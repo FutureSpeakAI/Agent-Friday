@@ -16,6 +16,7 @@ import { settingsManager, type AgentConfig } from './settings';
 import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
 import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
 import { trustGraph } from './trust-graph';
+import { meetingIntelligence } from './meeting-intelligence';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
@@ -454,6 +455,11 @@ export async function buildSystemPrompt(): Promise<string> {
     parts.push(commsContext);
   }
 
+  const meetingIntelCtx = meetingIntelligence.getContextString();
+  if (meetingIntelCtx) {
+    parts.push(meetingIntelCtx);
+  }
+
   const callCtx = callIntegration.getContextString();
   if (callCtx) {
     parts.push(callCtx);
@@ -573,6 +579,11 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
   const liveCommsContext = communications.getContextString();
   if (liveCommsContext) {
     sections.push({ name: 'communications', content: liveCommsContext, priority: 'low' });
+  }
+
+  const liveMeetingIntelCtx = meetingIntelligence.getContextString();
+  if (liveMeetingIntelCtx) {
+    sections.push({ name: 'meeting-intel', content: liveMeetingIntelCtx, priority: 'high' });
   }
 
   const callContext = callIntegration.getContextString();

@@ -14,3 +14,4 @@ export { registerIntegrationHandlers } from './integration-handlers';
 export { registerIntegrityHandlers } from './integrity-handlers';
 export { registerSuperpowersHandlers } from './superpowers-handlers';
 export { registerTrustGraphHandlers } from './trust-graph-handlers';
+export { registerMeetingIntelligenceHandlers } from './meeting-intelligence-handlers';
