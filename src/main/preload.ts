@@ -112,6 +112,11 @@ contextBridge.exposeInMainWorld('eve', {
       description: string;
       parameters: Record<string, unknown>;
     }>,
+    getToolDeclarations: () => ipcRenderer.invoke('onboarding:get-tool-declarations') as Promise<Array<{
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    }>>,
     getFirstGreeting: () => ipcRenderer.invoke('onboarding:get-first-greeting') as Promise<string>,
     finalizeAgent: (config: Record<string, unknown>) =>
       ipcRenderer.invoke('onboarding:finalize-agent', config) as Promise<{ success: boolean }>,
@@ -119,6 +124,10 @@ contextBridge.exposeInMainWorld('eve', {
 
   intelligence: {
     getBriefing: () => ipcRenderer.invoke('intelligence:get-briefing') as Promise<string>,
+    listAll: () => ipcRenderer.invoke('intelligence:list-all') as Promise<Array<{
+      id: string; topic: string; content: string; createdAt: number;
+      delivered: boolean; priority: 'high' | 'medium' | 'low';
+    }>>,
     setup: (topics: Array<{ topic: string; schedule: string; priority: string }>) =>
       ipcRenderer.invoke('intelligence:setup', topics) as Promise<string>,
   },
@@ -384,6 +393,17 @@ contextBridge.exposeInMainWorld('eve', {
     isInCallMode: () => ipcRenderer.invoke('call:is-in-call-mode'),
     openMeetingUrl: (url: string) => ipcRenderer.invoke('call:open-meeting-url', url),
     getContextString: () => ipcRenderer.invoke('call:get-context-string'),
+  },
+
+  shell: {
+    showInFolder: (filePath: string) => ipcRenderer.invoke('shell:show-in-folder', filePath),
+    openPath: (filePath: string) => ipcRenderer.invoke('shell:open-path', filePath),
+  },
+
+  onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+    ipcRenderer.on('file:modified', handler);
+    return () => { ipcRenderer.removeListener('file:modified', handler); };
   },
 
   window: {

@@ -14,9 +14,15 @@ interface MaskedSettings {
   hasGeminiKey: boolean;
   hasAnthropicKey: boolean;
   hasElevenLabsKey: boolean;
+  hasOpenaiKey: boolean;
+  hasPerplexityKey: boolean;
+  hasFirecrawlKey: boolean;
   geminiKeyHint: string;
   anthropicKeyHint: string;
   elevenLabsKeyHint: string;
+  openaiKeyHint: string;
+  perplexityKeyHint: string;
+  firecrawlKeyHint: string;
   agentVoicesEnabled: boolean;
   wakeWordEnabled: boolean;
   notificationWhisperEnabled: boolean;
@@ -52,22 +58,119 @@ interface TaskEntry {
   cronPattern?: string;
 }
 
+/* ── Reusable sub-components ── */
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return <h3 style={styles.sectionTitle}>{children}</h3>;
+}
+
+function Toggle({
+  value,
+  label,
+  hint,
+  onToggle,
+}: {
+  value: boolean;
+  label: string;
+  hint?: string;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <div style={styles.toggleRow} onClick={onToggle}>
+        <div
+          style={{
+            ...styles.toggle,
+            background: value ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
+            borderColor: value ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
+          }}
+        >
+          <div
+            style={{
+              ...styles.toggleDot,
+              transform: value ? 'translateX(16px)' : 'translateX(0)',
+              background: value ? '#00f0ff' : '#555568',
+            }}
+          />
+        </div>
+        <span style={styles.toggleLabel}>{label}</span>
+      </div>
+      {hint && <div style={styles.toggleHint}>{hint}</div>}
+    </>
+  );
+}
+
+function ApiKeyField({
+  label,
+  hasKey,
+  hint,
+  value,
+  onChange,
+  onSave,
+  description,
+}: {
+  label: string;
+  hasKey: boolean;
+  hint: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  description?: string;
+}) {
+  return (
+    <div style={styles.fieldGroup}>
+      <label style={styles.label}>
+        {label}
+        {hasKey && <span style={styles.keyHint}>{hint}</span>}
+        {hasKey && <span style={styles.connectedDot} />}
+      </label>
+      <div style={styles.keyRow}>
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={hasKey ? 'Enter new key to replace' : `Paste your ${label}`}
+          style={styles.keyInput}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && value.trim()) onSave();
+          }}
+        />
+        <button onClick={onSave} style={styles.saveBtn} disabled={!value.trim()}>
+          Save
+        </button>
+      </div>
+      {description && <div style={styles.toggleHint}>{description}</div>}
+    </div>
+  );
+}
+
+function Divider() {
+  return <div style={styles.divider} />;
+}
+
+/* ── Main Settings component ── */
+
 export default function Settings({ visible, onClose }: SettingsProps) {
   const [tab, setTab] = useState<Tab>('general');
   const [settings, setSettings] = useState<MaskedSettings | null>(null);
   const [longTerm, setLongTerm] = useState<LongTermEntry[]>([]);
   const [mediumTerm, setMediumTerm] = useState<MediumTermEntry[]>([]);
   const [tasks, setTasks] = useState<TaskEntry[]>([]);
+
+  // API key input states
   const [geminiKey, setGeminiKey] = useState('');
   const [anthropicKey, setAnthropicKey] = useState('');
   const [elevenLabsKey, setElevenLabsKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [perplexityKey, setPerplexityKey] = useState('');
+  const [firecrawlKey, setFirecrawlKey] = useState('');
   const [vaultPath, setVaultPath] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
 
   const loadSettings = useCallback(async () => {
     try {
       const s = await window.eve.settings.get();
-      setSettings(s);
+      setSettings(s as unknown as MaskedSettings);
     } catch {
       // ignore
     }
@@ -102,7 +205,6 @@ export default function Settings({ visible, onClose }: SettingsProps) {
     loadTasks();
   }, [visible, loadSettings, loadMemory, loadTasks]);
 
-  // Auto-focus the overlay so Escape works immediately
   const overlayRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (visible) {
@@ -118,59 +220,36 @@ export default function Settings({ visible, onClose }: SettingsProps) {
 
   if (!visible) return null;
 
-  const handleAutoLaunchToggle = async () => {
-    if (!settings) return;
-    await window.eve.settings.setAutoLaunch(!settings.autoLaunch);
-    await loadSettings();
-  };
-
-  const handleAutoScreenCaptureToggle = async () => {
-    if (!settings) return;
-    await window.eve.settings.setAutoScreenCapture(!settings.autoScreenCapture);
-    await loadSettings();
-  };
-
-  const handleSaveGeminiKey = async () => {
-    if (!geminiKey.trim()) return;
-    await window.eve.settings.setApiKey('gemini', geminiKey.trim());
-    setGeminiKey('');
-    setSaveMsg('Gemini key saved — restart to apply');
-    await loadSettings();
+  const flash = (msg: string) => {
+    setSaveMsg(msg);
     setTimeout(() => setSaveMsg(''), 3000);
   };
 
-  const handleSaveAnthropicKey = async () => {
-    if (!anthropicKey.trim()) return;
-    await window.eve.settings.setApiKey('anthropic', anthropicKey.trim());
-    setAnthropicKey('');
-    setSaveMsg('Anthropic key saved — restart to apply');
+  const saveApiKey = async (
+    key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl',
+    value: string,
+    setter: (v: string) => void,
+    successMsg: string,
+  ) => {
+    if (!value.trim()) return;
+    await window.eve.settings.setApiKey(key, value.trim());
+    setter('');
+    flash(successMsg);
     await loadSettings();
-    setTimeout(() => setSaveMsg(''), 3000);
-  };
-
-  const handleSaveElevenLabsKey = async () => {
-    if (!elevenLabsKey.trim()) return;
-    await window.eve.settings.setApiKey('elevenlabs', elevenLabsKey.trim());
-    setElevenLabsKey('');
-    setSaveMsg('ElevenLabs key saved — agent voices enabled');
-    await loadSettings();
-    setTimeout(() => setSaveMsg(''), 3000);
   };
 
   const handleSaveVaultPath = async () => {
     await window.eve.settings.setObsidianVaultPath(vaultPath.trim());
     setVaultPath('');
-    setSaveMsg(vaultPath.trim() ? 'Obsidian vault linked — memories will sync' : 'Obsidian vault disconnected');
+    flash(vaultPath.trim() ? 'Obsidian vault linked — memories will sync' : 'Obsidian vault disconnected');
     await loadSettings();
-    setTimeout(() => setSaveMsg(''), 3000);
   };
 
   const handleClearVaultPath = async () => {
     await window.eve.settings.setObsidianVaultPath('');
     setVaultPath('');
-    setSaveMsg('Obsidian vault disconnected');
+    flash('Obsidian vault disconnected');
     await loadSettings();
-    setTimeout(() => setSaveMsg(''), 3000);
   };
 
   const handleDeleteLongTerm = (id: string) => {
@@ -210,6 +289,12 @@ export default function Settings({ visible, onClose }: SettingsProps) {
     if (e.key === 'Escape') onClose();
   };
 
+  const toggleSetting = async (key: string) => {
+    if (!settings) return;
+    await window.eve.settings.set(key, !(settings as unknown as Record<string, boolean>)[key]);
+    await loadSettings();
+  };
+
   const tabs: { key: Tab; label: string }[] = [
     { key: 'general', label: 'General' },
     { key: 'memory', label: 'Memory' },
@@ -225,22 +310,17 @@ export default function Settings({ visible, onClose }: SettingsProps) {
             <div style={styles.confirmBox}>
               <div style={styles.confirmMsg}>{confirmAction.message}</div>
               <div style={styles.confirmBtns}>
-                <button
-                  onClick={() => setConfirmAction(null)}
-                  style={styles.confirmCancel}
-                >
+                <button onClick={() => setConfirmAction(null)} style={styles.confirmCancel}>
                   Cancel
                 </button>
-                <button
-                  onClick={confirmAction.onConfirm}
-                  style={styles.confirmDelete}
-                >
+                <button onClick={confirmAction.onConfirm} style={styles.confirmDelete}>
                   Delete
                 </button>
               </div>
             </div>
           </div>
         )}
+
         {/* Header */}
         <div style={styles.header}>
           <span style={styles.headerIcon}>⚙</span>
@@ -267,29 +347,267 @@ export default function Settings({ visible, onClose }: SettingsProps) {
         {/* Save feedback */}
         {saveMsg && <div style={styles.saveMsg}>{saveMsg}</div>}
 
-        {/* Content */}
-        <div style={styles.content}>
-          {tab === 'general' && (
-            <GeneralTab
-              settings={settings}
-              geminiKey={geminiKey}
-              anthropicKey={anthropicKey}
-              elevenLabsKey={elevenLabsKey}
-              vaultPath={vaultPath}
-              onGeminiKeyChange={setGeminiKey}
-              onAnthropicKeyChange={setAnthropicKey}
-              onElevenLabsKeyChange={setElevenLabsKey}
-              onVaultPathChange={setVaultPath}
-              onSaveGeminiKey={handleSaveGeminiKey}
-              onSaveAnthropicKey={handleSaveAnthropicKey}
-              onSaveElevenLabsKey={handleSaveElevenLabsKey}
-              onSaveVaultPath={handleSaveVaultPath}
-              onClearVaultPath={handleClearVaultPath}
-              onAutoLaunchToggle={handleAutoLaunchToggle}
-              onAutoScreenCaptureToggle={handleAutoScreenCaptureToggle}
-              onReloadSettings={loadSettings}
-            />
+        {/* Content — scrollable with custom scrollbar */}
+        <div className="settings-scroll" style={styles.content}>
+          {tab === 'general' && settings && (
+            <div style={styles.section}>
+              {/* ═══════════════ CORE API KEYS ═══════════════ */}
+              <SectionHeader>Core API Keys</SectionHeader>
+              <div style={styles.sectionHint}>
+                Required for core functionality — Gemini powers voice, Claude powers reasoning
+              </div>
+
+              <ApiKeyField
+                label="Gemini API Key"
+                hasKey={settings.hasGeminiKey}
+                hint={settings.geminiKeyHint}
+                value={geminiKey}
+                onChange={setGeminiKey}
+                onSave={() => saveApiKey('gemini', geminiKey, setGeminiKey, 'Gemini key saved — restart to apply')}
+                description="Powers real-time voice conversation via Gemini Live"
+              />
+
+              <ApiKeyField
+                label="Anthropic API Key"
+                hasKey={settings.hasAnthropicKey}
+                hint={settings.anthropicKeyHint}
+                value={anthropicKey}
+                onChange={setAnthropicKey}
+                onSave={() =>
+                  saveApiKey('anthropic', anthropicKey, setAnthropicKey, 'Anthropic key saved — restart to apply')
+                }
+                description="Claude handles deep research, code analysis, and psychological profiling"
+              />
+
+              <Divider />
+
+              {/* ═══════════════ SERVICE API KEYS ═══════════════ */}
+              <SectionHeader>Service API Keys</SectionHeader>
+              <div style={styles.sectionHint}>
+                Optional services that enhance capabilities — configure as needed
+              </div>
+
+              <ApiKeyField
+                label="ElevenLabs API Key"
+                hasKey={settings.hasElevenLabsKey}
+                hint={settings.elevenLabsKeyHint}
+                value={elevenLabsKey}
+                onChange={setElevenLabsKey}
+                onSave={() =>
+                  saveApiKey('elevenlabs', elevenLabsKey, setElevenLabsKey, 'ElevenLabs key saved — agent voices enabled')
+                }
+                description="Distinct voices for sub-agents (Atlas, Nova, Cipher)"
+              />
+
+              <ApiKeyField
+                label="OpenAI API Key"
+                hasKey={settings.hasOpenaiKey}
+                hint={settings.openaiKeyHint}
+                value={openaiKey}
+                onChange={setOpenaiKey}
+                onSave={() =>
+                  saveApiKey('openai', openaiKey, setOpenaiKey, 'OpenAI key saved')
+                }
+                description="Used for embeddings and specialized model calls"
+              />
+
+              <ApiKeyField
+                label="Perplexity API Key"
+                hasKey={settings.hasPerplexityKey}
+                hint={settings.perplexityKeyHint}
+                value={perplexityKey}
+                onChange={setPerplexityKey}
+                onSave={() =>
+                  saveApiKey('perplexity', perplexityKey, setPerplexityKey, 'Perplexity key saved')
+                }
+                description="Powers live web search and real-time information retrieval"
+              />
+
+              <ApiKeyField
+                label="Firecrawl API Key"
+                hasKey={settings.hasFirecrawlKey}
+                hint={settings.firecrawlKeyHint}
+                value={firecrawlKey}
+                onChange={setFirecrawlKey}
+                onSave={() =>
+                  saveApiKey('firecrawl', firecrawlKey, setFirecrawlKey, 'Firecrawl key saved')
+                }
+                description="Web scraping and deep page analysis for research tasks"
+              />
+
+              <Divider />
+
+              {/* ═══════════════ VOICE & AUDIO ═══════════════ */}
+              <SectionHeader>Voice &amp; Audio</SectionHeader>
+
+              <Toggle
+                value={settings.agentVoicesEnabled}
+                label="Sub-agents speak with distinct voices"
+                hint="Atlas, Nova, and Cipher each get their own ElevenLabs voice when delivering results"
+                onToggle={() => toggleSetting('agentVoicesEnabled')}
+              />
+
+              <Toggle
+                value={settings.wakeWordEnabled}
+                label={'Say "Hey Friday" to connect'}
+                hint="Listens for wake word when disconnected — auto-connects on detection"
+                onToggle={() => toggleSetting('wakeWordEnabled')}
+              />
+
+              <Divider />
+
+              {/* ═══════════════ INTELLIGENCE FEATURES ═══════════════ */}
+              <SectionHeader>Intelligence Features</SectionHeader>
+
+              <Toggle
+                value={settings.autoScreenCapture}
+                label="Auto-share screen on connect"
+                hint="Agent sees your screen when connected — disable for privacy"
+                onToggle={async () => {
+                  await window.eve.settings.setAutoScreenCapture(!settings.autoScreenCapture);
+                  await loadSettings();
+                }}
+              />
+
+              <Toggle
+                value={settings.notificationWhisperEnabled}
+                label="Notification whisper"
+                hint="Captures notifications from allowed apps and mentions them naturally"
+                onToggle={() => toggleSetting('notificationWhisperEnabled')}
+              />
+
+              <Toggle
+                value={settings.clipboardIntelligenceEnabled}
+                label="Clipboard intelligence"
+                hint="Monitors clipboard for URLs, code, and context — surfaces relevant info naturally"
+                onToggle={() => toggleSetting('clipboardIntelligenceEnabled')}
+              />
+
+              <Divider />
+
+              {/* ═══════════════ INTEGRATIONS ═══════════════ */}
+              <SectionHeader>Integrations</SectionHeader>
+
+              <Toggle
+                value={settings.googleCalendarEnabled}
+                label="Google Calendar"
+                hint="Reads your schedule, prepares meeting briefings, and can create events"
+                onToggle={() => toggleSetting('googleCalendarEnabled')}
+              />
+              {settings.googleCalendarEnabled && (
+                <div style={{ marginTop: 4, paddingLeft: 48 }}>
+                  <button
+                    onClick={async () => {
+                      const success = await window.eve.calendar.authenticate();
+                      if (success) {
+                        flash('Google Calendar connected successfully!');
+                      }
+                    }}
+                    style={{
+                      ...styles.saveBtn,
+                      width: '100%',
+                      padding: '10px 16px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Connect Google Calendar
+                  </button>
+                  <div style={{ ...styles.toggleHint, paddingLeft: 0, marginTop: 6 }}>
+                    Opens Google sign-in — grants read/write access to your primary calendar
+                  </div>
+                </div>
+              )}
+
+              {/* Obsidian vault */}
+              <div style={{ marginTop: 8 }}>
+                <label style={{ ...styles.label, fontSize: 13, color: '#d0d0d8', marginBottom: 6 }}>
+                  Knowledge Graph (Obsidian)
+                </label>
+                {settings.obsidianVaultPath ? (
+                  <div style={styles.fieldGroup}>
+                    <div style={styles.vaultConnected}>
+                      <span style={styles.vaultDot} />
+                      <span style={styles.vaultPathText}>{settings.obsidianVaultPath}</span>
+                    </div>
+                    <div style={styles.toggleHint}>
+                      Memories sync to <code style={styles.codeBadge}>EVE/memories/</code> and observations to{' '}
+                      <code style={styles.codeBadge}>EVE/observations/</code>
+                    </div>
+                    <button onClick={handleClearVaultPath} style={styles.disconnectBtn}>
+                      Disconnect vault
+                    </button>
+                  </div>
+                ) : (
+                  <div style={styles.fieldGroup}>
+                    <div style={styles.keyRow}>
+                      <input
+                        type="text"
+                        value={vaultPath}
+                        onChange={(e) => setVaultPath(e.target.value)}
+                        placeholder="C:\Users\you\Documents\MyVault"
+                        style={styles.keyInput}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && vaultPath.trim()) handleSaveVaultPath();
+                        }}
+                      />
+                      <button onClick={handleSaveVaultPath} style={styles.saveBtn} disabled={!vaultPath.trim()}>
+                        Link
+                      </button>
+                    </div>
+                    <div style={styles.toggleHint}>
+                      Paste the full path to your Obsidian vault. An EVE/ folder will be created inside it.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <Divider />
+
+              {/* ═══════════════ SYSTEM ═══════════════ */}
+              <SectionHeader>System</SectionHeader>
+
+              <Toggle
+                value={settings.autoLaunch}
+                label="Launch Agent Friday on startup"
+                hint="Starts automatically when you log in"
+                onToggle={async () => {
+                  await window.eve.settings.setAutoLaunch(!settings.autoLaunch);
+                  await loadSettings();
+                }}
+              />
+
+              <Divider />
+
+              <SectionHeader>Keyboard Shortcuts</SectionHeader>
+              <div style={styles.shortcutList}>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Space</span>
+                  <span style={styles.shortcutDesc}>Toggle microphone</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Tab</span>
+                  <span style={styles.shortcutDesc}>Toggle text input</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Ctrl+Shift+N</span>
+                  <span style={styles.shortcutDesc}>Show/hide Agent Friday (global)</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Escape</span>
+                  <span style={styles.shortcutDesc}>Close settings / panels</span>
+                </div>
+              </div>
+
+              {/* Bottom spacer for comfortable scrolling */}
+              <div style={{ height: 20 }} />
+            </div>
           )}
+
+          {tab === 'general' && !settings && (
+            <div style={styles.loading}>Loading settings...</div>
+          )}
+
           {tab === 'memory' && (
             <MemoryTab
               longTerm={longTerm}
@@ -298,355 +616,32 @@ export default function Settings({ visible, onClose }: SettingsProps) {
               onDeleteMediumTerm={handleDeleteMediumTerm}
             />
           )}
-          {tab === 'tasks' && (
-            <TasksTab tasks={tasks} onDelete={handleDeleteTask} />
-          )}
+
+          {tab === 'tasks' && <TasksTab tasks={tasks} onDelete={handleDeleteTask} />}
         </div>
       </div>
+
+      {/* Injected scrollbar styles */}
+      <style>{`
+        .settings-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .settings-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .settings-scroll::-webkit-scrollbar-thumb {
+          background: rgba(0, 240, 255, 0.15);
+          border-radius: 3px;
+        }
+        .settings-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(0, 240, 255, 0.3);
+        }
+      `}</style>
     </div>
   );
 }
 
-/* --- Sub-tabs --- */
-
-function GeneralTab({
-  settings,
-  geminiKey,
-  anthropicKey,
-  elevenLabsKey,
-  vaultPath,
-  onGeminiKeyChange,
-  onAnthropicKeyChange,
-  onElevenLabsKeyChange,
-  onVaultPathChange,
-  onSaveGeminiKey,
-  onSaveAnthropicKey,
-  onSaveElevenLabsKey,
-  onSaveVaultPath,
-  onClearVaultPath,
-  onAutoLaunchToggle,
-  onAutoScreenCaptureToggle,
-  onReloadSettings,
-}: {
-  settings: MaskedSettings | null;
-  geminiKey: string;
-  anthropicKey: string;
-  elevenLabsKey: string;
-  vaultPath: string;
-  onGeminiKeyChange: (v: string) => void;
-  onAnthropicKeyChange: (v: string) => void;
-  onElevenLabsKeyChange: (v: string) => void;
-  onVaultPathChange: (v: string) => void;
-  onSaveGeminiKey: () => void;
-  onSaveAnthropicKey: () => void;
-  onSaveElevenLabsKey: () => void;
-  onSaveVaultPath: () => void;
-  onClearVaultPath: () => void;
-  onAutoLaunchToggle: () => void;
-  onAutoScreenCaptureToggle: () => void;
-  onReloadSettings: () => void;
-}) {
-  if (!settings) return <div style={styles.loading}>Loading...</div>;
-
-  return (
-    <div style={styles.section}>
-      <h3 style={styles.sectionTitle}>API Keys</h3>
-
-      <div style={styles.fieldGroup}>
-        <label style={styles.label}>
-          Gemini API Key
-          {settings.hasGeminiKey && (
-            <span style={styles.keyHint}>{settings.geminiKeyHint}</span>
-          )}
-        </label>
-        <div style={styles.keyRow}>
-          <input
-            type="password"
-            value={geminiKey}
-            onChange={(e) => onGeminiKeyChange(e.target.value)}
-            placeholder={settings.hasGeminiKey ? 'Enter new key to replace' : 'Paste your Gemini API key'}
-            style={styles.keyInput}
-          />
-          <button onClick={onSaveGeminiKey} style={styles.saveBtn} disabled={!geminiKey.trim()}>
-            Save
-          </button>
-        </div>
-      </div>
-
-      <div style={styles.fieldGroup}>
-        <label style={styles.label}>
-          Anthropic API Key
-          {settings.hasAnthropicKey && (
-            <span style={styles.keyHint}>{settings.anthropicKeyHint}</span>
-          )}
-        </label>
-        <div style={styles.keyRow}>
-          <input
-            type="password"
-            value={anthropicKey}
-            onChange={(e) => onAnthropicKeyChange(e.target.value)}
-            placeholder={settings.hasAnthropicKey ? 'Enter new key to replace' : 'Paste your Anthropic API key'}
-            style={styles.keyInput}
-          />
-          <button onClick={onSaveAnthropicKey} style={styles.saveBtn} disabled={!anthropicKey.trim()}>
-            Save
-          </button>
-        </div>
-      </div>
-
-      <div style={styles.fieldGroup}>
-        <label style={styles.label}>
-          ElevenLabs API Key
-          {settings.hasElevenLabsKey && (
-            <span style={styles.keyHint}>{settings.elevenLabsKeyHint}</span>
-          )}
-        </label>
-        <div style={styles.keyRow}>
-          <input
-            type="password"
-            value={elevenLabsKey}
-            onChange={(e) => onElevenLabsKeyChange(e.target.value)}
-            placeholder={settings.hasElevenLabsKey ? 'Enter new key to replace' : 'Paste your ElevenLabs API key'}
-            style={styles.keyInput}
-          />
-          <button onClick={onSaveElevenLabsKey} style={styles.saveBtn} disabled={!elevenLabsKey.trim()}>
-            Save
-          </button>
-        </div>
-        <div style={styles.toggleHint}>Powers distinct voices for background agents (Atlas, Nova, Cipher)</div>
-      </div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Agent Voices</h3>
-      <div style={styles.toggleRow} onClick={async () => {
-        if (!settings) return;
-        await window.eve.settings.set('agentVoicesEnabled', !settings.agentVoicesEnabled);
-        await onReloadSettings();
-      }}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.agentVoicesEnabled ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.agentVoicesEnabled ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.agentVoicesEnabled ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.agentVoicesEnabled ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>Sub-agents speak with distinct voices</span>
-      </div>
-      <div style={styles.toggleHint}>Atlas, Nova, and Cipher each get their own ElevenLabs voice when delivering results</div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Startup</h3>
-      <div style={styles.toggleRow} onClick={onAutoLaunchToggle}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.autoLaunch ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.autoLaunch ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.autoLaunch ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.autoLaunch ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>Launch EVE on startup</span>
-      </div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Vision</h3>
-      <div style={styles.toggleRow} onClick={onAutoScreenCaptureToggle}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.autoScreenCapture ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.autoScreenCapture ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.autoScreenCapture ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.autoScreenCapture ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>Auto-share screen on connect</span>
-      </div>
-      <div style={styles.toggleHint}>EVE sees your screen when connected — disable for privacy</div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Wake Word</h3>
-      <div style={styles.toggleRow} onClick={async () => {
-        if (!settings) return;
-        await window.eve.settings.set('wakeWordEnabled', !settings.wakeWordEnabled);
-        await onReloadSettings();
-      }}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.wakeWordEnabled ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.wakeWordEnabled ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.wakeWordEnabled ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.wakeWordEnabled ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>Say "Hey EVE" to connect</span>
-      </div>
-      <div style={styles.toggleHint}>Listens for wake word when disconnected — auto-connects on detection</div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Notification Whisper</h3>
-      <div style={styles.toggleRow} onClick={async () => {
-        if (!settings) return;
-        await window.eve.settings.set('notificationWhisperEnabled', !settings.notificationWhisperEnabled);
-        await onReloadSettings();
-      }}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.notificationWhisperEnabled ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.notificationWhisperEnabled ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.notificationWhisperEnabled ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.notificationWhisperEnabled ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>EVE reads notifications aloud</span>
-      </div>
-      <div style={styles.toggleHint}>Captures notifications from allowed apps and mentions them naturally</div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Clipboard Intelligence</h3>
-      <div style={styles.toggleRow} onClick={async () => {
-        if (!settings) return;
-        await window.eve.settings.set('clipboardIntelligenceEnabled', !settings.clipboardIntelligenceEnabled);
-        await onReloadSettings();
-      }}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.clipboardIntelligenceEnabled ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.clipboardIntelligenceEnabled ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.clipboardIntelligenceEnabled ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.clipboardIntelligenceEnabled ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>EVE sees your clipboard</span>
-      </div>
-      <div style={styles.toggleHint}>Monitors clipboard for URLs, code, and context — surfaces relevant info naturally</div>
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Google Calendar</h3>
-      <div style={styles.toggleRow} onClick={async () => {
-        if (!settings) return;
-        await window.eve.settings.set('googleCalendarEnabled', !settings.googleCalendarEnabled);
-        await onReloadSettings();
-      }}>
-        <div style={{
-          ...styles.toggle,
-          background: settings.googleCalendarEnabled ? 'rgba(0, 240, 255, 0.2)' : 'rgba(255,255,255,0.06)',
-          borderColor: settings.googleCalendarEnabled ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
-        }}>
-          <div style={{
-            ...styles.toggleDot,
-            transform: settings.googleCalendarEnabled ? 'translateX(16px)' : 'translateX(0)',
-            background: settings.googleCalendarEnabled ? '#00f0ff' : '#555568',
-          }} />
-        </div>
-        <span style={styles.toggleLabel}>Calendar integration</span>
-      </div>
-      <div style={styles.toggleHint}>EVE reads your schedule, prepares meeting briefings, and can create events</div>
-      {settings.googleCalendarEnabled && (
-        <div style={{ marginTop: 10 }}>
-          <button
-            onClick={async () => {
-              const success = await window.eve.calendar.authenticate();
-              if (success) {
-                alert('Google Calendar connected successfully!');
-              }
-            }}
-            style={{
-              ...styles.saveBtn,
-              width: '100%',
-              padding: '10px 16px',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            Connect Google Calendar
-          </button>
-          <div style={styles.toggleHint}>Opens Google sign-in — grants read/write access to your primary calendar</div>
-        </div>
-      )}
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Knowledge Graph (Obsidian)</h3>
-      {settings.obsidianVaultPath ? (
-        <div style={styles.fieldGroup}>
-          <div style={styles.vaultConnected}>
-            <span style={styles.vaultDot} />
-            <span style={styles.vaultPathText}>{settings.obsidianVaultPath}</span>
-          </div>
-          <div style={styles.toggleHint}>
-            Memories sync to <code style={styles.codeBadge}>EVE/memories/</code> and observations to <code style={styles.codeBadge}>EVE/observations/</code>
-          </div>
-          <button onClick={onClearVaultPath} style={styles.disconnectBtn}>
-            Disconnect vault
-          </button>
-        </div>
-      ) : (
-        <div style={styles.fieldGroup}>
-          <label style={styles.label}>Obsidian vault folder path</label>
-          <div style={styles.keyRow}>
-            <input
-              type="text"
-              value={vaultPath}
-              onChange={(e) => onVaultPathChange(e.target.value)}
-              placeholder="C:\Users\you\Documents\MyVault"
-              style={styles.keyInput}
-            />
-            <button onClick={onSaveVaultPath} style={styles.saveBtn} disabled={!vaultPath.trim()}>
-              Link
-            </button>
-          </div>
-          <div style={styles.toggleHint}>
-            Paste the full path to your Obsidian vault. EVE will create an EVE/ folder inside it.
-          </div>
-        </div>
-      )}
-
-      <div style={styles.divider} />
-
-      <h3 style={styles.sectionTitle}>Keyboard Shortcuts</h3>
-      <div style={styles.shortcutList}>
-        <div style={styles.shortcutRow}>
-          <span style={styles.shortcutKey}>Space</span>
-          <span style={styles.shortcutDesc}>Toggle microphone</span>
-        </div>
-        <div style={styles.shortcutRow}>
-          <span style={styles.shortcutKey}>Tab</span>
-          <span style={styles.shortcutDesc}>Toggle text input</span>
-        </div>
-        <div style={styles.shortcutRow}>
-          <span style={styles.shortcutKey}>Ctrl+Shift+N</span>
-          <span style={styles.shortcutDesc}>Show/hide EVE (global)</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* --- Memory Tab --- */
 
 function MemoryTab({
   longTerm,
@@ -666,7 +661,7 @@ function MemoryTab({
         <span style={styles.badge}>{longTerm.length}</span>
       </h3>
       {longTerm.length === 0 ? (
-        <div style={styles.emptyState}>No memories yet — talk to EVE to build your profile</div>
+        <div style={styles.emptyState}>No memories yet — talk to your agent to build your profile</div>
       ) : (
         <div style={styles.entryList}>
           {longTerm.map((entry) => (
@@ -675,11 +670,7 @@ function MemoryTab({
                 <span style={styles.entryCategory}>{entry.category}</span>
                 <span style={styles.entryText}>{entry.fact}</span>
               </div>
-              <button
-                onClick={() => onDeleteLongTerm(entry.id)}
-                style={styles.deleteBtn}
-                title="Delete memory"
-              >
+              <button onClick={() => onDeleteLongTerm(entry.id)} style={styles.deleteBtn} title="Delete memory">
                 ✕
               </button>
             </div>
@@ -687,7 +678,7 @@ function MemoryTab({
         </div>
       )}
 
-      <div style={styles.divider} />
+      <Divider />
 
       <h3 style={styles.sectionTitle}>
         Medium-term Observations
@@ -721,6 +712,8 @@ function MemoryTab({
   );
 }
 
+/* --- Tasks Tab --- */
+
 function TasksTab({
   tasks,
   onDelete,
@@ -735,7 +728,7 @@ function TasksTab({
         <span style={styles.badge}>{tasks.length}</span>
       </h3>
       {tasks.length === 0 ? (
-        <div style={styles.emptyState}>No scheduled tasks — ask EVE to set a reminder</div>
+        <div style={styles.emptyState}>No scheduled tasks — ask your agent to set a reminder</div>
       ) : (
         <div style={styles.entryList}>
           {tasks.map((task) => (
@@ -747,14 +740,11 @@ function TasksTab({
                   {task.type === 'once' && task.triggerTime
                     ? `Once: ${new Date(task.triggerTime).toLocaleString()}`
                     : ''}
-                  {' · '}{task.action}: {task.payload}
+                  {' · '}
+                  {task.action}: {task.payload}
                 </span>
               </div>
-              <button
-                onClick={() => onDelete(task.id)}
-                style={styles.deleteBtn}
-                title="Delete task"
-              >
+              <button onClick={() => onDelete(task.id)} style={styles.deleteBtn} title="Delete task">
                 ✕
               </button>
             </div>
@@ -779,14 +769,15 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 100,
   },
   panel: {
-    width: 600,
-    maxHeight: '80vh',
+    width: 620,
+    maxHeight: '85vh',
     background: '#111118',
     border: '1px solid rgba(255,255,255,0.08)',
     borderRadius: 16,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    position: 'relative',
   },
   header: {
     display: 'flex',
@@ -794,6 +785,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10,
     padding: '18px 24px',
     borderBottom: '1px solid rgba(255,255,255,0.06)',
+    flexShrink: 0,
   },
   headerIcon: {
     fontSize: 18,
@@ -819,6 +811,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 0,
     borderBottom: '1px solid rgba(255,255,255,0.06)',
     padding: '0 24px',
+    flexShrink: 0,
   },
   tab: {
     background: 'none',
@@ -843,11 +836,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#22c55e',
     background: 'rgba(34,197,94,0.06)',
     borderBottom: '1px solid rgba(34,197,94,0.1)',
+    flexShrink: 0,
   },
   content: {
     flex: 1,
     overflowY: 'auto',
     padding: '20px 24px',
+    minHeight: 0,
   },
   section: {
     display: 'flex',
@@ -857,13 +852,19 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: {
     fontSize: 12,
     fontWeight: 700,
-    color: '#888898',
-    letterSpacing: '0.06em',
+    color: '#00f0ff',
+    letterSpacing: '0.08em',
     textTransform: 'uppercase' as const,
     margin: 0,
     display: 'flex',
     alignItems: 'center',
     gap: 8,
+  },
+  sectionHint: {
+    fontSize: 11,
+    color: '#555568',
+    marginTop: -6,
+    marginBottom: 4,
   },
   badge: {
     fontSize: 10,
@@ -888,7 +889,15 @@ const styles: Record<string, React.CSSProperties> = {
   keyHint: {
     fontSize: 11,
     color: '#555568',
-    fontFamily: 'monospace',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+  },
+  connectedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: '#22c55e',
+    boxShadow: '0 0 6px rgba(34, 197, 94, 0.4)',
+    display: 'inline-block',
   },
   keyRow: {
     display: 'flex',
@@ -902,8 +911,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 12px',
     color: '#e0e0e8',
     fontSize: 13,
-    fontFamily: 'monospace',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     outline: 'none',
+    transition: 'border-color 0.15s',
   },
   saveBtn: {
     background: 'rgba(0, 240, 255, 0.1)',
@@ -914,6 +924,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: '8px 16px',
     cursor: 'pointer',
+    transition: 'background 0.15s',
+    whiteSpace: 'nowrap',
   },
   divider: {
     height: 1,
@@ -973,7 +985,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     color: '#888898',
-    fontFamily: 'monospace',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     minWidth: 100,
     textAlign: 'center',
   },
@@ -1116,7 +1128,7 @@ const styles: Record<string, React.CSSProperties> = {
   vaultPathText: {
     fontSize: 12,
     color: '#d0d0d8',
-    fontFamily: 'monospace',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
@@ -1126,7 +1138,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(255,255,255,0.06)',
     padding: '1px 5px',
     borderRadius: 3,
-    fontFamily: 'monospace',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     color: '#888898',
   },
   disconnectBtn: {

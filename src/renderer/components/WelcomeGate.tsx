@@ -49,6 +49,7 @@ const WelcomeGate: React.FC<WelcomeGateProps> = ({ onKeysReady }) => {
         <div style={styles.titleBlock}>
           <div style={styles.logo}>◈</div>
           <h1 style={styles.title}>Agent Friday</h1>
+          <div style={styles.byLine}>by FutureSpeak.AI</div>
           <p style={styles.subtitle}>Enter your API keys to begin</p>
         </div>
 
@@ -142,6 +143,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#E0E6F0',
     margin: 0,
     letterSpacing: '0.05em',
+  },
+  byLine: {
+    fontSize: '0.7rem',
+    fontWeight: 500,
+    letterSpacing: '0.06em',
+    color: 'rgba(168, 85, 247, 0.5)',
+    marginTop: '0.25rem',
   },
   subtitle: {
     fontSize: '0.85rem',

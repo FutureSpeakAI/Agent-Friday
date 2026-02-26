@@ -214,6 +214,14 @@ Focus on: actionable insights, interesting developments, things they'd genuinely
     return summary;
   }
 
+  /**
+   * Get ALL briefings (both delivered and undelivered), sorted newest first.
+   * Used by the Research Panel in the renderer.
+   */
+  getAllBriefings(): Briefing[] {
+    return [...this.briefings].sort((a, b) => b.createdAt - a.createdAt);
+  }
+
   private prune(): void {
     const cutoff = Date.now() - BRIEFING_MAX_AGE_MS;
 
