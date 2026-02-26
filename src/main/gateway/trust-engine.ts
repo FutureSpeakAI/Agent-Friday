@@ -1,7 +1,7 @@
 /**
  * gateway/trust-engine.ts — Trust & Security Engine for the messaging gateway.
  *
- * Implements Asimov-compliant capability gating:
+ * Implements Asimov's cLaws capability gating:
  *   - First Law:  No data leakage across trust boundaries
  *   - Second Law: Authenticate the principal (pairing flow)
  *   - Third Law:  Gateway self-protection (rate limiting, audit)
