@@ -211,6 +211,27 @@ export class AudioPlaybackEngine {
     return this.currentSinkId;
   }
 
+  /**
+   * Ensure the playback AudioContext is in a running state.
+   * Called periodically by the health monitor to recover from
+   * browser autoplay suspensions and tab-backgrounding.
+   */
+  async resumeIfSuspended(): Promise<void> {
+    if (this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+        console.log('[AudioPlayback] Context resumed from suspended state');
+      } catch (err) {
+        console.warn('[AudioPlayback] Failed to resume context:', err);
+      }
+    }
+  }
+
+  /** Get the current AudioContext state for health monitoring */
+  getContextState(): AudioContextState {
+    return this.ctx.state;
+  }
+
   /** Clean shutdown */
   destroy() {
     this.flush();

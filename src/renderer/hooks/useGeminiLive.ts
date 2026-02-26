@@ -1634,6 +1634,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,       // Stabilizes mic levels over long sessions
         },
       });
       streamRef.current = stream;
@@ -1989,6 +1990,146 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
 
     return () => clearInterval(interval);
   }, [state.isConnected, state.isListening, sendTextToGemini]);
+
+  // --- System sleep/resume recovery ---
+  // When the system wakes from sleep, WebSockets are dead but onclose may not fire.
+  // We detect wake-up via a timer gap and trigger reconnection if needed.
+  useEffect(() => {
+    if (!state.isConnected) return;
+
+    let lastHeartbeat = Date.now();
+    const HEARTBEAT_INTERVAL = 5000; // Check every 5 seconds
+    const SLEEP_THRESHOLD = 15000;   // If 15s+ passed since last heartbeat, we probably slept
+
+    const heartbeat = setInterval(() => {
+      const now = Date.now();
+      const gap = now - lastHeartbeat;
+      lastHeartbeat = now;
+
+      if (gap > SLEEP_THRESHOLD) {
+        console.warn(`[GeminiLive] Detected system wake-up (${Math.round(gap / 1000)}s gap) — checking connection health`);
+
+        // The WebSocket is almost certainly dead after sleep
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          console.warn('[GeminiLive] WebSocket dead after wake — triggering reconnect');
+          // Use session manager for a clean reconnect with conversation context
+          const sm = sessionManagerRef.current;
+          if (sm && !smReconnectingRef.current && !isAutoReconnectingRef.current) {
+            intentionalDisconnectRef.current = true;
+            sm.requestReconnect();
+          }
+        } else {
+          // WS reports open but might be stale — send keepalive to test
+          try {
+            const silentPcm = new ArrayBuffer(320);
+            const silentB64 = btoa(String.fromCharCode(...new Uint8Array(silentPcm)));
+            ws.send(JSON.stringify({
+              realtime_input: {
+                media_chunks: [{ data: silentB64, mime_type: 'audio/pcm;rate=16000' }],
+              },
+            }));
+          } catch {
+            console.warn('[GeminiLive] Post-wake keepalive failed — triggering reconnect');
+            const sm = sessionManagerRef.current;
+            if (sm && !smReconnectingRef.current) {
+              intentionalDisconnectRef.current = true;
+              sm.requestReconnect();
+            }
+          }
+        }
+      }
+    }, HEARTBEAT_INTERVAL);
+
+    return () => clearInterval(heartbeat);
+  }, [state.isConnected]);
+
+  // --- Tab focus recovery ---
+  // Electron can suspend AudioContexts when the window loses focus for extended periods.
+  // Resume them immediately when the user returns.
+  useEffect(() => {
+    if (!state.isConnected) return;
+
+    const onVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        // User returned — resume all AudioContexts
+        const mic = audioContextRef.current;
+        if (mic && mic.state === 'suspended') {
+          console.log('[GeminiLive] Window regained focus — resuming mic AudioContext');
+          try { await mic.resume(); } catch {}
+        }
+        const playback = playbackEngineRef.current;
+        if (playback) {
+          try { await playback.resumeIfSuspended(); } catch {}
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [state.isConnected]);
+
+  // --- Mic + AudioContext health monitor ---
+  // Detects dead mic tracks (system sleep/resume, USB unplug, permission revocation)
+  // and suspended AudioContexts (browser autoplay policy, prolonged background tab)
+  useEffect(() => {
+    if (!state.isConnected || !state.isListening) return;
+
+    const HEALTH_CHECK_INTERVAL = 10_000; // Every 10 seconds
+
+    const healthCheck = async () => {
+      // 1. Check if mic stream tracks are still alive
+      const stream = streamRef.current;
+      if (stream) {
+        const tracks = stream.getAudioTracks();
+        const hasLiveTrack = tracks.some((t) => t.readyState === 'live' && t.enabled);
+        if (!hasLiveTrack && tracks.length > 0) {
+          console.warn('[GeminiLive] Mic track died (sleep/unplug?) — restarting mic pipeline');
+          try {
+            await startListening();
+          } catch (err) {
+            console.error('[GeminiLive] Mic restart failed:', err);
+          }
+          return;
+        }
+      }
+
+      // 2. Check if mic AudioContext got suspended (browser tab background, screen lock)
+      const ctx = audioContextRef.current;
+      if (ctx && ctx.state === 'suspended') {
+        console.warn('[GeminiLive] Mic AudioContext suspended — resuming');
+        try {
+          await ctx.resume();
+          console.log('[GeminiLive] Mic AudioContext resumed successfully');
+        } catch (err) {
+          console.warn('[GeminiLive] Mic AudioContext resume failed — restarting pipeline:', err);
+          await startListening();
+        }
+      }
+
+      // 3. Check if AudioContext was closed unexpectedly
+      if (ctx && ctx.state === 'closed') {
+        console.warn('[GeminiLive] Mic AudioContext closed unexpectedly — restarting pipeline');
+        await startListening();
+      }
+
+      // 4. Ensure playback AudioContext is also alive (it can suspend independently)
+      const playback = playbackEngineRef.current;
+      if (playback) {
+        try {
+          await playback.resumeIfSuspended();
+        } catch {
+          // Non-critical — playback will auto-resume when next chunk arrives
+        }
+      }
+    };
+
+    const interval = setInterval(healthCheck, HEALTH_CHECK_INTERVAL);
+    // Run once immediately
+    healthCheck();
+
+    return () => clearInterval(interval);
+  }, [state.isConnected, state.isListening, startListening]);
 
   // Periodic memory extraction — every 5 min during connected sessions
   useEffect(() => {
