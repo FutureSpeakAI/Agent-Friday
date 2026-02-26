@@ -1219,6 +1219,78 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                       const fsMsg = fsErr instanceof Error ? fsErr.message : String(fsErr);
                       resultText = `Feature setup error: ${fsMsg}`;
                     }
+                  } else if (fc.name === 'start_calendar_auth') {
+                    // Feature setup — trigger Google Calendar OAuth flow
+                    console.log('[GeminiLive] Starting Calendar OAuth');
+                    try {
+                      const result = await window.eve.calendar.authenticate();
+                      if (result) {
+                        resultText = 'Google Calendar connected successfully! The user can now ask about their schedule, and I can create events for them.';
+                      } else {
+                        resultText = 'Calendar authentication was cancelled or failed. The user can try again later in Settings.';
+                      }
+                    } catch (authErr) {
+                      const authMsg = authErr instanceof Error ? authErr.message : String(authErr);
+                      console.warn('[GeminiLive] Calendar auth error:', authMsg);
+                      if (authMsg.includes('credentials') || authMsg.includes('ENOENT')) {
+                        resultText = 'Calendar authentication failed — no Google credentials file found. The user needs to set up a Google Cloud project with Calendar API enabled and place the credentials.json file in the app data directory. This is a one-time setup. They can skip this for now and set it up later.';
+                      } else {
+                        resultText = `Calendar authentication failed: ${authMsg}. The user can try again later in Settings.`;
+                      }
+                    }
+                  } else if (fc.name === 'save_api_key') {
+                    // Feature setup — save an API key for a service
+                    const service = String(fc.args?.service || '');
+                    const apiKey = String(fc.args?.api_key || '');
+                    console.log(`[GeminiLive] Saving API key for: ${service}`);
+                    try {
+                      const keyMap: Record<string, 'perplexity' | 'firecrawl' | 'openai' | 'elevenlabs'> = {
+                        perplexity: 'perplexity',
+                        firecrawl: 'firecrawl',
+                        openai: 'openai',
+                        elevenlabs: 'elevenlabs',
+                      };
+                      const settingsKey = keyMap[service];
+                      if (!settingsKey) {
+                        resultText = `Unknown service "${service}". Supported: perplexity, firecrawl, openai, elevenlabs.`;
+                      } else if (!apiKey || apiKey.length < 8) {
+                        resultText = `The API key seems too short or empty. Ask the user to double-check it.`;
+                      } else {
+                        await window.eve.settings.setApiKey(settingsKey, apiKey);
+                        resultText = `${service.charAt(0).toUpperCase() + service.slice(1)} API key saved successfully! The service is now available.`;
+                      }
+                    } catch (keyErr) {
+                      const keyMsg = keyErr instanceof Error ? keyErr.message : String(keyErr);
+                      resultText = `Failed to save API key: ${keyMsg}`;
+                    }
+                  } else if (fc.name === 'set_obsidian_vault_path') {
+                    // Feature setup — set Obsidian vault path
+                    const vaultPath = String(fc.args?.vault_path || '');
+                    console.log(`[GeminiLive] Setting Obsidian vault path: ${vaultPath}`);
+                    try {
+                      if (!vaultPath) {
+                        resultText = 'No vault path provided. Ask the user for the full path to their Obsidian vault folder.';
+                      } else {
+                        await window.eve.settings.setObsidianVaultPath(vaultPath);
+                        resultText = `Obsidian vault path set to "${vaultPath}". I can now read and search notes from this vault.`;
+                      }
+                    } catch (vaultErr) {
+                      const vaultMsg = vaultErr instanceof Error ? vaultErr.message : String(vaultErr);
+                      resultText = `Failed to set vault path: ${vaultMsg}`;
+                    }
+                  } else if (fc.name === 'toggle_screen_capture') {
+                    // Feature setup — enable/disable screen capture
+                    const enabled = Boolean(fc.args?.enabled);
+                    console.log(`[GeminiLive] Screen capture: ${enabled ? 'enabling' : 'disabling'}`);
+                    try {
+                      await window.eve.settings.setAutoScreenCapture(enabled);
+                      resultText = enabled
+                        ? 'Screen capture enabled. I\'ll periodically capture what\'s on screen to stay contextually aware. All captures stay local and private.'
+                        : 'Screen capture disabled. I won\'t capture screen content. The user can re-enable this anytime in Settings.';
+                    } catch (scErr) {
+                      const scMsg = scErr instanceof Error ? scErr.message : String(scErr);
+                      resultText = `Failed to toggle screen capture: ${scMsg}`;
+                    }
                   } else if (fc.name === 'search_episodes') {
                     const query = String(fc.args?.query || '');
                     console.log('[GeminiLive] Searching episodes:', query);
@@ -1402,6 +1474,24 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     // Route to browser automation tools
                     console.log('[GeminiLive] Browser tool:', fc.name);
                     resultText = await window.eve.browser.callTool(fc.name, fc.args || {});
+
+                    // Special handling: send screenshots as images so Gemini can SEE them
+                    if (fc.name === 'browser_screenshot' && resultText && resultText.length > 1000) {
+                      // resultText is base64 JPEG — send as image via realtime_input before tool response
+                      try {
+                        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                          wsRef.current.send(JSON.stringify({
+                            realtime_input: {
+                              media_chunks: [{ data: resultText, mime_type: 'image/jpeg' }],
+                            },
+                          }));
+                        }
+                        resultText = 'Screenshot captured and sent to you for visual analysis. Describe what you see on the page — the layout, text, buttons, forms, and any relevant elements. Use this to decide your next action.';
+                      } catch (imgErr) {
+                        console.warn('[GeminiLive] Failed to send screenshot image:', imgErr);
+                        resultText = 'Screenshot taken but could not send image for analysis. Use browser_read_page to get text content instead.';
+                      }
+                    }
                   } else {
                     // Check if this is a connector tool (dynamic software-mastery tools)
                     let isConnector = false;
