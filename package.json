@@ -1,0 +1,117 @@
+{
+  "name": "agent-friday",
+  "version": "1.0.0",
+  "description": "Agent Friday — AI Chief of Staff by FutureSpeak.AI",
+  "author": "FutureSpeak.AI",
+  "license": "MIT",
+  "homepage": "https://github.com/FutureSpeakAI/Agent-Friday",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FutureSpeakAI/Agent-Friday.git"
+  },
+  "main": "dist/main/index.js",
+  "scripts": {
+    "start": "npm run build && electron .",
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://localhost:5199 && electron .",
+    "build:vite": "vite build",
+    "build:electron": "tsc -p tsconfig.main.json",
+    "build": "npm run build:vite && npm run build:electron",
+    "package": "npm run build && electron-builder",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\""
+  },
+  "build": {
+    "appId": "com.futurespeak.agentfriday",
+    "productName": "Agent Friday",
+    "copyright": "Copyright © 2025-2026 FutureSpeak.AI",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/puppeteer-core/**/*",
+      "node_modules/sharp/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "signtoolOptions": {
+        "sign": "build/sign.js",
+        "signingHashAlgorithms": [
+          "sha256"
+        ]
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Agent Friday",
+      "uninstallDisplayName": "Agent Friday — FutureSpeak.AI"
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage",
+        "zip"
+      ]
+    }
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^171.4.0",
+    "puppeteer-core": "^24.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "three": "^0.183.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.183.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "eslint": "^9.39.3",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "png-to-ico": "^3.0.1",
+    "prettier": "^3.8.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sharp": "^0.34.5",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^6.0.0",
+    "wait-on": "^8.0.2"
+  }
+}
