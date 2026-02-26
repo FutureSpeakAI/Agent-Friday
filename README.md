@@ -93,7 +93,7 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
 | **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
 | **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing |
-| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 16 connector modules |
+| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 17 connector modules |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -238,6 +238,7 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | **Media Streaming** | Spotify, YouTube, Plex, OBS Studio control |
 | **Office Suite** | Microsoft Office, Google Workspace |
 | **OpenAI Services** | DALL-E 3 image generation, TTS, GPT models |
+| **PageIndex** | Vectorless document intelligence — index PDFs and answer questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex)) |
 | **Perplexity** | Web search with citations |
 | **PowerShell** | Windows system automation |
 | **Terminal** | Multi-shell support (bash, zsh, PowerShell, CMD) |
@@ -254,7 +255,7 @@ Agent Friday connects to your entire workflow through a modular connector regist
 - **Scheduled Tasks** — One-time and recurring (cron) background jobs
 - **Clipboard Intelligence** — Monitors clipboard for code, URLs, and actionable content
 - **Project Awareness** — Watches project directories for git changes and file updates
-- **Document Ingestion** — Ingest PDFs, text files, and web pages into searchable memory
+- **Document Intelligence (PageIndex)** — Vectorless reasoning-based RAG: index any PDF into a hierarchical tree, then search or ask questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex))
 - **Screen Capture** — Automated or on-demand desktop screenshots for visual context
 - **Self-Improvement** — Can read and propose changes to its own source code (user-approved)
 
@@ -298,7 +299,7 @@ agent-friday/
         agent-types.ts
         builtin-agents.ts
         orchestrator.ts
-      connectors/                # Integration plugins (16 modules)
+      connectors/                # Integration plugins (17 modules)
         registry.ts
         adobe.ts
         comms-hub.ts
@@ -316,6 +317,15 @@ agent-friday/
         ui-automation.ts
         vscode.ts
         world-monitor.ts
+        pageindex.ts             # PageIndex document intelligence connector
+      pageindex/                   # Vectorless RAG engine (PageIndex port)
+        index.ts                 # Public API barrel export
+        types.ts                 # PageIndexTree, PageIndexNode, etc.
+        tree-builder.ts          # 5-phase indexing pipeline
+        tree-search.ts           # LLM-guided tree traversal search
+        pdf-parser.ts            # PDF text extraction (pdfjs-dist)
+        prompts.ts               # All LLM prompts (22 functions)
+        utils.ts                 # Token counting, JSON extraction, tree ops
 
     renderer/                    # React + Three.js frontend
       App.tsx                    # Root state machine (AppPhase enum)
@@ -349,6 +359,7 @@ agent-friday/
 | **Reasoning** | Claude Opus/Sonnet (Anthropic SDK) | Deep analysis, memory, profiling |
 | **Embeddings** | Gemini text-embedding-004 | Semantic search (768 dimensions) |
 | **Agent Voices** | ElevenLabs TTS | Distinct voices for sub-agents |
+| **Document Intelligence** | PageIndex (Vectify AI) + OpenAI GPT-4o | Vectorless tree-based RAG (~99% accuracy) |
 | **Protocols** | MCP (Model Context Protocol) | Dynamic tool registration |
 | **Browser** | Puppeteer-core + WebSocket | Tab control, screenshots, DOM |
 | **Calendar** | Google APIs (OAuth2) | Google Calendar + Gmail integration |
@@ -502,6 +513,7 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 
 ## Acknowledgments
 
+- **[PageIndex](https://github.com/VectifyAI/PageIndex)** by **[Vectify AI](https://vectify.ai)** (Mingtian Zhang, Yu Tang, and the PageIndex Team) — The brilliant vectorless, reasoning-based RAG framework that powers Agent Friday's document intelligence. PageIndex replaces traditional vector-based retrieval with a hierarchical tree structure navigated by LLM reasoning, achieving 98.7% accuracy on FinanceBench. Our TypeScript port integrates their complete indexing and search pipeline. MIT License.
 - [OpenClaw](https://github.com/pchaganti/gx-openclaws) — Pioneered applying Asimov's Laws to LLM agents; the conceptual foundation for Asimov's cLaws
 - [Google Gemini](https://ai.google.dev/) — Real-time voice AI
 - [Anthropic Claude](https://anthropic.com/) — Deep reasoning engine
