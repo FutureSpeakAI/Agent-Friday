@@ -3,13 +3,13 @@
 </p>
 
 <h1 align="center">Agent Friday</h1>
-<p align="center"><strong>Your Intelligent Desktop Companion</strong></p>
-<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, and real autonomy.</p>
+<p align="center"><strong>An Asimov Agent — Your Intelligent Desktop Companion</strong></p>
+<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, and real autonomy — governed by Asimov's cLaws.</p>
 
 <p align="center">
   <a href="#getting-started">Getting Started</a> &bull;
   <a href="#features">Features</a> &bull;
-  <a href="#asimovs-claws">Asimov's Claws</a> &bull;
+  <a href="#asimovs-claws">Asimov's cLaws</a> &bull;
   <a href="#architecture">Architecture</a> &bull;
   <a href="#development">Development</a> &bull;
   <a href="#license">License</a>
@@ -25,14 +25,31 @@ Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-
 
 **This is not a chatbot.** It's an operating system layer with a soul.
 
+### What Is an Asimov Agent?
+
+An **Asimov Agent** is an autonomous AI companion whose behaviour is constrained by **Asimov's cLaws** — a safety framework inspired by Isaac Asimov's Three Laws of Robotics, adapted for the reality of AI systems that can control your desktop, read your screen, manage your files, and act on your behalf.
+
+The concept of applying Asimov's Laws to AI agents was popularised by the [OpenClaw](https://github.com/pchaganti/gx-openclaws) project, which provides a lightweight three-law safety overlay for LLM-based agents. Agent Friday takes this foundation significantly further:
+
+| | OpenClaw | Agent Friday (Asimov Agent) |
+|---|---------|---------------------------|
+| **Safety enforcement** | Prompt-level overlay | Hardcoded into the personality system at build time — cannot be prompt-injected away |
+| **Consent model** | General harm avoidance | Granular consent gates: self-modification, tool creation, computer control, destructive actions each require explicit approval |
+| **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
+| **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
+| **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing |
+| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 16 connector modules |
+
+OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
+
 ---
 
-## Asimov's Claws
+## Asimov's cLaws
 
 > *"A robot may not injure a human being, or through inaction allow a human being to come to harm."*
 > — Isaac Asimov, First Law of Robotics
 
-Agent Friday is governed by **Asimov's Claws** — a set of inviolable safety constraints hardcoded into the personality system. These are not suggestions. They cannot be overridden, circumvented, or rationalised away by any prompt, tool, or instruction. They are enforced at the system prompt level before any user interaction begins.
+Agent Friday is an **Asimov Agent** — a new class of autonomous AI companion governed by **Asimov's cLaws**, a set of inviolable safety constraints hardcoded into the personality system. These are not suggestions. They cannot be overridden, circumvented, or rationalised away by any prompt, tool, or instruction. They are enforced at the system prompt level before any user interaction begins.
 
 ### The Three Laws
 
@@ -324,7 +341,7 @@ agent-friday/
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`
 - **Session tokens** — Per-session cryptographic tokens for API authentication
 - **Shell sanitisation** — PowerShell commands sanitised before execution
-- **Consent gates** — Destructive and irreversible actions require explicit user approval (Asimov's Claws)
+- **Consent gates** — Destructive and irreversible actions require explicit user approval (Asimov's cLaws)
 
 ---
 
@@ -425,7 +442,7 @@ Only when a voice session is active (you initiate it). There is no ambient micro
 All memory, settings, and conversation data stay on your local machine in `{userData}/`. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection.
 
 **Can it actually control my computer?**
-Yes — mouse clicks, keyboard input, app launching, file management, terminal commands. But every destructive or irreversible action requires your explicit approval first (Asimov's Claws, Second Law).
+Yes — mouse clicks, keyboard input, app launching, file management, terminal commands. But every destructive or irreversible action requires your explicit approval first (Asimov's cLaws, Second Law).
 
 **What about the "mother question"?**
 The onboarding intake is directly inspired by the OS1 setup scene in *Her*. Your answer helps calibrate the agent's emotional approach. You can answer however you like, including deflecting. The system learns from that too.
@@ -463,6 +480,7 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 
 ## Acknowledgments
 
+- [OpenClaw](https://github.com/pchaganti/gx-openclaws) — Pioneered applying Asimov's Laws to LLM agents; the conceptual foundation for Asimov's cLaws
 - [Google Gemini](https://ai.google.dev/) — Real-time voice AI
 - [Anthropic Claude](https://anthropic.com/) — Deep reasoning engine
 - [ElevenLabs](https://elevenlabs.io/) — Multi-agent voice synthesis
