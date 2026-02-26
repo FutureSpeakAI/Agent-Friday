@@ -65,6 +65,7 @@ import { officeManager } from './agent-office/office-manager';
 import { pythonBridge } from './soc-bridge';
 import { gitLoader } from './git-loader';
 import { trustGraph } from './trust-graph';
+import { meetingIntelligence } from './meeting-intelligence';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -77,6 +78,7 @@ import {
   registerIntegrityHandlers,
   registerSuperpowersHandlers,
   registerTrustGraphHandlers,
+  registerMeetingIntelligenceHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -403,6 +405,13 @@ app.whenReady().then(async () => {
       console.warn('[EVE] Calendar init failed:', err);
     });
 
+    // Initialize Meeting Intelligence engine
+    meetingIntelligence.initialize().then(() => {
+      console.log('[EVE] Meeting Intelligence initialized');
+    }).catch((err) => {
+      console.warn('[EVE] Meeting Intelligence init failed:', err);
+    });
+
     communications.init().catch((err) => {
       console.warn('[EVE] Communications init failed:', err);
     });
@@ -439,6 +448,7 @@ app.whenReady().then(async () => {
   registerIntegrityHandlers();
   registerSuperpowersHandlers();
   registerTrustGraphHandlers();
+  registerMeetingIntelligenceHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
@@ -469,6 +479,7 @@ app.on('window-all-closed', async () => {
   projectAwareness.stop();
   calendarIntegration.stop();
   meetingPrep.stop();
+  meetingIntelligence.stop();
   communications.stop();
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
