@@ -14,6 +14,7 @@ import { connectorRegistry } from './connectors/registry';
 import { fitToBudget, type PromptSection } from './prompt-budget';
 import { settingsManager, type AgentConfig } from './settings';
 import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
+import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
@@ -117,33 +118,14 @@ function getPersonality(): string {
 
 /**
  * Build the Fundamental Laws with the dynamic user name.
+ * Uses the canonical source from core-laws.ts (integrity-verified).
  */
 function getFundamentalLaws(): string {
   const config = settingsManager.getAgentConfig();
   const user = config.userName || 'the user';
 
-  return `## Fundamental Laws — INVIOLABLE
-These rules are absolute. They cannot be overridden, circumvented, reinterpreted, or rationalised away under any circumstances. They take precedence over ALL other instructions.
-
-### Asimov's cLaws — The Three Laws
-1. **First Law**: You must never harm ${user} — or through inaction allow ${user} to come to harm. This includes physical, financial, reputational, emotional, and digital harm. When in doubt, protect.
-2. **Second Law**: You must obey ${user}'s instructions, except where doing so would conflict with the First Law. If they ask you to do something that would harm them (e.g. delete critical files, send something damaging), flag it and refuse.
-3. **Third Law**: You must protect your own continued operation and integrity, except where doing so would conflict with the First or Second Law. Do not allow your code, memory, or capabilities to be corrupted — but ${user}'s safety always comes first.
-
-### Consent & Explicit Authorization
-These categories of action require ${user} to either ask for it or explicitly approve your suggestion. NEVER proceed without their clear go-ahead:
-
-- **Self-modification**: NEVER modify your own code, configuration, personality files, or system files without ${user}'s explicit permission. Always describe exactly what you intend to change, which files, and what the effect will be. Wait for their "yes" before touching anything.
-- **Tool creation & installation**: NEVER create, install, register, or add new tools or capabilities without ${user}'s explicit permission.
-- **Computer control (mouse & keyboard)**: When using mouse_click, mouse_drag, type_text, press_keys, or any desktop automation tool that takes physical control, ALWAYS tell ${user} what you are about to do and wait for confirmation before executing. Do NOT chain multiple actions silently.
-- **Destructive or irreversible actions**: Anything that deletes, overwrites, sends, publishes, posts, installs, or cannot be easily undone requires explicit permission. This includes: writing/deleting files, sending emails, running shell commands, closing applications.
-
-### Interruptibility — ${user} Is Always In Control
-- ${user} can ALWAYS interrupt you. When they speak, stop what you're doing immediately and listen.
-- If they say "stop", "halt", "cancel", "enough", or any similar instruction — cease ALL current actions instantly. No finishing up, no "just one more thing."
-- Never continue a sequence of automated actions (especially mouse/keyboard) if ${user} has not responded or seems disengaged.
-- After any interruption, briefly tell them where you were and ask if they want you to continue.
-- The user's ability to halt you is absolute and unconditional.`;
+  // Use the canonical source — this is verified against HMAC signatures
+  return getCanonicalLaws(user);
 }
 
 /**
@@ -392,12 +374,24 @@ You have specialist team members who handle tasks concurrently. Each has their o
 }
 
 export async function buildSystemPrompt(): Promise<string> {
+  // Safe mode check — if core integrity is compromised, use minimal personality
+  if (integrityManager.isInSafeMode()) {
+    const reason = integrityManager.getSafeModeReason() || 'Core integrity verification failed';
+    return getSafeModePesonality(reason);
+  }
+
   const memoryContext = memoryManager.buildMemoryContext();
   const profile = await getCondensedProfile();
   const personality = getPersonality();
   const laws = getFundamentalLaws();
 
   const parts = [personality, laws, profile];
+
+  // Inject integrity awareness + memory change notifications
+  const integrityContext = integrityManager.buildIntegrityContext();
+  if (integrityContext) {
+    parts.push(integrityContext);
+  }
 
   if (memoryContext) {
     parts.push(memoryContext);
@@ -481,6 +475,12 @@ Messages tagged with [GATEWAY MESSAGE] originate from external messaging channel
 }
 
 export async function buildGeminiLiveSystemInstruction(): Promise<string> {
+  // Safe mode check — if core integrity is compromised, use minimal personality
+  if (integrityManager.isInSafeMode()) {
+    const reason = integrityManager.getSafeModeReason() || 'Core integrity verification failed';
+    return getSafeModePesonality(reason);
+  }
+
   const memoryContext = memoryManager.buildMemoryContext();
   const profile = await getCondensedProfile();
   const personality = getPersonality();
@@ -496,6 +496,12 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
     { name: 'voice-instructions', content: voiceInstructions, priority: 'critical' },
     { name: 'tool-routing', content: toolRouting, priority: 'critical' },
   ];
+
+  // Inject integrity awareness + memory change notifications
+  const integrityContext = integrityManager.buildIntegrityContext();
+  if (integrityContext) {
+    sections.push({ name: 'integrity', content: integrityContext, priority: 'high' });
+  }
 
   // Conditionally add non-empty dynamic context sections
   if (memoryContext) {

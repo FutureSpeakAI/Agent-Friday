@@ -2,7 +2,7 @@
  * Onboarding IPC handlers — first-run flow, psych profile, feature setup, personality evolution.
  */
 import { ipcMain } from 'electron';
-import { isFirstRun, buildOnboardingToolDeclaration, buildAllOnboardingToolDeclarations, buildFirstGreetingPrompt } from '../onboarding';
+import { isFirstRun, buildAllOnboardingToolDeclarations, buildFirstGreetingPrompt } from '../onboarding';
 import { generatePsychologicalProfile } from '../psychological-profile';
 import {
   initializeFeatureSetup,
@@ -25,7 +25,6 @@ export function registerOnboardingHandlers(): void {
   ipcMain.handle('onboarding:is-first-run', () => isFirstRun());
   ipcMain.handle('onboarding:is-complete', () => settingsManager.getAgentConfig().onboardingComplete);
   ipcMain.handle('onboarding:get-config', () => settingsManager.getAgentConfig());
-  ipcMain.handle('onboarding:get-tool-declaration', () => buildOnboardingToolDeclaration());
   ipcMain.handle('onboarding:get-tool-declarations', () => buildAllOnboardingToolDeclarations());
   ipcMain.handle('onboarding:get-first-greeting', () => buildFirstGreetingPrompt());
 

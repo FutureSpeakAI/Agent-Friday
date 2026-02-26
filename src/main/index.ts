@@ -60,6 +60,10 @@ import { communications, registerCommunicationsHandlers } from './communications
 import { connectorRegistry } from './connectors/registry';
 import { gatewayManager } from './gateway/gateway-manager';
 import { createTelegramAdapter } from './gateway/adapters/telegram';
+import { integrityManager, getCanonicalLaws } from './integrity';
+import { officeManager } from './agent-office/office-manager';
+import { pythonBridge } from './soc-bridge';
+import { gitLoader } from './git-loader';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -69,6 +73,7 @@ import {
   registerAgentHandlers,
   registerOnboardingHandlers,
   registerIntegrationHandlers,
+  registerIntegrityHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -180,6 +185,46 @@ app.whenReady().then(async () => {
     console.log('[EVE] Memory system initialized');
   } catch (err) {
     console.warn('[EVE] Memory init failed:', err);
+  }
+
+  // Initialize integrity system (depends on settings + memory)
+  try {
+    await integrityManager.initialize();
+
+    // Check memory integrity on startup
+    const longTerm = memoryManager.getLongTerm();
+    const mediumTerm = memoryManager.getMediumTerm();
+    const memoryChanges = integrityManager.checkMemories(longTerm, mediumTerm);
+    if (memoryChanges) {
+      console.log('[EVE] Memory changes detected since last session — agent will be notified');
+    }
+
+    // Verify agent identity integrity
+    const agentCfg = settingsManager.getAgentConfig();
+    if (agentCfg.onboardingComplete) {
+      const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
+      const identityOk = integrityManager.verifyIdentity(identityJson);
+      if (!identityOk) {
+        console.warn('[EVE] Agent identity has been modified externally — agent will be notified');
+      }
+    }
+
+    // Sign everything on first run (when no manifest exists yet)
+    const state = integrityManager.getState();
+    if (state.initialized && state.lawsIntact && !integrityManager.isInSafeMode()) {
+      const userName = agentCfg.userName || '';
+      const lawsText = getCanonicalLaws(userName);
+      const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
+      const ltJson = JSON.stringify(longTerm, null, 2);
+      const mtJson = JSON.stringify(mediumTerm, null, 2);
+      const ltSnap = longTerm.map((e) => ({ id: e.id, fact: e.fact }));
+      const mtSnap = mediumTerm.map((e) => ({ id: e.id, observation: e.observation }));
+      await integrityManager.signAll(lawsText, identityJson, ltSnap, mtSnap, ltJson, mtJson);
+    }
+
+    console.log('[EVE] Integrity system initialized');
+  } catch (err) {
+    console.warn('[EVE] Integrity init failed:', err);
   }
 
   // Start the Express API server
@@ -332,6 +377,18 @@ app.whenReady().then(async () => {
     agentRunner.initialize(mainWindow);
     console.log('[EVE] Agent runner initialized');
 
+    // Initialize GitLoader (GitHub repo loading + code intelligence)
+    gitLoader.initialize().then(() => {
+      console.log('[EVE] GitLoader initialized');
+    }).catch((err) => {
+      console.warn('[EVE] GitLoader init failed:', err);
+    });
+
+    // Initialize office manager (pixel-art agent visualization)
+    officeManager.setMainWindow(mainWindow);
+    officeManager.setServerPort(serverPort);
+    console.log('[EVE] Office manager initialized');
+
     calendarIntegration.init().then(() => {
       meetingPrep.init(mainWindow!);
       console.log('[EVE] Calendar + meeting prep initialized');
@@ -372,6 +429,7 @@ app.whenReady().then(async () => {
   registerIntegrationHandlers();
   registerCalendarHandlers();
   registerCommunicationsHandlers();
+  registerIntegrityHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
@@ -392,6 +450,7 @@ app.on('before-quit', () => {
 app.on('window-all-closed', async () => {
   screenCapture.stop();
   taskScheduler.stop();
+  await pythonBridge.stop().catch(() => {});
   await gatewayManager.stop().catch(() => {});
   predictor.stop();
   ambientEngine.stop();

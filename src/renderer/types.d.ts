@@ -61,6 +61,83 @@ declare global {
         ) => Promise<string>;
       };
 
+      soc: {
+        listTools: () => Promise<
+          Array<{ name: string; description: string; parameters: Record<string, unknown> }>
+        >;
+        callTool: (
+          name: string,
+          args: Record<string, unknown>
+        ) => Promise<unknown>;
+        checkDeps: () => Promise<{
+          soc: Record<string, boolean>;
+          browser: Record<string, boolean>;
+        } | { error: string }>;
+        startBridge: () => Promise<{ status: string } | { error: string }>;
+        stopBridge: () => Promise<{ status: string } | { error: string }>;
+        bridgeStatus: () => Promise<{ running: boolean }>;
+      };
+
+      gitLoader: {
+        load: (repoUrl: string, options?: {
+          branch?: string;
+          sparse?: string[];
+          maxFileSize?: number;
+          includePatterns?: string[];
+          excludePatterns?: string[];
+        }) => Promise<{
+          id: string;
+          name: string;
+          owner: string;
+          branch: string;
+          description: string;
+          files: number;
+          totalSize: number;
+          loadedAt: number;
+        }>;
+        getTree: (repoId: string) => Promise<Array<{
+          path: string;
+          type: 'file' | 'directory';
+          size?: number;
+          language?: string;
+        }>>;
+        getFile: (repoId: string, filePath: string) => Promise<{
+          path: string;
+          content: string;
+          language: string;
+          size: number;
+        }>;
+        search: (repoId: string, query: string, options?: {
+          filePattern?: string;
+          maxResults?: number;
+          contextLines?: number;
+        }) => Promise<Array<{
+          file: string;
+          line: number;
+          content: string;
+          context: string[];
+        }>>;
+        getReadme: (repoId: string) => Promise<string | null>;
+        getSummary: (repoId: string) => Promise<{
+          name: string;
+          description: string;
+          language: string;
+          topics: string[];
+          structure: string;
+          keyFiles: string[];
+          dependencies: Record<string, string>;
+        }>;
+        listLoaded: () => Promise<Array<{
+          id: string;
+          name: string;
+          owner: string;
+          branch: string;
+          files: number;
+          loadedAt: number;
+        }>>;
+        unload: (repoId: string) => Promise<boolean>;
+      };
+
       sessionHealth: {
         get: () => Promise<Record<string, unknown>>;
         reset: () => Promise<void>;
@@ -124,11 +201,6 @@ declare global {
           agentIdentityLine: string;
           userName: string;
           onboardingComplete: boolean;
-        }>;
-        getToolDeclaration: () => Promise<{
-          name: string;
-          description: string;
-          parameters: Record<string, unknown>;
         }>;
         getToolDeclarations: () => Promise<Array<{
           name: string;
@@ -388,25 +460,35 @@ declare global {
           hasGeminiKey: boolean;
           hasAnthropicKey: boolean;
           hasElevenLabsKey: boolean;
+          hasOpenaiKey: boolean;
+          hasPerplexityKey: boolean;
+          hasFirecrawlKey: boolean;
+          hasOpenrouterKey: boolean;
           geminiKeyHint: string;
           anthropicKeyHint: string;
           elevenLabsKeyHint: string;
-          hasOpenaiKey: boolean;
           openaiKeyHint: string;
-          hasPerplexityKey: boolean;
           perplexityKeyHint: string;
-          hasFirecrawlKey: boolean;
           firecrawlKeyHint: string;
+          openrouterKeyHint: string;
+          preferredProvider: 'anthropic' | 'openrouter';
+          openrouterModel: string;
           agentVoicesEnabled: boolean;
           wakeWordEnabled: boolean;
           notificationWhisperEnabled: boolean;
           notificationAllowedApps: string[];
           clipboardIntelligenceEnabled: boolean;
           googleCalendarEnabled: boolean;
+          gatewayEnabled: boolean;
+          hasTelegramToken: boolean;
+          telegramOwnerId: string;
+          hasDiscordToken: boolean;
+          discordOwnerId: string;
+          worldMonitorPath: string;
         }>;
         setAutoLaunch: (enabled: boolean) => Promise<void>;
         setAutoScreenCapture: (enabled: boolean) => Promise<void>;
-        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl', value: string) => Promise<void>;
+        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl' | 'openrouter', value: string) => Promise<void>;
         setObsidianVaultPath: (vaultPath: string) => Promise<void>;
         set: (key: string, value: unknown) => Promise<void>;
       };
@@ -593,6 +675,16 @@ declare global {
           status: string;
           isAllDay: boolean;
         } | null>;
+      };
+
+      gateway: {
+        getStatus: () => Promise<{ enabled: boolean; adapters: string[]; activeSessions: number }>;
+        setEnabled: (enabled: boolean) => Promise<{ enabled: boolean; adapters: string[]; activeSessions: number }>;
+        getPendingPairings: () => Promise<Array<{ code: string; platform: string; timestamp: number }>>;
+        getPairedIdentities: () => Promise<Array<{ id: string; name: string; platform: string; tier: string }>>;
+        approvePairing: (code: string, tier?: string) => Promise<void>;
+        revokePairing: (identityId: string) => Promise<void>;
+        getActiveSessions: () => Promise<Array<{ id: string; platform: string; identity: string; startTime: number }>>;
       };
 
       meetingPrep: {

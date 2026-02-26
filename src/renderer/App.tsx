@@ -13,6 +13,7 @@ import MemoryExplorer from './components/MemoryExplorer';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
+import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
 import { MoodProvider, useMood } from './contexts/MoodContext';
@@ -24,6 +25,10 @@ import {
   playNotificationBell,
   playDisconnectTone,
 } from './audio/sound-effects';
+
+// ── Office window detection ──────────────────────────────────────────────
+// If loaded with ?office=true, render the pixel-art Agent Office instead
+const isOfficeWindow = new URLSearchParams(window.location.search).get('office') === 'true';
 
 export interface ChatMessage {
   id: string;
@@ -138,7 +143,19 @@ function MoodStatusLabel({ semanticState, statusText }: { semanticState: Semanti
   );
 }
 
+// ── Office window shortcut ───────────────────────────────────────────────
+// When loaded as the office window, skip the entire main app
+function OfficeApp() {
+  return (
+    <div style={{ width: '100%', height: '100%', background: '#0a0e1c', overflow: 'hidden' }}>
+      <AgentOffice />
+    </div>
+  );
+}
+
 export default function App() {
+  // If this is the office visualization window, render only the office
+  if (isOfficeWindow) return <OfficeApp />;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Initializing...');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -167,8 +184,9 @@ export default function App() {
     gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
     claude: 'ready' | 'no-key';
     elevenlabs: 'ready' | 'no-key';
+    openrouter: 'ready' | 'no-key';
     browser: 'ready' | 'unavailable';
-  }>({ gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', browser: 'unavailable' });
+  }>({ gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', openrouter: 'no-key', browser: 'unavailable' });
   const retriesRef = useRef(0);
   const maxRetries = 3;
 
@@ -240,20 +258,20 @@ export default function App() {
         let featureSetupDone = false;
         try {
           featureSetupDone = await window.eve.featureSetup.isComplete();
-        } catch {}
+        } catch (e) { console.warn('[Agent] Feature setup check failed:', e); }
 
         // Gather all tools for the new session
         let tools: Array<{ name: string; description?: string; parameters?: unknown }> = [];
         try {
           tools = await window.eve.desktop.listTools();
-        } catch {}
+        } catch (e) { console.warn('[Agent] Desktop tools unavailable:', e); }
 
         // If feature setup pending, inject all feature setup tools (mark_step, auth, save_key, etc.)
         if (!featureSetupDone) {
           try {
             const fsToolDecls = await window.eve.featureSetup.getToolDeclarations();
             tools = [...tools, ...fsToolDecls];
-          } catch {}
+          } catch (e) { console.warn('[Agent] Feature setup tools unavailable:', e); }
         }
 
         try {
@@ -278,7 +296,7 @@ export default function App() {
                       const prompt = await window.eve.featureSetup.getPrompt(step);
                       geminiLive.sendTextToGemini(prompt);
                     }
-                  } catch {}
+                  } catch (e) { console.warn('[Agent] Feature setup prompt failed:', e); }
                 }, 8000);
               }
             }, 1500);
@@ -429,6 +447,7 @@ export default function App() {
       setApiStatus({
         gemini: s.hasGeminiKey ? geminiState : 'no-key',
         claude: s.hasAnthropicKey ? 'ready' : 'no-key',
+        openrouter: s.hasOpenrouterKey ? 'ready' : 'no-key',
         elevenlabs: s.hasElevenLabsKey ? 'ready' : 'no-key',
         browser: 'ready', // Browser is always available if Chrome is installed
       });
@@ -456,7 +475,7 @@ export default function App() {
       let onboardingDone = false;
       try {
         onboardingDone = await window.eve.onboarding.isComplete();
-      } catch {}
+      } catch (e) { console.warn('[Agent] Onboarding check failed:', e); }
 
       if (cancelled) return;
 
@@ -468,7 +487,7 @@ export default function App() {
         try {
           const config = await window.eve.onboarding.getAgentConfig();
           setAgentName(config.agentName || '');
-        } catch {}
+        } catch (e) { console.warn('[Agent] Agent config load failed:', e); }
 
         // Load and increment personality evolution (visual uniqueness grows each session)
         try {
@@ -488,7 +507,7 @@ export default function App() {
       try {
         const settings = await window.eve.settings.get();
         hasKeys = !!settings.hasGeminiKey && !!settings.hasAnthropicKey;
-      } catch {}
+      } catch (e) { console.warn('[Agent] Settings check failed:', e); }
 
       if (cancelled) return;
 
@@ -970,7 +989,7 @@ export default function App() {
       <div style={{
         opacity: ['creating', 'feature-setup', 'normal'].includes(appPhase) ? 1 : 0,
         transition: 'opacity 2s ease-in',
-        pointerEvents: ['gate', 'onboarding', 'customizing', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
+        pointerEvents: ['gate', 'onboarding', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
         position: 'absolute' as const,
         inset: 0,
       }}>
@@ -1010,6 +1029,7 @@ export default function App() {
       <button
         onClick={() => setShowSidebar((s) => !s)}
         className="hover-bright"
+        aria-label={showSidebar ? 'Hide chat log' : 'Show chat log'}
         style={{
           ...styles.sidebarToggle,
           opacity: showSidebar ? 0.8 : 0.4,
@@ -1023,6 +1043,7 @@ export default function App() {
       <button
         onClick={() => setShowDashboard(true)}
         className="hover-bright"
+        aria-label="Command center"
         style={styles.dashboardBtn}
         title="Command Center (Ctrl+Shift+D)"
       >
@@ -1033,6 +1054,7 @@ export default function App() {
       <button
         onClick={() => setShowAgentDashboard(true)}
         className="hover-bright"
+        aria-label="Agent dashboard"
         style={styles.agentsBtn}
         title="Background Agents (Ctrl+Shift+A)"
       >
@@ -1043,6 +1065,7 @@ export default function App() {
       <button
         onClick={() => setShowSettings(true)}
         className="hover-bright"
+        aria-label="Settings"
         style={styles.settingsBtn}
         title="Settings"
       >

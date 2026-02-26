@@ -193,17 +193,6 @@ export function buildAllOnboardingToolDeclarations(): Array<{
   return [...buildIntakeToolDeclarations(), ...buildCustomizationToolDeclarations()];
 }
 
-/**
- * Backward-compatible — returns the finalize_agent_identity tool declaration.
- * @deprecated Use buildAllOnboardingToolDeclarations() instead.
- */
-export function buildOnboardingToolDeclaration(): {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-} {
-  return buildCustomizationToolDeclarations()[0];
-}
 
 /* ── Prompts ── */
 

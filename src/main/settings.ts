@@ -82,6 +82,11 @@ export interface EveSettings extends AgentConfig {
   firecrawlApiKey: string;
   perplexityApiKey: string;
   openaiApiKey: string;
+  openrouterApiKey: string;
+  /** Which model provider to prefer for agent tasks: 'anthropic' | 'openrouter' */
+  preferredProvider: 'anthropic' | 'openrouter';
+  /** OpenRouter model to use for agent tasks (e.g. 'anthropic/claude-sonnet-4') */
+  openrouterModel: string;
   agentVoicesEnabled: boolean;
   wakeWordEnabled: boolean;
   notificationWhisperEnabled: boolean;
@@ -125,6 +130,9 @@ const DEFAULTS: EveSettings = {
   firecrawlApiKey: '',
   perplexityApiKey: '',
   openaiApiKey: '',
+  openrouterApiKey: '',
+  preferredProvider: 'anthropic',
+  openrouterModel: 'anthropic/claude-sonnet-4',
   agentVoicesEnabled: true,
   wakeWordEnabled: true,
   notificationWhisperEnabled: true,
@@ -150,6 +158,7 @@ const DEFAULTS: EveSettings = {
 class SettingsManager {
   private settings: EveSettings = { ...DEFAULTS };
   private filePath = '';
+  private savePromise: Promise<void> = Promise.resolve(); // Write queue to prevent concurrent file writes
 
   async initialize(): Promise<void> {
     this.filePath = path.join(app.getPath('userData'), 'eve-settings.json');
@@ -181,6 +190,9 @@ class SettingsManager {
     if (!this.settings.openaiApiKey && process.env.OPENAI_API_KEY) {
       this.settings.openaiApiKey = process.env.OPENAI_API_KEY;
     }
+    if (!this.settings.openrouterApiKey && process.env.OPENROUTER_API_KEY) {
+      this.settings.openrouterApiKey = process.env.OPENROUTER_API_KEY;
+    }
 
     // Apply API keys to process.env so the rest of the app can use them
     this.applyApiKeys();
@@ -204,18 +216,28 @@ class SettingsManager {
       hasFirecrawlKey: !!this.settings.firecrawlApiKey,
       hasPerplexityKey: !!this.settings.perplexityApiKey,
       hasOpenaiKey: !!this.settings.openaiApiKey,
+      hasOpenrouterKey: !!this.settings.openrouterApiKey,
       geminiKeyHint: this.maskKey(this.settings.geminiApiKey),
       anthropicKeyHint: this.maskKey(this.settings.anthropicApiKey),
       elevenLabsKeyHint: this.maskKey(this.settings.elevenLabsApiKey),
       firecrawlKeyHint: this.maskKey(this.settings.firecrawlApiKey),
       perplexityKeyHint: this.maskKey(this.settings.perplexityApiKey),
       openaiKeyHint: this.maskKey(this.settings.openaiApiKey),
+      openrouterKeyHint: this.maskKey(this.settings.openrouterApiKey),
+      preferredProvider: this.settings.preferredProvider,
+      openrouterModel: this.settings.openrouterModel,
       agentVoicesEnabled: this.settings.agentVoicesEnabled,
       wakeWordEnabled: this.settings.wakeWordEnabled,
       notificationWhisperEnabled: this.settings.notificationWhisperEnabled,
       notificationAllowedApps: this.settings.notificationAllowedApps,
       clipboardIntelligenceEnabled: this.settings.clipboardIntelligenceEnabled,
       googleCalendarEnabled: this.settings.googleCalendarEnabled,
+      gatewayEnabled: this.settings.gatewayEnabled,
+      hasTelegramToken: !!this.settings.telegramBotToken,
+      telegramOwnerId: this.settings.telegramOwnerId || '',
+      hasDiscordToken: !!this.settings.discordBotToken,
+      discordOwnerId: this.settings.discordOwnerId || '',
+      worldMonitorPath: this.settings.worldMonitorPath || '',
     };
   }
 
@@ -249,7 +271,7 @@ class SettingsManager {
     return this.settings.obsidianVaultPath;
   }
 
-  async setApiKey(key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai', value: string): Promise<void> {
+  async setApiKey(key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter', value: string): Promise<void> {
     if (key === 'gemini') {
       this.settings.geminiApiKey = value;
     } else if (key === 'anthropic') {
@@ -262,6 +284,8 @@ class SettingsManager {
       this.settings.perplexityApiKey = value;
     } else if (key === 'openai') {
       this.settings.openaiApiKey = value;
+    } else if (key === 'openrouter') {
+      this.settings.openrouterApiKey = value;
     }
 
     this.applyApiKeys();
@@ -287,6 +311,16 @@ class SettingsManager {
     this.settings.userName = config.userName;
     this.settings.onboardingComplete = config.onboardingComplete;
     await this.save();
+
+    // Sign identity after legitimate change (integrity protection)
+    try {
+      const { integrityManager } = require('./integrity');
+      const identityJson = JSON.stringify(config, Object.keys(config).sort());
+      await integrityManager.signIdentity(identityJson);
+    } catch {
+      // Integrity system may not be initialized yet during onboarding
+    }
+
     console.log(`[Settings] Agent config saved: ${config.agentName} for ${config.userName}`);
   }
 
@@ -329,6 +363,18 @@ class SettingsManager {
     return this.settings.openaiApiKey;
   }
 
+  getOpenrouterApiKey(): string {
+    return this.settings.openrouterApiKey;
+  }
+
+  getPreferredProvider(): 'anthropic' | 'openrouter' {
+    return this.settings.preferredProvider || 'anthropic';
+  }
+
+  getOpenrouterModel(): string {
+    return this.settings.openrouterModel || 'anthropic/claude-sonnet-4';
+  }
+
   getWorldMonitorPath(): string {
     return this.settings.worldMonitorPath;
   }
@@ -361,6 +407,9 @@ class SettingsManager {
     if (this.settings.openaiApiKey) {
       process.env.OPENAI_API_KEY = this.settings.openaiApiKey;
     }
+    if (this.settings.openrouterApiKey) {
+      process.env.OPENROUTER_API_KEY = this.settings.openrouterApiKey;
+    }
   }
 
   private maskKey(key: string): string {
@@ -370,7 +419,13 @@ class SettingsManager {
   }
 
   private async save(): Promise<void> {
-    await fs.writeFile(this.filePath, JSON.stringify(this.settings, null, 2), 'utf-8');
+    // Serialize writes to prevent concurrent file corruption
+    this.savePromise = this.savePromise.then(async () => {
+      await fs.writeFile(this.filePath, JSON.stringify(this.settings, null, 2), 'utf-8');
+    }).catch((err) => {
+      console.error('[Settings] Save failed:', err);
+    });
+    return this.savePromise;
   }
 }
 

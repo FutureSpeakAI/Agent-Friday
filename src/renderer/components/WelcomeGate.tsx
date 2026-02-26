@@ -17,7 +17,7 @@ interface WelcomeGateProps {
 }
 
 interface KeyConfig {
-  id: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai';
+  id: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter';
   label: string;
   placeholder: string;
   required: boolean;
@@ -81,6 +81,15 @@ const KEY_CONFIGS: KeyConfig[] = [
     hasFlag: 'hasOpenaiKey',
     hintFlag: 'openaiKeyHint',
   },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    placeholder: 'sk-or-v1-...',
+    required: false,
+    description: 'Access 200+ AI models — can replace Claude as the agent reasoning engine',
+    hasFlag: 'hasOpenrouterKey',
+    hintFlag: 'openrouterKeyHint',
+  },
 ];
 
 const WelcomeGate: React.FC<WelcomeGateProps> = ({ onKeysReady }) => {
@@ -91,6 +100,7 @@ const WelcomeGate: React.FC<WelcomeGateProps> = ({ onKeysReady }) => {
     firecrawl: '',
     perplexity: '',
     openai: '',
+    openrouter: '',
   });
   // Track which keys already exist in persisted settings (from previous install)
   const [existingKeys, setExistingKeys] = useState<Record<string, boolean>>({});
