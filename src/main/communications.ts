@@ -8,6 +8,15 @@ import { ipcMain, clipboard, shell } from 'electron';
 import { memoryManager } from './memory';
 import crypto from 'crypto';
 
+// Late-bound trust graph import to avoid circular dependencies
+let _trustGraph: any = null;
+function getTrustGraph() {
+  if (!_trustGraph) {
+    try { _trustGraph = require('./trust-graph').trustGraph; } catch { /* not ready yet */ }
+  }
+  return _trustGraph;
+}
+
 /**
  * Call Claude Sonnet for drafting. Uses the same pattern as agent-runner.ts.
  */
@@ -102,6 +111,22 @@ class CommunicationsIntelligence {
     const tone = request.tone || 'professional';
     const maxLength = request.maxLength || 'medium';
 
+    // Resolve recipient via Trust Graph for relationship-aware drafting
+    let recipientContext = '';
+    if (request.to) {
+      try {
+        const tg = getTrustGraph();
+        if (tg) {
+          const resolution = tg.resolvePerson(request.to);
+          if (resolution.person) {
+            recipientContext = `\nAbout the recipient (from relationship intelligence):\n${tg.getContextForPerson(resolution.person.id)}`;
+          }
+        }
+      } catch {
+        // Trust Graph not ready — proceed without recipient context
+      }
+    }
+
     // Build style context
     const styleContext = this.styleProfile.personalNotes.length > 0
       ? `\nKnown about the user's style/preferences:\n${this.styleProfile.personalNotes.slice(0, 5).map((n) => `- ${n}`).join('\n')}`
@@ -130,7 +155,7 @@ Tone: ${tone}
 Length: ${lengthGuide}
 ${styleContext}
 
-Write ONLY the reply body — no subject line, no metadata. The reply should sound natural, human, and match the user's intent. Sign off with "${this.styleProfile.signOff}" if formal.`;
+Write ONLY the reply body — no subject line, no metadata. The reply should sound natural, human, and match the user's intent. Sign off with "${this.styleProfile.signOff}" if formal.${recipientContext}`;
     } else if (request.type === 'follow-up') {
       prompt = `Draft a ${tone} follow-up ${request.subject ? 'email' : 'message'}.
 
@@ -141,7 +166,7 @@ Tone: ${tone}
 Length: ${lengthGuide}
 ${styleContext}
 
-Write ONLY the message body. Be polite but purposeful. Reference previous interaction naturally.`;
+Write ONLY the message body. Be polite but purposeful. Reference previous interaction naturally.${recipientContext}`;
     } else {
       prompt = `Draft a ${tone} ${request.type}.
 
@@ -152,7 +177,7 @@ Tone: ${tone}
 Length: ${lengthGuide}
 ${styleContext}
 
-Write the ${request.type} body. Make it sound natural and human, not AI-generated. ${tone === 'formal' ? `Open with "${this.styleProfile.formalGreeting}" and sign off with "${this.styleProfile.signOff}".` : `Keep it conversational.`}`;
+Write the ${request.type} body. Make it sound natural and human, not AI-generated. ${tone === 'formal' ? `Open with "${this.styleProfile.formalGreeting}" and sign off with "${this.styleProfile.signOff}".` : `Keep it conversational.`}${recipientContext}`;
     }
 
     try {

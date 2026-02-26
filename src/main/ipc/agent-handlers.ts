@@ -12,7 +12,17 @@ export function registerAgentHandlers(): void {
   ipcMain.handle(
     'agents:spawn',
     (_event, agentType: string, description: string, input: Record<string, unknown>) => {
-      return agentRunner.spawn(agentType, description, input);
+      // Validate inputs
+      if (!agentType || typeof agentType !== 'string') {
+        throw new Error('agents:spawn requires a string agentType');
+      }
+      if (!description || typeof description !== 'string') {
+        throw new Error('agents:spawn requires a string description');
+      }
+      if (description.length > 10000) {
+        throw new Error('agents:spawn description too long (max 10000 chars)');
+      }
+      return agentRunner.spawn(agentType, description, input || {});
     },
   );
 

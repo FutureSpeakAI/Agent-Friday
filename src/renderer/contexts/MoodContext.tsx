@@ -252,8 +252,9 @@ export function MoodProvider({ semanticState, children }: MoodProviderProps) {
         setRawEnergy(state.energyLevel ?? 0.5);
         setRawStreak(state.moodStreak ?? 0);
 
-        // Update target
+        // Update target and kick off lerp
         targetRef.current = MOOD_CONFIGS[mood] || MOOD_CONFIGS.neutral;
+        startLerp();
       } catch {
         // Sentiment not available — stay neutral
       }
@@ -264,12 +265,16 @@ export function MoodProvider({ semanticState, children }: MoodProviderProps) {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  // ── Smooth interpolation loop (60fps lerp towards target) ──
-  useEffect(() => {
-    let rafId: number;
-    // Lerp factor: ~2 seconds to reach target at 60fps
-    // Each frame: t = 1 - (1 - 0.03)^1 ≈ 0.03 per frame → ~2s to 90% convergence
+  // ── Smooth interpolation loop — runs RAF only while lerping towards target ──
+  const rafIdRef = useRef<number>(0);
+  const isLerpingRef = useRef(false);
+
+  const startLerp = useCallback(() => {
+    if (isLerpingRef.current) return; // Already running
+    isLerpingRef.current = true;
+
     const LERP_SPEED = 0.03;
+    const CONVERGENCE_THRESHOLD = 0.005; // Stop when difference < 0.5%
 
     const tick = () => {
       const target = targetRef.current;
@@ -283,19 +288,52 @@ export function MoodProvider({ semanticState, children }: MoodProviderProps) {
       current.warmth = lerp(current.warmth, target.warmth, LERP_SPEED);
       current.turbulence = lerp(current.turbulence, target.turbulence, LERP_SPEED);
 
-      // Only update React state every ~8 frames to avoid over-rendering
-      // (visual smoothness comes from the RAF loop in NexusCore reading refs)
-      rafId = requestAnimationFrame(tick);
+      // Check convergence — stop RAF when values are close enough
+      const diff = Math.abs(current.intensity - target.intensity)
+        + Math.abs(current.warmth - target.warmth)
+        + Math.abs(current.turbulence - target.turbulence);
+
+      if (diff < CONVERGENCE_THRESHOLD) {
+        // Snap to target and stop looping
+        current.intensity = target.intensity;
+        current.warmth = target.warmth;
+        current.turbulence = target.turbulence;
+        current.palette = { ...target.palette };
+        isLerpingRef.current = false;
+        return;
+      }
+
+      rafIdRef.current = requestAnimationFrame(tick);
     };
 
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
+    rafIdRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => cancelAnimationFrame(rafIdRef.current);
   }, []);
 
   // ── Update visuals state at a lower frequency (every 100ms) to avoid React overhead ──
+  // Only push a new object when values actually changed (skip no-op updates).
+  const lastPushedRef = useRef({ intensity: 0, warmth: 0, turbulence: 0 });
+
   useEffect(() => {
     const id = setInterval(() => {
       const current = currentRef.current;
+      const last = lastPushedRef.current;
+
+      // Skip if interpolated values haven't moved since last push
+      const delta = Math.abs(current.intensity - last.intensity)
+        + Math.abs(current.warmth - last.warmth)
+        + Math.abs(current.turbulence - last.turbulence);
+
+      if (delta < 0.001) return; // Nothing changed — skip React render
+
+      last.intensity = current.intensity;
+      last.warmth = current.warmth;
+      last.turbulence = current.turbulence;
+
       setVisuals({
         currentMood: rawMood,
         confidence: rawConfidence,

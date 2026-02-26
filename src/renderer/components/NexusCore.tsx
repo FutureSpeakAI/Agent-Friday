@@ -133,6 +133,9 @@ function NexusCoreInner({
     };
     let targetColor = StateColors.LISTENING.clone();
     let currentColor = StateColors.LISTENING.clone();
+    // Pre-allocated scratch colors — reused every frame to avoid GC pressure
+    const _scratchColor = new THREE.Color();
+    const _scratchBg = new THREE.Color();
 
     // ── Renderer ──
     renderer = new THREE.WebGLRenderer({
@@ -418,22 +421,23 @@ function NexusCoreInner({
 
       // ══════════════════════════════════════════════════════════════════════
       // Semantic Color System — lerp towards target state color, blended with mood
+      // Pre-allocated scratch colors to avoid per-frame allocations (~180/sec saved)
       // ══════════════════════════════════════════════════════════════════════
-      targetColor = StateColors[semanticStateRef.current];
+      targetColor.copy(StateColors[semanticStateRef.current]);
 
       // Blend mood palette color into the semantic target (30% mood, 70% semantic)
       const mp = moodPaletteRef.current;
       if (mp) {
-        const moodColor = new THREE.Color(mp.primary);
-        targetColor = targetColor.clone().lerp(moodColor, 0.3);
+        _scratchColor.set(mp.primary);
+        targetColor.lerp(_scratchColor, 0.3);
       }
 
       // Personality evolution — gradually shift color toward agent's unique hue
       const evo = evolutionRef.current;
       const maturity = evo ? Math.min(evo.sessionCount / 50, 1) : 0;
       if (evo && maturity > 0) {
-        const evoColor = new THREE.Color().setHSL(evo.primaryHue / 360, 0.6, 0.5);
-        targetColor = targetColor.clone().lerp(evoColor, maturity * 0.35);
+        _scratchColor.setHSL(evo.primaryHue / 360, 0.6, 0.5);
+        targetColor.lerp(_scratchColor, maturity * 0.35);
       }
 
       currentColor.lerp(targetColor, 0.02); // Smooth elegant transition
@@ -444,7 +448,8 @@ function NexusCoreInner({
 
       // Apply semantic+mood blended color to environment
       const bgScale = 0.03 + (mInt * 0.02); // Brighter background for high-intensity moods
-      scene.background = new THREE.Color().copy(currentColor).multiplyScalar(bgScale);
+      _scratchBg.copy(currentColor).multiplyScalar(bgScale);
+      (scene.background as THREE.Color).copy(_scratchBg);
       scene.fog!.color.copy(scene.background as THREE.Color);
       scene.fog!.density = 0.03 + (currentBass * 0.005) - (mTurb * 0.005); // Turbulence opens up fog
 

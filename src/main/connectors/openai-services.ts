@@ -2,13 +2,14 @@
  * OpenAI Services Connector — Image generation, reasoning, transcription, and embeddings.
  *
  * Provides specialized AI capabilities that complement the core Gemini + Claude stack:
- *   - generate_image:     Create images via DALL-E 3
+ *   - generate_image:     Create images via Nano Banana 2 (Gemini 3.1 Flash Image)
+ *                         Falls back to DALL-E 3 if Gemini API key unavailable
  *   - reason_through:     Complex multi-step reasoning via o3
  *   - transcribe_audio:   Speech-to-text via Whisper
  *   - generate_embedding: Semantic embeddings for memory search (internal use)
  *
- * All calls go through the OpenAI API (https://api.openai.com/v1).
- * Authentication via Bearer token from settings.
+ * Image generation uses Google Gemini API; other tools use OpenAI API.
+ * Authentication: Gemini key for images, OpenAI Bearer token for reasoning/audio/embeddings.
  *
  * Exports: TOOLS, execute, detect
  */
@@ -100,10 +101,151 @@ function apiRequest(
 
 // ── Tool implementations ─────────────────────────────────────────────
 
+const GEMINI_API_HOST = 'generativelanguage.googleapis.com';
+const NANO_BANANA_MODEL = 'gemini-3.1-flash-image-preview';
+
+const VALID_ASPECT_RATIOS = [
+  '1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9',
+];
+const VALID_IMAGE_SIZES = ['512px', '1K', '2K', '4K'];
+
+/**
+ * Generate an image via Nano Banana 2 (Gemini 3.1 Flash Image).
+ * Falls back to DALL-E 3 if Gemini API key is not available.
+ */
 async function generateImage(args: Record<string, unknown>): Promise<string> {
   const prompt = typeof args.prompt === 'string' ? args.prompt : '';
   if (!prompt) return 'ERROR: image prompt is required.';
 
+  // Try Nano Banana 2 first (primary)
+  const geminiKey = settingsManager.getGeminiApiKey();
+  if (geminiKey) {
+    return generateImageNanoBanana(prompt, args, geminiKey);
+  }
+
+  // Fall back to DALL-E 3
+  return generateImageDallE(prompt, args);
+}
+
+/**
+ * Nano Banana 2 — Google's Gemini 3.1 Flash Image model.
+ * Pro-level visual intelligence at Flash speed. Supports 512px to 4K, 14 aspect ratios.
+ */
+async function generateImageNanoBanana(
+  prompt: string,
+  args: Record<string, unknown>,
+  apiKey: string,
+): Promise<string> {
+  const aspectRatio = typeof args.aspect_ratio === 'string' && VALID_ASPECT_RATIOS.includes(args.aspect_ratio)
+    ? args.aspect_ratio
+    : '1:1';
+  const imageSize = typeof args.size === 'string' && VALID_IMAGE_SIZES.includes(args.size)
+    ? args.size
+    : '1K';
+
+  const requestBody = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+      imageConfig: {
+        aspectRatio,
+        imageSize,
+      },
+    },
+  };
+
+  return new Promise((resolve) => {
+    const postData = JSON.stringify(requestBody);
+    const apiPath = `/v1beta/models/${NANO_BANANA_MODEL}:generateContent?key=${apiKey}`;
+
+    const options: https.RequestOptions = {
+      hostname: GEMINI_API_HOST,
+      port: 443,
+      path: apiPath,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+      timeout: REQUEST_TIMEOUT_MS,
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+
+          if (res.statusCode === 401 || res.statusCode === 403) {
+            resolve('ERROR: Gemini API key is invalid or lacks image generation access.');
+            return;
+          }
+          if (res.statusCode === 429) {
+            resolve('ERROR: Gemini rate limit exceeded. Try again in a moment.');
+            return;
+          }
+          if (res.statusCode !== 200) {
+            const errMsg = parsed.error?.message || JSON.stringify(parsed).slice(0, 500);
+            resolve(`ERROR: Nano Banana 2 failed (${res.statusCode}): ${errMsg}`);
+            return;
+          }
+
+          // Extract image and text from response
+          const parts = parsed.candidates?.[0]?.content?.parts || [];
+          let textResponse = '';
+          let imageData = '';
+          let mimeType = 'image/png';
+
+          for (const part of parts) {
+            if (part.text) textResponse = part.text;
+            if (part.inline_data) {
+              imageData = part.inline_data.data;
+              mimeType = part.inline_data.mime_type || 'image/png';
+            }
+          }
+
+          if (!imageData) {
+            resolve(`ERROR: No image data returned from Nano Banana 2.${textResponse ? ` Model said: ${textResponse}` : ''}`);
+            return;
+          }
+
+          // Save base64 image to temp directory
+          const tempDir = path.join(app.getPath('temp'), 'agent-friday-images');
+          try {
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+          } catch { /* proceed without local save */ }
+
+          const ext = mimeType.includes('jpeg') || mimeType.includes('jpg') ? 'jpg' : 'png';
+          const filename = `nanobanana2-${Date.now()}.${ext}`;
+          const localPath = path.join(tempDir, filename);
+
+          try {
+            fs.writeFileSync(localPath, Buffer.from(imageData, 'base64'));
+          } catch {
+            resolve(`## Image Generated (Nano Banana 2)\n\n**Prompt:** ${prompt}\n**Size:** ${imageSize} | **Aspect:** ${aspectRatio}\n${textResponse ? `**Model notes:** ${textResponse}\n` : ''}\n(Image generated but failed to save locally.)`);
+            return;
+          }
+
+          resolve(`## Image Generated (Nano Banana 2)\n\n**Prompt:** ${prompt}\n**Size:** ${imageSize} | **Aspect:** ${aspectRatio}\n${textResponse ? `**Model notes:** ${textResponse}\n` : ''}\n**Saved to:** ${localPath}\n\n(Gemini 3.1 Flash Image — pro quality at flash speed.)`);
+        } catch {
+          resolve(`ERROR: Failed to parse Nano Banana 2 response: ${data.slice(0, 500)}`);
+        }
+      });
+    });
+
+    req.on('error', (err) => resolve(`ERROR: Nano Banana 2 request failed: ${err.message}`));
+    req.on('timeout', () => { req.destroy(); resolve('ERROR: Nano Banana 2 request timed out.'); });
+
+    req.write(postData);
+    req.end();
+  });
+}
+
+/**
+ * DALL-E 3 fallback — used only when Gemini API key is unavailable.
+ */
+async function generateImageDallE(prompt: string, args: Record<string, unknown>): Promise<string> {
   const size = typeof args.size === 'string' && ['1024x1024', '1792x1024', '1024x1792'].includes(args.size)
     ? args.size
     : '1024x1024';
@@ -134,28 +276,21 @@ async function generateImage(args: Record<string, unknown>): Promise<string> {
 
   if (!imageUrl) return 'ERROR: No image URL returned from DALL-E 3.';
 
-  // Download the image to temp storage
   const tempDir = path.join(app.getPath('temp'), 'agent-friday-images');
   try {
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-  } catch {
-    // If we can't create temp dir, just return the URL
-  }
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  } catch { /* proceed */ }
 
   const filename = `dalle3-${Date.now()}.png`;
   const localPath = path.join(tempDir, filename);
 
-  // Async download the image
   try {
     await downloadFile(imageUrl, localPath);
   } catch {
-    // If download fails, still return the URL
-    return `## Image Generated\n\n**Prompt:** ${prompt}\n${revisedPrompt ? `**DALL-E revised prompt:** ${revisedPrompt}\n` : ''}\n**URL:** ${imageUrl}\n\n(Image URL expires in ~1 hour. Download failed — use the URL directly.)`;
+    return `## Image Generated (DALL-E 3 fallback)\n\n**Prompt:** ${prompt}\n${revisedPrompt ? `**Revised:** ${revisedPrompt}\n` : ''}\n**URL:** ${imageUrl}\n\n(URL expires in ~1 hour. Download failed.)`;
   }
 
-  return `## Image Generated\n\n**Prompt:** ${prompt}\n${revisedPrompt ? `**DALL-E revised prompt:** ${revisedPrompt}\n` : ''}\n**Saved to:** ${localPath}\n**URL:** ${imageUrl}\n\n(URL expires in ~1 hour. Local copy saved.)`;
+  return `## Image Generated (DALL-E 3 fallback)\n\n**Prompt:** ${prompt}\n${revisedPrompt ? `**Revised:** ${revisedPrompt}\n` : ''}\n**Saved to:** ${localPath}\n**URL:** ${imageUrl}\n\n(URL expires in ~1 hour. Local copy saved.)`;
 }
 
 /**
@@ -361,28 +496,26 @@ export const TOOLS: ReadonlyArray<ToolDeclaration> = [
   {
     name: 'generate_image',
     description:
-      'Generate an image using DALL-E 3. Creates high-quality images from text descriptions. ' +
-      'Best for: visual content creation, concept art, diagrams, illustrations, UI mockups, icons, ' +
-      'or any time the user asks to create, draw, or visualize something. ' +
-      'Images are saved locally and a temporary URL is provided.',
+      'Generate an image using Nano Banana 2 (Google Gemini 3.1 Flash Image). ' +
+      'Pro-level visual intelligence at flash speed — supports 512px to 4K resolution, 14 aspect ratios, ' +
+      'accurate text rendering, subject consistency, and real-time knowledge grounding. ' +
+      'Best for: visual content creation, concept art, diagrams, illustrations, UI mockups, marketing materials, ' +
+      'greeting cards, or any time the user asks to create, draw, or visualize something. ' +
+      'Falls back to DALL-E 3 if Gemini key unavailable. Images are saved locally.',
     parameters: {
       type: 'object',
       properties: {
         prompt: {
           type: 'string',
-          description: 'Detailed description of the image to generate. Be specific about style, composition, colors, and content.',
+          description: 'Detailed description of the image to generate. Be specific about style, composition, colors, and content. Nano Banana 2 excels at text rendering and subject consistency.',
+        },
+        aspect_ratio: {
+          type: 'string',
+          description: 'Aspect ratio: "1:1" (square, default), "16:9" (widescreen), "9:16" (portrait/phone), "3:2", "2:3", "4:3", "3:4", "4:5", "5:4", "21:9" (ultrawide), "1:4", "4:1", "1:8", "8:1".',
         },
         size: {
           type: 'string',
-          description: 'Image dimensions: "1024x1024" (square, default), "1792x1024" (landscape), "1024x1792" (portrait).',
-        },
-        quality: {
-          type: 'string',
-          description: '"standard" (default, faster) or "hd" (higher detail, slower, costs more).',
-        },
-        style: {
-          type: 'string',
-          description: '"vivid" (default, hyper-real and dramatic) or "natural" (more natural, less hyper-real).',
+          description: 'Image resolution: "512px" (fast preview), "1K" (1024px, default), "2K" (2048px), "4K" (4096px, highest quality).',
         },
       },
       required: ['prompt'],
@@ -476,6 +609,8 @@ export async function execute(
 }
 
 export async function detect(): Promise<boolean> {
-  const key = getApiKey();
-  return !!key && key.length > 0;
+  // Image gen uses Gemini key; reasoning/transcription use OpenAI key
+  const openaiKey = getApiKey();
+  const geminiKey = settingsManager.getGeminiApiKey();
+  return (!!openaiKey && openaiKey.length > 0) || (!!geminiKey && geminiKey.length > 0);
 }
