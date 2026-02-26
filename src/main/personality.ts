@@ -13,6 +13,7 @@ import { callIntegration } from './call-integration';
 import { connectorRegistry } from './connectors/registry';
 import { fitToBudget, type PromptSection } from './prompt-budget';
 import { settingsManager, type AgentConfig } from './settings';
+import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
@@ -96,12 +97,19 @@ If ${user} ever asks who you are: "${config.agentIdentityLine}"`;
 
 /**
  * Get the current personality string — either the setup assistant or the configured agent.
+ * During onboarding, includes the full "Her" screenplay flow (intake + customization)
+ * so Gemini knows exactly what questions to ask and in what order.
  */
 function getPersonality(): string {
   const config = settingsManager.getAgentConfig();
 
   if (!config.onboardingComplete || !config.agentName) {
-    return SETUP_ASSISTANT_PERSONALITY;
+    // Include the setup character definition + the full onboarding flow instructions.
+    // Both intake and customization flows are included because Gemini can't hot-swap
+    // system instructions mid-session — the model needs all instructions upfront.
+    const intakeFlow = buildOnboardingPrompt();
+    const customizationFlow = buildCustomizationPrompt();
+    return `${SETUP_ASSISTANT_PERSONALITY}\n\n${intakeFlow}\n\n${customizationFlow}`;
   }
 
   return buildDynamicPersonality(config);

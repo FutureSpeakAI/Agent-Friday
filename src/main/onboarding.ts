@@ -155,8 +155,22 @@ export function buildCustomizationToolDeclarations(): {
 }
 
 /**
+ * Returns ALL onboarding tool declarations as an array.
+ * Includes intake tools (save_intake_responses, transition_to_customization)
+ * and customization tools (finalize_agent_identity).
+ * All three are needed in the same Gemini session since we can't hot-swap tools mid-session.
+ */
+export function buildAllOnboardingToolDeclarations(): Array<{
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}> {
+  return [...buildIntakeToolDeclarations(), ...buildCustomizationToolDeclarations()];
+}
+
+/**
  * Backward-compatible — returns the finalize_agent_identity tool declaration.
- * Used by existing code paths during the transition.
+ * @deprecated Use buildAllOnboardingToolDeclarations() instead.
  */
 export function buildOnboardingToolDeclaration(): {
   name: string;

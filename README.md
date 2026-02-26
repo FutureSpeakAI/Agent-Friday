@@ -284,6 +284,7 @@ agent-friday/
       browser.ts                 # Browser extension bridge
       mcp-client.ts              # Model Context Protocol client
       desktop-tools.ts           # OS-level tool execution
+      eve-profile.ts             # Agent profile persistence
       preload.ts                 # IPC bridge (18 namespaces, 60+ channels)
       ipc/                       # Domain-specific IPC handlers
         settings-handlers.ts
@@ -331,6 +332,9 @@ agent-friday/
         QuickActions.tsx         # Command palette (Ctrl+K)
         Settings.tsx             # Configuration panel
         StatusBar.tsx            # Connection + mood indicators
+        TextInput.tsx            # Always-visible text chat input
+        FileToast.tsx            # File modification notification toasts
+        ResearchPanel.tsx        # Clickable research report sidebar
         ActionFeed.tsx           # Real-time tool activity ticker
 ```
 

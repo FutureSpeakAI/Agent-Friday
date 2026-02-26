@@ -1,7 +1,7 @@
 /**
  * Core IPC handlers — API port, API keys, system instruction, settings, MCP, window controls.
  */
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, shell } from 'electron';
 import { settingsManager } from '../settings';
 import { buildGeminiLiveSystemInstruction } from '../personality';
 import { mcpClient } from '../mcp-client';
@@ -56,7 +56,7 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     'settings:set-api-key',
     async (
       _event,
-      key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl',
+      key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai',
       value: string,
     ) => {
       await settingsManager.setApiKey(key, value);
@@ -78,6 +78,15 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   ipcMain.handle('mcp:add-server', async (_event, config: any) => {
     await mcpClient.addServer(config);
     return mcpClient.getStatus();
+  });
+
+  // ── Shell ──────────────────────────────────────────────────────────
+  ipcMain.handle('shell:show-in-folder', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath);
+  });
+
+  ipcMain.handle('shell:open-path', async (_event, filePath: string) => {
+    return shell.openPath(filePath);
   });
 
   // ── Window controls ─────────────────────────────────────────────────

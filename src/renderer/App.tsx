@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import NexusCore, { SemanticState } from './components/NexusCore';
 import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
+import ResearchPanel from './components/ResearchPanel';
 import StatusBar from './components/StatusBar';
 import TextInput from './components/TextInput';
 import Settings from './components/Settings';
@@ -13,6 +14,7 @@ import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
+import FileToast from './components/FileToast';
 import { MoodProvider, useMood } from './contexts/MoodContext';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useWakeWord } from './hooks/useWakeWord';
@@ -140,7 +142,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Initializing...');
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showTextInput, setShowTextInput] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'chat' | 'research'>('chat');
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentDashboard, setShowAgentDashboard] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -161,6 +163,12 @@ export default function App() {
     particleSpeed: number; cubeFragmentation: number; coreScale: number;
     dustDensity: number; glowIntensity: number;
   } | null>(null);
+  const [apiStatus, setApiStatus] = useState<{
+    gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
+    claude: 'ready' | 'no-key';
+    elevenlabs: 'ready' | 'no-key';
+    browser: 'ready' | 'unavailable';
+  }>({ gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', browser: 'unavailable' });
   const retriesRef = useRef(0);
   const maxRetries = 3;
 
@@ -323,13 +331,13 @@ export default function App() {
       // Desktop tools unavailable — that's fine
     }
 
-    // 3. If onboarding, inject onboarding + intake tool declarations
+    // 3. If onboarding, inject ALL onboarding tool declarations (intake + customization)
     if (!onboardingComplete) {
       try {
-        const onboardingTool = await window.eve.onboarding.getToolDeclaration();
-        tools = [...tools, onboardingTool];
+        const onboardingTools = await window.eve.onboarding.getToolDeclarations();
+        tools = [...tools, ...onboardingTools];
       } catch (err) {
-        console.warn('[Agent] Failed to get onboarding tool declaration:', err);
+        console.warn('[Agent] Failed to get onboarding tool declarations:', err);
       }
     }
 
@@ -368,10 +376,11 @@ export default function App() {
       setTimeout(async () => {
         try {
           if (!onboardingComplete) {
-            // First run — nudge Gemini to begin onboarding conversation
-            console.log('[Agent] First run detected — starting onboarding');
+            // First run — nudge Gemini to begin the "Her"-style intake process
+            // The system instruction already contains the full screenplay flow
+            console.log('[Agent] First run detected — starting "Her" onboarding intake');
             geminiLive.sendTextToGemini(
-              '[SYSTEM — FIRST RUN] This is the user\'s first time. Begin the onboarding conversation. Greet them warmly and start getting to know them.'
+              '[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.'
             );
           } else {
             // Normal session — check for intelligence briefings
@@ -408,6 +417,25 @@ export default function App() {
       setWakeWordEnabled(s.wakeWordEnabled !== false);
     }).catch(() => {});
   }, []);
+
+  // Compute API connectivity status — updates with connection state + settings
+  useEffect(() => {
+    const geminiState = geminiLive.isConnected ? 'connected' as const
+      : geminiLive.isConnecting ? 'connecting' as const
+      : 'offline' as const;
+
+    // Poll settings for key existence
+    window.eve.settings.get().then((s) => {
+      setApiStatus({
+        gemini: s.hasGeminiKey ? geminiState : 'no-key',
+        claude: s.hasAnthropicKey ? 'ready' : 'no-key',
+        elevenlabs: s.hasElevenLabsKey ? 'ready' : 'no-key',
+        browser: 'ready', // Browser is always available if Chrome is installed
+      });
+    }).catch(() => {
+      setApiStatus((prev) => ({ ...prev, gemini: geminiState }));
+    });
+  }, [geminiLive.isConnected, geminiLive.isConnecting]);
 
   // Wake word detection — auto-connect when "Hey EVE" is detected while idle
   useWakeWord({
@@ -844,12 +872,7 @@ export default function App() {
         return;
       }
 
-      // Tab toggles text input mode (only when not already typing in an input)
-      if (e.code === 'Tab' && e.target === document.body) {
-        e.preventDefault();
-        setShowTextInput((s) => !s);
-        return;
-      }
+      // Tab handled by TextInput component directly (always visible now)
 
       // Space toggles mic (only from body — not while typing)
       if (e.code === 'Space' && e.target === document.body) {
@@ -969,6 +992,7 @@ export default function App() {
       <div style={styles.brandBadge}>
         <div style={styles.brandTitle}>AGENT FRIDAY</div>
         <MoodBrandSub semanticState={semanticState} />
+        <div style={styles.brandCredit}>by FutureSpeak.AI</div>
       </div>
 
       {/* Clock — top-center */}
@@ -977,9 +1001,9 @@ export default function App() {
       {/* Status label — bottom-center, above StatusBar */}
       <MoodStatusLabel
         semanticState={semanticState}
-        statusText={`GEMINI LIVE // ${geminiLive.isConnected
-          ? (geminiLive.isSpeaking ? 'STREAMING RESPONSE' : geminiLive.isListening ? 'AWAITING AUDIO' : 'CONNECTED')
-          : geminiLive.isConnecting ? 'ESTABLISHING LINK' : 'OFFLINE'}`}
+        statusText={geminiLive.isConnected
+          ? (geminiLive.isSpeaking ? 'STREAMING RESPONSE' : geminiLive.isListening ? 'AWAITING INPUT' : 'CONNECTED')
+          : geminiLive.isConnecting ? 'ESTABLISHING LINK' : 'OFFLINE'}
       />
 
       {/* Sidebar toggle */}
@@ -1040,11 +1064,10 @@ export default function App() {
             getLevels={getLevels}
           />
           <TextInput
-            visible={showTextInput}
             onSend={handleTextSend}
-            onClose={() => setShowTextInput(false)}
+            isConnected={geminiLive.isConnected}
           />
-          <StatusBar status={status} isWebcamActive={geminiLive.isWebcamActive} isInCall={geminiLive.isInCall} />
+          <StatusBar status={status} isWebcamActive={geminiLive.isWebcamActive} isInCall={geminiLive.isInCall} apiStatus={apiStatus} />
         </div>
       </div>
       )}
@@ -1055,11 +1078,44 @@ export default function App() {
         onClick={() => setShowSidebar(false)}
       />
       <div className={`sidebar-panel${showSidebar ? ' open' : ''}`}>
-        <ChatHistory messages={messages} />
+        {/* Sidebar tabs */}
+        <div style={styles.sidebarTabs}>
+          <button
+            onClick={() => setSidebarTab('chat')}
+            style={{
+              ...styles.sidebarTabBtn,
+              color: sidebarTab === 'chat' ? '#00f0ff' : '#555568',
+              borderBottomColor: sidebarTab === 'chat' ? '#00f0ff' : 'transparent',
+            }}
+          >
+            ⬡ Chat
+          </button>
+          <button
+            onClick={() => setSidebarTab('research')}
+            style={{
+              ...styles.sidebarTabBtn,
+              color: sidebarTab === 'research' ? '#a855f7' : '#555568',
+              borderBottomColor: sidebarTab === 'research' ? '#a855f7' : 'transparent',
+            }}
+          >
+            ◆ Research
+          </button>
+        </div>
+        {/* Tab content */}
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {sidebarTab === 'chat' ? (
+            <ChatHistory messages={messages} />
+          ) : (
+            <ResearchPanel onSendText={handleTextSend} />
+          )}
+        </div>
       </div>
 
       {/* Action feed — animated tool execution indicators + agent cards */}
       <ActionFeed actions={activeActions} onOpenAgentDashboard={() => setShowAgentDashboard(true)} />
+
+      {/* File modification toasts — clickable paths to open in Explorer */}
+      <FileToast />
 
       {/* Agent creation animation overlay */}
       {appPhase === 'creating' && (
@@ -1216,6 +1272,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     transition: 'color 0.6s ease',
   },
+  brandCredit: {
+    fontSize: 9,
+    fontWeight: 500,
+    letterSpacing: '0.08em',
+    color: 'rgba(255, 255, 255, 0.18)',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    marginTop: 2,
+  },
   clockOverlay: {
     position: 'absolute',
     top: 44,
@@ -1253,6 +1317,26 @@ const styles: Record<string, React.CSSProperties> = {
     right: 0,
     zIndex: 50,
   } as React.CSSProperties,
+  sidebarTabs: {
+    display: 'flex',
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    padding: '0 8px',
+    gap: 0,
+    flexShrink: 0,
+  },
+  sidebarTabBtn: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    padding: '12px 8px',
+    fontSize: 12,
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    cursor: 'pointer',
+    transition: 'color 0.2s, border-color 0.2s',
+    textTransform: 'uppercase' as const,
+  },
   sidebarToggle: {
     position: 'absolute',
     top: 40,
