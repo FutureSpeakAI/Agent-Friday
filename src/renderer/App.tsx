@@ -248,11 +248,11 @@ export default function App() {
           tools = await window.eve.desktop.listTools();
         } catch {}
 
-        // If feature setup pending, inject the feature setup tool
+        // If feature setup pending, inject all feature setup tools (mark_step, auth, save_key, etc.)
         if (!featureSetupDone) {
           try {
-            const fsToolDecl = await window.eve.featureSetup.getToolDeclaration();
-            tools = [...tools, fsToolDecl];
+            const fsToolDecls = await window.eve.featureSetup.getToolDeclarations();
+            tools = [...tools, ...fsToolDecls];
           } catch {}
         }
 

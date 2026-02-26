@@ -11,6 +11,7 @@ import {
   getFeatureSetupState,
   getCurrentStep,
   buildFeatureSetupToolDeclaration,
+  buildAllFeatureSetupToolDeclarations,
   buildFeatureSetupPrompt,
 } from '../feature-setup';
 import { getEvolutionState, incrementSession } from '../personality-evolution';
@@ -98,6 +99,7 @@ export function registerOnboardingHandlers(): void {
   ipcMain.handle('feature-setup:is-complete', () => isFeatureSetupComplete());
   ipcMain.handle('feature-setup:get-current-step', () => getCurrentStep());
   ipcMain.handle('feature-setup:get-tool-declaration', () => buildFeatureSetupToolDeclaration());
+  ipcMain.handle('feature-setup:get-tool-declarations', () => buildAllFeatureSetupToolDeclarations());
 
   // ── Personality evolution ───────────────────────────────────────────
   ipcMain.handle('evolution:get-state', () => getEvolutionState());

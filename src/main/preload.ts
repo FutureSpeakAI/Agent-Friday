@@ -358,6 +358,11 @@ contextBridge.exposeInMainWorld('eve', {
     isComplete: () => ipcRenderer.invoke('feature-setup:is-complete'),
     getCurrentStep: () => ipcRenderer.invoke('feature-setup:get-current-step'),
     getToolDeclaration: () => ipcRenderer.invoke('feature-setup:get-tool-declaration'),
+    getToolDeclarations: () => ipcRenderer.invoke('feature-setup:get-tool-declarations') as Promise<Array<{
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    }>>,
   },
 
   evolution: {

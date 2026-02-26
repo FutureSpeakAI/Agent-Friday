@@ -134,6 +134,86 @@ export function buildFeatureSetupToolDeclaration(): {
 }
 
 /**
+ * Builds ALL feature setup tool declarations including helper tools.
+ * These let the agent actually perform setup actions during the walkthrough.
+ */
+export function buildAllFeatureSetupToolDeclarations(): Array<{
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}> {
+  return [
+    buildFeatureSetupToolDeclaration(),
+    {
+      name: 'start_calendar_auth',
+      description:
+        'Start the Google Calendar OAuth authentication flow. ' +
+        'Opens a browser window for the user to sign into their Google account and grant calendar access. ' +
+        'Call this during the calendar feature setup when the user agrees to connect their calendar.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+    {
+      name: 'save_api_key',
+      description:
+        'Save an API key for one of the supported services. ' +
+        'Call this during feature setup when the user provides an API key. ' +
+        'The key is stored securely in the local settings file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          service: {
+            type: 'string',
+            enum: ['perplexity', 'firecrawl', 'openai', 'elevenlabs'],
+            description: 'Which service the API key belongs to',
+          },
+          api_key: {
+            type: 'string',
+            description: 'The API key string provided by the user',
+          },
+        },
+        required: ['service', 'api_key'],
+      },
+    },
+    {
+      name: 'set_obsidian_vault_path',
+      description:
+        'Set the path to the user\'s Obsidian vault directory. ' +
+        'Call this during the Obsidian feature setup when the user provides their vault path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          vault_path: {
+            type: 'string',
+            description: 'Absolute path to the Obsidian vault directory',
+          },
+        },
+        required: ['vault_path'],
+      },
+    },
+    {
+      name: 'toggle_screen_capture',
+      description:
+        'Enable or disable automatic screen capture. ' +
+        'Call this during the screen awareness feature setup based on the user\'s preference.',
+      parameters: {
+        type: 'object',
+        properties: {
+          enabled: {
+            type: 'boolean',
+            description: 'true to enable screen capture, false to disable',
+          },
+        },
+        required: ['enabled'],
+      },
+    },
+  ];
+}
+
+/**
  * Builds a prompt for the agent to guide the user through a specific feature.
  */
 export function buildFeatureSetupPrompt(step: FeatureSetupStep): string {
@@ -142,19 +222,23 @@ export function buildFeatureSetupPrompt(step: FeatureSetupStep): string {
 
   const prompts: Record<FeatureSetupStep, string> = {
     obsidian: `[FEATURE SETUP — Obsidian Knowledge Base]
-Explain to ${userName} that you can connect to their Obsidian vault to read and search their notes, giving you deep context about their knowledge and projects. Ask if they use Obsidian and if they'd like to connect their vault. If yes, guide them to provide the vault path. If they don't use Obsidian, explain that's fine and ask if they'd like to skip this step. Only call mark_feature_setup_step with action "skip" if they explicitly say to skip.`,
+Explain to ${userName} that you can connect to their Obsidian vault to read and search their notes, giving you deep context about their knowledge and projects. Ask if they use Obsidian and if they'd like to connect their vault. If yes, ask them for the full path to their vault folder (e.g. "C:\\Users\\name\\Documents\\MyVault" on Windows, "~/Documents/MyVault" on Mac). Once they provide it, call set_obsidian_vault_path with the path, then mark the step complete. If they don't use Obsidian, explain that's fine and ask if they'd like to skip this step. Only call mark_feature_setup_step with action "skip" if they explicitly say to skip.`,
 
     browser: `[FEATURE SETUP — Browser Integration]
 Explain to ${userName} that you can browse the web, search for information, read articles, and interact with web pages on their behalf using the browser extension. This is already available — just let them know the capability exists and ask if they have any questions. Then mark this step as complete.`,
 
     calendar: `[FEATURE SETUP — Google Calendar]
-Explain to ${userName} that you can connect to their Google Calendar to check their schedule, create events, and give them proactive reminders about upcoming meetings. Ask if they'd like to connect their Google Calendar. If yes, guide them through the OAuth flow. If no, only skip if they explicitly say so.`,
+Explain to ${userName} that you can connect to their Google Calendar to check their schedule, create events, and give them proactive reminders about upcoming meetings. Ask if they'd like to connect their Google Calendar. If yes, call start_calendar_auth — this opens a browser window where they sign into Google and grant access. Wait for the result before confirming it worked. Then mark the step complete. If they say no, only skip if they explicitly say so.
 
-    email: `[FEATURE SETUP — Gmail Integration]
-Explain to ${userName} that you can help manage their email — reading, drafting, and organizing messages. This requires connecting their Gmail account. Ask if they'd like to set this up. If yes, guide them through it. If no, only skip if they explicitly say so.`,
+IMPORTANT: The Google Calendar OAuth requires a credentials file. If authentication fails because no credentials file exists, explain that they need to set up a Google Cloud project with Calendar API enabled and place the credentials.json file in the app data directory. This is a one-time setup.`,
+
+    email: `[FEATURE SETUP — Email Drafting]
+Explain to ${userName} that you can draft emails, messages, replies, and follow-ups in their voice. When you draft something, it's automatically copied to their clipboard so they can paste it into their email client. You can also refine drafts until they're happy with the result. This works out of the box — no account connection needed. Just let them know the capability exists and that they can ask you to "draft an email to..." anytime. Then mark this step as complete.
+
+NOTE: Be honest — you can DRAFT communications but you cannot directly read or send emails. The draft is copied to clipboard for them to use.`,
 
     'screen-capture': `[FEATURE SETUP — Screen Awareness]
-Explain to ${userName} that you can periodically capture what's on their screen to stay aware of what they're working on. This helps you provide contextual assistance without them having to explain everything. It's private — the captures stay local. Ask if they'd like to enable this. It's currently ${settingsManager.get().autoScreenCapture ? 'enabled' : 'disabled'}.`,
+Explain to ${userName} that you can periodically capture what's on their screen to stay aware of what they're working on. This helps you provide contextual assistance without them having to explain everything. It's private — the captures stay local. Ask if they'd like to enable this. It's currently ${settingsManager.get().autoScreenCapture ? 'enabled' : 'disabled'}. If they want to change it, call toggle_screen_capture with enabled=true or false. Then mark the step complete.`,
 
     'world-monitor': `[FEATURE SETUP — World Monitor]
 Explain to ${userName} that you have a world monitor that tracks news, weather, and information relevant to them. Ask if they'd like to configure what topics and locations matter to them. Guide them through setting preferences.`,
@@ -169,7 +253,7 @@ You have two research engines:
 - **Perplexity AI** — AI-powered search that understands questions and synthesizes answers from across the web, with four tiers from quick search to deep investigation
 - **Firecrawl** — Web scraping and crawling for reading full articles, documentation sites, and extracting structured data
 
-Ask if they have a Perplexity API key. If they do, help them enter it. If they have a Firecrawl key, help with that too. ${settingsManager.get().perplexityApiKey ? 'Perplexity is already configured.' : 'Perplexity is not yet configured.'} ${settingsManager.get().firecrawlApiKey ? 'Firecrawl is already configured.' : 'Firecrawl is not yet configured.'} If both are already set up, let them know and mark as complete. Even without these keys, you still have web capabilities through other means — but these make you significantly more powerful.`,
+Ask if they have a Perplexity API key. If they do, call save_api_key with service="perplexity" and the key they provide. Same for Firecrawl — call save_api_key with service="firecrawl". ${settingsManager.get().perplexityApiKey ? 'Perplexity is already configured.' : 'Perplexity is not yet configured.'} ${settingsManager.get().firecrawlApiKey ? 'Firecrawl is already configured.' : 'Firecrawl is not yet configured.'} If both are already set up, let them know and mark as complete. Even without these keys, you still have web capabilities through other means — but these make you significantly more powerful.`,
 
     'ai-services': `[FEATURE SETUP — AI Services (OpenAI)]
 Explain to ${userName} that you can generate images, perform deep mathematical and logical reasoning, and transcribe audio files using OpenAI's specialist models:
@@ -179,10 +263,10 @@ Explain to ${userName} that you can generate images, perform deep mathematical a
 - **Whisper** — Transcribe audio files (meetings, voice notes, podcasts) to text
 - **Embeddings** — Semantic understanding for smarter memory search
 
-Ask if they have an OpenAI API key. If yes, help them enter it. ${settingsManager.get().openaiApiKey ? 'OpenAI is already configured.' : 'OpenAI is not yet configured.'} These are optional but unlock powerful creative and analytical capabilities.`,
+Ask if they have an OpenAI API key. If yes, call save_api_key with service="openai" and the key they provide. ${settingsManager.get().openaiApiKey ? 'OpenAI is already configured.' : 'OpenAI is not yet configured.'} These are optional but unlock powerful creative and analytical capabilities.`,
 
     voice: `[FEATURE SETUP — Voice (ElevenLabs)]
-Explain to ${userName} that for the highest quality voice experience, you can use ElevenLabs for text-to-speech. This gives you a more natural, expressive voice compared to the built-in speech synthesis. Ask if they have an ElevenLabs API key. If yes, help them enter it. ${settingsManager.get().elevenLabsApiKey ? 'ElevenLabs is already configured — voice is active.' : 'ElevenLabs is not yet configured. The built-in Gemini voice works fine, but ElevenLabs sounds more natural.'}`,
+Explain to ${userName} that for the highest quality voice experience, you can use ElevenLabs for text-to-speech. This gives you a more natural, expressive voice compared to the built-in speech synthesis. Ask if they have an ElevenLabs API key. If yes, call save_api_key with service="elevenlabs" and the key they provide. ${settingsManager.get().elevenLabsApiKey ? 'ElevenLabs is already configured — voice is active.' : 'ElevenLabs is not yet configured. The built-in Gemini voice works fine, but ElevenLabs sounds more natural.'}`,
 
     gateway: `[FEATURE SETUP — Messaging Gateway]
 Explain to ${userName} that you can be reached through messaging apps like Telegram, so they can talk to you even when they're away from their computer. Ask if they'd like to set up Telegram or other messaging channels. If yes, guide them through providing their bot token.`,
