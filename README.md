@@ -4,43 +4,18 @@
 
 <h1 align="center">Agent Friday</h1>
 <p align="center"><strong>An Asimov Agent — Your Intelligent Desktop Companion</strong></p>
-<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, and real autonomy — governed by Asimov's cLaws.</p>
+<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
+<p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
+  <a href="#asimovs-claws">Asimov's cLaws</a> &bull;
+  <a href="#what-is-an-asimov-agent">Asimov Agents</a> &bull;
   <a href="#getting-started">Getting Started</a> &bull;
   <a href="#features">Features</a> &bull;
-  <a href="#asimovs-claws">Asimov's cLaws</a> &bull;
   <a href="#architecture">Architecture</a> &bull;
   <a href="#development">Development</a> &bull;
   <a href="#license">License</a>
 </p>
-
----
-
-## What Is This?
-
-Agent Friday is a desktop AI companion that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
-
-Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice) and **Claude Opus/Sonnet** (deep reasoning), with a plugin architecture that connects to everything from your browser to Blender to your email.
-
-**This is not a chatbot.** It's an operating system layer with a soul.
-
-### What Is an Asimov Agent?
-
-An **Asimov Agent** is an autonomous AI companion whose behaviour is constrained by **Asimov's cLaws** — a safety framework inspired by Isaac Asimov's Three Laws of Robotics, adapted for the reality of AI systems that can control your desktop, read your screen, manage your files, and act on your behalf.
-
-The concept of applying Asimov's Laws to AI agents was popularised by the [OpenClaw](https://github.com/pchaganti/gx-openclaws) project, which provides a lightweight three-law safety overlay for LLM-based agents. Agent Friday takes this foundation significantly further:
-
-| | OpenClaw | Agent Friday (Asimov Agent) |
-|---|---------|---------------------------|
-| **Safety enforcement** | Prompt-level overlay | Hardcoded into the personality system at build time — cannot be prompt-injected away |
-| **Consent model** | General harm avoidance | Granular consent gates: self-modification, tool creation, computer control, destructive actions each require explicit approval |
-| **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
-| **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
-| **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing |
-| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 16 connector modules |
-
-OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
 ---
 
@@ -49,7 +24,9 @@ OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. A
 > *"A robot may not injure a human being, or through inaction allow a human being to come to harm."*
 > — Isaac Asimov, First Law of Robotics
 
-Agent Friday is an **Asimov Agent** — a new class of autonomous AI companion governed by **Asimov's cLaws**, a set of inviolable safety constraints hardcoded into the personality system. These are not suggestions. They cannot be overridden, circumvented, or rationalised away by any prompt, tool, or instruction. They are enforced at the system prompt level before any user interaction begins.
+Agent Friday is an **Asimov Agent** — a new class of autonomous AI companion built by [FutureSpeak.AI](https://futurespeak.ai), governed by **Asimov's cLaws**: a safety framework inspired by Isaac Asimov's Three Laws of Robotics, adapted for the reality of AI systems that can control your desktop, read your screen, manage your files, and act on your behalf.
+
+These are not suggestions. They are not configurable. They cannot be overridden, circumvented, or rationalised away by any prompt, tool, or instruction. They are hardcoded into the personality system and enforced at the system prompt level before any user interaction begins. Every instruction the agent receives — every tool call, every action, every decision — passes through the cLaws first.
 
 ### The Three Laws
 
@@ -77,7 +54,48 @@ The user is **always** in control:
 - No "just finishing up" — the halt is absolute and unconditional
 - After interruption, the agent reports where it was and asks whether to continue
 
+### Trust Architecture
+
+The cLaws extend beyond the local desktop. Agent Friday's 5-tier trust engine gates every external interaction:
+
+| Tier | Who | What They Can Do |
+|------|-----|-----------------|
+| **Local** | You, at your desk | Full access — desktop, memory, tools, scheduling |
+| **Owner DM** | You, via Telegram/Slack | Full tools minus desktop control — no mouse/keyboard remotely |
+| **Approved DM** | Trusted contacts (paired) | Research, calendar, drafting — no system access |
+| **Group** | Group chat members | Web search and basic queries only |
+| **Public** | Unknown senders | Nothing — rate-limited acknowledgment only |
+
+Each tier enforces tool filtering, rate limiting, memory isolation, and injection defense. External messages are cryptographically authenticated through a pairing flow — no one gets elevated access by claiming to be you.
+
 These aren't features. They're the foundation everything else is built on.
+
+---
+
+## What Is This?
+
+Agent Friday is a desktop AI companion that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
+
+Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice) and **Claude Opus/Sonnet** (deep reasoning), with a plugin architecture that connects to everything from your browser to Blender to your email.
+
+**This is not a chatbot.** It's an operating system layer with a soul.
+
+### What Is an Asimov Agent?
+
+An **Asimov Agent** is an autonomous AI companion whose behaviour is constrained by **[Asimov's cLaws](#asimovs-claws)** — a safety framework developed by [FutureSpeak.AI](https://futurespeak.ai), inspired by Isaac Asimov's Three Laws of Robotics, adapted for AI systems with real-world agency.
+
+The concept of applying Asimov's Laws to AI agents was popularised by the [OpenClaw](https://github.com/pchaganti/gx-openclaws) project, which provides a lightweight three-law safety overlay for LLM-based agents. Agent Friday takes this foundation significantly further:
+
+| | OpenClaw | Agent Friday (Asimov Agent) |
+|---|---------|---------------------------|
+| **Safety enforcement** | Prompt-level overlay | Hardcoded into the personality system at build time — cannot be prompt-injected away |
+| **Consent model** | General harm avoidance | Granular consent gates: self-modification, tool creation, computer control, destructive actions each require explicit approval |
+| **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
+| **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
+| **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing |
+| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 16 connector modules |
+
+OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
 ---
 
@@ -498,4 +516,9 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 <p align="center">
   <em>"The heart is not like a box that gets filled up; it expands in size the more you love."</em><br/>
   <em>— Her (2013)</em>
+</p>
+
+<p align="center">
+  <strong>Agent Friday is an Asimov Agent, built by <a href="https://futurespeak.ai">FutureSpeak.AI</a></strong><br/>
+  Governed by <a href="#asimovs-claws">Asimov's cLaws</a> — safety-first autonomous AI for the real world.
 </p>
