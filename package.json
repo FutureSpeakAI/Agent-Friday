@@ -37,6 +37,12 @@
       "node_modules/puppeteer-core/**/*",
       "node_modules/sharp/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "directories": {
       "output": "release"
     },

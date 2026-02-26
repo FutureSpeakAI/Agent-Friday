@@ -80,7 +80,17 @@ let serverPort = 3333;
 const isDev = !app.isPackaged;
 
 // ── Window creation ─────────────────────────────────────────────────
+/** Resolve the app icon path for both dev and packaged modes */
+function getIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.png');
+  }
+  // Dev mode: icon is in build/ relative to project root
+  return path.join(__dirname, '..', '..', 'build', 'icon.png');
+}
+
 function createWindow() {
+  const iconPath = getIconPath();
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -90,6 +100,7 @@ function createWindow() {
     transparent: false,
     backgroundColor: '#060B19',
     show: false,
+    icon: iconPath,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#0a0a0f',
@@ -196,23 +207,19 @@ app.whenReady().then(async () => {
   }
 
   // ── System Tray ─────────────────────────────────────────────────
-  const trayIcon = nativeImage.createEmpty();
+  const iconPath = getIconPath();
+  let trayImage: Electron.NativeImage;
   try {
-    const iconData = Buffer.alloc(16 * 16 * 4, 0);
-    for (let y = 4; y < 12; y++) {
-      for (let x = 4; x < 12; x++) {
-        const offset = (y * 16 + x) * 4;
-        iconData[offset] = 0;
-        iconData[offset + 1] = 240;
-        iconData[offset + 2] = 255;
-        iconData[offset + 3] = 255;
-      }
+    trayImage = nativeImage.createFromPath(iconPath);
+    // Resize for tray — 16x16 on Windows standard DPI, 32x32 for HiDPI
+    if (!trayImage.isEmpty()) {
+      trayImage = trayImage.resize({ width: 16, height: 16 });
     }
-    const icon = nativeImage.createFromBuffer(iconData, { width: 16, height: 16 });
-    tray = new Tray(icon);
-  } catch {
-    tray = new Tray(trayIcon);
+  } catch (err) {
+    console.warn('[Tray] Failed to load icon from', iconPath, err);
+    trayImage = nativeImage.createEmpty();
   }
+  tray = new Tray(trayImage);
 
   const agentConfig = settingsManager.getAgentConfig();
   tray.setToolTip(agentConfig.agentName ? `Agent ${agentConfig.agentName}` : 'Agent Friday');
