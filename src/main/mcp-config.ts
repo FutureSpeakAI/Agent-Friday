@@ -40,10 +40,10 @@ const DEFAULT_CONFIG: MCPConfigFile = {
   version: '1.0.0',
   servers: [
     {
-      id: 'dc',
-      label: 'Desktop Commander',
+      id: 'filesystem',
+      label: 'Filesystem (MCP)',
       command: 'npx',
-      args: ['-y', '@anthropic-ai/desktop-commander@latest'],
+      args: ['-y', '@modelcontextprotocol/server-filesystem', process.env.HOME || process.env.USERPROFILE || '.'],
       enabled: true,
     },
     {
