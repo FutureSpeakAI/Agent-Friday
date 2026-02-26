@@ -254,6 +254,14 @@ class ConnectorRegistry {
         description: 'Image generation (DALL-E 3), deep reasoning (o3), audio transcription (Whisper), and semantic embeddings',
         importPath: './openai-services',
       },
+      // Tier 10 — Document Intelligence (PageIndex)
+      {
+        id: 'pageindex',
+        label: 'PageIndex Document Intelligence',
+        category: 'system',
+        description: 'Vectorless reasoning-based RAG — index PDFs into hierarchical trees and answer questions with ~99% accuracy (PageIndex by Vectify AI)',
+        importPath: './pageindex',
+      },
     ];
 
     const loaded: Array<{
