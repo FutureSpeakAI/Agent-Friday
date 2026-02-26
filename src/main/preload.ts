@@ -107,11 +107,6 @@ contextBridge.exposeInMainWorld('eve', {
       userName: string;
       onboardingComplete: boolean;
     }>,
-    getToolDeclaration: () => ipcRenderer.invoke('onboarding:get-tool-declaration') as Promise<{
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-    }>,
     getToolDeclarations: () => ipcRenderer.invoke('onboarding:get-tool-declarations') as Promise<Array<{
       name: string;
       description: string;
@@ -148,7 +143,7 @@ contextBridge.exposeInMainWorld('eve', {
     get: () => ipcRenderer.invoke('settings:get'),
     setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
     setAutoScreenCapture: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-screen-capture', enabled),
-    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai', value: string) =>
+    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter', value: string) =>
       ipcRenderer.invoke('settings:set-api-key', key, value),
     setObsidianVaultPath: (vaultPath: string) =>
       ipcRenderer.invoke('settings:set-obsidian-vault-path', vaultPath),
@@ -402,6 +397,33 @@ contextBridge.exposeInMainWorld('eve', {
     getActiveSessions: () => ipcRenderer.invoke('gateway:get-active-sessions'),
   },
 
+  gitLoader: {
+    load: (repoUrl: string, options?: Record<string, unknown>) =>
+      ipcRenderer.invoke('git:load', repoUrl, options),
+    getTree: (repoId: string) => ipcRenderer.invoke('git:get-tree', repoId),
+    getFile: (repoId: string, filePath: string) =>
+      ipcRenderer.invoke('git:get-file', repoId, filePath),
+    search: (repoId: string, query: string, options?: Record<string, unknown>) =>
+      ipcRenderer.invoke('git:search', repoId, query, options),
+    getReadme: (repoId: string) => ipcRenderer.invoke('git:get-readme', repoId),
+    getSummary: (repoId: string) => ipcRenderer.invoke('git:get-summary', repoId),
+    listLoaded: () => ipcRenderer.invoke('git:list-loaded'),
+    unload: (repoId: string) => ipcRenderer.invoke('git:unload', repoId),
+    listTools: () => ipcRenderer.invoke('git:list-tools'),
+    callTool: (name: string, args: Record<string, unknown>) =>
+      ipcRenderer.invoke('git:call-tool', name, args),
+  },
+
+  soc: {
+    listTools: () => ipcRenderer.invoke('soc:list-tools'),
+    callTool: (name: string, args: Record<string, unknown>) =>
+      ipcRenderer.invoke('soc:call-tool', name, args),
+    checkDeps: () => ipcRenderer.invoke('soc:check-deps'),
+    startBridge: () => ipcRenderer.invoke('soc:start-bridge'),
+    stopBridge: () => ipcRenderer.invoke('soc:stop-bridge'),
+    bridgeStatus: () => ipcRenderer.invoke('soc:bridge-status'),
+  },
+
   connectors: {
     listTools: () => ipcRenderer.invoke('connectors:list-tools'),
     callTool: (name: string, args: Record<string, unknown>) =>
@@ -420,9 +442,81 @@ contextBridge.exposeInMainWorld('eve', {
     getContextString: () => ipcRenderer.invoke('call:get-context-string'),
   },
 
+  integrity: {
+    getState: () => ipcRenderer.invoke('integrity:get-state') as Promise<{
+      initialized: boolean;
+      lawsIntact: boolean;
+      identityIntact: boolean;
+      memoriesIntact: boolean;
+      safeMode: boolean;
+      safeModeReason: string | null;
+      lastVerified: number;
+      memoryChanges: {
+        longTermAdded: string[];
+        longTermRemoved: string[];
+        longTermModified: string[];
+        mediumTermAdded: string[];
+        mediumTermRemoved: string[];
+        mediumTermModified: string[];
+        detectedAt: number;
+        acknowledged: boolean;
+      } | null;
+    }>,
+    isInSafeMode: () => ipcRenderer.invoke('integrity:is-safe-mode') as Promise<boolean>,
+    acknowledgeMemoryChanges: () => ipcRenderer.invoke('integrity:acknowledge-memory-changes'),
+    verify: () => ipcRenderer.invoke('integrity:verify') as Promise<{
+      lawsIntact: boolean;
+      identityIntact: boolean;
+      memoriesIntact: boolean;
+      safeMode: boolean;
+    }>,
+  },
+
   shell: {
     showInFolder: (filePath: string) => ipcRenderer.invoke('shell:show-in-folder', filePath),
     openPath: (filePath: string) => ipcRenderer.invoke('shell:open-path', filePath),
+  },
+
+  office: {
+    getState: () => ipcRenderer.invoke('office:get-state'),
+    isOpen: () => ipcRenderer.invoke('office:is-open'),
+    requestOpen: () => ipcRenderer.send('office:request-open'),
+    requestClose: () => ipcRenderer.send('office:request-close'),
+    onFullState: (callback: (state: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: any) => callback(state);
+      ipcRenderer.on('office:full-state', handler);
+      return () => { ipcRenderer.removeListener('office:full-state', handler); };
+    },
+    onAgentSpawned: (callback: (character: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, character: any) => callback(character);
+      ipcRenderer.on('office:agent-spawned', handler);
+      return () => { ipcRenderer.removeListener('office:agent-spawned', handler); };
+    },
+    onAgentThought: (callback: (data: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('office:agent-thought', handler);
+      return () => { ipcRenderer.removeListener('office:agent-thought', handler); };
+    },
+    onAgentPhase: (callback: (data: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('office:agent-phase', handler);
+      return () => { ipcRenderer.removeListener('office:agent-phase', handler); };
+    },
+    onAgentCompleted: (callback: (data: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('office:agent-completed', handler);
+      return () => { ipcRenderer.removeListener('office:agent-completed', handler); };
+    },
+    onAgentStopped: (callback: (data: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('office:agent-stopped', handler);
+      return () => { ipcRenderer.removeListener('office:agent-stopped', handler); };
+    },
+    onAgentRemoved: (callback: (data: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('office:agent-removed', handler);
+      return () => { ipcRenderer.removeListener('office:agent-removed', handler); };
+    },
   },
 
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
