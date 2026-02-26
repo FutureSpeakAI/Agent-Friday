@@ -13,6 +13,7 @@ import MemoryExplorer from './components/MemoryExplorer';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
+import SuperpowersPanel from './components/SuperpowersPanel';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
@@ -154,8 +155,9 @@ function OfficeApp() {
 }
 
 export default function App() {
-  // If this is the office visualization window, render only the office
-  if (isOfficeWindow) return <OfficeApp />;
+  // NOTE: Do NOT early-return before hooks — React requires hooks to be called
+  // unconditionally in the same order every render. The isOfficeWindow check is
+  // handled at the bottom of the component in the return statement.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Initializing...');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -165,6 +167,7 @@ export default function App() {
   const [showDashboard, setShowDashboard] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showMemoryExplorer, setShowMemoryExplorer] = useState(false);
+  const [showSuperpowers, setShowSuperpowers] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
@@ -891,6 +894,13 @@ export default function App() {
         return;
       }
 
+      // Ctrl+Shift+P toggles superpowers panel
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
+        e.preventDefault();
+        setShowSuperpowers((s) => !s);
+        return;
+      }
+
       // Tab handled by TextInput component directly (always visible now)
 
       // Space toggles mic (only from body — not while typing)
@@ -972,6 +982,9 @@ export default function App() {
     }
   }, [geminiLive.isListening, geminiLive.isConnected, geminiLive.isConnecting, geminiLive.startListening, geminiLive.stopListening, geminiLive.resetIdleActivity, handleRetry]);
 
+  // Office window shortcut — hooks are already called above, so this is safe.
+  if (isOfficeWindow) return <OfficeApp />;
+
   return (
     <MoodProvider semanticState={semanticState}>
     <div style={styles.container}>
@@ -1048,6 +1061,17 @@ export default function App() {
         title="Command Center (Ctrl+Shift+D)"
       >
         ◈
+      </button>
+
+      {/* Superpowers button */}
+      <button
+        onClick={() => setShowSuperpowers(true)}
+        className="hover-bright"
+        aria-label="Superpowers"
+        style={styles.superpowersBtn}
+        title="Superpowers (Ctrl+Shift+P)"
+      >
+        🔮
       </button>
 
       {/* Agent dashboard button */}
@@ -1254,6 +1278,9 @@ export default function App() {
 
       {/* Settings overlay */}
       <Settings visible={showSettings} onClose={() => setShowSettings(false)} />
+
+      {/* Superpowers overlay */}
+      <SuperpowersPanel visible={showSuperpowers} onClose={() => setShowSuperpowers(false)} />
     </div>
     </MoodProvider>
   );
@@ -1386,12 +1413,31 @@ const styles: Record<string, React.CSSProperties> = {
   dashboardBtn: {
     position: 'absolute',
     top: 40,
-    right: 88,
+    right: 126,
     zIndex: 40,
     background: 'rgba(255,255,255,0.06)',
     border: '1px solid rgba(255,255,255,0.1)',
     borderRadius: 6,
     color: '#00f0ff',
+    fontSize: 14,
+    width: 32,
+    height: 32,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.35,
+    transition: 'opacity 0.2s',
+  },
+  superpowersBtn: {
+    position: 'absolute',
+    top: 40,
+    right: 88,
+    zIndex: 40,
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 6,
+    color: '#c084fc',
     fontSize: 14,
     width: 32,
     height: 32,

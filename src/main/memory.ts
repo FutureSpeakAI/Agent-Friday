@@ -27,6 +27,19 @@ function getIntegrityManager() {
   return _integrityManager;
 }
 
+// Late-bound trust graph import to avoid circular dependency
+let _trustGraph: any = null;
+function getTrustGraph() {
+  if (!_trustGraph) {
+    try {
+      _trustGraph = require('./trust-graph').trustGraph;
+    } catch {
+      // Trust graph not yet initialized — skip person extraction
+    }
+  }
+  return _trustGraph;
+}
+
 export interface ShortTermEntry {
   role: 'user' | 'assistant';
   content: string;
@@ -67,6 +80,7 @@ class MemoryManager {
   private memoryDir: string = '';
   private store: MemoryStore = { shortTerm: [], mediumTerm: [], longTerm: [] };
   private initialized = false;
+  private saveQueue: Promise<void> = Promise.resolve(); // Serializes concurrent file writes
 
   async initialize(): Promise<void> {
     this.memoryDir = path.join(app.getPath('userData'), 'memory');
@@ -130,15 +144,31 @@ ${existingMediumTerm}
 Return JSON in this exact format (include only genuinely NEW information not already listed above):
 {
   "longTerm": [{"fact": "string", "category": "identity|preference|relationship|professional"}],
-  "mediumTerm": [{"observation": "string", "category": "preference|pattern|context"}]
+  "mediumTerm": [{"observation": "string", "category": "preference|pattern|context"}],
+  "personMentions": [
+    {
+      "name": "person's name (as mentioned)",
+      "context": "brief description of what was said about or involving them",
+      "sentiment": 0.0,
+      "domains": ["optional", "expertise", "areas"],
+      "evidenceType": "observed"
+    }
+  ]
 }
 
-If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
+personMentions: Extract any people mentioned in the conversation (not the user themselves). Include:
+- Their name as mentioned
+- Brief context of what was discussed about them
+- Sentiment from -1 (very negative) to +1 (very positive), 0 for neutral
+- Any domains of expertise implied (e.g. "typescript", "cooking", "finance")
+- Evidence type: "promise_kept", "promise_broken", "accurate_info", "inaccurate_info", "helpful_action", "unhelpful_action", "emotional_support", "user_stated", "observed", or "inferred"
+
+If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMentions": []}`;
 
     try {
       // Use Anthropic SDK directly for extraction (cheapest reliable option)
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
+      const anthropic = new AnthropicSdk({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
@@ -146,7 +176,8 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
         messages: [{ role: 'user', content: extractionPrompt }],
       });
 
-      const text = response.content.find((b: any) => b.type === 'text')?.text || '';
+      const textBlock = response.content.find((b) => b.type === 'text');
+      const text = textBlock && 'text' in textBlock ? textBlock.text : '';
 
       // Extract JSON from response (handle potential markdown wrapping)
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -214,8 +245,18 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
         await this.save('mediumTerm');
       }
 
+      // Route person mentions to Trust Graph
+      if (Array.isArray(extracted.personMentions) && extracted.personMentions.length > 0) {
+        const tg = getTrustGraph();
+        if (tg) {
+          tg.processPersonMentions(extracted.personMentions).catch((err: unknown) => {
+            console.warn('[Memory] Trust graph person mention processing failed:', err);
+          });
+        }
+      }
+
       console.log(
-        `[Memory] Extracted ${extracted.longTerm?.length || 0} long-term, ${extracted.mediumTerm?.length || 0} medium-term memories`
+        `[Memory] Extracted ${extracted.longTerm?.length || 0} long-term, ${extracted.mediumTerm?.length || 0} medium-term, ${extracted.personMentions?.length || 0} person mentions`
       );
     } catch (err) {
       console.warn('[Memory] Extraction failed:', err);
@@ -368,6 +409,16 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
   }
 
   private async save(tier: 'shortTerm' | 'mediumTerm' | 'longTerm'): Promise<void> {
+    // Serialize writes to prevent concurrent file corruption (same pattern as settings.ts)
+    this.saveQueue = this.saveQueue.then(async () => {
+      await this._doSave(tier);
+    }).catch((err) => {
+      console.error(`[Memory] Save failed for ${tier}:`, err);
+    });
+    return this.saveQueue;
+  }
+
+  private async _doSave(tier: 'shortTerm' | 'mediumTerm' | 'longTerm'): Promise<void> {
     // Always save JSON (canonical source)
     const filePath = path.join(this.memoryDir, `${tier}.json`);
     await fs.writeFile(filePath, JSON.stringify(this.store[tier], null, 2), 'utf-8');

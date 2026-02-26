@@ -11,6 +11,15 @@ import path from 'path';
 import { settingsManager } from './settings';
 import { memoryManager } from './memory';
 
+// Late-bound trust graph import to avoid circular dependencies
+let _trustGraph: any = null;
+function getTrustGraph() {
+  if (!_trustGraph) {
+    try { _trustGraph = require('./trust-graph').trustGraph; } catch { /* not ready yet */ }
+  }
+  return _trustGraph;
+}
+
 const BLANK_INTELLIGENCE_FILE = `# AGENT INTELLIGENCE FILE
 Subject: New User
 Classification: Principal — Full Access
@@ -110,6 +119,24 @@ function buildBaseProfileFromMemories(): string {
 
   if (relationships.length > 0) {
     sections.push(`\n## RELATIONSHIPS\n${relationships.join('\n')}`);
+  }
+
+  // Enrich with structured people intelligence from Trust Graph
+  try {
+    const tg = getTrustGraph();
+    if (tg) {
+      const topPeople = tg.getMostTrusted(10);
+      if (topPeople.length > 0) {
+        const peopleLines = topPeople.map((p: any) => {
+          const trustPct = Math.round((p.trust?.overall ?? 0.5) * 100);
+          const domains = p.domains?.length > 0 ? p.domains.join(', ') : 'general';
+          return `- **${p.primaryName}**: Trust ${trustPct}% | ${domains} | ${p.interactionCount || 0} interactions`;
+        });
+        sections.push(`\n## KEY PEOPLE\n${peopleLines.join('\n')}`);
+      }
+    }
+  } catch {
+    // Trust Graph not ready yet — skip enrichment
   }
 
   if (other.length > 0) {
@@ -380,6 +407,27 @@ export async function getCondensedProfile(): Promise<string> {
     result += profileLines.join('\n');
   } else {
     result += '- Basic profile established during onboarding — memories will accumulate over time';
+  }
+
+  // Append key people from Trust Graph
+  try {
+    const tg = getTrustGraph();
+    if (tg) {
+      const topPeople = tg.getMostTrusted(8);
+      if (topPeople.length > 0) {
+        result += `\n\n## Key People in ${userName}'s World\n`;
+        for (const person of topPeople) {
+          const trustPct = Math.round((person.trust?.overall ?? 0.5) * 100);
+          const domains = person.domains?.length > 0 ? person.domains.join(', ') : 'general';
+          const lastSeen = person.lastSeen
+            ? `last seen ${Math.round((Date.now() - person.lastSeen) / 86400000)}d ago`
+            : 'no recent interaction';
+          result += `- **${person.primaryName}** (trust: ${trustPct}%, ${domains}, ${person.interactionCount || 0} interactions, ${lastSeen})\n`;
+        }
+      }
+    }
+  } catch {
+    // Trust Graph not available — skip
   }
 
   // Append learned insights from the intelligence file

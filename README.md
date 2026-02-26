@@ -3,8 +3,8 @@
 </p>
 
 <h1 align="center">Agent Friday</h1>
-<p align="center"><strong>An Asimov Agent — Your Intelligent Desktop Companion</strong></p>
-<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
+<p align="center"><strong>The World's First AGI OS — An Asimov Agent by FutureSpeak.AI</strong></p>
+<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
@@ -88,9 +88,9 @@ These aren't features. They're the foundation everything else is built on.
 
 ## What Is This?
 
-Agent Friday is a desktop AI companion that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
+Agent Friday is the AGI OS — a desktop AI operating system that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, builds trust models of the people in your world, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
 
-Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
+Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
 
 **This is not a chatbot.** It's an operating system layer with a soul.
 
@@ -106,9 +106,9 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 | **Integrity verification** | Not addressed | Cryptographic HMAC-SHA256 verification of core laws on every startup, with Safe Mode fallback |
 | **Consent model** | General harm avoidance | Granular consent gates: self-modification, tool creation, computer control, destructive actions each require explicit approval |
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
-| **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
+| **Trust architecture** | Single trust level | 5-tier trust engine (local > owner-dm > approved-dm > group > public) with per-tier tool filtering, rate limiting, and memory isolation |
 | **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing and audit logging |
-| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 18+ connector modules, self-operating computer bridge |
+| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 18+ connector modules, self-operating computer bridge |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -124,13 +124,13 @@ Download the latest installer from the [Releases page](https://github.com/Future
 
 - **Node.js 20+** (with npm)
 - **API Keys** (entered during first-run setup):
-  - [Google Gemini](https://aistudio.google.com/apikey) — Required (voice + search + embeddings)
+  - [Google Gemini](https://aistudio.google.com/apikey) — Required (voice + search + embeddings + image generation via Nano Banana 2)
   - [Anthropic Claude](https://console.anthropic.com/) — Required (reasoning + memory analysis)
   - [OpenRouter](https://openrouter.ai/keys) — Optional (access to 200+ models: Llama, Mistral, Gemma, Command R, etc.)
   - [ElevenLabs](https://elevenlabs.io/) — Optional (enhanced voice synthesis for sub-agents)
   - [Firecrawl](https://firecrawl.dev/) — Optional (web scraping)
   - [Perplexity](https://docs.perplexity.ai/) — Optional (web search with citations)
-  - [OpenAI](https://platform.openai.com/) — Optional (DALL-E, TTS, GPT)
+  - [OpenAI](https://platform.openai.com/) — Optional (o3 reasoning, Whisper transcription, embeddings)
 - **VB-Cable** (optional) — [Download](https://vb-audio.com/Cable/) for live call participation
 
 ### Install & Run (from source)
@@ -152,7 +152,7 @@ On first launch, you'll experience a guided onboarding inspired by the OS1 setup
 4. **Agent Customization** — You choose everything: name, voice, gender, personality, backstory
 5. **Cinematic Reveal** — A warm golden glow fills the screen as your agent's 3D desktop materialises
 6. **First Words** — Your agent speaks its psychologically-tuned first greeting
-7. **Feature Walkthrough** — Guided setup of integrations (Obsidian, browser, calendar, email, and more)
+7. **Feature Walkthrough** — Guided setup of 12 integrations (Obsidian, browser, calendar, email, AI services, and more)
 
 ### Build an Installer
 
@@ -195,6 +195,31 @@ A 3-tier memory system with episodic overlay, all semantically indexed:
 
 **Semantic Search** via Gemini text-embedding-004 (768 dimensions) enables intelligent memory retrieval across all tiers.
 
+### Trust Graph Engine
+
+Agent Friday doesn't just remember facts about people — it builds a structured, multi-dimensional trust model of every person in the user's world. Context tells you what's happening, but trust tells you what to do about it.
+
+| Dimension | What It Measures | Scale |
+|-----------|-----------------|-------|
+| **Overall** | Weighted composite trust score | 0-1 |
+| **Reliability** | Do they follow through on commitments? | 0-1 |
+| **Information Quality** | Is their information usually accurate? | 0-1 |
+| **Emotional Trust** | Is it safe to be vulnerable with them? | 0-1 |
+| **Timeliness** | Do they respond and deliver on time? | 0-1 |
+| **Domain Expertise** | Per-domain credibility (finance, code, cooking, etc.) | 0-1 per domain |
+
+**How it works:**
+
+- **Person Resolution** — Fuzzy matching across names, emails, handles, and nicknames. "John", "John Smith", and "john@co.com" resolve to the same person node.
+- **Evidence-Based Scoring** — Every observation (promise kept, accurate info, helpful action, user statement) is recorded as trust evidence with impact scoring.
+- **Hermeneutic Re-evaluation** — Trust isn't accumulated linearly. Each new observation triggers a full recomputation of all trust dimensions, weighted by recency (30-day half-life) and impact magnitude.
+- **Communication Logging** — Tracks interactions across channels (email, Slack, meetings, calls) with sentiment analysis.
+- **Automatic Extraction** — Person mentions are extracted from every conversation by Claude and routed to the Trust Graph automatically.
+- **Time Decay** — Trust scores gradually drift toward uncertainty (0.3 floor) for people not recently interacted with.
+- **System-Wide Integration** — Trust profiles inject into meeting prep briefings, communication draft generation, system prompts, and the agent's profile intelligence.
+
+The Trust Graph persists to `trust-graph.json` with up to 200 person nodes, 50 evidence items per person, and 30 communication events per person.
+
 ### Personality System
 
 The agent's personality is not a static prompt — it's a dynamic composition assembled fresh for every interaction:
@@ -204,8 +229,9 @@ The agent's personality is not a static prompt — it's a dynamic composition as
 3. **Emotional Context** — Current mood, energy level, mood streak (keyword heuristic analysis)
 4. **Ambient Awareness** — Active app, window title, focus streak, time of day
 5. **Relationship Memory** — Trust level, inside jokes, communication patterns, peak interaction hours
-6. **Style Hints** — Dynamic micro-directives that modulate tone based on context
-7. **Prompt Budget** — Intelligent token allocation ensures personality context fits within model limits
+6. **Trust Graph** — Multi-dimensional credibility profiles of key people in the user's world
+7. **Style Hints** — Dynamic micro-directives that modulate tone based on context
+8. **Prompt Budget** — Intelligent token allocation ensures personality context fits within model limits
 
 The agent adapts in real time: rapid-fire when you're focused, exploratory when you're riffing, calm when you're exhausted, and sharp when you need precision.
 
@@ -217,6 +243,17 @@ Over time, each agent's 3D desktop visualisation becomes visually unique. Agent 
 - "Analytical" agents shift toward cyan/blue with faster particle speeds
 - "Playful" agents develop higher cube fragmentation and particle energy
 - Session count gradually intensifies all parameters (maturity factor over ~50 sessions)
+
+### Image Generation — Nano Banana 2
+
+Agent Friday uses **Nano Banana 2** (Google Gemini 3.1 Flash Image) as its primary image generation engine:
+
+- **Pro-quality images at flash speed** — Powered by Google's latest image generation model
+- **14 aspect ratios** — 1:1, 1:4, 1:8, 2:3, 3:2, 3:4, 4:1, 4:3, 4:5, 5:4, 8:1, 9:16, 16:9, 21:9
+- **4 resolution tiers** — 512px, 1K, 2K, 4K
+- **Accurate text rendering** — One of the first models to reliably render text in images
+- **No extra API key needed** — Uses the same Gemini API key you already have
+- **DALL-E 3 fallback** — Automatically falls back to OpenAI DALL-E 3 if available
 
 ### Intelligent Agents
 
@@ -262,6 +299,17 @@ On-the-fly GitHub repository loading and code analysis:
 - **Directory exploration** with file type and size metadata
 - **Automatic cleanup** — repos removed after use to save disk space
 
+### Communications Intelligence
+
+Relationship-aware communication drafting powered by Claude Sonnet and the Trust Graph:
+
+- **Draft emails, messages, replies, and follow-ups** in the user's voice
+- **Trust-informed tone calibration** — drafts automatically adapt based on Trust Graph profiles of recipients
+- **Writing style learning** — infers style preferences from long-term memory
+- **Clipboard integration** — drafts are automatically copied for pasting
+- **Mailto integration** — open drafts directly in the default email client
+- **Iterative refinement** — refine any draft with natural language instructions
+
 ### Live Call Participation
 
 Join video calls (Google Meet, Zoom, Teams) using virtual audio routing:
@@ -288,8 +336,8 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | **Google Calendar** | OAuth2 read/write, meeting prep, event management |
 | **Gmail** | OAuth2 email read/compose/send, draft assistance |
 | **Media Streaming** | Spotify, YouTube, Plex, OBS Studio control |
+| **Nano Banana 2 + OpenAI Services** | Image generation (Nano Banana 2 primary, DALL-E 3 fallback), o3 reasoning, Whisper transcription, embeddings |
 | **Office Suite** | Microsoft Office, Google Workspace |
-| **OpenAI Services** | DALL-E 3 image generation, TTS, GPT models |
 | **OpenRouter** | Access to 200+ models (Llama, Mistral, Gemma, Command R, DeepSeek, etc.) |
 | **PageIndex** | Vectorless document intelligence — index PDFs and answer questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex)) |
 | **Perplexity** | Web search with citations |
@@ -312,8 +360,9 @@ Agent Friday connects to your entire workflow through a modular connector regist
 - **Document Intelligence (PageIndex)** — Vectorless reasoning-based RAG: index any PDF into a hierarchical tree, then search or ask questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex))
 - **Screen Capture** — Automated or on-demand desktop screenshots for visual context
 - **Self-Improvement** — Can read and propose changes to its own source code (user-approved)
-- **Meeting Prep** — Automatic briefing generation before calendar events
+- **Meeting Prep** — Automatic trust-annotated briefing generation before calendar events
 - **Predictive Intelligence** — Proactive briefings, emotional check-ins, and context-aware notifications
+- **Superpowers Registry** — Dynamic power system for agent capabilities, with dedicated panel UI
 
 ---
 
@@ -325,19 +374,20 @@ agent-friday/
     main/                              # Electron main process (Node.js)
       index.ts                         # App lifecycle, window management, IPC hub
       server.ts                        # Express API + Claude tool loop
-      personality.ts                   # Dynamic personality composition
+      personality.ts                   # Dynamic personality composition + AGI OS identity
       onboarding.ts                    # "Her"-inspired intake flow
       settings.ts                      # Persistent configuration store
-      memory.ts                        # 3-tier memory system
+      memory.ts                        # 3-tier memory system + person mention extraction
       memory-consolidation.ts          # 6-hour memory consolidation engine
       episodic-memory.ts               # Session episode recording
       relationship-memory.ts           # User-agent relationship tracking
+      trust-graph.ts                   # Multi-dimensional people trust intelligence
       semantic-search.ts               # Gemini embedding-powered search
       sentiment.ts                     # Mood/energy keyword analysis
       ambient.ts                       # Desktop context polling
       psychological-profile.ts         # Claude-powered psych analysis
       personality-evolution.ts         # Trait-to-visual parameter mapping
-      feature-setup.ts                 # 9-step guided onboarding
+      feature-setup.ts                 # 12-step guided onboarding
       openrouter.ts                    # OpenRouter multi-model provider
       soc-bridge.ts                    # Self-Operating Computer bridge (Python JSONL)
       git-loader.ts                    # GitHub repo loading + code intelligence
@@ -345,8 +395,8 @@ agent-friday/
       mcp-client.ts                    # Model Context Protocol client
       mcp-config.ts                    # MCP server configuration
       desktop-tools.ts                 # OS-level tool execution
-      eve-profile.ts                   # Agent profile persistence
-      preload.ts                       # IPC bridge (20+ namespaces, 80+ channels)
+      eve-profile.ts                   # Agent profile persistence + Trust Graph enrichment
+      preload.ts                       # IPC bridge (22+ namespaces, 90+ channels)
       prompt-budget.ts                 # Token allocation for personality context
       voice-audition.ts                # Voice preview sample generation
       screen-capture.ts                # Desktop screenshot capture
@@ -360,10 +410,11 @@ agent-friday/
       session-health.ts                # Uptime & error tracking
       clipboard-intelligence.ts        # Clipboard monitoring
       call-integration.ts              # VB-Cable call participation
-      meeting-prep.ts                  # Calendar event briefing
-      communications.ts                # Unified communications layer
+      meeting-prep.ts                  # Trust-annotated calendar event briefing
+      communications.ts                # Trust-aware communications intelligence
       notifications.ts                 # System notification dispatch
       calendar.ts                      # Google Calendar OAuth2 integration
+      superpowers-registry.ts          # Dynamic agent power system
 
       integrity/                       # Asimov's cLaws enforcement
         core-laws.ts                   # Three Laws text + verification
@@ -414,6 +465,8 @@ agent-friday/
         onboarding-handlers.ts         # Onboarding flow
         integration-handlers.ts        # Connectors, MCP, browser, SOC, GitLoader
         integrity-handlers.ts          # Integrity verification + status
+        trust-graph-handlers.ts        # Trust Graph CRUD + queries
+        superpowers-handlers.ts        # Superpowers registry operations
 
       pageindex/                       # Vectorless RAG engine (PageIndex port)
         index.ts                       # Public API barrel export
@@ -429,7 +482,7 @@ agent-friday/
       main.tsx                         # React DOM entry point
       types.d.ts                       # Window API type declarations
       hooks/
-        useGeminiLive.ts               # WebSocket voice session + tool routing
+        useGeminiLive.ts               # WebSocket voice session + tool routing (Trust Graph tools)
         useWakeWord.ts                 # "Hey Friday" wake word detection
       audio/
         AudioPlaybackEngine.ts         # Gapless Web Audio scheduling
@@ -458,6 +511,7 @@ agent-friday/
         TextInput.tsx                  # Always-visible text chat input
         FileToast.tsx                  # File modification notification toasts
         ResearchPanel.tsx              # Clickable research report sidebar
+        SuperpowersPanel.tsx           # Agent powers dashboard
         ActionFeed.tsx                 # Real-time tool activity ticker
         ConnectionOverlay.tsx          # Error recovery overlay
         WireframeNetwork.tsx           # Canvas 2D primary background
@@ -469,7 +523,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 132 source files, ~22,000+ lines of TypeScript**
+**Total: 137 source files, ~57,000 lines of TypeScript**
 
 ### Technology Stack
 
@@ -480,12 +534,14 @@ agent-friday/
 | **Bundler** | Vite 6 | Fast dev server + production builds |
 | **Voice** | Gemini 2.5 Flash (WebSocket) | Real-time bidirectional audio |
 | **Reasoning** | Claude Opus/Sonnet (Anthropic SDK) | Deep analysis, memory, profiling |
+| **Image Generation** | Nano Banana 2 (Gemini 3.1 Flash Image) | Pro-quality image generation, 512px to 4K, 14 aspect ratios |
 | **Multi-Model** | OpenRouter API | Access to 200+ models (Llama, Mistral, Gemma, etc.) |
 | **Embeddings** | Gemini text-embedding-004 | Semantic search (768 dimensions) |
 | **Agent Voices** | ElevenLabs TTS | Distinct voices for sub-agents |
 | **Document Intelligence** | PageIndex (Vectify AI) + OpenAI GPT-4o | Vectorless tree-based RAG (~99% accuracy) |
 | **Desktop Automation** | Self-Operating Computer (Python) | Mouse, keyboard, screen reading via JSONL bridge |
 | **Code Intelligence** | GitLoader | On-the-fly GitHub repo analysis |
+| **Trust Intelligence** | Trust Graph Engine | Multi-dimensional people credibility scoring with hermeneutic re-evaluation |
 | **Protocols** | MCP (Model Context Protocol) | Dynamic tool registration |
 | **Browser** | Puppeteer-core + WebSocket | Tab control, screenshots, DOM |
 | **Calendar** | Google APIs (OAuth2) | Google Calendar + Gmail integration |
@@ -505,6 +561,7 @@ agent-friday/
 - **Shell sanitisation** — PowerShell commands sanitised before execution
 - **Gateway trust enforcement** — 5-tier trust engine with cryptographic pairing and audit logging
 - **Consent gates** — Destructive and irreversible actions require explicit user approval (Asimov's cLaws)
+- **Trust Graph integrity** — Evidence-based credibility scoring with time-decayed recomputation
 
 ---
 
@@ -545,6 +602,7 @@ All settings persist in `{userData}/eve-settings.json`:
 | **Integrations** | Obsidian vault path, Calendar/Gmail OAuth tokens, World Monitor path |
 | **Psychology** | Openness, trust readiness, connection style, approach strategy |
 | **Features** | Voice toggle, notifications, clipboard intelligence, screen capture |
+| **Trust Graph** | Max persons, evidence retention, decay rate, re-evaluation threshold |
 | **Onboarding** | Phase tracking, feature setup state, personality evolution parameters |
 | **Integrity** | HMAC signatures, law verification timestamps, watchdog state |
 
@@ -585,7 +643,7 @@ macOS and Linux builds are supported but primarily tested on Windows.
 ## Privacy & Security
 
 - **No telemetry** — Agent Friday does not phone home or collect usage data
-- **Local storage** — All memory, settings, and conversation data stay on your machine
+- **Local storage** — All memory, settings, trust graph data, and conversation data stay on your machine
 - **Screen capture** is local-only — images are sent directly to Gemini for context and never stored
 - **Obsidian sync** is opt-in — bidirectional vault sync only if you configure a vault path
 - **Webcam** access is tool-gated — the agent must explicitly request permission
@@ -593,19 +651,20 @@ macOS and Linux builds are supported but primarily tested on Windows.
 - **Connector tools** run locally — no data leaves your system except for API calls you initiate
 - **API keys** are stored in Electron's `userData` directory (OS-encrypted at rest)
 - **Integrity verification** — Core safety laws are HMAC-signed and checked every startup
+- **Trust Graph** data is local-only — person profiles and trust scores never leave your machine
 
 ---
 
 ## FAQ
 
 **What makes this different from ChatGPT / Claude desktop?**
-Agent Friday is a full desktop operating system layer, not a chat window. It sees your screen, controls your mouse, manages your files, connects to your tools, remembers your patterns, and adapts its personality to who you are. It runs locally with full privacy.
+Agent Friday is a full AGI operating system, not a chat window. It sees your screen, controls your mouse, manages your files, connects to your tools, builds trust models of the people in your world, remembers your patterns, and adapts its personality to who you are. It runs locally with full privacy.
 
 **Is it always listening?**
 Only when a voice session is active (you initiate it). There is no ambient microphone monitoring. Audio is processed via Gemini's WebSocket API and is not stored.
 
 **Where is my data?**
-All memory, settings, and conversation data stay on your local machine in `{userData}/`. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection.
+All memory, settings, trust graph, and conversation data stay on your local machine in `{userData}/`. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection.
 
 **Can it actually control my computer?**
 Yes — mouse clicks, keyboard input, app launching, file management, terminal commands. But every destructive or irreversible action requires your explicit approval first (Asimov's cLaws, Second Law).
@@ -615,6 +674,12 @@ The onboarding intake is directly inspired by the OS1 setup scene in *Her*. Your
 
 **What is OpenRouter?**
 OpenRouter gives Agent Friday access to 200+ AI models from various providers through a single API key. This means your agent can use Llama, Mistral, Gemma, Command R, DeepSeek, and many more — in addition to Claude and Gemini.
+
+**What is Nano Banana 2?**
+Nano Banana 2 is Google's latest image generation model (Gemini 3.1 Flash Image). It produces pro-quality images at flash speed with accurate text rendering, supporting resolutions from 512px to 4K across 14 aspect ratios. It uses the same Gemini API key — no additional keys needed.
+
+**What is the Trust Graph?**
+The Trust Graph is Agent Friday's model of the people in your world. It tracks multi-dimensional trust scores (reliability, information quality, emotional trust, domain expertise) based on observed evidence, with automatic re-evaluation as new information arrives. Think PageRank, but for human credibility.
 
 ---
 
@@ -628,6 +693,7 @@ OpenRouter gives Agent Friday access to 200+ AI models from various providers th
 | Can't join calls | Install [VB-Cable](https://vb-audio.com/Cable/) and select "CABLE Output" as meeting mic |
 | Connector tools missing | Connectors auto-detect software at startup; restart after installing new software |
 | World Monitor not available | Install World Monitor and set its path in Settings |
+| Image generation not working | Ensure Gemini API key is set (Nano Banana 2 uses the Gemini key) |
 | Build fails | Run `npm run typecheck` to identify TypeScript errors |
 | Packaged app shows blank screen | Ensure `npm run build` succeeds before `npm run package` |
 | Integrity warning on startup | Core law files may have been modified; check `integrity/core-laws.ts` |
@@ -653,7 +719,7 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 
 - **[PageIndex](https://github.com/VectifyAI/PageIndex)** by **[Vectify AI](https://vectify.ai)** (Mingtian Zhang, Yu Tang, and the PageIndex Team) — The brilliant vectorless, reasoning-based RAG framework that powers Agent Friday's document intelligence. PageIndex replaces traditional vector-based retrieval with a hierarchical tree structure navigated by LLM reasoning, achieving 98.7% accuracy on FinanceBench. Our TypeScript port integrates their complete indexing and search pipeline. MIT License.
 - [OpenClaw](https://github.com/pchaganti/gx-openclaws) — Pioneered applying Asimov's Laws to LLM agents; the conceptual foundation for Asimov's cLaws
-- [Google Gemini](https://ai.google.dev/) — Real-time voice AI
+- [Google Gemini](https://ai.google.dev/) — Real-time voice AI + Nano Banana 2 image generation
 - [Anthropic Claude](https://anthropic.com/) — Deep reasoning engine
 - [OpenRouter](https://openrouter.ai/) — Multi-model API gateway
 - [ElevenLabs](https://elevenlabs.io/) — Multi-agent voice synthesis
@@ -674,6 +740,6 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 </p>
 
 <p align="center">
-  <strong>Agent Friday is an Asimov Agent, built by <a href="https://futurespeak.ai">FutureSpeak.AI</a></strong><br/>
+  <strong>Agent Friday is an Asimov Agent — the AGI OS, built by <a href="https://futurespeak.ai">FutureSpeak.AI</a></strong><br/>
   Governed by <a href="#asimovs-claws">Asimov's cLaws</a> — safety-first autonomous AI for the real world.
 </p>

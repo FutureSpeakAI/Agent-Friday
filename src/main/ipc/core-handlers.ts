@@ -22,6 +22,10 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   ipcMain.handle('settings:get', () => settingsManager.getMasked());
 
   ipcMain.handle('settings:set', async (_event, key: string, value: unknown) => {
+    // Validate key is a non-empty string
+    if (!key || typeof key !== 'string') {
+      throw new Error('settings:set requires a string key');
+    }
     await settingsManager.setSetting(key, value);
   });
 
@@ -76,6 +80,16 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   ipcMain.handle('mcp:get-status', () => mcpClient.getStatus());
 
   ipcMain.handle('mcp:add-server', async (_event, config: any) => {
+    // Validate config is an object with required fields
+    if (!config || typeof config !== 'object') {
+      throw new Error('mcp:add-server requires a config object');
+    }
+    if (!config.name || typeof config.name !== 'string') {
+      throw new Error('mcp:add-server config must include a string "name"');
+    }
+    if (!config.command || typeof config.command !== 'string') {
+      throw new Error('mcp:add-server config must include a string "command"');
+    }
     await mcpClient.addServer(config);
     return mcpClient.getStatus();
   });
@@ -86,6 +100,14 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   });
 
   ipcMain.handle('shell:open-path', async (_event, filePath: string) => {
+    // Validate path is a string and doesn't contain shell metacharacters
+    if (!filePath || typeof filePath !== 'string') {
+      throw new Error('shell:open-path requires a valid file path');
+    }
+    // Block obviously dangerous patterns (command injection via path)
+    if (/[;&|`$]/.test(filePath)) {
+      throw new Error('shell:open-path rejected: path contains shell metacharacters');
+    }
     return shell.openPath(filePath);
   });
 
