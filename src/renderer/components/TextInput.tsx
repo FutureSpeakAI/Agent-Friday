@@ -1,16 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 interface TextInputProps {
-  visible: boolean;
   onSend: (text: string) => void;
-  onClose: () => void;
+  isConnected?: boolean;
 }
 
 const MAX_ROWS = 5;
 const LINE_HEIGHT = 20; // px per line
 
-export default function TextInput({ visible, onSend, onClose }: TextInputProps) {
+export default function TextInput({ onSend, isConnected }: TextInputProps) {
   const [value, setValue] = useState('');
+  const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-resize textarea to content (1–5 rows)
@@ -24,21 +24,25 @@ export default function TextInput({ visible, onSend, onClose }: TextInputProps) 
   }, []);
 
   useEffect(() => {
-    if (visible) {
-      setTimeout(() => {
-        textareaRef.current?.focus();
-        autoResize();
-      }, 50);
-    } else {
-      setValue('');
-    }
-  }, [visible, autoResize]);
-
-  useEffect(() => {
     autoResize();
   }, [value, autoResize]);
 
-  if (!visible) return null;
+  // Tab key focuses the input from anywhere
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        // Don't capture Tab if user is in another input/textarea or settings panel
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || (target.tagName === 'TEXTAREA' && target !== textareaRef.current)) {
+          return;
+        }
+        e.preventDefault();
+        textareaRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   const handleSubmit = () => {
     const trimmed = value.trim();
@@ -50,7 +54,7 @@ export default function TextInput({ visible, onSend, onClose }: TextInputProps) 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      onClose();
+      textareaRef.current?.blur();
       return;
     }
     // Enter sends, Shift+Enter adds newline
@@ -60,18 +64,28 @@ export default function TextInput({ visible, onSend, onClose }: TextInputProps) 
     }
   };
 
-  const isFocused = typeof document !== 'undefined' && document.activeElement === textareaRef.current;
-
   return (
     <div style={styles.container}>
-      <div style={styles.inputRow}>
-        <span style={styles.prompt}>›</span>
+      <div
+        style={{
+          ...styles.inputRow,
+          borderColor: focused
+            ? 'rgba(0, 240, 255, 0.3)'
+            : 'rgba(0, 240, 255, 0.08)',
+          background: focused
+            ? 'rgba(255,255,255,0.05)'
+            : 'rgba(255,255,255,0.02)',
+        }}
+      >
+        <span style={{ ...styles.prompt, color: focused ? '#00f0ff' : '#333348' }}>›</span>
         <textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Type a message..."
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={isConnected ? 'Type a message... (Tab to focus)' : 'Connect to start typing...'}
           style={styles.textarea}
           autoComplete="off"
           spellCheck={false}
@@ -82,22 +96,21 @@ export default function TextInput({ visible, onSend, onClose }: TextInputProps) 
           onClick={handleSubmit}
           style={{
             ...styles.sendBtn,
-            opacity: value.trim() ? 1 : 0.3,
+            opacity: value.trim() ? 1 : 0.2,
           }}
           disabled={!value.trim()}
+          title="Send (Enter)"
         >
           ↵
         </button>
       </div>
-      {!isFocused && (
+      {focused && (
         <div style={styles.hint}>
-          <span style={styles.hintKey}>Tab</span> voice mode
-          <span style={styles.hintSep}>·</span>
-          <span style={styles.hintKey}>Esc</span> close
-          <span style={styles.hintSep}>·</span>
           <span style={styles.hintKey}>Enter</span> send
           <span style={styles.hintSep}>·</span>
           <span style={styles.hintKey}>Shift+Enter</span> newline
+          <span style={styles.hintSep}>·</span>
+          <span style={styles.hintKey}>Esc</span> unfocus
         </div>
       )}
     </div>
@@ -108,7 +121,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
+    gap: 4,
     width: '100%',
     maxWidth: 560,
     padding: '0 24px',
@@ -117,20 +130,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'flex-start',
     gap: 10,
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(0, 240, 255, 0.15)',
+    border: '1px solid',
     borderRadius: 12,
-    padding: '10px 16px',
+    padding: '8px 14px',
     backdropFilter: 'blur(8px)',
-    transition: 'border-color 0.2s',
+    transition: 'border-color 0.2s, background 0.2s',
   },
   prompt: {
-    color: '#00f0ff',
     fontSize: 18,
     fontWeight: 700,
     lineHeight: `${LINE_HEIGHT}px`,
     flexShrink: 0,
-    paddingTop: 0,
+    transition: 'color 0.2s',
   },
   textarea: {
     flex: 1,

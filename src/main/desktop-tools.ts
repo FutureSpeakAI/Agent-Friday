@@ -860,6 +860,15 @@ async function readFile(filePath: string): Promise<ToolResult> {
 async function writeFile(filePath: string, content: string): Promise<ToolResult> {
   try {
     await fsWriteFile(filePath, content, 'utf-8');
+    // Notify renderer about file modification
+    if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+      mainWindowRef.webContents.send('file:modified', {
+        path: filePath,
+        action: 'write',
+        size: content.length,
+        timestamp: Date.now(),
+      });
+    }
     return { result: `File written: ${filePath} (${content.length} characters)` };
   } catch (err: unknown) {
     return { error: `Failed to write file: ${err instanceof Error ? err.message : String(err)}` };

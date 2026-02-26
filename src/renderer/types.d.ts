@@ -130,12 +130,25 @@ declare global {
           description: string;
           parameters: Record<string, unknown>;
         }>;
+        getToolDeclarations: () => Promise<Array<{
+          name: string;
+          description: string;
+          parameters: Record<string, unknown>;
+        }>>;
         getFirstGreeting: () => Promise<string>;
         finalizeAgent: (config: Record<string, unknown>) => Promise<{ success: boolean }>;
       };
 
       intelligence: {
         getBriefing: () => Promise<string>;
+        listAll: () => Promise<Array<{
+          id: string;
+          topic: string;
+          content: string;
+          createdAt: number;
+          delivered: boolean;
+          priority: 'high' | 'medium' | 'low';
+        }>>;
         setup: (
           topics: Array<{ topic: string; schedule: string; priority: string }>
         ) => Promise<string>;
@@ -374,8 +387,17 @@ declare global {
           obsidianVaultPath: string;
           hasGeminiKey: boolean;
           hasAnthropicKey: boolean;
+          hasElevenLabsKey: boolean;
           geminiKeyHint: string;
           anthropicKeyHint: string;
+          elevenLabsKeyHint: string;
+          hasOpenaiKey: boolean;
+          openaiKeyHint: string;
+          hasPerplexityKey: boolean;
+          perplexityKeyHint: string;
+          hasFirecrawlKey: boolean;
+          firecrawlKeyHint: string;
+          agentVoicesEnabled: boolean;
           wakeWordEnabled: boolean;
           notificationWhisperEnabled: boolean;
           notificationAllowedApps: string[];
@@ -384,7 +406,7 @@ declare global {
         }>;
         setAutoLaunch: (enabled: boolean) => Promise<void>;
         setAutoScreenCapture: (enabled: boolean) => Promise<void>;
-        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs', value: string) => Promise<void>;
+        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl', value: string) => Promise<void>;
         setObsidianVaultPath: (vaultPath: string) => Promise<void>;
         set: (key: string, value: unknown) => Promise<void>;
       };
@@ -734,6 +756,18 @@ declare global {
           glowIntensity: number;
         }>;
       };
+
+      shell: {
+        showInFolder: (filePath: string) => Promise<void>;
+        openPath: (filePath: string) => Promise<string>;
+      };
+
+      onFileModified: (callback: (data: {
+        path: string;
+        action: string;
+        size: number;
+        timestamp: number;
+      }) => void) => () => void;
 
       window: {
         minimize: () => void;

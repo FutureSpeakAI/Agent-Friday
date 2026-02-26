@@ -1,12 +1,37 @@
 import React from 'react';
 
+interface ApiStatus {
+  gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
+  claude: 'ready' | 'no-key';
+  elevenlabs: 'ready' | 'no-key';
+  browser: 'ready' | 'unavailable';
+}
+
 interface StatusBarProps {
   status: string;
   isWebcamActive?: boolean;
   isInCall?: boolean;
+  apiStatus?: ApiStatus;
 }
 
-export default function StatusBar({ status, isWebcamActive, isInCall }: StatusBarProps) {
+function StatusDot({ label, state }: { label: string; state: string }) {
+  const isGood = state === 'connected' || state === 'ready';
+  const isWarn = state === 'connecting';
+  const color = isGood ? '#22c55e' : isWarn ? '#f59e0b' : state === 'no-key' ? '#555568' : '#ef4444';
+
+  return (
+    <div style={dotStyles.wrapper} title={`${label}: ${state}`}>
+      <div style={{
+        ...dotStyles.dot,
+        background: color,
+        boxShadow: isGood ? `0 0 6px ${color}` : isWarn ? `0 0 4px ${color}` : 'none',
+      }} />
+      <span style={{ ...dotStyles.label, color: isGood ? '#8a8a9a' : '#444458' }}>{label}</span>
+    </div>
+  );
+}
+
+export default function StatusBar({ status, isWebcamActive, isInCall, apiStatus }: StatusBarProps) {
   const isOk = status === 'Ready' || status === 'Connected' || status === 'Connected — Listening';
   const isError =
     status.startsWith('Error') ||
@@ -24,6 +49,8 @@ export default function StatusBar({ status, isWebcamActive, isInCall }: StatusBa
         : isListening
           ? '#00f0ff'
           : '#00f0ff';
+
+  const api = apiStatus || { gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', browser: 'unavailable' };
 
   return (
     <div className="hover-glow" style={styles.bar}>
@@ -59,13 +86,35 @@ export default function StatusBar({ status, isWebcamActive, isInCall }: StatusBa
         </div>
       </div>
       <div style={styles.right}>
-        <span style={styles.modelLabel}>Gemini Live</span>
-        <span style={styles.separator}>+</span>
-        <span style={styles.claudeLabel}>Claude Opus</span>
+        <StatusDot label="GEM" state={api.gemini} />
+        <StatusDot label="CLU" state={api.claude} />
+        <StatusDot label="TTS" state={api.elevenlabs} />
+        <StatusDot label="BRW" state={api.browser} />
       </div>
     </div>
   );
 }
+
+const dotStyles: Record<string, React.CSSProperties> = {
+  wrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    cursor: 'default',
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+  label: {
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+  },
+};
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
@@ -110,7 +159,7 @@ const styles: Record<string, React.CSSProperties> = {
   right: {
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
+    gap: 14,
   },
   dot: {
     width: 6,
@@ -139,7 +188,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.1em',
-    color: '#a78bfa',  // purple-tinted — distinct from cyan brand name
+    color: '#a78bfa',
     fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
     textShadow: '0 0 8px rgba(138, 43, 226, 0.25)',
   },
@@ -148,18 +197,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: 1,
     background: 'linear-gradient(90deg, rgba(0, 240, 255, 0.0), rgba(0, 240, 255, 0.25), rgba(138, 43, 226, 0.3), rgba(0, 240, 255, 0.25), rgba(0, 240, 255, 0.0))',
     borderRadius: 1,
-  },
-  modelLabel: {
-    fontSize: 11,
-    color: '#8A2BE2',
-  },
-  claudeLabel: {
-    fontSize: 11,
-    color: '#d4a574',
-  },
-  separator: {
-    color: '#333345',
-    fontSize: 11,
   },
   cameraIndicator: {
     display: 'inline-flex',

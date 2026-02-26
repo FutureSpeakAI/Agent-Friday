@@ -22,6 +22,10 @@ export function registerIntegrationHandlers(): void {
     return intelligenceEngine.getBriefingSummary();
   });
 
+  ipcMain.handle('intelligence:list-all', () => {
+    return intelligenceEngine.getAllBriefings();
+  });
+
   ipcMain.handle(
     'intelligence:setup',
     async (
