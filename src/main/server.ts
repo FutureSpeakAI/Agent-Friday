@@ -9,6 +9,8 @@ import { mcpClient } from './mcp-client';
 import { buildSystemPrompt } from './personality';
 import { browserToolDefs, executeBrowserTool } from './browser';
 import { connectorRegistry } from './connectors/registry';
+import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
+import { settingsManager } from './settings';
 
 dotenv.config();
 
@@ -45,6 +47,26 @@ export async function startServer(): Promise<number> {
     next();
   });
 
+  // Session token authentication middleware for API routes
+  const authenticateToken: express.RequestHandler = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    // Also accept token from query param (for SSE/streaming endpoints)
+    const queryToken = req.query.token as string | undefined;
+
+    if (token === sessionToken || queryToken === sessionToken) {
+      return next();
+    }
+
+    // Allow unauthenticated access from same-origin (no origin = Electron renderer)
+    if (!req.headers.origin) {
+      return next();
+    }
+
+    res.status(401).json({ error: 'Unauthorized' });
+  };
+
   // Serve the built renderer files over http://
   // (required for microphone access in Electron)
   const rendererPath = path.join(__dirname, '../renderer');
@@ -54,20 +76,26 @@ export async function startServer(): Promise<number> {
     res.json({ status: 'ok' });
   });
 
-  app.post('/api/chat', async (req, res) => {
+  app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history = [] } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      res.status(400).json({ error: 'Message is required and must be a string' });
+      return;
+    }
 
     try {
       const result = await handleClaude(message, history);
       res.json(result);
-    } catch (err: any) {
-      console.error('[EVE] Chat error:', err);
-      res.status(500).json({ error: err.message || 'Internal server error' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Internal server error';
+      console.error('[Server] Chat error:', err);
+      res.status(500).json({ error: errMsg });
     }
   });
 
   // --- Audio transcription via Gemini ---
-  app.post('/api/transcribe', async (req, res) => {
+  app.post('/api/transcribe', authenticateToken, async (req, res) => {
     const { audio, mimeType } = req.body;
 
     if (!audio) {
@@ -96,16 +124,17 @@ export async function startServer(): Promise<number> {
       ]);
 
       const transcript = result.response.text().trim();
-      console.log('[EVE] Transcribed:', transcript);
+      console.log('[Server] Transcribed:', transcript.slice(0, 80));
       res.json({ transcript });
-    } catch (err: any) {
-      console.error('[EVE] Transcription error:', err);
-      res.status(500).json({ error: err.message || 'Transcription failed' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Transcription failed';
+      console.error('[Server] Transcription error:', err);
+      res.status(500).json({ error: errMsg });
     }
   });
 
   // --- Text-to-speech via Gemini (natural voice) ---
-  app.post('/api/speak', async (req, res) => {
+  app.post('/api/speak', authenticateToken, async (req, res) => {
     const { text } = req.body;
 
     if (!text) {
@@ -148,9 +177,24 @@ export async function startServer(): Promise<number> {
         }
       );
 
+      if (!apiRes.ok) {
+        const errorText = await apiRes.text();
+        console.error('[Server] Gemini TTS HTTP error:', apiRes.status, errorText.slice(0, 300));
+        res.status(500).json({ error: `Gemini TTS failed (HTTP ${apiRes.status})` });
+        return;
+      }
+
       const data = await apiRes.json();
+
+      // Check for Gemini API-level errors
+      if (data.error) {
+        console.error('[Server] Gemini TTS API error:', data.error.message || JSON.stringify(data.error).slice(0, 300));
+        res.status(500).json({ error: data.error.message || 'Gemini TTS error' });
+        return;
+      }
+
       const parts = data.candidates?.[0]?.content?.parts || [];
-      const audioPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('audio/'));
+      const audioPart = parts.find((p: Record<string, any>) => p.inlineData?.mimeType?.startsWith('audio/'));
 
       if (audioPart) {
         res.json({
@@ -158,21 +202,28 @@ export async function startServer(): Promise<number> {
           mimeType: audioPart.inlineData.mimeType,
         });
       } else {
-        console.warn('[EVE] No audio in Gemini TTS response:', JSON.stringify(data).slice(0, 500));
+        console.warn('[Server] No audio in Gemini TTS response:', JSON.stringify(data).slice(0, 500));
         res.status(500).json({ error: 'No audio generated' });
       }
-    } catch (err: any) {
-      console.error('[EVE] TTS error:', err);
-      res.status(500).json({ error: err.message || 'TTS failed' });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'TTS failed';
+      console.error('[Server] TTS error:', err);
+      res.status(500).json({ error: errMsg });
     }
   });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     // Bind to 127.0.0.1 only — never expose to network
     const server = app.listen(0, '127.0.0.1', () => {
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : 3333;
       resolve(port);
+    });
+
+    // Handle bind errors (e.g., address in use)
+    server.on('error', (err: Error) => {
+      console.error('[Server] Failed to bind:', err);
+      reject(err);
     });
   });
 }
@@ -217,14 +268,32 @@ export async function runClaudeToolLoop(
 ): Promise<ClaudeToolLoopResult> {
   const {
     systemPrompt,
-    messages,
     tools,
     maxIterations = 25,
     browserToolNames = new Set<string>(),
     connectorToolNames = new Set<string>(),
   } = options;
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  // Clone messages to avoid mutating the caller's array
+  const messages = [...options.messages];
+
+  // Check if we should use OpenRouter
+  const provider = settingsManager.getPreferredProvider();
+  if (provider === 'openrouter' && openRouter.isConfigured()) {
+    return runOpenRouterToolLoop({ ...options, messages });
+  }
+
+  // Default: direct Anthropic SDK
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return {
+      response: 'Anthropic API key not configured. Please set it in Settings.',
+      model: 'claude-opus-4-6',
+      toolCalls: 0,
+    };
+  }
+
+  const anthropic = new Anthropic({ apiKey });
 
   let response = await anthropic.messages.create({
     model: 'claude-opus-4-6',
@@ -260,14 +329,12 @@ export async function runClaudeToolLoop(
         if (browserToolNames.has(toolUse.name)) {
           result = await executeBrowserTool(toolUse.name, toolUse.input as Record<string, unknown>);
         } else if (connectorToolNames.has(toolUse.name)) {
-          // Route to connector registry (PowerShell, VS Code, Git, Firecrawl, etc.)
           const connResult = await connectorRegistry.executeTool(
             toolUse.name,
             toolUse.input as Record<string, unknown>
           );
           result = connResult.result || connResult.error || '(no output)';
         } else {
-          // Fall through to MCP (Desktop Commander, etc.)
           result = await mcpClient.callTool(toolUse.name, toolUse.input as Record<string, unknown>);
         }
 
@@ -294,11 +361,12 @@ export async function runClaudeToolLoop(
             content: typeof result === 'string' ? result : JSON.stringify(result),
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolUse.id,
-          content: `Error: ${err.message}`,
+          content: `Error: ${errMsg}`,
           is_error: true,
         });
       }
@@ -318,13 +386,77 @@ export async function runClaudeToolLoop(
 
   const textBlock = response.content.find((b) => b.type === 'text');
   return {
-    response: textBlock ? (textBlock as any).text : 'No response generated.',
+    response: textBlock && 'text' in textBlock ? textBlock.text : 'No response generated.',
     model: 'claude-opus-4-6',
     toolCalls: toolIterations,
   };
 }
 
-// --- Claude Opus 4.6 handler (local /api/chat) ---
+/**
+ * OpenRouter-based tool loop — same behavior as Anthropic but via OpenRouter API.
+ * Supports any model available through OpenRouter (200+ models).
+ */
+async function runOpenRouterToolLoop(
+  options: ClaudeToolLoopOptions
+): Promise<ClaudeToolLoopResult> {
+  const {
+    systemPrompt,
+    messages: anthropicMessages,
+    tools: anthropicTools,
+    maxIterations = 25,
+    browserToolNames = new Set<string>(),
+    connectorToolNames = new Set<string>(),
+  } = options;
+
+  const model = settingsManager.getOpenrouterModel();
+
+  // Convert Anthropic tool format → OpenRouter tool format
+  const orTools: OpenRouterTool[] = anthropicTools.map((t) => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description || '',
+      parameters: t.input_schema as Record<string, unknown>,
+    },
+  }));
+
+  // Helper to execute a tool by name
+  async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+    let result: unknown;
+    if (browserToolNames.has(name)) {
+      result = await executeBrowserTool(name, args);
+    } else if (connectorToolNames.has(name)) {
+      const connResult = await connectorRegistry.executeTool(name, args);
+      result = connResult.result || connResult.error || '(no output)';
+    } else {
+      result = await mcpClient.callTool(name, args);
+    }
+    return typeof result === 'string' ? result : JSON.stringify(result);
+  }
+
+  // Convert Anthropic messages → OpenRouter messages
+  const orMessages: OpenRouterMessage[] = anthropicMessages.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+  }));
+
+  const result = await openRouter.chatWithTools({
+    model,
+    systemPrompt,
+    messages: orMessages,
+    tools: orTools,
+    executeTool,
+    maxIterations,
+  });
+
+  return {
+    response: result.text,
+    model: result.model,
+    toolCalls: result.toolCalls,
+  };
+}
+
+// --- Claude handler (local /api/chat) ---
 // Thin wrapper: gathers tools, builds system prompt, delegates to runClaudeToolLoop().
 async function handleClaude(
   message: string,
@@ -369,8 +501,9 @@ async function handleClaude(
     if (connectorTools.length > 0) {
       console.log(`[Server] Claude has access to ${connectorTools.length} connector tools`);
     }
-  } catch (err: any) {
-    console.warn('[Server] Failed to load connector tools for Claude:', err?.message);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn('[Server] Failed to load connector tools:', errMsg);
   }
 
   // Combine MCP + browser + connector tools (local tier = ALL tools)

@@ -14,6 +14,19 @@ import {
 } from './obsidian-memory';
 import { semanticSearch } from './semantic-search';
 
+// Late-bound integrity import to avoid circular dependency
+let _integrityManager: any = null;
+function getIntegrityManager() {
+  if (!_integrityManager) {
+    try {
+      _integrityManager = require('./integrity').integrityManager;
+    } catch {
+      // Integrity system not yet initialized — skip signing
+    }
+  }
+  return _integrityManager;
+}
+
 export interface ShortTermEntry {
   role: 'user' | 'assistant';
   content: string;
@@ -145,11 +158,8 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
       if (Array.isArray(extracted.longTerm)) {
         for (const item of extracted.longTerm) {
           if (!item.fact || typeof item.fact !== 'string') continue;
-          // Check for duplicates
-          const exists = this.store.longTerm.some(
-            (e) => e.fact.toLowerCase().includes(item.fact.toLowerCase()) ||
-                   item.fact.toLowerCase().includes(e.fact.toLowerCase())
-          );
+          // Check for duplicates using normalized word overlap (not substring matching)
+          const exists = this.isDuplicateFact(item.fact, this.store.longTerm.map((e) => e.fact));
           if (!exists) {
             const newId = crypto.randomUUID();
             this.store.longTerm.push({
@@ -174,8 +184,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
         for (const item of extracted.mediumTerm) {
           if (!item.observation || typeof item.observation !== 'string') continue;
           const existing = this.store.mediumTerm.find(
-            (e) => e.observation.toLowerCase().includes(item.observation.toLowerCase()) ||
-                   item.observation.toLowerCase().includes(e.observation.toLowerCase())
+            (e) => this.isDuplicateFact(item.observation, [e.observation])
           );
           if (existing) {
             existing.occurrences++;
@@ -218,11 +227,8 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
     const validCategories = ['identity', 'preference', 'relationship', 'professional'];
     const cat = validCategories.includes(category) ? category : 'identity';
 
-    // Duplicate check
-    const exists = this.store.longTerm.some(
-      (e) => e.fact.toLowerCase().includes(fact.toLowerCase()) ||
-             fact.toLowerCase().includes(e.fact.toLowerCase())
-    );
+    // Duplicate check using word-overlap similarity
+    const exists = this.isDuplicateFact(fact, this.store.longTerm.map((e) => e.fact));
 
     if (!exists) {
       const newId = crypto.randomUUID();
@@ -299,6 +305,45 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
     return parts.join('\n\n');
   }
 
+  /**
+   * Check if a fact is a duplicate of any existing facts using word-overlap similarity.
+   * Requires >= 80% word overlap to be considered a duplicate.
+   * Avoids the substring matching bug where "he" matches "she likes cheese".
+   */
+  private isDuplicateFact(newFact: string, existingFacts: string[]): boolean {
+    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+      'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for', 'on', 'with', 'at',
+      'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'and', 'but',
+      'or', 'not', 'no', 'so', 'if', 'than', 'that', 'this', 'it', 'its', 'they', 'them',
+      'their', 'he', 'she', 'his', 'her', 'we', 'us', 'our', 'you', 'your', 'i', 'my', 'me']);
+
+    const tokenize = (text: string): Set<string> => {
+      const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      return new Set(words.filter((w) => !stopWords.has(w) && w.length > 2));
+    };
+
+    const newWords = tokenize(newFact);
+    if (newWords.size === 0) return false;
+
+    for (const existing of existingFacts) {
+      const existingWords = tokenize(existing);
+      if (existingWords.size === 0) continue;
+
+      // Compute Jaccard similarity (intersection / union)
+      let intersection = 0;
+      for (const word of newWords) {
+        if (existingWords.has(word)) intersection++;
+      }
+      const union = new Set([...newWords, ...existingWords]).size;
+      const similarity = intersection / union;
+
+      if (similarity >= 0.8) return true;
+    }
+
+    return false;
+  }
+
   private pruneExpired(): void {
     const cutoff = Date.now() - MEDIUM_TERM_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
     const before = this.store.mediumTerm.length;
@@ -326,6 +371,22 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": []}`;
     // Always save JSON (canonical source)
     const filePath = path.join(this.memoryDir, `${tier}.json`);
     await fs.writeFile(filePath, JSON.stringify(this.store[tier], null, 2), 'utf-8');
+
+    // Sign memory stores after save (integrity protection)
+    if (tier === 'longTerm' || tier === 'mediumTerm') {
+      const im = getIntegrityManager();
+      if (im) {
+        try {
+          const ltJson = JSON.stringify(this.store.longTerm, null, 2);
+          const mtJson = JSON.stringify(this.store.mediumTerm, null, 2);
+          const ltSnap = this.store.longTerm.map((e) => ({ id: e.id, fact: e.fact }));
+          const mtSnap = this.store.mediumTerm.map((e) => ({ id: e.id, observation: e.observation }));
+          await im.signMemories(ltSnap, mtSnap, ltJson, mtJson);
+        } catch (err) {
+          console.warn('[Memory] Integrity signing failed:', err);
+        }
+      }
+    }
 
     // Mirror to Obsidian vault if configured (long-term and medium-term only)
     const vaultPath = this.getVaultPath();

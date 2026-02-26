@@ -11,3 +11,4 @@ export type { ToolHandlerDeps } from './tool-handlers';
 export { registerAgentHandlers } from './agent-handlers';
 export { registerOnboardingHandlers } from './onboarding-handlers';
 export { registerIntegrationHandlers } from './integration-handlers';
+export { registerIntegrityHandlers } from './integrity-handlers';

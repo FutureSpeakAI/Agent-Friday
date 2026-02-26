@@ -610,6 +610,28 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         console.warn('[GeminiLive] Failed to load browser tools:', err);
       }
 
+      // Fetch SOC (Self-Operating Computer) + Browser-Use tool declarations
+      let socToolDecls: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+      try {
+        socToolDecls = await window.eve.soc.listTools();
+        if (socToolDecls.length > 0) {
+          console.log(`[GeminiLive] Loaded ${socToolDecls.length} SOC/browser-use tools`);
+        }
+      } catch (err) {
+        console.warn('[GeminiLive] SOC tools unavailable:', err);
+      }
+
+      // Fetch GitLoader tool declarations
+      let gitToolDecls: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+      try {
+        gitToolDecls = await window.eve.gitLoader.listTools();
+        if (gitToolDecls.length > 0) {
+          console.log(`[GeminiLive] Loaded ${gitToolDecls.length} GitLoader tools`);
+        }
+      } catch (err) {
+        console.warn('[GeminiLive] GitLoader tools unavailable:', err);
+      }
+
       // Build tool declarations: core + browser + connector + MCP tools
       // Load connector tools dynamically (only installed software)
       let connectorToolDecls: Array<{ name: string; description: string; parameters: unknown }> = [];
@@ -671,6 +693,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         ...CALENDAR_TOOLS,
         COMMUNICATIONS_TOOL,
         ...browserToolDecls,
+        ...socToolDecls,
+        ...gitToolDecls,
         ...connectorToolDecls,
         ...mcpToolDecls,
         ...(externalTools || toolsRef.current).map((t) => ({
@@ -1470,6 +1494,50 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     const memoryFact = `Household member: ${memberName} (${relationship}). Voice characteristics: ${voiceDesc}. Registered on ${new Date().toLocaleDateString()}.`;
                     await window.eve.memory.addImmediate(memoryFact, 'household');
                     resultText = `Registered ${memberName} (${relationship}) as a household member. I'll remember their voice for future sessions.`;
+                  } else if (['operate_computer', 'browser_task', 'take_screenshot', 'click_screen', 'type_text', 'press_keys'].includes(fc.name)) {
+                    // Route to Self-Operating Computer / Browser-Use tools
+                    console.log('[GeminiLive] SOC tool:', fc.name);
+                    try {
+                      const socResult = await window.eve.soc.callTool(fc.name, fc.args || {});
+                      if (socResult && typeof socResult === 'object' && 'error' in socResult) {
+                        resultText = `SOC Error: ${(socResult as any).error}`;
+                      } else if (fc.name === 'take_screenshot' && socResult && typeof socResult === 'object' && 'image' in socResult) {
+                        // Send screenshot as image for Gemini to see
+                        try {
+                          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                            wsRef.current.send(JSON.stringify({
+                              realtime_input: {
+                                media_chunks: [{ data: (socResult as any).image, mime_type: 'image/png' }],
+                              },
+                            }));
+                          }
+                          resultText = `Screenshot captured (${(socResult as any).width}x${(socResult as any).height}). Image sent for visual analysis.`;
+                        } catch {
+                          resultText = `Screenshot captured (${(socResult as any).width}x${(socResult as any).height}) but could not send image.`;
+                        }
+                      } else {
+                        resultText = typeof socResult === 'string' ? socResult : JSON.stringify(socResult);
+                      }
+                    } catch (socErr: unknown) {
+                      resultText = `SOC Error: ${socErr instanceof Error ? socErr.message : String(socErr)}`;
+                    }
+                  } else if (fc.name.startsWith('git_')) {
+                    // Route to GitLoader tools
+                    console.log('[GeminiLive] GitLoader tool:', fc.name);
+                    try {
+                      const gitResult = await window.eve.gitLoader.callTool(fc.name, fc.args || {});
+                      if (gitResult && typeof gitResult === 'object' && 'error' in gitResult) {
+                        resultText = `GitLoader Error: ${(gitResult as any).error}`;
+                      } else {
+                        resultText = typeof gitResult === 'string' ? gitResult : JSON.stringify(gitResult);
+                      }
+                      // Truncate very large results (repo trees can be huge)
+                      if (resultText.length > 30000) {
+                        resultText = resultText.slice(0, 30000) + '\n\n... [truncated — result too large. Use git_search or git_get_file for specific files]';
+                      }
+                    } catch (gitErr: unknown) {
+                      resultText = `GitLoader Error: ${gitErr instanceof Error ? gitErr.message : String(gitErr)}`;
+                    }
                   } else if (fc.name.startsWith('browser_')) {
                     // Route to browser automation tools
                     console.log('[GeminiLive] Browser tool:', fc.name);

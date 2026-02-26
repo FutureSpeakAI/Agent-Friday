@@ -1,9 +1,11 @@
 import React from 'react';
+import IntegrityShield from './IntegrityShield';
 
 interface ApiStatus {
   gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
   claude: 'ready' | 'no-key';
   elevenlabs: 'ready' | 'no-key';
+  openrouter: 'ready' | 'no-key';
   browser: 'ready' | 'unavailable';
 }
 
@@ -50,7 +52,7 @@ export default function StatusBar({ status, isWebcamActive, isInCall, apiStatus 
           ? '#00f0ff'
           : '#00f0ff';
 
-  const api = apiStatus || { gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', browser: 'unavailable' };
+  const api = apiStatus || { gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', openrouter: 'no-key', browser: 'unavailable' };
 
   return (
     <div className="hover-glow" style={styles.bar}>
@@ -86,8 +88,10 @@ export default function StatusBar({ status, isWebcamActive, isInCall, apiStatus 
         </div>
       </div>
       <div style={styles.right}>
+        <IntegrityShield />
         <StatusDot label="GEM" state={api.gemini} />
         <StatusDot label="CLU" state={api.claude} />
+        <StatusDot label="ORT" state={api.openrouter} />
         <StatusDot label="TTS" state={api.elevenlabs} />
         <StatusDot label="BRW" state={api.browser} />
       </div>

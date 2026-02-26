@@ -17,18 +17,28 @@ interface MaskedSettings {
   hasOpenaiKey: boolean;
   hasPerplexityKey: boolean;
   hasFirecrawlKey: boolean;
+  hasOpenrouterKey: boolean;
   geminiKeyHint: string;
   anthropicKeyHint: string;
   elevenLabsKeyHint: string;
   openaiKeyHint: string;
   perplexityKeyHint: string;
   firecrawlKeyHint: string;
+  openrouterKeyHint: string;
+  preferredProvider: 'anthropic' | 'openrouter';
+  openrouterModel: string;
   agentVoicesEnabled: boolean;
   wakeWordEnabled: boolean;
   notificationWhisperEnabled: boolean;
   notificationAllowedApps: string[];
   clipboardIntelligenceEnabled: boolean;
   googleCalendarEnabled: boolean;
+  gatewayEnabled: boolean;
+  hasTelegramToken: boolean;
+  telegramOwnerId: string;
+  hasDiscordToken: boolean;
+  discordOwnerId: string;
+  worldMonitorPath: string;
 }
 
 interface LongTermEntry {
@@ -164,6 +174,12 @@ export default function Settings({ visible, onClose }: SettingsProps) {
   const [openaiKey, setOpenaiKey] = useState('');
   const [perplexityKey, setPerplexityKey] = useState('');
   const [firecrawlKey, setFirecrawlKey] = useState('');
+  const [openrouterKey, setOpenrouterKey] = useState('');
+  const [openrouterModel, setOpenrouterModel] = useState('');
+  const [telegramToken, setTelegramToken] = useState('');
+  const [telegramOwnerId, setTelegramOwnerId] = useState('');
+  const [discordToken, setDiscordToken] = useState('');
+  const [discordOwnerId, setDiscordOwnerId] = useState('');
   const [vaultPath, setVaultPath] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
 
@@ -226,7 +242,7 @@ export default function Settings({ visible, onClose }: SettingsProps) {
   };
 
   const saveApiKey = async (
-    key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl',
+    key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl' | 'openrouter',
     value: string,
     setter: (v: string) => void,
     successMsg: string,
@@ -437,6 +453,122 @@ export default function Settings({ visible, onClose }: SettingsProps) {
 
               <Divider />
 
+              {/* ═══════════════ OPENROUTER / MODEL PROVIDER ═══════════════ */}
+              <SectionHeader>Model Provider</SectionHeader>
+              <div style={styles.sectionHint}>
+                OpenRouter gives access to 200+ models — use it as an alternative to direct Anthropic API
+              </div>
+
+              <ApiKeyField
+                label="OpenRouter API Key"
+                hasKey={settings.hasOpenrouterKey}
+                hint={settings.openrouterKeyHint}
+                value={openrouterKey}
+                onChange={setOpenrouterKey}
+                onSave={() =>
+                  saveApiKey('openrouter', openrouterKey, setOpenrouterKey, 'OpenRouter key saved')
+                }
+                description="Access 200+ AI models including Claude, GPT-4, Llama, Mistral, and more"
+              />
+
+              {settings.hasOpenrouterKey && (
+                <>
+                  <div style={styles.fieldGroup}>
+                    <label style={styles.label}>Preferred Provider for Agent Tasks</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={async () => {
+                          await window.eve.settings.set('preferredProvider', 'anthropic');
+                          await loadSettings();
+                          flash('Switched to Anthropic (direct) for agent tasks');
+                        }}
+                        style={{
+                          ...styles.saveBtn,
+                          flex: 1,
+                          padding: '8px 12px',
+                          background: settings.preferredProvider === 'anthropic'
+                            ? 'rgba(0, 240, 255, 0.15)' : 'rgba(255,255,255,0.04)',
+                          borderColor: settings.preferredProvider === 'anthropic'
+                            ? 'rgba(0, 240, 255, 0.3)' : 'rgba(255,255,255,0.08)',
+                          color: settings.preferredProvider === 'anthropic'
+                            ? '#00f0ff' : '#666680',
+                        }}
+                      >
+                        Anthropic Direct
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await window.eve.settings.set('preferredProvider', 'openrouter');
+                          await loadSettings();
+                          flash('Switched to OpenRouter for agent tasks');
+                        }}
+                        style={{
+                          ...styles.saveBtn,
+                          flex: 1,
+                          padding: '8px 12px',
+                          background: settings.preferredProvider === 'openrouter'
+                            ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255,255,255,0.04)',
+                          borderColor: settings.preferredProvider === 'openrouter'
+                            ? 'rgba(168, 85, 247, 0.3)' : 'rgba(255,255,255,0.08)',
+                          color: settings.preferredProvider === 'openrouter'
+                            ? '#a855f7' : '#666680',
+                        }}
+                      >
+                        OpenRouter
+                      </button>
+                    </div>
+                    <div style={styles.toggleHint}>
+                      {settings.preferredProvider === 'openrouter'
+                        ? `Using OpenRouter model: ${settings.openrouterModel || 'anthropic/claude-sonnet-4'}`
+                        : 'Using direct Anthropic API for agent reasoning tasks'}
+                    </div>
+                  </div>
+
+                  {settings.preferredProvider === 'openrouter' && (
+                    <div style={styles.fieldGroup}>
+                      <label style={styles.label}>OpenRouter Model</label>
+                      <div style={styles.keyRow}>
+                        <input
+                          type="text"
+                          value={openrouterModel || settings.openrouterModel || ''}
+                          onChange={(e) => setOpenrouterModel(e.target.value)}
+                          placeholder="anthropic/claude-sonnet-4"
+                          style={styles.keyInput}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && openrouterModel.trim()) {
+                              window.eve.settings.set('openrouterModel', openrouterModel.trim()).then(() => {
+                                flash(`Model set to ${openrouterModel.trim()}`);
+                                setOpenrouterModel('');
+                                loadSettings();
+                              });
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            if (!openrouterModel.trim()) return;
+                            window.eve.settings.set('openrouterModel', openrouterModel.trim()).then(() => {
+                              flash(`Model set to ${openrouterModel.trim()}`);
+                              setOpenrouterModel('');
+                              loadSettings();
+                            });
+                          }}
+                          style={styles.saveBtn}
+                          disabled={!openrouterModel.trim()}
+                        >
+                          Set
+                        </button>
+                      </div>
+                      <div style={styles.toggleHint}>
+                        Examples: anthropic/claude-sonnet-4, openai/gpt-4o, google/gemini-2.0-flash, meta-llama/llama-3.3-70b
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <Divider />
+
               {/* ═══════════════ VOICE & AUDIO ═══════════════ */}
               <SectionHeader>Voice &amp; Audio</SectionHeader>
 
@@ -564,6 +696,78 @@ export default function Settings({ visible, onClose }: SettingsProps) {
 
               <Divider />
 
+              {/* ═══════════════ MESSAGING GATEWAY ═══════════════ */}
+              <SectionHeader>Messaging Gateway</SectionHeader>
+
+              <Toggle
+                value={settings.gatewayEnabled}
+                label="Enable messaging gateway"
+                hint="Lets people reach your agent via Telegram or Discord"
+                onToggle={async () => {
+                  await window.eve.gateway.setEnabled(!settings.gatewayEnabled);
+                  await loadSettings();
+                }}
+              />
+
+              {settings.gatewayEnabled && (<>
+                <div style={{ marginTop: 12 }}>
+                  <ApiKeyField
+                    label="Telegram Bot Token"
+                    hasKey={settings.hasTelegramToken}
+                    hint=""
+                    value={telegramToken}
+                    onChange={setTelegramToken}
+                    onSave={async () => {
+                      if (!telegramToken.trim()) return;
+                      await window.eve.settings.set('telegramBotToken', telegramToken.trim());
+                      setTelegramToken('');
+                      flash('Telegram bot token saved');
+                      await loadSettings();
+                    }}
+                  />
+                </div>
+
+                {settings.hasTelegramToken && (
+                  <div style={styles.fieldGroup}>
+                    <label style={styles.fieldLabel}>Telegram Owner Chat ID</label>
+                    <div style={styles.keyRow}>
+                      <input
+                        type="text"
+                        value={telegramOwnerId || settings.telegramOwnerId}
+                        onChange={(e) => setTelegramOwnerId(e.target.value)}
+                        placeholder="Your Telegram numeric chat ID"
+                        style={styles.keyInput}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Enter' && telegramOwnerId.trim()) {
+                            await window.eve.settings.set('telegramOwnerId', telegramOwnerId.trim());
+                            flash('Telegram owner ID saved');
+                            await loadSettings();
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          if (telegramOwnerId.trim()) {
+                            await window.eve.settings.set('telegramOwnerId', telegramOwnerId.trim());
+                            flash('Telegram owner ID saved');
+                            await loadSettings();
+                          }
+                        }}
+                        style={styles.saveBtn}
+                        disabled={!telegramOwnerId.trim()}
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <div style={styles.toggleHint}>
+                      Only this chat ID can control the agent. Send /start to your bot to find your ID.
+                    </div>
+                  </div>
+                )}
+              </>)}
+
+              <Divider />
+
               {/* ═══════════════ SYSTEM ═══════════════ */}
               <SectionHeader>System</SectionHeader>
 
@@ -588,6 +792,22 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                 <div style={styles.shortcutRow}>
                   <span style={styles.shortcutKey}>Tab</span>
                   <span style={styles.shortcutDesc}>Toggle text input</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Ctrl+K</span>
+                  <span style={styles.shortcutDesc}>Quick actions</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Ctrl+Shift+D</span>
+                  <span style={styles.shortcutDesc}>Command center</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Ctrl+Shift+M</span>
+                  <span style={styles.shortcutDesc}>Memory explorer</span>
+                </div>
+                <div style={styles.shortcutRow}>
+                  <span style={styles.shortcutKey}>Ctrl+Shift+A</span>
+                  <span style={styles.shortcutDesc}>Agent dashboard</span>
                 </div>
                 <div style={styles.shortcutRow}>
                   <span style={styles.shortcutKey}>Ctrl+Shift+N</span>
