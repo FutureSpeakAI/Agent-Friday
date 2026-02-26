@@ -344,6 +344,26 @@ contextBridge.exposeInMainWorld('eve', {
     getIntakeResponses: () => ipcRenderer.invoke('psych:get-intake'),
   },
 
+  trustGraph: {
+    lookup: (name: string) => ipcRenderer.invoke('trust:lookup', name),
+    updateEvidence: (personName: string, evidence: Record<string, unknown>) =>
+      ipcRenderer.invoke('trust:update-evidence', personName, evidence),
+    logComm: (personName: string, event: Record<string, unknown>) =>
+      ipcRenderer.invoke('trust:log-comm', personName, event),
+    addAlias: (personId: string, alias: string, type: string) =>
+      ipcRenderer.invoke('trust:add-alias', personId, alias, type),
+    getAll: () => ipcRenderer.invoke('trust:get-all'),
+    getContext: (personId: string) => ipcRenderer.invoke('trust:get-context', personId),
+    getPromptContext: () => ipcRenderer.invoke('trust:get-prompt-context'),
+    findByDomain: (domain: string) => ipcRenderer.invoke('trust:find-by-domain', domain),
+    getMostTrusted: (limit?: number) => ipcRenderer.invoke('trust:most-trusted', limit),
+    getRecent: (limit?: number) => ipcRenderer.invoke('trust:recent', limit),
+    updateNotes: (personId: string, notes: string) =>
+      ipcRenderer.invoke('trust:update-notes', personId, notes),
+    linkPersons: (idA: string, idB: string, label: string) =>
+      ipcRenderer.invoke('trust:link-persons', idA, idB, label),
+  },
+
   featureSetup: {
     initialize: () => ipcRenderer.invoke('feature-setup:initialize'),
     getState: () => ipcRenderer.invoke('feature-setup:get-state'),
@@ -470,6 +490,21 @@ contextBridge.exposeInMainWorld('eve', {
       memoriesIntact: boolean;
       safeMode: boolean;
     }>,
+  },
+
+  superpowers: {
+    list: () => ipcRenderer.invoke('superpowers:list'),
+    get: (id: string) => ipcRenderer.invoke('superpowers:get', id),
+    toggle: (id: string, enabled: boolean) => ipcRenderer.invoke('superpowers:toggle', id, enabled),
+    toggleTool: (superpowerId: string, toolName: string, enabled: boolean) =>
+      ipcRenderer.invoke('superpowers:toggle-tool', superpowerId, toolName, enabled),
+    updatePermissions: (id: string, perms: Record<string, unknown>) =>
+      ipcRenderer.invoke('superpowers:update-permissions', id, perms),
+    install: (repoUrl: string) => ipcRenderer.invoke('superpowers:install', repoUrl),
+    uninstall: (id: string) => ipcRenderer.invoke('superpowers:uninstall', id),
+    usageStats: (id: string) => ipcRenderer.invoke('superpowers:usage-stats', id),
+    enabledTools: () => ipcRenderer.invoke('superpowers:enabled-tools'),
+    flush: () => ipcRenderer.invoke('superpowers:flush'),
   },
 
   shell: {

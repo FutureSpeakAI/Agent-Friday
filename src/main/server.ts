@@ -59,11 +59,16 @@ export async function startServer(): Promise<number> {
       return next();
     }
 
-    // Allow unauthenticated access from same-origin (no origin = Electron renderer)
+    // Allow unauthenticated access from same-origin (no origin = Electron renderer).
+    // Security model: server binds to 127.0.0.1 only (never exposed to network).
+    // Same-origin requests from the Electron renderer don't carry an Origin header.
+    // Risk: other local processes can also call without Origin. Acceptable for a
+    // desktop app — local processes are in the same trust boundary as the user.
     if (!req.headers.origin) {
       return next();
     }
 
+    console.warn('[Server] Rejected unauthorized request from origin:', req.headers.origin);
     res.status(401).json({ error: 'Unauthorized' });
   };
 

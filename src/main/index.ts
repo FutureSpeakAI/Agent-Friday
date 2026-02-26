@@ -64,6 +64,7 @@ import { integrityManager, getCanonicalLaws } from './integrity';
 import { officeManager } from './agent-office/office-manager';
 import { pythonBridge } from './soc-bridge';
 import { gitLoader } from './git-loader';
+import { trustGraph } from './trust-graph';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -74,6 +75,8 @@ import {
   registerOnboardingHandlers,
   registerIntegrationHandlers,
   registerIntegrityHandlers,
+  registerSuperpowersHandlers,
+  registerTrustGraphHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -333,6 +336,10 @@ app.whenReady().then(async () => {
       console.warn('[EVE] Relationship memory init failed:', err);
     });
 
+    trustGraph.initialize().catch((err) => {
+      console.warn('[EVE] Trust graph init failed:', err);
+    });
+
     semanticSearch.initialize().then(async () => {
       console.log('[EVE] Semantic search initialized');
       const longTerm = memoryManager.getLongTerm();
@@ -430,6 +437,8 @@ app.whenReady().then(async () => {
   registerCalendarHandlers();
   registerCommunicationsHandlers();
   registerIntegrityHandlers();
+  registerSuperpowersHandlers();
+  registerTrustGraphHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {

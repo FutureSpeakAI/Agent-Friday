@@ -15,6 +15,7 @@ import { fitToBudget, type PromptSection } from './prompt-budget';
 import { settingsManager, type AgentConfig } from './settings';
 import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
 import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
+import { trustGraph } from './trust-graph';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
@@ -369,8 +370,8 @@ You have specialist team members who handle tasks concurrently. Each has their o
 ## Current Context
 - Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
 - Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-- Platform: Desktop (Agent Friday — Electron application)
-- Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications`;
+- Platform: Agent Friday — the AGI OS (Electron desktop application)
+- Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, trust graph, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications`;
 }
 
 export async function buildSystemPrompt(): Promise<string> {
@@ -422,6 +423,12 @@ export async function buildSystemPrompt(): Promise<string> {
     parts.push(relationshipContext);
   }
 
+  const trustContext = trustGraph.getPromptContext();
+  if (trustContext) {
+    const config = settingsManager.getAgentConfig();
+    parts.push(`## Trust Graph — People in ${config.userName || 'the user'}'s world\n${trustContext}`);
+  }
+
   const clipboardContext = clipboardIntelligence.getContextString();
   if (clipboardContext) {
     parts.push(clipboardContext);
@@ -468,8 +475,8 @@ Messages tagged with [GATEWAY MESSAGE] originate from external messaging channel
   parts.push(`## Current Context
 - Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
 - Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-- Platform: Desktop (Agent Friday — Electron application)
-- Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications, live call participation`);
+- Platform: Agent Friday — the AGI OS (Electron desktop application)
+- Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, trust graph, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications, live call participation`);
 
   return parts.join('\n\n');
 }
@@ -531,6 +538,16 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
   const liveRelationshipContext = relationshipMemory.getContextString();
   if (liveRelationshipContext) {
     sections.push({ name: 'relationship-memory', content: liveRelationshipContext, priority: 'high' });
+  }
+
+  const liveTrustContext = trustGraph.getPromptContext();
+  if (liveTrustContext) {
+    const agentCfg = settingsManager.getAgentConfig();
+    sections.push({
+      name: 'trust-graph',
+      content: `## Trust Graph — People in ${agentCfg.userName || 'the user'}'s world\n${liveTrustContext}`,
+      priority: 'high',
+    });
   }
 
   const liveClipboardContext = clipboardIntelligence.getContextString();

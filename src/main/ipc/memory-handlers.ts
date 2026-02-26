@@ -35,15 +35,30 @@ export function registerMemoryHandlers(): void {
   );
 
   ipcMain.handle('memory:delete-long-term', async (_event, id: string) => {
+    if (!id || typeof id !== 'string') {
+      throw new Error('memory:delete-long-term requires a string id');
+    }
     await memoryManager.deleteLongTermEntry(id);
   });
 
   ipcMain.handle('memory:delete-medium-term', async (_event, id: string) => {
+    if (!id || typeof id !== 'string') {
+      throw new Error('memory:delete-medium-term requires a string id');
+    }
     await memoryManager.deleteMediumTermEntry(id);
   });
 
   ipcMain.handle('memory:add-immediate', async (_event, fact: string, category: string) => {
-    await memoryManager.addImmediateMemory(fact, category);
+    if (!fact || typeof fact !== 'string') {
+      throw new Error('memory:add-immediate requires a string fact');
+    }
+    if (fact.length > 5000) {
+      throw new Error('memory:add-immediate fact too long (max 5000 chars)');
+    }
+    if (category && typeof category !== 'string') {
+      throw new Error('memory:add-immediate category must be a string');
+    }
+    await memoryManager.addImmediateMemory(fact, category || 'identity');
   });
 
   // ── Episodic memory ─────────────────────────────────────────────────

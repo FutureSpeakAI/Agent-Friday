@@ -255,15 +255,15 @@ You have two research engines:
 
 Ask if they have a Perplexity API key. If they do, call save_api_key with service="perplexity" and the key they provide. Same for Firecrawl — call save_api_key with service="firecrawl". ${settingsManager.get().perplexityApiKey ? 'Perplexity is already configured.' : 'Perplexity is not yet configured.'} ${settingsManager.get().firecrawlApiKey ? 'Firecrawl is already configured.' : 'Firecrawl is not yet configured.'} If both are already set up, let them know and mark as complete. Even without these keys, you still have web capabilities through other means — but these make you significantly more powerful.`,
 
-    'ai-services': `[FEATURE SETUP — AI Services (OpenAI)]
-Explain to ${userName} that you can generate images, perform deep mathematical and logical reasoning, and transcribe audio files using OpenAI's specialist models:
+    'ai-services': `[FEATURE SETUP — AI Services (OpenAI + Nano Banana 2)]
+Explain to ${userName} that you have powerful creative and analytical capabilities:
 
-- **DALL-E 3** — Create images from descriptions (artwork, diagrams, mockups, illustrations)
-- **o3 Reasoning** — Deep multi-step reasoning for complex analytical problems
-- **Whisper** — Transcribe audio files (meetings, voice notes, podcasts) to text
-- **Embeddings** — Semantic understanding for smarter memory search
+- **Nano Banana 2** — Google's latest image generation model (Gemini 3.1 Flash Image). Pro-quality images at flash speed, 512px to 4K, 14 aspect ratios, accurate text rendering. Already active via your Gemini API key!
+- **o3 Reasoning** — Deep multi-step reasoning for complex analytical problems (requires OpenAI key)
+- **Whisper** — Transcribe audio files (meetings, voice notes, podcasts) to text (requires OpenAI key)
+- **Embeddings** — Semantic understanding for smarter memory search (requires OpenAI key)
 
-Ask if they have an OpenAI API key. If yes, call save_api_key with service="openai" and the key they provide. ${settingsManager.get().openaiApiKey ? 'OpenAI is already configured.' : 'OpenAI is not yet configured.'} These are optional but unlock powerful creative and analytical capabilities.`,
+Image generation works out of the box with your Gemini API key. For reasoning, transcription, and embeddings, ask if they have an OpenAI API key. If yes, call save_api_key with service="openai" and the key they provide. ${settingsManager.get().openaiApiKey ? 'OpenAI is already configured.' : 'OpenAI is not yet configured.'} These are optional but unlock powerful analytical capabilities.`,
 
     voice: `[FEATURE SETUP — Voice (ElevenLabs)]
 Explain to ${userName} that for the highest quality voice experience, you can use ElevenLabs for text-to-speech. This gives you a more natural, expressive voice compared to the built-in speech synthesis. Ask if they have an ElevenLabs API key. If yes, call save_api_key with service="elevenlabs" and the key they provide. ${settingsManager.get().elevenLabsApiKey ? 'ElevenLabs is already configured — voice is active.' : 'ElevenLabs is not yet configured. The built-in Gemini voice works fine, but ElevenLabs sounds more natural.'}`,

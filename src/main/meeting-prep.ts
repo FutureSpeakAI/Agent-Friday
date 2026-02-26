@@ -12,6 +12,7 @@ import { calendarIntegration } from './calendar';
 import { memoryManager } from './memory';
 import { episodicMemory } from './episodic-memory';
 import { projectAwareness } from './project-awareness';
+import { trustGraph } from './trust-graph';
 
 interface CalendarEvent {
   id: string;
@@ -36,6 +37,7 @@ interface MeetingBriefing {
     name: string;
     memories: string[];
     recentTopics: string[];
+    trustProfile: string;
   }>;
   relevantProjects: string[];
   suggestedTopics: string[];
@@ -115,12 +117,27 @@ class MeetingPrep {
       for (const attendee of event.attendees.slice(0, 8)) {
         const name = attendee.split('@')[0].replace(/[._]/g, ' ');
 
+        // Resolve person via Trust Graph for structured context
+        let trustProfile = '';
+        let resolvedName = name;
+        try {
+          const resolution = trustGraph.resolvePerson(name);
+          if (resolution.person) {
+            resolvedName = resolution.person.primaryName;
+            trustProfile = trustGraph.getContextForPerson(resolution.person.id);
+          }
+        } catch {
+          // Trust Graph not ready — fall through to memory-based matching
+        }
+
         // Search memories for this person
         const memories: string[] = [];
         try {
           const allMem = memoryManager.getLongTerm();
+          const lowerName = resolvedName.toLowerCase();
           const related = allMem.filter(
             (m: any) =>
+              m.fact.toLowerCase().includes(lowerName) ||
               m.fact.toLowerCase().includes(name.toLowerCase()) ||
               m.category === 'relationship'
           );
@@ -132,7 +149,7 @@ class MeetingPrep {
         // Search episodes for recent conversations mentioning them
         const recentTopics: string[] = [];
         try {
-          const episodes = await episodicMemory.search(name, 3);
+          const episodes = await episodicMemory.search(resolvedName, 3);
           recentTopics.push(
             ...episodes.map((ep: any) => ep.summary).slice(0, 2)
           );
@@ -140,8 +157,8 @@ class MeetingPrep {
           // skip
         }
 
-        if (memories.length > 0 || recentTopics.length > 0) {
-          attendeeContext.push({ name, memories, recentTopics });
+        if (memories.length > 0 || recentTopics.length > 0 || trustProfile) {
+          attendeeContext.push({ name: resolvedName, memories, recentTopics, trustProfile });
         }
       }
 
@@ -191,8 +208,14 @@ class MeetingPrep {
         briefingParts.push('\nAttendee context:');
         for (const ac of attendeeContext) {
           briefingParts.push(`  ${ac.name}:`);
+          if (ac.trustProfile) {
+            briefingParts.push(`    Trust: ${ac.trustProfile}`);
+          }
           for (const m of ac.memories) {
             briefingParts.push(`    - ${m}`);
+          }
+          if (ac.recentTopics.length > 0) {
+            briefingParts.push(`    Recent: ${ac.recentTopics.join('; ')}`);
           }
         }
       }

@@ -77,7 +77,7 @@ const KEY_CONFIGS: KeyConfig[] = [
     label: 'OpenAI',
     placeholder: 'sk-...',
     required: false,
-    description: 'DALL-E image generation, GPT models, TTS',
+    description: 'o3 reasoning, Whisper transcription, embeddings (images use Nano Banana 2 via Gemini)',
     hasFlag: 'hasOpenaiKey',
     hintFlag: 'openaiKeyHint',
   },

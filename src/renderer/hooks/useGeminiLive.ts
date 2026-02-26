@@ -217,6 +217,94 @@ const CALL_TOOLS = [
   },
 ];
 
+// Trust Graph tools — Gemini can update, query, and log interactions with people
+const TRUST_GRAPH_TOOLS = [
+  {
+    name: 'update_trust',
+    description:
+      'Record a trust-relevant observation about a person in the user\'s world. Use this when the user mentions someone keeping a promise, giving good/bad advice, being reliable/unreliable, or any interaction that affects how much to trust that person\'s input. The trust graph tracks multi-dimensional credibility across domains.',
+    parameters: {
+      type: 'object',
+      properties: {
+        person_name: {
+          type: 'string',
+          description: 'Name of the person this observation is about.',
+        },
+        evidence_type: {
+          type: 'string',
+          enum: [
+            'promise_kept', 'promise_broken', 'accurate_info', 'inaccurate_info',
+            'helpful_action', 'unhelpful_action', 'emotional_support',
+            'user_stated', 'observed',
+          ],
+          description: 'Type of trust evidence being recorded.',
+        },
+        description: {
+          type: 'string',
+          description: 'What happened — brief description of the observation.',
+        },
+        impact: {
+          type: 'number',
+          description: 'Impact from -1.0 (very negative) to +1.0 (very positive).',
+        },
+        domain: {
+          type: 'string',
+          description: 'Optional domain this applies to (e.g. "cooking", "finance", "typescript", "management").',
+        },
+      },
+      required: ['person_name', 'evidence_type', 'description', 'impact'],
+    },
+  },
+  {
+    name: 'lookup_person',
+    description:
+      'Look up everything the agent knows about a person — their trust scores, expertise domains, recent interactions, communication history, and notes. Use this when the user asks about someone, before a meeting with someone, or when you need context about a person mentioned in conversation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        person_name: {
+          type: 'string',
+          description: 'Name of the person to look up.',
+        },
+      },
+      required: ['person_name'],
+    },
+  },
+  {
+    name: 'note_interaction',
+    description:
+      'Log a communication event with a person. Use this when the user mentions they spoke with, emailed, met with, or otherwise interacted with someone. Helps build a picture of communication patterns and relationship dynamics.',
+    parameters: {
+      type: 'object',
+      properties: {
+        person_name: {
+          type: 'string',
+          description: 'Name of the person interacted with.',
+        },
+        channel: {
+          type: 'string',
+          enum: ['email', 'slack', 'telegram', 'meeting', 'phone', 'text', 'conversation'],
+          description: 'Communication channel used.',
+        },
+        direction: {
+          type: 'string',
+          enum: ['inbound', 'outbound', 'bidirectional'],
+          description: 'Direction of communication.',
+        },
+        summary: {
+          type: 'string',
+          description: 'One-line summary of what was discussed or communicated.',
+        },
+        sentiment: {
+          type: 'number',
+          description: 'Sentiment from -1.0 (very negative) to +1.0 (very positive).',
+        },
+      },
+      required: ['person_name', 'channel', 'direction', 'summary', 'sentiment'],
+    },
+  },
+];
+
 // Episodic memory tool — Gemini can search past conversations
 const SEARCH_EPISODES_TOOL = {
   name: 'search_episodes',
@@ -688,6 +776,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         ...SELF_IMPROVE_TOOLS,
         ...WEBCAM_TOOLS,
         ...HOUSEHOLD_TOOLS,
+        ...TRUST_GRAPH_TOOLS,
         ...CALL_TOOLS,
         ...SCHEDULER_TOOLS,
         ...CALENDAR_TOOLS,
@@ -1494,6 +1583,46 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     const memoryFact = `Household member: ${memberName} (${relationship}). Voice characteristics: ${voiceDesc}. Registered on ${new Date().toLocaleDateString()}.`;
                     await window.eve.memory.addImmediate(memoryFact, 'household');
                     resultText = `Registered ${memberName} (${relationship}) as a household member. I'll remember their voice for future sessions.`;
+                  } else if (fc.name === 'update_trust') {
+                    const personName = String(fc.args?.person_name || '');
+                    const evidenceType = String(fc.args?.evidence_type || 'observed');
+                    const description = String(fc.args?.description || '');
+                    const impact = Number(fc.args?.impact || 0);
+                    const domain = fc.args?.domain ? String(fc.args.domain) : undefined;
+                    console.log('[GeminiLive] Trust update:', personName, evidenceType, impact);
+                    const result = await window.eve.trustGraph.updateEvidence(personName, {
+                      type: evidenceType, description, impact, domain,
+                    });
+                    if (result.ok) {
+                      resultText = `Updated trust profile for ${personName} — recorded ${evidenceType} evidence (impact: ${impact > 0 ? '+' : ''}${impact}).`;
+                    } else {
+                      resultText = `Could not update trust for ${personName}: ${result.error || 'unknown error'}`;
+                    }
+                  } else if (fc.name === 'lookup_person') {
+                    const personName = String(fc.args?.person_name || '');
+                    console.log('[GeminiLive] Trust lookup:', personName);
+                    const resolution = await window.eve.trustGraph.lookup(personName);
+                    if (resolution.person) {
+                      const context = await window.eve.trustGraph.getContext(resolution.person.id);
+                      resultText = context || `Found ${resolution.person.primaryName} but no detailed context available yet.`;
+                    } else {
+                      resultText = `No person named "${personName}" found in the trust graph. They may be someone new — I'll start tracking them when more information comes up.`;
+                    }
+                  } else if (fc.name === 'note_interaction') {
+                    const personName = String(fc.args?.person_name || '');
+                    const channel = String(fc.args?.channel || 'conversation');
+                    const direction = String(fc.args?.direction || 'bidirectional') as 'inbound' | 'outbound' | 'bidirectional';
+                    const summary = String(fc.args?.summary || '');
+                    const sentiment = Number(fc.args?.sentiment || 0);
+                    console.log('[GeminiLive] Trust interaction:', personName, channel, direction);
+                    const result = await window.eve.trustGraph.logComm(personName, {
+                      channel, direction, summary, sentiment,
+                    });
+                    if (result.ok) {
+                      resultText = `Logged ${channel} interaction with ${personName} (${direction}).`;
+                    } else {
+                      resultText = `Could not log interaction with ${personName}: ${result.error || 'unknown error'}`;
+                    }
                   } else if (['operate_computer', 'browser_task', 'take_screenshot', 'click_screen', 'type_text', 'press_keys'].includes(fc.name)) {
                     // Route to Self-Operating Computer / Browser-Use tools
                     console.log('[GeminiLive] SOC tool:', fc.name);

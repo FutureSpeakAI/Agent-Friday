@@ -53,6 +53,14 @@ export interface PersonalityEvolutionState {
   glowIntensity: number;      // 0.5-2.0, maps to warmth
 }
 
+/* ── Trust Graph Configuration ── */
+export interface TrustGraphConfig {
+  maxPersons: number;            // Default 200
+  evidenceRetention: number;     // Days to keep evidence, default 90
+  decayRate: number;             // Trust decay per day of no interaction, default 0.001
+  reEvalThreshold: number;       // Evidence count that triggers hermeneutic re-eval, default 5
+}
+
 /* ── Intake Responses (raw answers from "Her" questions) ── */
 export interface IntakeResponses {
   voicePreference: string;    // Male, female, or neither
@@ -107,6 +115,8 @@ export interface EveSettings extends AgentConfig {
   featureSetupComplete: boolean;
   featureSetupState: FeatureSetupState | null;
   personalityEvolution: PersonalityEvolutionState | null;
+  // Trust Graph
+  trustGraphConfig: TrustGraphConfig | null;
 }
 
 const DEFAULTS: EveSettings = {
@@ -153,6 +163,7 @@ const DEFAULTS: EveSettings = {
   featureSetupComplete: false,
   featureSetupState: null,
   personalityEvolution: null,
+  trustGraphConfig: null,
 };
 
 class SettingsManager {
@@ -293,10 +304,47 @@ class SettingsManager {
   }
 
   async setSetting(key: string, value: unknown): Promise<void> {
-    if (key in this.settings) {
-      (this.settings as unknown as Record<string, unknown>)[key] = value;
-      await this.save();
+    if (!(key in this.settings)) return;
+
+    // Type-validate value against the expected type for this key
+    const currentValue = (this.settings as unknown as Record<string, unknown>)[key];
+    const expectedType = currentValue === null ? null : typeof currentValue;
+
+    // Allow null for nullable fields (profiles, state objects)
+    const nullableKeys = new Set([
+      'intakeResponses', 'psychologicalProfile', 'featureSetupState', 'personalityEvolution', 'trustGraphConfig',
+    ]);
+
+    if (value === null && !nullableKeys.has(key)) {
+      console.warn(`[Settings] Rejected null value for non-nullable key: ${key}`);
+      return;
     }
+
+    if (value !== null && expectedType !== null && typeof value !== expectedType) {
+      // Allow arrays where arrays are expected
+      if (Array.isArray(currentValue) && Array.isArray(value)) {
+        // ok — both arrays
+      } else if (typeof currentValue === 'object' && typeof value === 'object') {
+        // ok — both objects (for complex types like FeatureSetupState)
+      } else {
+        console.warn(`[Settings] Type mismatch for "${key}": expected ${expectedType}, got ${typeof value}`);
+        return;
+      }
+    }
+
+    // Block direct modification of API keys through generic setSetting
+    // (must use setApiKey() which has explicit key-name validation)
+    const apiKeyFields = new Set([
+      'geminiApiKey', 'anthropicApiKey', 'elevenLabsApiKey',
+      'firecrawlApiKey', 'perplexityApiKey', 'openaiApiKey', 'openrouterApiKey',
+    ]);
+    if (apiKeyFields.has(key)) {
+      console.warn(`[Settings] API key "${key}" must be set via setApiKey(), not setSetting()`);
+      return;
+    }
+
+    (this.settings as unknown as Record<string, unknown>)[key] = value;
+    await this.save();
   }
 
   /** Save the full agent identity config (called at end of onboarding) */
