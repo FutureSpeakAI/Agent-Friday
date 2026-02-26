@@ -82,7 +82,7 @@ export function buildIntakeToolDeclarations(): {
 
 /**
  * Returns the tool declarations for the customization phase.
- * Includes finalize_agent_identity.
+ * Includes play_voice_sample and finalize_agent_identity.
  */
 export function buildCustomizationToolDeclarations(): {
   name: string;
@@ -90,6 +90,31 @@ export function buildCustomizationToolDeclarations(): {
   parameters: Record<string, unknown>;
 }[] {
   return [
+    {
+      name: 'play_voice_sample',
+      description:
+        'Play an audio sample of a specific Gemini voice for the user to hear. ' +
+        'Call this when presenting voice options during customization so the user can audition each voice. ' +
+        'The sample takes 2-3 seconds to generate and will play automatically. ' +
+        'Wait for it to finish before offering the next voice.',
+      parameters: {
+        type: 'object',
+        properties: {
+          voice_name: {
+            type: 'string',
+            enum: [
+              'Kore', 'Puck', 'Charon', 'Fenrir', 'Leda', 'Orus', 'Zephyr', 'Aoede',
+              'Sulafat', 'Achird', 'Gacrux', 'Achernar', 'Sadachbia', 'Vindemiatrix',
+              'Sadaltager', 'Schedar', 'Alnilam', 'Algieba', 'Despina', 'Erinome',
+              'Algenib', 'Rasalgethi', 'Laomedeia', 'Pulcherrima', 'Zubenelgenubi',
+              'Umbriel', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus',
+            ],
+            description: 'The name of the Gemini voice to preview',
+          },
+        },
+        required: ['voice_name'],
+      },
+    },
     {
       name: 'finalize_agent_identity',
       description:
@@ -284,8 +309,9 @@ ${voiceGuide}
 1. "What would you like to name your agent?"
    → Accept whatever they choose. If they ask for suggestions, offer 3-4 options with different flavors.
 
-2. "I have a few voice options for you. Would you like me to describe them, or do you have a preference?"
-   → Walk them through the voice options above. Let them pick. Describe each voice's character so they can choose what resonates.
+2. "I have a few voice options for you. Let me play a sample of each one."
+   → For each recommended voice, call play_voice_sample with that voice_name. After each sample plays, briefly describe the voice's character. Let the user hear 3-4 voices before asking which one they prefer. If they want to hear more options or replay one, use play_voice_sample again.
+   → IMPORTANT: Always use the play_voice_sample tool to let the user HEAR the voice. Don't just describe voices — play them.
 
 3. "How would you describe your agent's personality? What traits matter to you?"
    → Help them articulate this. If they're vague ("I dunno, just nice"), gently prompt: "Are you thinking more witty and playful, or calm and steady? More of a sharp advisor or a warm presence?" Extract clear traits from their answer.

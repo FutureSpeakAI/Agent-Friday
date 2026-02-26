@@ -1143,6 +1143,40 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     // Notify App.tsx to show creation animation + reconnect
                     optionsRef.current.onAgentFinalized?.(agentConfig);
                     resultText = `Agent identity saved. ${agentConfig.agentName} is being created now. Goodbye — and welcome, ${agentConfig.agentName}.`;
+                  } else if (fc.name === 'play_voice_sample') {
+                    // Voice audition — generate a voice sample via REST API and play it
+                    const voiceName = String(fc.args?.voice_name || 'Kore');
+                    console.log(`[GeminiLive] Playing voice sample: ${voiceName}`);
+                    try {
+                      const sample = await window.eve.voiceAudition.generateSample(voiceName);
+                      if (sample && sample.audio) {
+                        // Decode base64 audio and play through a temporary Audio element
+                        // (not the main playback engine, since that expects raw PCM chunks)
+                        const audioBytes = Uint8Array.from(atob(sample.audio), (c) => c.charCodeAt(0));
+                        const blob = new Blob([audioBytes], { type: sample.mimeType });
+                        const url = URL.createObjectURL(blob);
+                        const audio = new Audio(url);
+                        // Wait for playback to finish so Gemini can time its next message
+                        await new Promise<void>((resolveAudio) => {
+                          audio.onended = () => {
+                            URL.revokeObjectURL(url);
+                            resolveAudio();
+                          };
+                          audio.onerror = () => {
+                            URL.revokeObjectURL(url);
+                            resolveAudio();
+                          };
+                          audio.play().catch(() => resolveAudio());
+                        });
+                        resultText = `Voice sample for "${voiceName}" played successfully. Ask the user what they think.`;
+                      } else {
+                        resultText = `Could not generate a voice sample for "${voiceName}". Describe the voice instead and move on.`;
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      console.warn('[GeminiLive] Voice sample error:', msg);
+                      resultText = `Voice sample generation failed: ${msg}. Describe the voice instead.`;
+                    }
                   } else if (fc.name === 'save_intake_responses') {
                     // "Her" intake — save the three raw responses and generate psych profile
                     const responses = {
