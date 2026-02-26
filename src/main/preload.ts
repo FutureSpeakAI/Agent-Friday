@@ -148,7 +148,7 @@ contextBridge.exposeInMainWorld('eve', {
     get: () => ipcRenderer.invoke('settings:get'),
     setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
     setAutoScreenCapture: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-screen-capture', enabled),
-    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs', value: string) =>
+    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai', value: string) =>
       ipcRenderer.invoke('settings:set-api-key', key, value),
     setObsidianVaultPath: (vaultPath: string) =>
       ipcRenderer.invoke('settings:set-obsidian-vault-path', vaultPath),
@@ -363,6 +363,26 @@ contextBridge.exposeInMainWorld('eve', {
   evolution: {
     getState: () => ipcRenderer.invoke('evolution:get-state'),
     incrementSession: () => ipcRenderer.invoke('evolution:increment-session'),
+  },
+
+  voiceAudition: {
+    generateSample: (voiceName: string, customPhrase?: string) =>
+      ipcRenderer.invoke('voice-audition:generate-sample', voiceName, customPhrase) as Promise<{
+        audio: string;
+        mimeType: string;
+      } | null>,
+    getRecommendations: (genderPref: string) =>
+      ipcRenderer.invoke('voice-audition:get-recommendations', genderPref) as Promise<Array<{
+        name: string;
+        gender: string;
+        description: string;
+      }>>,
+    getCatalog: () =>
+      ipcRenderer.invoke('voice-audition:get-catalog') as Promise<Array<{
+        name: string;
+        gender: string;
+        description: string;
+      }>>,
   },
 
   gateway: {
