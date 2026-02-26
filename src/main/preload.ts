@@ -453,6 +453,43 @@ contextBridge.exposeInMainWorld('eve', {
     getToolRouting: () => ipcRenderer.invoke('connectors:get-tool-routing'),
   },
 
+  meetingIntel: {
+    create: (opts: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:create', opts),
+    get: (id: string) => ipcRenderer.invoke('meeting-intel:get', id),
+    list: (opts?: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:list', opts),
+    getActive: () => ipcRenderer.invoke('meeting-intel:get-active'),
+    update: (meetingId: string, updates: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:update', meetingId, updates),
+    start: (meetingId: string) => ipcRenderer.invoke('meeting-intel:start', meetingId),
+    end: (meetingId: string, opts?: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:end', meetingId, opts),
+    cancel: (meetingId: string) => ipcRenderer.invoke('meeting-intel:cancel', meetingId),
+    endActive: (transcript?: string) =>
+      ipcRenderer.invoke('meeting-intel:end-active', transcript),
+    addNote: (meetingId: string, note: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:add-note', meetingId, note),
+    addNoteActive: (content: string, type?: string) =>
+      ipcRenderer.invoke('meeting-intel:add-note-active', content, type),
+    setTranscript: (meetingId: string, transcript: string) =>
+      ipcRenderer.invoke('meeting-intel:set-transcript', meetingId, transcript),
+    setSummary: (meetingId: string, summary: string) =>
+      ipcRenderer.invoke('meeting-intel:set-summary', meetingId, summary),
+    search: (query: string, limit?: number) =>
+      ipcRenderer.invoke('meeting-intel:search', query, limit),
+    stats: () => ipcRenderer.invoke('meeting-intel:stats'),
+    recentSummaries: (count?: number) =>
+      ipcRenderer.invoke('meeting-intel:recent-summaries', count),
+    fromCalendar: (event: Record<string, unknown>) =>
+      ipcRenderer.invoke('meeting-intel:from-calendar', event),
+    quickStart: (meetingUrl: string, name?: string) =>
+      ipcRenderer.invoke('meeting-intel:quick-start', meetingUrl, name),
+    refreshIntel: (meetingId: string) =>
+      ipcRenderer.invoke('meeting-intel:refresh-intel', meetingId),
+    getContext: () => ipcRenderer.invoke('meeting-intel:get-context'),
+  },
+
   callIntegration: {
     isVirtualAudioAvailable: () => ipcRenderer.invoke('call:is-virtual-audio-available'),
     enterCallMode: (meetingUrl?: string) => ipcRenderer.invoke('call:enter-call-mode', meetingUrl),

@@ -217,6 +217,69 @@ const CALL_TOOLS = [
   },
 ];
 
+// Meeting Intelligence tools — Gemini can manage meetings, take notes, and review history
+const MEETING_INTEL_TOOLS = [
+  {
+    name: 'create_meeting',
+    description:
+      'Create a new meeting in the meeting intelligence system. Use when the user says they have an upcoming meeting, want to prepare for one, or when you detect a meeting from their calendar. This tracks the full meeting lifecycle with notes, attendee intelligence, and post-meeting summaries.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Meeting name or title.' },
+        description: { type: 'string', description: 'Brief meeting description or agenda.' },
+        attendees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Names or emails of meeting attendees.',
+        },
+        meeting_url: { type: 'string', description: 'Video call URL if available.' },
+        scheduled_start: { type: 'string', description: 'Scheduled start time in ISO format.' },
+        scheduled_end: { type: 'string', description: 'Scheduled end time in ISO format.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags for categorization.' },
+        project_name: { type: 'string', description: 'Related project name if applicable.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'meeting_note',
+    description:
+      'Add a note, action item, decision, or question to the currently active meeting. Use this during meetings to capture key points, decisions made, action items assigned, or important questions raised. Notes are preserved in meeting history.',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'The note content.' },
+        note_type: {
+          type: 'string',
+          enum: ['note', 'action-item', 'decision', 'question', 'insight'],
+          description: 'Type of note: general note, action-item, decision, question, or insight.',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'end_current_meeting',
+    description:
+      'End the currently active meeting. Call this when the user says the meeting is over or when you detect the call has ended. This triggers post-meeting processing: summarization, action item extraction, and memory storage.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_meeting_history',
+    description:
+      'Get recent meeting history with summaries and action items. Use when the user asks about past meetings, wants to review what was discussed, or needs to find action items from a previous meeting.',
+    parameters: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Optional search query to filter meetings.' },
+        count: { type: 'number', description: 'Number of meetings to return (default 5).' },
+      },
+      required: [],
+    },
+  },
+];
+
 // Trust Graph tools — Gemini can update, query, and log interactions with people
 const TRUST_GRAPH_TOOLS = [
   {
@@ -778,6 +841,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         ...HOUSEHOLD_TOOLS,
         ...TRUST_GRAPH_TOOLS,
         ...CALL_TOOLS,
+        ...MEETING_INTEL_TOOLS,
         ...SCHEDULER_TOOLS,
         ...CALENDAR_TOOLS,
         COMMUNICATIONS_TOOL,
@@ -1549,7 +1613,11 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                               await window.eve.callIntegration.openMeetingUrl(meetingUrl);
                             }
                             setState((s) => ({ ...s, isInCall: true }));
-                            resultText = `Joined call mode — my voice is now routed through VB-Cable virtual microphone. ${meetingUrl ? 'I\'ve opened the meeting link in the browser.' : ''} The user should select "CABLE Output (VB-Audio Virtual Cable)" as the microphone in their meeting app to hear me. I can hear them through the normal microphone. Remember to call leave_meeting when the call is done.`;
+                            // Auto-create meeting in Meeting Intelligence
+                            try {
+                              await window.eve.meetingIntel.quickStart(meetingUrl || '', `Call at ${new Date().toLocaleTimeString()}`);
+                            } catch { /* non-critical */ }
+                            resultText = `Joined call mode — my voice is now routed through VB-Cable virtual microphone. ${meetingUrl ? 'I\'ve opened the meeting link in the browser.' : ''} The user should select "CABLE Output (VB-Audio Virtual Cable)" as the microphone in their meeting app to hear me. I can hear them through the normal microphone. Meeting intelligence is tracking this call. Use meeting_note to capture key points. Call leave_meeting when done.`;
                           }
                         } else {
                           resultText = 'VB-Cable is installed but I couldn\'t find the "CABLE Input" output device. The user may need to restart their computer after installing VB-Cable.';
@@ -1568,7 +1636,11 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                       }
                       await window.eve.callIntegration.exitCallMode();
                       setState((s) => ({ ...s, isInCall: false }));
-                      resultText = 'Left the meeting — audio routing restored to normal speakers. I\'m back to regular mode.';
+                      // Auto-end meeting in Meeting Intelligence
+                      try {
+                        await window.eve.meetingIntel.endActive();
+                      } catch { /* non-critical */ }
+                      resultText = 'Left the meeting — audio routing restored to normal speakers. Meeting intelligence will generate a summary and extract action items. I\'m back to regular mode.';
                     } catch (leaveErr) {
                       const leaveMsg = leaveErr instanceof Error ? leaveErr.message : String(leaveErr);
                       resultText = `Error leaving meeting: ${leaveMsg}`;
@@ -1622,6 +1694,89 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                       resultText = `Logged ${channel} interaction with ${personName} (${direction}).`;
                     } else {
                       resultText = `Could not log interaction with ${personName}: ${result.error || 'unknown error'}`;
+                    }
+                  } else if (fc.name === 'create_meeting') {
+                    // Meeting Intelligence — create a meeting
+                    const meetingName = String(fc.args?.name || 'New Meeting');
+                    const description = fc.args?.description ? String(fc.args.description) : undefined;
+                    const attendees = Array.isArray(fc.args?.attendees) ? fc.args.attendees.map(String) : undefined;
+                    const meetingUrl = fc.args?.meeting_url ? String(fc.args.meeting_url) : undefined;
+                    const scheduledStart = fc.args?.scheduled_start ? String(fc.args.scheduled_start) : undefined;
+                    const scheduledEnd = fc.args?.scheduled_end ? String(fc.args.scheduled_end) : undefined;
+                    const tags = Array.isArray(fc.args?.tags) ? fc.args.tags.map(String) : undefined;
+                    const projectName = fc.args?.project_name ? String(fc.args.project_name) : undefined;
+                    console.log('[GeminiLive] Creating meeting:', meetingName);
+                    try {
+                      const meeting = await window.eve.meetingIntel.create({
+                        name: meetingName, description, attendees, meetingUrl, scheduledStart, scheduledEnd, tags, projectName,
+                      });
+                      const attendeeCount = meeting.attendees?.length || 0;
+                      const intelCount = meeting.attendeeIntel?.filter((a: any) => a.trustProfile)?.length || 0;
+                      resultText = `Created meeting "${meetingName}" (ID: ${meeting.id}). ${attendeeCount} attendees tracked${intelCount > 0 ? `, ${intelCount} with trust intelligence` : ''}. Status: upcoming. Say "start the meeting" when ready.`;
+                    } catch (err) {
+                      resultText = `Failed to create meeting: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'meeting_note') {
+                    // Meeting Intelligence — add a note to the active meeting
+                    const content = String(fc.args?.content || '');
+                    const noteType = (fc.args?.note_type as string) || 'note';
+                    console.log('[GeminiLive] Meeting note:', noteType, content.slice(0, 50));
+                    try {
+                      const note = await window.eve.meetingIntel.addNoteActive(content, noteType);
+                      if (note) {
+                        resultText = `Noted${noteType !== 'note' ? ` [${noteType}]` : ''}: "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`;
+                      } else {
+                        resultText = 'No active meeting to add note to. Create and start a meeting first.';
+                      }
+                    } catch (err) {
+                      resultText = `Failed to add note: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'end_current_meeting') {
+                    // Meeting Intelligence — end the active meeting
+                    console.log('[GeminiLive] Ending current meeting');
+                    try {
+                      const meeting = await window.eve.meetingIntel.endActive();
+                      if (meeting) {
+                        const durationMins = meeting.startedAt && meeting.endedAt
+                          ? Math.round((meeting.endedAt - meeting.startedAt) / 60000)
+                          : 0;
+                        const noteCount = meeting.notes?.length || 0;
+                        resultText = `Meeting "${meeting.name}" ended after ${durationMins} minutes with ${noteCount} notes. Post-meeting processing started — summary and action items will be generated automatically.`;
+                      } else {
+                        resultText = 'No active meeting to end.';
+                      }
+                    } catch (err) {
+                      resultText = `Failed to end meeting: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'get_meeting_history') {
+                    // Meeting Intelligence — search or list meeting history
+                    const search = fc.args?.search ? String(fc.args.search) : undefined;
+                    const count = fc.args?.count ? Number(fc.args.count) : 5;
+                    console.log('[GeminiLive] Meeting history:', search || 'recent', count);
+                    try {
+                      if (search) {
+                        const results = await window.eve.meetingIntel.search(search, count);
+                        if (results.length === 0) {
+                          resultText = `No meetings found matching "${search}".`;
+                        } else {
+                          const lines = results.map((m: any) =>
+                            `- "${m.name}" (${m.status}) — ${m.summary || 'no summary'}${m.actionItems?.length ? ` | Actions: ${m.actionItems.join('; ')}` : ''}`
+                          );
+                          resultText = `Found ${results.length} meeting(s):\n${lines.join('\n')}`;
+                        }
+                      } else {
+                        const summaries = await window.eve.meetingIntel.recentSummaries(count);
+                        if (summaries.length === 0) {
+                          resultText = 'No meeting history yet.';
+                        } else {
+                          const lines = summaries.map((s: any) =>
+                            `- "${s.name}" (${s.date}, ${s.attendeeCount} attendees) — ${s.summary}${s.actionItems?.length ? ` | Actions: ${s.actionItems.join('; ')}` : ''}`
+                          );
+                          resultText = `Recent meetings:\n${lines.join('\n')}`;
+                        }
+                      }
+                    } catch (err) {
+                      resultText = `Failed to get meeting history: ${err instanceof Error ? err.message : String(err)}`;
                     }
                   } else if (['operate_computer', 'browser_task', 'take_screenshot', 'click_screen', 'type_text', 'press_keys'].includes(fc.name)) {
                     // Route to Self-Operating Computer / Browser-Use tools
