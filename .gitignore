@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Packaged installers
+release/
+
+# Environment variables (NEVER commit real API keys)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Code signing (developer-local certificates)
+*.cer
+*.pfx
+*.p12
+sign-setup.ps1
+
+# Claude workspace (local session data)
+.claude/
