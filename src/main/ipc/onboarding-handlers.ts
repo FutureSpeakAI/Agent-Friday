@@ -14,6 +14,7 @@ import {
   buildFeatureSetupPrompt,
 } from '../feature-setup';
 import { getEvolutionState, incrementSession } from '../personality-evolution';
+import { generateVoiceSample, getVoiceRecommendations, VOICE_CATALOG, type GeminiVoiceName } from '../voice-audition';
 import { settingsManager } from '../settings';
 import { ensureProfileOnDisk } from '../eve-profile';
 import type { IntakeResponses, FeatureSetupStep } from '../settings';
@@ -101,4 +102,17 @@ export function registerOnboardingHandlers(): void {
   // ── Personality evolution ───────────────────────────────────────────
   ipcMain.handle('evolution:get-state', () => getEvolutionState());
   ipcMain.handle('evolution:increment-session', async () => incrementSession());
+
+  // ── Voice audition ────────────────────────────────────────────────
+  ipcMain.handle('voice-audition:generate-sample', async (_event, voiceName: string, customPhrase?: string) => {
+    return generateVoiceSample(voiceName as GeminiVoiceName, customPhrase);
+  });
+
+  ipcMain.handle('voice-audition:get-recommendations', (_event, genderPref: string) => {
+    return getVoiceRecommendations(genderPref);
+  });
+
+  ipcMain.handle('voice-audition:get-catalog', () => {
+    return VOICE_CATALOG;
+  });
 }
