@@ -1,0 +1,205 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg-primary: #060B19;
+  --bg-secondary: #0F172A;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-active: rgba(0, 240, 255, 0.3);
+  --text-primary: #F8FAFC;
+  --text-secondary: #8888a0;
+  --text-muted: #4a4a62;
+  --accent-cyan: #00f0ff;
+  --accent-purple: #8A2BE2;
+  --accent-blue: #3b82f6;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-orange: #f97316;
+  --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.3);
+  --glow-purple: 0 0 20px rgba(138, 43, 226, 0.3);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-primary);
+  background-image: radial-gradient(ellipse at 50% 50%, #0F172A 0%, #060B19 70%);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+::selection {
+  background: rgba(0, 240, 255, 0.25);
+}
+
+/* --- Keyframes (centralised) --- */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-ring {
+  0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.5; }
+  50% { transform: translateX(-50%) scale(1.15); opacity: 0.2; }
+}
+
+@keyframes brand-glow {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 4px rgba(0, 240, 255, 0.2)); }
+  50% { filter: brightness(1.15) drop-shadow(0 0 8px rgba(0, 240, 255, 0.35)); }
+}
+
+.brand-glow-pulse {
+  animation: brand-glow 3s ease-in-out infinite;
+}
+
+@keyframes wave {
+  0%, 100% { height: 8px; }
+  50% { height: 24px; }
+}
+
+@keyframes bounce-dot {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideOutRight {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+/* --- Action feed animations --- */
+@keyframes slideInLeft {
+  from { transform: translateX(-30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes actionFadeOut {
+  from { opacity: 0.7; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-20px); }
+}
+
+@keyframes action-pulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+@keyframes action-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* --- Sidebar transition --- */
+.sidebar-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-panel.open {
+  transform: translateX(0);
+}
+
+.sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 24;
+}
+
+.sidebar-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* --- Hover utility classes --- */
+.hover-glow {
+  transition: box-shadow 0.2s ease, opacity 0.2s ease;
+}
+.hover-glow:hover {
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.15);
+}
+
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hover-bright {
+  transition: opacity 0.2s ease;
+}
+.hover-bright:hover {
+  opacity: 1 !important;
+}
+
+/* --- Chat message hover --- */
+.hover-lift:hover {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border-left-color: rgba(0, 240, 255, 0.2) !important;
+}
+
+/* --- Delete button hover --- */
+button[title="Delete memory"]:hover,
+button[title="Delete observation"]:hover,
+button[title="Delete task"]:hover {
+  opacity: 1 !important;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* --- Interactive elements cursor --- */
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
