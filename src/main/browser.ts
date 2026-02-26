@@ -250,6 +250,53 @@ class BrowserManager {
     }
   }
 
+  async scroll(direction: 'up' | 'down' = 'down', amount = 500): Promise<string> {
+    const page = await this.ensurePage();
+    if (direction === 'down') {
+      await page.evaluate((px) => window.scrollBy(0, px), amount);
+    } else {
+      await page.evaluate((px) => window.scrollBy(0, -px), amount);
+    }
+    const scrollY = await page.evaluate(() => Math.round(window.scrollY));
+    const maxScroll = await page.evaluate(() => Math.round(document.body.scrollHeight - window.innerHeight));
+    return `Scrolled ${direction} by ${amount}px. Position: ${scrollY}/${maxScroll}px.`;
+  }
+
+  async getUrl(): Promise<string> {
+    const page = await this.ensurePage();
+    return page.url();
+  }
+
+  async selectOption(selector: string, value: string): Promise<string> {
+    const page = await this.ensurePage();
+    try {
+      await page.select(selector, value);
+      return `Selected option "${value}" in ${selector}`;
+    } catch {
+      // Try by visible text
+      const selected = await page.evaluate(
+        (sel, text) => {
+          const selectEl = document.querySelector(sel) as HTMLSelectElement;
+          if (!selectEl) return false;
+          const options = Array.from(selectEl.options);
+          const match = options.find(
+            (o) => o.text.toLowerCase().includes(text.toLowerCase()) || o.value.toLowerCase().includes(text.toLowerCase())
+          );
+          if (match) {
+            selectEl.value = match.value;
+            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+          return false;
+        },
+        selector,
+        value,
+      );
+      if (selected) return `Selected option matching "${value}" in ${selector}`;
+      return `Could not select "${value}" in ${selector}`;
+    }
+  }
+
   async closeBrowser(): Promise<string> {
     if (this.browser) {
       await this.browser.close().catch(() => {});
@@ -325,8 +372,39 @@ export const browserToolDefs = [
   },
   {
     name: 'browser_screenshot',
-    description: 'Take a screenshot of the current page. Returns base64 JPEG.',
+    description:
+      'Take a screenshot of the current page. The screenshot image will be sent to you for visual analysis. ' +
+      'ALWAYS take a screenshot after navigating to a new page, clicking elements, or when you need to verify what is on screen. ' +
+      'This is your primary way of SEEING what the browser shows.',
     input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'browser_scroll',
+    description: 'Scroll the page up or down. Use this to see more content, find elements below the fold, or navigate long pages.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        direction: { type: 'string', description: '"down" (default) or "up"' },
+        amount: { type: 'number', description: 'Pixels to scroll (default 500)' },
+      },
+    },
+  },
+  {
+    name: 'browser_get_url',
+    description: 'Get the current page URL. Useful for checking where you are after navigation or redirects.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'browser_select',
+    description: 'Select an option from a dropdown/select element by CSS selector and value or visible text.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        selector: { type: 'string', description: 'CSS selector of the select element' },
+        value: { type: 'string', description: 'Option value or visible text to select' },
+      },
+      required: ['selector', 'value'],
+    },
   },
   {
     name: 'browser_go_back',
@@ -417,6 +495,9 @@ export async function executeBrowserTool(name: string, args: Record<string, unkn
     case 'browser_type': return browserManager.type(args.text as string, args.selector as string | undefined);
     case 'browser_press_key': return browserManager.pressKey(args.key as string);
     case 'browser_screenshot': return browserManager.screenshot();
+    case 'browser_scroll': return browserManager.scroll(args.direction as 'up' | 'down' | undefined, args.amount as number | undefined);
+    case 'browser_get_url': return browserManager.getUrl();
+    case 'browser_select': return browserManager.selectOption(args.selector as string, args.value as string);
     case 'browser_go_back': return browserManager.goBack();
     case 'browser_list_tabs': return browserManager.listTabs();
     case 'browser_switch_tab': return browserManager.switchTab(args.index as number);
