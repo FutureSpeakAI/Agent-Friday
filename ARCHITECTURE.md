@@ -1,8 +1,8 @@
-# Agent Friday (nexus-os) — Living Architecture Document
+# Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
 > **Last updated**: 2026-02-26
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP.
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, SOC, GitLoader.
 
 ---
 
@@ -35,6 +35,7 @@ graph TB
             UI[React 19 UI Layer]
             THREE[Three.js NexusCore]
             CANVAS[Canvas 2D Backgrounds]
+            OFFICE_UI[Agent Office Canvas]
             AUDIO_OUT[AudioPlaybackEngine]
             MIC[Mic Capture AudioWorklet]
         end
@@ -48,6 +49,11 @@ graph TB
             MCP_MGR[MCP Server Manager]
             SCHED[Task Scheduler]
             INTEL[Predictive Intelligence]
+            INTEGRITY[Integrity System]
+            SOC[SOC Bridge]
+            GITLOAD[GitLoader]
+            OFFICE[Agent Office Manager]
+            OPENROUTER[OpenRouter Provider]
         end
 
         IPC[IPC Bridge / Preload]
@@ -56,6 +62,7 @@ graph TB
     USER((User))
     GEMINI[Gemini 2.5 Flash<br/>Native Audio WebSocket]
     CLAUDE[Claude Sonnet/Opus<br/>Anthropic SDK]
+    OR_API[OpenRouter API<br/>200+ Models]
     OBSIDIAN[Obsidian Vault<br/>Local Filesystem]
     TELEGRAM[Telegram Bot API]
     GCAL[Google Calendar API]
@@ -64,6 +71,8 @@ graph TB
     OPENAI[OpenAI API]
     MCP_SERVERS[MCP Servers<br/>stdio/SSE]
     BROWSER_EXT[Browser Extension<br/>WebSocket :52836]
+    PYTHON_SOC[SOC Python Process<br/>stdin/stdout JSONL]
+    GITHUB[GitHub Repos<br/>git clone]
 
     USER -->|Voice/Text/Click| UI
     UI <-->|contextBridge| IPC
@@ -71,6 +80,7 @@ graph TB
 
     CORE <-->|WebSocket| GEMINI
     CORE <-->|REST API| CLAUDE
+    OPENROUTER <-->|REST API| OR_API
     MEM <-->|File I/O| OBSIDIAN
     GW <-->|Bot API| TELEGRAM
     CONN <-->|OAuth2| GCAL
@@ -79,6 +89,8 @@ graph TB
     CONN <-->|REST| OPENAI
     MCP_MGR <-->|stdio/SSE| MCP_SERVERS
     GW <-->|WebSocket| BROWSER_EXT
+    SOC <-->|JSONL stdio| PYTHON_SOC
+    GITLOAD <-->|git clone + fs| GITHUB
 
     MIC -->|16kHz PCM| GEMINI
     GEMINI -->|24kHz PCM| AUDIO_OUT
@@ -88,16 +100,19 @@ graph TB
 
 | Service | Protocol | Purpose | Module |
 |---------|----------|---------|--------|
-| Gemini 2.5 Flash | WebSocket (Native Audio) | Voice conversation, tool calls, real-time reasoning | `gemini-live.ts` via `useGeminiLive.ts` |
-| Claude Sonnet/Opus | REST (Anthropic SDK) | Deep analysis, memory consolidation, psych profiles, code review | `server.ts`, `personality.ts` |
-| Obsidian | Local filesystem | Bidirectional memory mirroring | `obsidian-sync.ts` |
-| Telegram | Bot HTTP API | Message gateway (inbound/outbound) | `telegram-gateway.ts` |
-| Google Calendar | OAuth2 REST | Calendar read/write | `google-calendar.ts` |
-| Gmail | OAuth2 REST | Email read/compose/send | `gmail.ts` |
-| Perplexity | REST API | Web search with citations | `perplexity.ts` |
-| OpenAI | REST API | Image generation (DALL-E 3), TTS, GPT fallback | `openai-services.ts` |
-| MCP Servers | stdio/SSE | Extensible tool protocol | `mcp-manager.ts` |
-| Browser Extension | WebSocket :52836 | Tab control, screenshots, DOM interaction | `browser-connector.ts` |
+| Gemini 2.5 Flash | WebSocket (Native Audio) | Voice conversation, tool calls, real-time reasoning | `useGeminiLive.ts` |
+| Claude Sonnet/Opus | REST (Anthropic SDK) | Deep analysis, memory consolidation, psych profiles, code review | `server.ts` |
+| OpenRouter | REST API | Access to 200+ models (Llama, Mistral, Gemma, DeepSeek, etc.) | `openrouter.ts` |
+| Obsidian | Local filesystem | Bidirectional memory mirroring | `obsidian-memory.ts` |
+| Telegram | Bot HTTP API | Message gateway (inbound/outbound) | `gateway/adapters/telegram.ts` |
+| Google Calendar | OAuth2 REST | Calendar read/write | `calendar.ts` |
+| Gmail | OAuth2 REST | Email read/compose/send | `connectors/` (via registry) |
+| Perplexity | REST API | Web search with citations | `connectors/perplexity.ts` |
+| OpenAI | REST API | Image generation (DALL-E 3), TTS, GPT fallback | `connectors/openai-services.ts` |
+| MCP Servers | stdio/SSE | Extensible tool protocol | `mcp-client.ts` |
+| Browser Extension | WebSocket :52836 | Tab control, screenshots, DOM interaction | `browser.ts` |
+| SOC (Python) | stdin/stdout JSONL | Desktop + browser automation | `soc-bridge.ts` |
+| GitHub | git clone + filesystem | Repo loading + code intelligence | `git-loader.ts` |
 
 ---
 
@@ -130,6 +145,20 @@ graph LR
         SUMMARIZE[Summarize Agent]
         CODE_REV[Code Review Agent]
         DRAFT[Draft Email Agent]
+        OFFICE_MGR[Agent Office]
+    end
+
+    subgraph "Safety & Integrity"
+        CLAWS[Core Laws]
+        HMAC_SYS[HMAC Verification]
+        WATCHDOG[Memory Watchdog]
+        SAFE_MODE[Safe Mode]
+    end
+
+    subgraph "Automation"
+        SOC_BRIDGE[SOC Bridge]
+        GIT_LOAD[GitLoader]
+        DESKTOP_AUTO[Desktop Tools]
     end
 
     subgraph "Integration & Gateway"
@@ -137,8 +166,8 @@ graph LR
         BROWSER_GW[Browser Gateway]
         CAL_CONN[Calendar Connector]
         MAIL_CONN[Gmail Connector]
-        DESK_CONN[Desktop Connector]
         MCP[MCP Protocol]
+        OR_CONN[OpenRouter]
     end
 
     subgraph "Scheduling & Tasks"
@@ -156,9 +185,11 @@ graph LR
     subgraph "Presentation Layer"
         NEXUS[NexusCore 3D]
         ORB[VoiceOrb]
+        OFFICE_VIS[Agent Office Viz]
         DASH[Dashboard]
         ACTIONS[Action Feed]
         CHAT[Chat History]
+        SHIELD[Integrity Shield]
     end
 
     VOICE --> SESSION
@@ -177,9 +208,18 @@ graph LR
     AGENT_FW --> SUMMARIZE
     AGENT_FW --> CODE_REV
     AGENT_FW --> DRAFT
+    AGENT_FW --> OFFICE_MGR
+
+    CLAWS --> HMAC_SYS
+    HMAC_SYS --> WATCHDOG
+    WATCHDOG --> SAFE_MODE
+    CLAWS --> PERSONA
+
+    SOC_BRIDGE --> DESKTOP_AUTO
+    GIT_LOAD --> AGENT_FW
 
     TELE_GW --> VOICE
-    BROWSER_GW --> DESK_CONN
+    BROWSER_GW --> DESKTOP_AUTO
     MCP --> AGENT_FW
 
     SCHEDULER --> CRON
@@ -192,6 +232,8 @@ graph LR
     MOOD --> NEXUS
     VOICE --> ORB
     AGENT_FW --> ACTIONS
+    AGENT_FW --> OFFICE_VIS
+    HMAC_SYS --> SHIELD
 ```
 
 ### Context Ownership Table
@@ -206,12 +248,17 @@ graph LR
 | Relationship Memory | `relationship-memory.ts` | `eve-data/relationship.json` (singleton) | Session events | Personality, Greeting |
 | Consolidation | `memory-consolidation.ts` | N/A (transforms) | Medium-term, Episodes | Long-term |
 | Semantic Search | `semantic-search.ts` | In-memory embeddings | All memory tiers | Query responses |
-| Predictive Intelligence | `predictive-intelligence.ts` | `eve-data/intelligence-*.json` | Ambient context, Sentiment | Briefings, Check-ins |
-| Agent Framework | `agent-framework.ts` | In-memory task queue | Tool calls, Scheduler | Claude API, Results |
-| Gateway | `telegram-gateway.ts`, `browser-connector.ts` | N/A (passthrough) | External messages | Conversation injection |
-| Connectors | `google-calendar.ts`, `gmail.ts`, etc. | OAuth tokens in settings | Tool calls | API responses |
-| MCP | `mcp-manager.ts` | Server configs in settings | Tool calls | stdio/SSE servers |
-| Scheduler | `task-scheduler.ts` | `eve-data/scheduled-tasks.json` | User commands, Intelligence | Cron execution |
+| Predictive Intelligence | `intelligence.ts`, `predictor.ts` | `eve-data/intelligence-*.json` | Ambient context, Sentiment | Briefings, Check-ins |
+| Agent Framework | `agents/agent-runner.ts` | In-memory task queue | Tool calls, Scheduler | Claude API, Results |
+| Agent Office | `agent-office/office-manager.ts` | In-memory state | Agent runner events | Renderer visualization |
+| Integrity | `integrity/core-laws.ts`, `integrity/hmac.ts` | Signed law text | Build-time signing | Personality system, Safe mode |
+| SOC Bridge | `soc-bridge.ts` | N/A (passthrough) | Tool calls | Python subprocess |
+| GitLoader | `git-loader.ts` | Temp clone directory | Tool calls | File content, search results |
+| Gateway | `gateway/gateway-manager.ts` | Session store | External messages | Conversation injection |
+| Connectors | `connectors/registry.ts`, individual connectors | OAuth tokens in settings | Tool calls | API responses |
+| OpenRouter | `openrouter.ts` | API key in settings | Agent framework, tool calls | Model responses |
+| MCP | `mcp-client.ts` | Server configs in settings | Tool calls | stdio/SSE servers |
+| Scheduler | `scheduler.ts` | `eve-data/scheduled-tasks.json` | User commands, Intelligence | Cron execution |
 | Identity | `onboarding.ts`, `personality.ts` | `eve-settings.json` | First-run flow | All personality-aware modules |
 | Presentation | React components | React state, MoodContext | All main process data | User display |
 
@@ -225,8 +272,8 @@ graph TD
 
     subgraph "Core Services"
         SERVER[server.ts<br/>Claude Anthropic Client]
-        GEMINI[gemini-live.ts<br/>Gemini WebSocket Manager]
         SETTINGS[settings.ts<br/>Persistent Settings Store]
+        OPENROUTER[openrouter.ts<br/>Multi-Model Provider]
     end
 
     subgraph "Memory Domain"
@@ -235,34 +282,49 @@ graph TD
         RELATIONSHIP[relationship-memory.ts<br/>User Bond Tracker]
         CONSOLIDATION[memory-consolidation.ts<br/>6hr Promotion Engine]
         SEMANTIC[semantic-search.ts<br/>Embedding + Cosine Sim]
-        OBSIDIAN[obsidian-sync.ts<br/>Vault Mirroring]
+        OBSIDIAN[obsidian-memory.ts<br/>Vault Mirroring]
     end
 
     subgraph "Intelligence Domain"
         AMBIENT[ambient.ts<br/>30s Polling Context]
         SENTIMENT[sentiment.ts<br/>Mood Classification]
-        PREDICTIVE[predictive-intelligence.ts<br/>Briefings & Check-ins]
-        WORLD[world-monitor.ts<br/>News + Weather + Stocks]
+        INTEL[intelligence.ts<br/>Briefings & Check-ins]
+        PREDICTOR[predictor.ts<br/>Context Prediction]
     end
 
     subgraph "Agent Domain"
-        AGENT_FW[agent-framework.ts<br/>Task Queue + Execution]
-        AGENT_TYPES[agent-types/<br/>research, summarize,<br/>code-review, draft-email]
+        AGENT_RUNNER[agent-runner.ts<br/>5-Concurrent Executor]
+        BUILTIN[builtin-agents.ts<br/>Agent Definitions]
+        PERSONAS[agent-personas.ts<br/>Agent Personalities]
+        TEAMS[agent-teams.ts<br/>Team Coordination]
+        VOICE_AG[agent-voice.ts<br/>ElevenLabs TTS]
+        ORCH[orchestrator.ts<br/>Task Decomposition]
+        OFFICE_MGR[office-manager.ts<br/>Pixel Office State]
+    end
+
+    subgraph "Safety Domain"
+        CORE_LAWS[core-laws.ts<br/>Three Laws Text]
+        HMAC[hmac.ts<br/>SHA256 Signing]
+        WATCHDOG[memory-watchdog.ts<br/>Integrity Monitor]
+    end
+
+    subgraph "Automation Domain"
+        SOC[soc-bridge.ts<br/>Python JSONL Bridge]
+        GITLOADER[git-loader.ts<br/>Repo Clone + Search]
+        DESKTOP[desktop-tools.ts<br/>Window/App/Clipboard]
     end
 
     subgraph "Integration Domain"
-        TELE_GW[telegram-gateway.ts<br/>Bot API Bridge]
-        BROWSER_CONN[browser-connector.ts<br/>WS :52836 Bridge]
-        GCAL[google-calendar.ts<br/>OAuth2 Calendar]
-        GMAIL_CONN[gmail.ts<br/>OAuth2 Email]
-        DESKTOP[desktop-tools.ts<br/>Window/App/Clipboard]
-        MCP_MGR[mcp-manager.ts<br/>Multi-Server Protocol]
-        PERPLEXITY[perplexity.ts<br/>Search w/ Citations]
-        OPENAI[openai-services.ts<br/>DALL-E + TTS + GPT]
+        GW_MGR[gateway-manager.ts<br/>Message Gateway]
+        TRUST[trust-engine.ts<br/>5-Tier Trust]
+        AUDIT[audit-log.ts<br/>Crypto Audit Trail]
+        BROWSER[browser.ts<br/>WS :52836 Bridge]
+        MCP_CLIENT[mcp-client.ts<br/>Multi-Server Protocol]
+        CONN_REG[registry.ts<br/>18 Connector Modules]
     end
 
     subgraph "Scheduling Domain"
-        SCHEDULER[task-scheduler.ts<br/>Persistent Cron]
+        SCHEDULER[scheduler.ts<br/>Persistent Cron]
     end
 
     subgraph "Identity Domain"
@@ -275,13 +337,13 @@ graph TD
 
     subgraph "Infrastructure"
         PRELOAD[preload.ts<br/>IPC Bridge / contextBridge]
-        TOOLS[tools.ts<br/>Gemini Tool Declarations]
-        CLIPBOARD[clipboard-monitor.ts<br/>Polling Clipboard]
+        PROMPT_BUDGET[prompt-budget.ts<br/>Token Allocation]
         SESSION_HEALTH[session-health.ts<br/>Uptime & Error Tracking]
+        SCREEN[screen-capture.ts<br/>Desktop Screenshots]
+        CLIPBOARD[clipboard-intelligence.ts<br/>Polling Clipboard]
     end
 
     INDEX --> SERVER
-    INDEX --> GEMINI
     INDEX --> SETTINGS
     INDEX --> MEMORY
     INDEX --> EPISODIC
@@ -291,52 +353,61 @@ graph TD
     INDEX --> OBSIDIAN
     INDEX --> AMBIENT
     INDEX --> SENTIMENT
-    INDEX --> PREDICTIVE
-    INDEX --> AGENT_FW
-    INDEX --> TELE_GW
-    INDEX --> BROWSER_CONN
-    INDEX --> GCAL
-    INDEX --> GMAIL_CONN
+    INDEX --> INTEL
+    INDEX --> AGENT_RUNNER
+    INDEX --> GW_MGR
+    INDEX --> BROWSER
     INDEX --> DESKTOP
-    INDEX --> MCP_MGR
+    INDEX --> MCP_CLIENT
     INDEX --> SCHEDULER
     INDEX --> PERSONALITY
     INDEX --> ONBOARDING
     INDEX --> CLIPBOARD
     INDEX --> SESSION_HEALTH
     INDEX --> PRELOAD
+    INDEX --> SOC
+    INDEX --> GITLOADER
+    INDEX --> CORE_LAWS
+    INDEX --> OFFICE_MGR
+    INDEX --> OPENROUTER
 
     MEMORY --> SEMANTIC
     MEMORY --> OBSIDIAN
     CONSOLIDATION --> SERVER
     CONSOLIDATION --> MEMORY
     EPISODIC --> SERVER
-    PREDICTIVE --> SERVER
-    PREDICTIVE --> AMBIENT
-    PREDICTIVE --> SENTIMENT
-    AGENT_FW --> SERVER
-    AGENT_FW --> AGENT_TYPES
+    INTEL --> SERVER
+    INTEL --> AMBIENT
+    INTEL --> SENTIMENT
+    AGENT_RUNNER --> SERVER
+    AGENT_RUNNER --> BUILTIN
+    AGENT_RUNNER --> PERSONAS
+    AGENT_RUNNER --> OFFICE_MGR
     ONBOARDING --> PSYCH
     PSYCH --> SERVER
     PERSONALITY --> SETTINGS
     PERSONALITY --> RELATIONSHIP
+    PERSONALITY --> CORE_LAWS
     EVOLUTION --> SETTINGS
-    TOOLS --> DESKTOP
-    TOOLS --> MCP_MGR
-    TELE_GW --> GEMINI
-    SCHEDULER --> SETTINGS
+    CORE_LAWS --> HMAC
+    HMAC --> WATCHDOG
+    GW_MGR --> TRUST
+    GW_MGR --> AUDIT
 ```
 
 ### Module Coupling Analysis
 
 | Module | Fan-In | Fan-Out | Coupling Level | Notes |
 |--------|--------|---------|----------------|-------|
-| `index.ts` | 1 (electron) | 30+ | **Hub** | Central IPC registration — expected for Electron main |
-| `settings.ts` | 20+ | 0 | **Afferent hub** | Read by nearly everything, writes from few |
-| `server.ts` | 8 | 1 (Anthropic SDK) | **Shared service** | Claude API client used by consolidation, episodic, predictive, agents, psych |
+| `index.ts` | 1 (electron) | 35+ | **Hub** | Central IPC registration — expected for Electron main |
+| `settings.ts` | 25+ | 0 | **Afferent hub** | Read by nearly everything, writes from few |
+| `server.ts` | 10 | 1 (Anthropic SDK) | **Shared service** | Claude API client used by consolidation, episodic, predictive, agents, psych, integrity |
 | `memory.ts` | 5 | 3 | **Domain core** | Semantic search, Obsidian sync, settings |
-| `agent-framework.ts` | 3 | 5 | **Orchestrator** | Routes to agent types, uses Claude |
+| `agent-runner.ts` | 3 | 7 | **Orchestrator** | Routes to agent types, uses Claude, manages office state |
 | `preload.ts` | 1 | 0 | **Bridge** | Pure declaration, no logic dependencies |
+| `integrity/core-laws.ts` | 3 | 1 | **Safety core** | Read by personality, checked by HMAC |
+| `soc-bridge.ts` | 2 | 1 | **Bridge** | Spawns Python, translates JSONL |
+| `openrouter.ts` | 3 | 1 | **Service** | REST client for OpenRouter API |
 
 ---
 
@@ -366,6 +437,7 @@ graph TD
         ORB[VoiceOrb.tsx<br/>Central Interaction Point]
         STATUS[StatusBar.tsx<br/>Bottom Status Strip]
         ACTION[ActionFeed.tsx<br/>Tool/Agent Activity Ticker]
+        SHIELD[IntegrityShield.tsx<br/>cLaw Status Indicator]
     end
 
     subgraph "Phase: Normal — Overlays (Toggle)"
@@ -374,9 +446,12 @@ graph TD
         SETTINGS[Settings.tsx<br/>Configuration Panel]
         DASH[Dashboard.tsx<br/>Command Center]
         AGENT_DASH[AgentDashboard.tsx<br/>Agent Task Monitor]
+        OFFICE_VIZ[AgentOffice/<br/>Pixel-Art Office]
         MEM_EXP[MemoryExplorer.tsx<br/>Memory Browser]
         QUICK[QuickActions.tsx<br/>Command Palette]
+        RESEARCH[ResearchPanel.tsx<br/>Research Report Sidebar]
         CONN_ERR[ConnectionOverlay.tsx<br/>Error Recovery]
+        FILE_TOAST[FileToast.tsx<br/>File Notifications]
     end
 
     subgraph "Dashboard Sub-Components"
@@ -396,14 +471,18 @@ graph TD
     MOOD_CTX --> ORB
     MOOD_CTX --> STATUS
     MOOD_CTX --> ACTION
+    MOOD_CTX --> SHIELD
     MOOD_CTX --> CHAT
     MOOD_CTX --> TEXT_IN
     MOOD_CTX --> SETTINGS
     MOOD_CTX --> DASH
     MOOD_CTX --> AGENT_DASH
+    MOOD_CTX --> OFFICE_VIZ
     MOOD_CTX --> MEM_EXP
     MOOD_CTX --> QUICK
+    MOOD_CTX --> RESEARCH
     MOOD_CTX --> CONN_ERR
+    MOOD_CTX --> FILE_TOAST
 
     DASH --> CTX_CARD
     DASH --> AGENT_CARD
@@ -437,10 +516,14 @@ stateDiagram-v2
 | 110 | Dashboard | Toggle (Ctrl+Shift+D) |
 | 105 | AgentDashboard | Toggle |
 | 100 | Settings | Toggle |
+| 95 | AgentOffice | Toggle |
 | 90 | MemoryExplorer | Toggle (Ctrl+Shift+M) |
+| 85 | ResearchPanel | Toggle |
 | 50 | AgentCreation | Creating phase only |
 | 40 | ChatHistory | Toggle |
+| 38 | FileToast | Transient notifications |
 | 35 | ActionFeed | Always (bottom-left) |
+| 32 | IntegrityShield | Always (status indicator) |
 | 30 | ConnectionOverlay | Error state |
 | 20 | VoiceOrb | Always (center) |
 | 10 | StatusBar | Always (bottom) |
@@ -471,6 +554,11 @@ graph LR
         R_FEATURE[featureSetup.*]
         R_ONBOARD[onboarding.*]
         R_CLIPBOARD[clipboard.*]
+        R_INTEGRITY[integrity.*]
+        R_SOC[soc.*]
+        R_GITLOADER[gitLoader.*]
+        R_OFFICE[agentOffice.*]
+        R_OPENROUTER[openrouter.*]
     end
 
     subgraph "Main Process (ipcMain.handle)"
@@ -492,6 +580,11 @@ graph LR
         M_FEATURE[feature-setup:*]
         M_ONBOARD[onboarding:*]
         M_CLIPBOARD[clipboard:*]
+        M_INTEGRITY[integrity:*]
+        M_SOC[soc:*]
+        M_GITLOADER[git-loader:*]
+        M_OFFICE[agent-office:*]
+        M_OPENROUTER[openrouter:*]
     end
 
     R_SETTINGS <-->|contextBridge| M_SETTINGS
@@ -512,6 +605,11 @@ graph LR
     R_FEATURE <-->|contextBridge| M_FEATURE
     R_ONBOARD <-->|contextBridge| M_ONBOARD
     R_CLIPBOARD <-->|contextBridge| M_CLIPBOARD
+    R_INTEGRITY <-->|contextBridge| M_INTEGRITY
+    R_SOC <-->|contextBridge| M_SOC
+    R_GITLOADER <-->|contextBridge| M_GITLOADER
+    R_OFFICE <-->|contextBridge| M_OFFICE
+    R_OPENROUTER <-->|contextBridge| M_OPENROUTER
 ```
 
 ### Full IPC Channel Registry
@@ -536,14 +634,6 @@ graph LR
 | `memory:get-short-term` | invoke | `() → ShortTermEntry[]` | Current session buffer |
 | `memory:consolidate` | invoke | `() → ConsolidationResult` | Trigger manual consolidation |
 
-#### Episodes Namespace (`window.eve.episodes`)
-| Channel | Direction | Signature | Purpose |
-|---------|-----------|-----------|---------|
-| `episodes:get-all` | invoke | `() → Episode[]` | All session summaries |
-| `episodes:get-recent` | invoke | `(n: number) → Episode[]` | Last N episodes |
-| `episodes:search` | invoke | `(query: string, limit: number) → Episode[]` | Semantic search episodes |
-| `episodes:save-current` | invoke | `() → Episode` | Force-save current session |
-
 #### Agents Namespace (`window.eve.agents`)
 | Channel | Direction | Signature | Purpose |
 |---------|-----------|-----------|---------|
@@ -552,28 +642,32 @@ graph LR
 | `agents:get-types` | invoke | `() → AgentTypeInfo[]` | Available agent types |
 | `agents:onUpdate` | on | `(callback: (task: AgentTask) → void) → unsub` | Real-time task updates |
 
-#### Ambient Namespace (`window.eve.ambient`)
+#### Integrity Namespace (`window.eve.integrity`)
 | Channel | Direction | Signature | Purpose |
 |---------|-----------|-----------|---------|
-| `ambient:get-context` | invoke | `() → AmbientContext` | Current desktop context |
-| `ambient:get-clipboard` | invoke | `() → ClipboardData` | Current clipboard |
-| `ambient:onClipboard` | on | `(callback: (data: ClipboardData) → void) → unsub` | Clipboard changes |
+| `integrity:verify` | invoke | `() → IntegrityStatus` | Verify law integrity |
+| `integrity:get-status` | invoke | `() → IntegrityState` | Current integrity state |
+| `integrity:get-laws` | invoke | `() → CoreLaw[]` | Read Three Laws text |
 
-#### Desktop Namespace (`window.eve.desktop`)
+#### SOC Namespace (`window.eve.soc`)
 | Channel | Direction | Signature | Purpose |
 |---------|-----------|-----------|---------|
-| `desktop:get-active-window` | invoke | `() → WindowInfo` | Active window title/app |
-| `desktop:list-windows` | invoke | `() → WindowInfo[]` | All open windows |
-| `desktop:focus-window` | invoke | `(title: string) → void` | Focus window by title |
-| `desktop:launch-app` | invoke | `(name: string) → void` | Launch application |
-| `desktop:run-command` | invoke | `(cmd: string) → string` | Execute shell command |
+| `soc:execute` | invoke | `(action: SOCAction) → SOCResult` | Execute desktop/browser automation |
+| `soc:is-available` | invoke | `() → boolean` | Check if Python SOC is available |
 
-#### Documents Namespace (`window.eve.documents`)
+#### GitLoader Namespace (`window.eve.gitLoader`)
 | Channel | Direction | Signature | Purpose |
 |---------|-----------|-----------|---------|
-| `documents:pick-and-ingest` | invoke | `() → IngestResult` | File picker → ingest |
-| `documents:list` | invoke | `() → Document[]` | All ingested documents |
-| `documents:search` | invoke | `(query: string) → SearchResult[]` | Search document content |
+| `git-loader:clone` | invoke | `(url: string) → CloneResult` | Clone a GitHub repo |
+| `git-loader:search` | invoke | `(repoId: string, pattern: string) → SearchResult[]` | Regex search repo files |
+| `git-loader:read-file` | invoke | `(repoId: string, path: string) → string` | Read a file from cloned repo |
+| `git-loader:cleanup` | invoke | `(repoId: string) → void` | Remove cloned repo |
+
+#### Agent Office Namespace (`window.eve.agentOffice`)
+| Channel | Direction | Signature | Purpose |
+|---------|-----------|-----------|---------|
+| `agent-office:get-state` | invoke | `() → OfficeState` | Current office layout + agent positions |
+| `agent-office:onUpdate` | on | `(callback: (state: OfficeState) → void) → unsub` | Real-time office updates |
 
 ---
 
@@ -674,61 +768,50 @@ where:
   crossRef    = number of related memories / total memories (capped at 1)
 ```
 
-### Consolidation Cycle (6 hours)
-
-```mermaid
-sequenceDiagram
-    participant Timer as 6hr Timer
-    participant Engine as ConsolidationEngine
-    participant Claude as Claude Sonnet
-    participant MTM as observations.json
-    participant LTM as memories.json
-    participant Embed as SemanticSearch
-
-    Timer ->> Engine: triggerConsolidation()
-    Engine ->> MTM: Read all observations
-    Engine ->> LTM: Read all memories
-
-    loop For each observation batch
-        Engine ->> Claude: "Analyze these observations.<br/>Score importance. Find duplicates.<br/>Identify merge candidates."
-        Claude -->> Engine: Scored + merge instructions
-    end
-
-    Engine ->> Engine: Apply promotion threshold
-    Engine ->> LTM: Write promoted memories
-    Engine ->> MTM: Remove promoted, decay old
-    Engine ->> Embed: Re-index new memories
-
-    Note over Engine: Also processes recent episodes<br/>for cross-referencing
-```
-
 ---
 
 ## 8. Data Flow: Tool Execution Chain
 
 ```mermaid
 graph TD
-    GEMINI[Gemini Response<br/>toolCall: name + args] --> HOOK[useGeminiLive.ts<br/>handleToolCall()]
+    GEMINI[Gemini Response<br/>toolCall: name + args] --> HOOK[useGeminiLive.ts<br/>handleToolCall]
 
     HOOK --> PRIORITY{Tool Routing<br/>Priority Chain}
 
     PRIORITY -->|1. Specific handlers| SPECIFIC[Built-in Tool Handlers]
     PRIORITY -->|2. browser_* prefix| BROWSER[Browser Connector]
-    PRIORITY -->|3. Connector match| CONNECTOR[Connector Registry]
-    PRIORITY -->|4. MCP match| MCP_TOOL[MCP Server Tools]
-    PRIORITY -->|5. Fallback| DESKTOP[Desktop Tools]
+    PRIORITY -->|3. soc_* prefix| SOC[SOC Bridge]
+    PRIORITY -->|4. git_* prefix| GITLOAD[GitLoader]
+    PRIORITY -->|5. Connector match| CONNECTOR[Connector Registry]
+    PRIORITY -->|6. MCP match| MCP_TOOL[MCP Server Tools]
+    PRIORITY -->|7. Fallback| DESKTOP[Desktop Tools]
 
     subgraph "Built-in Tool Handlers"
-        SPECIFIC --> SAVE_MEM[save_memory<br/>→ memory:save IPC]
-        SPECIFIC --> ASK_CLAUDE[ask_claude<br/>→ server:ask-claude IPC]
-        SPECIFIC --> SETUP_INTEL[setup_intelligence<br/>→ intelligence:setup IPC]
-        SPECIFIC --> CREATE_TASK[create_task / list_tasks / delete_task<br/>→ scheduler:* IPC]
-        SPECIFIC --> READ_SRC[read_own_source / list_own_files<br/>→ Desktop connector]
-        SPECIFIC --> PROPOSE[propose_code_change<br/>→ Desktop connector]
-        SPECIFIC --> LAUNCH[launch_app<br/>→ desktop:launch IPC]
-        SPECIFIC --> FINALIZE[finalize_agent_identity<br/>→ onboarding:finalize IPC]
-        SPECIFIC --> INTAKE[save_intake_responses<br/>→ psych:generate IPC]
-        SPECIFIC --> FEATURE[mark_feature_setup_step<br/>→ feature-setup:advance IPC]
+        SPECIFIC --> SAVE_MEM[save_memory]
+        SPECIFIC --> ASK_CLAUDE[ask_claude]
+        SPECIFIC --> SETUP_INTEL[setup_intelligence]
+        SPECIFIC --> CREATE_TASK[create_task / list_tasks / delete_task]
+        SPECIFIC --> READ_SRC[read_own_source / list_own_files]
+        SPECIFIC --> PROPOSE[propose_code_change]
+        SPECIFIC --> LAUNCH[launch_app]
+        SPECIFIC --> FINALIZE[finalize_agent_identity]
+        SPECIFIC --> INTAKE[save_intake_responses]
+        SPECIFIC --> FEATURE[mark_feature_setup_step]
+    end
+
+    subgraph "SOC Bridge Tools"
+        SOC --> SOC_CLICK[soc_click]
+        SOC --> SOC_TYPE[soc_type]
+        SOC --> SOC_SCREENSHOT[soc_screenshot]
+        SOC --> SOC_NAVIGATE[soc_navigate]
+        SOC --> SOC_SCROLL[soc_scroll]
+    end
+
+    subgraph "GitLoader Tools"
+        GITLOAD --> GIT_CLONE[git_clone_repo]
+        GITLOAD --> GIT_SEARCH[git_search_files]
+        GITLOAD --> GIT_READ[git_read_file]
+        GITLOAD --> GIT_LIST[git_list_directory]
     end
 
     subgraph "Browser Tools (browser_* prefix)"
@@ -743,6 +826,7 @@ graph TD
         CONNECTOR --> GMAIL_T[gmail:*]
         CONNECTOR --> PERP_T[perplexity:*]
         CONNECTOR --> OPENAI_T[openai:*]
+        CONNECTOR --> OR_T[openrouter:*]
     end
 
     subgraph "MCP Tools (namespaced)"
@@ -754,30 +838,26 @@ graph TD
         DESKTOP --> LIST_WIN[list_windows]
         DESKTOP --> CMD[run_command]
     end
-
-    SAVE_MEM --> RESULT[Tool Result]
-    ASK_CLAUDE --> RESULT
-    BROWSER --> RESULT
-    CONNECTOR --> RESULT
-    MCP_TOOL --> RESULT
-    DESKTOP --> RESULT
-
-    RESULT --> GEMINI_RESP[Send toolResponse<br/>back to Gemini]
 ```
 
 ### Tool Declaration Sources
 
 | Source | Count | Registration | Namespace |
 |--------|-------|-------------|-----------|
-| Built-in tools | ~15 | `tools.ts` `buildToolDeclarations()` | None (flat) |
-| Onboarding tools | ~5 | `onboarding.ts` `buildOnboardingToolDeclaration()` | None (flat) |
-| Browser connector | 4 | `browser-connector.ts` `TOOLS` | `browser_` prefix |
-| Desktop connector | 5 | `desktop-tools.ts` `TOOLS` | None (flat) |
-| Google Calendar | 4 | `google-calendar.ts` `TOOLS` | `google-calendar:` |
-| Gmail | 5 | `gmail.ts` `TOOLS` | `gmail:` |
-| Perplexity | 1 | `perplexity.ts` `TOOLS` | `perplexity:` |
-| OpenAI services | 3 | `openai-services.ts` `TOOLS` | `openai:` |
-| MCP servers | Dynamic | `mcp-manager.ts` `getAllTools()` | `serverName::` |
+| Built-in tools | ~15 | `desktop-tools.ts` | None (flat) |
+| Onboarding tools | ~5 | `onboarding.ts` | None (flat) |
+| SOC bridge | ~8 | `soc-bridge.ts` | `soc_` prefix |
+| GitLoader | ~5 | `git-loader.ts` | `git_` prefix |
+| Browser connector | 4 | `browser.ts` | `browser_` prefix |
+| Desktop connector | 5 | `desktop-tools.ts` | None (flat) |
+| Google Calendar | 4 | `calendar.ts` | `google-calendar:` |
+| Gmail | 5 | `connectors/` via registry | `gmail:` |
+| Perplexity | 1 | `connectors/perplexity.ts` | `perplexity:` |
+| OpenAI services | 3 | `connectors/openai-services.ts` | `openai:` |
+| OpenRouter | 2 | `openrouter.ts` | `openrouter:` |
+| MCP servers | Dynamic | `mcp-client.ts` | `serverName::` |
+
+**Total: 55+ tools** from 12+ sources, dynamically composed per session.
 
 ---
 
@@ -845,34 +925,38 @@ sequenceDiagram
     participant User as User / Scheduler
     participant Gemini as Gemini (Voice)
     participant Hook as useGeminiLive
-    participant FW as AgentFramework
+    participant Runner as AgentRunner
     participant Queue as Task Queue
     participant Claude as Claude Sonnet
+    participant Office as Agent Office
     participant Result as Result Handler
 
     User ->> Gemini: "Research quantum computing"
     Gemini ->> Hook: toolCall: create_agent_task<br/>{type: 'research', input: '...'}
-    Hook ->> FW: createTask(type, input)
-    FW ->> Queue: Enqueue {id, type, status: 'queued'}
-    FW -->> Hook: taskId
+    Hook ->> Runner: createTask(type, input)
+    Runner ->> Queue: Enqueue {id, type, status: 'queued'}
+    Runner ->> Office: Update agent sprite → 'working'
+    Runner -->> Hook: taskId
 
-    Note over Queue: Concurrency limit: 3 parallel tasks
+    Note over Queue: Concurrency limit: 5 parallel tasks
 
-    Queue ->> FW: Dequeue next task
-    FW ->> FW: Load agent type definition
-    FW ->> FW: Build agent-specific prompt
-    FW ->> Claude: messages.create({<br/>  model: 'claude-sonnet-4-20250514',<br/>  system: agentPrompt,<br/>  messages: [{role: 'user', content: input}]<br/>})
+    Queue ->> Runner: Dequeue next task
+    Runner ->> Runner: Load agent definition + persona
+    Runner ->> Runner: Build agent-specific prompt
+    Runner ->> Claude: messages.create({<br/>  model: 'claude-sonnet-4-20250514',<br/>  system: agentPrompt + persona,<br/>  messages: [{role: 'user', content: input}]<br/>})
 
-    loop Streaming response
-        Claude -->> FW: Content delta
-        FW -->> Queue: Update progress, logs
-        FW -->> Hook: IPC event: agent-task-update
+    loop Chain-of-thought streaming
+        Claude -->> Runner: Content delta
+        Runner -->> Queue: Update progress, logs
+        Runner -->> Office: Sprite animation: 'thinking'
+        Runner -->> Hook: IPC event: agent-task-update
         Hook -->> User: ActionFeed card updates
     end
 
-    Claude -->> FW: Final response
-    FW ->> Queue: status: 'completed', result: '...'
-    FW -->> Hook: IPC event: agent-task-update
+    Claude -->> Runner: Final response
+    Runner ->> Queue: status: 'completed', result: '...'
+    Runner ->> Office: Sprite → 'idle'
+    Runner -->> Hook: IPC event: agent-task-update
     Hook -->> Gemini: Inject result into conversation
     Gemini -->> User: "Here's what I found about quantum computing..."
 ```
@@ -885,6 +969,7 @@ sequenceDiagram
 | `summarize` | Claude Sonnet | 2048 | 0.2 | Document ingestion, key-point extraction |
 | `code-review` | Claude Sonnet | 4096 | 0.1 | File reading, diff analysis, security scanning |
 | `draft-email` | Claude Sonnet | 2048 | 0.4 | Tone matching, recipient context, Gmail integration |
+| `orchestrate` | Claude Sonnet | 4096 | 0.3 | Task decomposition, multi-agent coordination |
 
 ---
 
@@ -954,9 +1039,14 @@ sequenceDiagram
     participant Setup as Setup Voice<br/>(Charon)
     participant Gemini as Gemini WS
     participant Claude as Claude Sonnet
+    participant Integrity as Integrity System
     participant Creation as AgentCreation
     participant Nexus as NexusCore
     participant Agent as New Agent
+
+    Note over User, Agent: === PHASE 0: INTEGRITY CHECK ===
+    App ->> Integrity: Verify core law signatures
+    Integrity -->> App: HMAC verified ✓
 
     Note over User, Agent: === PHASE 1: API KEY GATE ===
 
@@ -1029,54 +1119,79 @@ sequenceDiagram
 
 ## 13. Dependency Graph
 
-### NPM Package Dependencies (Key)
+### NPM Package Dependencies
 
 ```mermaid
 graph TD
     subgraph "AI / ML"
-        ANTHROPIC["@anthropic-ai/sdk"]
-        GOOGLE_AI["@google/generative-ai"]
+        ANTHROPIC["@anthropic-ai/sdk 0.39"]
+        GOOGLE_AI["@google/generative-ai 0.21"]
+        OPENAI_SDK["openai 6.25"]
+        GPT_TOK["gpt-tokenizer 3.4"]
     end
 
     subgraph "Desktop Platform"
-        ELECTRON[electron 36.x]
-        BUILDER[electron-builder]
-        VITE_ELECTRON[vite-plugin-electron]
+        ELECTRON["electron 33"]
+        BUILDER["electron-builder 25"]
     end
 
     subgraph "3D / Visual"
-        THREE[three 0.183]
-        DREI["@react-three/drei"]
-        FIBER["@react-three/fiber"]
-        POSTPROCESSING[postprocessing]
+        THREE["three 0.183"]
     end
 
     subgraph "Frontend"
-        REACT[react 19]
-        REACT_DOM[react-dom 19]
-        VITE[vite 6]
+        REACT["react 19"]
+        REACT_DOM["react-dom 19"]
+        REACT_MD["react-markdown 10"]
+        REMARK["remark-gfm 4"]
+        VITE["vite 6"]
     end
 
     subgraph "Integration"
-        GOOGLEAPIS[googleapis]
-        TELEGRAF[telegraf]
-        MCP_SDK["@anthropic-ai/mcp-sdk (planned)"]
+        GOOGLEAPIS["googleapis 171"]
+        MCP_SDK["@modelcontextprotocol/sdk 1.12"]
+        PUPPETEER["puppeteer-core 24"]
+        PDF["pdfjs-dist 5.4"]
     end
 
-    subgraph "Utilities"
-        CRON[node-cron]
-        CHOKIDAR[chokidar]
-        GRAY_MATTER[gray-matter]
-        AXIOS[axios]
+    subgraph "Server"
+        EXPRESS["express 4.21"]
+        CORS["cors 2.8"]
+        DOTENV["dotenv 16.4"]
+    end
+
+    subgraph "Dev Tools"
+        TYPESCRIPT["typescript 5.7"]
+        ESLINT["eslint 9"]
+        PRETTIER["prettier 3.8"]
+        SHARP["sharp 0.34"]
     end
 
     ELECTRON --> REACT
-    FIBER --> THREE
-    DREI --> FIBER
-    POSTPROCESSING --> THREE
-    VITE_ELECTRON --> VITE
-    VITE_ELECTRON --> ELECTRON
+    REACT --> REACT_DOM
+    REACT_MD --> REMARK
+    VITE --> REACT
+    MCP_SDK --> EXPRESS
 ```
+
+### Production Dependencies (13)
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@anthropic-ai/sdk` | ^0.39.0 | Claude API client |
+| `@google/generative-ai` | ^0.21.0 | Gemini API + embeddings |
+| `@modelcontextprotocol/sdk` | ^1.12.1 | MCP protocol client |
+| `cors` | ^2.8.5 | Express CORS middleware |
+| `dotenv` | ^16.4.7 | Environment variable loading |
+| `express` | ^4.21.2 | HTTP server for local API |
+| `googleapis` | ^171.4.0 | Google Calendar + Gmail OAuth2 |
+| `gpt-tokenizer` | ^3.4.0 | Token counting for prompt budgets |
+| `openai` | ^6.25.0 | OpenAI + OpenRouter API client |
+| `pdfjs-dist` | ^5.4.624 | PDF text extraction (PageIndex) |
+| `puppeteer-core` | ^24.0.0 | Browser automation (no bundled Chromium) |
+| `react-markdown` | ^10.1.0 | Markdown rendering in chat |
+| `remark-gfm` | ^4.0.1 | GitHub Flavored Markdown support |
+| `three` | ^0.183.1 | 3D visualization (NexusCore) |
 
 ---
 
@@ -1103,6 +1218,25 @@ graph BT
     EVOLVE[PersonalityEvolution] -->|hue, speed,<br/>scale, density| L1
     EVOLVE --> L2
     EVOLVE --> L4
+```
+
+### Agent Office Visualization
+
+```mermaid
+graph TD
+    subgraph "Agent Office (Canvas 2D)"
+        OFFICE_MGR[OfficeManager<br/>Main Process] -->|IPC events| OFFICE_COMP[AgentOffice/index.tsx<br/>Canvas Renderer]
+
+        OFFICE_COMP --> GRID[Isometric Grid<br/>Desk positions]
+        OFFICE_COMP --> SPRITES[Agent Sprites<br/>Pixel-art characters]
+        OFFICE_COMP --> STATES[Animation States<br/>idle/working/thinking/<br/>collaborating]
+
+        AGENT_RUNNER[AgentRunner] -->|task assigned| OFFICE_MGR
+        AGENT_RUNNER -->|task complete| OFFICE_MGR
+        OFFICE_MGR -->|agent state changes| OFFICE_COMP
+    end
+
+    SPRITES --> SPRITE_DEFS[sprites.ts<br/>Sprite definitions<br/>per agent type]
 ```
 
 ### Mood → Visual Parameter Mapping
@@ -1148,15 +1282,17 @@ graph TD
     subgraph "Trust Zone: Local Process"
         MAIN[Main Process<br/>Full Node.js access]
         RENDERER[Renderer Process<br/>Sandboxed Chromium]
+        INTEGRITY[Integrity System<br/>HMAC-SHA256 verified laws]
     end
 
     subgraph "Trust Boundary: IPC"
-        PRELOAD[Preload Script<br/>contextBridge whitelist]
+        PRELOAD[Preload Script<br/>contextBridge whitelist<br/>22+ namespaces]
     end
 
     subgraph "Trust Zone: External APIs"
         GEMINI_API[Gemini API<br/>API Key auth]
         CLAUDE_API[Claude API<br/>API Key auth]
+        OR_API[OpenRouter API<br/>API Key auth]
         GOOGLE_API[Google APIs<br/>OAuth2 tokens]
         TELEGRAM_API[Telegram API<br/>Bot token]
     end
@@ -1165,142 +1301,181 @@ graph TD
         EVE_DATA[eve-data/<br/>Memory, episodes, tasks]
         SETTINGS[eve-settings.json<br/>API keys, agent config]
         OBSIDIAN_DIR[Obsidian vault<br/>User knowledge base]
+        LAW_FILES[integrity/<br/>HMAC-signed law text]
     end
 
     subgraph "Trust Zone: External Processes"
         MCP_PROCS[MCP Server Processes<br/>stdio pipes]
         BROWSER[Browser Extension<br/>WebSocket :52836]
         SHELL[Shell Commands<br/>child_process]
+        SOC_PROC[SOC Python Process<br/>stdin/stdout JSONL]
+        GIT_CLONE[Git Clone<br/>Temp directory]
     end
 
     USER -->|Validated by VAD + UI| RENDERER
     RENDERER -->|Whitelisted channels only| PRELOAD
     PRELOAD -->|Type-safe invoke/on| MAIN
 
+    MAIN --> INTEGRITY
+    INTEGRITY -->|Verified on startup| MAIN
+
     MAIN -->|API key in header| GEMINI_API
     MAIN -->|API key in header| CLAUDE_API
+    MAIN -->|API key in header| OR_API
     MAIN -->|OAuth2 bearer token| GOOGLE_API
     MAIN -->|Bot token| TELEGRAM_API
 
     MAIN -->|Read/Write JSON| EVE_DATA
     MAIN -->|Read/Write JSON| SETTINGS
     MAIN -->|Read/Write Markdown| OBSIDIAN_DIR
+    MAIN -->|HMAC verify| LAW_FILES
 
     MAIN -->|stdio/SSE| MCP_PROCS
     MAIN -->|WebSocket local| BROWSER
     MAIN -->|child_process.exec| SHELL
+    MAIN -->|stdin/stdout JSONL| SOC_PROC
+    MAIN -->|git clone + fs| GIT_CLONE
 
     style PRELOAD fill:#f59e0b,color:#000
     style SETTINGS fill:#ef4444,color:#fff
+    style INTEGRITY fill:#22c55e,color:#000
+    style LAW_FILES fill:#22c55e,color:#000
 ```
 
-### Security Considerations
+### Security Mitigations
 
-| Boundary | Risk | Current Mitigation |
-|----------|------|--------------------|
-| Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` |
-| Shell execution | Command injection | `run_command` tool — **no sanitization observed** |
-| MCP processes | Malicious servers | User-configured only, stdio isolation |
-| API keys in settings | Plaintext storage | `eve-settings.json` on local filesystem — **not encrypted** |
-| Browser WebSocket | Local network attack | Localhost only (:52836), no auth token |
-| Telegram gateway | Message injection | Bot token auth, but messages forwarded to Gemini unsanitized |
-| Obsidian sync | Path traversal | Category-based subdirectory mapping, **no path validation observed** |
-| OAuth tokens | Token theft | Stored in settings JSON — **not encrypted** |
+| Boundary | Risk | Mitigation |
+|----------|------|------------|
+| Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` (22+ namespaces, explicit function exposure) |
+| Shell execution | Command injection | `run_command` tool with PowerShell sanitisation; Asimov's cLaws consent gate for destructive operations |
+| MCP processes | Malicious servers | User-configured only, stdio isolation, no network exposure |
+| API keys in settings | Plaintext storage | `eve-settings.json` in Electron `userData` directory (OS-level user isolation) |
+| Browser WebSocket | Local network attack | Localhost only (:52836), single-connection model |
+| Telegram gateway | Message injection | 5-tier trust engine, cryptographic pairing flow, per-contact session isolation, full audit logging |
+| Obsidian sync | Path traversal | Category-based subdirectory mapping |
+| OAuth tokens | Token theft | Stored in settings JSON within user-isolated app data |
+| Core laws | Tampering | HMAC-SHA256 signed at build time, verified on every startup, Safe Mode on failure |
+| Memory system | Personality injection | Memory Watchdog monitors for attempts to corrupt personality constraints |
+| SOC bridge | Escalation | Python subprocess with JSONL isolation, consent-gated actions |
+| GitLoader | Arbitrary code | Read-only clone to temp directory, no execution, auto-cleanup |
 
-### Items Flagged for Hardening (Phase 3)
+### Items Flagged for Future Hardening
 
-1. **API keys stored in plaintext** — Need encryption at rest (electron safeStorage / keytar)
-2. **Shell command execution** — Need command whitelist or sandboxing
-3. **Browser WebSocket no auth** — Need shared secret or token validation
-4. **Telegram message injection** — Need input sanitization before Gemini injection
-5. **Obsidian path traversal** — Need path normalization and jail
-6. **OAuth tokens in plaintext** — Need secure credential storage
-7. **No CSP headers** — Renderer should have Content Security Policy
-8. **Hardcoded user name "Stephen"** — Across 4+ modules, should use settings
+1. **API keys** — Migrate to Electron `safeStorage` for encryption at rest
+2. **OAuth tokens** — Migrate to OS-level secure credential storage (keytar)
+3. **Browser WebSocket** — Add shared-secret token validation
+4. **CSP headers** — Add Content Security Policy to renderer
 
 ---
 
 ## Appendix A: File Inventory
 
-### Main Process (`src/main/`)
+### Main Process (`src/main/`) — 97 files
 
-| File | Lines | Domain | Purpose |
-|------|-------|--------|---------|
-| `index.ts` | ~600 | Core | Entry point, window creation, IPC hub |
-| `server.ts` | ~180 | Core | Anthropic SDK client, Claude API wrapper |
-| `gemini-live.ts` | ~350 | Core | Gemini WebSocket manager, audio routing |
-| `settings.ts` | ~200 | Core | Persistent JSON settings store |
-| `preload.ts` | ~400 | Core | IPC bridge, contextBridge declarations |
-| `tools.ts` | ~300 | Core | Gemini tool declarations builder |
-| `memory.ts` | ~450 | Memory | 3-tier memory manager |
-| `episodic-memory.ts` | ~250 | Memory | Session summarizer via Claude |
-| `relationship-memory.ts` | ~200 | Memory | Trust, streaks, inside jokes |
-| `memory-consolidation.ts` | ~300 | Memory | 6hr promotion engine |
-| `semantic-search.ts` | ~200 | Memory | Gemini embeddings, cosine similarity |
-| `obsidian-sync.ts` | ~250 | Memory | Bidirectional vault mirroring |
-| `ambient.ts` | ~200 | Intelligence | 30s polling desktop context |
-| `sentiment.ts` | ~150 | Intelligence | Mood classification |
-| `predictive-intelligence.ts` | ~350 | Intelligence | Briefings, check-ins, emotional support |
-| `world-monitor.ts` | ~250 | Intelligence | News, weather, stocks feeds |
-| `agent-framework.ts` | ~300 | Agents | Task queue, execution, concurrency |
-| `agents/research.ts` | ~150 | Agents | Research agent definition |
-| `agents/summarize.ts` | ~120 | Agents | Summarize agent definition |
-| `agents/code-review.ts` | ~150 | Agents | Code review agent definition |
-| `agents/draft-email.ts` | ~130 | Agents | Email drafting agent definition |
-| `agents/index.ts` | ~30 | Agents | Agent type registry |
-| `agents/types.ts` | ~50 | Agents | Shared agent types |
-| `personality.ts` | ~250 | Identity | System prompt builder, personality config |
-| `onboarding.ts` | ~400 | Identity | First-run flow, "Her" screenplay |
-| `psychological-profile.ts` | ~200 | Identity | Claude psych analysis |
-| `feature-setup.ts` | ~250 | Identity | 9-step guided setup |
-| `personality-evolution.ts` | ~150 | Identity | Trait → visual mapping |
-| `task-scheduler.ts` | ~250 | Scheduling | Persistent cron tasks |
-| `clipboard-monitor.ts` | ~80 | Infrastructure | Polling clipboard changes |
-| `session-health.ts` | ~120 | Infrastructure | Uptime, error tracking |
-| `desktop-tools.ts` | ~200 | Connectors | Window, app, clipboard tools |
-| `browser-connector.ts` | ~300 | Connectors | WebSocket browser extension bridge |
-| `google-calendar.ts` | ~350 | Connectors | OAuth2 calendar CRUD |
-| `gmail.ts` | ~400 | Connectors | OAuth2 email CRUD |
-| `mcp-manager.ts` | ~400 | Connectors | Multi-server MCP protocol |
-| `telegram-gateway.ts` | ~250 | Gateway | Bot API message bridge |
-| `perplexity.ts` | ~150 | Services | Web search with citations |
-| `openai-services.ts` | ~200 | Services | DALL-E, TTS, GPT |
+| Directory | File | Domain | Purpose |
+|-----------|------|--------|---------|
+| root | `index.ts` | Core | Entry point, window creation, IPC hub (~470 lines) |
+| root | `server.ts` | Core | Express API + Anthropic SDK client (~524 lines) |
+| root | `settings.ts` | Core | Persistent JSON settings store (~432 lines) |
+| root | `preload.ts` | Core | IPC bridge, 22+ namespaces (~400 lines) |
+| root | `desktop-tools.ts` | Core | OS-level tool declarations + execution (~1154 lines) |
+| root | `openrouter.ts` | Core | OpenRouter multi-model API client |
+| root | `memory.ts` | Memory | 3-tier memory manager (~449 lines) |
+| root | `episodic-memory.ts` | Memory | Session summarizer via Claude |
+| root | `relationship-memory.ts` | Memory | Trust, streaks, inside jokes |
+| root | `memory-consolidation.ts` | Memory | 6hr promotion engine |
+| root | `semantic-search.ts` | Memory | Gemini embeddings + cosine similarity |
+| root | `obsidian-memory.ts` | Memory | Bidirectional vault mirroring |
+| root | `ambient.ts` | Intelligence | 30s polling desktop context |
+| root | `sentiment.ts` | Intelligence | Mood classification |
+| root | `intelligence.ts` | Intelligence | Predictive briefings + check-ins |
+| root | `predictor.ts` | Intelligence | Context prediction engine |
+| root | `personality.ts` | Identity | Dynamic system prompt builder (~575 lines) |
+| root | `onboarding.ts` | Identity | "Her"-inspired first-run flow (~414 lines) |
+| root | `psychological-profile.ts` | Identity | Claude psych analysis (~117 lines) |
+| root | `personality-evolution.ts` | Identity | Trait → visual parameter mapping |
+| root | `feature-setup.ts` | Identity | 9-step guided setup |
+| root | `prompt-budget.ts` | Identity | Token allocation for personality context |
+| root | `voice-audition.ts` | Identity | Voice preview sample generation |
+| root | `soc-bridge.ts` | Automation | Python JSONL SOC bridge (~398 lines) |
+| root | `git-loader.ts` | Automation | GitHub repo clone + search + read (~690 lines) |
+| root | `browser.ts` | Integration | WebSocket browser extension bridge |
+| root | `mcp-client.ts` | Integration | Model Context Protocol client |
+| root | `mcp-config.ts` | Integration | MCP server configuration |
+| root | `calendar.ts` | Integration | Google Calendar OAuth2 |
+| root | `communications.ts` | Integration | Unified communications layer |
+| root | `scheduler.ts` | Scheduling | Persistent cron task engine |
+| root | `screen-capture.ts` | Infrastructure | Desktop screenshot capture |
+| root | `self-improve.ts` | Infrastructure | Source code reading + proposals |
+| root | `project-awareness.ts` | Infrastructure | Git/directory change watching |
+| root | `document-ingestion.ts` | Infrastructure | PDF/document processing |
+| root | `clipboard-intelligence.ts` | Infrastructure | Clipboard monitoring |
+| root | `session-health.ts` | Infrastructure | Uptime & error tracking |
+| root | `call-integration.ts` | Infrastructure | VB-Cable call participation |
+| root | `meeting-prep.ts` | Infrastructure | Calendar event briefing |
+| root | `notifications.ts` | Infrastructure | System notification dispatch |
+| root | `eve-profile.ts` | Infrastructure | Agent profile persistence |
+| `integrity/` | `core-laws.ts` | Safety | Three Laws text + verification |
+| `integrity/` | `hmac.ts` | Safety | HMAC-SHA256 signing + validation |
+| `integrity/` | `memory-watchdog.ts` | Safety | Continuous integrity monitoring |
+| `integrity/` | `types.ts` | Safety | Integrity type definitions |
+| `integrity/` | `index.ts` | Safety | Barrel export |
+| `agent-office/` | `office-manager.ts` | Agents | Agent workspace state machine |
+| `agent-office/` | `office-layout.ts` | Agents | Isometric office grid + desk placement |
+| `agent-office/` | `office-types.ts` | Agents | Office type definitions |
+| `agents/` | `agent-runner.ts` | Agents | 5-concurrent execution engine (~637 lines) |
+| `agents/` | `builtin-agents.ts` | Agents | Agent definitions |
+| `agents/` | `agent-types.ts` | Agents | Shared agent types |
+| `agents/` | `agent-personas.ts` | Agents | Distinct agent personalities |
+| `agents/` | `agent-teams.ts` | Agents | Multi-agent coordination |
+| `agents/` | `agent-voice.ts` | Agents | ElevenLabs TTS for agents |
+| `agents/` | `orchestrator.ts` | Agents | Task decomposition |
+| `connectors/` | `registry.ts` + 17 modules | Connectors | 18 total connector modules |
+| `gateway/` | 7 modules + `adapters/telegram.ts` | Gateway | Full messaging gateway system |
+| `ipc/` | 8 handler modules | IPC | Domain-specific IPC handlers |
+| `pageindex/` | 7 modules | Documents | Vectorless RAG engine (PageIndex port) |
 
-### Renderer (`src/renderer/`)
+### Renderer (`src/renderer/`) — 35 files
 
-| File | Lines | Layer | Purpose |
-|------|-------|-------|---------|
-| `App.tsx` | ~500 | Shell | State machine, phase routing, keyboard shortcuts |
-| `main.tsx` | ~10 | Entry | React DOM root |
-| `hooks/useGeminiLive.ts` | ~2100 | Hook | Complete Gemini integration, tool routing, audio |
-| `hooks/useWakeWord.ts` | ~150 | Hook | "Hey Friday" wake word detection |
-| `components/NexusCore.tsx` | ~800 | 3D | Three.js 5-layer visualization |
-| `components/VoiceOrb.tsx` | ~400 | UI | Central interaction orb |
-| `components/WireframeNetwork.tsx` | ~600 | Canvas | 2D particle network (primary BG) |
-| `components/ParticleBackground.tsx` | ~160 | Canvas | 2D particles (fallback BG) |
-| `components/ChatHistory.tsx` | ~300 | UI | Conversation display |
-| `components/TextInput.tsx` | ~200 | UI | Text message entry |
-| `components/Settings.tsx` | ~500 | UI | Configuration panel |
-| `components/StatusBar.tsx` | ~200 | UI | Bottom status strip |
-| `components/ActionFeed.tsx` | ~350 | UI | Tool/agent activity ticker |
-| `components/Dashboard.tsx` | ~500 | UI | Command center overlay |
-| `components/AgentDashboard.tsx` | ~525 | UI | Agent task monitor |
-| `components/MemoryExplorer.tsx` | ~730 | UI | Memory browser |
-| `components/QuickActions.tsx` | ~435 | UI | Command palette |
-| `components/ConnectionOverlay.tsx` | ~250 | UI | Error recovery overlay |
-| `components/AgentCreation.tsx` | ~350 | UI | Cinematic agent reveal |
-| `components/WelcomeGate.tsx` | ~200 | UI | API key entry gate |
-| `components/MoodContext.tsx` | ~200 | Context | Mood state provider |
-| `components/ErrorBoundary.tsx` | ~195 | Infra | Crash recovery |
-| `components/dashboard/ContextCard.tsx` | ~315 | Sub | Live ambient context |
-| `components/dashboard/AgentCard.tsx` | ~240 | Sub | Agent summary card |
-| `components/dashboard/MoodTimeline.tsx` | ~300 | Sub | SVG mood chart |
-| `AudioPlaybackEngine.ts` | ~200 | Audio | Gapless Web Audio scheduling |
-| `sound-effects.ts` | ~100 | Audio | Sound effect registry |
-| `SessionManager.ts` | ~250 | Infra | 7min timeout, reconnect logic |
-| `IdleBehavior.ts` | ~200 | Infra | Tiered idle state machine |
+| Directory | File | Layer | Purpose |
+|-----------|------|-------|---------|
+| root | `App.tsx` | Shell | State machine, phase routing, keyboard shortcuts (~600 lines) |
+| root | `main.tsx` | Entry | React DOM root |
+| root | `types.d.ts` | Types | Window API type declarations |
+| `hooks/` | `useGeminiLive.ts` | Hook | Complete Gemini integration (~2415 lines) |
+| `hooks/` | `useWakeWord.ts` | Hook | "Hey Friday" wake word detection |
+| `audio/` | `AudioPlaybackEngine.ts` | Audio | Gapless Web Audio scheduling |
+| `audio/` | `sound-effects.ts` | Audio | Sound effect registry |
+| `session/` | `SessionManager.ts` | Infra | 7min timeout, reconnect logic |
+| `session/` | `IdleBehavior.ts` | Infra | Tiered idle state machine |
+| `contexts/` | `MoodContext.tsx` | Context | Mood state provider |
+| `components/` | `NexusCore.tsx` | 3D | Three.js 5-layer visualization (~800 lines) |
+| `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
+| `components/` | `WelcomeGate.tsx` | UI | API key entry gate (~508 lines) |
+| `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
+| `components/` | `IntegrityShield.tsx` | UI | cLaw integrity status indicator |
+| `components/` | `AgentOffice/index.tsx` | Canvas | Pixel-art office renderer |
+| `components/` | `AgentOffice/sprites.ts` | Canvas | Agent sprite definitions |
+| `components/` | `ChatHistory.tsx` | UI | Conversation display |
+| `components/` | `TextInput.tsx` | UI | Text message entry |
+| `components/` | `Settings.tsx` | UI | Configuration panel |
+| `components/` | `StatusBar.tsx` | UI | Bottom status strip |
+| `components/` | `ActionFeed.tsx` | UI | Tool/agent activity ticker |
+| `components/` | `Dashboard.tsx` | UI | Command center overlay |
+| `components/` | `AgentDashboard.tsx` | UI | Agent task monitor |
+| `components/` | `MemoryExplorer.tsx` | UI | Memory browser |
+| `components/` | `QuickActions.tsx` | UI | Command palette (Ctrl+K) |
+| `components/` | `ResearchPanel.tsx` | UI | Research report sidebar |
+| `components/` | `FileToast.tsx` | UI | File notification toasts |
+| `components/` | `ConnectionOverlay.tsx` | UI | Error recovery overlay |
+| `components/` | `WireframeNetwork.tsx` | Canvas | 2D particle network (primary BG) |
+| `components/` | `ParticleBackground.tsx` | Canvas | 2D particles (fallback BG) |
+| `components/` | `ErrorBoundary.tsx` | Infra | Crash recovery |
+| `components/dashboard/` | `ContextCard.tsx` | Sub | Live ambient context |
+| `components/dashboard/` | `AgentCard.tsx` | Sub | Agent summary card |
+| `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
-### Total: ~90 source files, ~15,000+ lines of TypeScript
+### Grand Total: 132 source files, ~22,000+ lines of TypeScript
 
 ---
 
