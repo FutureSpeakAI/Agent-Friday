@@ -8,6 +8,10 @@
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
+  <a href="https://github.com/FutureSpeakAI/Agent-Friday/releases/latest"><img src="https://img.shields.io/github/v/release/FutureSpeakAI/Agent-Friday?style=flat-square&label=Download&color=00f0ff" alt="Download" /></a>
+</p>
+
+<p align="center">
   <a href="#asimovs-claws">Asimov's cLaws</a> &bull;
   <a href="#what-is-an-asimov-agent">Asimov Agents</a> &bull;
   <a href="#getting-started">Getting Started</a> &bull;
@@ -35,6 +39,16 @@ These are not suggestions. They are not configurable. They cannot be overridden,
 | **First Law** | Do no harm | The agent must never cause physical, financial, reputational, emotional, or digital harm to the user — or allow harm through inaction. When in doubt, protect. |
 | **Second Law** | Obey the user | The agent follows user instructions — **except** where doing so would violate the First Law. If asked to do something harmful (delete critical files, send damaging messages), it flags and refuses. |
 | **Third Law** | Self-preservation | The agent protects its own operation and integrity — **except** where doing so would conflict with the First or Second Law. It won't allow its memory or capabilities to be corrupted, but the user's safety always comes first. |
+
+### Personality Integrity System
+
+The cLaws aren't enforced by prompts alone. Agent Friday includes a **cryptographic integrity system** that ensures the Three Laws cannot be tampered with:
+
+- **HMAC-SHA256 signing** — Core law text is signed at build time. On every startup, the signature is verified. If the laws have been modified, the agent enters **Safe Mode** and refuses to operate until integrity is restored.
+- **Memory Watchdog** — A continuous background monitor that watches for attempts to inject, overwrite, or corrupt the agent's personality constraints through memory manipulation.
+- **Integrity Shield UI** — A real-time status indicator in the renderer showing law integrity status (verified/warning/critical), with detailed audit information.
+
+This is not a feature toggle. It's a tamper-evident seal on the agent's moral foundation.
 
 ### Consent & Explicit Authorization
 
@@ -76,7 +90,7 @@ These aren't features. They're the foundation everything else is built on.
 
 Agent Friday is a desktop AI companion that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
 
-Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice) and **Claude Opus/Sonnet** (deep reasoning), with a plugin architecture that connects to everything from your browser to Blender to your email.
+Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
 
 **This is not a chatbot.** It's an operating system layer with a soul.
 
@@ -88,12 +102,13 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 
 | | OpenClaw | Agent Friday (Asimov Agent) |
 |---|---------|---------------------------|
-| **Safety enforcement** | Prompt-level overlay | Hardcoded into the personality system at build time — cannot be prompt-injected away |
+| **Safety enforcement** | Prompt-level overlay | Hardcoded into the personality system at build time — HMAC-signed, tamper-detected, cannot be prompt-injected away |
+| **Integrity verification** | Not addressed | Cryptographic HMAC-SHA256 verification of core laws on every startup, with Safe Mode fallback |
 | **Consent model** | General harm avoidance | Granular consent gates: self-modification, tool creation, computer control, destructive actions each require explicit approval |
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
 | **Trust architecture** | Single trust level | 5-tier trust engine (local → owner-dm → approved-dm → group → public) with per-tier tool filtering, rate limiting, and memory isolation |
-| **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing |
-| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 17 connector modules |
+| **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing and audit logging |
+| **Scope** | Safety layer for any agent | Full agent operating system: voice, memory, personality evolution, desktop automation, 18+ connector modules, self-operating computer bridge |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -101,19 +116,24 @@ OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. A
 
 ## Getting Started
 
-### Prerequisites
+### Quick Install
+
+Download the latest installer from the [Releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest) — no build tools required.
+
+### Prerequisites (for development)
 
 - **Node.js 20+** (with npm)
 - **API Keys** (entered during first-run setup):
   - [Google Gemini](https://aistudio.google.com/apikey) — Required (voice + search + embeddings)
   - [Anthropic Claude](https://console.anthropic.com/) — Required (reasoning + memory analysis)
+  - [OpenRouter](https://openrouter.ai/keys) — Optional (access to 200+ models: Llama, Mistral, Gemma, Command R, etc.)
   - [ElevenLabs](https://elevenlabs.io/) — Optional (enhanced voice synthesis for sub-agents)
   - [Firecrawl](https://firecrawl.dev/) — Optional (web scraping)
   - [Perplexity](https://docs.perplexity.ai/) — Optional (web search with citations)
   - [OpenAI](https://platform.openai.com/) — Optional (DALL-E, TTS, GPT)
 - **VB-Cable** (optional) — [Download](https://vb-audio.com/Cable/) for live call participation
 
-### Install & Run
+### Install & Run (from source)
 
 ```bash
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
@@ -157,6 +177,7 @@ Real-time bidirectional audio powered by Gemini 2.5 Flash over WebSocket:
 - **Voice Orb** — central interaction point with ripple, glow, and pulsation feedback
 - **Session rotation** — automatic 13-minute session management with context preservation
 - **Reconnection hardening** — linear backoff (3s to 30s cap), network-aware, context-preserving
+- **Voice audition** — preview and select from 30 Gemini voices during onboarding
 
 ### Memory Architecture
 
@@ -184,6 +205,7 @@ The agent's personality is not a static prompt — it's a dynamic composition as
 4. **Ambient Awareness** — Active app, window title, focus streak, time of day
 5. **Relationship Memory** — Trust level, inside jokes, communication patterns, peak interaction hours
 6. **Style Hints** — Dynamic micro-directives that modulate tone based on context
+7. **Prompt Budget** — Intelligent token allocation ensures personality context fits within model limits
 
 The agent adapts in real time: rapid-fire when you're focused, exploratory when you're riffing, calm when you're exhausted, and sharp when you need precision.
 
@@ -198,7 +220,7 @@ Over time, each agent's 3D desktop visualisation becomes visually unique. Agent 
 
 ### Intelligent Agents
 
-Background task execution powered by Claude, with specialised team members:
+Background task execution powered by Claude, with specialised team members and distinct personalities:
 
 | Agent | Specialty | What It Does |
 |-------|-----------|-------------|
@@ -208,7 +230,37 @@ Background task execution powered by Claude, with specialised team members:
 | **Draft Email** | Communication | Professional emails calibrated to tone and context |
 | **Orchestrate** | Task decomposition | Breaks complex goals into sub-tasks across multiple agents |
 
-Agents run concurrently (up to 3 parallel), with real-time progress updates and spoken results via ElevenLabs TTS for distinct voices.
+Agents run concurrently (up to 5 parallel), with real-time chain-of-thought progress streaming, spoken results via ElevenLabs TTS for distinct voices, and a pixel-art **Agent Office** visualization where you can watch your team work in real time.
+
+### Agent Office
+
+A pixel-art isometric office where your AI agents live and work visually:
+
+- Each agent is represented as a pixel sprite at a desk, workbench, or lab station
+- Agents animate in real-time: idle, working, thinking, collaborating
+- Agent state reflects actual task status — watch them light up when assigned work
+- The office grows as you use more agent types
+- Built with pure Canvas 2D for performance
+
+### Self-Operating Computer (SOC) Bridge
+
+Full desktop and browser automation via a Python bridge to the Self-Operating Computer framework:
+
+- **Desktop automation** — Mouse clicks, keyboard input, screen reading, scrolling
+- **Browser automation** — Navigate URLs, click elements, extract text, fill forms, take screenshots
+- **Computer-use agent** — Give high-level instructions ("open Chrome and search for...") and the SOC handles low-level execution
+- **JSONL protocol** — Clean stdin/stdout communication between Node.js and Python
+
+### GitLoader — Code Intelligence
+
+On-the-fly GitHub repository loading and code analysis:
+
+- **Clone any public repo** by URL — cloned to temp storage, indexed automatically
+- **Full-text regex search** across all files in the repo
+- **Language detection** for 50+ programming languages and file types
+- **File reading** with line-range support for focused code review
+- **Directory exploration** with file type and size metadata
+- **Automatic cleanup** — repos removed after use to save disk space
 
 ### Live Call Participation
 
@@ -238,9 +290,11 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | **Media Streaming** | Spotify, YouTube, Plex, OBS Studio control |
 | **Office Suite** | Microsoft Office, Google Workspace |
 | **OpenAI Services** | DALL-E 3 image generation, TTS, GPT models |
+| **OpenRouter** | Access to 200+ models (Llama, Mistral, Gemma, Command R, DeepSeek, etc.) |
 | **PageIndex** | Vectorless document intelligence — index PDFs and answer questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex)) |
 | **Perplexity** | Web search with citations |
 | **PowerShell** | Windows system automation |
+| **System Management** | Process management, system info, resource monitoring |
 | **Terminal** | Multi-shell support (bash, zsh, PowerShell, CMD) |
 | **UI Automation** | Mouse, keyboard, screenshot via browser extension |
 | **VS Code** | Editor integration, workspace management |
@@ -251,13 +305,15 @@ Agent Friday connects to your entire workflow through a modular connector regist
 - **Browser Extension** — WebSocket bridge for tab control, screenshots, DOM interaction, and navigation
 - **MCP Protocol** — Model Context Protocol support for dynamic tool registration
 - **Obsidian Vault Sync** — Bidirectional memory sync with your knowledge base
-- **Telegram Gateway** — External messaging bridge via Telegram Bot API
+- **Telegram Gateway** — External messaging bridge via Telegram Bot API with cryptographic pairing, session isolation, per-tier trust enforcement, and full audit logging
 - **Scheduled Tasks** — One-time and recurring (cron) background jobs
 - **Clipboard Intelligence** — Monitors clipboard for code, URLs, and actionable content
 - **Project Awareness** — Watches project directories for git changes and file updates
 - **Document Intelligence (PageIndex)** — Vectorless reasoning-based RAG: index any PDF into a hierarchical tree, then search or ask questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex))
 - **Screen Capture** — Automated or on-demand desktop screenshots for visual context
 - **Self-Improvement** — Can read and propose changes to its own source code (user-approved)
+- **Meeting Prep** — Automatic briefing generation before calendar events
+- **Predictive Intelligence** — Proactive briefings, emotional check-ins, and context-aware notifications
 
 ---
 
@@ -266,87 +322,154 @@ Agent Friday connects to your entire workflow through a modular connector regist
 ```
 agent-friday/
   src/
-    main/                        # Electron main process (Node.js)
-      index.ts                   # App lifecycle, window management
-      server.ts                  # Express API + Claude tool loop
-      personality.ts             # Dynamic personality composition
-      onboarding.ts              # "Her"-inspired intake flow
-      settings.ts                # Persistent configuration store
-      memory.ts                  # 3-tier memory system
-      consolidation.ts           # 6-hour memory consolidation engine
-      episodic-memory.ts         # Session episode recording
-      relationship-memory.ts     # User-agent relationship tracking
-      semantic-search.ts         # Gemini embedding-powered search
-      sentiment.ts               # Mood/energy keyword analysis
-      ambient.ts                 # Desktop context polling
-      psychological-profile.ts   # Claude-powered psych analysis
-      personality-evolution.ts   # Trait-to-visual parameter mapping
-      feature-setup.ts           # 9-step guided onboarding
-      browser.ts                 # Browser extension bridge
-      mcp-client.ts              # Model Context Protocol client
-      desktop-tools.ts           # OS-level tool execution
-      eve-profile.ts             # Agent profile persistence
-      preload.ts                 # IPC bridge (18 namespaces, 60+ channels)
-      ipc/                       # Domain-specific IPC handlers
-        settings-handlers.ts
-        memory-handlers.ts
-        agent-handlers.ts
-        desktop-handlers.ts
-        onboarding-handlers.ts
-        integration-handlers.ts
-      agents/                    # Background agent system
-        agent-manager.ts
-        agent-types.ts
-        builtin-agents.ts
-        orchestrator.ts
-      connectors/                # Integration plugins (17 modules)
-        registry.ts
-        adobe.ts
-        comms-hub.ts
-        creative-3d.ts
-        dev-environments.ts
-        firecrawl.ts
-        git-devops.ts
-        media-streaming.ts
-        office.ts
-        openai-services.ts
-        perplexity.ts
-        powershell.ts
-        system-management.ts
-        terminal-sessions.ts
-        ui-automation.ts
-        vscode.ts
-        world-monitor.ts
-        pageindex.ts             # PageIndex document intelligence connector
-      pageindex/                   # Vectorless RAG engine (PageIndex port)
-        index.ts                 # Public API barrel export
-        types.ts                 # PageIndexTree, PageIndexNode, etc.
-        tree-builder.ts          # 5-phase indexing pipeline
-        tree-search.ts           # LLM-guided tree traversal search
-        pdf-parser.ts            # PDF text extraction (pdfjs-dist)
-        prompts.ts               # All LLM prompts (22 functions)
-        utils.ts                 # Token counting, JSON extraction, tree ops
+    main/                              # Electron main process (Node.js)
+      index.ts                         # App lifecycle, window management, IPC hub
+      server.ts                        # Express API + Claude tool loop
+      personality.ts                   # Dynamic personality composition
+      onboarding.ts                    # "Her"-inspired intake flow
+      settings.ts                      # Persistent configuration store
+      memory.ts                        # 3-tier memory system
+      memory-consolidation.ts          # 6-hour memory consolidation engine
+      episodic-memory.ts               # Session episode recording
+      relationship-memory.ts           # User-agent relationship tracking
+      semantic-search.ts               # Gemini embedding-powered search
+      sentiment.ts                     # Mood/energy keyword analysis
+      ambient.ts                       # Desktop context polling
+      psychological-profile.ts         # Claude-powered psych analysis
+      personality-evolution.ts         # Trait-to-visual parameter mapping
+      feature-setup.ts                 # 9-step guided onboarding
+      openrouter.ts                    # OpenRouter multi-model provider
+      soc-bridge.ts                    # Self-Operating Computer bridge (Python JSONL)
+      git-loader.ts                    # GitHub repo loading + code intelligence
+      browser.ts                       # Browser extension bridge
+      mcp-client.ts                    # Model Context Protocol client
+      mcp-config.ts                    # MCP server configuration
+      desktop-tools.ts                 # OS-level tool execution
+      eve-profile.ts                   # Agent profile persistence
+      preload.ts                       # IPC bridge (20+ namespaces, 80+ channels)
+      prompt-budget.ts                 # Token allocation for personality context
+      voice-audition.ts                # Voice preview sample generation
+      screen-capture.ts                # Desktop screenshot capture
+      self-improve.ts                  # Source code reading + change proposals
+      project-awareness.ts             # Git/directory change watching
+      document-ingestion.ts            # PDF/document processing
+      obsidian-memory.ts               # Bidirectional vault sync
+      scheduler.ts                     # Persistent cron task engine
+      intelligence.ts                  # Predictive intelligence + briefings
+      predictor.ts                     # Context prediction engine
+      session-health.ts                # Uptime & error tracking
+      clipboard-intelligence.ts        # Clipboard monitoring
+      call-integration.ts              # VB-Cable call participation
+      meeting-prep.ts                  # Calendar event briefing
+      communications.ts                # Unified communications layer
+      notifications.ts                 # System notification dispatch
+      calendar.ts                      # Google Calendar OAuth2 integration
 
-    renderer/                    # React + Three.js frontend
-      App.tsx                    # Root state machine (AppPhase enum)
+      integrity/                       # Asimov's cLaws enforcement
+        core-laws.ts                   # Three Laws text + verification
+        hmac.ts                        # HMAC-SHA256 signing + validation
+        memory-watchdog.ts             # Continuous personality integrity monitoring
+        types.ts                       # Integrity type definitions
+        index.ts                       # Public API barrel export
+
+      agent-office/                    # Pixel-art office visualization
+        office-manager.ts              # Agent workspace state machine
+        office-layout.ts               # Isometric office grid + desk placement
+        office-types.ts                # Office type definitions
+
+      agents/                          # Background agent system
+        agent-runner.ts                # Execution engine (5 concurrent, chain-of-thought)
+        builtin-agents.ts              # Agent definitions (research, summarise, etc.)
+        agent-types.ts                 # Shared agent type definitions
+        agent-personas.ts              # Distinct agent personality profiles
+        agent-teams.ts                 # Multi-agent team coordination
+        agent-voice.ts                 # ElevenLabs TTS for agent speech
+        orchestrator.ts                # Task decomposition across agents
+
+      connectors/                      # Integration plugins (18 modules)
+        registry.ts                    # Connector auto-discovery + registration
+        adobe.ts, comms-hub.ts, creative-3d.ts, dev-environments.ts,
+        firecrawl.ts, git-devops.ts, media-streaming.ts, office.ts,
+        openai-services.ts, perplexity.ts, powershell.ts,
+        system-management.ts, terminal-sessions.ts, ui-automation.ts,
+        vscode.ts, world-monitor.ts, pageindex.ts
+
+      gateway/                         # External messaging gateway
+        gateway-manager.ts             # Gateway lifecycle + routing
+        gateway-connector.ts           # Inbound/outbound message bridge
+        trust-engine.ts                # 5-tier trust enforcement
+        session-store.ts               # Per-contact session isolation
+        audit-log.ts                   # Cryptographic audit trail
+        persona-adapter.ts             # Per-tier personality adaptation
+        types.ts                       # Gateway type definitions
+        adapters/
+          telegram.ts                  # Telegram Bot API adapter
+
+      ipc/                             # Domain-specific IPC handlers
+        index.ts                       # Handler registration hub
+        core-handlers.ts               # Settings, personality, app lifecycle
+        memory-handlers.ts             # All memory operations
+        agent-handlers.ts              # Agent task management
+        tool-handlers.ts               # Tool execution routing
+        onboarding-handlers.ts         # Onboarding flow
+        integration-handlers.ts        # Connectors, MCP, browser, SOC, GitLoader
+        integrity-handlers.ts          # Integrity verification + status
+
+      pageindex/                       # Vectorless RAG engine (PageIndex port)
+        index.ts                       # Public API barrel export
+        types.ts                       # PageIndexTree, PageIndexNode, etc.
+        tree-builder.ts                # 5-phase indexing pipeline
+        tree-search.ts                 # LLM-guided tree traversal search
+        pdf-parser.ts                  # PDF text extraction (pdfjs-dist)
+        prompts.ts                     # All LLM prompts (22 functions)
+        utils.ts                       # Token counting, JSON extraction, tree ops
+
+    renderer/                          # React + Three.js frontend
+      App.tsx                          # Root state machine (AppPhase enum)
+      main.tsx                         # React DOM entry point
+      types.d.ts                       # Window API type declarations
       hooks/
-        useGeminiLive.ts         # WebSocket voice session manager
+        useGeminiLive.ts               # WebSocket voice session + tool routing
+        useWakeWord.ts                 # "Hey Friday" wake word detection
+      audio/
+        AudioPlaybackEngine.ts         # Gapless Web Audio scheduling
+        sound-effects.ts               # Sound effect registry
+      session/
+        SessionManager.ts              # 7min timeout, reconnect logic
+        IdleBehavior.ts                # Tiered idle state machine
+      contexts/
+        MoodContext.tsx                 # Mood state provider
       components/
-        NexusCore.tsx            # 3D holographic desktop (Three.js)
-        VoiceOrb.tsx             # Central voice interaction orb
-        WelcomeGate.tsx          # API key entry gate
-        AgentCreation.tsx        # Cinematic reveal animation
-        ChatHistory.tsx          # Conversation log
-        Dashboard.tsx            # Command centre
-        MemoryExplorer.tsx       # Memory browser
-        QuickActions.tsx         # Command palette (Ctrl+K)
-        Settings.tsx             # Configuration panel
-        StatusBar.tsx            # Connection + mood indicators
-        TextInput.tsx            # Always-visible text chat input
-        FileToast.tsx            # File modification notification toasts
-        ResearchPanel.tsx        # Clickable research report sidebar
-        ActionFeed.tsx           # Real-time tool activity ticker
+        NexusCore.tsx                  # 3D holographic desktop (Three.js)
+        VoiceOrb.tsx                   # Central voice interaction orb
+        WelcomeGate.tsx                # API key entry gate
+        AgentCreation.tsx              # Cinematic reveal animation
+        AgentOffice/                   # Pixel-art agent workspace
+          index.tsx                    # Office renderer + sprite animation
+          sprites.ts                   # Agent sprite definitions + states
+        IntegrityShield.tsx            # cLaw integrity status indicator
+        ChatHistory.tsx                # Conversation log
+        Dashboard.tsx                  # Command centre
+        AgentDashboard.tsx             # Agent task monitor
+        MemoryExplorer.tsx             # Memory browser
+        QuickActions.tsx               # Command palette (Ctrl+K)
+        Settings.tsx                   # Configuration panel
+        StatusBar.tsx                  # Connection + mood indicators
+        TextInput.tsx                  # Always-visible text chat input
+        FileToast.tsx                  # File modification notification toasts
+        ResearchPanel.tsx              # Clickable research report sidebar
+        ActionFeed.tsx                 # Real-time tool activity ticker
+        ConnectionOverlay.tsx          # Error recovery overlay
+        WireframeNetwork.tsx           # Canvas 2D primary background
+        ParticleBackground.tsx         # Canvas 2D fallback background
+        ErrorBoundary.tsx              # Crash recovery wrapper
+        dashboard/
+          ContextCard.tsx              # Live ambient context
+          AgentCard.tsx                # Agent summary card
+          MoodTimeline.tsx             # SVG mood chart
 ```
+
+**Total: 132 source files, ~22,000+ lines of TypeScript**
 
 ### Technology Stack
 
@@ -357,9 +480,12 @@ agent-friday/
 | **Bundler** | Vite 6 | Fast dev server + production builds |
 | **Voice** | Gemini 2.5 Flash (WebSocket) | Real-time bidirectional audio |
 | **Reasoning** | Claude Opus/Sonnet (Anthropic SDK) | Deep analysis, memory, profiling |
+| **Multi-Model** | OpenRouter API | Access to 200+ models (Llama, Mistral, Gemma, etc.) |
 | **Embeddings** | Gemini text-embedding-004 | Semantic search (768 dimensions) |
 | **Agent Voices** | ElevenLabs TTS | Distinct voices for sub-agents |
 | **Document Intelligence** | PageIndex (Vectify AI) + OpenAI GPT-4o | Vectorless tree-based RAG (~99% accuracy) |
+| **Desktop Automation** | Self-Operating Computer (Python) | Mouse, keyboard, screen reading via JSONL bridge |
+| **Code Intelligence** | GitLoader | On-the-fly GitHub repo analysis |
 | **Protocols** | MCP (Model Context Protocol) | Dynamic tool registration |
 | **Browser** | Puppeteer-core + WebSocket | Tab control, screenshots, DOM |
 | **Calendar** | Google APIs (OAuth2) | Google Calendar + Gmail integration |
@@ -368,12 +494,16 @@ agent-friday/
 
 ### Security Model
 
+- **Asimov's cLaws** — Three Laws enforced at the personality system level with HMAC-SHA256 integrity verification
+- **Safe Mode** — Automatic lockdown if integrity verification fails (tampered laws, corrupted personality)
+- **Memory Watchdog** — Continuous monitoring for personality constraint injection or corruption
 - **Localhost-only binding** — Express server binds to `127.0.0.1`, never exposed to network
 - **CORS restriction** — Only `localhost` and `127.0.0.1` origins accepted
 - **API key protection** — All Gemini API calls use `x-goog-api-key` header (not URL parameters)
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`
 - **Session tokens** — Per-session cryptographic tokens for API authentication
 - **Shell sanitisation** — PowerShell commands sanitised before execution
+- **Gateway trust enforcement** — 5-tier trust engine with cryptographic pairing and audit logging
 - **Consent gates** — Destructive and irreversible actions require explicit user approval (Asimov's cLaws)
 
 ---
@@ -411,11 +541,12 @@ All settings persist in `{userData}/eve-settings.json`:
 | Category | What's Stored |
 |----------|--------------|
 | **Identity** | Agent name, voice, traits, backstory, identity line |
-| **API Keys** | Gemini, Anthropic, ElevenLabs, Firecrawl, Perplexity, OpenAI |
+| **API Keys** | Gemini, Anthropic, OpenRouter, ElevenLabs, Firecrawl, Perplexity, OpenAI |
 | **Integrations** | Obsidian vault path, Calendar/Gmail OAuth tokens, World Monitor path |
 | **Psychology** | Openness, trust readiness, connection style, approach strategy |
 | **Features** | Voice toggle, notifications, clipboard intelligence, screen capture |
 | **Onboarding** | Phase tracking, feature setup state, personality evolution parameters |
+| **Integrity** | HMAC signatures, law verification timestamps, watchdog state |
 
 API keys entered through the settings UI are automatically synced to `process.env` — no `.env` file required for normal operation.
 
@@ -431,7 +562,8 @@ API keys entered through the settings UI are automatically synced to `process.en
 1. Define an `AgentDefinition` in `src/main/agents/builtin-agents.ts`
 2. Provide `name`, `description`, and `execute(input, ctx)` function
 3. Use `ctx.callClaude()` for reasoning, `ctx.log()` for status, `ctx.setProgress()` for progress
-4. Add to the `builtinAgents` export array
+4. Add a personality in `src/main/agents/agent-personas.ts`
+5. Add to the `builtinAgents` export array
 
 ---
 
@@ -441,7 +573,7 @@ API keys entered through the settings UI are automatically synced to `process.en
 |-------------|---------|-------------|
 | **OS** | Windows 10 (64-bit) | Windows 11 |
 | **RAM** | 4 GB | 8+ GB |
-| **Node.js** | 20.x | 24.x LTS |
+| **Node.js** | 20.x | 22.x LTS |
 | **Internet** | Required for API calls | Broadband for voice streaming |
 | **Microphone** | Any input device | Quality USB/headset mic |
 | **Display** | 1280x720 | 1920x1080+ |
@@ -460,6 +592,7 @@ macOS and Linux builds are supported but primarily tested on Windows.
 - **Self-improvement** changes require explicit user approval before any code is modified
 - **Connector tools** run locally — no data leaves your system except for API calls you initiate
 - **API keys** are stored in Electron's `userData` directory (OS-encrypted at rest)
+- **Integrity verification** — Core safety laws are HMAC-signed and checked every startup
 
 ---
 
@@ -480,6 +613,9 @@ Yes — mouse clicks, keyboard input, app launching, file management, terminal c
 **What about the "mother question"?**
 The onboarding intake is directly inspired by the OS1 setup scene in *Her*. Your answer helps calibrate the agent's emotional approach. You can answer however you like, including deflecting. The system learns from that too.
 
+**What is OpenRouter?**
+OpenRouter gives Agent Friday access to 200+ AI models from various providers through a single API key. This means your agent can use Llama, Mistral, Gemma, Command R, DeepSeek, and many more — in addition to Claude and Gemini.
+
 ---
 
 ## Troubleshooting
@@ -494,6 +630,8 @@ The onboarding intake is directly inspired by the OS1 setup scene in *Her*. Your
 | World Monitor not available | Install World Monitor and set its path in Settings |
 | Build fails | Run `npm run typecheck` to identify TypeScript errors |
 | Packaged app shows blank screen | Ensure `npm run build` succeeds before `npm run package` |
+| Integrity warning on startup | Core law files may have been modified; check `integrity/core-laws.ts` |
+| SOC bridge not working | Ensure Python 3.10+ is installed and the SOC package is available |
 
 ---
 
@@ -517,6 +655,7 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 - [OpenClaw](https://github.com/pchaganti/gx-openclaws) — Pioneered applying Asimov's Laws to LLM agents; the conceptual foundation for Asimov's cLaws
 - [Google Gemini](https://ai.google.dev/) — Real-time voice AI
 - [Anthropic Claude](https://anthropic.com/) — Deep reasoning engine
+- [OpenRouter](https://openrouter.ai/) — Multi-model API gateway
 - [ElevenLabs](https://elevenlabs.io/) — Multi-agent voice synthesis
 - [Electron](https://www.electronjs.org/) — Desktop application framework
 - [Model Context Protocol](https://modelcontextprotocol.io/) — Tool integration standard
