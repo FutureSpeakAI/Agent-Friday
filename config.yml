@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: mailto:stephen@futurespeak.ai
+    about: Do NOT open a public issue for security vulnerabilities. Email stephen@futurespeak.ai instead. See SECURITY.md for details.
+  - name: Community Discussion
+    url: https://github.com/FutureSpeakAI/Agent-Friday/discussions
+    about: Questions, ideas, and general conversation about Agent Friday.
+  - name: Discord
+    url: https://futurespeak.ai
+    about: Join the Discord for real-time community discussion (link on the site).
