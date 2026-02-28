@@ -2,7 +2,6 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import NexusCore, { SemanticState } from './components/NexusCore';
 import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
-import ResearchPanel from './components/ResearchPanel';
 import StatusBar from './components/StatusBar';
 import TextInput from './components/TextInput';
 import Settings from './components/Settings';
@@ -160,8 +159,6 @@ export default function App() {
   // handled at the bottom of the component in the return statement.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Initializing...');
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'chat' | 'research'>('chat');
   const [showSettings, setShowSettings] = useState(false);
   const [showAgentDashboard, setShowAgentDashboard] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -173,7 +170,8 @@ export default function App() {
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
   const [codeProposal, setCodeProposal] = useState<CodeProposal | null>(null);
   const [activeActions, setActiveActions] = useState<ActionItem[]>([]);
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const [appPhase, setAppPhase] = useState<
     'checking' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
   >('checking');
@@ -279,8 +277,7 @@ export default function App() {
 
         try {
           await geminiLive.connect(newInstruction, tools, voice);
-          setStatus('Connected — Listening');
-          geminiLive.startListening();
+          setStatus('Connected');
 
           // Transition to feature setup or normal
           setAppPhase(featureSetupDone ? 'normal' : 'feature-setup');
@@ -389,9 +386,7 @@ export default function App() {
       setRetryCount(0);
       setConnectionError('');
 
-      // Auto-start listening immediately — hands-free experience
-      setStatus('Connected — Listening');
-      geminiLive.startListening();
+      setStatus('Connected');
 
       // After connection stabilizes, inject context
       setTimeout(async () => {
@@ -435,7 +430,7 @@ export default function App() {
   // Load wake word setting
   useEffect(() => {
     window.eve.settings.get().then((s) => {
-      setWakeWordEnabled(s.wakeWordEnabled !== false);
+      setWakeWordEnabled(s.wakeWordEnabled === true);
     }).catch(() => {});
   }, []);
 
@@ -837,10 +832,8 @@ export default function App() {
 
   // Handle text message send
   const handleTextSend = useCallback(
-    (text: string) => {
-      if (!geminiLive.isConnected) return;
-
-      // Add user message to chat history
+    async (text: string) => {
+      // Add user message to chat history immediately (optimistic)
       setMessages((prev) => [
         ...prev,
         {
@@ -851,8 +844,15 @@ export default function App() {
         },
       ]);
 
-      // Send to Gemini
-      geminiLive.sendTextToGemini(text);
+      // Auto-connect if not already connected
+      if (!geminiLive.isConnected && !geminiLive.isConnecting) {
+        await connectToGemini();
+      }
+
+      // Send to Gemini (connectToGemini is async; send after connection)
+      if (geminiLive.isConnected) {
+        geminiLive.sendTextToGemini(text);
+      }
 
       // Reset idle behavior — user is active
       geminiLive.resetIdleActivity();
@@ -860,7 +860,7 @@ export default function App() {
       // Record interaction for predictor
       window.eve.predictor.recordInteraction().catch(() => {});
     },
-    [geminiLive.isConnected, geminiLive.sendTextToGemini, geminiLive.resetIdleActivity]
+    [geminiLive.isConnected, geminiLive.isConnecting, geminiLive.sendTextToGemini, geminiLive.resetIdleActivity, connectToGemini]
   );
 
   // Keyboard: Space to mute/unmute, Tab to toggle text input
@@ -903,8 +903,8 @@ export default function App() {
 
       // Tab handled by TextInput component directly (always visible now)
 
-      // Space toggles mic (only from body — not while typing)
-      if (e.code === 'Space' && e.target === document.body) {
+      // Space toggles mic — only in voice mode, only from body (not while typing)
+      if (voiceMode && e.code === 'Space' && e.target === document.body) {
         e.preventDefault();
         geminiLive.resetIdleActivity();
         if (geminiLive.isListening) {
@@ -917,7 +917,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [geminiLive.isListening, geminiLive.isConnected, geminiLive.startListening, geminiLive.stopListening, geminiLive.resetIdleActivity]);
+  }, [voiceMode, geminiLive.isListening, geminiLive.isConnected, geminiLive.startListening, geminiLive.stopListening, geminiLive.resetIdleActivity]);
 
   // B2: RAF loop for audio levels — avoids re-renders, reads directly from AnalyserNodes
   const audioLevelsRef = useRef({ mic: 0, output: 0 });
@@ -1038,20 +1038,6 @@ export default function App() {
           : geminiLive.isConnecting ? 'ESTABLISHING LINK' : 'OFFLINE'}
       />
 
-      {/* Sidebar toggle */}
-      <button
-        onClick={() => setShowSidebar((s) => !s)}
-        className="hover-bright"
-        aria-label={showSidebar ? 'Hide chat log' : 'Show chat log'}
-        style={{
-          ...styles.sidebarToggle,
-          opacity: showSidebar ? 0.8 : 0.4,
-        }}
-        title={showSidebar ? 'Hide chat log' : 'Show chat log'}
-      >
-        {showSidebar ? '\u2190' : '\u2261'}
-      </button>
-
       {/* Command center button */}
       <button
         onClick={() => setShowDashboard(true)}
@@ -1097,66 +1083,56 @@ export default function App() {
       </button>
       </>)}
 
-      {/* Voice orb + text input — hidden during gate/checking */}
+      {/* Main chat panel — front and center, hidden during gate/checking */}
       {!['checking', 'gate'].includes(appPhase) && (
       <div style={styles.main}>
-        {/* Center — the orb is the entire interface */}
-        <div style={styles.center}>
-          <MoodVoiceOrb
-            isListening={geminiLive.isListening}
-            isProcessing={geminiLive.isConnecting}
-            isStreaming={geminiLive.isSpeaking}
-            onClick={handleOrbClick}
-            interimTranscript={geminiLive.transcript || geminiLive.error}
-            getLevels={getLevels}
-          />
-          <TextInput
-            onSend={handleTextSend}
-            isConnected={geminiLive.isConnected}
-          />
+        <div style={styles.chatPanel}>
+          {/* Chat messages area */}
+          <div style={styles.chatMessages}>
+            <ChatHistory messages={messages} />
+          </div>
+
+          {/* Voice orb — only shown when voice mode is active */}
+          {voiceMode && (
+            <div style={styles.voiceOrbArea}>
+              <MoodVoiceOrb
+                isListening={geminiLive.isListening}
+                isProcessing={geminiLive.isConnecting}
+                isStreaming={geminiLive.isSpeaking}
+                onClick={handleOrbClick}
+                interimTranscript={geminiLive.transcript || geminiLive.error}
+                getLevels={getLevels}
+              />
+            </div>
+          )}
+
+          {/* Text input area at bottom */}
+          <div style={styles.chatInputArea}>
+            <TextInput
+              onSend={handleTextSend}
+              isConnected={geminiLive.isConnected}
+            />
+            {/* Voice mode toggle */}
+            <button
+              onClick={() => setVoiceMode((v) => !v)}
+              className="hover-bright"
+              aria-label={voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+              title={voiceMode ? 'Voice mode ON — click to disable' : 'Enable voice mode'}
+              style={{
+                ...styles.voiceModeToggle,
+                borderColor: voiceMode ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255,255,255,0.1)',
+                color: voiceMode ? '#00f0ff' : '#555568',
+                background: voiceMode ? 'rgba(0, 240, 255, 0.08)' : 'rgba(255,255,255,0.03)',
+              }}
+            >
+              {voiceMode ? '🎤 Voice On' : '🎤 Voice'}
+            </button>
+          </div>
+
           <StatusBar status={status} isWebcamActive={geminiLive.isWebcamActive} isInCall={geminiLive.isInCall} apiStatus={apiStatus} />
         </div>
       </div>
       )}
-
-      {/* Animated sidebar overlay */}
-      <div
-        className={`sidebar-backdrop${showSidebar ? ' visible' : ''}`}
-        onClick={() => setShowSidebar(false)}
-      />
-      <div className={`sidebar-panel${showSidebar ? ' open' : ''}`}>
-        {/* Sidebar tabs */}
-        <div style={styles.sidebarTabs}>
-          <button
-            onClick={() => setSidebarTab('chat')}
-            style={{
-              ...styles.sidebarTabBtn,
-              color: sidebarTab === 'chat' ? '#00f0ff' : '#555568',
-              borderBottomColor: sidebarTab === 'chat' ? '#00f0ff' : 'transparent',
-            }}
-          >
-            ⬡ Chat
-          </button>
-          <button
-            onClick={() => setSidebarTab('research')}
-            style={{
-              ...styles.sidebarTabBtn,
-              color: sidebarTab === 'research' ? '#a855f7' : '#555568',
-              borderBottomColor: sidebarTab === 'research' ? '#a855f7' : 'transparent',
-            }}
-          >
-            ◆ Research
-          </button>
-        </div>
-        {/* Tab content */}
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          {sidebarTab === 'chat' ? (
-            <ChatHistory messages={messages} />
-          ) : (
-            <ResearchPanel onSendText={handleTextSend} />
-          )}
-        </div>
-      </div>
 
       {/* Action feed — animated tool execution indicators + agent cards */}
       <ActionFeed actions={activeActions} onOpenAgentDashboard={() => setShowAgentDashboard(true)} />
@@ -1367,48 +1343,53 @@ const styles: Record<string, React.CSSProperties> = {
     right: 0,
     zIndex: 50,
   } as React.CSSProperties,
-  sidebarTabs: {
-    display: 'flex',
-    borderBottom: '1px solid rgba(255,255,255,0.06)',
-    padding: '0 8px',
-    gap: 0,
-    flexShrink: 0,
-  },
-  sidebarTabBtn: {
-    flex: 1,
-    background: 'none',
-    border: 'none',
-    borderBottom: '2px solid transparent',
-    padding: '12px 8px',
-    fontSize: 12,
-    fontWeight: 600,
-    letterSpacing: '0.04em',
-    cursor: 'pointer',
-    transition: 'color 0.2s, border-color 0.2s',
-    textTransform: 'uppercase' as const,
-  },
-  sidebarToggle: {
-    position: 'absolute',
-    top: 40,
-    left: 12,
-    zIndex: 40,
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    color: '#e0e0e8',
-    fontSize: 18,
-    width: 32,
-    height: 32,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    transition: 'opacity 0.2s',
-  },
   main: {
     flex: 1,
     display: 'flex',
     overflow: 'hidden',
+    paddingTop: 80,
+    paddingBottom: 0,
+  },
+  chatPanel: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    padding: '0 20px 0 20px',
+    maxWidth: 860,
+    margin: '0 auto',
+    width: '100%',
+  },
+  chatMessages: {
+    flex: 1,
+    overflowY: 'auto',
+    minHeight: 0,
+  },
+  voiceOrbArea: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '12px 0 4px 0',
+    flexShrink: 0,
+  },
+  chatInputArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
+    flexShrink: 0,
+  },
+  voiceModeToggle: {
+    border: '1px solid',
+    borderRadius: 20,
+    padding: '5px 14px',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    letterSpacing: '0.03em',
+    opacity: 0.75,
   },
   dashboardBtn: {
     position: 'absolute',

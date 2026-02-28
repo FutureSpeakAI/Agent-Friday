@@ -85,7 +85,7 @@ export default function TextInput({ onSend, isConnected }: TextInputProps) {
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={isConnected ? 'Type a message... (Tab to focus)' : 'Connect to start typing...'}
+          placeholder="Type a message... (Tab to focus)"
           style={styles.textarea}
           autoComplete="off"
           spellCheck={false}
@@ -123,8 +123,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 4,
     width: '100%',
-    maxWidth: 560,
-    padding: '0 24px',
+    padding: '0 4px',
   },
   inputRow: {
     display: 'flex',
