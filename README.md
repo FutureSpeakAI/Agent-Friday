@@ -4,7 +4,7 @@
 
 <h1 align="center">Agent Friday</h1>
 <p align="center"><strong>The World's First AGI OS — An Asimov Agent by FutureSpeak.AI</strong></p>
-<p align="center">Voice-first AI chief of staff with genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
+<p align="center">Text-first AI chief of staff with optional voice mode, genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
@@ -167,14 +167,26 @@ The installer lands in `release/`. Supports Windows (NSIS + ZIP), macOS (DMG + Z
 
 ## Features
 
-### Voice Interaction
+### Text-First Chat
 
-Real-time bidirectional audio powered by Gemini 2.5 Flash over WebSocket:
+Agent Friday v2.0.0 is a **text-first** AGI OS. The central interface is a full-width chat panel with streaming AI responses — no voice required:
 
+- **Always-active text input** — type and send immediately; auto-connects to Gemini on first message
+- **Streaming replies** — see the agent's response arrive in real time, token by token
+- **Full keyboard control** — Tab to focus, Enter to send, Shift+Enter for newlines, Esc to unfocus
+- **Works without microphone** — every feature is accessible via text alone
+
+### Voice Mode (Optional)
+
+Voice mode is an explicit opt-in — the microphone **never** activates without direct user action:
+
+- **Voice toggle button** — click the 🎤 button to enter voice mode; click again to exit
+- **Wake word disabled by default** — "Hey Friday" detection is off unless you explicitly enable it in Settings
+- **Space bar** only toggles mic when voice mode is active
 - **AudioWorklet** mic capture at 16kHz PCM — no latency from main thread
 - **Gapless playback engine** with sample-boundary scheduling at 24kHz
 - **Barge-in support** — speak any time and the agent stops to listen
-- **Voice Orb** — central interaction point with ripple, glow, and pulsation feedback
+- **Voice Orb** — appears only in voice mode with ripple, glow, and pulsation feedback
 - **Session rotation** — automatic 13-minute session management with context preservation
 - **Reconnection hardening** — linear backoff (3s to 30s cap), network-aware, context-preserving
 - **Voice audition** — preview and select from 30 Gemini voices during onboarding
@@ -724,7 +736,7 @@ macOS and Linux builds are supported but primarily tested on Windows.
 Agent Friday is a full AGI operating system, not a chat window. It sees your screen, controls your mouse, manages your files, connects to your tools, builds trust models of the people in your world, remembers your patterns, and adapts its personality to who you are. It runs locally with full privacy.
 
 **Is it always listening?**
-Only when a voice session is active (you initiate it). There is no ambient microphone monitoring. Audio is processed via Gemini's WebSocket API and is not stored.
+No. The microphone is **never** activated without explicit user action. Voice mode is off by default — you must click the voice toggle to enable it, then click the orb or press Space to start listening. Wake word detection is also disabled by default. Audio is processed via Gemini's WebSocket API and is not stored.
 
 **Where is my data?**
 All memory, settings, trust graph, and conversation data stay on your local machine in `{userData}/`. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection.
@@ -750,7 +762,7 @@ The Trust Graph is Agent Friday's model of the people in your world. It tracks m
 
 | Issue | Solution |
 |-------|---------|
-| No voice response | Check Gemini API key in Settings; ensure microphone permissions are granted |
+| No voice response | Ensure voice mode is enabled (click 🎤 button); check Gemini API key in Settings; ensure microphone permissions are granted |
 | "MCP client failed to connect" | Ensure `npx` works or install Desktop Commander globally |
 | Agents have no voice | Add an ElevenLabs API key in Settings |
 | Can't join calls | Install [VB-Cable](https://vb-audio.com/Cable/) and select "CABLE Output" as meeting mic |
