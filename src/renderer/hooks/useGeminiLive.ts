@@ -881,7 +881,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
 
           const setup = {
             setup: {
-              model: 'models/gemini-2.5-flash-native-audio-latest',
+              model: 'models/gemini-2.5-flash-native-audio-preview-12-2025',
               generation_config: {
                 response_modalities: ['AUDIO'],
                 speech_config: {
@@ -919,6 +919,18 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
             const raw =
               typeof event.data === 'string' ? event.data : await (event.data as Blob).text();
             const data = JSON.parse(raw);
+
+            // Catch Gemini error responses (invalid model, auth failure, etc.)
+            if (data.error) {
+              clearTimeout(timeout);
+              const errMsg = data.error.message || data.error.status || JSON.stringify(data.error);
+              console.error('[GeminiLive] Server error:', errMsg);
+              setState((s) => ({ ...s, isConnecting: false, error: `Gemini error: ${errMsg}` }));
+              optionsRef.current.onError?.(`Gemini error: ${errMsg}`);
+              ws.close();
+              reject(new Error(errMsg));
+              return;
+            }
 
             if (data.setupComplete) {
               clearTimeout(timeout);
@@ -2048,10 +2060,11 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           reject(new Error(`WebSocket closed: ${reason}`));
         };
 
-        ws.onerror = () => {
+        ws.onerror = (event) => {
           clearTimeout(timeout);
-          const msg = 'WebSocket connection failed — check API key and network';
-          console.error('[GeminiLive]', msg);
+          const detail = navigator.onLine ? 'API key may be invalid or Gemini service is down' : 'device appears offline';
+          const msg = `WebSocket connection failed — ${detail}`;
+          console.error('[GeminiLive] WebSocket error event:', event, '| Online:', navigator.onLine);
           setState((s) => ({ ...s, isConnecting: false, error: msg }));
           optionsRef.current.onError?.(msg);
           reject(new Error(msg));

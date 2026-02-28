@@ -99,8 +99,8 @@ export default function VoiceOrb({
         if (!bar) return;
         const phase = (Date.now() / 300 + i * 0.7) % (Math.PI * 2);
         const ambient = Math.sin(phase) * 0.3 + 0.5; // 0.2–0.8 base
-        const h = 8 + (ambient + level * 3.0) * 18; // 8–62px range (expanded)
-        bar.style.height = `${Math.min(h, 62)}px`;
+        const h = 6 + (ambient + level * 3.0) * 14; // 6–48px range
+        bar.style.height = `${Math.min(h, 48)}px`;
       });
 
       // Outer reactive glow ring — responds to audio levels
@@ -176,8 +176,8 @@ export default function VoiceOrb({
         <div style={styles.orbInner}>
           {state === 'idle' && (
             <svg
-              width="32"
-              height="32"
+              width="24"
+              height="24"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -198,7 +198,7 @@ export default function VoiceOrb({
                   style={{
                     ...styles.waveBar,
                     background: barColor,
-                    height: 8, // initial — RAF updates this
+                    height: 6, // initial — RAF updates this
                   }}
                 />
               ))}
@@ -241,15 +241,15 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 20,
+    gap: 16,
     zIndex: 10,
   },
   audioGlow: {
     position: 'absolute',
-    width: 320,
-    height: 320,
+    width: 240,
+    height: 240,
     borderRadius: '50%',
-    top: -75,
+    top: -50,
     left: '50%',
     transform: 'translateX(-50%)',
     pointerEvents: 'none',
@@ -257,29 +257,29 @@ const styles: Record<string, React.CSSProperties> = {
   },
   outerRing: {
     position: 'absolute',
-    width: 220,
-    height: 220,
+    width: 168,
+    height: 168,
     borderRadius: '50%',
     border: '1px solid',
-    top: -15,
+    top: -12,
     left: '50%',
     transform: 'translateX(-50%)',
     pointerEvents: 'none',
   },
   middleRing: {
     position: 'absolute',
-    width: 260,
-    height: 260,
+    width: 198,
+    height: 198,
     borderRadius: '50%',
     border: '1px solid',
-    top: -35,
+    top: -27,
     left: '50%',
     transform: 'translateX(-50%)',
     pointerEvents: 'none',
   },
   orb: {
-    width: 180,
-    height: 180,
+    width: 130,
+    height: 130,
     borderRadius: '50%',
     border: '1.5px solid',
     display: 'flex',
@@ -299,11 +299,11 @@ const styles: Record<string, React.CSSProperties> = {
   waveContainer: {
     display: 'flex',
     alignItems: 'center',
-    gap: 4,
-    height: 62,
+    gap: 3,
+    height: 48,
   },
   waveBar: {
-    width: 4,
+    width: 3,
     borderRadius: 2,
     transition: 'height 0.06s ease-out',
   },
