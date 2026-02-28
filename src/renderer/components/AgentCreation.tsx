@@ -2,12 +2,12 @@
  * AgentCreation.tsx — Cinematic agent materialization sequence.
  *
  * Full-screen animation between onboarding and the agent's first greeting.
- * Warm golden glow builds → NexusCore desktop is revealed for the first time.
+ * Warm golden glow builds → FridayCore desktop is revealed for the first time.
  *
  * Timeline (~6s):
  *  0-2s   — Dark screen, subtle pulsing orb, status text
  *  2-3s   — Orb expands, warm golden glow fills screen
- *  3-4.5s — Glow softens, NexusCore fades in through it (onNexusReveal)
+ *  3-4.5s — Glow softens, FridayCore fades in through it (onFridayReveal)
  *  4.5-5.5s — Overlay fades out
  *  5.5s   — onComplete fires
  */
@@ -16,7 +16,7 @@ import React, { useState, useEffect, useRef } from 'react';
 
 interface AgentCreationProps {
   agentName: string;
-  onNexusReveal?: () => void;
+  onFridayReveal?: () => void;
   onComplete?: () => void;
 }
 
@@ -27,7 +27,7 @@ const STEPS = [
   { label: 'Initializing consciousness', delay: 2000 },
 ];
 
-export default function AgentCreation({ agentName, onNexusReveal, onComplete }: AgentCreationProps) {
+export default function AgentCreation({ agentName, onFridayReveal, onComplete }: AgentCreationProps) {
   const [visibleSteps, setVisibleSteps] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(0);
   const [phase, setPhase] = useState<'building' | 'glow' | 'revealing' | 'fading'>('building');
@@ -45,10 +45,10 @@ export default function AgentCreation({ agentName, onNexusReveal, onComplete }: 
     // Phase 2: Warm glow expansion (2s)
     timers.push(setTimeout(() => setPhase('glow'), 2000));
 
-    // Phase 3: NexusCore reveal (3s) — trigger parent to show NexusCore
+    // Phase 3: FridayCore reveal (3s) — trigger parent to show FridayCore
     timers.push(setTimeout(() => {
       setPhase('revealing');
-      onNexusReveal?.();
+      onFridayReveal?.();
     }, 3000));
 
     // Phase 4: Fade overlay out (4.5s)
@@ -58,7 +58,7 @@ export default function AgentCreation({ agentName, onNexusReveal, onComplete }: 
     timers.push(setTimeout(() => onComplete?.(), 5500));
 
     return () => timers.forEach(clearTimeout);
-  }, [onNexusReveal, onComplete]);
+  }, [onFridayReveal, onComplete]);
 
   // Dynamic glow intensity based on phase
   const glowOpacity = phase === 'building' ? 0.3 : phase === 'glow' ? 1 : phase === 'revealing' ? 0.6 : 0;

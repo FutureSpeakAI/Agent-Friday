@@ -4,7 +4,7 @@
  * Track II, Phase 3: The Absorber — Superpower Registry.
  *
  * A Superpower is a persisted adapted connector that:
- *   - Survives app restarts (JSON persistence in eve-data/)
+ *   - Survives app restarts (JSON persistence in friday-data/)
  *   - Can be toggled on/off, configured, updated, and removed
  *   - Registers tools dynamically with the ConnectorRegistry
  *   - Tracks health, usage, and lifecycle state
@@ -144,7 +144,7 @@ const DEFAULT_CONFIG: SuperpowerStoreConfig = {
 
 /**
  * Persistent store for installed superpowers.
- * Follows the same JSON persistence pattern as eve-data (memories, episodes, etc).
+ * Follows the same JSON persistence pattern as friday-data (memories, episodes, etc).
  *
  * cLaw: The store enforces the consent boundary — no superpower can be
  * installed without a valid consentToken. The token is ONLY set by the

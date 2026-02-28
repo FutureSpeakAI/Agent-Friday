@@ -1,5 +1,5 @@
 /**
- * eve-profile.ts — Dynamic user intelligence dossier.
+ * friday-profile.ts — Dynamic user intelligence dossier.
  * For fresh installs, creates a blank profile that gets populated during onboarding.
  * For returning users, assembles a condensed profile from stored memories and learned insights.
  * The consolidation system compresses raw learnings into narrative paragraphs using Claude Sonnet.
@@ -43,7 +43,7 @@ let isConsolidating = false; // Lock to prevent concurrent consolidation
  * or preserves existing learned insights on subsequent launches.
  */
 export async function ensureProfileOnDisk(): Promise<void> {
-  const filePath = path.join(app.getPath('userData'), 'eve-intelligence.md');
+  const filePath = path.join(app.getPath('userData'), 'friday-intelligence.md');
   const config = settingsManager.getAgentConfig();
 
   try {
@@ -240,7 +240,7 @@ async function consolidateLearnings(): Promise<void> {
   if (isConsolidating) return;
   isConsolidating = true;
 
-  const filePath = path.join(app.getPath('userData'), 'eve-intelligence.md');
+  const filePath = path.join(app.getPath('userData'), 'friday-intelligence.md');
   const config = settingsManager.getAgentConfig();
   const userName = config.userName || 'the user';
 
@@ -312,7 +312,7 @@ Write a single dense paragraph (4-8 sentences) that captures every meaningful in
  * threshold, Claude Sonnet compresses them into a narrative paragraph.
  */
 export async function appendLearning(insight: string, category: string): Promise<void> {
-  const filePath = path.join(app.getPath('userData'), 'eve-intelligence.md');
+  const filePath = path.join(app.getPath('userData'), 'friday-intelligence.md');
   try {
     let content = await fs.readFile(filePath, 'utf-8').catch(() => '');
 
@@ -432,7 +432,7 @@ export async function getCondensedProfile(): Promise<string> {
 
   // Append learned insights from the intelligence file
   try {
-    const filePath = path.join(app.getPath('userData'), 'eve-intelligence.md');
+    const filePath = path.join(app.getPath('userData'), 'friday-intelligence.md');
     const content = await fs.readFile(filePath, 'utf-8').catch(() => '');
     if (content) {
       const { consolidatedBlocks, recentEntries } = parseLearnedSection(content);

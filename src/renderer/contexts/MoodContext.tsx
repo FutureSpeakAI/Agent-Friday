@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
-import type { SemanticState } from '../components/NexusCore';
+import type { SemanticState } from '../components/FridayCore';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

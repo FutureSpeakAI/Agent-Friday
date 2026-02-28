@@ -17,7 +17,7 @@ import {
 import { getEvolutionState, incrementSession } from '../personality-evolution';
 import { generateVoiceSample, getVoiceRecommendations, VOICE_CATALOG, type GeminiVoiceName } from '../voice-audition';
 import { settingsManager } from '../settings';
-import { ensureProfileOnDisk } from '../eve-profile';
+import { ensureProfileOnDisk } from '../friday-profile';
 import type { IntakeResponses, FeatureSetupStep } from '../settings';
 
 export function registerOnboardingHandlers(): void {

@@ -515,9 +515,9 @@ export class SuperpowerEcosystem {
     if (this.initialized) return;
 
     const dataDir = app.getPath('userData');
-    const eveDataDir = `${dataDir}/eve-data`;
-    await fs.mkdir(eveDataDir, { recursive: true });
-    this.filePath = `${eveDataDir}/superpower-ecosystem.json`;
+    const fridayDataDir = `${dataDir}/friday-data`;
+    await fs.mkdir(fridayDataDir, { recursive: true });
+    this.filePath = `${fridayDataDir}/superpower-ecosystem.json`;
 
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');

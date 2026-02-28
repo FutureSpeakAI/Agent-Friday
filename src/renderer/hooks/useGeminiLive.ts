@@ -93,7 +93,7 @@ const SETUP_INTELLIGENCE_TOOL = {
   },
 };
 
-// Self-improvement tools — Gemini can read and propose changes to EVE's own source code
+// Self-improvement tools — Gemini can read and propose changes to Friday's own source code
 const SELF_IMPROVE_TOOLS = [
   {
     name: 'read_own_source',
@@ -104,7 +104,7 @@ const SELF_IMPROVE_TOOLS = [
       properties: {
         file_path: {
           type: 'string',
-          description: 'Relative path to the file within the EVE OS project.',
+          description: 'Relative path to the file within the Agent Friday project.',
         },
       },
       required: ['file_path'],
@@ -119,7 +119,7 @@ const SELF_IMPROVE_TOOLS = [
       properties: {
         dir_path: {
           type: 'string',
-          description: 'Relative directory path within the EVE OS project.',
+          description: 'Relative directory path within the Agent Friday project.',
         },
       },
       required: ['dir_path'],
@@ -434,7 +434,7 @@ const DOCUMENT_TOOLS = [
   {
     name: 'read_document',
     description:
-      'Read a document that has been ingested into EVE\'s document library. Use this when the user asks about a specific document by name or ID. Returns the document content, summary, and metadata.',
+      'Read a document that has been ingested into Friday\'s document library. Use this when the user asks about a specific document by name or ID. Returns the document content, summary, and metadata.',
     parameters: {
       type: 'object',
       properties: {
@@ -468,7 +468,7 @@ const PROJECT_TOOLS = [
   {
     name: 'watch_project',
     description:
-      'Start watching a project directory. EVE will detect the project type (Node.js, Python, Rust, Go, Java), framework, git status, and key files. Use when the user mentions a project path or asks you to look at a project.',
+      'Start watching a project directory. Friday will detect the project type (Node.js, Python, Rust, Go, Java), framework, git status, and key files. Use when the user mentions a project path or asks you to look at a project.',
     parameters: {
       type: 'object',
       properties: {
@@ -1022,9 +1022,9 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 setState((s) => ({ ...s, transcript: '' }));
               }
 
-              // Handle interruption — user spoke while EVE was talking
+              // Handle interruption — user spoke while Friday was talking
               // The server stops generating, but we must flush the audio buffer
-              // so EVE actually stops speaking immediately
+              // so Friday actually stops speaking immediately
               if (data.serverContent.interrupted) {
                 console.log('[GeminiLive] Server signalled interruption — flushing audio buffer');
                 playbackEngineRef.current?.flush();
@@ -2110,7 +2110,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }
 
     try {
-      // Flush any in-progress audio playback so EVE stops talking immediately
+      // Flush any in-progress audio playback so Friday stops talking immediately
       playbackEngineRef.current?.flush();
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -2420,10 +2420,10 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }
   }, [state.isConnected, state.isListening]);
 
-  // Reset idle timer when EVE finishes speaking (conversation is active)
+  // Reset idle timer when Friday finishes speaking (conversation is active)
   useEffect(() => {
     if (!state.isSpeaking) {
-      // EVE just stopped speaking — user might respond, reset idle timer
+      // Friday just stopped speaking — user might respond, reset idle timer
       idleBehaviorRef.current?.resetActivity();
     }
   }, [state.isSpeaking]);
@@ -2448,7 +2448,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           const completedAt = task.completedAt || 0;
           if (Date.now() - completedAt > 120_000) continue;
 
-          // Don't interrupt if EVE is currently speaking
+          // Don't interrupt if Friday is currently speaking
           if (stateRef.current.isSpeaking) {
             // Retry on next poll cycle
             surfacedAgentsRef.delete(task.id);

@@ -1,8 +1,8 @@
 /**
- * IdleBehavior — Tiered idle cue system for EVE.
+ * IdleBehavior — Tiered idle cue system for Friday.
  *
- * Gives EVE autonomous verbal presence without constant narration.
- * When the user stops interacting, EVE progresses through tiers:
+ * Gives Friday autonomous verbal presence without constant narration.
+ * When the user stops interacting, Friday progresses through tiers:
  *
  *   Tier 0: Active conversation (no idle behavior)
  *   Tier 1: Short silence (~12s) — soft contextual hum/acknowledgment
@@ -21,7 +21,7 @@ export interface IdleBehaviorCallbacks {
   getAmbientContext?: () => string;
   /** Whether the connection is active and we should run idle behavior */
   isActive: () => boolean;
-  /** Whether EVE is currently speaking (skip cues while speaking) */
+  /** Whether Friday is currently speaking (skip cues while speaking) */
   isSpeaking: () => boolean;
 }
 
@@ -115,7 +115,7 @@ export class IdleBehavior {
     if (!this.running || !this.callbacks) return;
     if (!this.callbacks.isActive()) return;
 
-    // Don't interrupt EVE while she's speaking
+    // Don't interrupt Friday while she's speaking
     if (this.callbacks.isSpeaking()) {
       // Retry this tier in 5s
       this.timers.push(setTimeout(() => this.fireTier(tier), 5000));

@@ -1,5 +1,5 @@
 /**
- * document-ingestion.ts — Document Ingestion Engine for EVE OS.
+ * document-ingestion.ts — Document Ingestion Engine for Agent Friday.
  *
  * Reads .txt, .md, .pdf, .docx, .json, .csv files via appropriate parsers,
  * generates Claude summaries, and indexes content via semantic search.

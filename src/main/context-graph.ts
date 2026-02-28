@@ -24,7 +24,7 @@ import { contextStream, type ContextEvent, type ContextEventType } from './conte
 
 export interface WorkStream {
   id: string;
-  name: string;                        // e.g. "Coding in VS Code — nexus-os"
+  name: string;                        // e.g. "Coding in VS Code — agent-friday"
   task: string;                        // Inferred task: "coding", "browsing", etc.
   app: string;                         // Primary app
   startedAt: number;

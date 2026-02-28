@@ -1,5 +1,5 @@
 /**
- * comms-hub.ts  —  Communication Hub connector for Agent Friday (Nexus OS)
+ * comms-hub.ts  —  Communication Hub connector for Agent Friday
  *
  * Provides webhook, email, HTTP, and notification tools using only Node.js
  * built-in modules (https, http, net, tls, child_process). Zero external deps.
@@ -472,7 +472,7 @@ function smtpSendEmail(params: {
             if (code !== 220)
               throw new Error(`SMTP greeting failed: ${code} ${text}`);
             step = 1;
-            send('EHLO nexus-os');
+            send('EHLO agent-friday');
             break;
 
           /* 1: EHLO response — check for STARTTLS */
@@ -501,7 +501,7 @@ function smtpSendEmail(params: {
                   buffer = '';
                   socket.on('data', onData);
                   step = 1;
-                  send('EHLO nexus-os');
+                  send('EHLO agent-friday');
                 },
               );
               tlsSocket.on('error', reject);

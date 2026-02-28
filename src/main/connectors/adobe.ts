@@ -106,7 +106,7 @@ function getTempDir(): string {
  * Generate a unique temp file path with the given extension.
  */
 function tempFile(prefix: string, ext: string): string {
-  const name = `nexus_adobe_${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const name = `friday_adobe_${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
   return path.join(getTempDir(), name);
 }
 
@@ -754,20 +754,20 @@ function scriptPremiereRunJsx(jsxCode: string): string {
   return `
 # Write the ExtendScript to a temp file
 $jsxContent = @'
-var _nexus_result;
+var _friday_result;
 try {
-  _nexus_result = eval(${JSON.stringify(jsxCode)});
+  _friday_result = eval(${JSON.stringify(jsxCode)});
 } catch(e) {
-  _nexus_result = 'Error: ' + e.message;
+  _friday_result = 'Error: ' + e.message;
 }
 // Write output to a temp file for retrieval
 var outFile = new File('${outputFile}');
 outFile.open('w');
-outFile.write(String(_nexus_result));
+outFile.write(String(_friday_result));
 outFile.close();
 '@
 
-$jsxPath = [System.IO.Path]::Combine($env:TEMP, 'nexus_premiere_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
+$jsxPath = [System.IO.Path]::Combine($env:TEMP, 'friday_premiere_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
 $outPath = '${psEscape(outputFile.replace(/\\\\/g, '\\'))}'
 Set-Content -Path $jsxPath -Value $jsxContent -Encoding UTF8
 
@@ -781,7 +781,7 @@ bt.onResult = function(res) {};
 bt.onError = function(err) {};
 bt.send(10);
 "@
-  $btPath = [System.IO.Path]::Combine($env:TEMP, 'nexus_premiere_bt_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
+  $btPath = [System.IO.Path]::Combine($env:TEMP, 'friday_premiere_bt_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
   Set-Content -Path $btPath -Value $btScript -Encoding UTF8
 
   # First, try direct COM invocation
@@ -838,20 +838,20 @@ function scriptAfterEffectsRunJsx(jsxCode: string): string {
   return `
 # Write the ExtendScript to a temp file
 $jsxContent = @'
-var _nexus_result;
+var _friday_result;
 try {
-  _nexus_result = eval(${JSON.stringify(jsxCode)});
+  _friday_result = eval(${JSON.stringify(jsxCode)});
 } catch(e) {
-  _nexus_result = 'Error: ' + e.message;
+  _friday_result = 'Error: ' + e.message;
 }
 // Write output to a temp file for retrieval
 var outFile = new File('${outputFile}');
 outFile.open('w');
-outFile.write(String(_nexus_result));
+outFile.write(String(_friday_result));
 outFile.close();
 '@
 
-$jsxPath = [System.IO.Path]::Combine($env:TEMP, 'nexus_ae_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
+$jsxPath = [System.IO.Path]::Combine($env:TEMP, 'friday_ae_' + [System.Guid]::NewGuid().ToString('N') + '.jsx')
 $outPath = '${psEscape(outputFile.replace(/\\\\/g, '\\'))}'
 Set-Content -Path $jsxPath -Value $jsxContent -Encoding UTF8
 

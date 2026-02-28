@@ -1,6 +1,6 @@
 /**
- * self-improve.ts — EVE's self-modification system.
- * Allows EVE to read and propose changes to her own source code.
+ * self-improve.ts — Friday's self-modification system.
+ * Allows Friday to read and propose changes to her own source code.
  * ALL changes require explicit user approval before being written.
  */
 
@@ -8,7 +8,7 @@ import { BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 
-// The project root — EVE's own codebase
+// The project root — Friday's own codebase
 export const PROJECT_ROOT = path.resolve(__dirname, '../../');
 
 // Allowed file extensions for reading/writing
@@ -271,7 +271,7 @@ export const SELF_IMPROVE_TOOLS = [
       properties: {
         file_path: {
           type: 'string',
-          description: 'Relative path to the file within the EVE OS project.',
+          description: 'Relative path to the file within the Agent Friday project.',
         },
       },
       required: ['file_path'],
@@ -286,7 +286,7 @@ export const SELF_IMPROVE_TOOLS = [
       properties: {
         dir_path: {
           type: 'string',
-          description: 'Relative directory path within the EVE OS project.',
+          description: 'Relative directory path within the Agent Friday project.',
         },
       },
       required: ['dir_path'],

@@ -52,7 +52,7 @@ export default function AgentCard({ tasks, onCancel }: AgentCardProps) {
       </div>
 
       {tasks.length === 0 ? (
-        <div style={styles.empty}>No agents running — ask EVE to research something</div>
+        <div style={styles.empty}>No agents running — ask Friday to research something</div>
       ) : (
         <div style={styles.taskList}>
           {activeTasks.map((task) => {

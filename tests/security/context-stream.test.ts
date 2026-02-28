@@ -244,8 +244,8 @@ describe('Context Stream — Track III Phase 1', () => {
     });
 
     it('updates windowTitle from ambient events', () => {
-      stream.push(makeEvent('ambient', 'title', { windowTitle: 'main.ts — nexus-os' }));
-      expect(stream.getSnapshot().windowTitle).toBe('main.ts — nexus-os');
+      stream.push(makeEvent('ambient', 'title', { windowTitle: 'main.ts — agent-friday' }));
+      expect(stream.getSnapshot().windowTitle).toBe('main.ts — agent-friday');
     });
 
     it('updates inferredTask from ambient events', () => {

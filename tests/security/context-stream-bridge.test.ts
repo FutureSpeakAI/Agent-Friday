@@ -16,7 +16,7 @@ vi.mock('../../src/main/context-stream', () => ({
 // ── Mock ambient engine (inline values — no external refs) ───────────
 const mockGetAmbientState = vi.fn().mockReturnValue({
   activeApp: 'VS Code',
-  windowTitle: 'index.ts — nexus-os',
+  windowTitle: 'index.ts — agent-friday',
   inferredTask: 'coding',
   focusStreak: 300,
   appDurations: {},
@@ -80,7 +80,7 @@ describe('Context Stream Bridge — Source Integration', () => {
     // Reset default mock return values
     mockGetAmbientState.mockReturnValue({
       activeApp: 'VS Code',
-      windowTitle: 'index.ts — nexus-os',
+      windowTitle: 'index.ts — agent-friday',
       inferredTask: 'coding',
       focusStreak: 300,
       appDurations: {},
@@ -143,7 +143,7 @@ describe('Context Stream Bridge — Source Integration', () => {
           dedupeKey: 'ambient-focus',
           data: expect.objectContaining({
             activeApp: 'VS Code',
-            windowTitle: 'index.ts — nexus-os',
+            windowTitle: 'index.ts — agent-friday',
             inferredTask: 'coding',
           }),
         }),
@@ -179,7 +179,7 @@ describe('Context Stream Bridge — Source Integration', () => {
       // Change window title
       mockGetAmbientState.mockReturnValue({
         activeApp: 'VS Code',
-        windowTitle: 'test.ts — nexus-os',
+        windowTitle: 'test.ts — agent-friday',
         inferredTask: 'coding',
         focusStreak: 300,
         appDurations: {},

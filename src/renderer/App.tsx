@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import NexusCore, { SemanticState } from './components/NexusCore';
+import FridayCore, { SemanticState } from './components/FridayCore';
 import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
 import StatusBar from './components/StatusBar';
@@ -76,7 +76,7 @@ const SEMANTIC_COLORS_ALPHA: Record<SemanticState, string> = {
   EXECUTING: 'rgba(34, 197, 94, 0.5)',
 };
 
-function MoodNexusCore({ getLevels, semanticState, isSpeaking, evolutionState }: {
+function MoodFridayCore({ getLevels, semanticState, isSpeaking, evolutionState }: {
   getLevels: () => { mic: number; output: number };
   semanticState: SemanticState;
   isSpeaking: boolean;
@@ -84,7 +84,7 @@ function MoodNexusCore({ getLevels, semanticState, isSpeaking, evolutionState }:
 }) {
   const mood = useMood();
   return (
-    <NexusCore
+    <FridayCore
       getLevels={getLevels}
       semanticState={semanticState}
       isSpeaking={isSpeaking}
@@ -170,8 +170,8 @@ export default function App() {
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
   const [codeProposal, setCodeProposal] = useState<CodeProposal | null>(null);
   const [activeActions, setActiveActions] = useState<ActionItem[]>([]);
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
+  const [voiceMode, setVoiceMode] = useState(true);
   const [appPhase, setAppPhase] = useState<
     'checking' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
   >('checking');
@@ -454,7 +454,7 @@ export default function App() {
     });
   }, [geminiLive.isConnected, geminiLive.isConnecting]);
 
-  // Wake word detection — auto-connect when "Hey EVE" is detected while idle
+  // Wake word detection — auto-connect when "Hey Friday" is detected while idle
   useWakeWord({
     enabled: wakeWordEnabled,
     isConnected: geminiLive.isConnected,
@@ -526,7 +526,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Listen for scheduler task-fired events → inject into Gemini so EVE speaks them
+  // Listen for scheduler task-fired events → inject into Gemini so Friday speaks them
   useEffect(() => {
     const cleanup = window.eve.scheduler.onTaskFired((task) => {
       console.log('[Agent] Task fired:', task.description);
@@ -560,7 +560,7 @@ export default function App() {
     return cleanup;
   }, [geminiLive.sendTextToGemini]);
 
-  // Listen for predictive suggestions → inject into Gemini so EVE speaks them naturally
+  // Listen for predictive suggestions → inject into Gemini so Friday speaks them naturally
   useEffect(() => {
     const cleanup = window.eve.predictor.onSuggestion((suggestion) => {
       console.log(`[Friday] Prediction: ${suggestion.type} (${suggestion.confidence})`);
@@ -576,7 +576,7 @@ export default function App() {
     return cleanup;
   }, [geminiLive.sendTextToGemini]);
 
-  // Listen for captured notifications → inject into Gemini so EVE announces them naturally
+  // Listen for captured notifications → inject into Gemini so Friday announces them naturally
   useEffect(() => {
     const cleanup = window.eve.notifications.onCaptured((notif) => {
       console.log(`[Friday] Notification captured: ${notif.app} — ${notif.title}`);
@@ -607,7 +607,7 @@ export default function App() {
     return cleanup;
   }, [geminiLive.sendTextToGemini]);
 
-  // Listen for agent task completions → proactively notify EVE + mirror into ActionFeed
+  // Listen for agent task completions → proactively notify Friday + mirror into ActionFeed
   useEffect(() => {
     const cleanup = window.eve.agents.onUpdate((task) => {
       // Notify Gemini on completion / failure
@@ -998,7 +998,7 @@ export default function App() {
         />
       )}
 
-      {/* NexusCore — hidden during gate/onboarding/customizing, revealed during creating */}
+      {/* FridayCore — hidden during gate/onboarding/customizing, revealed during creating */}
       <div style={{
         opacity: ['creating', 'feature-setup', 'normal'].includes(appPhase) ? 1 : 0,
         transition: 'opacity 2s ease-in',
@@ -1006,7 +1006,7 @@ export default function App() {
         position: 'absolute' as const,
         inset: 0,
       }}>
-        <MoodNexusCore
+        <MoodFridayCore
           getLevels={getLevels}
           semanticState={semanticState}
           isSpeaking={geminiLive.isSpeaking}

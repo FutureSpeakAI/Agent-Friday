@@ -33,7 +33,7 @@ graph TB
     subgraph "Agent Friday Desktop App"
         subgraph "Renderer Process (Chromium)"
             UI[React 19 UI Layer]
-            THREE[Three.js NexusCore]
+            THREE[Three.js FridayCore]
             CANVAS[Canvas 2D Backgrounds]
             OFFICE_UI[Agent Office Canvas]
             AUDIO_OUT[AudioPlaybackEngine]
@@ -217,7 +217,7 @@ graph LR
     end
 
     subgraph "Presentation Layer"
-        NEXUS[NexusCore 3D]
+        NEXUS[FridayCore 3D]
         ORB[VoiceOrb]
         OFFICE_VIS[Agent Office Viz]
         DASH[Dashboard]
@@ -277,13 +277,13 @@ graph LR
 |----------------|-----------------|------------|----------|------------|
 | Voice & Conversation | `useGeminiLive.ts`, `SessionManager.ts` | In-memory | User mic, Gemini WS | Memory, Mood, UI |
 | Short-term Memory | `memory.ts` | In-memory (20 entries) | Conversation | Medium-term promotion |
-| Medium-term Memory | `memory.ts` | `eve-data/observations.json` (30 entries) | Short-term | Long-term promotion, Consolidation |
-| Long-term Memory | `memory.ts` | `eve-data/memories.json` (unlimited) | Consolidation, direct save | Obsidian sync, Semantic search |
-| Episodic Memory | `episodic-memory.ts` | `eve-data/episodes.json` (200 cap) | Session end | Consolidation, Search |
-| Relationship Memory | `relationship-memory.ts` | `eve-data/relationship.json` (singleton) | Session events | Personality, Greeting |
+| Medium-term Memory | `memory.ts` | `friday-data/observations.json` (30 entries) | Short-term | Long-term promotion, Consolidation |
+| Long-term Memory | `memory.ts` | `friday-data/memories.json` (unlimited) | Consolidation, direct save | Obsidian sync, Semantic search |
+| Episodic Memory | `episodic-memory.ts` | `friday-data/episodes.json` (200 cap) | Session end | Consolidation, Search |
+| Relationship Memory | `relationship-memory.ts` | `friday-data/relationship.json` (singleton) | Session events | Personality, Greeting |
 | Consolidation | `memory-consolidation.ts` | N/A (transforms) | Medium-term, Episodes | Long-term |
 | Semantic Search | `semantic-search.ts` | In-memory embeddings | All memory tiers | Query responses |
-| Predictive Intelligence | `intelligence.ts`, `predictor.ts` | `eve-data/intelligence-*.json` | Ambient context, Sentiment | Briefings, Check-ins |
+| Predictive Intelligence | `intelligence.ts`, `predictor.ts` | `friday-data/intelligence-*.json` | Ambient context, Sentiment | Briefings, Check-ins |
 | Agent Framework | `agents/agent-runner.ts` | In-memory task queue | Tool calls, Scheduler | Claude API, Results |
 | Agent Office | `agent-office/office-manager.ts` | In-memory state | Agent runner events | Renderer visualization |
 | Integrity | `integrity/core-laws.ts`, `integrity/hmac.ts` | Signed law text | Build-time signing | Personality system, Safe mode |
@@ -293,8 +293,8 @@ graph LR
 | Connectors | `connectors/registry.ts`, individual connectors | OAuth tokens in settings | Tool calls | API responses |
 | OpenRouter | `openrouter.ts` | API key in settings | Agent framework, tool calls | Model responses |
 | MCP | `mcp-client.ts` | Server configs in settings | Tool calls | stdio/SSE servers |
-| Scheduler | `scheduler.ts` | `eve-data/scheduled-tasks.json` | User commands, Intelligence | Cron execution |
-| Identity | `onboarding.ts`, `personality.ts` | `eve-settings.json` | First-run flow | All personality-aware modules |
+| Scheduler | `scheduler.ts` | `friday-data/scheduled-tasks.json` | User commands, Intelligence | Cron execution |
+| Identity | `onboarding.ts`, `personality.ts` | `friday-settings.json` | First-run flow | All personality-aware modules |
 | Presentation | React components | React state, MoodContext | All main process data | User display |
 
 ---
@@ -466,7 +466,7 @@ graph TD
     end
 
     subgraph "Phase: Normal — Always Visible"
-        NEXUS[NexusCore.tsx<br/>Three.js 5-Layer 3D]
+        NEXUS[FridayCore.tsx<br/>Three.js 5-Layer 3D]
         WIRE[WireframeNetwork.tsx<br/>Canvas 2D Primary BG]
         PARTICLE[ParticleBackground.tsx<br/>Canvas 2D Fallback BG]
         ORB[VoiceOrb.tsx<br/>Central Interaction Point]
@@ -536,7 +536,7 @@ stateDiagram-v2
     gate --> onboarding: Keys entered → connect
     onboarding --> customizing: Intake complete → transition_to_customization
     customizing --> creating: finalize_agent_identity called
-    creating --> feature_setup: Animation complete → NexusCore revealed
+    creating --> feature_setup: Animation complete → FridayCore revealed
     feature_setup --> normal: All 9 steps done/skipped
 
     normal --> normal: Reconnect cycles
@@ -562,7 +562,7 @@ stateDiagram-v2
 | 30 | ConnectionOverlay | Error state |
 | 20 | VoiceOrb | Always (center) |
 | 10 | StatusBar | Always (bottom) |
-| 5 | NexusCore / WireframeNetwork | Always (background) |
+| 5 | FridayCore / WireframeNetwork | Always (background) |
 
 ---
 
@@ -652,8 +652,8 @@ graph LR
 #### Settings Namespace (`window.eve.settings`)
 | Channel | Direction | Signature | Purpose |
 |---------|-----------|-----------|---------|
-| `settings:get` | invoke | `() → EveSettings` | Read all settings |
-| `settings:set` | invoke | `(partial: Partial<EveSettings>) → void` | Update settings |
+| `settings:get` | invoke | `() → FridaySettings` | Read all settings |
+| `settings:set` | invoke | `(partial: Partial<FridaySettings>) → void` | Update settings |
 | `settings:get-api-key` | invoke | `(service: string) → string` | Read API key |
 | `settings:set-api-key` | invoke | `(service: string, key: string) → void` | Store API key |
 | `settings:get-agent-config` | invoke | `() → AgentConfig` | Read agent identity |
@@ -1076,7 +1076,7 @@ sequenceDiagram
     participant Claude as Claude Sonnet
     participant Integrity as Integrity System
     participant Creation as AgentCreation
-    participant Nexus as NexusCore
+    participant Friday as FridayCore
     participant Agent as New Agent
 
     Note over User, Agent: === PHASE 0: INTEGRITY CHECK ===
@@ -1127,7 +1127,7 @@ sequenceDiagram
     Creation ->> Creation: 0-2s: Pulsing orb, "Initializing..."
     Creation ->> Creation: 2-3s: Warm golden glow fills screen
     Creation ->> App: onNexusReveal() at 3s
-    App ->> Nexus: Opacity 0 → 1 (2s transition)
+    App ->> Friday: Opacity 0 → 1 (2s transition)
     Creation ->> Creation: 4.5-6s: Overlay fades out
     Creation ->> App: onComplete() at 6.5s
 
@@ -1226,17 +1226,17 @@ graph TD
 | `puppeteer-core` | ^24.0.0 | Browser automation (no bundled Chromium) |
 | `react-markdown` | ^10.1.0 | Markdown rendering in chat |
 | `remark-gfm` | ^4.0.1 | GitHub Flavored Markdown support |
-| `three` | ^0.183.1 | 3D visualization (NexusCore) |
+| `three` | ^0.183.1 | 3D visualization (FridayCore) |
 
 ---
 
 ## 14. Visual System Architecture
 
-### NexusCore 3D Layer Stack
+### FridayCore 3D Layer Stack
 
 ```mermaid
 graph BT
-    subgraph "Three.js Scene (NexusCore.tsx)"
+    subgraph "Three.js Scene (FridayCore.tsx)"
         L1[Layer 1: AI Network<br/>Icosahedron wireframe<br/>Orbiting particles<br/>Connection lines]
         L2[Layer 2: Ambient Data Dust<br/>200 particles<br/>Subtle drift + audio reactive]
         L3[Layer 3: Consciousness Threads<br/>Curved tubes<br/>Flowing energy lines]
@@ -1333,8 +1333,8 @@ graph TD
     end
 
     subgraph "Trust Zone: Local Filesystem"
-        EVE_DATA[eve-data/<br/>Memory, episodes, tasks]
-        SETTINGS[eve-settings.json<br/>API keys, agent config]
+        FRIDAY_DATA[friday-data/<br/>Memory, episodes, tasks]
+        SETTINGS[friday-settings.json<br/>API keys, agent config]
         OBSIDIAN_DIR[Obsidian vault<br/>User knowledge base]
         LAW_FILES[integrity/<br/>HMAC-signed law text]
     end
@@ -1360,7 +1360,7 @@ graph TD
     MAIN -->|OAuth2 bearer token| GOOGLE_API
     MAIN -->|Bot token| TELEGRAM_API
 
-    MAIN -->|Read/Write JSON| EVE_DATA
+    MAIN -->|Read/Write JSON| FRIDAY_DATA
     MAIN -->|Read/Write JSON| SETTINGS
     MAIN -->|Read/Write Markdown| OBSIDIAN_DIR
     MAIN -->|HMAC verify| LAW_FILES
@@ -1384,7 +1384,7 @@ graph TD
 | Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` (22+ namespaces, explicit function exposure) |
 | Shell execution | Command injection | `run_command` tool with PowerShell sanitisation; Asimov's cLaws consent gate for destructive operations |
 | MCP processes | Malicious servers | User-configured only, stdio isolation, no network exposure |
-| API keys in settings | Plaintext storage | `eve-settings.json` in Electron `userData` directory (OS-level user isolation) |
+| API keys in settings | Plaintext storage | `friday-settings.json` in Electron `userData` directory (OS-level user isolation) |
 | Browser WebSocket | Local network attack | Localhost only (:52836), single-connection model |
 | Telegram gateway | Message injection | 5-tier trust engine, cryptographic pairing flow, per-contact session isolation, full audit logging |
 | Obsidian sync | Path traversal | Category-based subdirectory mapping |
@@ -1474,7 +1474,7 @@ graph TD
 | root | `call-integration.ts` | Infrastructure | VB-Cable call participation |
 | root | `meeting-prep.ts` | Infrastructure | Calendar event briefing |
 | root | `notifications.ts` | Infrastructure | System notification dispatch |
-| root | `eve-profile.ts` | Infrastructure | Agent profile persistence |
+| root | `friday-profile.ts` | Infrastructure | Agent profile persistence |
 | root | `consent-gate.ts` | Safety | User consent management for sensitive operations |
 | root | `adapter-engine.ts` | Superpowers | Dynamic adapter loading and execution |
 | root | `superpower-ecosystem.ts` | Superpowers | Superpower lifecycle and ecosystem management |
@@ -1562,7 +1562,7 @@ graph TD
 | `session/` | `SessionManager.ts` | Infra | 7min timeout, reconnect logic |
 | `session/` | `IdleBehavior.ts` | Infra | Tiered idle state machine |
 | `contexts/` | `MoodContext.tsx` | Context | Mood state provider |
-| `components/` | `NexusCore.tsx` | 3D | Three.js 5-layer visualization (~800 lines) |
+| `components/` | `FridayCore.tsx` | 3D | Three.js 5-layer visualization (~800 lines) |
 | `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
 | `components/` | `WelcomeGate.tsx` | UI | API key entry gate (~508 lines) |
 | `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
@@ -1597,18 +1597,18 @@ graph TD
 
 | File | Format | Size Limit | Purpose |
 |------|--------|-----------|---------|
-| `eve-data/memories.json` | JSON array | Unlimited | Long-term memory store |
-| `eve-data/observations.json` | JSON array | 30 entries | Medium-term observations |
-| `eve-data/episodes.json` | JSON array | 200 entries | Session summaries |
-| `eve-data/relationship.json` | JSON object | Singleton | Trust, streaks, inside jokes |
-| `eve-data/scheduled-tasks.json` | JSON array | Unlimited | Cron task definitions |
-| `eve-data/intelligence-topics.json` | JSON array | Unlimited | Research topic configs |
-| `eve-data/intelligence-cache.json` | JSON object | Per-topic | Cached research results |
-| `eve-data/trust-graph.json` | JSON array | 200 persons max | Trust Graph person nodes, evidence, scores |
-| `eve-data/commitment-tracker.json` | JSON array | Unlimited | Tracked promises and commitments |
-| `eve-data/context-graph.json` | JSON object | Singleton | Context relationship graph |
-| `eve-data/workflows/` | JSON files | Per-workflow | Recorded workflow definitions |
-| `eve-settings.json` | JSON object | Singleton | All settings, API keys, agent config |
+| `friday-data/memories.json` | JSON array | Unlimited | Long-term memory store |
+| `friday-data/observations.json` | JSON array | 30 entries | Medium-term observations |
+| `friday-data/episodes.json` | JSON array | 200 entries | Session summaries |
+| `friday-data/relationship.json` | JSON object | Singleton | Trust, streaks, inside jokes |
+| `friday-data/scheduled-tasks.json` | JSON array | Unlimited | Cron task definitions |
+| `friday-data/intelligence-topics.json` | JSON array | Unlimited | Research topic configs |
+| `friday-data/intelligence-cache.json` | JSON object | Per-topic | Cached research results |
+| `friday-data/trust-graph.json` | JSON array | 200 persons max | Trust Graph person nodes, evidence, scores |
+| `friday-data/commitment-tracker.json` | JSON array | Unlimited | Tracked promises and commitments |
+| `friday-data/context-graph.json` | JSON object | Singleton | Context relationship graph |
+| `friday-data/workflows/` | JSON files | Per-workflow | Recorded workflow definitions |
+| `friday-settings.json` | JSON object | Singleton | All settings, API keys, agent config |
 
 ---
 
