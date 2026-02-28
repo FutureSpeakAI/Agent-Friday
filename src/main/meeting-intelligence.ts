@@ -22,7 +22,6 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { meetingPrep } from './meeting-prep';
-import { callIntegration } from './call-integration';
 import { trustGraph } from './trust-graph';
 import { memoryManager } from './memory';
 

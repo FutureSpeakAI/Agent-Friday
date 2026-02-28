@@ -210,6 +210,14 @@ class GatewayManager {
           });
       }
 
+      // 12. Unified inbox capture (DLP + triage + context stream)
+      try {
+        const { unifiedInbox } = require('../unified-inbox');
+        unifiedInbox.ingestMessage(msg);
+      } catch (err: any) {
+        console.warn('[Gateway] Inbox ingestion failed:', err?.message);
+      }
+
       this.totalMessagesHandled++;
     } catch (err: any) {
       console.error(`[Gateway] Processing failed for ${msg.senderName}:`, err?.message);

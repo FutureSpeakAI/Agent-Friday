@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 const NODE_COUNT = 200;

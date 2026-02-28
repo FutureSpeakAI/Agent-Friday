@@ -23,7 +23,10 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:claw-gate": "vitest run tests/integrity tests/gateway tests/errors tests/services tests/performance tests/security --reporter=verbose"
   },
   "build": {
     "appId": "com.futurespeak.agentfriday",
@@ -121,6 +124,7 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^6.0.0",
+    "vitest": "^4.0.18",
     "wait-on": "^8.0.2"
   }
 }

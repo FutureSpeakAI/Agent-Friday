@@ -28,8 +28,10 @@ interface EpisodeEntry {
   summary: string;
   startTime: number;
   endTime: number;
+  durationSeconds: number;
   topics: string[];
-  sentiment: string;
+  emotionalTone: string;
+  keyDecisions: string[];
   turnCount: number;
 }
 
@@ -83,7 +85,7 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
       const [lt, mt, ep] = await Promise.allSettled([
         window.eve.memory.getLongTerm(),
         window.eve.memory.getMediumTerm(),
-        window.eve.episodes.search('', 20),
+        window.eve.episodic.search(''),
       ]);
       if (lt.status === 'fulfilled') setLongTerm(lt.value);
       if (mt.status === 'fulfilled') setMediumTerm(mt.value);
@@ -118,8 +120,8 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
     setIsSearching(true);
     try {
       const [memResults, episodeResults] = await Promise.allSettled([
-        window.eve.memory.search(q),
-        window.eve.episodes.search(q, 10),
+        window.eve.search.query(q),
+        window.eve.episodic.search(q),
       ]);
 
       const results: SearchResult[] = [];
@@ -127,11 +129,11 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
       if (memResults.status === 'fulfilled') {
         for (const m of memResults.value) {
           results.push({
-            type: 'memory',
+            type: (m.type as SearchResult['type']) || 'memory',
             id: m.id,
-            text: m.fact || m.observation || '',
+            text: m.text || '',
             score: m.score || 0.5,
-            category: m.category,
+            category: (m.meta as any)?.category,
           });
         }
       }
@@ -352,10 +354,10 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
                         </span>
                         <span style={{
                           ...styles.sentimentChip,
-                          color: ep.sentiment === 'positive' ? '#22c55e' :
-                            ep.sentiment === 'negative' ? '#ef4444' : '#666680',
+                          color: ep.emotionalTone === 'positive' ? '#22c55e' :
+                            ep.emotionalTone === 'negative' ? '#ef4444' : '#666680',
                         }}>
-                          {ep.sentiment}
+                          {ep.emotionalTone}
                         </span>
                         <span style={styles.turnCount}>{ep.turnCount} turns</span>
                       </div>

@@ -44,6 +44,9 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   ipcMain.handle('desktop:confirm-response', (_event, id: string, approved: boolean) => {
     const { handleConfirmationResponse } = require('../desktop-tools');
     handleConfirmationResponse(id, approved);
+    // cLaw Security Fix: Also route to centralized consent-gate for side-effect consent requests
+    const { handleConsentResponse } = require('../consent-gate');
+    handleConsentResponse(id, approved);
   });
 
   // ── Browser tools ───────────────────────────────────────────────────

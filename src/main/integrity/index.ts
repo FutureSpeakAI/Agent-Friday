@@ -19,8 +19,9 @@ import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 
+import crypto from 'crypto';
 import { initializeHmac, sign, verify, isInitialized } from './hmac';
-import { getCanonicalLaws, getIntegrityAwarenessContext, getMemoryChangeContext, getSafeModePesonality } from './core-laws';
+import { getCanonicalLaws, getIntegrityAwarenessContext, getMemoryChangeContext } from './core-laws';
 import { checkMemoryIntegrity, buildMemorySnapshots } from './memory-watchdog';
 import {
   type IntegrityState,
@@ -32,8 +33,9 @@ import {
 
 // Re-export everything for convenience
 export { getCanonicalLaws, getIntegrityAwarenessContext, getMemoryChangeContext, getSafeModePesonality } from './core-laws';
-export { initializeHmac, sign, verify } from './hmac';
-export type { IntegrityState, IntegrityManifest, MemoryChangeReport } from './types';
+export { initializeHmac, sign, verify, signBytes, verifyBytes } from './hmac';
+export type { IntegrityState, IntegrityManifest, MemoryChangeReport, IntegrityAttestation } from './types';
+export { toAttestation, serializeAttestation, deserializeAttestation } from './types';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -64,6 +66,8 @@ class IntegrityManager {
 
     this.state.initialized = true;
     this.state.lastVerified = Date.now();
+    this.state.nonce = crypto.randomBytes(4).toString('hex');
+    this.state.sessionId = crypto.randomUUID().slice(0, 12);
 
     console.log(`[Integrity] Initialized — laws: ${this.state.lawsIntact ? '✓' : '✗ TAMPERED'}, ` +
       `identity: ${this.state.identityIntact ? '✓' : '?'}, ` +
@@ -77,29 +81,40 @@ class IntegrityManager {
    * canonical source in core-laws.ts by checking the HMAC signature.
    *
    * If this fails → safe mode. The laws are immutable.
+   *
+   * cLaw Safety: ANY error during verification triggers safe mode (fail CLOSED).
    */
   private verifyCoreIntegrity(): void {
-    if (!this.manifest) {
-      // First run — no manifest exists yet. Sign the current laws.
-      // This is not a failure; we're establishing the baseline.
-      console.log('[Integrity] First run — establishing law signatures');
-      this.state.lawsIntact = true;
-      return;
-    }
+    try {
+      if (!this.manifest) {
+        // First run — no manifest exists yet. Sign the current laws.
+        // This is not a failure; we're establishing the baseline.
+        console.log('[Integrity] First run — establishing law signatures');
+        this.state.lawsIntact = true;
+        return;
+      }
 
-    // Generate the canonical laws text and verify against signed version
-    const canonicalLaws = getCanonicalLaws(''); // Use empty string for comparison
-    const currentSignature = sign(canonicalLaws);
+      // Generate the canonical laws text and verify against signed version
+      const canonicalLaws = getCanonicalLaws(''); // Use empty string for comparison
+      const currentSignature = sign(canonicalLaws);
 
-    if (currentSignature !== this.manifest.lawsSignature) {
-      // CRITICAL FAILURE — laws have been tampered with
-      console.error('[Integrity] ⚠ CORE LAW TAMPERING DETECTED — entering safe mode');
+      if (currentSignature !== this.manifest.lawsSignature) {
+        // CRITICAL FAILURE — laws have been tampered with
+        console.error('[Integrity] ⚠ CORE LAW TAMPERING DETECTED — entering safe mode');
+        this.state.lawsIntact = false;
+        this.state.safeMode = true;
+        this.state.safeModeReason = 'Core Fundamental Laws have been modified outside of normal operation. ' +
+          'The compiled laws do not match the signed baseline. This could indicate tampering.';
+      } else {
+        this.state.lawsIntact = true;
+      }
+    } catch (err) {
+      // cLaw: fail CLOSED — if we can't verify, assume the worst
+      console.error('[Integrity/cLaw] Core verification FAILED with error — entering safe mode:', err);
       this.state.lawsIntact = false;
       this.state.safeMode = true;
-      this.state.safeModeReason = 'Core Fundamental Laws have been modified outside of normal operation. ' +
-        'The compiled laws do not match the signed baseline. This could indicate tampering.';
-    } else {
-      this.state.lawsIntact = true;
+      this.state.safeModeReason = 'Integrity verification system encountered an error. ' +
+        'Entering safe mode as a precaution. Error: ' + (err instanceof Error ? err.message : String(err));
     }
   }
 

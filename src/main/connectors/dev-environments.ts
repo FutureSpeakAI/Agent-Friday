@@ -108,8 +108,8 @@ async function isOnPath(bin: string): Promise<boolean> {
 }
 
 async function resolveDockerCompose(): Promise<string[]> {
-  try { await execFileAsync('docker', ['compose', 'version'], { timeout: 5000 }); return ['docker', 'compose']; } catch {}
-  try { await execFileAsync('docker-compose', ['version'], { timeout: 5000 }); return ['docker-compose']; } catch {}
+  try { await execFileAsync('docker', ['compose', 'version'], { timeout: 5000 }); return ['docker', 'compose']; } catch { /* not found */ }
+  try { await execFileAsync('docker-compose', ['version'], { timeout: 5000 }); return ['docker-compose']; } catch { /* not found */ }
   throw new Error('Neither "docker compose" nor "docker-compose" found on PATH.');
 }
 
@@ -179,7 +179,7 @@ async function pythonVenvList(args: Record<string, unknown>): Promise<string> {
         try { await fsAccess(path.join(full, 'pyvenv.cfg')); results.push(full); }
         catch { await scan(full, depth + 1); }
       }
-    } catch {}
+    } catch { /* permission denied */ }
   }
   await scan(searchPath, 0);
   return results.length > 0 ? `Found ${results.length} virtual environment(s):\n${results.join('\n')}` : 'No virtual environments found.';

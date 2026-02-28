@@ -11,6 +11,26 @@ import { browserToolDefs, executeBrowserTool } from './browser';
 import { connectorRegistry } from './connectors/registry';
 import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
 import { settingsManager } from './settings';
+import { integrityManager } from './integrity';
+
+/**
+ * cLaw Security Fix (CRITICAL-001): Safe mode tool filtering.
+ * When integrity is compromised, strip ALL side-effect tools.
+ * Only allow read-only information retrieval tools.
+ */
+const SAFE_MODE_ALLOWED_TOOLS = new Set([
+  // Read-only MCP tools
+  'list_windows', 'get_active_window', 'read_clipboard', 'focus_window',
+  'read_screen', 'read_file', 'list_directory',
+  // Read-only browser tools
+  'browser_screenshot', 'browser_get_page_info',
+]);
+
+function filterToolsForSafeMode<T extends { name: string }>(tools: T[]): T[] {
+  if (!integrityManager.isInSafeMode()) return tools;
+  console.warn('[Server/cLaw] Safe mode active — stripping all side-effect tools');
+  return tools.filter(t => SAFE_MODE_ALLOWED_TOOLS.has(t.name));
+}
 
 dotenv.config();
 
@@ -59,14 +79,10 @@ export async function startServer(): Promise<number> {
       return next();
     }
 
-    // Allow unauthenticated access from same-origin (no origin = Electron renderer).
-    // Security model: server binds to 127.0.0.1 only (never exposed to network).
-    // Same-origin requests from the Electron renderer don't carry an Origin header.
-    // Risk: other local processes can also call without Origin. Acceptable for a
-    // desktop app — local processes are in the same trust boundary as the user.
-    if (!req.headers.origin) {
-      return next();
-    }
+    // cLaw Security Fix (HIGH-002): Removed no-Origin auth bypass.
+    // Previously, requests without an Origin header bypassed authentication entirely,
+    // allowing any local process to call authenticated endpoints.
+    // Now all requests require the session token regardless of Origin.
 
     console.warn('[Server] Rejected unauthorized request from origin:', req.headers.origin);
     res.status(401).json({ error: 'Unauthorized' });
@@ -273,11 +289,14 @@ export async function runClaudeToolLoop(
 ): Promise<ClaudeToolLoopResult> {
   const {
     systemPrompt,
-    tools,
     maxIterations = 25,
     browserToolNames = new Set<string>(),
     connectorToolNames = new Set<string>(),
   } = options;
+
+  // cLaw Security Fix (CRITICAL-001): Architecturally strip side-effect tools in safe mode.
+  // This replaces the prompt-only safe mode restriction with a hard tool surface reduction.
+  const tools = filterToolsForSafeMode(options.tools);
 
   // Clone messages to avoid mutating the caller's array
   const messages = [...options.messages];

@@ -932,7 +932,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               if (!smReconnectingRef.current) {
                 sessionManagerRef.current?.sessionStarted();
               }
-              try { window.eve.sessionHealth.sessionStarted(); } catch {}
+              try { window.eve.sessionHealth.sessionStarted(); } catch { /* ignored */ }
 
               // Start WebSocket keepalive (every 8s) — send tiny silent PCM frame
               // to keep the Gemini session alive. Dead sockets caught via send() failure.
@@ -1893,7 +1893,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                   const durationMs = Date.now() - toolStartTime;
                   optionsRef.current.onToolEnd?.(actionId, fc.name, true);
                   // Record tool call metrics for session health
-                  try { window.eve.sessionHealth.recordToolCall(fc.name, true, durationMs); } catch {}
+                  try { window.eve.sessionHealth.recordToolCall(fc.name, true, durationMs); } catch { /* ignored */ }
                   return {
                     response: { result: resultText },
                     id: fc.id,
@@ -1907,7 +1907,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                   try {
                     window.eve.sessionHealth.recordToolCall(fc.name, false, durationMs);
                     window.eve.sessionHealth.recordError(fc.name, msg);
-                  } catch {}
+                  } catch { /* ignored */ }
                   console.error(`[GeminiLive] Tool "${fc.name}" failed (${durationMs}ms):`, msg);
                   return { response: { error: `Tool error (${fc.name}): ${msg}` }, id: fc.id };
                 }
@@ -1930,7 +1930,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           const reason = event.reason || `code ${event.code}`;
           console.log('[GeminiLive] WebSocket closed:', reason);
           // Track close reason in session health
-          try { window.eve.sessionHealth.recordWsClose(event.code, reason); } catch {}
+          try { window.eve.sessionHealth.recordWsClose(event.code, reason); } catch { /* ignored */ }
 
           // During SM-managed reconnects, DON'T end session or stop idle — SM handles it
           if (!smReconnectingRef.current) {
@@ -2016,7 +2016,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 try {
                   window.eve.sessionHealth.recordReconnect('auto-retry', true);
                   window.eve.sessionHealth.recordVoiceAnchor();
-                } catch {}
+                } catch { /* ignored */ }
                 // Safety net: only restart mic if the pipeline somehow died
                 if (!stateRef.current.isListening || !audioContextRef.current || audioContextRef.current.state === 'closed') {
                   console.log('[GeminiLive] Mic pipeline down after auto-reconnect — restarting');
@@ -2027,7 +2027,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 console.log('[GeminiLive] Auto-reconnect successful');
               } catch (err) {
                 console.warn(`[GeminiLive] Auto-reconnect attempt ${attempt} failed:`, err);
-                try { window.eve.sessionHealth.recordReconnect('auto-retry', false); } catch {}
+                try { window.eve.sessionHealth.recordReconnect('auto-retry', false); } catch { /* ignored */ }
                 // Self-loop — NOT relying on onclose to re-trigger (prevents rapid-fire)
                 attemptReconnect();
               }
@@ -2088,9 +2088,9 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     // (critical for reconnect scenarios — prevents orphaned AudioContexts)
     if (audioContextRef.current) {
       console.log('[GeminiLive] Tearing down stale audio context before restart');
-      try { workletNodeRef.current?.disconnect(); } catch {}
-      try { processorRef.current?.disconnect(); } catch {}
-      try { audioContextRef.current.close(); } catch {}
+      try { workletNodeRef.current?.disconnect(); } catch { /* teardown */ }
+      try { processorRef.current?.disconnect(); } catch { /* teardown */ }
+      try { audioContextRef.current.close(); } catch { /* teardown */ }
       audioContextRef.current = null;
       workletNodeRef.current = null;
       processorRef.current = null;
@@ -2165,7 +2165,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
 
           const input = event.inputBuffer.getChannelData(0);
           const pcm16 = float32ToInt16(input);
-          const b64 = arrayBufferToBase64(pcm16.buffer);
+          const b64 = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
 
           wsRef.current.send(
             JSON.stringify({
@@ -2222,7 +2222,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     processorRef.current = null;
 
     // Close mic AudioContext — wait for it to fully close before allowing restart
-    try { audioContextRef.current?.close(); } catch {}
+    try { audioContextRef.current?.close(); } catch { /* teardown */ }
     audioContextRef.current = null;
 
     // Fully stop all mic media tracks so the browser releases the device
@@ -2532,11 +2532,11 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         const mic = audioContextRef.current;
         if (mic && mic.state === 'suspended') {
           console.log('[GeminiLive] Window regained focus — resuming mic AudioContext');
-          try { await mic.resume(); } catch {}
+          try { await mic.resume(); } catch { /* ignored */ }
         }
         const playback = playbackEngineRef.current;
         if (playback) {
-          try { await playback.resumeIfSuspended(); } catch {}
+          try { await playback.resumeIfSuspended(); } catch { /* ignored */ }
         }
       }
     };
@@ -2640,13 +2640,14 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     const analyser = micAnalyserRef.current;
     const data = micAnalyserDataRef.current;
     if (!analyser || !data) return 0;
-    analyser.getByteFrequencyData(data);
+    const buf = data as Uint8Array<ArrayBuffer>;
+    analyser.getByteFrequencyData(buf);
     let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-      const v = data[i] / 255;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i] / 255;
       sum += v * v;
     }
-    return Math.sqrt(sum / data.length);
+    return Math.sqrt(sum / buf.length);
   }, []);
 
   /** Get current playback output level (0–1) — call from RAF loop, not React render */

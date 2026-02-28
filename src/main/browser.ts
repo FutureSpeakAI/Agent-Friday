@@ -245,7 +245,7 @@ class BrowserManager {
           await client.detach();
           return 'Browser moved to background.';
         }
-      } catch {}
+      } catch { /* minimize failed */ }
       return 'Could not minimize browser.';
     }
   }

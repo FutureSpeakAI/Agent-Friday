@@ -132,9 +132,18 @@ export interface PendingPairing {
 
 // ── Audit Log Entry ──────────────────────────────────────────────────
 
+/**
+ * Action ledger entry type discriminator.
+ * Current types are messaging-related; Track X will extend with
+ * 'credit_transfer', 'escrow_lock', 'attestation', etc.
+ */
+export type AuditEntryType = 'message' | 'tool_use' | 'claw_check' | string;
+
 export interface AuditEntry {
   /** Unix ms timestamp */
   ts: number;
+  /** Entry type discriminator — extensible for future ledger entry types (Track X foundation) */
+  type?: AuditEntryType;
   /** Direction: inbound or outbound */
   dir: 'in' | 'out';
   /** Channel identifier */

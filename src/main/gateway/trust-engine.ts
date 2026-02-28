@@ -155,23 +155,31 @@ class TrustEngine {
   /**
    * Resolve a sender's trust tier.
    * Priority: owner check → paired identity lookup → public
+   *
+   * cLaw Safety: fails CLOSED to 'public' (most restrictive) on ANY error.
    */
   resolveTrust(channel: string, senderId: string): TrustTier {
-    // Check if this is the owner
-    const ownerId = this.ownerIds.get(channel);
-    if (ownerId && ownerId === senderId) {
-      return 'owner-dm';
-    }
+    try {
+      // Check if this is the owner
+      const ownerId = this.ownerIds.get(channel);
+      if (ownerId && ownerId === senderId) {
+        return 'owner-dm';
+      }
 
-    // Check paired identities
-    const identity = this.identities.find(
-      (id) => id.channel === channel && id.senderId === senderId
-    );
-    if (identity) {
-      return identity.tier;
-    }
+      // Check paired identities
+      const identity = this.identities.find(
+        (id) => id.channel === channel && id.senderId === senderId
+      );
+      if (identity) {
+        return identity.tier;
+      }
 
-    return 'public';
+      return 'public';
+    } catch (err) {
+      // cLaw: fail CLOSED — most restrictive tier on any error
+      console.error('[TrustEngine/cLaw] resolveTrust failed, defaulting to public (most restrictive):', err);
+      return 'public';
+    }
   }
 
   /**
@@ -190,24 +198,21 @@ class TrustEngine {
     if (policy.tier === 'public') return [];
 
     return tools.filter((tool) => {
-      // For 'group' tier: start with block-all, then check allow patterns
-      // For others: check allow patterns, then apply blocks
+      // cLaw Security Fix (HIGH-003): For whitelist-only tiers (group), allow patterns
+      // carve exceptions from the default-deny block list. For all other tiers,
+      // explicit block patterns override allow patterns.
       const allowed = this.matchesAnyPattern(tool.name, policy.toolAllowPatterns);
       const blocked = this.matchesAnyPattern(tool.name, policy.toolBlockPatterns);
 
       if (policy.tier === 'group') {
-        // Whitelist-only: must explicitly match an allow pattern
+        // Whitelist-only: tool must explicitly match an allow pattern to pass.
+        // The block pattern ['*'] is the default-deny; allow patterns are exceptions.
         return allowed;
       }
 
-      // Default: allowed unless explicitly blocked
-      if (blocked && !allowed) return false;
-      if (allowed) return true;
-
-      // If allow patterns include '*', everything not blocked is allowed
-      if (policy.toolAllowPatterns.includes('*')) return !blocked;
-
-      return false;
+      // For other tiers: explicit block patterns always take precedence over allow
+      if (blocked) return false;
+      return allowed;
     });
   }
 
