@@ -146,8 +146,6 @@ class IntegrityManager {
           // Auto-recovery succeeded — no safe mode needed
           console.log('[Integrity] ✓ Auto-recovery succeeded — law signatures re-established');
           this.state.lawsIntact = true;
-          // Save will happen when signAll() runs on startup
-          this.needsManifestSave = true;
         } else {
           // This should never happen — if it does, something is deeply wrong
           console.error('[Integrity] ⚠ Auto-recovery FAILED — entering safe mode');
