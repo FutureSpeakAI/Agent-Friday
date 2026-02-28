@@ -939,6 +939,24 @@ declare global {
         }>;
       };
 
+      desktopEvolution: {
+        getIndex: () => Promise<number>;
+        setIndex: (index: number) => Promise<void>;
+        getTransitionState: () => Promise<{
+          currentIndex: number;
+          targetIndex: number;
+          blend: number;
+          lastChange: number;
+        }>;
+      };
+
+      artEvolution: {
+        getState: () => Promise<any>;
+        getLatest: () => Promise<any>;
+        check: () => Promise<any>;
+        force: () => Promise<any>;
+      };
+
       trustGraph: {
         lookup: (name: string) => Promise<any>;
         updateEvidence: (personName: string, evidence: Record<string, unknown>) => Promise<any>;

@@ -77,6 +77,7 @@ import { unifiedInbox } from './unified-inbox';
 import { outboundIntelligence } from './outbound-intelligence';
 import { intelligenceRouter } from './intelligence-router';
 import { agentNetwork } from './agent-network';
+import { initializeArtEvolution, checkAndEvolve, forceEvolve, getArtEvolutionState, getLatestEvolution } from './art-evolution';
 import { superpowerEcosystem } from './superpower-ecosystem';
 import { stateExport } from './state-export';
 import { memoryQuality } from './memory-quality';
@@ -376,6 +377,19 @@ app.whenReady().then(async () => {
 
     trustGraph.initialize().catch((err) => {
       console.warn('[Friday] Trust graph init failed:', err);
+    });
+
+    initializeArtEvolution().then(() => {
+      // Check if weekly evolution is due (non-blocking)
+      checkAndEvolve().then((record) => {
+        if (record) {
+          console.log(`[Friday] Art evolution triggered: → structure ${record.targetIndex}`);
+        }
+      }).catch((err) => {
+        console.warn('[Friday] Art evolution check failed:', err);
+      });
+    }).catch((err) => {
+      console.warn('[Friday] Art evolution init failed:', err);
     });
 
     semanticSearch.initialize().then(async () => {

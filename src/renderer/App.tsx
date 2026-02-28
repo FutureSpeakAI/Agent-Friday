@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import FridayCore, { SemanticState } from './components/FridayCore';
+import DesktopViz from './components/DesktopViz';
+import HudOverlay from './components/HudOverlay';
 import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
 import StatusBar from './components/StatusBar';
@@ -19,6 +21,7 @@ import FileToast from './components/FileToast';
 import { MoodProvider, useMood } from './contexts/MoodContext';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useWakeWord } from './hooks/useWakeWord';
+import { useDesktopEvolution } from './hooks/useDesktopEvolution';
 import {
   playConnectedChime,
   playListeningPing,
@@ -92,6 +95,30 @@ function MoodFridayCore({ getLevels, semanticState, isSpeaking, evolutionState }
       moodIntensity={mood.intensity}
       moodTurbulence={mood.turbulence}
       evolutionState={evolutionState}
+    />
+  );
+}
+
+function MoodDesktopViz({ getLevels, semanticState, isSpeaking, isListening, evolutionIndex, transitionBlend }: {
+  getLevels: () => { mic: number; output: number };
+  semanticState: SemanticState;
+  isSpeaking: boolean;
+  isListening: boolean;
+  evolutionIndex: number;
+  transitionBlend: number;
+}) {
+  const mood = useMood();
+  return (
+    <DesktopViz
+      getLevels={getLevels}
+      semanticState={semanticState}
+      isSpeaking={isSpeaking}
+      isListening={isListening}
+      moodPalette={mood.palette}
+      moodIntensity={mood.intensity}
+      moodTurbulence={mood.turbulence}
+      evolutionIndex={evolutionIndex}
+      transitionBlend={transitionBlend}
     />
   );
 }
@@ -188,6 +215,7 @@ export default function App() {
     openrouter: 'ready' | 'no-key';
     browser: 'ready' | 'unavailable';
   }>({ gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', openrouter: 'no-key', browser: 'unavailable' });
+  const desktopEvolution = useDesktopEvolution();
   const retriesRef = useRef(0);
   const maxRetries = 3;
 
@@ -998,7 +1026,7 @@ export default function App() {
         />
       )}
 
-      {/* FridayCore — hidden during gate/onboarding/customizing, revealed during creating */}
+      {/* DesktopViz — holographic 3D base layer, hidden during gate/onboarding/customizing */}
       <div style={{
         opacity: ['creating', 'feature-setup', 'normal'].includes(appPhase) ? 1 : 0,
         transition: 'opacity 2s ease-in',
@@ -1006,11 +1034,13 @@ export default function App() {
         position: 'absolute' as const,
         inset: 0,
       }}>
-        <MoodFridayCore
+        <MoodDesktopViz
           getLevels={getLevels}
           semanticState={semanticState}
           isSpeaking={geminiLive.isSpeaking}
-          evolutionState={evolutionState}
+          isListening={geminiLive.isListening}
+          evolutionIndex={desktopEvolution.evolutionIndex}
+          transitionBlend={desktopEvolution.transitionBlend}
         />
       </div>
 
@@ -1019,69 +1049,22 @@ export default function App() {
       {/* Minimal drag region at top — always visible for window dragging */}
       <div style={styles.dragBar} />
 
-      {!['checking', 'gate'].includes(appPhase) && (<>
-      {/* Brand badge — top-left */}
-      <div style={styles.brandBadge}>
-        <div style={styles.brandTitle}>AGENT FRIDAY</div>
-        <MoodBrandSub semanticState={semanticState} />
-        <div style={styles.brandCredit}>by FutureSpeak.AI</div>
-      </div>
-
-      {/* Clock — top-center */}
-      <div style={styles.clockOverlay}>{clockStr}</div>
-
-      {/* Status label — bottom-center, above StatusBar */}
-      <MoodStatusLabel
-        semanticState={semanticState}
-        statusText={geminiLive.isConnected
-          ? (geminiLive.isSpeaking ? 'STREAMING RESPONSE' : geminiLive.isListening ? 'AWAITING INPUT' : 'CONNECTED')
-          : geminiLive.isConnecting ? 'ESTABLISHING LINK' : 'OFFLINE'}
-      />
-
-      {/* Command center button */}
-      <button
-        onClick={() => setShowDashboard(true)}
-        className="hover-bright"
-        aria-label="Command center"
-        style={styles.dashboardBtn}
-        title="Command Center (Ctrl+Shift+D)"
-      >
-        ◈
-      </button>
-
-      {/* Superpowers button */}
-      <button
-        onClick={() => setShowSuperpowers(true)}
-        className="hover-bright"
-        aria-label="Superpowers"
-        style={styles.superpowersBtn}
-        title="Superpowers (Ctrl+Shift+P)"
-      >
-        🔮
-      </button>
-
-      {/* Agent dashboard button */}
-      <button
-        onClick={() => setShowAgentDashboard(true)}
-        className="hover-bright"
-        aria-label="Agent dashboard"
-        style={styles.agentsBtn}
-        title="Background Agents (Ctrl+Shift+A)"
-      >
-        ⚡
-      </button>
-
-      {/* Settings gear */}
-      <button
-        onClick={() => setShowSettings(true)}
-        className="hover-bright"
-        aria-label="Settings"
-        style={styles.settingsBtn}
-        title="Settings"
-      >
-        ⚙
-      </button>
-      </>)}
+      {/* ─── HudOverlay — holographic HUD with API panel, app tray, evolution controls ─── */}
+      {!['checking', 'gate'].includes(appPhase) && (
+        <HudOverlay
+          apiStatus={apiStatus}
+          semanticState={semanticState}
+          evolutionIndex={desktopEvolution.evolutionIndex}
+          onEvolutionChange={desktopEvolution.setEvolution}
+          onOpenDashboard={() => setShowDashboard(true)}
+          onOpenSuperpowers={() => setShowSuperpowers(true)}
+          onOpenAgents={() => setShowAgentDashboard(true)}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenMemory={() => setShowMemoryExplorer(true)}
+          clockStr={clockStr}
+          devMode={false}
+        />
+      )}
 
       {/* Main chat panel — front and center, hidden during gate/checking */}
       {!['checking', 'gate'].includes(appPhase) && (
@@ -1272,68 +1255,6 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
   },
 
-  // ─── HUD overlay styles ─────────────────────────────────────────────────────
-  brandBadge: {
-    position: 'absolute',
-    top: 48,
-    left: 20,
-    zIndex: 30,
-    pointerEvents: 'none',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  },
-  brandTitle: {
-    fontSize: 13,
-    fontWeight: 800,
-    letterSpacing: '0.22em',
-    color: 'rgba(255, 255, 255, 0.55)',
-    textTransform: 'uppercase' as const,
-    fontFamily: "'Inter', 'Segoe UI', sans-serif",
-  },
-  brandSub: {
-    fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: '0.15em',
-    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
-    transition: 'color 0.6s ease',
-  },
-  brandCredit: {
-    fontSize: 9,
-    fontWeight: 500,
-    letterSpacing: '0.08em',
-    color: 'rgba(255, 255, 255, 0.18)',
-    fontFamily: "'Inter', 'Segoe UI', sans-serif",
-    marginTop: 2,
-  },
-  clockOverlay: {
-    position: 'absolute',
-    top: 44,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 30,
-    pointerEvents: 'none',
-    fontSize: 14,
-    fontWeight: 300,
-    letterSpacing: '0.08em',
-    color: 'rgba(255, 255, 255, 0.35)',
-    fontFamily: "'Inter', 'Segoe UI', sans-serif",
-  },
-  statusLabel: {
-    position: 'absolute',
-    bottom: 48,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 30,
-    pointerEvents: 'none',
-    fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: '0.18em',
-    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
-    transition: 'color 0.6s ease',
-    whiteSpace: 'nowrap',
-  },
-
   dragBar: {
     height: 32,
     WebkitAppRegion: 'drag' as unknown as string,
@@ -1390,82 +1311,6 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.2s',
     letterSpacing: '0.03em',
     opacity: 0.75,
-  },
-  dashboardBtn: {
-    position: 'absolute',
-    top: 40,
-    right: 126,
-    zIndex: 40,
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    color: '#00f0ff',
-    fontSize: 14,
-    width: 32,
-    height: 32,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.35,
-    transition: 'opacity 0.2s',
-  },
-  superpowersBtn: {
-    position: 'absolute',
-    top: 40,
-    right: 88,
-    zIndex: 40,
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    color: '#c084fc',
-    fontSize: 14,
-    width: 32,
-    height: 32,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.35,
-    transition: 'opacity 0.2s',
-  },
-  agentsBtn: {
-    position: 'absolute',
-    top: 40,
-    right: 50,
-    zIndex: 40,
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    color: '#e0e0e8',
-    fontSize: 14,
-    width: 32,
-    height: 32,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.3,
-    transition: 'opacity 0.2s',
-  },
-  settingsBtn: {
-    position: 'absolute',
-    top: 40,
-    right: 12,
-    zIndex: 40,
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 6,
-    color: '#e0e0e8',
-    fontSize: 16,
-    width: 32,
-    height: 32,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.3,
-    transition: 'opacity 0.2s',
   },
   center: {
     flex: 1,

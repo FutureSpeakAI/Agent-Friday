@@ -116,6 +116,9 @@ export interface FridaySettings extends AgentConfig {
   featureSetupComplete: boolean;
   featureSetupState: FeatureSetupState | null;
   personalityEvolution: PersonalityEvolutionState | null;
+  // Desktop evolution (3D visualization structure index)
+  desktopEvolutionIndex: number;
+  desktopEvolutionLastChange: number;  // timestamp of last structure change
   // Trust Graph
   trustGraphConfig: TrustGraphConfig | null;
 }
@@ -164,6 +167,8 @@ const DEFAULTS: FridaySettings = {
   featureSetupComplete: false,
   featureSetupState: null,
   personalityEvolution: null,
+  desktopEvolutionIndex: 0,
+  desktopEvolutionLastChange: 0,
   trustGraphConfig: null,
 };
 
