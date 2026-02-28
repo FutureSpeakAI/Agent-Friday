@@ -147,8 +147,8 @@ const ARCHIVE_FORMAT = 'agent-friday-backup-v1' as const;
 /** All state file paths relative to userData that define the agent. */
 const STATE_FILE_PATHS: string[] = [
   // Settings & profile
-  'eve-settings.json',
-  'eve-intelligence.md',
+  'friday-settings.json',
+  'friday-intelligence.md',
 
   // Memory system
   'memory/long-term.json',
@@ -170,9 +170,9 @@ const STATE_FILE_PATHS: string[] = [
   'daily-briefings.json',
 
   // Workflow system
-  'eve-data/recordings.json',
-  'eve-data/templates.json',
-  'eve-data/execution-history.json',
+  'friday-data/recordings.json',
+  'friday-data/templates.json',
+  'friday-data/execution-history.json',
 
   // Communication
   'unified-inbox.json',
@@ -183,16 +183,16 @@ const STATE_FILE_PATHS: string[] = [
 
   // Superpower systems
   'superpowers.json',
-  'eve-data/superpower-ecosystem.json',
+  'friday-data/superpower-ecosystem.json',
 
   // Agent network
-  'eve-data/agent-network.json',
+  'friday-data/agent-network.json',
 
   // Integrity
   'integrity-manifest.json',
 
   // Action audit trail
-  'eve-data/action-ledger.json',
+  'friday-data/action-ledger.json',
 ];
 
 const DEFAULT_CONFIG: PersistenceConfig = {
@@ -302,8 +302,8 @@ export class StateExportEngine {
     // Ensure backup directory exists
     await fs.mkdir(this.config.backupDirectory, { recursive: true });
 
-    // Ensure eve-data directory exists
-    await fs.mkdir(path.join(this.userDataPath, 'eve-data'), { recursive: true });
+    // Ensure friday-data directory exists
+    await fs.mkdir(path.join(this.userDataPath, 'friday-data'), { recursive: true });
     await fs.mkdir(path.join(this.userDataPath, 'memory'), { recursive: true });
 
     // Load backup history
@@ -899,7 +899,7 @@ export class StateExportEngine {
 
     // Check all critical state files exist
     const criticalFiles = [
-      'eve-settings.json',
+      'friday-settings.json',
       'memory/long-term.json',
       'trust-graph.json',
     ];
@@ -964,7 +964,7 @@ export class StateExportEngine {
   /** Get the agent's display name from settings. */
   private async getAgentName(): Promise<string> {
     try {
-      const settingsPath = path.join(this.userDataPath, 'eve-settings.json');
+      const settingsPath = path.join(this.userDataPath, 'friday-settings.json');
       const data = await fs.readFile(settingsPath, 'utf-8');
       const settings = JSON.parse(data);
       return settings.agentName || settings.userName || 'Agent Friday';

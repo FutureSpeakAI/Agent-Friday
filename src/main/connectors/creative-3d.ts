@@ -51,7 +51,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const RENDER_TIMEOUT_MS = 300_000;
 
 /** Directory for temporary Blender Python scripts. */
-const TEMP_DIR = path.join(os.tmpdir(), 'nexus-creative-3d');
+const TEMP_DIR = path.join(os.tmpdir(), 'friday-creative-3d');
 
 /** Dangerous Python patterns that should never run in Blender. */
 const DANGEROUS_PYTHON_PATTERNS: RegExp[] = [

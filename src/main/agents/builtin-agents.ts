@@ -1,5 +1,5 @@
 /**
- * builtin-agents.ts — Pre-built background agents for EVE OS.
+ * builtin-agents.ts — Pre-built background agents for Agent Friday.
  *
  * Each agent is a self-contained task that runs in the background,
  * powered by Claude Sonnet for reasoning and web search for research.

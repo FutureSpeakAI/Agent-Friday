@@ -1,9 +1,9 @@
 /**
  * obsidian-memory.ts — Markdown file I/O for Obsidian vault integration.
  *
- * Reads and writes EVE memory entries as Markdown files with YAML frontmatter.
+ * Reads and writes Friday memory entries as Markdown files with YAML frontmatter.
  * Folder structure inside the vault:
- *   EVE/
+ *   Friday/
  *     memories/        — long-term confirmed facts
  *     observations/    — medium-term patterns with confidence
  *
@@ -17,7 +17,7 @@ import type { LongTermEntry, MediumTermEntry } from './memory';
 
 // ── Folder names inside the vault ──────────────────────────────────────────
 
-const EVE_ROOT = 'EVE';
+const FRIDAY_ROOT = 'Friday';
 const MEMORIES_DIR = 'memories';
 const OBSERVATIONS_DIR = 'observations';
 
@@ -89,15 +89,15 @@ function fromISO(iso: string): number {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/** Create the EVE folder structure inside the vault if it doesn't exist. */
+/** Create the Friday folder structure inside the vault if it doesn't exist. */
 export async function ensureVaultStructure(vaultPath: string): Promise<void> {
-  await fs.mkdir(path.join(vaultPath, EVE_ROOT, MEMORIES_DIR), { recursive: true });
-  await fs.mkdir(path.join(vaultPath, EVE_ROOT, OBSERVATIONS_DIR), { recursive: true });
+  await fs.mkdir(path.join(vaultPath, FRIDAY_ROOT, MEMORIES_DIR), { recursive: true });
+  await fs.mkdir(path.join(vaultPath, FRIDAY_ROOT, OBSERVATIONS_DIR), { recursive: true });
 }
 
 /** Write a long-term memory entry as a Markdown note. */
 export async function writeLongTermNote(vaultPath: string, entry: LongTermEntry): Promise<void> {
-  const dir = path.join(vaultPath, EVE_ROOT, MEMORIES_DIR);
+  const dir = path.join(vaultPath, FRIDAY_ROOT, MEMORIES_DIR);
   const slug = slugify(entry.fact);
   const filename = `${slug}-${entry.id.slice(0, 8)}.md`;
 
@@ -107,7 +107,7 @@ export async function writeLongTermNote(vaultPath: string, entry: LongTermEntry)
     confirmed: entry.confirmed,
     source: entry.source,
     created: toISO(entry.createdAt),
-    tags: ['eve-memory', entry.category],
+    tags: ['friday-memory', entry.category],
   });
 
   const body = `# ${entry.fact}\n`;
@@ -118,7 +118,7 @@ export async function writeLongTermNote(vaultPath: string, entry: LongTermEntry)
 
 /** Write a medium-term observation entry as a Markdown note. */
 export async function writeMediumTermNote(vaultPath: string, entry: MediumTermEntry): Promise<void> {
-  const dir = path.join(vaultPath, EVE_ROOT, OBSERVATIONS_DIR);
+  const dir = path.join(vaultPath, FRIDAY_ROOT, OBSERVATIONS_DIR);
   const slug = slugify(entry.observation);
   const filename = `${slug}-${entry.id.slice(0, 8)}.md`;
 
@@ -129,7 +129,7 @@ export async function writeMediumTermNote(vaultPath: string, entry: MediumTermEn
     occurrences: entry.occurrences,
     first_observed: toISO(entry.firstObserved),
     last_reinforced: toISO(entry.lastReinforced),
-    tags: ['eve-observation', entry.category],
+    tags: ['friday-observation', entry.category],
   });
 
   const body = `# ${entry.observation}\n`;
@@ -140,7 +140,7 @@ export async function writeMediumTermNote(vaultPath: string, entry: MediumTermEn
 
 /** Read all long-term memory notes from the vault. */
 export async function readLongTermNotes(vaultPath: string): Promise<LongTermEntry[]> {
-  const dir = path.join(vaultPath, EVE_ROOT, MEMORIES_DIR);
+  const dir = path.join(vaultPath, FRIDAY_ROOT, MEMORIES_DIR);
   const entries: LongTermEntry[] = [];
 
   try {
@@ -178,7 +178,7 @@ export async function readLongTermNotes(vaultPath: string): Promise<LongTermEntr
 
 /** Read all medium-term observation notes from the vault. */
 export async function readMediumTermNotes(vaultPath: string): Promise<MediumTermEntry[]> {
-  const dir = path.join(vaultPath, EVE_ROOT, OBSERVATIONS_DIR);
+  const dir = path.join(vaultPath, FRIDAY_ROOT, OBSERVATIONS_DIR);
   const entries: MediumTermEntry[] = [];
 
   try {
@@ -220,7 +220,7 @@ export async function deleteNote(
   tier: 'memories' | 'observations',
   id: string
 ): Promise<boolean> {
-  const dir = path.join(vaultPath, EVE_ROOT, tier);
+  const dir = path.join(vaultPath, FRIDAY_ROOT, tier);
 
   try {
     const files = await fs.readdir(dir);

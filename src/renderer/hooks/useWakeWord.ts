@@ -80,7 +80,7 @@ export function useWakeWord({ enabled, isConnected, onWake }: UseWakeWordOptions
 
           // Check if any wake phrase matches
           const isWake = WAKE_PHRASES.some((phrase) => {
-            // Exact match or ends with the phrase (handles "hey eve" after other words)
+            // Exact match or ends with the phrase (handles "hey friday" after other words)
             return transcript === phrase || transcript.endsWith(phrase);
           });
 

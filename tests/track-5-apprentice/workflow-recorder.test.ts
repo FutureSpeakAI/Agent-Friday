@@ -55,7 +55,7 @@ function makeEvent(overrides: Partial<Omit<RecordedEvent, 'id' | 'timestamp'>> =
     type: 'app_switch' as EventType,
     description: 'Switched to VS Code',
     activeApp: 'VS Code',
-    windowTitle: 'main.ts - nexus-os',
+    windowTitle: 'main.ts - agent-friday',
     ...overrides,
   };
 }

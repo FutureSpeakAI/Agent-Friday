@@ -27,8 +27,8 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
     // Voice commands
     {
       id: 'ask',
-      label: 'Ask EVE',
-      description: 'Send a text message to EVE',
+      label: 'Ask Friday',
+      description: 'Send a text message to Friday',
       icon: '💬',
       category: 'command' as const,
       action: () => {
@@ -40,7 +40,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
     {
       id: 'remind',
       label: 'Set a reminder',
-      description: 'Ask EVE to remind you about something',
+      description: 'Ask Friday to remind you about something',
       icon: '⏰',
       category: 'command' as const,
       action: () => {
@@ -85,7 +85,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
     {
       id: 'recall',
       label: 'Recall memory',
-      description: 'Search EVE\'s memory for something',
+      description: 'Search Friday\'s memory for something',
       icon: '💡',
       category: 'memory' as const,
       action: () => {
@@ -97,7 +97,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
     {
       id: 'ingest',
       label: 'Ingest document',
-      description: 'Import a file into EVE\'s document library',
+      description: 'Import a file into Friday\'s document library',
       icon: '📄',
       category: 'document' as const,
       action: async () => {
@@ -138,7 +138,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
     {
       id: 'settings',
       label: 'Open Settings',
-      description: 'Configure EVE\'s behaviour',
+      description: 'Configure Friday\'s behaviour',
       icon: '⚙',
       category: 'system' as const,
       action: () => {
@@ -256,7 +256,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={isConnected ? 'Type a command or ask EVE...' : 'EVE is disconnected — commands only'}
+            placeholder={isConnected ? 'Type a command or ask Friday...' : 'Friday is disconnected — commands only'}
             style={styles.input}
           />
           <span style={styles.escHint}>ESC</span>
@@ -268,7 +268,7 @@ export default function QuickActions({ visible, onClose, onSendText, isConnected
             <div style={styles.noResults}>
               {query.trim() ? (
                 <>
-                  No matching command — press Enter to ask EVE: <strong>"{query}"</strong>
+                  No matching command — press Enter to ask Friday: <strong>"{query}"</strong>
                 </>
               ) : (
                 'Start typing to filter commands...'

@@ -232,7 +232,7 @@ describe('ContextToolRouter', () => {
       mockGraph.getActiveEntities.mockReturnValue([
         makeEntity('file', 'src/main/index.ts'),
         makeEntity('file', 'src/main/context-graph.ts'),
-        makeEntity('project', 'nexus-os'),
+        makeEntity('project', 'agent-friday'),
       ] as any);
 
       const suggestions = router.route();
@@ -275,7 +275,7 @@ describe('ContextToolRouter', () => {
       mockGraph.getActiveStream.mockReturnValue(makeWorkStream({ task: 'coding' }) as any);
       mockGraph.getTopEntities.mockReturnValue([
         makeEntity('file', 'src/main/index.ts'),
-        makeEntity('project', 'nexus-os'),
+        makeEntity('project', 'agent-friday'),
         makeEntity('topic', 'typescript'),
         makeEntity('person', 'John'),
         makeEntity('url', 'https://github.com'),

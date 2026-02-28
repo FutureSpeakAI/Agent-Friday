@@ -1,9 +1,9 @@
 /**
- * clipboard-intelligence.ts — Clipboard Intelligence for EVE OS.
+ * clipboard-intelligence.ts — Clipboard Intelligence for Agent Friday.
  *
  * Polls the clipboard every 2 seconds, classifies content type
  * (URL, code, email, JSON, text, file path), and emits events
- * to the renderer so EVE can reference clipboard context naturally.
+ * to the renderer so Friday can reference clipboard context naturally.
  */
 
 import { clipboard, BrowserWindow } from 'electron';

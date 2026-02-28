@@ -1,5 +1,5 @@
 /**
- * semantic-search.ts — Semantic Search Engine for EVE OS.
+ * semantic-search.ts — Semantic Search Engine for Agent Friday.
  *
  * Uses Gemini text-embedding-004 to generate embeddings for all memory
  * tiers (long-term facts, medium-term observations, episodic summaries).

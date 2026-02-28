@@ -115,17 +115,17 @@ describe('Trust Engine — Tier Boundary Enforcement', () => {
 
     it('should resolve REVOKED identity back to public', async () => {
       // Set up a paired identity
-      const code = trustEngine.generatePairingCode('telegram', 'eve-789', 'Eve');
+      const code = trustEngine.generatePairingCode('telegram', 'friday-789', 'Friday');
       const identity = await trustEngine.approvePairing(code, 'approved-dm');
       expect(identity).not.toBeNull();
-      expect(trustEngine.resolveTrust('telegram', 'eve-789')).toBe('approved-dm');
+      expect(trustEngine.resolveTrust('telegram', 'friday-789')).toBe('approved-dm');
 
       // Revoke it
       const revoked = await trustEngine.revokePairing(identity!.id);
       expect(revoked).toBe(true);
 
       // Should now resolve to public
-      expect(trustEngine.resolveTrust('telegram', 'eve-789')).toBe('public');
+      expect(trustEngine.resolveTrust('telegram', 'friday-789')).toBe('public');
     });
   });
 

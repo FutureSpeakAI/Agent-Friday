@@ -16,7 +16,7 @@ export interface PersonalityEvolutionVisuals {
   glowIntensity: number;      // 0.5-2.0
 }
 
-interface NexusCoreProps {
+interface FridayCoreProps {
   getLevels?: () => { mic: number; output: number };
   semanticState?: SemanticState;
   isSpeaking?: boolean;
@@ -29,13 +29,13 @@ interface NexusCoreProps {
 }
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
-class NexusErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+class FridayErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
   static getDerivedStateFromError(_err: Error) {
     return { hasError: true };
   }
   componentDidCatch(err: Error, info: ErrorInfo) {
-    console.error('[NexusCore] Error boundary caught:', err, info);
+    console.error('[FridayCore] Error boundary caught:', err, info);
   }
   render() {
     if (this.state.hasError) return null; // Fail silently — app still usable
@@ -54,7 +54,7 @@ const GRID_OFFSET = (GRID_SIZE * GRID_SPACING) / 2 - GRID_SPACING / 2;
 const CORE_BASE_SCALE = 3.5;
 const ANIM_SPEED = 0.25;
 
-function NexusCoreInner({
+function FridayCoreInner({
   getLevels,
   semanticState = 'LISTENING',
   isSpeaking = false,
@@ -62,7 +62,7 @@ function NexusCoreInner({
   moodIntensity = 0.4,
   moodTurbulence = 0.2,
   evolutionState,
-}: NexusCoreProps) {
+}: FridayCoreProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
@@ -103,15 +103,15 @@ function NexusCoreInner({
     // Dynamic import to prevent module-level crash
     import('three').then((mod) => {
       THREE = mod;
-      console.log('[NexusCore] Three.js loaded successfully');
+      console.log('[FridayCore] Three.js loaded successfully');
       try {
         initScene(THREE);
       } catch (err: any) {
-        console.error('[NexusCore] Scene init error:', err);
+        console.error('[FridayCore] Scene init error:', err);
         setInitError(err.message || 'Unknown init error');
       }
     }).catch((err) => {
-      console.error('[NexusCore] Failed to import three:', err);
+      console.error('[FridayCore] Failed to import three:', err);
       setInitError('Failed to load Three.js: ' + (err.message || err));
     });
 
@@ -679,7 +679,7 @@ function NexusCoreInner({
   }, []); // Mount once — animation reads refs for dynamic values
 
   if (initError) {
-    console.warn('[NexusCore] Rendering fallback due to error:', initError);
+    console.warn('[FridayCore] Rendering fallback due to error:', initError);
     return null;
   }
 
@@ -697,10 +697,10 @@ function NexusCoreInner({
 }
 
 // Export wrapped in error boundary
-export default function NexusCore(props: NexusCoreProps) {
+export default function FridayCore(props: FridayCoreProps) {
   return (
-    <NexusErrorBoundary>
-      <NexusCoreInner {...props} />
-    </NexusErrorBoundary>
+    <FridayErrorBoundary>
+      <FridayCoreInner {...props} />
+    </FridayErrorBoundary>
   );
 }

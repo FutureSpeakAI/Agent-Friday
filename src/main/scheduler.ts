@@ -1,7 +1,7 @@
 /**
  * scheduler.ts — Persistent task scheduler with cron support.
  * Tasks can be one-time or recurring, and fire via IPC to the renderer
- * where EVE speaks them naturally.
+ * where Friday speaks them naturally.
  */
 
 import { app, BrowserWindow, Notification } from 'electron';
@@ -248,12 +248,12 @@ class TaskScheduler {
     // System notification for non-research tasks
     if (Notification.isSupported()) {
       new Notification({
-        title: 'EVE Reminder',
+        title: 'Friday Reminder',
         body: task.description,
       }).show();
     }
 
-    // Send to renderer so EVE speaks it
+    // Send to renderer so Friday speaks it
     this.mainWindow?.webContents.send('scheduler:task-fired', {
       id: task.id,
       description: task.description,

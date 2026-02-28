@@ -1,5 +1,5 @@
 /**
- * memory-consolidation.ts — Memory Consolidation Engine for EVE OS.
+ * memory-consolidation.ts — Memory Consolidation Engine for Agent Friday.
  *
  * Runs every 6 hours (or on demand):
  * 1. Promotes high-confidence medium-term observations → long-term facts
@@ -13,7 +13,7 @@
 import { memoryManager, MediumTermEntry, LongTermEntry } from './memory';
 import { episodicMemory } from './episodic-memory';
 import { semanticSearch } from './semantic-search';
-import { appendLearning } from './eve-profile';
+import { appendLearning } from './friday-profile';
 import crypto from 'crypto';
 
 const CONSOLIDATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours

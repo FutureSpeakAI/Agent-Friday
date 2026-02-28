@@ -1,5 +1,5 @@
 import { memoryManager } from './memory';
-import { getCondensedProfile } from './eve-profile';
+import { getCondensedProfile } from './friday-profile';
 import { ambientEngine } from './ambient';
 import { sentimentEngine, Mood } from './sentiment';
 import { episodicMemory } from './episodic-memory';

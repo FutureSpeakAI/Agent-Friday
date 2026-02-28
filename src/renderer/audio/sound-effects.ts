@@ -48,7 +48,7 @@ export function playListeningPing(): void {
   osc.stop(now + 0.2);
 }
 
-/** Low subtle tone — played when EVE starts "thinking" (tool call in progress) */
+/** Low subtle tone — played when Friday starts "thinking" (tool call in progress) */
 export function playThinkingTone(): void {
   const ac = getContext();
   const now = ac.currentTime;

@@ -1,5 +1,5 @@
 /**
- * media-streaming.ts  --  Media & Streaming connector for Agent Friday (Nexus OS)
+ * media-streaming.ts  --  Media & Streaming connector for Agent Friday
  *
  * Provides tool declarations and an executor for controlling OBS Studio,
  * FFmpeg media processing, and audio device enumeration on Windows.
@@ -67,7 +67,7 @@ let obsConnected = false;
 function runPS(script: string, timeout = PS_TIMEOUT): string {
   const tmp = path.join(
     process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp',
-    `nexus_media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ps1`,
+    `friday_media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ps1`,
   );
   try {
     fs.writeFileSync(tmp, script, 'utf-8');

@@ -45,7 +45,7 @@ function runPS(script: string): string {
   // Write script to a temp file to avoid quoting issues with inline -Command
   const tmp = path.join(
     process.env.TEMP || process.env.TMP || 'C:\\Windows\\Temp',
-    `nexus_office_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ps1`,
+    `friday_office_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.ps1`,
   );
   try {
     fs.writeFileSync(tmp, script, 'utf-8');

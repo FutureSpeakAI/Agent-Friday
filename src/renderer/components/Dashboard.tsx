@@ -269,7 +269,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
 
               {projects.length === 0 && documents.length === 0 && (
                 <div style={styles.empty}>
-                  No projects or documents — ask EVE to watch a project or ingest a file
+                  No projects or documents — ask Friday to watch a project or ingest a file
                 </div>
               )}
             </div>

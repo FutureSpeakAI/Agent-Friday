@@ -558,7 +558,7 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
     it('creates stream on first ambient event', () => {
       graphListener!(makeGraphEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts — agent-friday' },
       }));
       const active = graph.getActiveStream();
       expect(active).not.toBeNull();
@@ -570,9 +570,9 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
     it('includes project name in stream name from title', () => {
       graphListener!(makeGraphEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
-      expect(graph.getActiveStream()!.name).toContain('nexus-os');
+      expect(graph.getActiveStream()!.name).toContain('agent-friday');
     });
 
     it('creates new stream when app changes', () => {
@@ -653,7 +653,7 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
       graph.start();
       graphListener!(makeGraphEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
     });
 
@@ -689,7 +689,7 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
     });
 
     it('extracts project from window title separator pattern', () => {
-      expect(graph.getEntitiesByType('project').some(e => e.value === 'nexus-os')).toBe(true);
+      expect(graph.getEntitiesByType('project').some(e => e.value === 'agent-friday')).toBe(true);
     });
 
     it('extracts person from communication events', () => {
@@ -713,10 +713,10 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
     it('extracts repo/branch/files from git events', () => {
       graphListener!(makeGraphEvent({
         type: 'git',
-        data: { repo: 'nexus-os', branch: 'main', files: ['src/index.ts', 'src/app.ts'] },
+        data: { repo: 'agent-friday', branch: 'main', files: ['src/index.ts', 'src/app.ts'] },
         summary: 'Git: 2 files committed',
       }));
-      expect(graph.getEntitiesByType('project').some(e => e.normalizedValue === 'nexus-os')).toBe(true);
+      expect(graph.getEntitiesByType('project').some(e => e.normalizedValue === 'agent-friday')).toBe(true);
       expect(graph.getEntitiesByType('file').some(e => e.value === 'src/index.ts')).toBe(true);
     });
 
@@ -822,7 +822,7 @@ describe('Phase 2: Context Graph (ContextGraph)', () => {
     it('finds co-occurring entities in same stream', () => {
       graphListener!(makeGraphEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
       graphListener!(makeGraphEvent({
         type: 'tool-invoke',
@@ -1221,7 +1221,7 @@ describe('Phase 3: Context-Aware Routing (Integration)', () => {
       graph.start();
       graphListener!(makeGraphEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'main.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'main.ts — agent-friday' },
       }));
       graphListener!(makeGraphEvent({
         type: 'tool-invoke',

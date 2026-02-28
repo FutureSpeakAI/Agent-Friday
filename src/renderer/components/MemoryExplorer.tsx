@@ -254,7 +254,7 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
               )}
 
               {filteredLT.length === 0 ? (
-                <div style={styles.empty}>No memories yet — talk to EVE to build your profile</div>
+                <div style={styles.empty}>No memories yet — talk to Friday to build your profile</div>
               ) : (
                 <div style={styles.entryList}>
                   {filteredLT.map((m) => (
@@ -291,7 +291,7 @@ export default function MemoryExplorer({ visible, onClose }: MemoryExplorerProps
           {tab === 'observations' && (
             <div style={styles.section}>
               {mediumTerm.length === 0 ? (
-                <div style={styles.empty}>No observations yet — EVE builds these over time</div>
+                <div style={styles.empty}>No observations yet — Friday builds these over time</div>
               ) : (
                 <div style={styles.entryList}>
                   {mediumTerm.map((o) => (
