@@ -623,6 +623,10 @@ function sanitizeSchema(schema: unknown): Record<string, unknown> {
   }
 
   if (!clean.type) clean.type = 'object';
+  // Gemini requires array types to have items with a type field
+  if (clean.type === 'array' && !clean.items) {
+    clean.items = { type: 'string' };
+  }
   if (clean.type === 'object' && !clean.properties) clean.properties = {};
 
   return clean;
@@ -791,7 +795,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         connectorToolDecls = connectorTools.map((t) => ({
           name: t.name,
           description: (t.description || '').slice(0, 512),
-          parameters: t.parameters,
+          parameters: sanitizeSchema(t.parameters || { type: 'object', properties: {} }),
         }));
         if (connectorToolDecls.length > 0) {
           console.log(`[GeminiLive] Loaded ${connectorToolDecls.length} connector tools`);
