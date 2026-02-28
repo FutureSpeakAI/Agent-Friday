@@ -355,7 +355,9 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto',
     paddingTop: '3vh',
     paddingBottom: '3vh',
-  },
+    // Override body-level -webkit-app-region:drag so scrollbar + content are interactive
+    WebkitAppRegion: 'no-drag',
+  } as React.CSSProperties,
   container: {
     display: 'flex',
     flexDirection: 'column',
