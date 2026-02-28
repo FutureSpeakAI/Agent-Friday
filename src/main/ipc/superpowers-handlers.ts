@@ -1,10 +1,15 @@
 /**
  * Superpowers IPC handlers — manage loaded programs (GitLoader repos),
  * toggle tools, configure permissions, install/uninstall, safety scanning.
+ *
+ * Track II, Phase 4: Unified handler for both v1 (GitLoader-backed) and
+ * v2 (Adaptation Engine-backed) superpowers. The v2 store provides
+ * consent-gated installation of adapted connectors.
  */
 import { ipcMain } from 'electron';
 import { superpowersRegistry } from '../superpowers-registry';
 import type { SuperpowerPermissions } from '../superpowers-registry';
+import { superpowerStore } from '../superpower-store';
 
 export function registerSuperpowersHandlers(): void {
   // Initialize the registry (loads persisted state, syncs with GitLoader)
@@ -31,6 +36,15 @@ export function registerSuperpowersHandlers(): void {
     }
     if (typeof enabled !== 'boolean') {
       throw new Error('superpowers:toggle requires a boolean enabled');
+    }
+    // Check v2 store first (sp- prefix), fall back to v1 registry
+    if (id.startsWith('sp-')) {
+      if (enabled) {
+        superpowerStore.enableSuperpower(id);
+      } else {
+        superpowerStore.disableSuperpower(id);
+      }
+      return superpowerStore.get(id);
     }
     return superpowersRegistry.setEnabled(id, enabled);
   });
@@ -89,7 +103,49 @@ export function registerSuperpowersHandlers(): void {
     if (!id || typeof id !== 'string') {
       throw new Error('superpowers:uninstall requires a string id');
     }
+    // v2 adapted superpowers
+    if (id.startsWith('sp-')) {
+      superpowerStore.uninstallSuperpower(id);
+      return true;
+    }
     return superpowersRegistry.uninstall(id);
+  });
+
+  // ── Uninstall preview (cLaw: enumerate what gets removed) ──────────
+  ipcMain.handle('superpowers:uninstall-preview', (_event, id: string) => {
+    if (!id || typeof id !== 'string') {
+      throw new Error('superpowers:uninstall-preview requires a string id');
+    }
+
+    // v2 adapted superpowers
+    if (id.startsWith('sp-')) {
+      const sp = superpowerStore.get(id);
+      if (!sp) return null;
+      return {
+        id: sp.id,
+        name: sp.name,
+        toolsRemoved: sp.tools.map(t => t.name),
+        toolCount: sp.tools.length,
+        usageCount: sp.usageCount,
+        hasSourceCode: !!sp.sourceCode,
+        hasBridgeScript: !!sp.bridgeScript,
+        dependencyCount: sp.dependencies.length,
+      };
+    }
+
+    // v1 GitLoader superpowers
+    const sp = superpowersRegistry.get(id);
+    if (!sp) return null;
+    return {
+      id: sp.id,
+      name: sp.name,
+      toolsRemoved: sp.tools.map((t: { name: string }) => t.name),
+      toolCount: sp.tools.length,
+      usageCount: sp.totalInvocations,
+      hasSourceCode: false,
+      hasBridgeScript: false,
+      dependencyCount: 0,
+    };
   });
 
   // ── Usage statistics ────────────────────────────────────────────────
@@ -111,6 +167,14 @@ export function registerSuperpowersHandlers(): void {
     (_event, superpowerId: string, toolName: string, latencyMs: number, success: boolean) => {
       if (!superpowerId || typeof superpowerId !== 'string') return;
       if (!toolName || typeof toolName !== 'string') return;
+      // v2 adapted superpowers
+      if (superpowerId.startsWith('sp-')) {
+        superpowerStore.recordUsage(superpowerId);
+        if (!success) {
+          superpowerStore.recordError(superpowerId, `Tool ${toolName} failed`);
+        }
+        return;
+      }
       superpowersRegistry.recordInvocation(superpowerId, toolName, latencyMs, success);
     },
   );
@@ -118,5 +182,57 @@ export function registerSuperpowersHandlers(): void {
   // ── Flush pending saves ─────────────────────────────────────────────
   ipcMain.handle('superpowers:flush', async () => {
     await superpowersRegistry.flush();
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // v2 Adapted Superpower Store — Consent-gated installation
+  // ═══════════════════════════════════════════════════════════════════
+
+  // ── Store: List all v2 superpowers ──────────────────────────────────
+  ipcMain.handle('superpowers:store-list', () => {
+    return superpowerStore.getAll();
+  });
+
+  // ── Store: Get a single v2 superpower ──────────────────────────────
+  ipcMain.handle('superpowers:store-get', (_event, id: string) => {
+    if (!id || typeof id !== 'string') {
+      throw new Error('superpowers:store-get requires a string id');
+    }
+    return superpowerStore.get(id);
+  });
+
+  // ── Store: Confirm consent and complete installation ───────────────
+  ipcMain.handle(
+    'superpowers:store-confirm',
+    (_event, id: string, consentToken: string) => {
+      if (!id || typeof id !== 'string') {
+        throw new Error('superpowers:store-confirm requires a string id');
+      }
+      if (!consentToken || typeof consentToken !== 'string') {
+        throw new Error('superpowers:store-confirm requires a non-empty consent token');
+      }
+      superpowerStore.confirmInstall(id, consentToken);
+      return superpowerStore.get(id);
+    },
+  );
+
+  // ── Store: Get enabled tools from v2 superpowers ───────────────────
+  ipcMain.handle('superpowers:store-enabled-tools', () => {
+    return superpowerStore.getEnabledTools();
+  });
+
+  // ── Store: Get status ──────────────────────────────────────────────
+  ipcMain.handle('superpowers:store-status', () => {
+    return superpowerStore.getStatus();
+  });
+
+  // ── Store: Get prompt context (for system prompt injection) ────────
+  ipcMain.handle('superpowers:store-prompt-context', () => {
+    return superpowerStore.getPromptContext();
+  });
+
+  // ── Store: Superpowers needing attention ───────────────────────────
+  ipcMain.handle('superpowers:store-needs-attention', () => {
+    return superpowerStore.getNeedingAttention();
   });
 }

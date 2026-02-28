@@ -3,8 +3,9 @@ import React, { useState, useEffect } from 'react';
 interface MoodPoint {
   mood: string;
   confidence: number;
-  energyLevel: number;
+  energy: number;
   timestamp: number;
+  trigger?: string;
 }
 
 interface MoodTimelineProps {
@@ -92,7 +93,7 @@ export default function MoodTimeline({ getMoodHistory }: MoodTimelineProps) {
   points.forEach((pt, i) => {
     const x = CHART_PADDING + (i / (points.length - 1)) * (width - CHART_PADDING * 2);
     const y = moodToY(pt.mood);
-    dotPositions.push({ x, y, mood: pt.mood, ts: pt.timestamp, energy: pt.energyLevel });
+    dotPositions.push({ x, y, mood: pt.mood, ts: pt.timestamp, energy: pt.energy });
 
     if (i === 0) {
       pathParts.push(`M ${x} ${y}`);

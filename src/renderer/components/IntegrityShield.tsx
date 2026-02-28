@@ -11,25 +11,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-declare global {
-  interface Window {
-    eve: {
-      integrity: {
-        getState: () => Promise<IntegrityState>;
-        isInSafeMode: () => Promise<boolean>;
-        acknowledgeMemoryChanges: () => Promise<void>;
-        verify: () => Promise<{
-          lawsIntact: boolean;
-          identityIntact: boolean;
-          memoriesIntact: boolean;
-          safeMode: boolean;
-        }>;
-      };
-      [key: string]: unknown;
-    };
-  }
-}
-
 interface IntegrityState {
   initialized: boolean;
   lawsIntact: boolean;

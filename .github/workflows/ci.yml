@@ -1,0 +1,73 @@
+# Agent Friday — CI Pipeline
+# Runs on every push and pull request to main.
+#
+# Gates:
+#   1. Typecheck (main process) — Safety-critical code must compile clean
+#   2. Lint (advisory) — Reports issues but does not block (pre-existing debt)
+#   3. cLaw Gate [BLOCKING] — Safety-critical tests MUST pass or the build fails.
+#      Covers HMAC tamper detection, core laws integrity,
+#      memory watchdog diffs, and trust tier boundary enforcement.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Gate 1: Main Process Typecheck ───────────────────────────────
+  typecheck:
+    name: Typecheck (main process)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck main process (strict, no emit)
+        run: npx tsc -p tsconfig.main.json --noEmit
+
+  # ── Gate 2: Lint (advisory) ──────────────────────────────────────
+  lint:
+    name: Lint (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: ESLint
+        run: npm run lint
+
+  # ── Gate 3: cLaw Gate [BLOCKING] ─────────────────────────────────
+  # These tests enforce Asimov's cLaws at the build level:
+  #   - HMAC tamper detection (integrity/hmac)
+  #   - Core laws canonical source (integrity/core-laws)
+  #   - Memory watchdog diff engine (integrity/memory-watchdog)
+  #   - Trust tier boundary enforcement (gateway/trust-engine)
+  #
+  # If ANY of these fail, the entire pipeline fails. Non-negotiable.
+  claw-gate:
+    name: "cLaw Gate — Safety Tests"
+    runs-on: ubuntu-latest
+    needs: [typecheck]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: "Run cLaw Gate tests"
+        run: npm run test:claw-gate

@@ -37,6 +37,12 @@ export interface IntegrityState {
 
   /** Reason for safe mode, if active */
   safeModeReason: string | null;
+
+  /** Random nonce for the current verification cycle (prevents replay attacks) */
+  nonce?: string;
+
+  /** Session identifier tying this state to a specific runtime (Track X foundation) */
+  sessionId?: string;
 }
 
 // ── Memory Change Detection ───────────────────────────────────────────
@@ -95,9 +101,75 @@ export interface IntegrityManifest {
   version: number;
 }
 
+// ── Compact Attestation (Track X foundation) ─────────────────────────
+// A lightweight, serializable proof of integrity status.
+// Designed to be < 512 bytes when serialized, suitable for cross-agent
+// exchange, DAG node embedding, and ledger transaction signing.
+
+export interface IntegrityAttestation {
+  /** HMAC digest of the current integrity state (hex) */
+  digest: string;
+  /** Unix ms timestamp of when this attestation was produced */
+  ts: number;
+  /** Random nonce preventing replay (8 hex chars) */
+  nonce: string;
+  /** Session identifier tying attestation to a specific runtime */
+  sessionId: string;
+  /** Whether all integrity checks are passing */
+  intact: boolean;
+  /** Whether the agent is in safe mode */
+  safeMode: boolean;
+  /** Attestation format version */
+  v: number;
+}
+
+/**
+ * Produce a compact attestation from an IntegrityState + HMAC digest.
+ * The caller is responsible for computing the digest (via hmac.sign)
+ * over whatever payload they want to attest to.
+ */
+export function toAttestation(
+  state: IntegrityState,
+  digest: string,
+  sessionId: string,
+): IntegrityAttestation {
+  return {
+    digest,
+    ts: Date.now(),
+    nonce: state.nonce || Math.random().toString(16).slice(2, 10),
+    sessionId,
+    intact: state.lawsIntact && state.identityIntact && state.memoriesIntact,
+    safeMode: state.safeMode,
+    v: INTEGRITY_ATTESTATION_VERSION,
+  };
+}
+
+/** Serialize an attestation to a compact string (< 512 bytes). */
+export function serializeAttestation(att: IntegrityAttestation): string {
+  return JSON.stringify(att);
+}
+
+/** Deserialize a compact attestation string. Returns null if invalid. */
+export function deserializeAttestation(data: string): IntegrityAttestation | null {
+  try {
+    const parsed = JSON.parse(data);
+    if (
+      typeof parsed.digest === 'string' &&
+      typeof parsed.ts === 'number' &&
+      typeof parsed.nonce === 'string'
+    ) {
+      return parsed as IntegrityAttestation;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Constants ─────────────────────────────────────────────────────────
 
 export const INTEGRITY_MANIFEST_VERSION = 1;
+export const INTEGRITY_ATTESTATION_VERSION = 1;
 
 export const DEFAULT_INTEGRITY_STATE: IntegrityState = {
   initialized: false,
@@ -108,4 +180,6 @@ export const DEFAULT_INTEGRITY_STATE: IntegrityState = {
   lastVerified: 0,
   safeMode: false,
   safeModeReason: null,
+  nonce: undefined,
+  sessionId: undefined,
 };

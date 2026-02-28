@@ -172,9 +172,9 @@ class Predictor {
       const topPattern = mediumTerm.sort((a, b) => b.occurrences - a.occurrences)[0];
 
       if (ctx.pendingTaskCount > 0 && topPattern) {
-        parts.push(`You\'ve got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} on the schedule today. Also — ${topPattern.observation.toLowerCase()}.`);
+        parts.push(`You've got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} on the schedule today. Also — ${topPattern.observation.toLowerCase()}.`);
       } else if (ctx.pendingTaskCount > 0) {
-        parts.push(`You\'ve got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} queued up today.`);
+        parts.push(`You've got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} queued up today.`);
       } else if (topPattern) {
         parts.push(`Something I was thinking about — ${topPattern.observation.toLowerCase()}.`);
       } else {
@@ -296,7 +296,7 @@ class Predictor {
       if (ctx.pendingTaskCount > 0) {
         return {
           type: 'idle_prompt',
-          message: `You\'ve got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} queued up whenever you\'re ready. No rush.`,
+          message: `You've got ${ctx.pendingTaskCount} thing${ctx.pendingTaskCount > 1 ? 's' : ''} queued up whenever you're ready. No rush.`,
           confidence: 0.45,
         };
       }

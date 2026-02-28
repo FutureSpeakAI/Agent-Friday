@@ -42,7 +42,7 @@ function buildFrontmatter(data: Record<string, unknown>): string {
       lines.push(`${key}: [${value.map((v) => String(v)).join(', ')}]`);
     } else if (typeof value === 'string') {
       // Quote strings that contain special chars
-      const needsQuotes = /[:#\[\]{}|>*&!%@`]/.test(String(value));
+      const needsQuotes = /[:#[\]{}|>*&!%@`]/.test(String(value));
       lines.push(`${key}: ${needsQuotes ? `"${String(value).replace(/"/g, '\\"')}"` : value}`);
     } else {
       lines.push(`${key}: ${String(value)}`);

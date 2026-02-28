@@ -8,7 +8,7 @@
  * Components consume via useMood() hook — no prop drilling needed.
  */
 
-import React, { createContext, useContext, useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from 'react';
 import type { SemanticState } from '../components/NexusCore';
 
 // ── Types ────────────────────────────────────────────────────────────────────

@@ -24,6 +24,16 @@ const DESTRUCTIVE_TOOLS = new Set([
   'set_volume',
   'send_keys',
   'write_file',
+  // cLaw Security Fix (CRITICAL-003): Mouse tools can click destructive UI elements
+  'mouse_click',
+  'mouse_double_click',
+  'mouse_right_click',
+  'mouse_move',
+  'mouse_scroll',
+  'mouse_drag',
+  // cLaw Security Fix (CRITICAL-004): Keyboard tools can type/execute arbitrary actions
+  'type_text',
+  'press_keys',
 ]);
 
 const READ_ONLY_TOOLS = new Set([
@@ -248,7 +258,7 @@ function runPS(script: string, timeoutMs = 15000): Promise<string> {
       `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
       { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
       (err, stdout, stderr) => {
-        try { unlinkSync(tmpFile); } catch {}
+        try { unlinkSync(tmpFile); } catch { /* cleanup */ }
         if (err) {
           reject(new Error(stderr?.trim() || err.message));
         } else {

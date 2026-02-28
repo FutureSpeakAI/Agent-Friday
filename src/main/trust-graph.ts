@@ -53,6 +53,12 @@ export interface TrustScores {
   emotionalTrust: number;
   timeliness: number;
   informationQuality: number;
+  /**
+   * Runtime-extensible trust dimensions (Track X foundation).
+   * Track X will add dimensions like 'commercialReliability', 'escrowHonor', etc.
+   * Stored as string→number map so new dimensions can be added without schema migration.
+   */
+  extended?: Record<string, number>;
 }
 
 export interface DomainScore {

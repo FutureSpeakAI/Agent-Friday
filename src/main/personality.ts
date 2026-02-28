@@ -16,6 +16,8 @@ import { settingsManager, type AgentConfig } from './settings';
 import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
 import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
 import { trustGraph } from './trust-graph';
+import { personalityCalibration } from './personality-calibration';
+import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { meetingIntelligence } from './meeting-intelligence';
 
 /**
@@ -414,6 +416,16 @@ export async function buildSystemPrompt(): Promise<string> {
     parts.push(styleHints);
   }
 
+  const calibrationContext = personalityCalibration.getPromptContext();
+  if (calibrationContext) {
+    parts.push(calibrationContext);
+  }
+
+  const bridgeContext = memoryPersonalityBridge.getPromptContext();
+  if (bridgeContext) {
+    parts.push(bridgeContext);
+  }
+
   const episodicContext = episodicMemory.getContextString();
   if (episodicContext) {
     parts.push(episodicContext);
@@ -534,6 +546,16 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
   const liveStyleHints = buildStyleHints();
   if (liveStyleHints) {
     sections.push({ name: 'style-hints', content: liveStyleHints, priority: 'medium' });
+  }
+
+  const liveCalibrationContext = personalityCalibration.getPromptContext();
+  if (liveCalibrationContext) {
+    sections.push({ name: 'personality-calibration', content: liveCalibrationContext, priority: 'medium' });
+  }
+
+  const liveBridgeContext = memoryPersonalityBridge.getPromptContext();
+  if (liveBridgeContext) {
+    sections.push({ name: 'memory-personality-bridge', content: liveBridgeContext, priority: 'medium' });
   }
 
   const liveEpisodicContext = episodicMemory.getContextString();

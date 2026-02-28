@@ -15,7 +15,6 @@ import {
   getCachedCanvas,
   clearCanvasCache,
   getFurnitureSprite,
-  DESK_SPRITE,
 } from './sprites';
 
 /* ── Types (mirrored from office-types.ts — renderer can't import from main) ── */
@@ -349,7 +348,7 @@ const AgentOffice: React.FC = () => {
       justifyContent: 'center',
       overflow: 'hidden',
       fontFamily: "'Segoe UI', sans-serif",
-      WebkitAppRegion: 'drag' as any,
+      WebkitAppRegion: 'drag',
     }}>
       {/* Title bar area */}
       <div style={{
@@ -364,7 +363,7 @@ const AgentOffice: React.FC = () => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        WebkitAppRegion: 'no-drag' as any,
+        WebkitAppRegion: 'no-drag',
       }}>
         <canvas
           ref={canvasRef}
@@ -391,7 +390,7 @@ const AgentOffice: React.FC = () => {
         color: 'rgba(0, 240, 255, 0.5)',
         gap: 16,
         flexShrink: 0,
-        WebkitAppRegion: 'no-drag' as any,
+        WebkitAppRegion: 'no-drag',
       }}>
         <span>AGENT OFFICE</span>
         <span>{stateRef.current.characters.size} agent{stateRef.current.characters.size !== 1 ? 's' : ''}</span>

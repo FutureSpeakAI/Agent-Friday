@@ -379,7 +379,7 @@ export default function App() {
         const config = await window.eve.onboarding.getAgentConfig();
         voiceName = config.agentVoice || 'Kore';
         setAgentName(config.agentName || '');
-      } catch {}
+      } catch { /* config load failed */ }
     }
 
     // 6. Connect!

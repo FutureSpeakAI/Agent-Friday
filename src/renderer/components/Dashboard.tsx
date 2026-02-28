@@ -51,8 +51,11 @@ interface EpisodeEntry {
   summary: string;
   startTime: number;
   endTime: number;
+  durationSeconds: number;
   topics: string[];
-  sentiment: string;
+  emotionalTone: string;
+  keyDecisions: string[];
+  turnCount: number;
 }
 
 export default function Dashboard({ visible, onClose }: DashboardProps) {
@@ -62,7 +65,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
   const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
   const [episodes, setEpisodes] = useState<EpisodeEntry[]>([]);
   const [projects, setProjects] = useState<Array<{ name: string; type: string; rootPath: string }>>([]);
-  const [documents, setDocuments] = useState<Array<{ id: string; fileName: string; size: number }>>([]);
+  const [documents, setDocuments] = useState<Array<{ id: string; filename: string; size: number }>>([]);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async () => {
@@ -72,8 +75,8 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
           window.eve.ambient.getState(),
           window.eve.sentiment.getState(),
           window.eve.clipboard.getCurrent(),
-          window.eve.agents.listTasks(),
-          window.eve.episodes.search('', 5),
+          window.eve.agents.list(),
+          window.eve.episodic.search(''),
           window.eve.project.list(),
           window.eve.documents.list(),
         ]);
@@ -103,7 +106,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
     if (!visible) return;
 
     const cleanupClip = window.eve.clipboard.onChanged((entry) => {
-      setClipboard(entry);
+      setClipboard({ text: entry.preview, ...entry });
     });
 
     const cleanupAgent = window.eve.agents.onUpdate((task) => {
@@ -131,7 +134,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
 
   const getMoodHistory = useCallback(async () => {
     try {
-      return await window.eve.sentiment.getHistory();
+      return await window.eve.sentiment.getMoodLog();
     } catch {
       return [];
     }
@@ -139,7 +142,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
 
   const handleCancelTask = useCallback(async (id: string) => {
     try {
-      await window.eve.agents.cancelTask(id);
+      await window.eve.agents.cancel(id);
       setAgentTasks((prev) =>
         prev.map((t) => (t.id === id ? { ...t, status: 'cancelled' as const } : t))
       );
@@ -214,8 +217,8 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
                       </div>
                       <div style={{
                         ...styles.sentimentDot,
-                        background: ep.sentiment === 'positive' ? '#22c55e' :
-                          ep.sentiment === 'negative' ? '#ef4444' : '#666680',
+                        background: ep.emotionalTone === 'positive' ? '#22c55e' :
+                          ep.emotionalTone === 'negative' ? '#ef4444' : '#666680',
                       }} />
                     </div>
                   ))}
@@ -250,7 +253,7 @@ export default function Dashboard({ visible, onClose }: DashboardProps) {
                   {documents.slice(0, 5).map((d) => (
                     <div key={d.id} style={styles.workspaceItem}>
                       <span style={styles.workspaceIcon}>◇</span>
-                      <span style={styles.workspaceName}>{d.fileName}</span>
+                      <span style={styles.workspaceName}>{d.filename}</span>
                       <span style={styles.workspaceType}>
                         {d.size > 1024 * 1024
                           ? `${(d.size / (1024 * 1024)).toFixed(1)}MB`

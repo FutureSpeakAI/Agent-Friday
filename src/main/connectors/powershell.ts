@@ -14,7 +14,6 @@
  */
 
 import { execSync, spawn } from 'child_process';
-import * as path from 'path';
 
 // ---------------------------------------------------------------------------
 // Types

@@ -8,7 +8,7 @@
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import path from 'path';
 import { app } from 'electron';
-import { buildDefaultLayout, findPath, isWalkable, getWalkableTiles } from './office-layout';
+import { buildDefaultLayout } from './office-layout';
 import {
   OfficeLayout,
   Character,

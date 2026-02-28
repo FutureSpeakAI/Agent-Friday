@@ -30,13 +30,16 @@ export interface ToolResult {
   error?: string;
 }
 
+/** Category for built-in connectors — grouping in UI and personality routing */
+export type ConnectorCategory = 'foundation' | 'creative' | 'office' | 'devops' | 'communication' | 'system';
+
 export interface Connector {
   /** Unique module ID */
   id: string;
   /** Human-readable name for personality prompt */
   label: string;
   /** Category for grouping in UI and personality routing */
-  category: 'foundation' | 'creative' | 'office' | 'devops' | 'communication' | 'system';
+  category: ConnectorCategory;
   /** Short description of what this connector enables */
   description: string;
   /** Tool declarations from the module */

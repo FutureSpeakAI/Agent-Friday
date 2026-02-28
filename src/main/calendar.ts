@@ -8,6 +8,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { google, calendar_v3 } from 'googleapis';
+import { requireConsent } from './consent-gate';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events'];
 const TOKEN_FILE = 'google-calendar-token.json';
@@ -224,6 +225,20 @@ class CalendarIntegration {
     location?: string;
   }): Promise<CalendarEvent | null> {
     if (!this.calendarApi) return null;
+
+    // cLaw Security Fix (CRITICAL-005): Require user consent before creating calendar events.
+    // Creating events with attendees sends Google Calendar invitations — an external side effect.
+    const approved = await requireConsent('create_calendar_event', {
+      summary: opts.summary,
+      startTime: opts.startTime,
+      endTime: opts.endTime,
+      attendees: opts.attendees?.join(', ') || '(none)',
+      location: opts.location || '(none)',
+    });
+    if (!approved) {
+      console.log('[Calendar] Event creation denied by user');
+      return null;
+    }
 
     try {
       const res = await this.calendarApi.events.insert({

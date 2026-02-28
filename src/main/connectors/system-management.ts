@@ -19,7 +19,7 @@
  *   detect   — Async check: always true on Windows
  */
 
-import { execFile, execSync } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 

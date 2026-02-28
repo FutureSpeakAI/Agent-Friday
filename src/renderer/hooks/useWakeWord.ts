@@ -204,10 +204,4 @@ export function useWakeWord({ enabled, isConnected, onWake }: UseWakeWordOptions
   }, [enabled, isConnected, startRecognition]);
 }
 
-// Augment Window for webkitSpeechRecognition
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
-}
+// SpeechRecognition and webkitSpeechRecognition Window augmentation is in types.d.ts
