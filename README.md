@@ -414,7 +414,52 @@ agent-friday/
       communications.ts                # Trust-aware communications intelligence
       notifications.ts                 # System notification dispatch
       calendar.ts                      # Google Calendar OAuth2 integration
-      superpowers-registry.ts          # Dynamic agent power system
+      errors.ts                        # Shared error types and utilities
+      consent-gate.ts                  # User consent for sensitive operations
+
+      # ── Trust & People ──
+      trust-graph.ts                   # Multi-dimensional person trust scoring
+      commitment-tracker.ts            # Promise/commitment tracking
+      memory-quality.ts                # Memory quality scoring and pruning
+      memory-personality-bridge.ts     # Memory ↔ personality feedback loop
+
+      # ── Intelligence & Context ──
+      intelligence-router.ts           # Multi-source intelligence routing
+      outbound-intelligence.ts         # Proactive intelligence delivery
+      daily-briefing.ts                # Morning briefing generation
+      meeting-intelligence.ts          # Enhanced meeting attendee intelligence
+      context-graph.ts                 # Graph-based contextual model
+      context-stream.ts                # Real-time context streaming
+      context-stream-bridge.ts         # Context stream ↔ renderer bridge
+      context-tool-router.ts           # Context-aware tool routing
+
+      # ── Personality ──
+      personality-calibration.ts       # Personality drift detection/correction
+
+      # ── Superpowers & Capabilities ──
+      superpowers-registry.ts          # Dynamic superpower system
+      superpower-ecosystem.ts          # Superpower lifecycle management
+      superpower-sandbox.ts            # Sandboxed execution environment
+      superpower-store.ts              # Superpower discovery and install
+      adapter-engine.ts                # Dynamic adapter loading
+      capability-manifest.ts           # Agent capability declarations
+      capability-gap-detector.ts       # Missing capability detection
+      agent-network.ts                 # Multi-agent network coordination
+
+      # ── Workflows & Git ──
+      workflow-recorder.ts             # Record replayable workflow sequences
+      workflow-executor.ts             # Execute recorded workflows
+      git-analyzer.ts                  # Repository analysis
+      git-monitor.ts                   # Continuous repo change monitoring
+      git-review.ts                    # Automated code review / PR analysis
+      git-sandbox.ts                   # Sandboxed git operation execution
+      git-scanner.ts                   # Repository scanning and indexing
+
+      # ── Infrastructure ──
+      unified-inbox.ts                 # Cross-channel message aggregation
+      service-status.ts                # External service health monitoring
+      perf-monitor.ts                  # Performance metrics collection
+      state-export.ts                  # Full agent state export/import
 
       integrity/                       # Asimov's cLaws enforcement
         core-laws.ts                   # Three Laws text + verification
@@ -456,17 +501,35 @@ agent-friday/
         adapters/
           telegram.ts                  # Telegram Bot API adapter
 
-      ipc/                             # Domain-specific IPC handlers
+      ipc/                             # Domain-specific IPC handlers (28 modules)
         index.ts                       # Handler registration hub
         core-handlers.ts               # Settings, personality, app lifecycle
         memory-handlers.ts             # All memory operations
         agent-handlers.ts              # Agent task management
+        agent-network-handlers.ts      # Agent network coordination
         tool-handlers.ts               # Tool execution routing
         onboarding-handlers.ts         # Onboarding flow
         integration-handlers.ts        # Connectors, MCP, browser, SOC, GitLoader
         integrity-handlers.ts          # Integrity verification + status
         trust-graph-handlers.ts        # Trust Graph CRUD + queries
         superpowers-handlers.ts        # Superpowers registry operations
+        superpower-ecosystem-handlers.ts  # Superpower ecosystem ops
+        capability-gap-handlers.ts     # Capability gap detection
+        commitment-tracker-handlers.ts # Commitment tracking
+        context-graph-handlers.ts      # Context graph queries
+        context-stream-handlers.ts     # Context streaming
+        context-tool-router-handlers.ts  # Context-aware routing
+        daily-briefing-handlers.ts     # Daily briefing
+        intelligence-router-handlers.ts  # Intelligence routing
+        meeting-intelligence-handlers.ts # Meeting intelligence
+        memory-personality-bridge-handlers.ts  # Memory-personality bridge
+        memory-quality-handlers.ts     # Memory quality scoring
+        outbound-intelligence-handlers.ts  # Outbound intelligence
+        personality-calibration-handlers.ts  # Personality calibration
+        state-export-handlers.ts       # State export/import
+        unified-inbox-handlers.ts      # Unified inbox
+        workflow-executor-handlers.ts  # Workflow execution
+        workflow-recorder-handlers.ts  # Workflow recording
 
       pageindex/                       # Vectorless RAG engine (PageIndex port)
         index.ts                       # Public API barrel export
@@ -523,7 +586,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 137 source files, ~57,000 lines of TypeScript**
+**Total: 187 source files, ~77,000 lines of TypeScript**
 
 ### Technology Stack
 
