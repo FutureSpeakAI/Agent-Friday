@@ -1354,6 +1354,15 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                       console.warn('[GeminiLive] Voice sample error:', msg);
                       resultText = `Voice sample generation failed: ${msg}. Describe the voice instead.`;
                     }
+                  } else if (fc.name === 'acknowledge_introduction') {
+                    // Trust introduction complete — user is ready to proceed to intake
+                    const userResponse = String(fc.args?.user_response || '');
+                    const questions = fc.args?.questions_asked as string[] || [];
+                    console.log('[GeminiLive] Trust introduction acknowledged:', userResponse);
+                    if (questions.length > 0) {
+                      console.log('[GeminiLive] User asked questions:', questions.join(', '));
+                    }
+                    resultText = 'Trust introduction acknowledged. The user understands the system and is ready for setup. Now transition to the intake phase — ask the three "Her" questions one at a time.';
                   } else if (fc.name === 'save_intake_responses') {
                     // "Her" intake — save the three raw responses and generate psych profile
                     const responses = {
