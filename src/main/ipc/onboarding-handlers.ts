@@ -104,6 +104,45 @@ export function registerOnboardingHandlers(): void {
   ipcMain.handle('evolution:get-state', () => getEvolutionState());
   ipcMain.handle('evolution:increment-session', async () => incrementSession());
 
+  // ── Desktop evolution (3D visualization structure index) ──────────
+  ipcMain.handle('desktop-evolution:get-index', () => {
+    const { settingsManager } = require('../settings');
+    return settingsManager.get().desktopEvolutionIndex ?? 0;
+  });
+  ipcMain.handle('desktop-evolution:set-index', (_event: any, index: number) => {
+    const { settingsManager } = require('../settings');
+    settingsManager.set('desktopEvolutionIndex', index);
+    settingsManager.set('desktopEvolutionLastChange', Date.now());
+  });
+  ipcMain.handle('desktop-evolution:get-transition', () => {
+    const { settingsManager } = require('../settings');
+    const settings = settingsManager.get();
+    return {
+      currentIndex: settings.desktopEvolutionIndex ?? 0,
+      targetIndex: settings.desktopEvolutionIndex ?? 0,
+      blend: 1.0,
+      lastChange: settings.desktopEvolutionLastChange ?? 0,
+    };
+  });
+
+  // ── Art evolution (weekly Gemini-powered visual evolution) ────────
+  ipcMain.handle('art-evolution:get-state', () => {
+    const { getArtEvolutionState } = require('../art-evolution');
+    return getArtEvolutionState();
+  });
+  ipcMain.handle('art-evolution:get-latest', () => {
+    const { getLatestEvolution } = require('../art-evolution');
+    return getLatestEvolution();
+  });
+  ipcMain.handle('art-evolution:check', async () => {
+    const { checkAndEvolve } = require('../art-evolution');
+    return checkAndEvolve();
+  });
+  ipcMain.handle('art-evolution:force', async () => {
+    const { forceEvolve } = require('../art-evolution');
+    return forceEvolve();
+  });
+
   // ── Voice audition ────────────────────────────────────────────────
   ipcMain.handle('voice-audition:generate-sample', async (_event, voiceName: string, customPhrase?: string) => {
     return generateVoiceSample(voiceName as GeminiVoiceName, customPhrase);
