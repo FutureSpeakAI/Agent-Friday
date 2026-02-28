@@ -1,8 +1,8 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-02-26
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, SOC, GitLoader.
+> **Last updated**: 2026-02-27
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
 
 ---
 
@@ -54,6 +54,11 @@ graph TB
             GITLOAD[GitLoader]
             OFFICE[Agent Office Manager]
             OPENROUTER[OpenRouter Provider]
+            TRUST[Trust Graph Engine]
+            CONTEXT[Context Stream Pipeline]
+            SUPERPOWERS[Superpowers Ecosystem]
+            WORKFLOWS[Workflow Recorder/Executor]
+            GITSUITE[Git Analysis Suite]
         end
 
         IPC[IPC Bridge / Preload]
@@ -180,6 +185,35 @@ graph LR
         PSYCH[Psychological Profile]
         PERSONA[Personality System]
         EVOLVE[Personality Evolution]
+        CALIB[Personality Calibration]
+    end
+
+    subgraph "Trust & People"
+        TRUST_ENGINE[Trust Graph Engine]
+        COMMITMENTS[Commitment Tracker]
+        PERSON_RES[Person Resolution]
+    end
+
+    subgraph "Context & Routing"
+        CTX_GRAPH[Context Graph]
+        CTX_STREAM[Context Stream]
+        CTX_ROUTER[Context Tool Router]
+        INTEL_ROUTER[Intelligence Router]
+    end
+
+    subgraph "Superpowers & Capabilities"
+        SP_REGISTRY[Superpowers Registry]
+        SP_SANDBOX[Superpower Sandbox]
+        SP_STORE[Superpower Store]
+        SP_ECO[Ecosystem Manager]
+        CAP_MANIFEST[Capability Manifest]
+        CAP_GAP[Gap Detector]
+    end
+
+    subgraph "Workflows & Git"
+        WF_RECORD[Workflow Recorder]
+        WF_EXEC[Workflow Executor]
+        GIT_SUITE[Git Analysis Suite]
     end
 
     subgraph "Presentation Layer"
@@ -190,6 +224,7 @@ graph LR
         ACTIONS[Action Feed]
         CHAT[Chat History]
         SHIELD[Integrity Shield]
+        SP_PANEL[Superpowers Panel]
     end
 
     VOICE --> SESSION
@@ -1370,40 +1405,62 @@ graph TD
 
 ## Appendix A: File Inventory
 
-### Main Process (`src/main/`) — 97 files
+### Main Process (`src/main/`) — 152 files
 
 | Directory | File | Domain | Purpose |
 |-----------|------|--------|---------|
-| root | `index.ts` | Core | Entry point, window creation, IPC hub (~470 lines) |
-| root | `server.ts` | Core | Express API + Anthropic SDK client (~524 lines) |
-| root | `settings.ts` | Core | Persistent JSON settings store (~432 lines) |
-| root | `preload.ts` | Core | IPC bridge, 22+ namespaces (~400 lines) |
-| root | `desktop-tools.ts` | Core | OS-level tool declarations + execution (~1154 lines) |
+| root | `index.ts` | Core | Entry point, window creation, IPC hub |
+| root | `server.ts` | Core | Express API + Anthropic SDK client |
+| root | `settings.ts` | Core | Persistent JSON settings store |
+| root | `preload.ts` | Core | IPC bridge, 30+ namespaces |
+| root | `desktop-tools.ts` | Core | OS-level tool declarations + execution |
 | root | `openrouter.ts` | Core | OpenRouter multi-model API client |
-| root | `memory.ts` | Memory | 3-tier memory manager (~449 lines) |
+| root | `errors.ts` | Core | Shared error types and utilities |
+| root | `memory.ts` | Memory | 3-tier memory manager with person mention extraction |
 | root | `episodic-memory.ts` | Memory | Session summarizer via Claude |
 | root | `relationship-memory.ts` | Memory | Trust, streaks, inside jokes |
 | root | `memory-consolidation.ts` | Memory | 6hr promotion engine |
+| root | `memory-quality.ts` | Memory | Memory quality scoring and pruning |
+| root | `memory-personality-bridge.ts` | Memory | Memory ↔ personality trait feedback loop |
 | root | `semantic-search.ts` | Memory | Gemini embeddings + cosine similarity |
 | root | `obsidian-memory.ts` | Memory | Bidirectional vault mirroring |
 | root | `ambient.ts` | Intelligence | 30s polling desktop context |
 | root | `sentiment.ts` | Intelligence | Mood classification |
 | root | `intelligence.ts` | Intelligence | Predictive briefings + check-ins |
+| root | `intelligence-router.ts` | Intelligence | Multi-source intelligence routing and prioritisation |
 | root | `predictor.ts` | Intelligence | Context prediction engine |
-| root | `personality.ts` | Identity | Dynamic system prompt builder (~575 lines) |
-| root | `onboarding.ts` | Identity | "Her"-inspired first-run flow (~414 lines) |
-| root | `psychological-profile.ts` | Identity | Claude psych analysis (~117 lines) |
+| root | `outbound-intelligence.ts` | Intelligence | Proactive outbound intelligence delivery |
+| root | `daily-briefing.ts` | Intelligence | Daily morning briefing generation |
+| root | `meeting-intelligence.ts` | Intelligence | Enhanced meeting context + attendee intelligence |
+| root | `personality.ts` | Identity | Dynamic system prompt builder |
+| root | `personality-calibration.ts` | Identity | Personality drift detection and correction |
+| root | `onboarding.ts` | Identity | "Her"-inspired first-run flow |
+| root | `psychological-profile.ts` | Identity | Claude psych analysis |
 | root | `personality-evolution.ts` | Identity | Trait → visual parameter mapping |
 | root | `feature-setup.ts` | Identity | 9-step guided setup |
 | root | `prompt-budget.ts` | Identity | Token allocation for personality context |
 | root | `voice-audition.ts` | Identity | Voice preview sample generation |
-| root | `soc-bridge.ts` | Automation | Python JSONL SOC bridge (~398 lines) |
-| root | `git-loader.ts` | Automation | GitHub repo clone + search + read (~690 lines) |
+| root | `trust-graph.ts` | People | Multi-dimensional person trust scoring, hermeneutic re-evaluation |
+| root | `commitment-tracker.ts` | People | Promise/commitment tracking across contacts |
+| root | `context-graph.ts` | Context | Graph-based contextual relationship model |
+| root | `context-stream.ts` | Context | Real-time context streaming pipeline |
+| root | `context-stream-bridge.ts` | Context | Context stream ↔ renderer bridge |
+| root | `context-tool-router.ts` | Context | Context-aware tool routing and selection |
+| root | `soc-bridge.ts` | Automation | Python JSONL SOC bridge |
+| root | `git-loader.ts` | Automation | GitHub repo clone + search + read |
+| root | `git-analyzer.ts` | Git | Repository analysis and code understanding |
+| root | `git-monitor.ts` | Git | Continuous repository change monitoring |
+| root | `git-review.ts` | Git | Automated code review and PR analysis |
+| root | `git-sandbox.ts` | Git | Sandboxed git operation execution |
+| root | `git-scanner.ts` | Git | Repository scanning and indexing |
+| root | `workflow-recorder.ts` | Workflows | Record user workflows as replayable sequences |
+| root | `workflow-executor.ts` | Workflows | Execute recorded workflows |
 | root | `browser.ts` | Integration | WebSocket browser extension bridge |
 | root | `mcp-client.ts` | Integration | Model Context Protocol client |
 | root | `mcp-config.ts` | Integration | MCP server configuration |
 | root | `calendar.ts` | Integration | Google Calendar OAuth2 |
 | root | `communications.ts` | Integration | Unified communications layer |
+| root | `unified-inbox.ts` | Integration | Cross-channel message aggregation |
 | root | `scheduler.ts` | Scheduling | Persistent cron task engine |
 | root | `screen-capture.ts` | Infrastructure | Desktop screenshot capture |
 | root | `self-improve.ts` | Infrastructure | Source code reading + proposals |
@@ -1411,10 +1468,22 @@ graph TD
 | root | `document-ingestion.ts` | Infrastructure | PDF/document processing |
 | root | `clipboard-intelligence.ts` | Infrastructure | Clipboard monitoring |
 | root | `session-health.ts` | Infrastructure | Uptime & error tracking |
+| root | `service-status.ts` | Infrastructure | External service health monitoring |
+| root | `perf-monitor.ts` | Infrastructure | Performance metrics collection and analysis |
+| root | `state-export.ts` | Infrastructure | Full agent state export/import |
 | root | `call-integration.ts` | Infrastructure | VB-Cable call participation |
 | root | `meeting-prep.ts` | Infrastructure | Calendar event briefing |
 | root | `notifications.ts` | Infrastructure | System notification dispatch |
 | root | `eve-profile.ts` | Infrastructure | Agent profile persistence |
+| root | `consent-gate.ts` | Safety | User consent management for sensitive operations |
+| root | `adapter-engine.ts` | Superpowers | Dynamic adapter loading and execution |
+| root | `superpower-ecosystem.ts` | Superpowers | Superpower lifecycle and ecosystem management |
+| root | `superpower-sandbox.ts` | Superpowers | Sandboxed superpower execution environment |
+| root | `superpower-store.ts` | Superpowers | Superpower discovery and installation |
+| root | `superpowers-registry.ts` | Superpowers | Registry of available superpowers |
+| root | `capability-manifest.ts` | Capabilities | Agent capability declarations |
+| root | `capability-gap-detector.ts` | Capabilities | Detect and report missing capabilities |
+| root | `agent-network.ts` | Network | Multi-agent network coordination |
 | `integrity/` | `core-laws.ts` | Safety | Three Laws text + verification |
 | `integrity/` | `hmac.ts` | Safety | HMAC-SHA256 signing + validation |
 | `integrity/` | `memory-watchdog.ts` | Safety | Continuous integrity monitoring |
@@ -1423,19 +1492,63 @@ graph TD
 | `agent-office/` | `office-manager.ts` | Agents | Agent workspace state machine |
 | `agent-office/` | `office-layout.ts` | Agents | Isometric office grid + desk placement |
 | `agent-office/` | `office-types.ts` | Agents | Office type definitions |
-| `agents/` | `agent-runner.ts` | Agents | 5-concurrent execution engine (~637 lines) |
+| `agents/` | `agent-runner.ts` | Agents | 5-concurrent execution engine |
 | `agents/` | `builtin-agents.ts` | Agents | Agent definitions |
 | `agents/` | `agent-types.ts` | Agents | Shared agent types |
 | `agents/` | `agent-personas.ts` | Agents | Distinct agent personalities |
 | `agents/` | `agent-teams.ts` | Agents | Multi-agent coordination |
 | `agents/` | `agent-voice.ts` | Agents | ElevenLabs TTS for agents |
 | `agents/` | `orchestrator.ts` | Agents | Task decomposition |
-| `connectors/` | `registry.ts` + 17 modules | Connectors | 18 total connector modules |
+| `connectors/` | `registry.ts` | Connectors | Connector registry and lifecycle |
+| `connectors/` | `adobe.ts` | Connectors | Adobe Creative Cloud integration |
+| `connectors/` | `comms-hub.ts` | Connectors | Communications hub connector |
+| `connectors/` | `creative-3d.ts` | Connectors | Blender/3D creative tool integration |
+| `connectors/` | `dev-environments.ts` | Connectors | Development environment connector |
+| `connectors/` | `firecrawl.ts` | Connectors | Firecrawl web scraping connector |
+| `connectors/` | `git-devops.ts` | Connectors | Git/DevOps platform connector |
+| `connectors/` | `media-streaming.ts` | Connectors | Media streaming service connector |
+| `connectors/` | `office.ts` | Connectors | Microsoft Office integration |
+| `connectors/` | `openai-services.ts` | Connectors | OpenAI API services (DALL-E, Whisper, o3) |
+| `connectors/` | `pageindex.ts` | Connectors | PageIndex document connector |
+| `connectors/` | `perplexity.ts` | Connectors | Perplexity search API connector |
+| `connectors/` | `powershell.ts` | Connectors | PowerShell execution connector |
+| `connectors/` | `system-management.ts` | Connectors | OS system management connector |
+| `connectors/` | `terminal-sessions.ts` | Connectors | Terminal session connector |
+| `connectors/` | `ui-automation.ts` | Connectors | UI automation (RobotJS) connector |
+| `connectors/` | `vscode.ts` | Connectors | VS Code integration connector |
+| `connectors/` | `world-monitor.ts` | Connectors | Real-world event monitoring connector |
 | `gateway/` | 7 modules + `adapters/telegram.ts` | Gateway | Full messaging gateway system |
-| `ipc/` | 8 handler modules | IPC | Domain-specific IPC handlers |
+| `ipc/` | `index.ts` | IPC | IPC handler registry and init |
+| `ipc/` | `core-handlers.ts` | IPC | Core system IPC handlers |
+| `ipc/` | `agent-handlers.ts` | IPC | Agent framework IPC handlers |
+| `ipc/` | `agent-network-handlers.ts` | IPC | Agent network IPC handlers |
+| `ipc/` | `capability-gap-handlers.ts` | IPC | Capability gap detection IPC handlers |
+| `ipc/` | `commitment-tracker-handlers.ts` | IPC | Commitment tracking IPC handlers |
+| `ipc/` | `context-graph-handlers.ts` | IPC | Context graph IPC handlers |
+| `ipc/` | `context-stream-handlers.ts` | IPC | Context stream IPC handlers |
+| `ipc/` | `context-tool-router-handlers.ts` | IPC | Context-aware tool router IPC handlers |
+| `ipc/` | `daily-briefing-handlers.ts` | IPC | Daily briefing IPC handlers |
+| `ipc/` | `integration-handlers.ts` | IPC | Integration system IPC handlers |
+| `ipc/` | `integrity-handlers.ts` | IPC | Integrity system IPC handlers |
+| `ipc/` | `intelligence-router-handlers.ts` | IPC | Intelligence routing IPC handlers |
+| `ipc/` | `meeting-intelligence-handlers.ts` | IPC | Meeting intelligence IPC handlers |
+| `ipc/` | `memory-handlers.ts` | IPC | Memory system IPC handlers |
+| `ipc/` | `memory-personality-bridge-handlers.ts` | IPC | Memory-personality bridge IPC handlers |
+| `ipc/` | `memory-quality-handlers.ts` | IPC | Memory quality IPC handlers |
+| `ipc/` | `onboarding-handlers.ts` | IPC | Onboarding IPC handlers |
+| `ipc/` | `outbound-intelligence-handlers.ts` | IPC | Outbound intelligence IPC handlers |
+| `ipc/` | `personality-calibration-handlers.ts` | IPC | Personality calibration IPC handlers |
+| `ipc/` | `state-export-handlers.ts` | IPC | State export IPC handlers |
+| `ipc/` | `superpower-ecosystem-handlers.ts` | IPC | Superpower ecosystem IPC handlers |
+| `ipc/` | `superpowers-handlers.ts` | IPC | Superpowers registry IPC handlers |
+| `ipc/` | `tool-handlers.ts` | IPC | Tool execution IPC handlers |
+| `ipc/` | `trust-graph-handlers.ts` | IPC | Trust graph IPC handlers |
+| `ipc/` | `unified-inbox-handlers.ts` | IPC | Unified inbox IPC handlers |
+| `ipc/` | `workflow-executor-handlers.ts` | IPC | Workflow executor IPC handlers |
+| `ipc/` | `workflow-recorder-handlers.ts` | IPC | Workflow recorder IPC handlers |
 | `pageindex/` | 7 modules | Documents | Vectorless RAG engine (PageIndex port) |
 
-### Renderer (`src/renderer/`) — 35 files
+### Renderer (`src/renderer/`) — 36 files
 
 | Directory | File | Layer | Purpose |
 |-----------|------|-------|---------|
@@ -1466,6 +1579,7 @@ graph TD
 | `components/` | `MemoryExplorer.tsx` | UI | Memory browser |
 | `components/` | `QuickActions.tsx` | UI | Command palette (Ctrl+K) |
 | `components/` | `ResearchPanel.tsx` | UI | Research report sidebar |
+| `components/` | `SuperpowersPanel.tsx` | UI | Superpower management interface |
 | `components/` | `FileToast.tsx` | UI | File notification toasts |
 | `components/` | `ConnectionOverlay.tsx` | UI | Error recovery overlay |
 | `components/` | `WireframeNetwork.tsx` | Canvas | 2D particle network (primary BG) |
@@ -1475,7 +1589,7 @@ graph TD
 | `components/dashboard/` | `AgentCard.tsx` | Sub | Agent summary card |
 | `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
-### Grand Total: 132 source files, ~22,000+ lines of TypeScript
+### Grand Total: 187 source files, ~77,000 lines of TypeScript
 
 ---
 
@@ -1490,6 +1604,10 @@ graph TD
 | `eve-data/scheduled-tasks.json` | JSON array | Unlimited | Cron task definitions |
 | `eve-data/intelligence-topics.json` | JSON array | Unlimited | Research topic configs |
 | `eve-data/intelligence-cache.json` | JSON object | Per-topic | Cached research results |
+| `eve-data/trust-graph.json` | JSON array | 200 persons max | Trust Graph person nodes, evidence, scores |
+| `eve-data/commitment-tracker.json` | JSON array | Unlimited | Tracked promises and commitments |
+| `eve-data/context-graph.json` | JSON object | Singleton | Context relationship graph |
+| `eve-data/workflows/` | JSON files | Per-workflow | Recorded workflow definitions |
 | `eve-settings.json` | JSON object | Singleton | All settings, API keys, agent config |
 
 ---
