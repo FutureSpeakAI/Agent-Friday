@@ -6,11 +6,10 @@
  * Inspired by GitNexus: repos are loaded into memory for fast agent querying.
  */
 
-import { exec, execSync } from 'child_process';
+import { exec } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { randomUUID } from 'crypto';
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 

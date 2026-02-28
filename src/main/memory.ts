@@ -2,7 +2,6 @@ import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { appendLearning } from './eve-profile';
 import { settingsManager } from './settings';
 import {
   ensureVaultStructure,
@@ -38,6 +37,32 @@ function getTrustGraph() {
     }
   }
   return _trustGraph;
+}
+
+// Late-bound memory-personality bridge import to avoid circular dependency
+let _memoryPersonalityBridge: any = null;
+function getMemoryPersonalityBridge() {
+  if (!_memoryPersonalityBridge) {
+    try {
+      _memoryPersonalityBridge = require('./memory-personality-bridge').memoryPersonalityBridge;
+    } catch {
+      // Bridge not yet initialized — skip extraction guidance
+    }
+  }
+  return _memoryPersonalityBridge;
+}
+
+// Late-bound eve-profile import to avoid circular dependency: memory -> eve-profile -> memory
+let _appendLearning: any = null;
+function getAppendLearning() {
+  if (!_appendLearning) {
+    try {
+      _appendLearning = require('./eve-profile').appendLearning;
+    } catch {
+      // Eve profile not yet initialized — skip learning append
+    }
+  }
+  return _appendLearning;
 }
 
 export interface ShortTermEntry {
@@ -165,6 +190,16 @@ personMentions: Extract any people mentioned in the conversation (not the user t
 
 If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMentions": []}`;
 
+    // Inject personality-informed extraction guidance if available
+    const bridge = getMemoryPersonalityBridge();
+    let finalPrompt = extractionPrompt;
+    if (bridge) {
+      const guidance = bridge.getExtractionGuidance();
+      if (guidance) {
+        finalPrompt = extractionPrompt + guidance;
+      }
+    }
+
     try {
       // Use Anthropic SDK directly for extraction (cheapest reliable option)
       const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
@@ -173,7 +208,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
-        messages: [{ role: 'user', content: extractionPrompt }],
+        messages: [{ role: 'user', content: finalPrompt }],
       });
 
       const textBlock = response.content.find((b) => b.type === 'text');
@@ -202,7 +237,8 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
               source: 'extracted',
             });
             // Also append to living intelligence profile
-            appendLearning(item.fact, item.category || 'identity').catch(() => {});
+            const appendFn = getAppendLearning();
+            if (appendFn) appendFn(item.fact, item.category || 'identity').catch(() => {});
             // Index for semantic search
             semanticSearch.index(newId, item.fact, 'long-term', { category: item.category || 'identity' }).catch(() => {});
           }
@@ -255,6 +291,13 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
         }
       }
 
+      // Sync memory patterns → personality calibration via bridge
+      if (bridge) {
+        try { bridge.syncMemoryToPersonality(); } catch {
+          // Bridge sync is best-effort
+        }
+      }
+
       console.log(
         `[Memory] Extracted ${extracted.longTerm?.length || 0} long-term, ${extracted.mediumTerm?.length || 0} medium-term, ${extracted.personMentions?.length || 0} person mentions`
       );
@@ -283,7 +326,8 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
       });
       await this.save('longTerm');
       // Also append to living intelligence profile
-      appendLearning(fact, cat).catch(() => {});
+      const appendFn = getAppendLearning();
+      if (appendFn) appendFn(fact, cat).catch(() => {});
       // Index for semantic search
       semanticSearch.index(newId, fact, 'long-term', { category: cat, confirmed: true }).catch(() => {});
       console.log(`[Memory] Immediate save: "${fact}" (${cat})`);

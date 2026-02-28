@@ -148,7 +148,7 @@ function ActionCard({
       // Focus the window this agent is working in
       try {
         window.eve?.desktop?.focusWindow?.(action.windowTitle!);
-      } catch {}
+      } catch { /* focus failed */ }
     } else if (onOpenAgentDashboard) {
       onOpenAgentDashboard();
     }

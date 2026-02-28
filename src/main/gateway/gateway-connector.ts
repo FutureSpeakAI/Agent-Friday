@@ -15,23 +15,8 @@
  */
 
 import { gatewayManager } from './gateway-manager';
-
-// ── Types ──────────────────────────────────────────────────────────────
-
-interface ToolDeclaration {
-  name: string;
-  description: string;
-  parameters: {
-    type: string;
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
-}
-
-interface ToolResult {
-  result?: string;
-  error?: string;
-}
+import { requireConsent } from '../consent-gate';
+import type { ToolDeclaration, ToolResult } from '../connectors/registry';
 
 // ── Tool Declarations ──────────────────────────────────────────────────
 
@@ -134,6 +119,13 @@ async function handleSendMessage(args: Record<string, unknown>): Promise<ToolRes
   if (!channel) return { error: 'Missing required parameter: channel' };
   if (!recipientId) return { error: 'Missing required parameter: recipient_id' };
   if (!text) return { error: 'Missing required parameter: text' };
+
+  // cLaw Security Fix (CRITICAL-002): Require user consent before sending external messages.
+  // gateway_send_message bypassed the outbound-intelligence approval workflow.
+  const approved = await requireConsent('gateway_send_message', { channel, recipient_id: recipientId, text });
+  if (!approved) {
+    return { result: 'Message not sent — user denied or timed out.' };
+  }
 
   try {
     await gatewayManager.sendProactiveMessage(channel, recipientId, text);

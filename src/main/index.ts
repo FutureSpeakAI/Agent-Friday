@@ -61,11 +61,27 @@ import { connectorRegistry } from './connectors/registry';
 import { gatewayManager } from './gateway/gateway-manager';
 import { createTelegramAdapter } from './gateway/adapters/telegram';
 import { integrityManager, getCanonicalLaws } from './integrity';
+import { setConsentWindow } from './consent-gate';
 import { officeManager } from './agent-office/office-manager';
 import { pythonBridge } from './soc-bridge';
 import { gitLoader } from './git-loader';
 import { trustGraph } from './trust-graph';
 import { meetingIntelligence } from './meeting-intelligence';
+import { startContextStreamBridge, stopContextStreamBridge } from './context-stream-bridge';
+import { contextGraph } from './context-graph';
+import { commitmentTracker } from './commitment-tracker';
+import { dailyBriefingEngine } from './daily-briefing';
+import { workflowRecorder } from './workflow-recorder';
+import { workflowExecutor } from './workflow-executor';
+import { unifiedInbox } from './unified-inbox';
+import { outboundIntelligence } from './outbound-intelligence';
+import { intelligenceRouter } from './intelligence-router';
+import { agentNetwork } from './agent-network';
+import { superpowerEcosystem } from './superpower-ecosystem';
+import { stateExport } from './state-export';
+import { memoryQuality } from './memory-quality';
+import { personalityCalibration } from './personality-calibration';
+import { memoryPersonalityBridge } from './memory-personality-bridge';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -79,6 +95,23 @@ import {
   registerSuperpowersHandlers,
   registerTrustGraphHandlers,
   registerMeetingIntelligenceHandlers,
+  registerCapabilityGapHandlers,
+  registerContextStreamHandlers,
+  registerContextGraphHandlers,
+  registerContextToolRouterHandlers,
+  registerCommitmentTrackerHandlers,
+  registerDailyBriefingHandlers,
+  registerWorkflowRecorderHandlers,
+  registerWorkflowExecutorHandlers,
+  registerUnifiedInboxHandlers,
+  registerOutboundIntelligenceHandlers,
+  registerIntelligenceRouterHandlers,
+  registerAgentNetworkHandlers,
+  registerSuperpowerEcosystemHandlers,
+  registerStateExportHandlers,
+  registerMemoryQualityHandlers,
+  registerPersonalityCalibrationHandlers,
+  registerMemoryPersonalityBridgeHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -126,6 +159,7 @@ function createWindow() {
 
   setMainWindow(mainWindow);
   setMainWindowForSelfImprove(mainWindow);
+  setConsentWindow(mainWindow);
 
   mainWindow.maximize();
   mainWindow.once('ready-to-show', () => {
@@ -416,6 +450,63 @@ app.whenReady().then(async () => {
       console.warn('[EVE] Communications init failed:', err);
     });
 
+    commitmentTracker.initialize().catch((err) => {
+      console.warn('[EVE] Commitment tracker init failed:', err);
+    });
+
+    dailyBriefingEngine.initialize().catch((err) => {
+      console.warn('[EVE] Daily briefing init failed:', err);
+    });
+
+    workflowRecorder.initialize().catch((err) => {
+      console.warn('[EVE] Workflow recorder init failed:', err);
+    });
+
+    workflowExecutor.initialize().catch((err) => {
+      console.warn('[EVE] Workflow executor init failed:', err);
+    });
+
+    unifiedInbox.initialize().catch((err) => {
+      console.warn('[EVE] Unified inbox init failed:', err);
+    });
+
+    outboundIntelligence.initialize().catch((err) => {
+      console.warn('[EVE] Outbound intelligence init failed:', err);
+    });
+
+    intelligenceRouter.initialize().catch((err) => {
+      console.warn('[EVE] Intelligence router init failed:', err);
+    });
+
+    agentNetwork.initialize().catch((err) => {
+      console.warn('[EVE] Agent network init failed:', err);
+    });
+
+    superpowerEcosystem.initialize().catch((err) => {
+      console.warn('[EVE] Superpower ecosystem init failed:', err);
+    });
+
+    stateExport.initialize().catch((err) => {
+      console.warn('[EVE] State export engine init failed:', err);
+    });
+
+    memoryQuality.initialize().catch((err) => {
+      console.warn('[EVE] Memory quality engine init failed:', err);
+    });
+
+    personalityCalibration.initialize().catch((err) => {
+      console.warn('[EVE] Personality calibration init failed:', err);
+    });
+
+    memoryPersonalityBridge.initialize().catch((err) => {
+      console.warn('[EVE] Memory-personality bridge init failed:', err);
+    });
+
+    // Start the context stream bridge (after all engines are initialized)
+    startContextStreamBridge();
+    contextGraph.start();
+    console.log('[EVE] Context stream bridge + graph started');
+
     connectorRegistry.initialize().catch((err) => {
       console.warn('[EVE] Connector registry init failed:', err);
     });
@@ -449,6 +540,23 @@ app.whenReady().then(async () => {
   registerSuperpowersHandlers();
   registerTrustGraphHandlers();
   registerMeetingIntelligenceHandlers();
+  registerCapabilityGapHandlers();
+  registerContextStreamHandlers();
+  registerContextGraphHandlers();
+  registerContextToolRouterHandlers();
+  registerCommitmentTrackerHandlers();
+  registerDailyBriefingHandlers();
+  registerWorkflowRecorderHandlers();
+  registerWorkflowExecutorHandlers();
+  registerUnifiedInboxHandlers();
+  registerOutboundIntelligenceHandlers();
+  registerIntelligenceRouterHandlers();
+  registerAgentNetworkHandlers();
+  registerSuperpowerEcosystemHandlers();
+  registerStateExportHandlers();
+  registerMemoryQualityHandlers();
+  registerPersonalityCalibrationHandlers();
+  registerMemoryPersonalityBridgeHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
@@ -480,7 +588,10 @@ app.on('window-all-closed', async () => {
   calendarIntegration.stop();
   meetingPrep.stop();
   meetingIntelligence.stop();
+  contextGraph.stop();
+  stopContextStreamBridge();
   communications.stop();
+  agentNetwork.stop().catch(() => {});
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
   if (process.platform !== 'darwin') app.quit();

@@ -9,7 +9,7 @@
 export class AudioPlaybackEngine {
   private ctx: AudioContext;
   private analyser: AnalyserNode;
-  private analyserData: Uint8Array;
+  private analyserData: Uint8Array<ArrayBuffer>;
   private queue: Float32Array[] = [];
   private nextStartTime = 0;
   private isPlaying = false;

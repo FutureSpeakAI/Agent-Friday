@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { app, safeStorage } from 'electron';
+import { app, safeStorage, dialog } from 'electron';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ const ALGORITHM = 'sha256';
 
 let signingKey: Buffer | null = null;
 let initialized = false;
+let safeStorageAvailable = false;
 
 // ── Initialization ────────────────────────────────────────────────────
 
@@ -41,6 +42,31 @@ export async function initializeHmac(): Promise<void> {
 
   // Check if safeStorage is available (DPAPI on Windows, Keychain on macOS)
   const canEncrypt = safeStorage.isEncryptionAvailable();
+  safeStorageAvailable = canEncrypt;
+
+  // cLaw Security Fix (HIGH-001): Loud warning when OS credential store is unavailable.
+  // Without safeStorage, HMAC keys are stored in plaintext — tamper detection still works
+  // (attacker must find the key file) but the security bar is much lower.
+  if (!canEncrypt) {
+    const msg = '[Integrity/HMAC] WARNING: OS credential store (safeStorage) is NOT available. '
+      + 'HMAC signing keys will be stored unencrypted. Integrity tamper detection will still '
+      + 'function, but an attacker with filesystem access could forge signatures. '
+      + 'On Linux, install libsecret or kwallet. On Windows/macOS this should not happen.';
+    console.error(msg);
+    try {
+      dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'Agent Friday — Security Warning',
+        message: 'OS Credential Store Unavailable',
+        detail: 'The integrity system cannot encrypt its signing keys because the OS credential store '
+          + 'is not available. The agent will still function, but tamper-detection is weakened.\n\n'
+          + 'On Linux, install libsecret (GNOME) or kwallet (KDE) to resolve this.',
+        buttons: ['I Understand'],
+      });
+    } catch {
+      // Dialog may fail in headless/CI environments — that's OK, console warning suffices
+    }
+  }
 
   try {
     // Try to load existing key
@@ -88,6 +114,37 @@ export function sign(data: string): string {
   const hmac = crypto.createHmac(ALGORITHM, signingKey);
   hmac.update(data, 'utf8');
   return hmac.digest('hex');
+}
+
+/**
+ * Compute HMAC-SHA256 signature for an arbitrary binary payload.
+ * Returns raw bytes — callers can .toString('hex') if they need a string.
+ *
+ * Track X foundation: ledger transactions, DAG node signing, and cross-agent
+ * attestations operate on binary payloads, not UTF-8 strings.
+ */
+export function signBytes(data: Buffer): Buffer {
+  if (!signingKey) {
+    throw new Error('[Integrity/HMAC] Not initialized — call initializeHmac() first');
+  }
+
+  const hmac = crypto.createHmac(ALGORITHM, signingKey);
+  hmac.update(data);
+  return hmac.digest();
+}
+
+/**
+ * Verify an HMAC-SHA256 signature against a binary payload.
+ * Uses timing-safe comparison to prevent timing attacks.
+ */
+export function verifyBytes(data: Buffer, expectedSignature: Buffer): boolean {
+  if (!signingKey) {
+    throw new Error('[Integrity/HMAC] Not initialized — call initializeHmac() first');
+  }
+
+  const actual = signBytes(data);
+  if (actual.length !== expectedSignature.length) return false;
+  return crypto.timingSafeEqual(actual, expectedSignature);
 }
 
 /**
@@ -154,4 +211,12 @@ export async function verifyFile(filePath: string, expectedSignature: string): P
  */
 export function isInitialized(): boolean {
   return initialized;
+}
+
+/**
+ * Check if OS safeStorage is available for key encryption.
+ * cLaw Security Fix (HIGH-001): Expose this so other modules can degrade gracefully.
+ */
+export function isSafeStorageAvailable(): boolean {
+  return safeStorageAvailable;
 }

@@ -7,8 +7,12 @@
  */
 
 import { AgentDefinition, AgentContext } from './agent-types';
-import { agentRunner } from './agent-runner';
 import { settingsManager } from '../settings';
+
+// Late-bound import to avoid circular dependency: orchestrator -> agent-runner -> builtin-agents -> orchestrator
+function getAgentRunner() {
+  return require('./agent-runner').agentRunner;
+}
 
 interface SubTask {
   agentType: string;
@@ -34,7 +38,7 @@ async function decomposeGoal(
   context: string,
   callClaude: (prompt: string, maxTokens?: number) => Promise<string>
 ): Promise<PlanStep[]> {
-  const availableAgents = agentRunner.getAgentTypes();
+  const availableAgents: Array<{ name: string; description: string }> = getAgentRunner().getAgentTypes();
   const agentList = availableAgents
     .map((a) => `- "${a.name}": ${a.description}`)
     .join('\n');

@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
+import { useRef, useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
+import type * as THREE_NS from 'three';
 import type { MoodPalette } from '../contexts/MoodContext';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ function NexusCoreInner({
     });
 
     function initScene(THREE: typeof import('three')) {
+    if (!el) return;
 
     // Prevent double-init in StrictMode
     if (cleanupRef.current) {
@@ -125,14 +127,14 @@ function NexusCoreInner({
     // ════════════════════════════════════════════════════════════════════════
     // SEMANTIC COLOR MAP
     // ════════════════════════════════════════════════════════════════════════
-    const StateColors: Record<SemanticState, THREE.Color> = {
+    const StateColors: Record<SemanticState, THREE_NS.Color> = {
       LISTENING:  new THREE.Color(0x00e5ff),  // Cyan — Gemini/Voice
       REASONING:  new THREE.Color(0xb026ff),  // Purple — Claude Opus
       SUB_AGENTS: new THREE.Color(0xffaa00),  // Amber — Agent Team
       EXECUTING:  new THREE.Color(0x00ff66),  // Emerald — Tools/World Monitor
     };
-    let targetColor = StateColors.LISTENING.clone();
-    let currentColor = StateColors.LISTENING.clone();
+    const targetColor = StateColors.LISTENING.clone();
+    const currentColor = StateColors.LISTENING.clone();
     // Pre-allocated scratch colors — reused every frame to avoid GC pressure
     const _scratchColor = new THREE.Color();
     const _scratchBg = new THREE.Color();
@@ -308,10 +310,10 @@ function NexusCoreInner({
       opacity: 0.8,
     });
 
-    interface CorePiece extends THREE.Mesh {
+    interface CorePiece extends THREE_NS.Mesh {
       userData: {
-        basePos: THREE.Vector3;
-        randomDir: THREE.Vector3;
+        basePos: THREE_NS.Vector3;
+        randomDir: THREE_NS.Vector3;
         noiseOffset: number;
         rotX: number;
         rotY: number;
@@ -323,7 +325,7 @@ function NexusCoreInner({
       for (let y = 0; y < GRID_SIZE; y++) {
         for (let z = 0; z < GRID_SIZE; z++) {
           if (Math.random() > 0.8) continue; // fractured look
-          const piece = new THREE.Mesh(coreGeo, coreMat.clone()) as CorePiece;
+          const piece = new THREE.Mesh(coreGeo, coreMat.clone()) as unknown as CorePiece;
           const wireframe = new THREE.LineSegments(edgesGeo, edgesMat.clone());
           piece.add(wireframe);
           const posX = x * GRID_SPACING - GRID_OFFSET;
@@ -449,9 +451,9 @@ function NexusCoreInner({
       // Apply semantic+mood blended color to environment
       const bgScale = 0.03 + (mInt * 0.02); // Brighter background for high-intensity moods
       _scratchBg.copy(currentColor).multiplyScalar(bgScale);
-      (scene.background as THREE.Color).copy(_scratchBg);
-      scene.fog!.color.copy(scene.background as THREE.Color);
-      scene.fog!.density = 0.03 + (currentBass * 0.005) - (mTurb * 0.005); // Turbulence opens up fog
+      (scene.background as THREE_NS.Color).copy(_scratchBg);
+      (scene.fog as THREE_NS.FogExp2).color.copy(scene.background as THREE_NS.Color);
+      (scene.fog as THREE_NS.FogExp2).density = 0.03 + (currentBass * 0.005) - (mTurb * 0.005); // Turbulence opens up fog
 
       // Apply to geometry
       edgesMat.color.copy(currentColor);
@@ -644,15 +646,15 @@ function NexusCoreInner({
 
       // Dispose geometries & materials
       scene.traverse((obj) => {
-        if ((obj as THREE.Mesh).geometry) {
-          (obj as THREE.Mesh).geometry.dispose();
+        if ((obj as THREE_NS.Mesh).geometry) {
+          (obj as THREE_NS.Mesh).geometry.dispose();
         }
-        if ((obj as THREE.Mesh).material) {
-          const mat = (obj as THREE.Mesh).material;
+        if ((obj as THREE_NS.Mesh).material) {
+          const mat = (obj as THREE_NS.Mesh).material;
           if (Array.isArray(mat)) {
             mat.forEach((m) => m.dispose());
           } else {
-            (mat as THREE.Material).dispose();
+            (mat as THREE_NS.Material).dispose();
           }
         }
       });

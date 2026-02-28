@@ -539,9 +539,523 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.invoke('superpowers:update-permissions', id, perms),
     install: (repoUrl: string) => ipcRenderer.invoke('superpowers:install', repoUrl),
     uninstall: (id: string) => ipcRenderer.invoke('superpowers:uninstall', id),
+    uninstallPreview: (id: string) => ipcRenderer.invoke('superpowers:uninstall-preview', id),
     usageStats: (id: string) => ipcRenderer.invoke('superpowers:usage-stats', id),
     enabledTools: () => ipcRenderer.invoke('superpowers:enabled-tools'),
     flush: () => ipcRenderer.invoke('superpowers:flush'),
+    // v2 Adapted Superpower Store
+    storeList: () => ipcRenderer.invoke('superpowers:store-list'),
+    storeGet: (id: string) => ipcRenderer.invoke('superpowers:store-get', id),
+    storeConfirm: (id: string, consentToken: string) =>
+      ipcRenderer.invoke('superpowers:store-confirm', id, consentToken),
+    storeEnabledTools: () => ipcRenderer.invoke('superpowers:store-enabled-tools'),
+    storeStatus: () => ipcRenderer.invoke('superpowers:store-status'),
+    storePromptContext: () => ipcRenderer.invoke('superpowers:store-prompt-context'),
+    storeNeedsAttention: () => ipcRenderer.invoke('superpowers:store-needs-attention'),
+  },
+
+  capabilityGaps: {
+    record: (taskDescription: string) =>
+      ipcRenderer.invoke('capability-gaps:record', taskDescription),
+    top: (limit?: number) => ipcRenderer.invoke('capability-gaps:top', limit),
+    get: (gapId: string) => ipcRenderer.invoke('capability-gaps:get', gapId),
+    generateProposals: () => ipcRenderer.invoke('capability-gaps:generate-proposals'),
+    pendingProposals: () => ipcRenderer.invoke('capability-gaps:pending-proposals'),
+    acceptedProposals: () => ipcRenderer.invoke('capability-gaps:accepted-proposals'),
+    getProposal: (proposalId: string) => ipcRenderer.invoke('capability-gaps:get-proposal', proposalId),
+    present: (proposalId: string) => ipcRenderer.invoke('capability-gaps:present', proposalId),
+    accept: (proposalId: string) => ipcRenderer.invoke('capability-gaps:accept', proposalId),
+    decline: (proposalId: string) => ipcRenderer.invoke('capability-gaps:decline', proposalId),
+    markInstalled: (proposalId: string) => ipcRenderer.invoke('capability-gaps:mark-installed', proposalId),
+    promptContext: () => ipcRenderer.invoke('capability-gaps:prompt-context'),
+    status: () => ipcRenderer.invoke('capability-gaps:status'),
+    prune: () => ipcRenderer.invoke('capability-gaps:prune'),
+  },
+
+  contextStream: {
+    push: (event: {
+      type: string;
+      source: string;
+      summary: string;
+      data?: Record<string, unknown>;
+      dedupeKey?: string;
+      ttlMs?: number;
+    }) => ipcRenderer.invoke('context-stream:push', event),
+    snapshot: () => ipcRenderer.invoke('context-stream:snapshot'),
+    recent: (opts?: { limit?: number; types?: string[]; sinceMs?: number }) =>
+      ipcRenderer.invoke('context-stream:recent', opts),
+    byType: (type: string, limit?: number) =>
+      ipcRenderer.invoke('context-stream:by-type', type, limit),
+    latestByType: () => ipcRenderer.invoke('context-stream:latest-by-type'),
+    contextString: () => ipcRenderer.invoke('context-stream:context-string'),
+    promptContext: () => ipcRenderer.invoke('context-stream:prompt-context'),
+    status: () => ipcRenderer.invoke('context-stream:status'),
+    prune: () => ipcRenderer.invoke('context-stream:prune'),
+    setEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke('context-stream:set-enabled', enabled),
+    clear: () => ipcRenderer.invoke('context-stream:clear'),
+  },
+
+  contextGraph: {
+    snapshot: () => ipcRenderer.invoke('context-graph:snapshot'),
+    activeStream: () => ipcRenderer.invoke('context-graph:active-stream'),
+    recentStreams: (limit?: number) =>
+      ipcRenderer.invoke('context-graph:recent-streams', limit),
+    streamsByTask: (task: string) =>
+      ipcRenderer.invoke('context-graph:streams-by-task', task),
+    entitiesByType: (type: string, limit?: number) =>
+      ipcRenderer.invoke('context-graph:entities-by-type', type, limit),
+    topEntities: (limit?: number) =>
+      ipcRenderer.invoke('context-graph:top-entities', limit),
+    activeEntities: (windowMs?: number) =>
+      ipcRenderer.invoke('context-graph:active-entities', windowMs),
+    relatedEntities: (type: string, value: string, limit?: number) =>
+      ipcRenderer.invoke('context-graph:related-entities', type, value, limit),
+    contextString: () => ipcRenderer.invoke('context-graph:context-string'),
+    promptContext: () => ipcRenderer.invoke('context-graph:prompt-context'),
+    status: () => ipcRenderer.invoke('context-graph:status'),
+  },
+
+  toolRouter: {
+    suggestions: () => ipcRenderer.invoke('tool-router:suggestions'),
+    activeCategory: () => ipcRenderer.invoke('tool-router:active-category'),
+    categoryScores: () => ipcRenderer.invoke('tool-router:category-scores'),
+    snapshot: () => ipcRenderer.invoke('tool-router:snapshot'),
+    contextString: () => ipcRenderer.invoke('tool-router:context-string'),
+    promptContext: () => ipcRenderer.invoke('tool-router:prompt-context'),
+    status: () => ipcRenderer.invoke('tool-router:status'),
+    registerTools: (tools: Array<{ name: string; description?: string }>) =>
+      ipcRenderer.invoke('tool-router:register-tools', tools),
+    unregisterTool: (name: string) =>
+      ipcRenderer.invoke('tool-router:unregister-tool', name),
+    config: () => ipcRenderer.invoke('tool-router:config'),
+  },
+
+  commitments: {
+    getActive: () => ipcRenderer.invoke('commitment:get-active'),
+    getOverdue: () => ipcRenderer.invoke('commitment:get-overdue'),
+    getByPerson: (personName: string) =>
+      ipcRenderer.invoke('commitment:get-by-person', personName),
+    getUpcoming: (withinHours?: number) =>
+      ipcRenderer.invoke('commitment:get-upcoming', withinHours),
+    getById: (id: string) => ipcRenderer.invoke('commitment:get-by-id', id),
+    getAll: () => ipcRenderer.invoke('commitment:get-all'),
+    add: (mention: Record<string, unknown>) =>
+      ipcRenderer.invoke('commitment:add', mention),
+    complete: (id: string, notes?: string) =>
+      ipcRenderer.invoke('commitment:complete', id, notes),
+    cancel: (id: string, reason?: string) =>
+      ipcRenderer.invoke('commitment:cancel', id, reason),
+    snooze: (id: string, untilMs: number) =>
+      ipcRenderer.invoke('commitment:snooze', id, untilMs),
+    trackOutbound: (msg: { recipient: string; channel: string; summary: string }) =>
+      ipcRenderer.invoke('commitment:track-outbound', msg),
+    recordReply: (recipient: string, channel: string) =>
+      ipcRenderer.invoke('commitment:record-reply', recipient, channel),
+    getUnreplied: () => ipcRenderer.invoke('commitment:get-unreplied'),
+    generateSuggestions: () => ipcRenderer.invoke('commitment:generate-suggestions'),
+    getPendingSuggestions: () => ipcRenderer.invoke('commitment:get-pending-suggestions'),
+    markSuggestionDelivered: (id: string) =>
+      ipcRenderer.invoke('commitment:mark-suggestion-delivered', id),
+    markSuggestionActedOn: (id: string) =>
+      ipcRenderer.invoke('commitment:mark-suggestion-acted-on', id),
+    contextString: () => ipcRenderer.invoke('commitment:context-string'),
+    promptContext: () => ipcRenderer.invoke('commitment:prompt-context'),
+    status: () => ipcRenderer.invoke('commitment:status'),
+    config: () => ipcRenderer.invoke('commitment:config'),
+  },
+
+  dailyBriefing: {
+    generate: (type: string, sourceData: Record<string, unknown>) =>
+      ipcRenderer.invoke('briefing:generate', type, sourceData),
+    shouldGenerate: () => ipcRenderer.invoke('briefing:should-generate'),
+    adaptiveLength: (sourceData: Record<string, unknown>) =>
+      ipcRenderer.invoke('briefing:adaptive-length', sourceData),
+    getLatest: (type?: string) => ipcRenderer.invoke('briefing:get-latest', type),
+    getLatestToday: (type: string) => ipcRenderer.invoke('briefing:get-latest-today', type),
+    getById: (id: string) => ipcRenderer.invoke('briefing:get-by-id', id),
+    getHistory: (limit?: number) => ipcRenderer.invoke('briefing:get-history', limit),
+    getAll: () => ipcRenderer.invoke('briefing:get-all'),
+    markDelivered: (id: string, channel: string) =>
+      ipcRenderer.invoke('briefing:mark-delivered', id, channel),
+    markDeliveryFailed: (id: string, channel: string, reason: string) =>
+      ipcRenderer.invoke('briefing:mark-delivery-failed', id, channel, reason),
+    isStale: (type: string) => ipcRenderer.invoke('briefing:is-stale', type),
+    scheduledTimeToday: (timeStr: string) =>
+      ipcRenderer.invoke('briefing:scheduled-time-today', timeStr),
+    formatText: (id: string) => ipcRenderer.invoke('briefing:format-text', id),
+    formatMarkdown: (id: string) => ipcRenderer.invoke('briefing:format-markdown', id),
+    contextString: () => ipcRenderer.invoke('briefing:context-string'),
+    promptContext: () => ipcRenderer.invoke('briefing:prompt-context'),
+    status: () => ipcRenderer.invoke('briefing:status'),
+    config: () => ipcRenderer.invoke('briefing:config'),
+  },
+
+  workflowRecorder: {
+    startRecording: (name: string) =>
+      ipcRenderer.invoke('workflow:start-recording', name),
+    stopRecording: () => ipcRenderer.invoke('workflow:stop-recording'),
+    cancelRecording: () => ipcRenderer.invoke('workflow:cancel-recording'),
+    recordEvent: (type: string, description: string, payload?: Record<string, unknown>) =>
+      ipcRenderer.invoke('workflow:record-event', type, description, payload),
+    addAnnotation: (text: string) =>
+      ipcRenderer.invoke('workflow:add-annotation', text),
+    addKeyFrame: (filePath: string, activeApp: string) =>
+      ipcRenderer.invoke('workflow:add-keyframe', filePath, activeApp),
+    createTemplate: (recordingId: string, overrides?: Record<string, unknown>) =>
+      ipcRenderer.invoke('workflow:create-template', recordingId, overrides),
+    deleteTemplate: (id: string) =>
+      ipcRenderer.invoke('workflow:delete-template', id),
+    status: () => ipcRenderer.invoke('workflow:status'),
+    getRecording: (id: string) =>
+      ipcRenderer.invoke('workflow:get-recording', id),
+    getAllRecordings: () => ipcRenderer.invoke('workflow:get-all-recordings'),
+    getRecentRecordings: (limit?: number) =>
+      ipcRenderer.invoke('workflow:get-recent-recordings', limit),
+    getTemplate: (id: string) =>
+      ipcRenderer.invoke('workflow:get-template', id),
+    getAllTemplates: () => ipcRenderer.invoke('workflow:get-all-templates'),
+    getTemplatesByTag: (tag: string) =>
+      ipcRenderer.invoke('workflow:get-templates-by-tag', tag),
+    deleteRecording: (id: string) =>
+      ipcRenderer.invoke('workflow:delete-recording', id),
+    config: () => ipcRenderer.invoke('workflow:config'),
+  },
+
+  workflowExecutor: {
+    execute: (templateId: string, params?: Record<string, string>, triggeredBy?: string) =>
+      ipcRenderer.invoke('wf-exec:execute', templateId, params, triggeredBy),
+    pause: () => ipcRenderer.invoke('wf-exec:pause'),
+    resume: () => ipcRenderer.invoke('wf-exec:resume'),
+    cancel: () => ipcRenderer.invoke('wf-exec:cancel'),
+    provideUserResponse: (response: string) =>
+      ipcRenderer.invoke('wf-exec:provide-user-response', response),
+    grantPermission: (templateId: string, opts?: Record<string, unknown>) =>
+      ipcRenderer.invoke('wf-exec:grant-permission', templateId, opts),
+    revokePermission: (templateId: string) =>
+      ipcRenderer.invoke('wf-exec:revoke-permission', templateId),
+    getPermissions: () => ipcRenderer.invoke('wf-exec:get-permissions'),
+    activeRun: () => ipcRenderer.invoke('wf-exec:active-run'),
+    isRunning: () => ipcRenderer.invoke('wf-exec:is-running'),
+    runHistory: (limit?: number) =>
+      ipcRenderer.invoke('wf-exec:run-history', limit),
+    getRun: (runId: string) =>
+      ipcRenderer.invoke('wf-exec:get-run', runId),
+    getConfig: () => ipcRenderer.invoke('wf-exec:get-config'),
+    updateConfig: (updates: Record<string, unknown>) =>
+      ipcRenderer.invoke('wf-exec:update-config', updates),
+  },
+
+  inbox: {
+    getMessages: (opts?: Record<string, unknown>) =>
+      ipcRenderer.invoke('inbox:get-messages', opts),
+    getMessage: (id: string) =>
+      ipcRenderer.invoke('inbox:get-message', id),
+    getStats: () => ipcRenderer.invoke('inbox:get-stats'),
+    markRead: (ids: string | string[]) =>
+      ipcRenderer.invoke('inbox:mark-read', ids),
+    markUnread: (ids: string | string[]) =>
+      ipcRenderer.invoke('inbox:mark-unread', ids),
+    archive: (ids: string | string[]) =>
+      ipcRenderer.invoke('inbox:archive', ids),
+    unarchive: (ids: string | string[]) =>
+      ipcRenderer.invoke('inbox:unarchive', ids),
+    delete: (ids: string | string[]) =>
+      ipcRenderer.invoke('inbox:delete', ids),
+    markAllRead: () => ipcRenderer.invoke('inbox:mark-all-read'),
+    getConfig: () => ipcRenderer.invoke('inbox:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('inbox:update-config', partial),
+  },
+
+  outbound: {
+    createDraft: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:create-draft', params),
+    getDraft: (id: string) => ipcRenderer.invoke('outbound:get-draft', id),
+    editDraft: (id: string, updates: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:edit-draft', id, updates),
+    deleteDraft: (id: string) => ipcRenderer.invoke('outbound:delete-draft', id),
+    getDrafts: (opts?: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:get-drafts', opts),
+    getPending: () => ipcRenderer.invoke('outbound:get-pending'),
+    approve: (id: string) => ipcRenderer.invoke('outbound:approve', id),
+    reject: (id: string) => ipcRenderer.invoke('outbound:reject', id),
+    approveAll: () => ipcRenderer.invoke('outbound:approve-all'),
+    tryAutoApprove: (id: string) =>
+      ipcRenderer.invoke('outbound:try-auto-approve', id),
+    send: (id: string) => ipcRenderer.invoke('outbound:send', id),
+    approveAndSend: (id: string) =>
+      ipcRenderer.invoke('outbound:approve-and-send', id),
+    sendAllApproved: () => ipcRenderer.invoke('outbound:send-all-approved'),
+    batchReview: () => ipcRenderer.invoke('outbound:batch-review'),
+    getStyleProfile: (personId: string) =>
+      ipcRenderer.invoke('outbound:get-style-profile', personId),
+    updateStyleProfile: (personId: string, name: string, obs: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:update-style-profile', personId, name, obs),
+    getAllStyleProfiles: () =>
+      ipcRenderer.invoke('outbound:get-all-style-profiles'),
+    addStandingPermission: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:add-standing-permission', params),
+    revokeStandingPermission: (id: string) =>
+      ipcRenderer.invoke('outbound:revoke-standing-permission', id),
+    deleteStandingPermission: (id: string) =>
+      ipcRenderer.invoke('outbound:delete-standing-permission', id),
+    getStandingPermissions: () =>
+      ipcRenderer.invoke('outbound:get-standing-permissions'),
+    getAllStandingPermissions: () =>
+      ipcRenderer.invoke('outbound:get-all-standing-permissions'),
+    getStats: () => ipcRenderer.invoke('outbound:get-stats'),
+    getConfig: () => ipcRenderer.invoke('outbound:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('outbound:update-config', partial),
+    getPromptContext: () =>
+      ipcRenderer.invoke('outbound:get-prompt-context'),
+  },
+
+  intelligenceRouter: {
+    classifyTask: (params: {
+      messageContent: string;
+      toolCount: number;
+      hasImages: boolean;
+      hasAudio: boolean;
+      systemPromptLength: number;
+      conversationLength: number;
+    }) => ipcRenderer.invoke('router:classify-task', params),
+    selectModel: (task: Record<string, unknown>) =>
+      ipcRenderer.invoke('router:select-model', task),
+    classifyAndRoute: (params: {
+      messageContent: string;
+      toolCount: number;
+      hasImages: boolean;
+      hasAudio: boolean;
+      systemPromptLength: number;
+      conversationLength: number;
+    }) => ipcRenderer.invoke('router:classify-and-route', params),
+    recordOutcome: (decisionId: string, outcome: {
+      success: boolean;
+      durationMs: number;
+      inputTokens?: number;
+      outputTokens?: number;
+    }) => ipcRenderer.invoke('router:record-outcome', decisionId, outcome),
+    getModel: (modelId: string) =>
+      ipcRenderer.invoke('router:get-model', modelId),
+    getAllModels: () => ipcRenderer.invoke('router:get-all-models'),
+    getAvailableModels: () => ipcRenderer.invoke('router:get-available-models'),
+    registerModel: (model: Record<string, unknown>) =>
+      ipcRenderer.invoke('router:register-model', model),
+    setModelAvailability: (modelId: string, available: boolean) =>
+      ipcRenderer.invoke('router:set-model-availability', modelId, available),
+    resetModelFailures: (modelId: string) =>
+      ipcRenderer.invoke('router:reset-model-failures', modelId),
+    getDecision: (id: string) =>
+      ipcRenderer.invoke('router:get-decision', id),
+    getRecentDecisions: (limit?: number) =>
+      ipcRenderer.invoke('router:get-recent-decisions', limit),
+    getDecisionsForModel: (modelId: string, limit?: number) =>
+      ipcRenderer.invoke('router:get-decisions-for-model', modelId, limit),
+    getStats: () => ipcRenderer.invoke('router:get-stats'),
+    getConfig: () => ipcRenderer.invoke('router:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('router:update-config', partial),
+    getPromptContext: () =>
+      ipcRenderer.invoke('router:get-prompt-context'),
+  },
+
+  agentNetwork: {
+    getIdentity: () => ipcRenderer.invoke('agent-net:get-identity'),
+    getAgentId: () => ipcRenderer.invoke('agent-net:get-agent-id'),
+    generatePairingOffer: () => ipcRenderer.invoke('agent-net:generate-pairing-offer'),
+    getActivePairingCode: () => ipcRenderer.invoke('agent-net:get-active-pairing-code'),
+    acceptPairing: (remoteIdentity: Record<string, unknown>, ownerPersonId: string | null, ownerTrust: { overall: number } | null) =>
+      ipcRenderer.invoke('agent-net:accept-pairing', remoteIdentity, ownerPersonId, ownerTrust),
+    recordInboundPairing: (remoteIdentity: Record<string, unknown>) =>
+      ipcRenderer.invoke('agent-net:record-inbound-pairing', remoteIdentity),
+    blockAgent: (agentId: string) => ipcRenderer.invoke('agent-net:block-agent', agentId),
+    unpairAgent: (agentId: string) => ipcRenderer.invoke('agent-net:unpair-agent', agentId),
+    getPeer: (agentId: string) => ipcRenderer.invoke('agent-net:get-peer', agentId),
+    getAllPeers: () => ipcRenderer.invoke('agent-net:get-all-peers'),
+    getPairedPeers: () => ipcRenderer.invoke('agent-net:get-paired-peers'),
+    getPendingPairingRequests: () => ipcRenderer.invoke('agent-net:get-pending-pairing-requests'),
+    updatePeerTrust: (agentId: string, ownerTrust: { overall: number } | null, ownerPersonId?: string) =>
+      ipcRenderer.invoke('agent-net:update-peer-trust', agentId, ownerTrust, ownerPersonId),
+    setAutoApproveTaskTypes: (agentId: string, taskTypes: string[]) =>
+      ipcRenderer.invoke('agent-net:set-auto-approve-task-types', agentId, taskTypes),
+    updatePeerCapabilities: (agentId: string, capabilities: string[]) =>
+      ipcRenderer.invoke('agent-net:update-peer-capabilities', agentId, capabilities),
+    findPeersWithCapability: (capability: string) =>
+      ipcRenderer.invoke('agent-net:find-peers-with-capability', capability),
+    createMessage: (toAgentId: string, type: string, payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('agent-net:create-message', toAgentId, type, payload),
+    processInboundMessage: (message: Record<string, unknown>) =>
+      ipcRenderer.invoke('agent-net:process-inbound-message', message),
+    getMessageLog: (limit?: number) => ipcRenderer.invoke('agent-net:get-message-log', limit),
+    createDelegation: (targetAgentId: string, description: string, requiredCapabilities?: string[], deadline?: number) =>
+      ipcRenderer.invoke('agent-net:create-delegation', targetAgentId, description, requiredCapabilities, deadline),
+    handleInboundDelegation: (requestingAgentId: string, delegationId: string, description: string, requiredCapabilities: string[], deadline: number) =>
+      ipcRenderer.invoke('agent-net:handle-inbound-delegation', requestingAgentId, delegationId, description, requiredCapabilities, deadline),
+    approveDelegation: (delegationId: string) => ipcRenderer.invoke('agent-net:approve-delegation', delegationId),
+    rejectDelegation: (delegationId: string) => ipcRenderer.invoke('agent-net:reject-delegation', delegationId),
+    startDelegation: (delegationId: string) => ipcRenderer.invoke('agent-net:start-delegation', delegationId),
+    completeDelegation: (delegationId: string, result: unknown) =>
+      ipcRenderer.invoke('agent-net:complete-delegation', delegationId, result),
+    failDelegation: (delegationId: string, error: string) =>
+      ipcRenderer.invoke('agent-net:fail-delegation', delegationId, error),
+    cancelDelegation: (delegationId: string) => ipcRenderer.invoke('agent-net:cancel-delegation', delegationId),
+    getDelegation: (delegationId: string) => ipcRenderer.invoke('agent-net:get-delegation', delegationId),
+    getAllDelegations: () => ipcRenderer.invoke('agent-net:get-all-delegations'),
+    getDelegationsForAgent: (agentId: string) =>
+      ipcRenderer.invoke('agent-net:get-delegations-for-agent', agentId),
+    getPendingInboundDelegations: () => ipcRenderer.invoke('agent-net:get-pending-inbound-delegations'),
+    getStats: () => ipcRenderer.invoke('agent-net:get-stats'),
+    getConfig: () => ipcRenderer.invoke('agent-net:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('agent-net:update-config', partial),
+    getPromptContext: () => ipcRenderer.invoke('agent-net:get-prompt-context'),
+  },
+
+  ecosystem: {
+    createManifest: (opts: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:create-manifest', opts),
+    validateManifest: (manifest: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:validate-manifest', manifest),
+    getDeveloperKeys: () => ipcRenderer.invoke('ecosystem:get-developer-keys'),
+    hasDeveloperKeys: () => ipcRenderer.invoke('ecosystem:has-developer-keys'),
+    signPackage: (manifest: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:sign-package', manifest),
+    publishPackage: (pkg: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:publish-package', pkg),
+    getPublishedPackages: () => ipcRenderer.invoke('ecosystem:get-published-packages'),
+    getPublishedPackage: (packageId: string) =>
+      ipcRenderer.invoke('ecosystem:get-published-package', packageId),
+    unpublishPackage: (packageId: string) =>
+      ipcRenderer.invoke('ecosystem:unpublish-package', packageId),
+    searchRegistry: (query: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:search-registry', query),
+    getRegistryListing: (packageId: string) =>
+      ipcRenderer.invoke('ecosystem:get-registry-listing', packageId),
+    searchForCapability: (description: string, keywords: string[]) =>
+      ipcRenderer.invoke('ecosystem:search-for-capability', description, keywords),
+    initiatePurchase: (packageId: string, amountUsdCents: number, type?: string) =>
+      ipcRenderer.invoke('ecosystem:initiate-purchase', packageId, amountUsdCents, type),
+    approvePurchase: (transactionId: string, consentToken: string) =>
+      ipcRenderer.invoke('ecosystem:approve-purchase', transactionId, consentToken),
+    cancelPurchase: (transactionId: string) =>
+      ipcRenderer.invoke('ecosystem:cancel-purchase', transactionId),
+    executePurchase: (transactionId: string) =>
+      ipcRenderer.invoke('ecosystem:execute-purchase', transactionId),
+    getTransactions: () => ipcRenderer.invoke('ecosystem:get-transactions'),
+    getTransactionsForPackage: (packageId: string) =>
+      ipcRenderer.invoke('ecosystem:get-transactions-for-package', packageId),
+    getTransaction: (transactionId: string) =>
+      ipcRenderer.invoke('ecosystem:get-transaction', transactionId),
+    isPurchased: (packageId: string) =>
+      ipcRenderer.invoke('ecosystem:is-purchased', packageId),
+    getStats: () => ipcRenderer.invoke('ecosystem:get-stats'),
+    getConfig: () => ipcRenderer.invoke('ecosystem:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('ecosystem:update-config', partial),
+    getPromptContext: () => ipcRenderer.invoke('ecosystem:get-prompt-context'),
+  },
+
+  persistence: {
+    exportState: (passphrase: string, outputPath?: string) =>
+      ipcRenderer.invoke('persistence:export-state', passphrase, outputPath),
+    exportIncremental: (passphrase: string, outputPath?: string) =>
+      ipcRenderer.invoke('persistence:export-incremental', passphrase, outputPath),
+    importState: (archivePath: string, passphrase: string) =>
+      ipcRenderer.invoke('persistence:import-state', archivePath, passphrase),
+    validateArchive: (archivePath: string, passphrase: string) =>
+      ipcRenderer.invoke('persistence:validate-archive', archivePath, passphrase),
+    setAutoPassphrase: (passphrase: string) =>
+      ipcRenderer.invoke('persistence:set-auto-passphrase', passphrase),
+    clearAutoPassphrase: () =>
+      ipcRenderer.invoke('persistence:clear-auto-passphrase'),
+    runScheduledBackup: () =>
+      ipcRenderer.invoke('persistence:run-scheduled-backup'),
+    getStateFiles: () => ipcRenderer.invoke('persistence:get-state-files'),
+    enumerateState: () => ipcRenderer.invoke('persistence:enumerate-state'),
+    getBackupHistory: () => ipcRenderer.invoke('persistence:get-backup-history'),
+    getLastBackup: () => ipcRenderer.invoke('persistence:get-last-backup'),
+    getConfig: () => ipcRenderer.invoke('persistence:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('persistence:update-config', partial),
+    getPromptContext: () => ipcRenderer.invoke('persistence:get-prompt-context'),
+    checkContinuity: () => ipcRenderer.invoke('persistence:check-continuity'),
+  },
+
+  memoryQuality: {
+    assessExtraction: (results: Array<Record<string, unknown>>) =>
+      ipcRenderer.invoke('memquality:assess-extraction', results),
+    assessRetrieval: (results: Array<Record<string, unknown>>) =>
+      ipcRenderer.invoke('memquality:assess-retrieval', results),
+    assessConsolidation: (results: Array<Record<string, unknown>>) =>
+      ipcRenderer.invoke('memquality:assess-consolidation', results),
+    assessPersonMentions: (results: Array<Record<string, unknown>>) =>
+      ipcRenderer.invoke('memquality:assess-person-mentions', results),
+    buildReport: (
+      extractionResults: Array<Record<string, unknown>>,
+      retrievalResults: Array<Record<string, unknown>>,
+      consolidationResults: Array<Record<string, unknown>>,
+    ) => ipcRenderer.invoke('memquality:build-report', extractionResults, retrievalResults, consolidationResults),
+    getExtractionBenchmarks: () => ipcRenderer.invoke('memquality:get-extraction-benchmarks'),
+    getRetrievalBenchmarks: () => ipcRenderer.invoke('memquality:get-retrieval-benchmarks'),
+    getConsolidationBenchmarks: () => ipcRenderer.invoke('memquality:get-consolidation-benchmarks'),
+    getLatestReport: () => ipcRenderer.invoke('memquality:get-latest-report'),
+    getQualityHistory: () => ipcRenderer.invoke('memquality:get-quality-history'),
+    getQualityTrend: (count?: number) => ipcRenderer.invoke('memquality:get-quality-trend', count),
+    getConfig: () => ipcRenderer.invoke('memquality:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('memquality:update-config', partial),
+    getPromptContext: () => ipcRenderer.invoke('memquality:get-prompt-context'),
+  },
+
+  personalityCalibration: {
+    processMessage: (text: string, responseTimeMs?: number) =>
+      ipcRenderer.invoke('calibration:process-message', text, responseTimeMs),
+    recordDismissal: () => ipcRenderer.invoke('calibration:record-dismissal'),
+    recordEngagement: () => ipcRenderer.invoke('calibration:record-engagement'),
+    incrementSession: () => ipcRenderer.invoke('calibration:increment-session'),
+    getDimensions: () => ipcRenderer.invoke('calibration:get-dimensions'),
+    getState: () => ipcRenderer.invoke('calibration:get-state'),
+    getDismissalRate: () => ipcRenderer.invoke('calibration:get-dismissal-rate'),
+    getEffectiveProactivity: (isCritical: boolean) =>
+      ipcRenderer.invoke('calibration:get-effective-proactivity', isCritical),
+    getHistory: () => ipcRenderer.invoke('calibration:get-history'),
+    getExplanation: () => ipcRenderer.invoke('calibration:get-explanation'),
+    getPromptContext: () => ipcRenderer.invoke('calibration:get-prompt-context'),
+    getVisualWarmthModifier: () => ipcRenderer.invoke('calibration:get-visual-warmth-modifier'),
+    getVisualEnergyModifier: () => ipcRenderer.invoke('calibration:get-visual-energy-modifier'),
+    getConfig: () => ipcRenderer.invoke('calibration:get-config'),
+    updateConfig: (partial: Record<string, unknown>) =>
+      ipcRenderer.invoke('calibration:update-config', partial),
+    resetDimension: (dimension: string) =>
+      ipcRenderer.invoke('calibration:reset-dimension', dimension),
+    resetAll: () => ipcRenderer.invoke('calibration:reset-all'),
+  },
+
+  memoryPersonalityBridge: {
+    recordEngagement: (memoryId: string, type: string, context: string) =>
+      ipcRenderer.invoke('bridge:record-engagement', memoryId, type, context),
+    getEngagements: () => ipcRenderer.invoke('bridge:get-engagements'),
+    getPriorityAdjustments: () => ipcRenderer.invoke('bridge:get-priority-adjustments'),
+    getExtractionGuidance: () => ipcRenderer.invoke('bridge:get-extraction-guidance'),
+    getExtractionHints: () => ipcRenderer.invoke('bridge:get-extraction-hints'),
+    recomputeExtractionHints: () => ipcRenderer.invoke('bridge:recompute-extraction-hints'),
+    proposeProactivity: (proposal: any) => ipcRenderer.invoke('bridge:propose-proactivity', proposal),
+    arbitrateProactivity: () => ipcRenderer.invoke('bridge:arbitrate-proactivity'),
+    getProactivityCooldown: () => ipcRenderer.invoke('bridge:get-proactivity-cooldown'),
+    getPendingProposals: () => ipcRenderer.invoke('bridge:get-pending-proposals'),
+    recordExchange: (flattery: boolean, urgency: boolean, options: number) =>
+      ipcRenderer.invoke('bridge:record-exchange', flattery, urgency, options),
+    getManipulationMetrics: () => ipcRenderer.invoke('bridge:get-manipulation-metrics'),
+    getPromptContext: () => ipcRenderer.invoke('bridge:get-prompt-context'),
+    getState: () => ipcRenderer.invoke('bridge:get-state'),
+    getConfig: () => ipcRenderer.invoke('bridge:get-config'),
+    getRelevanceWeights: () => ipcRenderer.invoke('bridge:get-relevance-weights'),
+    syncMemoryToPersonality: () => ipcRenderer.invoke('bridge:sync-memory-to-personality'),
+    updateConfig: (updates: Record<string, unknown>) =>
+      ipcRenderer.invoke('bridge:update-config', updates),
+    reset: () => ipcRenderer.invoke('bridge:reset'),
   },
 
   shell: {

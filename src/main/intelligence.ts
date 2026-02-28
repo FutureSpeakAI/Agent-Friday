@@ -159,7 +159,7 @@ Focus on: actionable insights, interesting developments, things they'd genuinely
 
     for (const topic of topics) {
       let cronPattern: string;
-      let taskType: 'once' | 'recurring' = 'recurring';
+      const taskType: 'once' | 'recurring' = 'recurring';
 
       switch (topic.schedule) {
         case 'daily_morning':

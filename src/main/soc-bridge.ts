@@ -209,6 +209,9 @@ class PythonToolBridge {
 
 export const pythonBridge = new PythonToolBridge();
 
+// cLaw Security Fix (CRITICAL-007): Import centralized consent gate
+import { requireConsent } from './consent-gate';
+
 /* ── High-level API ────────────────────────────────────────────────────── */
 
 /**
@@ -220,6 +223,10 @@ export async function operateComputer(objective: string, model = 'gpt-4-with-ocr
   completed: boolean;
   summary: string;
 }> {
+  // cLaw Security Fix (CRITICAL-007): Autonomous screen control requires explicit user approval
+  const approved = await requireConsent('operate_computer', { objective, model, maxSteps });
+  if (!approved) throw new Error('User denied autonomous computer operation');
+
   const resp = await pythonBridge.send('soc', 'operate', undefined, { objective, model, max_steps: maxSteps }, 300000);
   if (resp.status === 'error') throw new Error(resp.error || 'SOC operation failed');
   return resp.result as { completed: boolean; summary: string };
@@ -238,6 +245,10 @@ export async function takeScreenshot(): Promise<{ image: string; width: number; 
  * Click at screen coordinates.
  */
 export async function clickScreen(x: number, y: number): Promise<void> {
+  // cLaw Security Fix (CRITICAL-007): Screen clicks can perform destructive UI actions
+  const approved = await requireConsent('soc_click', { x, y });
+  if (!approved) throw new Error('User denied screen click');
+
   const resp = await pythonBridge.send('soc', 'click', undefined, { x, y });
   if (resp.status === 'error') throw new Error(resp.error || 'Click failed');
 }
@@ -246,6 +257,10 @@ export async function clickScreen(x: number, y: number): Promise<void> {
  * Type text.
  */
 export async function typeText(text: string): Promise<void> {
+  // cLaw Security Fix (CRITICAL-007): Typing can enter passwords, submit forms, execute shortcuts
+  const approved = await requireConsent('soc_type', { text });
+  if (!approved) throw new Error('User denied text input');
+
   const resp = await pythonBridge.send('soc', 'type', undefined, { text });
   if (resp.status === 'error') throw new Error(resp.error || 'Type failed');
 }
@@ -254,6 +269,10 @@ export async function typeText(text: string): Promise<void> {
  * Press keyboard keys.
  */
 export async function pressKeys(keys: string[]): Promise<void> {
+  // cLaw Security Fix (CRITICAL-007): Key presses can execute shortcuts (Alt+F4, Ctrl+A+Del, etc.)
+  const approved = await requireConsent('soc_press_keys', { keys });
+  if (!approved) throw new Error('User denied key press');
+
   const resp = await pythonBridge.send('soc', 'press', undefined, { keys });
   if (resp.status === 'error') throw new Error(resp.error || 'Press failed');
 }
@@ -266,6 +285,10 @@ export async function browserTask(task: string, model = 'gpt-4o', maxSteps = 20,
   final_result: string;
   steps: number;
 }> {
+  // cLaw Security Fix (CRITICAL-007): Autonomous browser automation requires explicit approval
+  const approved = await requireConsent('browser_task', { task, model, maxSteps, headless });
+  if (!approved) throw new Error('User denied browser automation task');
+
   const resp = await pythonBridge.send('browser', 'run', undefined, { task, model, max_steps: maxSteps, headless }, 300000);
   if (resp.status === 'error') throw new Error(resp.error || 'Browser task failed');
   return resp.result as { completed: boolean; final_result: string; steps: number };

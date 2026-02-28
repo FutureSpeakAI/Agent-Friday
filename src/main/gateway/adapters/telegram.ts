@@ -65,7 +65,7 @@ class TelegramAdapter implements ChannelAdapter {
   }
 
   async sendMessage(response: GatewayResponse): Promise<void> {
-    let text = response.text;
+    const text = response.text;
 
     // Split long messages at paragraph boundaries
     if (text.length > MAX_MESSAGE_LENGTH) {

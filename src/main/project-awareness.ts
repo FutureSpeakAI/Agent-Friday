@@ -164,7 +164,7 @@ class ProjectAwareness {
           if (reqFile.includes('django')) framework = 'Django';
           else if (reqFile.includes('flask')) framework = 'Flask';
           else if (reqFile.includes('fastapi')) framework = 'FastAPI';
-        } catch {}
+        } catch { /* file read failed */ }
       }
 
       // Rust

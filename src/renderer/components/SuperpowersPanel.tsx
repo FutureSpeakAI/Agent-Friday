@@ -442,6 +442,17 @@ function ToggleSwitch({
 
 /* ── DetailView ────────────────────────────────────────────────────────── */
 
+interface UninstallPreview {
+  id: string;
+  name: string;
+  toolsRemoved: string[];
+  toolCount: number;
+  usageCount: number;
+  hasSourceCode: boolean;
+  hasBridgeScript: boolean;
+  dependencyCount: number;
+}
+
 function DetailView({
   superpower: sp,
   stats,
@@ -456,7 +467,22 @@ function DetailView({
   onUninstall: (id: string) => void;
 }) {
   const [showConfirmUninstall, setShowConfirmUninstall] = useState(false);
+  const [uninstallPreview, setUninstallPreview] = useState<UninstallPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const [detailTab, setDetailTab] = useState<'tools' | 'permissions' | 'safety' | 'stats'>('tools');
+
+  const handleUninstallClick = async () => {
+    setLoadingPreview(true);
+    try {
+      const preview = await eve.superpowers.uninstallPreview(sp.id);
+      setUninstallPreview(preview);
+    } catch {
+      // Fallback if preview fails — show basic confirmation
+      setUninstallPreview(null);
+    }
+    setLoadingPreview(false);
+    setShowConfirmUninstall(true);
+  };
 
   return (
     <div style={styles.detailRoot}>
@@ -520,20 +546,59 @@ function DetailView({
         )}
       </div>
 
-      {/* Danger zone */}
+      {/* Danger zone — cLaw Gate: enumerate what gets removed */}
       <div style={styles.dangerZone}>
         {!showConfirmUninstall ? (
           <button
-            onClick={() => setShowConfirmUninstall(true)}
+            onClick={handleUninstallClick}
             style={styles.uninstallBtn}
+            disabled={loadingPreview}
           >
-            Uninstall Superpower
+            {loadingPreview ? 'Loading…' : 'Uninstall Superpower'}
           </button>
         ) : (
-          <div style={styles.confirmRow}>
-            <span style={styles.confirmText}>Remove {sp.name}? This cannot be undone.</span>
-            <button onClick={() => onUninstall(sp.id)} style={styles.confirmYes}>Remove</button>
-            <button onClick={() => setShowConfirmUninstall(false)} style={styles.confirmNo}>Cancel</button>
+          <div style={styles.uninstallPreviewBox}>
+            <div style={styles.uninstallPreviewTitle}>
+              Remove {sp.name}? This cannot be undone.
+            </div>
+            {uninstallPreview && (
+              <div style={styles.uninstallPreviewDetails}>
+                <div style={styles.uninstallPreviewRow}>
+                  <span style={styles.uninstallPreviewLabel}>Tools removed:</span>
+                  <span style={styles.uninstallPreviewValue}>
+                    {uninstallPreview.toolCount} — {uninstallPreview.toolsRemoved.join(', ') || 'none'}
+                  </span>
+                </div>
+                {uninstallPreview.usageCount > 0 && (
+                  <div style={styles.uninstallPreviewRow}>
+                    <span style={styles.uninstallPreviewLabel}>Total invocations:</span>
+                    <span style={styles.uninstallPreviewValue}>{uninstallPreview.usageCount}</span>
+                  </div>
+                )}
+                {uninstallPreview.hasSourceCode && (
+                  <div style={styles.uninstallPreviewRow}>
+                    <span style={styles.uninstallPreviewLabel}>Source code:</span>
+                    <span style={styles.uninstallPreviewValue}>Will be deleted</span>
+                  </div>
+                )}
+                {uninstallPreview.hasBridgeScript && (
+                  <div style={styles.uninstallPreviewRow}>
+                    <span style={styles.uninstallPreviewLabel}>Bridge script:</span>
+                    <span style={styles.uninstallPreviewValue}>Will be removed</span>
+                  </div>
+                )}
+                {uninstallPreview.dependencyCount > 0 && (
+                  <div style={styles.uninstallPreviewRow}>
+                    <span style={styles.uninstallPreviewLabel}>Dependencies:</span>
+                    <span style={styles.uninstallPreviewValue}>{uninstallPreview.dependencyCount} packages</span>
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={styles.confirmRow}>
+              <button onClick={() => onUninstall(sp.id)} style={styles.confirmYes}>Remove</button>
+              <button onClick={() => { setShowConfirmUninstall(false); setUninstallPreview(null); }} style={styles.confirmNo}>Cancel</button>
+            </div>
           </div>
         )}
       </div>
@@ -1168,5 +1233,41 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 14px',
     borderRadius: 6,
     cursor: 'pointer',
+  },
+  uninstallPreviewBox: {
+    background: 'rgba(239, 68, 68, 0.04)',
+    border: '1px solid rgba(239, 68, 68, 0.15)',
+    borderRadius: 8,
+    padding: 14,
+  },
+  uninstallPreviewTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#ef4444',
+    marginBottom: 10,
+  },
+  uninstallPreviewDetails: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottom: '1px solid rgba(239, 68, 68, 0.1)',
+  },
+  uninstallPreviewRow: {
+    display: 'flex',
+    fontSize: 11,
+    gap: 8,
+    lineHeight: '1.4',
+  },
+  uninstallPreviewLabel: {
+    color: '#ef4444',
+    fontWeight: 600,
+    minWidth: 110,
+    flexShrink: 0,
+  },
+  uninstallPreviewValue: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    wordBreak: 'break-word' as const,
   },
 };

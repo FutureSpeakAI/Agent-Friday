@@ -15,6 +15,7 @@ import * as http from 'http';
 import * as net from 'net';
 import * as tls from 'tls';
 import { execFile } from 'child_process';
+import { requireConsent } from '../consent-gate';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -979,10 +980,29 @@ async function notificationToast(
 /*  execute() — main tool dispatcher                                   */
 /* ------------------------------------------------------------------ */
 
+/** cLaw Security Fix (CRITICAL-006): Tools that send data externally require user consent */
+const CONSENT_REQUIRED_TOOLS = new Set([
+  'slack_send_webhook',
+  'discord_send_webhook',
+  'teams_send_webhook',
+  'smtp_send_email',
+  'http_request',
+  'webhook_send',
+]);
+
 export async function execute(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
+  // cLaw Security Fix (CRITICAL-006): Gate all outbound communication tools behind consent.
+  // notification_toast is local-only and exempt.
+  if (CONSENT_REQUIRED_TOOLS.has(toolName)) {
+    const approved = await requireConsent(toolName, args);
+    if (!approved) {
+      return { result: `Action cancelled — user denied: ${toolName}` };
+    }
+  }
+
   try {
     let result: string;
 

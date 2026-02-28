@@ -8,7 +8,12 @@ import { app, BrowserWindow, Notification } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { intelligenceEngine } from './intelligence';
+import { workflowExecutor } from './workflow-executor';
+
+// Late-bound import to avoid circular dependency: scheduler -> intelligence -> scheduler
+function getIntelligenceEngine() {
+  return require('./intelligence').intelligenceEngine;
+}
 
 export interface ScheduledTask {
   id: string;
@@ -16,7 +21,7 @@ export interface ScheduledTask {
   type: 'once' | 'recurring';
   triggerTime?: number;      // Unix ms for one-time tasks
   cronPattern?: string;      // "minute hour dayOfMonth month dayOfWeek" for recurring
-  action: 'remind' | 'launch_app' | 'run_command' | 'research' | 'gateway_message';
+  action: 'remind' | 'launch_app' | 'run_command' | 'research' | 'gateway_message' | 'run_workflow';
   payload: string;
   enabled: boolean;
   createdAt: number;
@@ -50,11 +55,11 @@ export const SCHEDULER_TOOL_DECLARATIONS = [
         },
         action: {
           type: 'string',
-          description: '"remind" (speak reminder), "launch_app" (open an app), "run_command" (execute PowerShell), "research" (run background research), or "gateway_message" (send via messaging gateway).',
+          description: '"remind" (speak reminder), "launch_app" (open an app), "run_command" (execute PowerShell), "research" (run background research), "gateway_message" (send via messaging gateway), or "run_workflow" (replay a recorded workflow template).',
         },
         payload: {
           type: 'string',
-          description: 'For remind: the reminder text. For launch_app: app name. For run_command: the command. For gateway_message: JSON with { channel, recipientId, text }.',
+          description: 'For remind: the reminder text. For launch_app: app name. For run_command: the command. For gateway_message: JSON with { channel, recipientId, text }. For run_workflow: JSON with { templateId, parameters? }.',
         },
       },
       required: ['description', 'type', 'action', 'payload'],
@@ -124,7 +129,7 @@ class TaskScheduler {
       type: params.type === 'recurring' ? 'recurring' : 'once',
       triggerTime: params.trigger_time,
       cronPattern: params.cron_pattern,
-      action: (['remind', 'launch_app', 'run_command', 'research', 'gateway_message'].includes(params.action)
+      action: (['remind', 'launch_app', 'run_command', 'research', 'gateway_message', 'run_workflow'].includes(params.action)
         ? params.action
         : 'remind') as ScheduledTask['action'],
       payload: params.payload,
@@ -197,9 +202,27 @@ class TaskScheduler {
 
     // Research tasks run silently in the background
     if (task.action === 'research') {
-      intelligenceEngine.runResearch(task.payload).catch((err) => {
+      getIntelligenceEngine().runResearch(task.payload).catch((err: unknown) => {
         console.warn(`[Scheduler] Research task failed: ${task.description}`, err);
       });
+      return;
+    }
+
+    // Workflow replay tasks execute a recorded workflow template
+    if (task.action === 'run_workflow') {
+      try {
+        const { templateId, parameters } = JSON.parse(task.payload);
+        if (templateId) {
+          workflowExecutor.executeWorkflow(templateId, parameters || {}, 'schedule', task.id)
+            .catch((err) => {
+              console.warn(`[Scheduler] Workflow execution failed: ${task.description}`, err?.message || err);
+            });
+        } else {
+          console.warn(`[Scheduler] run_workflow missing templateId: ${task.payload}`);
+        }
+      } catch (err) {
+        console.warn(`[Scheduler] Invalid run_workflow payload: ${task.payload}`);
+      }
       return;
     }
 

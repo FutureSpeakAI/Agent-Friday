@@ -1,3 +1,4 @@
+/* globals AudioWorkletProcessor, registerProcessor */
 /**
  * AudioWorkletProcessor for mic capture.
  * Accumulates 4096 Float32 samples, converts to Int16 PCM, posts via MessagePort.
