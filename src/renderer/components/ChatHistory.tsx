@@ -8,9 +8,9 @@ interface ChatHistoryProps {
 }
 
 function getModelInfo(model?: string): { label: string; color: string; rgb: string } {
-  if (!model) return { label: 'EVE', color: '#a855f7', rgb: '168,85,247' };
+  if (!model) return { label: 'Friday', color: '#a855f7', rgb: '168,85,247' };
   if (model.includes('claude')) return { label: 'Claude', color: '#d4a574', rgb: '212,165,116' };
-  return { label: 'EVE', color: '#a855f7', rgb: '168,85,247' };
+  return { label: 'Friday', color: '#a855f7', rgb: '168,85,247' };
 }
 
 /** Inline copy button for code blocks */
@@ -117,7 +117,7 @@ export default function ChatHistory({ messages }: ChatHistoryProps) {
           <div style={styles.empty}>
             <div style={styles.emptyIcon}>◇</div>
             <div style={styles.emptyText}>No messages yet</div>
-            <div style={styles.emptyHint}>Press Space or click the orb to start</div>
+            <div style={styles.emptyHint}>Type a message to begin</div>
           </div>
         )}
         {messages.map((msg) => {
