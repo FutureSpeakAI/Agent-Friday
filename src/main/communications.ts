@@ -1,6 +1,6 @@
 /**
  * 7C — Communications Intelligence
- * Drafts emails, messages, and professional communications in EVE's user's voice.
+ * Drafts emails, messages, and professional communications in Friday's user's voice.
  * Learns writing style from memory and adapts tone per recipient/context.
  */
 

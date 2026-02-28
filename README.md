@@ -4,7 +4,7 @@
 
 <h1 align="center">Agent Friday</h1>
 <p align="center"><strong>The World's First AGI OS — An Asimov Agent by FutureSpeak.AI</strong></p>
-<p align="center">Text-first AI chief of staff with optional voice mode, genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
+<p align="center">Voice-first AI chief of staff with a robust text interface, genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
@@ -167,9 +167,9 @@ The installer lands in `release/`. Supports Windows (NSIS + ZIP), macOS (DMG + Z
 
 ## Features
 
-### Text-First Chat
+### Voice-First with Robust Text Interface
 
-Agent Friday v2.0.0 is a **text-first** AGI OS. The central interface is a full-width chat panel with streaming AI responses — no voice required:
+Agent Friday v2.0.0 is a **voice-first** AGI OS with a full-featured text interface. The central UI pairs real-time voice conversation with a full-width chat panel and streaming AI responses:
 
 - **Always-active text input** — type and send immediately; auto-connects to Gemini on first message
 - **Streaming replies** — see the agent's response arrive in real time, token by token
@@ -407,7 +407,7 @@ agent-friday/
       mcp-client.ts                    # Model Context Protocol client
       mcp-config.ts                    # MCP server configuration
       desktop-tools.ts                 # OS-level tool execution
-      eve-profile.ts                   # Agent profile persistence + Trust Graph enrichment
+      friday-profile.ts                # Agent profile persistence + Trust Graph enrichment
       preload.ts                       # IPC bridge (22+ namespaces, 90+ channels)
       prompt-budget.ts                 # Token allocation for personality context
       voice-audition.ts                # Voice preview sample generation
@@ -568,7 +568,7 @@ agent-friday/
       contexts/
         MoodContext.tsx                 # Mood state provider
       components/
-        NexusCore.tsx                  # 3D holographic desktop (Three.js)
+        FridayCore.tsx                 # 3D holographic desktop (Three.js)
         VoiceOrb.tsx                   # Central voice interaction orb
         WelcomeGate.tsx                # API key entry gate
         AgentCreation.tsx              # Cinematic reveal animation
@@ -668,7 +668,7 @@ npm run format:check     # Check format compliance
 
 ### Configuration
 
-All settings persist in `{userData}/eve-settings.json`:
+All settings persist in `{userData}/friday-settings.json`:
 
 | Category | What's Stored |
 |----------|--------------|

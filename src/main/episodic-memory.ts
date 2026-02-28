@@ -1,11 +1,11 @@
 /**
- * episodic-memory.ts — Episodic Memory Store for EVE OS.
+ * episodic-memory.ts — Episodic Memory Store for Agent Friday.
  *
  * Records timestamped session episodes with Claude-generated summaries,
  * topics, emotional tone, and key decisions. Episodes are created
  * automatically when a Gemini Live session disconnects (sessions >60s).
  *
- * Persisted to episodes.json + Obsidian vault (EVE/episodes/).
+ * Persisted to episodes.json + Obsidian vault (Friday/episodes/).
  */
 
 import { app } from 'electron';
@@ -262,7 +262,7 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
       const vaultPath = this.getVaultPath();
       if (vaultPath) {
         try {
-          const dir = path.join(vaultPath, 'EVE', 'episodes');
+          const dir = path.join(vaultPath, 'Friday', 'episodes');
           const files = await fs.readdir(dir);
           for (const file of files) {
             if (file.includes(id.slice(0, 8))) {
@@ -282,7 +282,7 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
 
   /**
    * Build context string for injection into personality.ts system instruction.
-   * Shows recent episode summaries so EVE can reference past conversations naturally.
+   * Shows recent episode summaries so Friday can reference past conversations naturally.
    */
   getContextString(): string {
     const recent = this.getRecent(5);
@@ -326,7 +326,7 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
     if (!vaultPath) return;
 
     try {
-      const dir = path.join(vaultPath, 'EVE', 'episodes');
+      const dir = path.join(vaultPath, 'Friday', 'episodes');
       await fs.mkdir(dir, { recursive: true });
 
       const date = new Date(episode.startTime);

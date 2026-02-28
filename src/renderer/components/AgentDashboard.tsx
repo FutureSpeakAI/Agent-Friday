@@ -135,7 +135,7 @@ export default function AgentDashboard({ visible, onClose }: AgentDashboardProps
         <div style={styles.taskList}>
           {tasks.length === 0 && (
             <div style={styles.emptyState}>
-              No agent tasks yet. Ask EVE to research something or review code to spawn a
+              No agent tasks yet. Ask Friday to research something or review code to spawn a
               background agent.
             </div>
           )}

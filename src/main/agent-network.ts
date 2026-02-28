@@ -479,7 +479,7 @@ export class AgentNetwork {
   // ── Initialization ────────────────────────────────────────────────
 
   async initialize(): Promise<void> {
-    this.dataDir = path.join(app.getPath('userData'), 'eve-data');
+    this.dataDir = path.join(app.getPath('userData'), 'friday-data');
     await fs.mkdir(this.dataDir, { recursive: true });
     await this.load();
 

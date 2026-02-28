@@ -72,7 +72,7 @@ const SHORT_PASSPHRASE = 'short';
 /** Create a minimal valid archive payload for testing. */
 function buildTestArchive(
   passphrase: string,
-  files: Record<string, string> = { 'eve-settings.json': '{"test":true}' },
+  files: Record<string, string> = { 'friday-settings.json': '{"test":true}' },
   opts: { incremental?: boolean; baseBackupTimestamp?: number } = {},
 ): { archiveJson: string; manifest: ArchiveManifest } {
   const salt = crypto.randomBytes(32);
@@ -341,14 +341,14 @@ describe('StateExportEngine — initialization', () => {
     expect(config.autoBackupPassphraseSet).toBe(false);
   });
 
-  it('creates backup, eve-data, and memory directories', async () => {
+  it('creates backup, friday-data, and memory directories', async () => {
     await createEngine();
     expect(mockFs.mkdir).toHaveBeenCalledWith(
       expect.stringContaining('backups'),
       { recursive: true },
     );
     expect(mockFs.mkdir).toHaveBeenCalledWith(
-      expect.stringContaining('eve-data'),
+      expect.stringContaining('friday-data'),
       { recursive: true },
     );
     expect(mockFs.mkdir).toHaveBeenCalledWith(
@@ -406,7 +406,7 @@ describe('StateExportEngine — state file paths', () => {
   it('includes critical files (settings, memory, trust-graph)', async () => {
     const engine = await createEngine();
     const paths = engine.getStateFilePaths();
-    expect(paths).toContain('eve-settings.json');
+    expect(paths).toContain('friday-settings.json');
     expect(paths).toContain('memory/long-term.json');
     expect(paths).toContain('trust-graph.json');
   });
@@ -437,18 +437,18 @@ describe('StateExportEngine — state file paths', () => {
 describe('StateExportEngine — enumerateState', () => {
   it('returns entries only for existing files', async () => {
     mockStateFiles({
-      'eve-settings.json': '{"name":"test"}',
+      'friday-settings.json': '{"name":"test"}',
       'memory/long-term.json': '[]',
     });
     const engine = await createEngine();
     const entries = await engine.enumerateState();
     expect(entries.length).toBe(2);
-    expect(entries[0].relativePath).toBe('eve-settings.json');
+    expect(entries[0].relativePath).toBe('friday-settings.json');
     expect(entries[1].relativePath).toBe('memory/long-term.json');
   });
 
   it('entries contain valid content hashes', async () => {
-    mockStateFiles({ 'eve-settings.json': '{"test":true}' });
+    mockStateFiles({ 'friday-settings.json': '{"test":true}' });
     const engine = await createEngine();
     const entries = await engine.enumerateState();
     expect(entries[0].contentHash).toMatch(/^[0-9a-f]{64}$/);
@@ -482,7 +482,7 @@ describe('StateExportEngine — exportState', () => {
 
   it('exports successfully with valid passphrase', async () => {
     mockStateFiles({
-      'eve-settings.json': '{"agentName":"Friday"}',
+      'friday-settings.json': '{"agentName":"Friday"}',
       'memory/long-term.json': '[{"fact":"test"}]',
     });
     const engine = await createEngine();
@@ -493,7 +493,7 @@ describe('StateExportEngine — exportState', () => {
   });
 
   it('writes archive to the specified output path', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/my-backup.friday-backup');
     expect(mockFs.writeFile).toHaveBeenCalledWith(
@@ -504,7 +504,7 @@ describe('StateExportEngine — exportState', () => {
   });
 
   it('archive JSON has correct format field', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/format-test.friday-backup');
 
@@ -518,7 +518,7 @@ describe('StateExportEngine — exportState', () => {
   });
 
   it('records backup in history', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/hist.friday-backup');
     const history = engine.getBackupHistory();
@@ -528,14 +528,14 @@ describe('StateExportEngine — exportState', () => {
   });
 
   it('manifest.incremental is false for full exports', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     const result = await engine.exportState(TEST_PASSPHRASE, '/tmp/full.friday-backup');
     expect(result.manifest.incremental).toBe(false);
   });
 
   it('reads agent name from settings', async () => {
-    mockStateFiles({ 'eve-settings.json': '{"agentName":"MyAgent"}' });
+    mockStateFiles({ 'friday-settings.json': '{"agentName":"MyAgent"}' });
     const engine = await createEngine();
     const result = await engine.exportState(TEST_PASSPHRASE, '/tmp/name.friday-backup');
     expect(result.manifest.agentName).toBe('MyAgent');
@@ -557,7 +557,7 @@ describe('StateExportEngine — exportState', () => {
 describe('StateExportEngine — validateArchive', () => {
   it('validates a correctly-built archive', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"ok":true}',
+      'friday-settings.json': '{"ok":true}',
     });
 
     mockFs.readFile.mockImplementation(async (p: string) => {
@@ -591,7 +591,7 @@ describe('StateExportEngine — validateArchive', () => {
 
   it('rejects archive with tampered content hash', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"test":1}',
+      'friday-settings.json': '{"test":1}',
     });
 
     // We need to tamper after encryption... Instead, build a custom malformed archive.
@@ -647,7 +647,7 @@ describe('StateExportEngine — validateArchive', () => {
   it('warns for incremental backups', async () => {
     const { archiveJson } = buildTestArchive(
       TEST_PASSPHRASE,
-      { 'eve-settings.json': '{}' },
+      { 'friday-settings.json': '{}' },
       { incremental: true, baseBackupTimestamp: 1000 },
     );
 
@@ -709,7 +709,7 @@ describe('StateExportEngine — validateArchive', () => {
 describe('StateExportEngine — importState', () => {
   it('imports a valid archive successfully', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"imported":true}',
+      'friday-settings.json': '{"imported":true}',
       'memory/long-term.json': '[]',
     });
 
@@ -728,7 +728,7 @@ describe('StateExportEngine — importState', () => {
 
   it('writes restored files to correct paths', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"restored":true}',
+      'friday-settings.json': '{"restored":true}',
     });
 
     mockFs.readFile.mockImplementation(async () => archiveJson);
@@ -738,7 +738,7 @@ describe('StateExportEngine — importState', () => {
     // Should have written the restored file
     const writeCalls = mockFs.writeFile.mock.calls;
     const restoreCall = writeCalls.find(
-      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('eve-settings.json'),
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('friday-settings.json'),
     );
     expect(restoreCall).toBeDefined();
   });
@@ -762,7 +762,7 @@ describe('StateExportEngine — importState', () => {
 
   it('refuses import with wrong passphrase (fail-closed)', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"secret":"data"}',
+      'friday-settings.json': '{"secret":"data"}',
     });
 
     mockFs.readFile.mockImplementation(async (p: string) => {
@@ -804,7 +804,7 @@ describe('StateExportEngine — importState', () => {
 
 describe('StateExportEngine — exportIncremental', () => {
   it('falls back to full export when no previous backup exists', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     const result = await engine.exportIncremental(TEST_PASSPHRASE, '/tmp/inc-full.friday-backup');
     expect(result.success).toBe(true);
@@ -824,7 +824,7 @@ describe('StateExportEngine — exportIncremental', () => {
     const newTimestamp = Date.now();
 
     // First, seed a backup in history
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/base.friday-backup');
 
@@ -832,7 +832,7 @@ describe('StateExportEngine — exportIncremental', () => {
     const backupTs = engine.getLastBackup()!.timestamp;
 
     mockFs.stat.mockImplementation(async (p: string) => {
-      if (p.toString().includes('eve-settings.json')) {
+      if (p.toString().includes('friday-settings.json')) {
         return { size: 2, mtimeMs: backupTs - 10000 }; // OLD — unchanged
       }
       if (p.toString().includes('long-term.json')) {
@@ -843,7 +843,7 @@ describe('StateExportEngine — exportIncremental', () => {
     mockFs.readFile.mockImplementation(async (p: string, enc?: string) => {
       if (p.toString().includes('backup-history')) throw new Error('ENOENT');
       if (p.toString().includes('.backup-passphrase')) throw new Error('ENOENT');
-      if (p.toString().includes('eve-settings.json')) {
+      if (p.toString().includes('friday-settings.json')) {
         return enc === 'utf-8' ? '{}' : Buffer.from('{}');
       }
       if (p.toString().includes('long-term.json')) {
@@ -860,14 +860,14 @@ describe('StateExportEngine — exportIncremental', () => {
   });
 
   it('reports no changes if all files are older than last backup', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/base2.friday-backup');
 
     // Now all files have mtimeMs BEFORE the backup
     const backupTs = engine.getLastBackup()!.timestamp;
     mockFs.stat.mockImplementation(async (p: string) => {
-      if (p.toString().includes('eve-settings.json')) {
+      if (p.toString().includes('friday-settings.json')) {
         return { size: 2, mtimeMs: backupTs - 50000 };
       }
       throw new Error('ENOENT');
@@ -875,7 +875,7 @@ describe('StateExportEngine — exportIncremental', () => {
     mockFs.readFile.mockImplementation(async (p: string) => {
       if (p.toString().includes('backup-history')) throw new Error('ENOENT');
       if (p.toString().includes('.backup-passphrase')) throw new Error('ENOENT');
-      if (p.toString().includes('eve-settings.json')) return Buffer.from('{}');
+      if (p.toString().includes('friday-settings.json')) return Buffer.from('{}');
       throw new Error('ENOENT');
     });
 
@@ -896,7 +896,7 @@ describe('StateExportEngine — backup history', () => {
   });
 
   it('getLastBackup returns most recent record', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
 
     await engine.exportState(TEST_PASSPHRASE, '/tmp/b1.friday-backup');
@@ -908,7 +908,7 @@ describe('StateExportEngine — backup history', () => {
   });
 
   it('returns defensive copy of history', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/def.friday-backup');
 
@@ -919,7 +919,7 @@ describe('StateExportEngine — backup history', () => {
   });
 
   it('prunes oldest backups when exceeding maxBackupCount', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine({ maxBackupCount: 2 });
 
     await engine.exportState(TEST_PASSPHRASE, '/tmp/p1.friday-backup');
@@ -933,7 +933,7 @@ describe('StateExportEngine — backup history', () => {
   });
 
   it('deletes pruned archive files from disk', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine({ maxBackupCount: 1 });
 
     await engine.exportState(TEST_PASSPHRASE, '/tmp/old.friday-backup');
@@ -990,7 +990,7 @@ describe('StateExportEngine — getPromptContext', () => {
   });
 
   it('includes time-since-last-backup after an export', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/ctx.friday-backup');
 
@@ -1001,7 +1001,7 @@ describe('StateExportEngine — getPromptContext', () => {
 
   it('shows auto-backup status', async () => {
     const engine = await createEngine({ autoBackupEnabled: true });
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     await engine.exportState(TEST_PASSPHRASE, '/tmp/auto-ctx.friday-backup');
 
     const ctx = engine.getPromptContext();
@@ -1039,7 +1039,7 @@ describe('StateExportEngine — checkContinuityReadiness', () => {
     const { ready, issues } = await engine.checkContinuityReadiness();
     expect(ready).toBe(false);
     expect(issues.length).toBeGreaterThan(0);
-    expect(issues.some(i => i.includes('eve-settings.json'))).toBe(true);
+    expect(issues.some(i => i.includes('friday-settings.json'))).toBe(true);
   });
 
   it('reports ready when critical files exist', async () => {
@@ -1053,7 +1053,7 @@ describe('StateExportEngine — checkContinuityReadiness', () => {
   it('lists specific missing critical files', async () => {
     // Only settings exists
     mockFs.access.mockImplementation(async (p: string) => {
-      if (p.toString().includes('eve-settings.json')) return undefined;
+      if (p.toString().includes('friday-settings.json')) return undefined;
       throw new Error('ENOENT');
     });
 
@@ -1062,7 +1062,7 @@ describe('StateExportEngine — checkContinuityReadiness', () => {
     expect(ready).toBe(false);
     expect(issues.some(i => i.includes('long-term.json'))).toBe(true);
     expect(issues.some(i => i.includes('trust-graph.json'))).toBe(true);
-    expect(issues.some(i => i.includes('eve-settings.json'))).toBe(false);
+    expect(issues.some(i => i.includes('friday-settings.json'))).toBe(false);
   });
 });
 
@@ -1094,7 +1094,7 @@ describe('StateExportEngine — scheduled backups', () => {
 
 describe('StateExportEngine — cLaw compliance', () => {
   it('archives are ALWAYS encrypted (no plaintext export)', async () => {
-    mockStateFiles({ 'eve-settings.json': '{"private":"data"}' });
+    mockStateFiles({ 'friday-settings.json': '{"private":"data"}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/claw.friday-backup');
 
@@ -1112,7 +1112,7 @@ describe('StateExportEngine — cLaw compliance', () => {
 
   it('wrong passphrase returns zero data (no partial leaks)', async () => {
     const { archiveJson } = buildTestArchive(TEST_PASSPHRASE, {
-      'eve-settings.json': '{"sensitive":"info"}',
+      'friday-settings.json': '{"sensitive":"info"}',
     });
 
     mockFs.readFile.mockImplementation(async (p: string) => {
@@ -1138,7 +1138,7 @@ describe('StateExportEngine — cLaw compliance', () => {
   });
 
   it('FutureSpeak has zero access: no external URLs in archive', async () => {
-    mockStateFiles({ 'eve-settings.json': '{}' });
+    mockStateFiles({ 'friday-settings.json': '{}' });
     const engine = await createEngine();
     await engine.exportState(TEST_PASSPHRASE, '/tmp/offline.friday-backup');
 
@@ -1157,7 +1157,7 @@ describe('StateExportEngine — cLaw compliance', () => {
 describe('StateExportEngine — round-trip', () => {
   it('export → validate → import round-trips cleanly', async () => {
     const testFiles = {
-      'eve-settings.json': '{"agentName":"RoundTrip","theme":"dark"}',
+      'friday-settings.json': '{"agentName":"RoundTrip","theme":"dark"}',
       'memory/long-term.json': '[{"fact":"I like tests","confidence":0.9}]',
       'trust-graph.json': '{"persons":[]}',
     };

@@ -1,11 +1,11 @@
 /**
  * intelligence.ts — Background intelligence engine.
  * Runs research tasks using Claude, stores briefings, and serves them
- * to the renderer for EVE to speak when the user returns.
+ * to the renderer for Friday to speak when the user returns.
  *
  * Flow: Scheduler fires "research" action → intelligence engine runs →
  * Claude produces a briefing → stored in briefings.json →
- * on next user interaction, EVE has the briefing ready.
+ * on next user interaction, Friday has the briefing ready.
  */
 
 import { app } from 'electron';

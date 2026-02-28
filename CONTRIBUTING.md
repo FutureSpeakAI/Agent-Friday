@@ -89,7 +89,7 @@ Use the **Feature Request** issue template. The most useful feature requests exp
 
 1. **Fork** the repository
 2. **Create a feature branch** from `main`: `git checkout -b feature/your-feature-name`
-3. **Write your code.** Follow the existing patterns in the codebase — TypeScript strict mode, the connector interface pattern, IPC channel naming conventions, JSON persistence in `eve-data/`
+3. **Write your code.** Follow the existing patterns in the codebase — TypeScript strict mode, the connector interface pattern, IPC channel naming conventions, JSON persistence in `friday-data/`
 4. **Run checks:** `npm run typecheck && npm run lint`
 5. **Commit** with a clear message: `git commit -m 'Add HEIC image conversion connector'`
 6. **Push** to your fork: `git push origin feature/your-feature-name`
@@ -131,7 +131,7 @@ Key subsystems:
 - **TypeScript strict mode.** No `any` types without justification.
 - **Explicit types on function signatures.** Inferred types are fine for local variables.
 - **Interface-first design.** Define the shape before the implementation, especially for connectors.
-- **JSON persistence pattern.** State files live in `eve-data/`. Settings live in `eve-settings.json`. Follow the existing read/write patterns.
+- **JSON persistence pattern.** State files live in `friday-data/`. Settings live in `friday-settings.json`. Follow the existing read/write patterns.
 - **IPC naming convention.** Channels follow the pattern `namespace:action` (e.g., `memory:search`, `calendar:listEvents`).
 - **No side effects in imports.** Module-level code should not perform I/O or modify global state.
 

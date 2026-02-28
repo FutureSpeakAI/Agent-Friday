@@ -1,5 +1,5 @@
 /**
- * project-awareness.ts — Project Awareness Engine for EVE OS.
+ * project-awareness.ts — Project Awareness Engine for Agent Friday.
  *
  * Watches project directories for changes, detects project type from
  * config files (package.json, requirements.txt, .git, etc.), and builds

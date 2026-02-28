@@ -130,7 +130,7 @@ describe('Context Graph — Track III Phase 2', () => {
     it('creates a work stream on first ambient event', () => {
       registeredListener!(makeEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts — agent-friday' },
       }));
 
       const active = graph.getActiveStream();
@@ -144,11 +144,11 @@ describe('Context Graph — Track III Phase 2', () => {
     it('includes project name in stream name from window title', () => {
       registeredListener!(makeEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
 
       const active = graph.getActiveStream();
-      expect(active!.name).toContain('nexus-os');
+      expect(active!.name).toContain('agent-friday');
     });
 
     it('creates new stream when app changes', () => {
@@ -245,7 +245,7 @@ describe('Context Graph — Track III Phase 2', () => {
       // Create an active stream first
       registeredListener!(makeEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
     });
 
@@ -288,7 +288,7 @@ describe('Context Graph — Track III Phase 2', () => {
 
     it('extracts project name from window title separator pattern', () => {
       const projectEntities = graph.getEntitiesByType('project');
-      expect(projectEntities.some(e => e.value === 'nexus-os')).toBe(true);
+      expect(projectEntities.some(e => e.value === 'agent-friday')).toBe(true);
     });
 
     it('extracts app from notification events', () => {
@@ -339,7 +339,7 @@ describe('Context Graph — Track III Phase 2', () => {
       registeredListener!(makeEvent({
         type: 'git',
         data: {
-          repo: 'nexus-os',
+          repo: 'agent-friday',
           branch: 'main',
           files: ['src/index.ts', 'src/app.ts'],
         },
@@ -347,7 +347,7 @@ describe('Context Graph — Track III Phase 2', () => {
       }));
 
       const projectEntities = graph.getEntitiesByType('project');
-      expect(projectEntities.some(e => e.normalizedValue === 'nexus-os')).toBe(true);
+      expect(projectEntities.some(e => e.normalizedValue === 'agent-friday')).toBe(true);
 
       const fileEntities = graph.getEntitiesByType('file');
       expect(fileEntities.some(e => e.value === 'src/index.ts')).toBe(true);
@@ -467,7 +467,7 @@ describe('Context Graph — Track III Phase 2', () => {
       // Create a stream with multiple entities
       registeredListener!(makeEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — nexus-os' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'test.ts — agent-friday' },
       }));
       registeredListener!(makeEvent({
         type: 'tool-invoke',
@@ -897,11 +897,11 @@ describe('Context Graph — Track III Phase 2', () => {
     it('extracts project from "file - project - VS Code" pattern', () => {
       registeredListener!(makeEvent({
         type: 'ambient',
-        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts - nexus-os - VS Code' },
+        data: { activeApp: 'VS Code', inferredTask: 'coding', windowTitle: 'index.ts - agent-friday - VS Code' },
       }));
 
       const projects = graph.getEntitiesByType('project');
-      expect(projects.some(e => e.normalizedValue === 'nexus-os')).toBe(true);
+      expect(projects.some(e => e.normalizedValue === 'agent-friday')).toBe(true);
     });
 
     it('handles title with no project', () => {
@@ -945,7 +945,7 @@ describe('Context Graph — Track III Phase 2', () => {
       registeredListener!(makeEvent({
         type: 'git',
         data: {
-          repo: 'nexus-os',
+          repo: 'agent-friday',
           branch: 'feature/context-graph',
           files: ['src/context-graph.ts', 'tests/context-graph.test.ts'],
         },
@@ -954,7 +954,7 @@ describe('Context Graph — Track III Phase 2', () => {
 
       const projects = graph.getEntitiesByType('project');
       const files = graph.getEntitiesByType('file');
-      expect(projects.some(e => e.normalizedValue === 'nexus-os')).toBe(true);
+      expect(projects.some(e => e.normalizedValue === 'agent-friday')).toBe(true);
       expect(files.some(e => e.value === 'src/context-graph.ts')).toBe(true);
     });
   });

@@ -1,7 +1,7 @@
 /**
  * 7A — Google Calendar Integration
  * OAuth2 → Calendar API for event awareness, scheduling, and proactive briefings.
- * EVE reads your calendar so she can prepare you for meetings and manage your time.
+ * Friday reads your calendar so she can prepare you for meetings and manage your time.
  */
 
 import { BrowserWindow, ipcMain } from 'electron';
@@ -39,7 +39,7 @@ class CalendarIntegration {
   constructor() {
     this.dataDir = path.join(
       process.env.APPDATA || path.join(process.env.HOME || '', '.config'),
-      'nexus-os'
+      'agent-friday'
     );
   }
 

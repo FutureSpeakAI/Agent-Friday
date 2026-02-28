@@ -1,5 +1,5 @@
 /**
- * relationship-memory.ts — Relationship Memory for EVE OS.
+ * relationship-memory.ts — Relationship Memory for Agent Friday.
  *
  * Tracks the evolving relationship between the agent and the user:
  * total sessions, total duration, inside jokes, shared references,

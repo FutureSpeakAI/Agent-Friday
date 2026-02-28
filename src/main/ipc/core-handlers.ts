@@ -48,9 +48,9 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
           await ensureVaultStructure(vaultPath);
           await syncLongTermToVault(vaultPath, memoryManager.getLongTerm());
           await syncMediumTermToVault(vaultPath, memoryManager.getMediumTerm());
-          console.log('[EVE] Synced existing memories to Obsidian vault');
+          console.log('[Friday] Synced existing memories to Obsidian vault');
         } catch (err) {
-          console.warn('[EVE] Failed to sync memories to vault:', err);
+          console.warn('[Friday] Failed to sync memories to vault:', err);
         }
       }
     },

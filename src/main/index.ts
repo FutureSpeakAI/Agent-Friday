@@ -42,7 +42,7 @@ import { ambientEngine } from './ambient';
 import { sentimentEngine } from './sentiment';
 import { notificationEngine } from './notifications';
 import { intelligenceEngine } from './intelligence';
-import { ensureProfileOnDisk } from './eve-profile';
+import { ensureProfileOnDisk } from './friday-profile';
 import { settingsManager } from './settings';
 import { episodicMemory } from './episodic-memory';
 import { setMainWindowForSelfImprove, registerHotReload, invalidateModuleCache } from './self-improve';
@@ -209,21 +209,21 @@ app.whenReady().then(async () => {
   // Initialize settings first (API keys depend on it)
   try {
     await settingsManager.initialize();
-    console.log('[EVE] Settings loaded');
+    console.log('[Friday] Settings loaded');
 
     if (!isDev && settingsManager.get().autoLaunch) {
       app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
     }
   } catch (err) {
-    console.warn('[EVE] Settings init failed:', err);
+    console.warn('[Friday] Settings init failed:', err);
   }
 
   // Initialize memory system (personality depends on it)
   try {
     await memoryManager.initialize();
-    console.log('[EVE] Memory system initialized');
+    console.log('[Friday] Memory system initialized');
   } catch (err) {
-    console.warn('[EVE] Memory init failed:', err);
+    console.warn('[Friday] Memory init failed:', err);
   }
 
   // Initialize integrity system (depends on settings + memory)
@@ -235,7 +235,7 @@ app.whenReady().then(async () => {
     const mediumTerm = memoryManager.getMediumTerm();
     const memoryChanges = integrityManager.checkMemories(longTerm, mediumTerm);
     if (memoryChanges) {
-      console.log('[EVE] Memory changes detected since last session — agent will be notified');
+      console.log('[Friday] Memory changes detected since last session — agent will be notified');
     }
 
     // Verify agent identity integrity
@@ -244,7 +244,7 @@ app.whenReady().then(async () => {
       const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
       const identityOk = integrityManager.verifyIdentity(identityJson);
       if (!identityOk) {
-        console.warn('[EVE] Agent identity has been modified externally — agent will be notified');
+        console.warn('[Friday] Agent identity has been modified externally — agent will be notified');
       }
     }
 
@@ -263,21 +263,21 @@ app.whenReady().then(async () => {
       await integrityManager.signAll(lawsText, identityJson, ltSnap, mtSnap, ltJson, mtJson);
     }
 
-    console.log('[EVE] Integrity system initialized');
+    console.log('[Friday] Integrity system initialized');
   } catch (err) {
-    console.warn('[EVE] Integrity init failed:', err);
+    console.warn('[Friday] Integrity init failed:', err);
   }
 
   // Start the Express API server
   serverPort = await startServer();
-  console.log(`[EVE] API server running on port ${serverPort}`);
+  console.log(`[Friday] API server running on port ${serverPort}`);
 
   // Initialize MCP client
   try {
     await mcpClient.connect();
-    console.log('[EVE] MCP client connected');
+    console.log('[Friday] MCP client connected');
   } catch (err) {
-    console.warn('[EVE] MCP client failed to connect:', err);
+    console.warn('[Friday] MCP client failed to connect:', err);
   }
 
   // Auto-grant microphone and camera permissions
@@ -345,41 +345,41 @@ app.whenReady().then(async () => {
   // ── Engine initialization cascade ───────────────────────────────
   try {
     await intelligenceEngine.initialize();
-    console.log('[EVE] Intelligence engine initialized');
+    console.log('[Friday] Intelligence engine initialized');
   } catch (err) {
-    console.warn('[EVE] Intelligence engine init failed:', err);
+    console.warn('[Friday] Intelligence engine init failed:', err);
   }
 
   ensureProfileOnDisk().catch((err) => {
-    console.warn('[EVE] Profile write failed:', err);
+    console.warn('[Friday] Profile write failed:', err);
   });
 
   if (mainWindow) {
     taskScheduler.initialize(mainWindow).catch((err) => {
-      console.warn('[EVE] Scheduler init failed:', err);
+      console.warn('[Friday] Scheduler init failed:', err);
     });
 
     predictor.initialize(mainWindow);
     ambientEngine.initialize();
 
     sentimentEngine.initialize().catch((err) => {
-      console.warn('[EVE] Sentiment init failed:', err);
+      console.warn('[Friday] Sentiment init failed:', err);
     });
 
     episodicMemory.initialize().catch((err) => {
-      console.warn('[EVE] Episodic memory init failed:', err);
+      console.warn('[Friday] Episodic memory init failed:', err);
     });
 
     relationshipMemory.initialize().catch((err) => {
-      console.warn('[EVE] Relationship memory init failed:', err);
+      console.warn('[Friday] Relationship memory init failed:', err);
     });
 
     trustGraph.initialize().catch((err) => {
-      console.warn('[EVE] Trust graph init failed:', err);
+      console.warn('[Friday] Trust graph init failed:', err);
     });
 
     semanticSearch.initialize().then(async () => {
-      console.log('[EVE] Semantic search initialized');
+      console.log('[Friday] Semantic search initialized');
       const longTerm = memoryManager.getLongTerm();
       const mediumTerm = memoryManager.getMediumTerm();
       const episodes = episodicMemory.getAll();
@@ -407,10 +407,10 @@ app.whenReady().then(async () => {
 
       if (items.length > 0) {
         await semanticSearch.indexBulk(items);
-        console.log(`[EVE] Indexed ${items.length} existing memories for semantic search`);
+        console.log(`[Friday] Indexed ${items.length} existing memories for semantic search`);
       }
     }).catch((err) => {
-      console.warn('[EVE] Semantic search init failed:', err);
+      console.warn('[Friday] Semantic search init failed:', err);
     });
 
     memoryConsolidation.initialize();
@@ -420,97 +420,97 @@ app.whenReady().then(async () => {
     documentIngestion.initialize(mainWindow);
 
     agentRunner.initialize(mainWindow);
-    console.log('[EVE] Agent runner initialized');
+    console.log('[Friday] Agent runner initialized');
 
     // Initialize GitLoader (GitHub repo loading + code intelligence)
     gitLoader.initialize().then(() => {
-      console.log('[EVE] GitLoader initialized');
+      console.log('[Friday] GitLoader initialized');
     }).catch((err) => {
-      console.warn('[EVE] GitLoader init failed:', err);
+      console.warn('[Friday] GitLoader init failed:', err);
     });
 
     // Initialize office manager (pixel-art agent visualization)
     officeManager.setMainWindow(mainWindow);
     officeManager.setServerPort(serverPort);
-    console.log('[EVE] Office manager initialized');
+    console.log('[Friday] Office manager initialized');
 
     calendarIntegration.init().then(() => {
       meetingPrep.init(mainWindow!);
-      console.log('[EVE] Calendar + meeting prep initialized');
+      console.log('[Friday] Calendar + meeting prep initialized');
     }).catch((err) => {
-      console.warn('[EVE] Calendar init failed:', err);
+      console.warn('[Friday] Calendar init failed:', err);
     });
 
     // Initialize Meeting Intelligence engine
     meetingIntelligence.initialize().then(() => {
-      console.log('[EVE] Meeting Intelligence initialized');
+      console.log('[Friday] Meeting Intelligence initialized');
     }).catch((err) => {
-      console.warn('[EVE] Meeting Intelligence init failed:', err);
+      console.warn('[Friday] Meeting Intelligence init failed:', err);
     });
 
     communications.init().catch((err) => {
-      console.warn('[EVE] Communications init failed:', err);
+      console.warn('[Friday] Communications init failed:', err);
     });
 
     commitmentTracker.initialize().catch((err) => {
-      console.warn('[EVE] Commitment tracker init failed:', err);
+      console.warn('[Friday] Commitment tracker init failed:', err);
     });
 
     dailyBriefingEngine.initialize().catch((err) => {
-      console.warn('[EVE] Daily briefing init failed:', err);
+      console.warn('[Friday] Daily briefing init failed:', err);
     });
 
     workflowRecorder.initialize().catch((err) => {
-      console.warn('[EVE] Workflow recorder init failed:', err);
+      console.warn('[Friday] Workflow recorder init failed:', err);
     });
 
     workflowExecutor.initialize().catch((err) => {
-      console.warn('[EVE] Workflow executor init failed:', err);
+      console.warn('[Friday] Workflow executor init failed:', err);
     });
 
     unifiedInbox.initialize().catch((err) => {
-      console.warn('[EVE] Unified inbox init failed:', err);
+      console.warn('[Friday] Unified inbox init failed:', err);
     });
 
     outboundIntelligence.initialize().catch((err) => {
-      console.warn('[EVE] Outbound intelligence init failed:', err);
+      console.warn('[Friday] Outbound intelligence init failed:', err);
     });
 
     intelligenceRouter.initialize().catch((err) => {
-      console.warn('[EVE] Intelligence router init failed:', err);
+      console.warn('[Friday] Intelligence router init failed:', err);
     });
 
     agentNetwork.initialize().catch((err) => {
-      console.warn('[EVE] Agent network init failed:', err);
+      console.warn('[Friday] Agent network init failed:', err);
     });
 
     superpowerEcosystem.initialize().catch((err) => {
-      console.warn('[EVE] Superpower ecosystem init failed:', err);
+      console.warn('[Friday] Superpower ecosystem init failed:', err);
     });
 
     stateExport.initialize().catch((err) => {
-      console.warn('[EVE] State export engine init failed:', err);
+      console.warn('[Friday] State export engine init failed:', err);
     });
 
     memoryQuality.initialize().catch((err) => {
-      console.warn('[EVE] Memory quality engine init failed:', err);
+      console.warn('[Friday] Memory quality engine init failed:', err);
     });
 
     personalityCalibration.initialize().catch((err) => {
-      console.warn('[EVE] Personality calibration init failed:', err);
+      console.warn('[Friday] Personality calibration init failed:', err);
     });
 
     memoryPersonalityBridge.initialize().catch((err) => {
-      console.warn('[EVE] Memory-personality bridge init failed:', err);
+      console.warn('[Friday] Memory-personality bridge init failed:', err);
     });
 
     // Start the context stream bridge (after all engines are initialized)
     startContextStreamBridge();
     contextGraph.start();
-    console.log('[EVE] Context stream bridge + graph started');
+    console.log('[Friday] Context stream bridge + graph started');
 
     connectorRegistry.initialize().catch((err) => {
-      console.warn('[EVE] Connector registry init failed:', err);
+      console.warn('[Friday] Connector registry init failed:', err);
     });
 
     const gatewaySettings = settingsManager.get();
@@ -520,9 +520,9 @@ app.whenReady().then(async () => {
           const telegramAdapter = createTelegramAdapter(gatewaySettings.telegramBotToken);
           await gatewayManager.registerAdapter(telegramAdapter);
         }
-        console.log('[EVE] Messaging gateway initialized');
+        console.log('[Friday] Messaging gateway initialized');
       }).catch((err) => {
-        console.warn('[EVE] Gateway init failed:', err);
+        console.warn('[Friday] Gateway init failed:', err);
       });
     }
   }
@@ -565,9 +565,9 @@ app.whenReady().then(async () => {
     invalidateModuleCache('src/main/personality.ts');
     console.log('[HotReload] personality.ts reloaded — changes will apply on next session');
   });
-  registerHotReload('eve-profile.ts', async () => {
-    invalidateModuleCache('src/main/eve-profile.ts');
-    console.log('[HotReload] eve-profile.ts reloaded');
+  registerHotReload('friday-profile.ts', async () => {
+    invalidateModuleCache('src/main/friday-profile.ts');
+    console.log('[HotReload] friday-profile.ts reloaded');
   });
 });
 

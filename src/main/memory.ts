@@ -52,14 +52,14 @@ function getMemoryPersonalityBridge() {
   return _memoryPersonalityBridge;
 }
 
-// Late-bound eve-profile import to avoid circular dependency: memory -> eve-profile -> memory
+// Late-bound friday-profile import to avoid circular dependency: memory -> friday-profile -> memory
 let _appendLearning: any = null;
 function getAppendLearning() {
   if (!_appendLearning) {
     try {
-      _appendLearning = require('./eve-profile').appendLearning;
+      _appendLearning = require('./friday-profile').appendLearning;
     } catch {
-      // Eve profile not yet initialized — skip learning append
+      // Friday profile not yet initialized — skip learning append
     }
   }
   return _appendLearning;

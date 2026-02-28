@@ -663,8 +663,8 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                       <span style={styles.vaultPathText}>{settings.obsidianVaultPath}</span>
                     </div>
                     <div style={styles.toggleHint}>
-                      Memories sync to <code style={styles.codeBadge}>EVE/memories/</code> and observations to{' '}
-                      <code style={styles.codeBadge}>EVE/observations/</code>
+                      Memories sync to <code style={styles.codeBadge}>Friday/memories/</code> and observations to{' '}
+                      <code style={styles.codeBadge}>Friday/observations/</code>
                     </div>
                     <button onClick={handleClearVaultPath} style={styles.disconnectBtn}>
                       Disconnect vault
@@ -688,7 +688,7 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                       </button>
                     </div>
                     <div style={styles.toggleHint}>
-                      Paste the full path to your Obsidian vault. An EVE/ folder will be created inside it.
+                      Paste the full path to your Obsidian vault. A Friday/ folder will be created inside it.
                     </div>
                   </div>
                 )}

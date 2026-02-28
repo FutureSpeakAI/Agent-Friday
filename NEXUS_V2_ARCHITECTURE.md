@@ -1,4 +1,4 @@
-# Nexus OS v2.0 — Grand Architecture
+# Agent Friday v2.0 — Grand Architecture
 
 > **Codename**: Asimov Layer
 > **Author**: FutureSpeak.AI
@@ -25,7 +25,7 @@ This is not a chatbot with plugins. This is an operating system where an Asimov-
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    PRESENTATION LAYER                        │
-│  NexusCore 3D Desktop │ Holographic Display │ Voice Orb     │
+│  FridayCore 3D Desktop │ Holographic Display │ Voice Orb     │
 │  Audio Visualizer     │ App Windows (Office) │ Mood System  │
 ├─────────────────────────────────────────────────────────────┤
 │                    AGENT INTELLIGENCE                        │
@@ -106,9 +106,9 @@ src/main/
 
 ### 2.2 Holographic 3D Display — Face-Tracked Parallax
 
-**What it is**: Using MediaPipe FaceLandmarker via webcam to track the user's head/iris position, then applying off-axis projection to NexusCore's Three.js scene so the 3D desktop appears to have physical depth — like looking through a window into a holographic space.
+**What it is**: Using MediaPipe FaceLandmarker via webcam to track the user's head/iris position, then applying off-axis projection to FridayCore's Three.js scene so the 3D desktop appears to have physical depth — like looking through a window into a holographic space.
 
-**Integration Strategy**: Add a face-tracking subsystem to the renderer that feeds head position data into NexusCore's camera system, creating a parallax effect that makes the cube desktop feel like it exists in real 3D space behind the screen.
+**Integration Strategy**: Add a face-tracking subsystem to the renderer that feeds head position data into FridayCore's camera system, creating a parallax effect that makes the cube desktop feel like it exists in real 3D space behind the screen.
 
 **Architecture**:
 ```
@@ -124,15 +124,15 @@ src/renderer/
 
 **Key Design Decisions**:
 - **MediaPipe loading**: Use `@mediapipe/tasks-vision` WASM module, loaded on-demand only when user enables holographic mode (not at startup — too expensive).
-- **Camera modification**: Don't create a separate camera. Modify NexusCore's existing `THREE.PerspectiveCamera` using `camera.setViewOffset()` — this shifts the frustum based on head position without breaking any existing scene setup.
+- **Camera modification**: Don't create a separate camera. Modify FridayCore's existing `THREE.PerspectiveCamera` using `camera.setViewOffset()` — this shifts the frustum based on head position without breaking any existing scene setup.
 - **Performance budget**: Face tracking at 15fps (not 30/60 — diminishing returns for parallax). Run in a Web Worker if possible, or on the main thread with `requestAnimationFrame` throttled.
 - **Smoothing is critical**: Raw landmark data is noisy. Apply exponential moving average (EMA) with factor 0.12 for position, 0.08 for rotation. This gives smooth parallax without perceivable lag.
 - **Depth mapping**: Head Z-distance (from camera) maps to parallax intensity. Close to screen = subtle effect. Further away = more dramatic parallax. This prevents nausea-inducing over-correction.
 - **Privacy**: All face data stays local. No frames leave the renderer process. MediaPipe runs entirely in-browser WASM — no cloud API calls.
 
-**NexusCore Changes**:
+**FridayCore Changes**:
 ```typescript
-// In NexusCore.tsx, add to the animation loop:
+// In FridayCore.tsx, add to the animation loop:
 if (headTrackingEnabled && headPosition) {
   const parallaxScale = 0.15; // Subtle — don't make people sick
   camera.setViewOffset(
@@ -152,7 +152,7 @@ if (headTrackingEnabled && headPosition) {
 - **projectM**: MilkDrop-style psychedelic visualizations using feedback loops, per-pixel mesh warping, and audio-reactive shaders
 - **MusicDNA**: DNA helix geometry where two intertwining strands represent different audio channels
 
-**Integration Strategy**: Build a Three.js/GLSL audio visualization system that lives inside NexusCore as an optional visual layer. The core technique is the **feedback loop** — render the previous frame as a texture, warp it based on audio data, and composite new elements on top. This creates the flowing, evolving visual style of MilkDrop.
+**Integration Strategy**: Build a Three.js/GLSL audio visualization system that lives inside FridayCore as an optional visual layer. The core technique is the **feedback loop** — render the previous frame as a texture, warp it based on audio data, and composite new elements on top. This creates the flowing, evolving visual style of MilkDrop.
 
 **Architecture**:
 ```
@@ -172,7 +172,7 @@ src/renderer/
 - **Three-Band Decomposition**: Split audio into bass (20-250Hz), mid (250-4000Hz), treble (4000-16000Hz) + attenuated variants. Bass drives large-scale movement, mid drives medium features, treble drives fine detail and sparkle.
 - **Feedback Loop Implementation**: Use two `THREE.WebGLRenderTarget`s in a ping-pong pattern. Each frame: read from target A, apply warp shader (UV displacement based on audio + time), render to target B, swap. This creates the flowing "memory" effect where visual history trails behind.
 - **DNA Helix**: Parametric tube geometry (`THREE.TubeGeometry`) with two intertwined sinusoidal paths. Radius modulated by real-time audio amplitude. Color by frequency band. The two strands literally represent the conversation — user and agent voices intertwined.
-- **Integration with NexusCore**: The audio viz renders to a separate render target and is composited as a background layer behind the cube desktop, or as a floating element within the 3D scene. Controlled by MoodContext — when mood.intensity is high, viz is more prominent.
+- **Integration with FridayCore**: The audio viz renders to a separate render target and is composited as a background layer behind the cube desktop, or as a floating element within the 3D scene. Controlled by MoodContext — when mood.intensity is high, viz is more prominent.
 - **Performance**: Target 60fps. The feedback loop shader is the most expensive part. Keep mesh resolution at 64x64 (not the 96x96 that projectM uses). Total GPU budget: <4ms per frame.
 
 ---
@@ -366,7 +366,7 @@ Every external call gets a timeout. Defaults: Gemini WebSocket → 30s, Claude A
 
 ### 2.9 Personality Evolution — Visual Uniqueness Over Time
 
-**What it is**: A system where each agent's NexusCore desktop gradually becomes visually unique based on the agent's personality traits and how long they've been alive.
+**What it is**: A system where each agent's FridayCore desktop gradually becomes visually unique based on the agent's personality traits and how long they've been alive.
 
 **Architecture**:
 ```
@@ -390,8 +390,8 @@ src/main/
 1. Read `personalityEvolution` from settings
 2. Increment `sessionCount`
 3. Recompute all visual parameters based on traits + maturity
-4. Pass as props to NexusCore: `<NexusCore evolutionState={evolutionState} />`
-5. NexusCore applies via `THREE.MathUtils.lerp()` between defaults and evolved values
+4. Pass as props to FridayCore: `<FridayCore evolutionState={evolutionState} />`
+5. FridayCore applies via `THREE.MathUtils.lerp()` between defaults and evolved values
 
 ---
 
@@ -534,11 +534,11 @@ src/main/
 
 ---
 
-### 2.15 Pixel Agents — 3D Agent Avatars in NexusCore
+### 2.15 Pixel Agents — 3D Agent Avatars in FridayCore
 
 **What it is**: A VS Code extension that visualizes AI agents as animated pixel art characters in a virtual 2D office, with real-time activity tracking from JSONL transcripts. 1.8k stars, MIT.
 
-**Integration Strategy**: Not porting the extension itself. Extracting the *concept* — reading agent state and mapping it to visual characters — and implementing it in Three.js as 3D agent avatars within NexusCore.
+**Integration Strategy**: Not porting the extension itself. Extracting the *concept* — reading agent state and mapping it to visual characters — and implementing it in Three.js as 3D agent avatars within FridayCore.
 
 **Architecture**:
 ```
@@ -549,14 +549,14 @@ src/renderer/
     avatar-mesh.ts       — Three.js character mesh (low-poly humanoid or stylized icon)
     animation-controller.ts — State machine: idle, thinking, working, waiting, done
     speech-bubble.ts     — Floating 3D text bubble for agent status/questions
-    workspace-layout.ts  — Position avatars in NexusCore's 3D space
+    workspace-layout.ts  — Position avatars in FridayCore's 3D space
     index.ts             — Exports useAgentAvatars() hook
 ```
 
 **Key Design Decisions**:
 - **State Mapping**: Agent Runner already tracks states (`pending`, `running`, `completed`, `failed`, `cancelled`). Map these to avatar animations: `pending` = idle/waiting, `running` = typing/working, `completed` = celebrating, `failed` = head-scratch, `cancelled` = walking away.
 - **Speech Bubbles**: When an agent enters `input-required` state (human-in-the-loop), the avatar displays a floating 3D speech bubble with the question. User can respond via voice or click.
-- **Workspace in NexusCore**: Each active agent gets a small "desk" or "workstation" floating in the NexusCore 3D space, arranged around the central cube. The more agents running, the more alive the desktop looks.
+- **Workspace in FridayCore**: Each active agent gets a small "desk" or "workstation" floating in the FridayCore 3D space, arranged around the central cube. The more agents running, the more alive the desktop looks.
 - **Personality-Driven Appearance**: Avatar appearance derives from agent type/persona. The main agent (Friday) gets a distinct avatar that evolves with the personality evolution system (Section 2.9). Background agents get simpler representations.
 - **Performance**: Max 8 simultaneous avatars (matching agent concurrency limit). Simple geometry (<500 triangles each). Instanced rendering where possible.
 
@@ -584,7 +584,7 @@ src/main/
 
 **The Floppy Drive Metaphor**:
 ```
-Traditional OS:                    Nexus OS:
+Traditional OS:                    Agent Friday OS:
   Insert floppy disc         →     git-load a repo URL
   OS reads the disc          →     GitLoader clones + indexes
   Program detected           →     program-analyzer.ts detects entry points
@@ -851,7 +851,7 @@ This isn't just branding — it's a psychological framing that makes the GitLoad
 - **"Upgrade my superpowers"** = run the improvement engine on all loaded programs
 - **"What can I do?"** = list all active superpowers and their capabilities
 
-#### Nexus Superpowers UI — Agent Office App
+#### Friday Superpowers UI — Agent Office App
 
 A dedicated Agent Office window for managing all loaded programs.
 
@@ -1001,38 +1001,38 @@ Every application that ships with a major operating system (Windows, macOS) must
 
 | OS Stock App | Agent Friday Equivalent | Backend | Status |
 |---|---|---|---|
-| File Explorer | **Nexus Files** — smart file browser with AI search | Native fs + semantic search | Planned |
-| Notepad/TextEdit | **Nexus Notes** — Obsidian-connected markdown editor | `obsidian-memory.ts` | Planned |
-| Calculator | **Nexus Calc** — natural language + traditional calculator | Gemini/Claude inline | Planned |
-| Calendar | **Nexus Calendar** — Google Cal + AI scheduling | `calendar.ts` + Metorial | Partial |
-| Mail | **Nexus Mail** — Gmail with AI triage + compose | `communications.ts` + Metorial | Partial |
-| Messages | **Nexus Messages** — unified messaging (Telegram, SMS, etc.) | `gateway/` + Metorial | Partial |
-| Web Browser | **Nexus Browser** — AI-assisted browsing with page intelligence | `browser.ts` + `pageindex/` | Partial |
-| Terminal | **Nexus Terminal** — enhanced terminal with AI command assistance | `terminal-sessions.ts` | Exists |
-| System Monitor | **Nexus Monitor** — system health + resource usage | `system-management.ts` | Planned |
-| Media Player | **Nexus Media** — audio/video with visualization | Audio viz + `media-streaming.ts` | Planned |
-| Photo Viewer | **Nexus Gallery** — AI-tagged photo browser | `document-ingestion.ts` | Planned |
-| Settings | **Nexus Settings** — unified control panel | `settings.ts` | Exists |
-| App Store | **Nexus Store** — MCP tool/agent marketplace | Metorial catalog + A2A | Planned |
-| Camera | **Nexus Camera** — webcam capture + face tracking + holographic | MediaPipe + face-tracker | Planned |
-| Voice Recorder | **Nexus Recorder** — voice notes with transcription | AudioWorklet + Gemini | Planned |
-| Weather | **Nexus Weather** — AI weather briefings | Metorial (weather API) | Planned |
-| News | **Nexus News** — world monitor with AI curation | `world-monitor.ts` + intelligence | Partial |
-| Maps | **Nexus Maps** — AI-assisted navigation/location | Metorial (Google Maps) | Planned |
-| Contacts | **Nexus Contacts** — relationship memory + contact management | `relationship-memory.ts` | Planned |
-| Task Manager | **Nexus Tasks** — AI task management + scheduling | `scheduler/` + agents | Partial |
-| PDF Viewer | **Nexus Docs** — document viewer with AI analysis | `document-ingestion.ts` | Partial |
-| Paint/Canvas | **Nexus Canvas** — AI-assisted drawing + 3D modeling | `creative-3d.ts` | Planned |
-| Code Editor | **Nexus Code** — VS Code integration + AI coding | `vscode.ts` + `dev-environments.ts` | Partial |
-| Wallet | **Nexus Wallet** — ACP-backed financial management | `commerce/` (ACP) | Planned |
-| Package Manager | **Nexus Superpowers** — Git-loaded program manager with toggle controls | `git-loader/` + `registry.ts` | Planned |
+| File Explorer | **Friday Files** — smart file browser with AI search | Native fs + semantic search | Planned |
+| Notepad/TextEdit | **Friday Notes** — Obsidian-connected markdown editor | `obsidian-memory.ts` | Planned |
+| Calculator | **Friday Calc** — natural language + traditional calculator | Gemini/Claude inline | Planned |
+| Calendar | **Friday Calendar** — Google Cal + AI scheduling | `calendar.ts` + Metorial | Partial |
+| Mail | **Friday Mail** — Gmail with AI triage + compose | `communications.ts` + Metorial | Partial |
+| Messages | **Friday Messages** — unified messaging (Telegram, SMS, etc.) | `gateway/` + Metorial | Partial |
+| Web Browser | **Friday Browser** — AI-assisted browsing with page intelligence | `browser.ts` + `pageindex/` | Partial |
+| Terminal | **Friday Terminal** — enhanced terminal with AI command assistance | `terminal-sessions.ts` | Exists |
+| System Monitor | **Friday Monitor** — system health + resource usage | `system-management.ts` | Planned |
+| Media Player | **Friday Media** — audio/video with visualization | Audio viz + `media-streaming.ts` | Planned |
+| Photo Viewer | **Friday Gallery** — AI-tagged photo browser | `document-ingestion.ts` | Planned |
+| Settings | **Friday Settings** — unified control panel | `settings.ts` | Exists |
+| App Store | **Friday Store** — MCP tool/agent marketplace | Metorial catalog + A2A | Planned |
+| Camera | **Friday Camera** — webcam capture + face tracking + holographic | MediaPipe + face-tracker | Planned |
+| Voice Recorder | **Friday Recorder** — voice notes with transcription | AudioWorklet + Gemini | Planned |
+| Weather | **Friday Weather** — AI weather briefings | Metorial (weather API) | Planned |
+| News | **Friday News** — world monitor with AI curation | `world-monitor.ts` + intelligence | Partial |
+| Maps | **Friday Maps** — AI-assisted navigation/location | Metorial (Google Maps) | Planned |
+| Contacts | **Friday Contacts** — relationship memory + contact management | `relationship-memory.ts` | Planned |
+| Task Manager | **Friday Tasks** — AI task management + scheduling | `scheduler/` + agents | Partial |
+| PDF Viewer | **Friday Docs** — document viewer with AI analysis | `document-ingestion.ts` | Partial |
+| Paint/Canvas | **Friday Canvas** — AI-assisted drawing + 3D modeling | `creative-3d.ts` | Planned |
+| Code Editor | **Friday Code** — VS Code integration + AI coding | `vscode.ts` + `dev-environments.ts` | Partial |
+| Wallet | **Friday Wallet** — ACP-backed financial management | `commerce/` (ACP) | Planned |
+| Package Manager | **Friday Superpowers** — Git-loaded program manager with toggle controls | `git-loader/` + `registry.ts` | Planned |
 
 ### 3.2 App Window System
 
 Each app renders as a draggable, resizable window within the Agent Office canvas (`src/renderer/components/office/`). The existing `OfficeWindow` component system handles window management. New apps are registered in the app registry and can be launched via:
 - Click (UI)
-- Voice command ("open Nexus Mail")
-- Agent tool call (`app:launch('nexus-mail')`)
+- Voice command ("open Friday Mail")
+- Agent tool call (`app:launch('friday-mail')`)
 - Keyboard shortcut
 - A2A task delegation
 
@@ -1168,8 +1168,8 @@ User Request
 **Test**: Move head left/right (parallax). Spawn agent task, verify avatar animates through states.
 
 ### Stage 12: Personality Evolution
-**Files**: `src/main/personality-evolution.ts`, NexusCore.tsx modifications
-**Why twelfth**: Needs NexusCore changes from Stage 11 integrated first.
+**Files**: `src/main/personality-evolution.ts`, FridayCore.tsx modifications
+**Why twelfth**: Needs FridayCore changes from Stage 11 integrated first.
 **Test**: Create agents with different trait profiles, verify visual differences after simulated 50 sessions.
 
 ### Stage 13: Stock OS App Suite (Phase 1 — Core Apps)
@@ -1202,7 +1202,7 @@ The complete first-run experience plan exists at `.claude/plans/composed-munchin
 2. **"Her" Intake** — 3 pointed questions (voice preference, social description, mother relationship)
 3. **Psychological Profile** — Claude Sonnet analysis of intake responses
 4. **User-Driven Customization** — User chooses name, voice, gender, backstory, personality
-5. **Cinematic Reveal** — Warm glow animation → NexusCore desktop appears for first time
+5. **Cinematic Reveal** — Warm glow animation → FridayCore desktop appears for first time
 6. **Psychologically-Tuned First Greeting** — Agent's first words match user's attachment style
 7. **Guided Feature Setup** — 12-step walkthrough of every capability
 8. **Visual Evolution Begins** — Desktop starts evolving based on agent traits
@@ -1219,8 +1219,8 @@ This plan is ready for implementation as part of Stage 10 or as a parallel track
 **Extracts from**: `src/main/integrity/`, NASSE scorer, red-team engine, action classifier
 **Why separate**: This becomes a standalone npm package that any agent framework can use. It establishes FutureSpeak.AI as the authority on AI safety in consumer applications.
 
-### 7.2 Nexus Protocol (Public Repository)
-**Repo**: `FutureSpeakAI/nexus-protocol`
+### 7.2 Friday Protocol (Public Repository)
+**Repo**: `FutureSpeakAI/friday-protocol`
 **Purpose**: Open-source A2A + ACP protocol implementations for TypeScript.
 **Extracts from**: `src/main/a2a/`, `src/main/commerce/`
 **Why separate**: Protocol implementations should be framework-agnostic. Other agent developers can adopt the same protocols without adopting Agent Friday.

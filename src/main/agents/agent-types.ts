@@ -1,5 +1,5 @@
 /**
- * agent-types.ts — Type definitions for EVE's enhanced multi-agent system.
+ * agent-types.ts — Type definitions for Friday's enhanced multi-agent system.
  *
  * Supports parallel agents, sub-agents, agent teams with shared task lists,
  * chain-of-thought streaming, inter-agent awareness, and immediate cancellation.

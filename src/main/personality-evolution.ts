@@ -1,6 +1,6 @@
 /**
  * personality-evolution.ts — Maps agent personality traits and session history
- * to NexusCore visual parameters, making each agent's desktop unique over time.
+ * to FridayCore visual parameters, making each agent's desktop unique over time.
  *
  * The evolution is gradual: early sessions look mostly standard, but over weeks
  * of use the colors, particle behavior, cube geometry, and ambient effects drift
