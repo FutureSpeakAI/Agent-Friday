@@ -527,6 +527,10 @@ contextBridge.exposeInMainWorld('eve', {
       memoriesIntact: boolean;
       safeMode: boolean;
     }>,
+    reset: () => ipcRenderer.invoke('integrity:reset') as Promise<{
+      success: boolean;
+      message: string;
+    }>,
   },
 
   superpowers: {

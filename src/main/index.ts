@@ -249,10 +249,12 @@ app.whenReady().then(async () => {
     }
 
     // Sign everything on first run (when no manifest exists yet)
+    // NOTE: signAll() internally uses getCanonicalLaws('') for law signatures,
+    // regardless of what lawsText is passed. This prevents false safe mode
+    // triggers when userName changes between sessions.
     const state = integrityManager.getState();
     if (state.initialized && state.lawsIntact && !integrityManager.isInSafeMode()) {
-      const userName = agentCfg.userName || '';
-      const lawsText = getCanonicalLaws(userName);
+      const lawsText = getCanonicalLaws(''); // Always canonical empty-string form
       const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
       const ltJson = JSON.stringify(longTerm, null, 2);
       const mtJson = JSON.stringify(mediumTerm, null, 2);

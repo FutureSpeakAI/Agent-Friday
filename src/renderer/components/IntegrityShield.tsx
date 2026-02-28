@@ -46,6 +46,8 @@ export default function IntegrityShield() {
   const [state, setState] = useState<IntegrityState>(DEFAULT_STATE);
   const [expanded, setExpanded] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Poll integrity state every 30 seconds
@@ -85,6 +87,23 @@ export default function IntegrityShield() {
       // ignore
     }
     setVerifying(false);
+  };
+
+  const handleReset = async () => {
+    setResetting(true);
+    setResetMessage(null);
+    try {
+      const result = await window.eve.integrity.reset();
+      setResetMessage(result.message);
+      if (result.success) {
+        await fetchState();
+        // Auto-clear success message after 5 seconds
+        setTimeout(() => setResetMessage(null), 5000);
+      }
+    } catch (err) {
+      setResetMessage('Reset failed. Try restarting the application.');
+    }
+    setResetting(false);
   };
 
   // Determine overall shield color
@@ -231,6 +250,27 @@ export default function IntegrityShield() {
               <div style={panelStyles.safeModeBox}>
                 <span style={panelStyles.safeModeLabel}>⚠ SAFE MODE ACTIVE</span>
                 <span style={panelStyles.safeModeReason}>{state.safeModeReason}</span>
+                <button
+                  onClick={handleReset}
+                  disabled={resetting}
+                  style={{
+                    ...panelStyles.resetButton,
+                    opacity: resetting ? 0.5 : 1,
+                  }}
+                >
+                  {resetting ? 'Resetting Integrity…' : '🔄 Reset Asimov\'s cLaws'}
+                </button>
+                {resetMessage && (
+                  <span style={{
+                    display: 'block',
+                    fontSize: 9,
+                    color: resetMessage.includes('failed') || resetMessage.includes('Failed') ? '#ef4444' : '#22c55e',
+                    marginTop: 6,
+                    lineHeight: 1.3,
+                  }}>
+                    {resetMessage}
+                  </span>
+                )}
               </div>
             </>
           )}
@@ -395,6 +435,22 @@ const panelStyles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: '#ef4444aa',
     lineHeight: 1.4,
+  },
+  resetButton: {
+    display: 'block',
+    width: '100%',
+    padding: '8px 0',
+    marginTop: 10,
+    background: 'rgba(239, 68, 68, 0.12)',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
+    borderRadius: 4,
+    color: '#ef4444',
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    cursor: 'pointer',
+    fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+    transition: 'all 0.2s',
   },
   verifyButton: {
     width: '100%',
