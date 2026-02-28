@@ -282,6 +282,7 @@ export const TOOLS: ReadonlyArray<ToolDeclaration> = [
         },
         domains: {
           type: 'array',
+          items: { type: 'string' },
           description: 'Optional domain filter — restrict results to these domains (e.g. ["reddit.com", "stackoverflow.com"]).',
         },
         recency: {
@@ -311,6 +312,7 @@ export const TOOLS: ReadonlyArray<ToolDeclaration> = [
         },
         domains: {
           type: 'array',
+          items: { type: 'string' },
           description: 'Optional domain filter — restrict sources to these domains.',
         },
         recency: {
