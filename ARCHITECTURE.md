@@ -1,7 +1,7 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-02-27
+> **Last updated**: 2026-02-28
 > **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
 
 ---
@@ -33,7 +33,7 @@ graph TB
     subgraph "Agent Friday Desktop App"
         subgraph "Renderer Process (Chromium)"
             UI[React 19 UI Layer]
-            THREE[Three.js FridayCore]
+            THREE[Three.js DesktopViz<br/>13 Evolution Structures]
             CANVAS[Canvas 2D Backgrounds]
             OFFICE_UI[Agent Office Canvas]
             AUDIO_OUT[AudioPlaybackEngine]
@@ -217,7 +217,8 @@ graph LR
     end
 
     subgraph "Presentation Layer"
-        NEXUS[FridayCore 3D]
+        NEXUS[DesktopViz 3D<br/>13 Structures + Bloom]
+        HUD[HudOverlay]
         ORB[VoiceOrb]
         OFFICE_VIS[Agent Office Viz]
         DASH[Dashboard]
@@ -263,6 +264,7 @@ graph LR
     ONBOARD --> PSYCH
     PSYCH --> PERSONA
     PERSONA --> EVOLVE
+    EVOLVE --> ART_EVOL
 
     MOOD --> NEXUS
     VOICE --> ORB
@@ -368,6 +370,7 @@ graph TD
         PSYCH[psychological-profile.ts<br/>Claude Psych Analysis]
         FEATURE_SETUP[feature-setup.ts<br/>9-Step Guided Setup]
         EVOLUTION[personality-evolution.ts<br/>Visual Trait Mapping]
+        ART_EVOL[art-evolution.ts<br/>Weekly Gemini Art Therapy]
     end
 
     subgraph "Infrastructure"
@@ -466,7 +469,9 @@ graph TD
     end
 
     subgraph "Phase: Normal — Always Visible"
-        NEXUS[FridayCore.tsx<br/>Three.js 5-Layer 3D]
+        DESKTOP_VIZ[DesktopViz.tsx<br/>Three.js 13-Structure Holographic]
+        HUD_OVERLAY[HudOverlay.tsx<br/>Holographic HUD Overlay]
+        NEXUS[FridayCore.tsx<br/>Legacy 3D Viz]
         WIRE[WireframeNetwork.tsx<br/>Canvas 2D Primary BG]
         PARTICLE[ParticleBackground.tsx<br/>Canvas 2D Fallback BG]
         ORB[VoiceOrb.tsx<br/>Central Interaction Point]
@@ -1232,11 +1237,54 @@ graph TD
 
 ## 14. Visual System Architecture
 
-### FridayCore 3D Layer Stack
+### DesktopViz 3D Holographic System
 
 ```mermaid
 graph BT
-    subgraph "Three.js Scene (FridayCore.tsx)"
+    subgraph "Three.js Scene (DesktopViz.tsx)"
+        S1[Structure Layer<br/>13 Evolution Structures<br/>CUBES / ICOSAHEDRON / NETWORK / DOME<br/>ASTROLABE / TESSERACT / QUANTUM<br/>MANDELBROT / MOBIUS / GRID<br/>CABLES / NONE / EDEN]
+        S2[Ambient Particles<br/>200-400 data dust particles<br/>Mood-reactive drift + density]
+        S3[Bloom Post-Processing<br/>UnrealBloomPass<br/>Intensity from mood warmth]
+        S4[HUD Overlay<br/>Agent name + structure label<br/>Active status indicator]
+    end
+
+    MOOD[MoodContext] -->|palette, intensity,<br/>warmth, turbulence| S1
+    MOOD -->|opacity, speed, density| S2
+    MOOD -->|bloom strength,<br/>threshold, radius| S3
+    EVOLVE[PersonalityEvolution] -->|hue, speed,<br/>scale, density| S1
+    EVOLVE --> S2
+    ART_EVOL[ArtEvolution<br/>Weekly Gemini Therapy] -->|structure index,<br/>color mutations| S1
+    HOOK[useDesktopEvolution] -->|transition blend,<br/>target structure| S1
+```
+
+### Art Evolution Pipeline
+
+```mermaid
+sequenceDiagram
+    participant Scheduler as Weekly Check
+    participant ArtEvol as art-evolution.ts
+    participant Sentiment as Sentiment Engine
+    participant Memory as Memory System
+    participant Gemini as Gemini 2.0 Flash
+    participant DesktopViz as DesktopViz.tsx
+
+    Scheduler ->> ArtEvol: checkAndEvolve()
+    ArtEvol ->> ArtEvol: Has 7 days elapsed?
+    ArtEvol ->> Sentiment: Poll emotional state
+    ArtEvol ->> Memory: Get recent memories
+    ArtEvol ->> ArtEvol: Build influence report
+    ArtEvol ->> Gemini: Art therapy prompt + influence report
+    Gemini -->> ArtEvol: { targetIndex, rationale, colorMutation }
+    ArtEvol ->> ArtEvol: Save to art-evolution.json
+    ArtEvol ->> DesktopViz: New structure index via IPC
+    DesktopViz ->> DesktopViz: Gradual blend transition
+```
+
+### Legacy: FridayCore 3D Layer Stack
+
+```mermaid
+graph BT
+    subgraph "Three.js Scene (FridayCore.tsx — Legacy)"
         L1[Layer 1: AI Network<br/>Icosahedron wireframe<br/>Orbiting particles<br/>Connection lines]
         L2[Layer 2: Ambient Data Dust<br/>200 particles<br/>Subtle drift + audio reactive]
         L3[Layer 3: Consciousness Threads<br/>Curved tubes<br/>Flowing energy lines]
@@ -1405,7 +1453,7 @@ graph TD
 
 ## Appendix A: File Inventory
 
-### Main Process (`src/main/`) — 152 files
+### Main Process (`src/main/`) — 153 files
 
 | Directory | File | Domain | Purpose |
 |-----------|------|--------|---------|
@@ -1437,6 +1485,7 @@ graph TD
 | root | `onboarding.ts` | Identity | "Her"-inspired first-run flow |
 | root | `psychological-profile.ts` | Identity | Claude psych analysis |
 | root | `personality-evolution.ts` | Identity | Trait → visual parameter mapping |
+| root | `art-evolution.ts` | Identity | Weekly Gemini-powered art therapy + structure evolution |
 | root | `feature-setup.ts` | Identity | 9-step guided setup |
 | root | `prompt-budget.ts` | Identity | Token allocation for personality context |
 | root | `voice-audition.ts` | Identity | Voice preview sample generation |
@@ -1548,21 +1597,25 @@ graph TD
 | `ipc/` | `workflow-recorder-handlers.ts` | IPC | Workflow recorder IPC handlers |
 | `pageindex/` | 7 modules | Documents | Vectorless RAG engine (PageIndex port) |
 
-### Renderer (`src/renderer/`) — 36 files
+### Renderer (`src/renderer/`) — 40 files
 
 | Directory | File | Layer | Purpose |
 |-----------|------|-------|---------|
 | root | `App.tsx` | Shell | State machine, phase routing, keyboard shortcuts (~600 lines) |
 | root | `main.tsx` | Entry | React DOM root |
 | root | `types.d.ts` | Types | Window API type declarations |
+| root | `desktop-viz.css` | Styles | Holographic desktop + HUD overlay styles |
 | `hooks/` | `useGeminiLive.ts` | Hook | Complete Gemini integration (~2415 lines) |
+| `hooks/` | `useDesktopEvolution.ts` | Hook | Desktop evolution structure index + transition state management |
 | `hooks/` | `useWakeWord.ts` | Hook | "Hey Friday" wake word detection |
 | `audio/` | `AudioPlaybackEngine.ts` | Audio | Gapless Web Audio scheduling |
 | `audio/` | `sound-effects.ts` | Audio | Sound effect registry |
 | `session/` | `SessionManager.ts` | Infra | 7min timeout, reconnect logic |
 | `session/` | `IdleBehavior.ts` | Infra | Tiered idle state machine |
 | `contexts/` | `MoodContext.tsx` | Context | Mood state provider |
-| `components/` | `FridayCore.tsx` | 3D | Three.js 5-layer visualization (~800 lines) |
+| `components/` | `DesktopViz.tsx` | 3D | Holographic desktop — 13 evolution structures, bloom, mood-reactive |
+| `components/` | `HudOverlay.tsx` | UI | Holographic HUD — agent name, structure label, status |
+| `components/` | `FridayCore.tsx` | 3D | Legacy 3D desktop (superseded by DesktopViz) |
 | `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
 | `components/` | `WelcomeGate.tsx` | UI | API key entry gate (~508 lines) |
 | `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
@@ -1589,7 +1642,7 @@ graph TD
 | `components/dashboard/` | `AgentCard.tsx` | Sub | Agent summary card |
 | `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
-### Grand Total: 187 source files, ~77,000 lines of TypeScript
+### Grand Total: 192 source files, ~80,000 lines of TypeScript
 
 ---
 
@@ -1607,6 +1660,7 @@ graph TD
 | `friday-data/trust-graph.json` | JSON array | 200 persons max | Trust Graph person nodes, evidence, scores |
 | `friday-data/commitment-tracker.json` | JSON array | Unlimited | Tracked promises and commitments |
 | `friday-data/context-graph.json` | JSON object | Singleton | Context relationship graph |
+| `friday-data/art-evolution.json` | JSON object | 52 records max | Weekly art evolution history + structure transition state |
 | `friday-data/workflows/` | JSON files | Per-workflow | Recorded workflow definitions |
 | `friday-settings.json` | JSON object | Singleton | All settings, API keys, agent config |
 

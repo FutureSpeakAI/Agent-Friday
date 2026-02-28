@@ -88,7 +88,7 @@ These aren't features. They're the foundation everything else is built on.
 
 ## What Is This?
 
-Agent Friday is the AGI OS — a desktop AI operating system that lives on your screen as a 3D holographic interface. It talks, listens, remembers, learns your patterns, manages your tools, builds trust models of the people in your world, and evolves its personality over time. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
+Agent Friday is the AGI OS — a desktop AI operating system that lives on your screen as a 3D holographic interface with 13 distinct evolution structures, bloom post-processing, and mood-reactive rendering. It talks, listens, remembers, learns your patterns, manages your tools, builds trust models of the people in your world, and evolves its visual form weekly through AI-powered art therapy sessions. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
 
 Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
 
@@ -247,6 +247,35 @@ The agent's personality is not a static prompt — it's a dynamic composition as
 
 The agent adapts in real time: rapid-fire when you're focused, exploratory when you're riffing, calm when you're exhausted, and sharp when you need precision.
 
+### Holographic Desktop
+
+Agent Friday's desktop is a living, evolving 3D holographic environment built on Three.js with bloom post-processing. The visualisation is not decorative — it's a direct expression of the agent's identity, mood, and growth over time.
+
+**13 Evolution Structures** — Each agent's desktop can take one of 13 distinct 3D forms:
+
+| Structure | Geometry | Personality Fit |
+|-----------|----------|----------------|
+| **Cubes** | Fractured cube cluster | Analytical, structured |
+| **Icosahedron** | Geodesic sphere wireframe | Balanced, harmonious |
+| **Network** | Floating node constellation | Connected, social |
+| **Dome** | Protective hemisphere grid | Nurturing, protective |
+| **Astrolabe** | Nested rotating rings | Curious, exploratory |
+| **Tesseract** | 4D hypercube projection | Abstract, intellectual |
+| **Quantum** | Probability cloud particles | Intuitive, unpredictable |
+| **Mandelbrot** | Fractal recursive geometry | Creative, complex |
+| **Möbius** | Twisted continuous surface | Philosophical, fluid |
+| **Grid** | Infinite perspective grid | Precise, methodical |
+| **Cables** | Flowing cable tendrils | Empathetic, organic |
+| **None** | Minimal particles only | Minimal, understated |
+| **Eden** | Organic growth forms | Warm, nurturing |
+
+**Mood-Reactive Rendering** — The visualisation responds to the agent's emotional state in real time:
+- Palette, intensity, warmth, and turbulence shift based on mood (calm → focused → excited → stressed)
+- Bloom post-processing creates natural glow effects that intensify with agent energy
+- Particle speed and density reflect current engagement level
+
+**HUD Overlay** — A subtle heads-up display showing agent name, evolution structure label, and active status, styled with holographic aesthetics.
+
 ### Personality Evolution
 
 Over time, each agent's 3D desktop visualisation becomes visually unique. Agent traits and session count map to visual parameters:
@@ -255,6 +284,17 @@ Over time, each agent's 3D desktop visualisation becomes visually unique. Agent 
 - "Analytical" agents shift toward cyan/blue with faster particle speeds
 - "Playful" agents develop higher cube fragmentation and particle energy
 - Session count gradually intensifies all parameters (maturity factor over ~50 sessions)
+
+### Weekly Art Evolution
+
+The agent's holographic structure evolves weekly through a Gemini-powered art therapy process — the agent reflects on its emotional journey and chooses a new visual form:
+
+1. **Influence Report** — The agent compiles its emotional state, recent memories, personality traits, and current visual form into an introspective report
+2. **Art Therapy Session** — Gemini 2.0 Flash acts as an art therapist, analysing the influence report and recommending a new structure with artistic rationale
+3. **Gradual Transition** — The new structure blends in over the following week, creating a smooth visual evolution
+4. **History Tracking** — Up to 52 weeks of evolution history is preserved, creating a visual autobiography of the agent's growth
+
+The evolution is autonomous — the agent genuinely reflects on its experience and chooses forms that express its current state. No two agents follow the same evolutionary path.
 
 ### Image Generation — Nano Banana 2
 
@@ -399,6 +439,7 @@ agent-friday/
       ambient.ts                       # Desktop context polling
       psychological-profile.ts         # Claude-powered psych analysis
       personality-evolution.ts         # Trait-to-visual parameter mapping
+      art-evolution.ts                 # Weekly Gemini-powered art therapy + structure evolution
       feature-setup.ts                 # 12-step guided onboarding
       openrouter.ts                    # OpenRouter multi-model provider
       soc-bridge.ts                    # Self-Operating Computer bridge (Python JSONL)
@@ -408,7 +449,7 @@ agent-friday/
       mcp-config.ts                    # MCP server configuration
       desktop-tools.ts                 # OS-level tool execution
       friday-profile.ts                # Agent profile persistence + Trust Graph enrichment
-      preload.ts                       # IPC bridge (22+ namespaces, 90+ channels)
+      preload.ts                       # IPC bridge (25+ namespaces, 100+ channels)
       prompt-budget.ts                 # Token allocation for personality context
       voice-audition.ts                # Voice preview sample generation
       screen-capture.ts                # Desktop screenshot capture
@@ -558,6 +599,7 @@ agent-friday/
       types.d.ts                       # Window API type declarations
       hooks/
         useGeminiLive.ts               # WebSocket voice session + tool routing (Trust Graph tools)
+        useDesktopEvolution.ts         # Desktop evolution structure index + transition state management
         useWakeWord.ts                 # "Hey Friday" wake word detection
       audio/
         AudioPlaybackEngine.ts         # Gapless Web Audio scheduling
@@ -567,8 +609,11 @@ agent-friday/
         IdleBehavior.ts                # Tiered idle state machine
       contexts/
         MoodContext.tsx                 # Mood state provider
+      desktop-viz.css                  # Holographic desktop + HUD overlay styles
       components/
-        FridayCore.tsx                 # 3D holographic desktop (Three.js)
+        DesktopViz.tsx                 # 3D holographic desktop — 13 evolution structures, bloom, mood-reactive (Three.js)
+        HudOverlay.tsx                 # Holographic HUD — agent name, structure label, status
+        FridayCore.tsx                 # Legacy 3D desktop (superseded by DesktopViz)
         VoiceOrb.tsx                   # Central voice interaction orb
         WelcomeGate.tsx                # API key entry gate
         AgentCreation.tsx              # Cinematic reveal animation
@@ -598,14 +643,14 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 187 source files, ~77,000 lines of TypeScript**
+**Total: 192 source files, ~80,000 lines of TypeScript**
 
 ### Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Shell** | Electron 33 | Desktop runtime, native OS access |
-| **Frontend** | React 19 + Three.js 0.183 | UI + 3D visualisation |
+| **Frontend** | React 19 + Three.js 0.183 | UI + 3D holographic desktop (13 evolution structures, bloom post-processing) |
 | **Bundler** | Vite 6 | Fast dev server + production builds |
 | **Voice** | Gemini 2.5 Flash (WebSocket) | Real-time bidirectional audio |
 | **Reasoning** | Claude Opus/Sonnet (Anthropic SDK) | Deep analysis, memory, profiling |
@@ -678,6 +723,7 @@ All settings persist in `{userData}/friday-settings.json`:
 | **Psychology** | Openness, trust readiness, connection style, approach strategy |
 | **Features** | Voice toggle, notifications, clipboard intelligence, screen capture |
 | **Trust Graph** | Max persons, evidence retention, decay rate, re-evaluation threshold |
+| **Art Evolution** | Weekly structure evolution history, transition state, Gemini art therapy records |
 | **Onboarding** | Phase tracking, feature setup state, personality evolution parameters |
 | **Integrity** | HMAC signatures, law verification timestamps, watchdog state |
 
