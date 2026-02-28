@@ -13,7 +13,7 @@ import { callIntegration } from './call-integration';
 import { connectorRegistry } from './connectors/registry';
 import { fitToBudget, type PromptSection } from './prompt-budget';
 import { settingsManager, type AgentConfig } from './settings';
-import { buildOnboardingPrompt, buildCustomizationPrompt } from './onboarding';
+import { buildOnboardingPrompt, buildCustomizationPrompt, buildTrustIntroductionPrompt } from './onboarding';
 import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
 import { trustGraph } from './trust-graph';
 import { personalityCalibration } from './personality-calibration';
@@ -110,11 +110,15 @@ function getPersonality(): string {
 
   if (!config.onboardingComplete || !config.agentName) {
     // Include the setup character definition + the full onboarding flow instructions.
-    // Both intake and customization flows are included because Gemini can't hot-swap
-    // system instructions mid-session — the model needs all instructions upfront.
+    // All phases are included because Gemini can't hot-swap system instructions mid-session —
+    // the model needs all instructions upfront.
+    // Phase 0: Trust introduction (MUST happen first — establishes trust before setup)
+    // Phase A: "Her" intake questions
+    // Phase B+C: Customization
+    const trustIntro = buildTrustIntroductionPrompt();
     const intakeFlow = buildOnboardingPrompt();
     const customizationFlow = buildCustomizationPrompt();
-    return `${SETUP_ASSISTANT_PERSONALITY}\n\n${intakeFlow}\n\n${customizationFlow}`;
+    return `${SETUP_ASSISTANT_PERSONALITY}\n\n${trustIntro}\n\n${intakeFlow}\n\n${customizationFlow}`;
   }
 
   return buildDynamicPersonality(config);

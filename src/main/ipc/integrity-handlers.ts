@@ -41,4 +41,23 @@ export function registerIntegrityHandlers(): void {
       safeMode: state.safeMode,
     };
   });
+
+  /**
+   * Reset Asimov's cLaws — re-sign everything and exit safe mode.
+   * This is the user-facing "Reset Integrity" function for corrupted agents.
+   * It re-establishes all cryptographic signatures using the current state
+   * and clears any false-positive safe mode triggers.
+   */
+  ipcMain.handle('integrity:reset', async () => {
+    const config = settingsManager.getAgentConfig();
+    const identityJson = JSON.stringify(config, Object.keys(config).sort());
+    const longTerm = memoryManager.getLongTerm();
+    const mediumTerm = memoryManager.getMediumTerm();
+    const ltJson = JSON.stringify(longTerm, null, 2);
+    const mtJson = JSON.stringify(mediumTerm, null, 2);
+    const ltSnap = longTerm.map((e: any) => ({ id: e.id, fact: e.fact }));
+    const mtSnap = mediumTerm.map((e: any) => ({ id: e.id, observation: e.observation }));
+
+    return integrityManager.resetIntegrity(identityJson, ltSnap, mtSnap, ltJson, mtJson);
+  });
 }
