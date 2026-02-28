@@ -385,6 +385,19 @@ contextBridge.exposeInMainWorld('eve', {
     incrementSession: () => ipcRenderer.invoke('evolution:increment-session'),
   },
 
+  desktopEvolution: {
+    getIndex: () => ipcRenderer.invoke('desktop-evolution:get-index') as Promise<number>,
+    setIndex: (index: number) => ipcRenderer.invoke('desktop-evolution:set-index', index) as Promise<void>,
+    getTransitionState: () => ipcRenderer.invoke('desktop-evolution:get-transition') as Promise<{ currentIndex: number; targetIndex: number; blend: number; lastChange: number }>,
+  },
+
+  artEvolution: {
+    getState: () => ipcRenderer.invoke('art-evolution:get-state'),
+    getLatest: () => ipcRenderer.invoke('art-evolution:get-latest'),
+    check: () => ipcRenderer.invoke('art-evolution:check'),
+    force: () => ipcRenderer.invoke('art-evolution:force'),
+  },
+
   voiceAudition: {
     generateSample: (voiceName: string, customPhrase?: string) =>
       ipcRenderer.invoke('voice-audition:generate-sample', voiceName, customPhrase) as Promise<{
