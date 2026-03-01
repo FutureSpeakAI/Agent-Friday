@@ -149,6 +149,24 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
         vaultSalt = await fs.readFile(saltPath);
         vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
         vaultUnlocked = true;
+
+        // EDGE CASE: Vault initialized on a previous launch but the user never
+        // saw the recovery phrase (e.g., app was killed before the keyphrase
+        // screen finished, or the UI failed to display it). Generate a new
+        // recovery phrase so the keyphrase gate can complete.
+        if (!meta.recoveryPhraseShown) {
+          recoveryPhrase = generateRecoveryPhrase();
+          recoveryPhraseTimer = setTimeout(() => {
+            if (recoveryPhrase) {
+              console.warn('[Vault] Auto-clearing recovery phrase from memory (10-minute safety timeout)');
+              recoveryPhrase = null;
+              recoveryPhraseTimer = null;
+            }
+          }, 10 * 60 * 1000);
+          console.log(`[Vault] Auto-unlocked + regenerated recovery phrase (never shown) in ${Date.now() - t0}ms`);
+          return recoveryPhrase;
+        }
+
         console.log(`[Vault] Auto-unlocked (same machine) in ${Date.now() - t0}ms`);
         return null;
       } catch (err) {
