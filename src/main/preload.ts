@@ -1134,6 +1134,7 @@ contextBridge.exposeInMainWorld('eve', {
   vault: {
     isUnlocked: () => ipcRenderer.invoke('vault:is-unlocked'),
     isInitialized: () => ipcRenderer.invoke('vault:is-initialized'),
+    isRecoveryPhraseShown: () => ipcRenderer.invoke('vault:is-recovery-phrase-shown'),
     getRecoveryPhrase: () => ipcRenderer.invoke('vault:get-recovery-phrase'),
     clearRecoveryPhrase: () => ipcRenderer.invoke('vault:clear-recovery-phrase'),
     markRecoveryPhraseShown: () => ipcRenderer.invoke('vault:mark-recovery-phrase-shown'),

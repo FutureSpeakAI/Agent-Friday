@@ -533,3 +533,47 @@ class SettingsManager {
 }
 
 export const settingsManager = new SettingsManager();
+
+// ── Sensitive environment variable list ────────────────────────────────
+// Used to strip API keys from child process environments so spawned
+// processes cannot inherit secrets from the parent Electron process.
+const SENSITIVE_ENV_KEYS = [
+  'GEMINI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'ELEVENLABS_API_KEY',
+  'FIRECRAWL_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'OPENAI_API_KEY',
+  'OPENROUTER_API_KEY',
+  // Common secret env vars that should never leak
+  'AWS_SECRET_ACCESS_KEY',
+  'AZURE_CLIENT_SECRET',
+  'DATABASE_URL',
+  'STRIPE_SECRET_KEY',
+  'GITHUB_TOKEN',
+  'SECRET_KEY',
+  'PRIVATE_KEY',
+];
+
+/**
+ * Returns a copy of process.env with all API keys and sensitive secrets removed.
+ * Use this as the `env` option when spawning child processes to prevent
+ * credential leakage to subprocesses.
+ *
+ * @example
+ *   import { getSanitizedEnv } from './settings';
+ *   spawn('node', ['script.js'], { env: getSanitizedEnv() });
+ */
+export function getSanitizedEnv(): Record<string, string | undefined> {
+  const env = { ...process.env };
+  for (const key of SENSITIVE_ENV_KEYS) {
+    delete env[key];
+  }
+  // Also strip any key containing 'API_KEY' or 'SECRET' as a catch-all
+  for (const key of Object.keys(env)) {
+    if (/API_KEY|SECRET|_TOKEN$/i.test(key) && key !== 'SESSION_MANAGER') {
+      delete env[key];
+    }
+  }
+  return env;
+}

@@ -286,6 +286,34 @@ app.whenReady().then(async () => {
     console.warn('[Friday] MCP client failed to connect:', err);
   }
 
+  // ── Content Security Policy (CSP) ──────────────────────────────────
+  // Prevents XSS from reaching the 40+ IPC namespaces exposed via preload.
+  // The renderer loads from http://localhost and connects to Gemini WebSocket.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "img-src 'self' data: blob: https:",
+            "media-src 'self' blob: data: mediastream:",
+            "connect-src 'self' wss://generativelanguage.googleapis.com https://generativelanguage.googleapis.com blob:",
+            "worker-src 'self' blob:",
+            "child-src 'self' blob:",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'",
+          ].join('; '),
+        ],
+      },
+    });
+  });
+
   // Auto-grant microphone and camera permissions
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     const allowed = ['media', 'mediaKeySystem', 'display-capture', 'audioCapture'];
@@ -610,6 +638,7 @@ app.whenReady().then(async () => {
     const vault = require('./vault');
     ipcMain.handle('vault:is-unlocked', () => vault.isVaultUnlocked());
     ipcMain.handle('vault:is-initialized', () => vault.isVaultInitialized());
+    ipcMain.handle('vault:is-recovery-phrase-shown', () => vault.isRecoveryPhraseShown());
     ipcMain.handle('vault:get-recovery-phrase', () => vault.getRecoveryPhrase());
     ipcMain.handle('vault:clear-recovery-phrase', () => { vault.clearRecoveryPhrase(); return true; });
     ipcMain.handle('vault:mark-recovery-phrase-shown', () => vault.markRecoveryPhraseShown());
