@@ -23,6 +23,7 @@ import { settingsManager } from '../settings';
 import { officeManager } from '../agent-office/office-manager';
 import { openRouter } from '../openrouter';
 import { awarenessMesh } from './awareness-mesh';
+import { capabilityMap } from './capability-map';
 
 const MAX_CONCURRENT = 5;   // Bumped from 3 for better parallelism
 const MAX_TASKS = 100;
@@ -45,7 +46,11 @@ class AgentRunner {
 
   initialize(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow;
-    console.log(`[AgentRunner] Initialized with ${this.definitions.size} agent types`);
+
+    // Populate capability map with builtin agent metadata for intelligent routing
+    capabilityMap.registerBuiltins(this.getAgentTypes());
+
+    console.log(`[AgentRunner] Initialized with ${this.definitions.size} agent types, ${capabilityMap.getAll().length} capabilities registered`);
   }
 
   /* ── Spawn ────────────────────────────────────────────────────────── */
