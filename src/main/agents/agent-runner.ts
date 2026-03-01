@@ -350,6 +350,8 @@ class AgentRunner {
     this.abortControllers.set(task.id, abortController);
 
     const context: AgentContext = {
+      taskId: task.id,
+
       log: (message: string) => {
         if (this.hardStopped.has(task.id)) return;
         task.logs.push(`[${new Date().toLocaleTimeString('en-GB')}] ${message}`);
