@@ -42,10 +42,12 @@ These are not suggestions. They are not configurable. They cannot be overridden,
 
 ### Personality Integrity System
 
-The cLaws aren't enforced by prompts alone. Agent Friday includes a **cryptographic integrity system** that ensures the Three Laws cannot be tampered with:
+The cLaws aren't enforced by prompts alone. Agent Friday includes a **multi-layered cryptographic integrity system** that ensures the Three Laws cannot be tampered with:
 
 - **HMAC-SHA256 signing** — Core law text is signed at build time. On every startup, the signature is verified. If the laws have been modified, the agent enters **Safe Mode** and refuses to operate until integrity is restored.
 - **Memory Watchdog** — A continuous background monitor that watches for attempts to inject, overwrite, or corrupt the agent's personality constraints through memory manipulation.
+- **Sovereign Vault** — All critical state files (personality, settings, memories, trust graph) are encrypted at rest with AES-256-GCM. The vault key is derived from the agent's Ed25519 private key + machine fingerprint via scrypt, making offline tampering infeasible.
+- **cLaw Attestation** — Every agent-to-agent message carries a cryptographic attestation proving the sender operates under valid Fundamental Laws. Peers reject messages from agents with invalid or expired governance.
 - **Integrity Shield UI** — A real-time status indicator in the renderer showing law integrity status (verified/warning/critical), with detailed audit information.
 
 This is not a feature toggle. It's a tamper-evident seal on the agent's moral foundation.
@@ -499,6 +501,17 @@ agent-friday/
       capability-gap-detector.ts       # Missing capability detection
       agent-network.ts                 # Multi-agent network coordination
 
+      # ── Cryptographic Security ──
+      vault.ts                         # Sovereign Vault — AES-256-GCM at-rest encryption
+      claw-attestation.ts              # Cross-agent cLaw governance verification protocol
+      agent-self-knowledge.ts          # Agent capability self-awareness for system prompt
+
+      network/                         # P2P network protocols
+        file-transfer.ts               # Trust-gated chunked file transfer (512KB chunks, SHA-256)
+
+      types/                           # TypeScript type declarations
+        node-machine-id.d.ts           # Type shim for node-machine-id
+
       # ── Workflows & Git ──
       workflow-recorder.ts             # Record replayable workflow sequences
       workflow-executor.ts             # Execute recorded workflows
@@ -643,7 +656,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 192 source files, ~80,000 lines of TypeScript**
+**Total: 197 source files, ~82,000 lines of TypeScript**
 
 ### Technology Stack
 
@@ -671,11 +684,15 @@ agent-friday/
 ### Security Model
 
 - **Asimov's cLaws** — Three Laws enforced at the personality system level with HMAC-SHA256 integrity verification
+- **Sovereign Vault** — All sensitive state files (settings, memories, trust graph, agent network) encrypted at rest with AES-256-GCM. Vault key derived from Ed25519 private key + machine fingerprint via scrypt (N=2²⁰). 12-word recovery phrase for machine migration
+- **cLaw Attestation** — Every outbound P2P message includes a cryptographic attestation (SHA-256 hash of canonical laws + Ed25519 signature + timestamp). Peer agents verify governance compliance; attestations expire after 5 minutes
+- **End-to-End Encryption** — Agent-to-agent messages encrypted with AES-256-GCM using shared secrets from X25519 ECDH key agreement
+- **Trusted File Transfer** — Files between agents are chunked (512 KB), individually SHA-256 hashed, and verified with whole-file integrity check. Trust levels gate acceptance (≥70% auto-accept, 30-70% prompt user, <30% auto-reject). Dangerous extensions always blocked
 - **Safe Mode** — Automatic lockdown if integrity verification fails (tampered laws, corrupted personality)
 - **Memory Watchdog** — Continuous monitoring for personality constraint injection or corruption
 - **Localhost-only binding** — Express server binds to `127.0.0.1`, never exposed to network
 - **CORS restriction** — Only `localhost` and `127.0.0.1` origins accepted
-- **API key protection** — All Gemini API calls use `x-goog-api-key` header (not URL parameters)
+- **API key protection** — All Gemini API calls use `x-goog-api-key` header (not URL parameters); API keys encrypted at rest by Sovereign Vault
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`
 - **Session tokens** — Per-session cryptographic tokens for API authentication
 - **Shell sanitisation** — PowerShell commands sanitised before execution
@@ -765,14 +782,16 @@ macOS and Linux builds are supported but primarily tested on Windows.
 
 - **No telemetry** — Agent Friday does not phone home or collect usage data
 - **Local storage** — All memory, settings, trust graph data, and conversation data stay on your machine
+- **Encryption at rest** — The Sovereign Vault encrypts all sensitive state files with AES-256-GCM, bound to this machine's fingerprint
 - **Screen capture** is local-only — images are sent directly to Gemini for context and never stored
 - **Obsidian sync** is opt-in — bidirectional vault sync only if you configure a vault path
 - **Webcam** access is tool-gated — the agent must explicitly request permission
 - **Self-improvement** changes require explicit user approval before any code is modified
 - **Connector tools** run locally — no data leaves your system except for API calls you initiate
-- **API keys** are stored in Electron's `userData` directory (OS-encrypted at rest)
+- **API keys** are encrypted at rest by the Sovereign Vault (AES-256-GCM) in Electron's `userData` directory
 - **Integrity verification** — Core safety laws are HMAC-signed and checked every startup
 - **Trust Graph** data is local-only — person profiles and trust scores never leave your machine
+- **P2P governance** — Agent-to-agent communication requires cryptographic cLaw attestation; file transfers are trust-gated with dangerous extensions blocked
 
 ---
 
