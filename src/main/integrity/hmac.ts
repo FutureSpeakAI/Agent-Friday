@@ -54,7 +54,8 @@ export async function initializeHmac(): Promise<void> {
       + 'On Linux, install libsecret or kwallet. On Windows/macOS this should not happen.';
     console.error(msg);
     try {
-      dialog.showMessageBoxSync({
+      // Async dialog — does NOT block the event loop (unlike showMessageBoxSync)
+      await dialog.showMessageBox({
         type: 'warning',
         title: 'Agent Friday — Security Warning',
         message: 'OS Credential Store Unavailable',
