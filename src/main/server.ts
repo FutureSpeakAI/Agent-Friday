@@ -72,10 +72,10 @@ export async function startServer(): Promise<number> {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-    // Also accept token from query param (for SSE/streaming endpoints)
-    const queryToken = req.query.token as string | undefined;
-
-    if (token === sessionToken || queryToken === sessionToken) {
+    // Security hardening: session token ONLY via Authorization header.
+    // Query parameter fallback removed — tokens in URLs leak via referrer headers,
+    // server logs, browser history, and proxy logs.
+    if (token === sessionToken) {
       return next();
     }
 

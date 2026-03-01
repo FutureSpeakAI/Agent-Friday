@@ -10,6 +10,7 @@ import { app } from 'electron';
 import * as path from 'path';
 import * as readline from 'readline';
 import { randomUUID } from 'crypto';
+import { getSanitizedEnv } from './settings';
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -61,7 +62,7 @@ class PythonToolBridge {
 
       this.proc = spawn(pythonCmd, [this.bridgePath], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: getSanitizedEnv() as NodeJS.ProcessEnv,
       });
 
       // Read stdout line-by-line for JSONL responses

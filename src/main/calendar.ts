@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { google, calendar_v3 } from 'googleapis';
 import { requireConsent } from './consent-gate';
+import { vaultRead, vaultWrite, isVaultUnlocked } from './vault';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events'];
 const TOKEN_FILE = 'google-calendar-token.json';
@@ -66,17 +67,23 @@ class CalendarIntegration {
         redirect_uris?.[0] || 'http://localhost:3000/oauth2callback'
       );
 
-      // Try to load saved token
+      // Try to load saved token (vault-encrypted if vault is unlocked)
       const tokenPath = path.join(this.dataDir, TOKEN_FILE);
       if (fs.existsSync(tokenPath)) {
-        const token = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
+        const tokenRaw = await vaultRead(tokenPath);
+        const token = JSON.parse(tokenRaw);
         this.oauth2Client.setCredentials(token);
 
-        // Set up automatic token refresh
-        this.oauth2Client.on('tokens', (tokens: any) => {
+        // Set up automatic token refresh — writes through vault
+        this.oauth2Client.on('tokens', async (tokens: any) => {
           if (tokens.refresh_token) {
-            const existing = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
-            fs.writeFileSync(tokenPath, JSON.stringify({ ...existing, ...tokens }));
+            try {
+              const existingRaw = await vaultRead(tokenPath);
+              const existing = JSON.parse(existingRaw);
+              await vaultWrite(tokenPath, JSON.stringify({ ...existing, ...tokens }));
+            } catch (err) {
+              console.warn('[Calendar] Token refresh persistence failed:', err);
+            }
           }
         });
 
@@ -131,9 +138,9 @@ class CalendarIntegration {
             const { tokens } = await this.oauth2Client!.getToken(code);
             this.oauth2Client!.setCredentials(tokens);
 
-            // Save token
+            // Save token through vault (encrypted at rest)
             const tokenPath = path.join(this.dataDir, TOKEN_FILE);
-            fs.writeFileSync(tokenPath, JSON.stringify(tokens));
+            await vaultWrite(tokenPath, JSON.stringify(tokens));
 
             this.calendarApi = google.calendar({ version: 'v3', auth: this.oauth2Client! });
             console.log('[Calendar] OAuth complete — authenticated');
