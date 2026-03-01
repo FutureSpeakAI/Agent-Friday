@@ -21,6 +21,24 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 
+// Late-bound vault import — avoids circular deps and allows test mocking
+interface VaultIO { vaultRead: (p: string) => Promise<string>; vaultWrite: (p: string, c: string) => Promise<void> }
+let _vault: VaultIO | null = null;
+function getVault(): VaultIO {
+  if (!_vault) {
+    try {
+      _vault = require('./vault');
+    } catch {
+      // Vault not available — use raw fs fallback
+      _vault = {
+        vaultRead: async (p: string) => (await fs.readFile(p, 'utf-8')),
+        vaultWrite: async (p: string, c: string) => { await fs.writeFile(p, c, 'utf-8'); },
+      };
+    }
+  }
+  return _vault!;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface AgentIdentity {
@@ -1129,7 +1147,7 @@ export class AgentNetwork {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
       // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
-      const { vaultRead } = require('./vault');
+      const { vaultRead } = getVault();
       const raw = await vaultRead(filePath);
       const data = JSON.parse(raw);
       if (data.keyPair) this.state.keyPair = data.keyPair;
@@ -1149,7 +1167,7 @@ export class AgentNetwork {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
       // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
-      const { vaultWrite } = require('./vault');
+      const { vaultWrite } = getVault();
       await vaultWrite(filePath, JSON.stringify(this.state, null, 2));
     } catch (err) {
       console.error('[AgentNetwork] Save failed:', err);
