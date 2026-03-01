@@ -368,6 +368,107 @@ const TRUST_GRAPH_TOOLS = [
   },
 ];
 
+// Multimedia creation tools — Gemini can create podcasts, visuals, audio messages, and music
+const MULTIMEDIA_TOOLS = [
+  {
+    name: 'create_podcast',
+    description:
+      'Create a multi-speaker podcast from sources (files, URLs, conversation topics, or memories). Generates a WAV audio file with distinct speakers discussing the content. Use when the user wants to turn content into an engaging audio discussion, create a podcast-style summary, or explore a topic through conversation format. The podcast will have multiple speakers with different voices.',
+    parameters: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'Main topic or title for the podcast episode.',
+        },
+        sources: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['text', 'url', 'file', 'conversation', 'memory'] },
+              content: { type: 'string', description: 'The source content, URL, file path, or topic text.' },
+            },
+          },
+          description: 'Content sources to base the podcast on.',
+        },
+        style: {
+          type: 'string',
+          enum: ['deep-dive', 'debate', 'summary', 'interview', 'explainer', 'storytelling'],
+          description: 'Podcast format/style. Defaults to deep-dive.',
+        },
+        duration_minutes: {
+          type: 'number',
+          description: 'Target duration in minutes (5-30). Defaults to 10.',
+        },
+      },
+      required: ['topic'],
+    },
+  },
+  {
+    name: 'create_visual',
+    description:
+      'Create a visual artifact — infographic, diagram, chart, timeline, dashboard, or any visual content. Generates self-contained HTML/CSS/SVG rendered to an image file. Use when the user asks you to visualize data, create an infographic, make a diagram, or produce any visual content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'What to create — be descriptive about the visual content, data, layout, and style.',
+        },
+        type: {
+          type: 'string',
+          enum: ['infographic', 'diagram', 'chart', 'timeline', 'dashboard', 'poster', 'card', 'other'],
+          description: 'Type of visual to create.',
+        },
+        data: {
+          type: 'string',
+          description: 'Optional structured data to visualize (JSON, CSV, or text).',
+        },
+      },
+      required: ['prompt', 'type'],
+    },
+  },
+  {
+    name: 'create_audio_message',
+    description:
+      'Create a polished audio message or voice note using text-to-speech. Generates a WAV file with the agent\'s voice speaking the given text. Use when the user wants to send a voice message, create an audio memo, or produce spoken content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'The text to convert to speech.',
+        },
+        voice: {
+          type: 'string',
+          description: 'Voice name to use (default: agent\'s configured voice). Options: Kore, Puck, Charon, Fenrir, Leda, Orus, Zephyr, Aoede.',
+        },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'create_music',
+    description:
+      'Generate a short music piece or sound design. Creates a WAV file with AI-generated audio. Use when the user asks for background music, a jingle, ambient sounds, or any musical creation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'Description of the music to create (genre, mood, instruments, tempo, etc.).',
+        },
+        duration_seconds: {
+          type: 'number',
+          description: 'Duration in seconds (5-60). Default: 15.',
+        },
+      },
+      required: ['prompt'],
+    },
+  },
+];
+
 // Episodic memory tool — Gemini can search past conversations
 const SEARCH_EPISODES_TOOL = {
   name: 'search_episodes',
@@ -845,6 +946,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         ...WEBCAM_TOOLS,
         ...HOUSEHOLD_TOOLS,
         ...TRUST_GRAPH_TOOLS,
+        ...MULTIMEDIA_TOOLS,
         ...CALL_TOOLS,
         ...MEETING_INTEL_TOOLS,
         ...SCHEDULER_TOOLS,
@@ -1696,6 +1798,95 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     const memoryFact = `Household member: ${memberName} (${relationship}). Voice characteristics: ${voiceDesc}. Registered on ${new Date().toLocaleDateString()}.`;
                     await window.eve.memory.addImmediate(memoryFact, 'household');
                     resultText = `Registered ${memberName} (${relationship}) as a household member. I'll remember their voice for future sessions.`;
+                  } else if (fc.name === 'create_podcast') {
+                    // Multimedia — create a multi-speaker podcast
+                    const topic = String(fc.args?.topic || 'Untitled Podcast');
+                    const sources = Array.isArray(fc.args?.sources) ? fc.args.sources : [];
+                    const style = String(fc.args?.style || 'deep-dive');
+                    const durationMinutes = Number(fc.args?.duration_minutes || 10);
+                    console.log('[GeminiLive] Creating podcast:', topic, style, durationMinutes + 'min');
+                    try {
+                      const result = await window.eve.multimedia.createPodcast({
+                        topic,
+                        sources: sources.length > 0 ? sources : [{ type: 'text', content: topic }],
+                        style,
+                        durationMinutes,
+                      });
+                      if (result.ok) {
+                        const r = result.result;
+                        resultText = `Podcast created: "${r.title}"\n` +
+                          `Duration: ${Math.round(r.durationSeconds / 60)} minutes | ` +
+                          `Speakers: ${r.speakers.map((s: any) => s.name).join(', ')} | ` +
+                          `Segments: ${r.segmentCount}\n` +
+                          `File saved to: ${r.filePath}\n` +
+                          `The audio file is ready to play.`;
+                      } else {
+                        resultText = `Podcast creation failed: ${result.error}`;
+                      }
+                    } catch (err) {
+                      resultText = `Podcast creation error: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'create_visual') {
+                    // Multimedia — create a visual artifact
+                    const prompt = String(fc.args?.prompt || '');
+                    const type = String(fc.args?.type || 'infographic');
+                    const data = fc.args?.data ? String(fc.args.data) : undefined;
+                    console.log('[GeminiLive] Creating visual:', type, prompt.slice(0, 60));
+                    try {
+                      const result = await window.eve.multimedia.createVisual({
+                        prompt, type, data,
+                      });
+                      if (result.ok) {
+                        const r = result.result;
+                        resultText = `Visual created: "${r.title}" (${r.type})\n` +
+                          `File saved to: ${r.filePath}\n` +
+                          `The visual is ready to view.`;
+                      } else {
+                        resultText = `Visual creation failed: ${result.error}`;
+                      }
+                    } catch (err) {
+                      resultText = `Visual creation error: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'create_audio_message') {
+                    // Multimedia — create a voice message
+                    const text = String(fc.args?.text || '');
+                    const voice = fc.args?.voice ? String(fc.args.voice) : undefined;
+                    console.log('[GeminiLive] Creating audio message:', text.slice(0, 60));
+                    try {
+                      const result = await window.eve.multimedia.createAudioMessage({
+                        text, voice,
+                      });
+                      if (result.ok) {
+                        const r = result.result;
+                        resultText = `Audio message created.\n` +
+                          `Duration: ${Math.round(r.durationSeconds)} seconds | Voice: ${r.voice}\n` +
+                          `File saved to: ${r.filePath}`;
+                      } else {
+                        resultText = `Audio message creation failed: ${result.error}`;
+                      }
+                    } catch (err) {
+                      resultText = `Audio message error: ${err instanceof Error ? err.message : String(err)}`;
+                    }
+                  } else if (fc.name === 'create_music') {
+                    // Multimedia — generate music
+                    const prompt = String(fc.args?.prompt || '');
+                    const durationSeconds = Number(fc.args?.duration_seconds || 15);
+                    console.log('[GeminiLive] Creating music:', prompt.slice(0, 60));
+                    try {
+                      const result = await window.eve.multimedia.createMusic({
+                        prompt, durationSeconds,
+                      });
+                      if (result.ok) {
+                        const r = result.result;
+                        resultText = `Music created: "${r.title}"\n` +
+                          `Duration: ${Math.round(r.durationSeconds)} seconds\n` +
+                          `File saved to: ${r.filePath}`;
+                      } else {
+                        resultText = `Music creation failed: ${result.error}`;
+                      }
+                    } catch (err) {
+                      resultText = `Music creation error: ${err instanceof Error ? err.message : String(err)}`;
+                    }
                   } else if (fc.name === 'update_trust') {
                     const personName = String(fc.args?.person_name || '');
                     const evidenceType = String(fc.args?.evidence_type || 'observed');

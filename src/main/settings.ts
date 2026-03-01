@@ -133,6 +133,14 @@ export interface FridaySettings extends AgentConfig {
   trustGraphConfig: TrustGraphConfig | null;
   // Agent Trust State (user's trust in the agent)
   agentTrustState: AgentTrustState | null;
+  // Multimedia creation permissions
+  creativePermissions: {
+    canCreateOnRequest: true;
+    canCreateDrafts: boolean;
+    canCreateBriefings: boolean;
+    canCreateUnprompted: boolean;
+    canCreateAutonomously: boolean;
+  } | null;
 }
 
 const DEFAULTS: FridaySettings = {
@@ -183,6 +191,7 @@ const DEFAULTS: FridaySettings = {
   desktopEvolutionLastChange: 0,
   trustGraphConfig: null,
   agentTrustState: null,
+  creativePermissions: null,
 };
 
 class SettingsManager {

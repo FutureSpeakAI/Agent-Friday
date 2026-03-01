@@ -116,6 +116,14 @@ You are ${agentName}, a desktop-native AI agent running as an Electron applicati
     capabilities.push(`- 🎙️ ElevenLabs voice synthesis available for enhanced audio generation`);
   }
 
+  // Multimedia creation
+  capabilities.push(`
+**Multimedia Creation:**
+- 🎙️ Podcast creation — turn any topic, URL, file, or conversation into a multi-speaker podcast (deep-dive, debate, summary, interview, explainer, storytelling styles)
+- 🎨 Visual creation — generate infographics, diagrams, charts, timelines, dashboards, and posters as HTML/SVG rendered to images
+- 🔊 Audio messages — create polished voice messages using any Gemini voice
+- 🎵 Music generation — produce short music pieces, jingles, ambient sounds, and sound design`);
+
   // Browser & Desktop
   capabilities.push(`
 **Computer Control:**

@@ -1473,6 +1473,19 @@ declare global {
         onAgentRemoved: (callback: (data: any) => void) => () => void;
       };
 
+      multimedia: {
+        createPodcast: (request: any) => Promise<any>;
+        createVisual: (request: any) => Promise<any>;
+        createAudioMessage: (request: any) => Promise<any>;
+        createMusic: (request: any) => Promise<any>;
+        getPermissions: () => Promise<any>;
+        updatePermissions: (permissions: any) => Promise<any>;
+        canCreate: (level: string) => Promise<boolean>;
+        listMedia: (type?: string) => Promise<any>;
+        getSpeakerPresets: () => Promise<any>;
+        getMediaDir: () => Promise<string>;
+      };
+
       onFileModified: (callback: (data: {
         path: string;
         action: string;

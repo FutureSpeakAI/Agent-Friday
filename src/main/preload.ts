@@ -1131,6 +1131,19 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  multimedia: {
+    createPodcast: (request: any) => ipcRenderer.invoke('multimedia:create-podcast', request),
+    createVisual: (request: any) => ipcRenderer.invoke('multimedia:create-visual', request),
+    createAudioMessage: (request: any) => ipcRenderer.invoke('multimedia:create-audio-message', request),
+    createMusic: (request: any) => ipcRenderer.invoke('multimedia:create-music', request),
+    getPermissions: () => ipcRenderer.invoke('multimedia:get-permissions'),
+    updatePermissions: (permissions: any) => ipcRenderer.invoke('multimedia:update-permissions', permissions),
+    canCreate: (level: string) => ipcRenderer.invoke('multimedia:can-create', level),
+    listMedia: (type?: string) => ipcRenderer.invoke('multimedia:list-media', type),
+    getSpeakerPresets: () => ipcRenderer.invoke('multimedia:get-speaker-presets'),
+    getMediaDir: () => ipcRenderer.invoke('multimedia:get-media-dir'),
+  },
+
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
     ipcRenderer.on('file:modified', handler);
