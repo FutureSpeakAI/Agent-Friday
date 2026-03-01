@@ -83,6 +83,7 @@ import { stateExport } from './state-export';
 import { memoryQuality } from './memory-quality';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
+import { multimediaEngine } from './multimedia-engine';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -114,6 +115,7 @@ import {
   registerPersonalityCalibrationHandlers,
   registerMemoryPersonalityBridgeHandlers,
   registerAgentTrustHandlers,
+  registerMultimediaHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -519,6 +521,10 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Memory-personality bridge init failed:', err);
     });
 
+    multimediaEngine.initialize().catch((err) => {
+      console.warn('[Friday] Multimedia engine init failed:', err);
+    });
+
     // Start the context stream bridge (after all engines are initialized)
     startContextStreamBridge();
     contextGraph.start();
@@ -575,6 +581,7 @@ app.whenReady().then(async () => {
   registerPersonalityCalibrationHandlers();
   registerMemoryPersonalityBridgeHandlers();
   registerAgentTrustHandlers();
+  registerMultimediaHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
