@@ -18,12 +18,14 @@
 import { AgentDefinition, AgentContext } from './agent-types';
 import { delegationEngine, TrustTier } from './delegation-engine';
 import { capabilityMap } from './capability-map';
+import { symbiontProtocol } from './symbiont-protocol';
 
 // Late-bound import to avoid circular dependency: orchestrator -> agent-runner -> builtin-agents -> orchestrator
 // Wrapped in _deps for test stubbing (vi.mock cannot intercept runtime require())
 export const _deps = {
   getAgentRunner: (): any => require('./agent-runner').agentRunner,
   getCapabilityMap: () => capabilityMap,
+  getSymbiont: () => symbiontProtocol,
 };
 
 interface SubTask {
@@ -64,11 +66,14 @@ async function decomposeGoal(
         .map((a: { name: string; description: string }) => `- "${a.name}": ${a.description}`)
         .join('\n');
 
+  // Symbiont Protocol: inject live performance data into planning context
+  const perfEnhancement = _deps.getSymbiont().getPromptEnhancement();
+
   const prompt = `You are a task decomposition engine. Break down a complex goal into concrete sub-tasks that can be executed by specialised agents.
 
 AVAILABLE AGENTS:
 ${agentList}
-
+${perfEnhancement}
 GOAL: ${goal}
 ${context ? `\nCONTEXT: ${context}` : ''}
 
