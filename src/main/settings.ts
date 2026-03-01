@@ -62,6 +62,16 @@ export interface TrustGraphConfig {
   reEvalThreshold: number;       // Evidence count that triggers hermeneutic re-eval, default 5
 }
 
+/* ── Agent Trust State (user's trust in the agent — frustration detection & recovery) ── */
+export interface AgentTrustState {
+  score: number;              // 0-1, starts at 0.5
+  frustrationSignals: number; // Count of detected frustration in current session
+  corrections: number;        // Times user corrected the agent
+  successStreak: number;      // Consecutive interactions without frustration signal
+  lastFrustration: number;    // Timestamp of last detected frustration
+  recoveryMode: boolean;      // True when trust is below 0.3
+}
+
 /* ── Intake Responses (raw answers from "Her" questions) ── */
 export interface IntakeResponses {
   voicePreference: string;    // Male, female, or neither
@@ -121,6 +131,8 @@ export interface FridaySettings extends AgentConfig {
   desktopEvolutionLastChange: number;  // timestamp of last structure change
   // Trust Graph
   trustGraphConfig: TrustGraphConfig | null;
+  // Agent Trust State (user's trust in the agent)
+  agentTrustState: AgentTrustState | null;
 }
 
 const DEFAULTS: FridaySettings = {
@@ -170,6 +182,7 @@ const DEFAULTS: FridaySettings = {
   desktopEvolutionIndex: 0,
   desktopEvolutionLastChange: 0,
   trustGraphConfig: null,
+  agentTrustState: null,
 };
 
 class SettingsManager {

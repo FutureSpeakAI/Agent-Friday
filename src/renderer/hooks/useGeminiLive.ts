@@ -681,6 +681,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const webcamCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTextRef = useRef<((text: string) => void) | null>(null);
+  const audioHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   optionsRef.current = options;
 
   // Initialize playback engine once
@@ -896,16 +897,17 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                   },
                 },
               },
-              // Tune VAD for responsive interruptions while avoiding false barge-in
-              // HIGH start sensitivity = reliably detects when the user starts speaking (enables interruption)
+              // Tune VAD for responsive interruptions while filtering ambient noise
+              // MEDIUM start sensitivity = filters out ambient noise/keyboard clicks while still detecting speech
               // LOW end sensitivity = waits longer before deciding user stopped (prevents choppy cut-off)
+              // Higher silence_duration prevents false end-of-speech during natural pauses
               // Echo cancellation on the mic (getUserMedia) handles self-interruption prevention
               realtime_input_config: {
                 automatic_activity_detection: {
-                  start_of_speech_sensitivity: 'START_SENSITIVITY_HIGH',
+                  start_of_speech_sensitivity: 'START_SENSITIVITY_MEDIUM',
                   end_of_speech_sensitivity: 'END_SENSITIVITY_LOW',
-                  prefix_padding_ms: 100,
-                  silence_duration_ms: 300,
+                  prefix_padding_ms: 150,
+                  silence_duration_ms: 500,
                 },
               },
               system_instruction: {
@@ -949,6 +951,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 sessionManagerRef.current?.sessionStarted();
               }
               try { window.eve.sessionHealth.sessionStarted(); } catch { /* ignored */ }
+              // Reset agent trust session counters on new session
+              window.eve.agentTrust.resetSession().catch(() => {});
 
               // Start WebSocket keepalive (every 8s) — send tiny silent PCM frame
               // to keep the Gemini session alive. Dead sockets caught via send() failure.
@@ -988,6 +992,33 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                   keepaliveRef.current = null;
                 }
               }, 8_000);
+
+              // Audio health monitoring — periodic check for degradation
+              // Detects buffer overflow, suspended contexts, and session fatigue
+              if (audioHealthTimerRef.current) clearInterval(audioHealthTimerRef.current);
+              playbackEngineRef.current?.resetHealthCounters();
+              audioHealthTimerRef.current = setInterval(() => {
+                const engine = playbackEngineRef.current;
+                if (!engine) return;
+
+                const health = engine.getHealthMetrics();
+
+                // Proactive reconnect if audio is degraded (high dropped chunks = buffer overflow → voice quality loss)
+                if (engine.isDegraded() && !smReconnectingRef.current && !isAutoReconnectingRef.current) {
+                  console.warn('[GeminiLive] Audio degradation detected — triggering proactive reconnect', health);
+                  engine.resetHealthCounters();
+                  const sm = sessionManagerRef.current;
+                  if (sm) {
+                    intentionalDisconnectRef.current = true;
+                    sm.requestReconnect();
+                  }
+                }
+
+                // Auto-resume suspended playback context (browser autoplay policy / tab backgrounding)
+                if (health.contextState === 'suspended') {
+                  engine.resumeIfSuspended();
+                }
+              }, 30_000); // Check every 30 seconds
 
               // Auto-start screen capture if enabled in settings (skip if already running from previous session)
               try {
@@ -1395,28 +1426,13 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     optionsRef.current.onPhaseChange?.('customizing');
                     resultText = 'Transitioning to agent customization phase. Guide the user through choosing their agent\'s name, voice, personality, and backstory.';
                   } else if (fc.name === 'mark_feature_setup_step') {
-                    // Feature setup walkthrough — advance to next step
+                    // Feature configured — record it and continue conversation naturally
                     const step = String(fc.args?.step || '');
                     const action = String(fc.args?.action || 'complete') as 'complete' | 'skip';
-                    console.log(`[GeminiLive] Feature setup: ${step} → ${action}`);
+                    console.log(`[GeminiLive] Feature configured: ${step} → ${action}`);
                     try {
-                      const state = await window.eve.featureSetup.advance(step, action);
-                      if (state && state.currentStep >= state.steps.length) {
-                        // All steps done — transition to normal
-                        optionsRef.current.onPhaseChange?.('normal');
-                        resultText = `Feature "${step}" ${action === 'complete' ? 'completed' : 'skipped'}. All features are now configured! You're fully set up.`;
-                      } else {
-                        // Get prompt for the next step
-                        const nextStep = await window.eve.featureSetup.getCurrentStep();
-                        if (nextStep) {
-                          const nextPrompt = await window.eve.featureSetup.getPrompt(nextStep);
-                          // Send next step prompt after a brief pause
-                          setTimeout(() => {
-                            sendTextRef.current?.(nextPrompt);
-                          }, 2000);
-                        }
-                        resultText = `Feature "${step}" ${action === 'complete' ? 'completed' : 'skipped'}. Moving to the next feature.`;
-                      }
+                      await window.eve.featureSetup.advance(step, action);
+                      resultText = `Feature "${step}" ${action === 'complete' ? 'configured successfully' : 'noted as skipped'}.`;
                     } catch (fsErr) {
                       const fsMsg = fsErr instanceof Error ? fsErr.message : String(fsErr);
                       resultText = `Feature setup error: ${fsMsg}`;
@@ -2097,6 +2113,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       // User interaction resets idle behavior
       idleBehaviorRef.current?.resetActivity();
       setState((s) => ({ ...s, idleTier: 0 }));
+      // Process trust signals from user text (fire-and-forget)
+      window.eve.agentTrust.processMessage(text).catch(() => {});
     }
   }, []);
 
@@ -2163,6 +2181,20 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         workletNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
           // Guard: don't send audio until Gemini has confirmed setup (prevents pre-setup contamination on reconnect)
           if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !setupCompleteRef.current) return;
+
+          // Client-side noise gate: compute RMS energy and skip near-silent frames
+          // This prevents ambient noise, keyboard clicks, and fan noise from triggering Gemini's VAD
+          const samples = new Int16Array(e.data);
+          let sumSq = 0;
+          for (let i = 0; i < samples.length; i++) {
+            const normalized = samples[i] / 32768;
+            sumSq += normalized * normalized;
+          }
+          const rms = Math.sqrt(sumSq / samples.length);
+
+          // Threshold: 0.015 filters ambient noise while passing normal speech (typically RMS > 0.05)
+          if (rms < 0.015) return;
+
           const b64 = arrayBufferToBase64(e.data);
           wsRef.current.send(
             JSON.stringify({
@@ -2190,6 +2222,15 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !setupCompleteRef.current) return;
 
           const input = event.inputBuffer.getChannelData(0);
+
+          // Client-side noise gate: compute RMS energy and skip near-silent frames
+          let sumSq = 0;
+          for (let i = 0; i < input.length; i++) {
+            sumSq += input[i] * input[i];
+          }
+          const rms = Math.sqrt(sumSq / input.length);
+          if (rms < 0.015) return; // Filter ambient noise
+
           const pcm16 = float32ToInt16(input);
           const b64 = arrayBufferToBase64(pcm16.buffer as ArrayBuffer);
 
@@ -2325,6 +2366,10 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     if (keepaliveRef.current) {
       clearInterval(keepaliveRef.current);
       keepaliveRef.current = null;
+    }
+    if (audioHealthTimerRef.current) {
+      clearInterval(audioHealthTimerRef.current);
+      audioHealthTimerRef.current = null;
     }
     setState({ isConnected: false, isConnecting: false, isListening: false, isSpeaking: false, isWebcamActive: false, isInCall: false, transcript: '', error: '', idleTier: 0 });
   }, [stopListening]);

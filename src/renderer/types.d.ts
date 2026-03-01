@@ -895,6 +895,22 @@ declare global {
         getIntakeResponses: () => Promise<any>;
       };
 
+      agentTrust: {
+        getState: () => Promise<{
+          score: number;
+          frustrationSignals: number;
+          corrections: number;
+          successStreak: number;
+          lastFrustration: number;
+          recoveryMode: boolean;
+        }>;
+        processMessage: (message: string) => Promise<any>;
+        resetSession: () => Promise<any>;
+        getPromptBlock: () => Promise<string>;
+        getLabel: () => Promise<string>;
+        boost: (amount: number) => Promise<any>;
+      };
+
       featureSetup: {
         initialize: () => Promise<any>;
         getState: () => Promise<{

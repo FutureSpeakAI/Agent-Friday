@@ -4,6 +4,11 @@
  * Instead of chaining chunks via `source.onended` (which introduces micro-gaps),
  * this engine pre-buffers chunks and uses `source.start(exactTime)` to schedule
  * each chunk at the exact sample boundary where the previous one ends.
+ *
+ * AUDIO QUALITY FEATURES:
+ * - Buffer overflow protection (max queue size prevents runaway buildup)
+ * - Health monitoring (queue depth, context state, session duration)
+ * - Automatic context recovery from browser suspension
  */
 
 export class AudioPlaybackEngine {
@@ -18,6 +23,9 @@ export class AudioPlaybackEngine {
   private activeSourceCount = 0;
   private currentSinkId: string | null = null;
   private isResuming = false;
+  private sessionStartTime = 0;
+  private totalChunksPlayed = 0;
+  private droppedChunks = 0;
 
   /** Minimum chunks buffered before playback starts */
   private readonly PRE_BUFFER = 2;
@@ -25,6 +33,8 @@ export class AudioPlaybackEngine {
   private readonly DRAIN_INTERVAL = 50;
   /** Output sample rate — Gemini sends 24kHz PCM */
   private readonly SAMPLE_RATE = 24000;
+  /** Maximum queue depth before dropping oldest chunks (prevents buffer bloat → audio lag) */
+  private readonly MAX_QUEUE_SIZE = 50;
 
   constructor() {
     this.ctx = new AudioContext({ sampleRate: this.SAMPLE_RATE });
@@ -33,6 +43,7 @@ export class AudioPlaybackEngine {
     this.analyser.smoothingTimeConstant = 0.8;
     this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
     this.analyser.connect(this.ctx.destination);
+    this.sessionStartTime = Date.now();
   }
 
   /** Get current output audio level as 0–1 RMS value */
@@ -52,7 +63,17 @@ export class AudioPlaybackEngine {
 
   /** Enqueue a decoded Float32 PCM chunk for playback */
   enqueue(pcm: Float32Array) {
+    // Buffer overflow protection — if queue is too deep, the audio is lagging
+    // behind real-time. Drop oldest chunks to catch up (better to skip than lag).
+    if (this.queue.length >= this.MAX_QUEUE_SIZE) {
+      const toDrop = this.queue.length - this.MAX_QUEUE_SIZE + 5; // Drop 5 extra to create breathing room
+      this.queue.splice(0, toDrop);
+      this.droppedChunks += toDrop;
+      console.warn(`[AudioPlayback] Buffer overflow — dropped ${toDrop} oldest chunks (total dropped: ${this.droppedChunks})`);
+    }
+
     this.queue.push(pcm);
+    this.totalChunksPlayed++;
 
     // Start draining once we have enough buffered
     if (!this.drainTimer && this.queue.length >= this.PRE_BUFFER) {
@@ -230,6 +251,47 @@ export class AudioPlaybackEngine {
   /** Get the current AudioContext state for health monitoring */
   getContextState(): AudioContextState {
     return this.ctx.state;
+  }
+
+  /** Get current queue depth for health monitoring */
+  getQueueDepth(): number {
+    return this.queue.length;
+  }
+
+  /** Get audio health metrics for session monitoring */
+  getHealthMetrics(): {
+    queueDepth: number;
+    activeSourceCount: number;
+    contextState: AudioContextState;
+    totalChunksPlayed: number;
+    droppedChunks: number;
+    sessionDurationMs: number;
+    isPlaying: boolean;
+  } {
+    return {
+      queueDepth: this.queue.length,
+      activeSourceCount: this.activeSourceCount,
+      contextState: this.ctx.state,
+      totalChunksPlayed: this.totalChunksPlayed,
+      droppedChunks: this.droppedChunks,
+      sessionDurationMs: Date.now() - this.sessionStartTime,
+      isPlaying: this.isPlaying,
+    };
+  }
+
+  /** Check if audio health is degraded (high dropped chunks, suspended context) */
+  isDegraded(): boolean {
+    // Degraded if: context is suspended, or we've dropped >10 chunks recently
+    if (this.ctx.state === 'suspended') return true;
+    if (this.droppedChunks > 10) return true;
+    return false;
+  }
+
+  /** Reset dropped chunk counter (call after reconnect to start fresh) */
+  resetHealthCounters() {
+    this.droppedChunks = 0;
+    this.totalChunksPlayed = 0;
+    this.sessionStartTime = Date.now();
   }
 
   /** Clean shutdown */

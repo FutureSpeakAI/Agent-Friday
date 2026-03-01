@@ -364,6 +364,15 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.invoke('trust:link-persons', idA, idB, label),
   },
 
+  agentTrust: {
+    getState: () => ipcRenderer.invoke('agent-trust:get-state'),
+    processMessage: (message: string) => ipcRenderer.invoke('agent-trust:process-message', message),
+    resetSession: () => ipcRenderer.invoke('agent-trust:reset-session'),
+    getPromptBlock: () => ipcRenderer.invoke('agent-trust:get-prompt-block'),
+    getLabel: () => ipcRenderer.invoke('agent-trust:get-label'),
+    boost: (amount: number) => ipcRenderer.invoke('agent-trust:boost', amount),
+  },
+
   featureSetup: {
     initialize: () => ipcRenderer.invoke('feature-setup:initialize'),
     getState: () => ipcRenderer.invoke('feature-setup:get-state'),

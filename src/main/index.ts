@@ -113,6 +113,7 @@ import {
   registerMemoryQualityHandlers,
   registerPersonalityCalibrationHandlers,
   registerMemoryPersonalityBridgeHandlers,
+  registerAgentTrustHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -573,6 +574,7 @@ app.whenReady().then(async () => {
   registerMemoryQualityHandlers();
   registerPersonalityCalibrationHandlers();
   registerMemoryPersonalityBridgeHandlers();
+  registerAgentTrustHandlers();
 
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
