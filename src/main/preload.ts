@@ -1179,6 +1179,44 @@ contextBridge.exposeInMainWorld('eve', {
     activeCount: () => ipcRenderer.invoke('container:active-count'),
   },
 
+  delegation: {
+    registerRoot: (taskId: string, agentType: string, description: string, trustTier?: string) =>
+      ipcRenderer.invoke('delegation:register-root', taskId, agentType, description, trustTier),
+    spawnSubAgent: (payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('delegation:spawn-sub-agent', payload),
+    reportCompletion: (taskId: string, result: string | null, error: string | null) =>
+      ipcRenderer.invoke('delegation:report-completion', taskId, result, error),
+    collectResults: (parentTaskId: string) =>
+      ipcRenderer.invoke('delegation:collect-results', parentTaskId),
+    haltTree: (taskId: string) =>
+      ipcRenderer.invoke('delegation:halt-tree', taskId),
+    haltAll: () =>
+      ipcRenderer.invoke('delegation:halt-all'),
+    getTree: (rootId: string) =>
+      ipcRenderer.invoke('delegation:get-tree', rootId),
+    getNode: (taskId: string) =>
+      ipcRenderer.invoke('delegation:get-node', taskId),
+    getActiveTrees: () =>
+      ipcRenderer.invoke('delegation:get-active-trees'),
+    getAllTrees: () =>
+      ipcRenderer.invoke('delegation:get-all-trees'),
+    getAncestry: (taskId: string) =>
+      ipcRenderer.invoke('delegation:get-ancestry', taskId),
+    getStats: () =>
+      ipcRenderer.invoke('delegation:get-stats'),
+    getConfig: () =>
+      ipcRenderer.invoke('delegation:get-config'),
+    updateConfig: (updates: Record<string, unknown>) =>
+      ipcRenderer.invoke('delegation:update-config', updates),
+    cleanup: (maxAgeMs?: number) =>
+      ipcRenderer.invoke('delegation:cleanup', maxAgeMs),
+    onUpdate: (callback: (update: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, update: Record<string, unknown>) => callback(update);
+      ipcRenderer.on('delegation:update', handler);
+      return () => { ipcRenderer.removeListener('delegation:update', handler); };
+    },
+  },
+
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
     ipcRenderer.on('file:modified', handler);
