@@ -120,6 +120,7 @@ import {
   registerAgentTrustHandlers,
   registerMultimediaHandlers,
   registerContainerEngineHandlers,
+  registerDelegationEngineHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -639,6 +640,7 @@ app.whenReady().then(async () => {
   registerAgentTrustHandlers();
   registerMultimediaHandlers();
   registerContainerEngineHandlers();
+  registerDelegationEngineHandlers(mainWindow ?? undefined);
 
   // ── Vault IPC handlers ────────────────────────────────────────────
   {
