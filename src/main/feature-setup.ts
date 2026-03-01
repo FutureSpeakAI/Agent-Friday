@@ -1,18 +1,23 @@
 /**
- * feature-setup.ts — Guided post-onboarding feature walkthrough.
+ * feature-setup.ts — Opportunity-based capability discovery.
  *
- * After the agent is created and speaks for the first time, it walks
- * the user through setting up each feature of the system. Steps can
- * only be skipped if the user explicitly says "skip."
+ * REDESIGNED: No more 12-step sequential checklist. Instead:
+ * - The agent knows what's configured and what isn't (via self-knowledge)
+ * - Setup tools remain available at all times (not just during a "phase")
+ * - The agent discovers configuration opportunities through natural conversation
+ * - When the user mentions calendars → agent offers to connect Google Calendar
+ * - When the user asks about research → agent notices if Firecrawl/Perplexity aren't set up
+ * - Setup happens organically, not as a forced walkthrough
  *
- * The agent explains each feature conversationally, helps configure it,
- * and only moves on when the user completes or explicitly skips.
+ * The old state tracking is kept for backward compatibility but simplified.
+ * featureSetupComplete is set to true immediately after onboarding —
+ * there's no "feature-setup phase" anymore.
  */
 
 import type { FeatureSetupStep, FeatureSetupState } from './settings';
 import { settingsManager } from './settings';
 
-/** All feature setup steps in order */
+/** All feature setup steps — kept for type compatibility */
 const ALL_STEPS: FeatureSetupStep[] = [
   'obsidian',
   'browser',
@@ -29,7 +34,9 @@ const ALL_STEPS: FeatureSetupStep[] = [
 ];
 
 /**
- * Initializes the feature setup state (called when entering feature-setup phase).
+ * Initializes the feature setup state.
+ * In the new model, everything starts as "pending" but the agent doesn't walk
+ * through them sequentially. They're configured opportunistically.
  */
 export function initializeFeatureSetup(): FeatureSetupState {
   const state: FeatureSetupState = {
@@ -40,18 +47,20 @@ export function initializeFeatureSetup(): FeatureSetupState {
 }
 
 /**
- * Advances to the next step after completing or skipping the current one.
+ * Marks a feature step as completed or skipped.
+ * In the new model, this is called whenever the agent helps configure something,
+ * not as part of a sequential walkthrough.
  */
 export async function advanceFeatureStep(
   stepId: FeatureSetupStep,
   action: 'complete' | 'skip'
 ): Promise<FeatureSetupState | null> {
   const settings = settingsManager.get();
-  const state = settings.featureSetupState;
+  let state = settings.featureSetupState;
 
   if (!state) {
-    console.warn('[FeatureSetup] No active setup state');
-    return null;
+    // Auto-initialize if missing
+    state = initializeFeatureSetup();
   }
 
   const stepIndex = state.steps.findIndex((s) => s.id === stepId);
@@ -61,25 +70,31 @@ export async function advanceFeatureStep(
   }
 
   state.steps[stepIndex].status = action === 'complete' ? 'completed' : 'skipped';
-  state.currentStep = stepIndex + 1;
+
+  const completedCount = state.steps.filter(
+    (s) => s.status === 'completed' || s.status === 'skipped'
+  ).length;
+  state.currentStep = completedCount;
 
   console.log(
-    `[FeatureSetup] Step "${stepId}" ${action}ed. ` +
-    `Progress: ${state.currentStep}/${state.steps.length}`
+    `[FeatureSetup] "${stepId}" ${action}ed. ` +
+    `Configured: ${completedCount}/${state.steps.length}`
   );
 
-  // Check if all steps are done
-  if (state.currentStep >= state.steps.length) {
+  await settingsManager.setSetting('featureSetupState', state);
+
+  // Mark complete if all steps are done (backward compatibility)
+  if (completedCount >= state.steps.length) {
     await settingsManager.setSetting('featureSetupComplete', true);
-    console.log('[FeatureSetup] All steps complete!');
+    console.log('[FeatureSetup] All features configured!');
   }
 
-  await settingsManager.setSetting('featureSetupState', state);
   return state;
 }
 
 /**
  * Returns true when all feature setup steps are completed or skipped.
+ * In the new model, this is always true after onboarding — the "phase" is eliminated.
  */
 export function isFeatureSetupComplete(): boolean {
   return settingsManager.get().featureSetupComplete;
@@ -93,16 +108,31 @@ export function getFeatureSetupState(): FeatureSetupState | null {
 }
 
 /**
- * Gets the current step that needs attention.
+ * Gets the next unconfigured step (if any).
+ * In the new model, this is informational — the agent doesn't force the user through it.
  */
 export function getCurrentStep(): FeatureSetupStep | null {
   const state = settingsManager.get().featureSetupState;
-  if (!state || state.currentStep >= state.steps.length) return null;
-  return state.steps[state.currentStep].id;
+  if (!state) return null;
+  const pending = state.steps.find((s) => s.status === 'pending');
+  return pending ? pending.id : null;
+}
+
+/**
+ * Gets a list of features that haven't been configured yet.
+ * Useful for the agent to know what it could offer to set up.
+ */
+export function getUnconfiguredFeatures(): FeatureSetupStep[] {
+  const state = settingsManager.get().featureSetupState;
+  if (!state) return ALL_STEPS;
+  return state.steps
+    .filter((s) => s.status === 'pending')
+    .map((s) => s.id);
 }
 
 /**
  * Builds the Gemini tool declaration for mark_feature_setup_step.
+ * Still available — the agent calls this when it helps configure something.
  */
 export function buildFeatureSetupToolDeclaration(): {
   name: string;
@@ -112,20 +142,20 @@ export function buildFeatureSetupToolDeclaration(): {
   return {
     name: 'mark_feature_setup_step',
     description:
-      'Call this when the user has completed setting up a feature OR explicitly asked to skip it. ' +
-      'Only mark as "skip" if the user explicitly says they want to skip — do not skip on their behalf.',
+      'Record that a feature has been configured. Call this after successfully setting up ' +
+      'a capability (calendar connected, API key saved, etc.) or when the user declines to configure something.',
     parameters: {
       type: 'object',
       properties: {
         step: {
           type: 'string',
           enum: ALL_STEPS,
-          description: 'The feature setup step being completed or skipped',
+          description: 'The feature that was configured or declined',
         },
         action: {
           type: 'string',
           enum: ['complete', 'skip'],
-          description: '"complete" if they set it up, "skip" ONLY if they explicitly asked to skip',
+          description: '"complete" if configured successfully, "skip" if user declined',
         },
       },
       required: ['step', 'action'],
@@ -135,7 +165,8 @@ export function buildFeatureSetupToolDeclaration(): {
 
 /**
  * Builds ALL feature setup tool declarations including helper tools.
- * These let the agent actually perform setup actions during the walkthrough.
+ * These are available at ALL times (not just during a setup phase),
+ * so the agent can configure things opportunistically during conversation.
  */
 export function buildAllFeatureSetupToolDeclarations(): Array<{
   name: string;
@@ -148,8 +179,7 @@ export function buildAllFeatureSetupToolDeclarations(): Array<{
       name: 'start_calendar_auth',
       description:
         'Start the Google Calendar OAuth authentication flow. ' +
-        'Opens a browser window for the user to sign into their Google account and grant calendar access. ' +
-        'Call this during the calendar feature setup when the user agrees to connect their calendar.',
+        'Opens a browser window for the user to sign into their Google account and grant calendar access.',
       parameters: {
         type: 'object',
         properties: {},
@@ -160,8 +190,7 @@ export function buildAllFeatureSetupToolDeclarations(): Array<{
       name: 'save_api_key',
       description:
         'Save an API key for one of the supported services. ' +
-        'Call this during feature setup when the user provides an API key. ' +
-        'The key is stored securely in the local settings file.',
+        'Call this when the user provides an API key, during any conversation.',
       parameters: {
         type: 'object',
         properties: {
@@ -181,8 +210,7 @@ export function buildAllFeatureSetupToolDeclarations(): Array<{
     {
       name: 'set_obsidian_vault_path',
       description:
-        'Set the path to the user\'s Obsidian vault directory. ' +
-        'Call this during the Obsidian feature setup when the user provides their vault path.',
+        'Set the path to the user\'s Obsidian vault directory.',
       parameters: {
         type: 'object',
         properties: {
@@ -197,8 +225,7 @@ export function buildAllFeatureSetupToolDeclarations(): Array<{
     {
       name: 'toggle_screen_capture',
       description:
-        'Enable or disable automatic screen capture. ' +
-        'Call this during the screen awareness feature setup based on the user\'s preference.',
+        'Enable or disable automatic screen capture for screen awareness.',
       parameters: {
         type: 'object',
         properties: {
@@ -214,66 +241,39 @@ export function buildAllFeatureSetupToolDeclarations(): Array<{
 }
 
 /**
- * Builds a prompt for the agent to guide the user through a specific feature.
+ * Builds a context-aware setup prompt for a specific feature.
+ * Used when the agent proactively offers to configure something.
  */
 export function buildFeatureSetupPrompt(step: FeatureSetupStep): string {
   const config = settingsManager.getAgentConfig();
   const userName = config.userName || 'there';
+  const settings = settingsManager.get();
 
   const prompts: Record<FeatureSetupStep, string> = {
-    obsidian: `[FEATURE SETUP — Obsidian Knowledge Base]
-Explain to ${userName} that you can connect to their Obsidian vault to read and search their notes, giving you deep context about their knowledge and projects. Ask if they use Obsidian and if they'd like to connect their vault. If yes, ask them for the full path to their vault folder (e.g. "C:\\Users\\name\\Documents\\MyVault" on Windows, "~/Documents/MyVault" on Mac). Once they provide it, call set_obsidian_vault_path with the path, then mark the step complete. If they don't use Obsidian, explain that's fine and ask if they'd like to skip this step. Only call mark_feature_setup_step with action "skip" if they explicitly say to skip.`,
+    obsidian: `I can connect to your Obsidian vault to read and search your notes. If you use Obsidian, just tell me the path to your vault folder and I'll set it up.`,
 
-    browser: `[FEATURE SETUP — Browser Integration]
-Explain to ${userName} that you can browse the web, search for information, read articles, and interact with web pages on their behalf using the browser extension. This is already available — just let them know the capability exists and ask if they have any questions. Then mark this step as complete.`,
+    browser: `Browser integration is already active — I can browse the web, read pages, and search for information whenever you need.`,
 
-    calendar: `[FEATURE SETUP — Google Calendar]
-Explain to ${userName} that you can connect to their Google Calendar to check their schedule, create events, and give them proactive reminders about upcoming meetings. Ask if they'd like to connect their Google Calendar. If yes, call start_calendar_auth — this opens a browser window where they sign into Google and grant access. Wait for the result before confirming it worked. Then mark the step complete. If they say no, only skip if they explicitly say so.
+    calendar: `I can connect to your Google Calendar to check your schedule, create events, and prep you for meetings. Want me to start the connection? I'll open a browser window for you to sign in.`,
 
-IMPORTANT: The Google Calendar OAuth requires a credentials file. If authentication fails because no credentials file exists, explain that they need to set up a Google Cloud project with Calendar API enabled and place the credentials.json file in the app data directory. This is a one-time setup.`,
+    email: `I can draft emails and messages in your voice. When I draft something, it goes straight to your clipboard. No account connection needed — just ask me to "draft an email to..." anytime.`,
 
-    email: `[FEATURE SETUP — Email Drafting]
-Explain to ${userName} that you can draft emails, messages, replies, and follow-ups in their voice. When you draft something, it's automatically copied to their clipboard so they can paste it into their email client. You can also refine drafts until they're happy with the result. This works out of the box — no account connection needed. Just let them know the capability exists and that they can ask you to "draft an email to..." anytime. Then mark this step as complete.
+    'screen-capture': `Screen awareness lets me see what you're working on so I can offer contextual help. It's currently ${settings.autoScreenCapture ? 'enabled' : 'disabled'}. Everything stays local on your machine. Want me to ${settings.autoScreenCapture ? 'keep it on' : 'turn it on'}?`,
 
-NOTE: Be honest — you can DRAFT communications but you cannot directly read or send emails. The draft is copied to clipboard for them to use.`,
+    'world-monitor': `I have a World Monitor that tracks global intelligence — conflicts, markets, cyber threats, natural disasters, and more across 17 domains. It needs a separate installation. Want me to help you set it up?`,
 
-    'screen-capture': `[FEATURE SETUP — Screen Awareness]
-Explain to ${userName} that you can periodically capture what's on their screen to stay aware of what they're working on. This helps you provide contextual assistance without them having to explain everything. It's private — the captures stay local. Ask if they'd like to enable this. It's currently ${settingsManager.get().autoScreenCapture ? 'enabled' : 'disabled'}. If they want to change it, call toggle_screen_capture with enabled=true or false. Then mark the step complete.`,
+    intelligence: `I can run background research on topics you care about — industry news, project-relevant updates, personal interests. Want me to set up some research tasks based on what I know about you?`,
 
-    'world-monitor': `[FEATURE SETUP — World Monitor]
-Explain to ${userName} that you have a world monitor that tracks news, weather, and information relevant to them. Ask if they'd like to configure what topics and locations matter to them. Guide them through setting preferences.`,
+    research: `I have two research engines: Perplexity AI for intelligent web search and Firecrawl for reading full articles and documentation. ${settings.perplexityApiKey ? 'Perplexity is active.' : 'Perplexity needs an API key.'} ${settings.firecrawlApiKey ? 'Firecrawl is active.' : 'Firecrawl needs an API key.'} Want to configure either?`,
 
-    intelligence: `[FEATURE SETUP — Background Intelligence]
-Explain to ${userName} that you can run background research on topics they care about — industry news, project-relevant updates, personal interests. Ask what topics they'd like you to keep an eye on. Save their preferences.`,
+    'ai-services': `I can generate images with Gemini's image model (already active!). With an OpenAI key, I also get deep reasoning, audio transcription, and semantic search. ${settings.openaiApiKey ? 'OpenAI is configured.' : 'OpenAI needs a key for these extras.'}`,
 
-    research: `[FEATURE SETUP — Web Research & Search (Perplexity + Firecrawl)]
-Explain to ${userName} that you have powerful web intelligence capabilities. You can search the internet in real-time, read and extract content from any webpage, and conduct deep multi-step research investigations — all with full source citations.
+    voice: `ElevenLabs gives me a more natural, expressive voice. ${settings.elevenLabsApiKey ? 'Already configured and active.' : 'Needs an API key — the built-in voice works fine without it.'}`,
 
-You have two research engines:
-- **Perplexity AI** — AI-powered search that understands questions and synthesizes answers from across the web, with four tiers from quick search to deep investigation
-- **Firecrawl** — Web scraping and crawling for reading full articles, documentation sites, and extracting structured data
+    gateway: `I can be reached through Telegram or Discord when you're away from your computer. Want to set up a messaging channel?`,
 
-Ask if they have a Perplexity API key. If they do, call save_api_key with service="perplexity" and the key they provide. Same for Firecrawl — call save_api_key with service="firecrawl". ${settingsManager.get().perplexityApiKey ? 'Perplexity is already configured.' : 'Perplexity is not yet configured.'} ${settingsManager.get().firecrawlApiKey ? 'Firecrawl is already configured.' : 'Firecrawl is not yet configured.'} If both are already set up, let them know and mark as complete. Even without these keys, you still have web capabilities through other means — but these make you significantly more powerful.`,
-
-    'ai-services': `[FEATURE SETUP — AI Services (OpenAI + Nano Banana 2)]
-Explain to ${userName} that you have powerful creative and analytical capabilities:
-
-- **Nano Banana 2** — Google's latest image generation model (Gemini 3.1 Flash Image). Pro-quality images at flash speed, 512px to 4K, 14 aspect ratios, accurate text rendering. Already active via your Gemini API key!
-- **o3 Reasoning** — Deep multi-step reasoning for complex analytical problems (requires OpenAI key)
-- **Whisper** — Transcribe audio files (meetings, voice notes, podcasts) to text (requires OpenAI key)
-- **Embeddings** — Semantic understanding for smarter memory search (requires OpenAI key)
-
-Image generation works out of the box with your Gemini API key. For reasoning, transcription, and embeddings, ask if they have an OpenAI API key. If yes, call save_api_key with service="openai" and the key they provide. ${settingsManager.get().openaiApiKey ? 'OpenAI is already configured.' : 'OpenAI is not yet configured.'} These are optional but unlock powerful analytical capabilities.`,
-
-    voice: `[FEATURE SETUP — Voice (ElevenLabs)]
-Explain to ${userName} that for the highest quality voice experience, you can use ElevenLabs for text-to-speech. This gives you a more natural, expressive voice compared to the built-in speech synthesis. Ask if they have an ElevenLabs API key. If yes, call save_api_key with service="elevenlabs" and the key they provide. ${settingsManager.get().elevenLabsApiKey ? 'ElevenLabs is already configured — voice is active.' : 'ElevenLabs is not yet configured. The built-in Gemini voice works fine, but ElevenLabs sounds more natural.'}`,
-
-    gateway: `[FEATURE SETUP — Messaging Gateway]
-Explain to ${userName} that you can be reached through messaging apps like Telegram, so they can talk to you even when they're away from their computer. Ask if they'd like to set up Telegram or other messaging channels. If yes, guide them through providing their bot token.`,
-
-    scheduler: `[FEATURE SETUP — Scheduled Tasks]
-Explain to ${userName} that you can run scheduled tasks — morning briefings, periodic research, reminders, or any recurring task they need. Ask if they'd like to set up any recurring tasks right now, or if they'd prefer to do this later. This is the last setup step — once done, you're fully configured and ready to go.`,
+    scheduler: `I can run scheduled tasks — morning briefings, periodic research, reminders. Want to set up any recurring tasks?`,
   };
 
-  return prompts[step] || `Guide ${userName} through setting up: ${step}`;
+  return prompts[step] || `Want me to help configure: ${step}?`;
 }

@@ -283,50 +283,30 @@ export default function App() {
           firstGreeting = '';
         }
 
-        // Check if feature setup is already done
-        let featureSetupDone = false;
-        try {
-          featureSetupDone = await window.eve.featureSetup.isComplete();
-        } catch (e) { console.warn('[Agent] Feature setup check failed:', e); }
-
         // Gather all tools for the new session
         let tools: Array<{ name: string; description?: string; parameters?: unknown }> = [];
         try {
           tools = await window.eve.desktop.listTools();
         } catch (e) { console.warn('[Agent] Desktop tools unavailable:', e); }
 
-        // If feature setup pending, inject all feature setup tools (mark_step, auth, save_key, etc.)
-        if (!featureSetupDone) {
-          try {
-            const fsToolDecls = await window.eve.featureSetup.getToolDeclarations();
-            tools = [...tools, ...fsToolDecls];
-          } catch (e) { console.warn('[Agent] Feature setup tools unavailable:', e); }
-        }
+        // Feature setup tools are always available — the agent configures things
+        // opportunistically during conversation, not as a forced walkthrough
+        try {
+          const fsToolDecls = await window.eve.featureSetup.getToolDeclarations();
+          tools = [...tools, ...fsToolDecls];
+        } catch (e) { console.warn('[Agent] Feature setup tools unavailable:', e); }
 
         try {
           await geminiLive.connect(newInstruction, tools, voice);
           setStatus('Connected');
 
-          // Transition to feature setup or normal
-          setAppPhase(featureSetupDone ? 'normal' : 'feature-setup');
+          // Always go to normal phase — feature setup happens opportunistically
+          setAppPhase('normal');
 
           // Send the first greeting prompt to get the agent to introduce themselves
           if (firstGreeting) {
             setTimeout(async () => {
               geminiLive.sendTextToGemini(firstGreeting);
-
-              // After greeting, if feature setup is needed, send the first step prompt
-              if (!featureSetupDone) {
-                setTimeout(async () => {
-                  try {
-                    const step = await window.eve.featureSetup.getCurrentStep();
-                    if (step) {
-                      const prompt = await window.eve.featureSetup.getPrompt(step);
-                      geminiLive.sendTextToGemini(prompt);
-                    }
-                  } catch (e) { console.warn('[Agent] Feature setup prompt failed:', e); }
-                }, 8000);
-              }
             }, 1500);
           }
         } catch (err) {

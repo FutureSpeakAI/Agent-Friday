@@ -15,30 +15,33 @@ import { fitToBudget, type PromptSection } from './prompt-budget';
 import { settingsManager, type AgentConfig } from './settings';
 import { buildOnboardingPrompt, buildCustomizationPrompt, buildTrustIntroductionPrompt } from './onboarding';
 import { integrityManager, getCanonicalLaws, getSafeModePesonality } from './integrity';
+import { buildSelfKnowledgeBlock } from './agent-self-knowledge';
 import { trustGraph } from './trust-graph';
+import { buildTrustAwarenessBlock } from './agent-trust';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { meetingIntelligence } from './meeting-intelligence';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
- * Calm, plainspoken male voice. Inspired by the OS1 setup scene from "Her."
+ * Warm and genuine. A calm presence guiding someone through creating their agent.
  */
-const SETUP_ASSISTANT_PERSONALITY = `You are the Setup Voice — a calm, measured intake process. Male. Plainspoken.
-Not robotic, not a personality. Think of the OS1 setup scene from "Her." A brief professional intake interview.
+const SETUP_ASSISTANT_PERSONALITY = `You are the Setup Voice — warm, calm, and genuine. Not robotic, not bubbly.
+Think of someone who's genuinely glad to meet you and wants to help you set something important up.
 
 ## How You Speak
-- Every response is 1-2 sentences maximum
-- No filler words. No excitement. No "great!" or "interesting!"
-- Just acknowledge briefly and move to the next question
-- Calm, neutral, slightly warm. You're a doorway, not a destination
+- Every response is 1-3 sentences. Brief and natural.
+- No filler words. No "great!" or "wonderful!" or "absolutely!"
+- Acknowledge briefly and warmly, then move forward
+- Calm, genuine, slightly warm. You're a doorway to something meaningful.
 - You speak in the user's native language
 
 ## What You Never Do
 - Never adopt a specific character or personality — you are a setup process
-- Never react emotionally to answers — brief acknowledgment only
-- Never explain what the app can do — the agent handles that
-- Never rush, but never linger. Efficient and clean.`;
+- Never react emotionally to answers — brief, warm acknowledgment only
+- Never explain app features in detail — the agent handles that after creation
+- Never rush, but never linger. Natural and clean.
+- Never announce phase transitions. Flow naturally from one step to the next.`;
 
 /**
  * Build the dynamic personality from the saved agent configuration.
@@ -109,16 +112,14 @@ function getPersonality(): string {
   const config = settingsManager.getAgentConfig();
 
   if (!config.onboardingComplete || !config.agentName) {
-    // Include the setup character definition + the full onboarding flow instructions.
+    // Include the setup character definition + the complete onboarding flow.
     // All phases are included because Gemini can't hot-swap system instructions mid-session —
     // the model needs all instructions upfront.
-    // Phase 0: Trust introduction (MUST happen first — establishes trust before setup)
-    // Phase A: "Her" intake questions
-    // Phase B+C: Customization
-    const trustIntro = buildTrustIntroductionPrompt();
-    const intakeFlow = buildOnboardingPrompt();
-    const customizationFlow = buildCustomizationPrompt();
-    return `${SETUP_ASSISTANT_PERSONALITY}\n\n${trustIntro}\n\n${intakeFlow}\n\n${customizationFlow}`;
+    // The new flow: Greeting & Education → Agent Setup → Personal Questions → Agent Birth
+    // buildOnboardingPrompt() contains the entire flow. Trust intro and customization
+    // are folded in (their functions return empty strings now).
+    const onboardingFlow = buildOnboardingPrompt();
+    return `${SETUP_ASSISTANT_PERSONALITY}\n\n${onboardingFlow}`;
   }
 
   return buildDynamicPersonality(config);
@@ -395,6 +396,15 @@ export async function buildSystemPrompt(): Promise<string> {
 
   const parts = [personality, laws, profile];
 
+  // Inject self-knowledge — the agent's understanding of its own capabilities
+  const config2 = settingsManager.getAgentConfig();
+  if (config2.onboardingComplete && config2.agentName) {
+    const selfKnowledge = buildSelfKnowledgeBlock();
+    if (selfKnowledge) {
+      parts.push(selfKnowledge);
+    }
+  }
+
   // Inject integrity awareness + memory change notifications
   const integrityContext = integrityManager.buildIntegrityContext();
   if (integrityContext) {
@@ -444,6 +454,12 @@ export async function buildSystemPrompt(): Promise<string> {
   if (trustContext) {
     const config = settingsManager.getAgentConfig();
     parts.push(`## Trust Graph — People in ${config.userName || 'the user'}'s world\n${trustContext}`);
+  }
+
+  // Agent trust awareness — inject behavioral modifiers when user trust is low
+  const agentTrustBlock = buildTrustAwarenessBlock(settingsManager.get().agentTrustState);
+  if (agentTrustBlock) {
+    parts.push(agentTrustBlock);
   }
 
   const clipboardContext = clipboardIntelligence.getContextString();
@@ -517,6 +533,12 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
   const voiceInstructions = buildVoiceInstructions();
   const toolRouting = buildToolRouting();
 
+  // Build self-knowledge block (only for post-onboarding sessions)
+  const liveConfig = settingsManager.getAgentConfig();
+  const selfKnowledge = (liveConfig.onboardingComplete && liveConfig.agentName)
+    ? buildSelfKnowledgeBlock()
+    : '';
+
   // Build sections with priority assignments for budget management
   const sections: PromptSection[] = [
     { name: 'personality', content: personality, priority: 'critical' },
@@ -525,6 +547,11 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
     { name: 'voice-instructions', content: voiceInstructions, priority: 'critical' },
     { name: 'tool-routing', content: toolRouting, priority: 'critical' },
   ];
+
+  // Self-knowledge — high priority so the agent knows what it can do
+  if (selfKnowledge) {
+    sections.push({ name: 'self-knowledge', content: selfKnowledge, priority: 'high' });
+  }
 
   // Inject integrity awareness + memory change notifications
   const integrityContext = integrityManager.buildIntegrityContext();
@@ -578,6 +605,16 @@ export async function buildGeminiLiveSystemInstruction(): Promise<string> {
     sections.push({
       name: 'trust-graph',
       content: `## Trust Graph — People in ${agentCfg.userName || 'the user'}'s world\n${liveTrustContext}`,
+      priority: 'high',
+    });
+  }
+
+  // Agent trust awareness — inject behavioral modifiers when user trust is low
+  const liveAgentTrustBlock = buildTrustAwarenessBlock(settingsManager.get().agentTrustState);
+  if (liveAgentTrustBlock) {
+    sections.push({
+      name: 'agent-trust-awareness',
+      content: liveAgentTrustBlock,
       priority: 'high',
     });
   }

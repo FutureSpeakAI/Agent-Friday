@@ -47,8 +47,11 @@ export function registerOnboardingHandlers(): void {
       await settingsManager.saveAgentConfig(config);
       const featureState = initializeFeatureSetup();
       await settingsManager.setSetting('featureSetupState', featureState);
+      // Mark feature setup as complete immediately — no sequential walkthrough phase.
+      // Features are configured opportunistically during normal conversation.
+      await settingsManager.setSetting('featureSetupComplete', true);
       console.log(
-        `[Onboarding] Feature setup initialized with ${featureState.steps.length} steps`,
+        `[Onboarding] Feature setup initialized (${featureState.steps.length} features, configured opportunistically)`,
       );
       ensureProfileOnDisk().catch((err) => {
         console.warn('[Onboarding] Profile rewrite failed:', err);
