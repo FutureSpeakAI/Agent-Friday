@@ -34,3 +34,4 @@ export { registerPersonalityCalibrationHandlers } from './personality-calibratio
 export { registerMemoryPersonalityBridgeHandlers } from './memory-personality-bridge-handlers';
 export { registerAgentTrustHandlers } from './agent-trust-handlers';
 export { registerMultimediaHandlers } from './multimedia-handlers';
+export { registerContainerEngineHandlers } from './container-engine-handlers';

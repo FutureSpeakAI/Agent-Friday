@@ -120,6 +120,8 @@ function formatConsentDescription(action: string, details: Record<string, unknow
       return `Type text: "${String(details.text || '').slice(0, 80)}"`;
     case 'soc_press_keys':
       return `Press keys: ${details.keys}`;
+    case 'container_execute':
+      return `Run ${details.language || 'code'} in Docker container (trigger: ${details.trigger || 'unknown'})${details.codePreview ? `: "${String(details.codePreview).slice(0, 100)}"` : ''}${details.packages ? ` [packages: ${details.packages}]` : ''}${details.network && details.network !== 'none' ? ` [network: ${details.network}]` : ''}`;
     default:
       return `${action}: ${JSON.stringify(details).slice(0, 150)}`;
   }
