@@ -1159,6 +1159,26 @@ contextBridge.exposeInMainWorld('eve', {
     getMediaDir: () => ipcRenderer.invoke('multimedia:get-media-dir'),
   },
 
+  container: {
+    execute: (payload: {
+      code: string;
+      language: string;
+      trigger?: string;
+      description?: string;
+      packages?: string[];
+      sourcePath?: string;
+      limits?: Record<string, number>;
+      network?: string;
+      env?: Record<string, string>;
+    }) => ipcRenderer.invoke('container:execute', payload),
+    cancel: (taskId: string) => ipcRenderer.invoke('container:cancel', taskId),
+    status: () => ipcRenderer.invoke('container:status'),
+    list: () => ipcRenderer.invoke('container:list'),
+    get: (taskId: string) => ipcRenderer.invoke('container:get', taskId),
+    available: () => ipcRenderer.invoke('container:available'),
+    activeCount: () => ipcRenderer.invoke('container:active-count'),
+  },
+
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
     ipcRenderer.on('file:modified', handler);
