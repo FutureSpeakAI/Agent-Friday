@@ -17,11 +17,13 @@
 
 import { AgentDefinition, AgentContext } from './agent-types';
 import { delegationEngine, TrustTier } from './delegation-engine';
+import { capabilityMap } from './capability-map';
 
 // Late-bound import to avoid circular dependency: orchestrator -> agent-runner -> builtin-agents -> orchestrator
 // Wrapped in _deps for test stubbing (vi.mock cannot intercept runtime require())
 export const _deps = {
   getAgentRunner: (): any => require('./agent-runner').agentRunner,
+  getCapabilityMap: () => capabilityMap,
 };
 
 interface SubTask {
@@ -48,11 +50,19 @@ async function decomposeGoal(
   context: string,
   callClaude: (prompt: string, maxTokens?: number) => Promise<string>
 ): Promise<PlanStep[]> {
-  const availableAgents: Array<{ name: string; description: string }> = _deps.getAgentRunner().getAgentTypes();
-  const agentList = availableAgents
-    .filter((a) => a.name !== 'orchestrate') // Prevent recursive orchestration in plan
-    .map((a) => `- "${a.name}": ${a.description}`)
-    .join('\n');
+  // Use capability map for rich agent metadata (tags, domains, latency, required inputs)
+  // Falls back to flat agent list if capability map is empty (pre-initialization)
+  const cm = _deps.getCapabilityMap();
+  const richAgentList = cm.getOrchestratorPromptContext({ excludeOrchestrate: true });
+  const availableAgents = richAgentList !== 'No agents available.'
+    ? cm.getAgentTypes(true)
+    : _deps.getAgentRunner().getAgentTypes();
+  const agentList = richAgentList !== 'No agents available.'
+    ? richAgentList
+    : availableAgents
+        .filter((a: { name: string }) => a.name !== 'orchestrate')
+        .map((a: { name: string; description: string }) => `- "${a.name}": ${a.description}`)
+        .join('\n');
 
   const prompt = `You are a task decomposition engine. Break down a complex goal into concrete sub-tasks that can be executed by specialised agents.
 
@@ -96,7 +106,7 @@ Example for "Research AI governance and draft a briefing email to the board":
   const rawPlan = JSON.parse(match[0]) as SubTask[];
 
   // Validate and clean
-  const agentNames = new Set(availableAgents.map((a) => a.name));
+  const agentNames = new Set(availableAgents.map((a: { name: string }) => a.name));
   agentNames.delete('orchestrate'); // Prevent recursive orchestration
   const plan: PlanStep[] = rawPlan.map((task, i) => {
     if (!agentNames.has(task.agentType)) {
