@@ -39,6 +39,7 @@ export type ErrorSource =
   | 'ecosystem'
   | 'persistence'
   | 'container'
+  | 'delegation'
   | 'unknown';
 
 // ── Base Error Class ─────────────────────────────────────────────────
