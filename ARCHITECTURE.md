@@ -2,7 +2,7 @@
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
 > **Last updated**: 2026-02-28
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
 
 ---
 
@@ -160,6 +160,12 @@ graph LR
         SAFE_MODE[Safe Mode]
     end
 
+    subgraph "Cryptographic Security"
+        VAULT[Sovereign Vault<br/>AES-256-GCM at rest]
+        CLAW_ATT[cLaw Attestation<br/>Ed25519 governance proof]
+        FILE_XFER[Trusted File Transfer<br/>SHA-256 chunked]
+    end
+
     subgraph "Automation"
         SOC_BRIDGE[SOC Bridge]
         GIT_LOAD[GitLoader]
@@ -266,6 +272,10 @@ graph LR
     PERSONA --> EVOLVE
     EVOLVE --> ART_EVOL
 
+    VAULT --> CLAWS
+    CLAW_ATT --> CLAWS
+    FILE_XFER --> TRUST_ENGINE
+
     MOOD --> NEXUS
     VOICE --> ORB
     AGENT_FW --> ACTIONS
@@ -297,6 +307,9 @@ graph LR
 | MCP | `mcp-client.ts` | Server configs in settings | Tool calls | stdio/SSE servers |
 | Scheduler | `scheduler.ts` | `friday-data/scheduled-tasks.json` | User commands, Intelligence | Cron execution |
 | Identity | `onboarding.ts`, `personality.ts` | `friday-settings.json` | First-run flow | All personality-aware modules |
+| Sovereign Vault | `vault.ts` | `friday-data/vault-meta.json` + encrypted files | Settings, Memory, Trust Graph save paths | All file I/O for sensitive data |
+| cLaw Attestation | `claw-attestation.ts` | In-memory (ephemeral) | Core laws, Agent network | Outbound/inbound P2P messages |
+| File Transfer | `network/file-transfer.ts` | `friday-data/file-transfers/`, audit JSON | Agent network, Trust Graph | Inbound file storage, audit trail |
 | Presentation | React components | React state, MoodContext | All main process data | User display |
 
 ---
@@ -343,6 +356,12 @@ graph TD
         CORE_LAWS[core-laws.ts<br/>Three Laws Text]
         HMAC[hmac.ts<br/>SHA256 Signing]
         WATCHDOG[memory-watchdog.ts<br/>Integrity Monitor]
+    end
+
+    subgraph "Cryptographic Security Domain"
+        VAULT_MOD[vault.ts<br/>Sovereign Vault AES-256-GCM]
+        CLAW_ATT_MOD[claw-attestation.ts<br/>Governance Verification]
+        FILE_XFER_MOD[network/file-transfer.ts<br/>Trust-Gated Transfer]
     end
 
     subgraph "Automation Domain"
@@ -408,6 +427,8 @@ graph TD
     INDEX --> CORE_LAWS
     INDEX --> OFFICE_MGR
     INDEX --> OPENROUTER
+    INDEX --> VAULT_MOD
+    INDEX --> FILE_XFER_MOD
 
     MEMORY --> SEMANTIC
     MEMORY --> OBSIDIAN
@@ -431,6 +452,8 @@ graph TD
     HMAC --> WATCHDOG
     GW_MGR --> TRUST
     GW_MGR --> AUDIT
+    VAULT_MOD --> SETTINGS
+    CLAW_ATT_MOD --> CORE_LAWS
 ```
 
 ### Module Coupling Analysis
@@ -446,6 +469,9 @@ graph TD
 | `integrity/core-laws.ts` | 3 | 1 | **Safety core** | Read by personality, checked by HMAC |
 | `soc-bridge.ts` | 2 | 1 | **Bridge** | Spawns Python, translates JSONL |
 | `openrouter.ts` | 3 | 1 | **Service** | REST client for OpenRouter API |
+| `vault.ts` | 10+ | 2 | **Afferent hub** | Read/write by all persistent stores; depends on node-machine-id, crypto |
+| `claw-attestation.ts` | 1 | 2 | **Safety core** | Used by agent-network.ts; depends on core-laws, crypto |
+| `network/file-transfer.ts` | 1 | 3 | **Domain core** | Used by index.ts IPC; depends on vault, crypto, fs |
 
 ---
 
@@ -1366,6 +1392,8 @@ graph TD
         MAIN[Main Process<br/>Full Node.js access]
         RENDERER[Renderer Process<br/>Sandboxed Chromium]
         INTEGRITY[Integrity System<br/>HMAC-SHA256 verified laws]
+        VAULT_SEC[Sovereign Vault<br/>AES-256-GCM at-rest encryption]
+        ATTESTATION[cLaw Attestation<br/>Ed25519 governance proofs]
     end
 
     subgraph "Trust Boundary: IPC"
@@ -1381,10 +1409,11 @@ graph TD
     end
 
     subgraph "Trust Zone: Local Filesystem"
-        FRIDAY_DATA[friday-data/<br/>Memory, episodes, tasks]
-        SETTINGS[friday-settings.json<br/>API keys, agent config]
+        FRIDAY_DATA[friday-data/<br/>Memory, episodes, tasks<br/>Vault-encrypted at rest]
+        SETTINGS[friday-settings.json<br/>API keys, agent config<br/>Vault-encrypted at rest]
         OBSIDIAN_DIR[Obsidian vault<br/>User knowledge base]
         LAW_FILES[integrity/<br/>HMAC-signed law text]
+        FILE_XFER_DIR[file-transfers/<br/>Trust-gated inbound files]
     end
 
     subgraph "Trust Zone: External Processes"
@@ -1401,6 +1430,10 @@ graph TD
 
     MAIN --> INTEGRITY
     INTEGRITY -->|Verified on startup| MAIN
+    MAIN -->|Encrypt/Decrypt| VAULT_SEC
+    VAULT_SEC -->|Sealed read/write| FRIDAY_DATA
+    VAULT_SEC -->|Sealed read/write| SETTINGS
+    MAIN -->|Attest outbound msgs| ATTESTATION
 
     MAIN -->|API key in header| GEMINI_API
     MAIN -->|API key in header| CLAUDE_API
@@ -1423,6 +1456,8 @@ graph TD
     style SETTINGS fill:#ef4444,color:#fff
     style INTEGRITY fill:#22c55e,color:#000
     style LAW_FILES fill:#22c55e,color:#000
+    style VAULT_SEC fill:#22c55e,color:#000
+    style ATTESTATION fill:#22c55e,color:#000
 ```
 
 ### Security Mitigations
@@ -1432,7 +1467,7 @@ graph TD
 | Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` (22+ namespaces, explicit function exposure) |
 | Shell execution | Command injection | `run_command` tool with PowerShell sanitisation; Asimov's cLaws consent gate for destructive operations |
 | MCP processes | Malicious servers | User-configured only, stdio isolation, no network exposure |
-| API keys in settings | Plaintext storage | `friday-settings.json` in Electron `userData` directory (OS-level user isolation) |
+| API keys in settings | Plaintext storage | Encrypted at rest by Sovereign Vault (AES-256-GCM, scrypt-derived key bound to machine fingerprint); transparent read with graceful degradation for unencrypted legacy files |
 | Browser WebSocket | Local network attack | Localhost only (:52836), single-connection model |
 | Telegram gateway | Message injection | 5-tier trust engine, cryptographic pairing flow, per-contact session isolation, full audit logging |
 | Obsidian sync | Path traversal | Category-based subdirectory mapping |
@@ -1441,11 +1476,14 @@ graph TD
 | Memory system | Personality injection | Memory Watchdog monitors for attempts to corrupt personality constraints |
 | SOC bridge | Escalation | Python subprocess with JSONL isolation, consent-gated actions |
 | GitLoader | Arbitrary code | Read-only clone to temp directory, no execution, auto-cleanup |
+| Agent-to-agent messages | Governance bypass | cLaw Attestation on every outbound message (SHA-256 law hash + Ed25519 signature + 5min expiry); peers reject invalid attestations |
+| P2P file transfer | Malicious files | Trust-gated acceptance (≥70% auto-accept, 30-70% prompt, <30% reject); 512KB chunked with per-chunk SHA-256 + whole-file integrity check; 28 dangerous extensions blocked; 50MB max |
+| Sensitive state files | Offline tampering | Sovereign Vault AES-256-GCM encryption at rest; key derived from Ed25519 private key + machine fingerprint via scrypt (N=2²⁰); 12-word recovery phrase for migration |
 
 ### Items Flagged for Future Hardening
 
-1. **API keys** — Migrate to Electron `safeStorage` for encryption at rest
-2. **OAuth tokens** — Migrate to OS-level secure credential storage (keytar)
+1. ~~**API keys** — Migrate to Electron `safeStorage` for encryption at rest~~ → **RESOLVED**: Sovereign Vault now encrypts all settings (including API keys) at rest with AES-256-GCM
+2. **OAuth tokens** — Migrate to OS-level secure credential storage (keytar) — partially mitigated by Sovereign Vault
 3. **Browser WebSocket** — Add shared-secret token validation
 4. **CSP headers** — Add Content Security Policy to renderer
 
@@ -1453,7 +1491,7 @@ graph TD
 
 ## Appendix A: File Inventory
 
-### Main Process (`src/main/`) — 153 files
+### Main Process (`src/main/`) — 158 files
 
 | Directory | File | Domain | Purpose |
 |-----------|------|--------|---------|
@@ -1533,6 +1571,11 @@ graph TD
 | root | `capability-manifest.ts` | Capabilities | Agent capability declarations |
 | root | `capability-gap-detector.ts` | Capabilities | Detect and report missing capabilities |
 | root | `agent-network.ts` | Network | Multi-agent network coordination |
+| root | `vault.ts` | Security | Sovereign Vault — AES-256-GCM at-rest encryption, scrypt key derivation, machine fingerprint binding |
+| root | `claw-attestation.ts` | Security | Cross-agent cLaw governance verification protocol (Ed25519 signed attestations) |
+| root | `agent-self-knowledge.ts` | Identity | Agent capability self-awareness block for system prompt injection |
+| `network/` | `file-transfer.ts` | Security | Trust-gated chunked file transfer (512KB, SHA-256, 50MB max, 28 blocked extensions) |
+| `types/` | `node-machine-id.d.ts` | Types | TypeScript type shim for node-machine-id native module |
 | `integrity/` | `core-laws.ts` | Safety | Three Laws text + verification |
 | `integrity/` | `hmac.ts` | Safety | HMAC-SHA256 signing + validation |
 | `integrity/` | `memory-watchdog.ts` | Safety | Continuous integrity monitoring |
@@ -1642,7 +1685,7 @@ graph TD
 | `components/dashboard/` | `AgentCard.tsx` | Sub | Agent summary card |
 | `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
-### Grand Total: 192 source files, ~80,000 lines of TypeScript
+### Grand Total: 197 source files, ~82,000 lines of TypeScript
 
 ---
 
@@ -1662,7 +1705,10 @@ graph TD
 | `friday-data/context-graph.json` | JSON object | Singleton | Context relationship graph |
 | `friday-data/art-evolution.json` | JSON object | 52 records max | Weekly art evolution history + structure transition state |
 | `friday-data/workflows/` | JSON files | Per-workflow | Recorded workflow definitions |
-| `friday-settings.json` | JSON object | Singleton | All settings, API keys, agent config |
+| `friday-data/vault-meta.json` | JSON object | Singleton | Vault salt, IV metadata, recovery phrase verification |
+| `friday-data/file-transfer-audit.json` | JSON array | 500 entries max | File transfer audit trail (trust decisions, integrity checks) |
+| `friday-data/file-transfers/` | Binary files | Per-transfer | Received files from trusted agents |
+| `friday-settings.json` | JSON object (vault-encrypted) | Singleton | All settings, API keys, agent config |
 
 ---
 
