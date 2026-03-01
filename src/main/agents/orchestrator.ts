@@ -22,8 +22,8 @@ import { symbiontProtocol } from './symbiont-protocol';
 
 // Late-bound import to avoid circular dependency: orchestrator -> agent-runner -> builtin-agents -> orchestrator
 // Wrapped in _deps for test stubbing (vi.mock cannot intercept runtime require())
-export const _deps = {
-  getAgentRunner: (): any => require('./agent-runner').agentRunner,
+export const _deps: Record<string, () => any> = {
+  getAgentRunner: () => require('./agent-runner').agentRunner,
   getCapabilityMap: () => capabilityMap,
   getSymbiont: () => symbiontProtocol,
 };

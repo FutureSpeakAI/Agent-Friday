@@ -1056,6 +1056,10 @@ declare global {
           memoriesIntact: boolean;
           safeMode: boolean;
         }>;
+        reset: () => Promise<{
+          success: boolean;
+          message: string;
+        }>;
       };
 
       superpowers: {
@@ -1476,6 +1480,7 @@ declare global {
       vault: {
         isUnlocked: () => Promise<boolean>;
         isInitialized: () => Promise<boolean>;
+        isRecoveryPhraseShown: () => Promise<boolean>;
         getRecoveryPhrase: () => Promise<string | null>;
         clearRecoveryPhrase: () => Promise<boolean>;
         markRecoveryPhraseShown: () => Promise<void>;

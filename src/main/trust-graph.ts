@@ -20,6 +20,24 @@ import path from 'path';
 import crypto from 'crypto';
 import type { TrustGraphConfig } from './settings';
 
+// Late-bound vault import — avoids circular deps and allows test mocking
+interface VaultIO { vaultRead: (p: string) => Promise<string>; vaultWrite: (p: string, c: string) => Promise<void> }
+let _vault: VaultIO | null = null;
+function getVault(): VaultIO {
+  if (!_vault) {
+    try {
+      _vault = require('./vault');
+    } catch {
+      // Vault not available — use raw fs fallback
+      _vault = {
+        vaultRead: async (p: string) => (await fs.readFile(p, 'utf-8')),
+        vaultWrite: async (p: string, c: string) => { await fs.writeFile(p, c, 'utf-8'); },
+      };
+    }
+  }
+  return _vault!;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    DATA MODEL
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -211,7 +229,7 @@ class TrustGraph {
 
     try {
       // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
-      const { vaultRead } = require('./vault');
+      const { vaultRead } = getVault();
       const data = await vaultRead(this.filePath);
       const saved = JSON.parse(data);
       this.persons = saved.persons || [];
@@ -946,7 +964,7 @@ class TrustGraph {
     this.savePromise = this.savePromise
       .then(async () => {
         // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
-        const { vaultWrite } = require('./vault');
+        const { vaultWrite } = getVault();
         await vaultWrite(
           this.filePath,
           JSON.stringify({ persons: this.persons, config: this.config }, null, 2),
