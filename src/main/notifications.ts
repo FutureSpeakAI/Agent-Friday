@@ -6,7 +6,7 @@
 
 import { BrowserWindow } from 'electron';
 import { exec } from 'child_process';
-import { settingsManager } from './settings';
+import { settingsManager, getSanitizedEnv } from './settings';
 
 export interface CapturedNotification {
   app: string;
@@ -132,7 +132,7 @@ try {
 
       exec(
         `powershell.exe -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-        { timeout: 10_000, maxBuffer: 512 * 1024 },
+        { timeout: 10_000, maxBuffer: 512 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
         (err, stdout) => {
           if (err) {
             resolve([]);

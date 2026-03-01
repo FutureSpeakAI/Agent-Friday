@@ -85,6 +85,7 @@ let vaultKey: Buffer | null = null;
 let vaultSalt: Buffer | null = null;
 let vaultUnlocked = false;
 let recoveryPhrase: string | null = null; // Only populated during first-time setup
+let recoveryPhraseTimer: ReturnType<typeof setTimeout> | null = null; // Auto-clear safety net
 let machineFingerprint: string = '';
 
 // ── Interfaces ────────────────────────────────────────────────────────
@@ -177,6 +178,16 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
 
   // Generate 12-word recovery phrase
   recoveryPhrase = generateRecoveryPhrase();
+
+  // Safety net: auto-clear recovery phrase from memory after 10 minutes
+  // even if the renderer never calls clearRecoveryPhrase()
+  recoveryPhraseTimer = setTimeout(() => {
+    if (recoveryPhrase) {
+      console.warn('[Vault] Auto-clearing recovery phrase from memory (10-minute safety timeout)');
+      recoveryPhrase = null;
+      recoveryPhraseTimer = null;
+    }
+  }, 10 * 60 * 1000);
 
   // Save vault metadata
   const vaultMeta: VaultConfig = {
@@ -452,6 +463,19 @@ export async function isVaultInitialized(): Promise<boolean> {
   }
 }
 
+/** Has the recovery phrase been shown and confirmed by the user? */
+export async function isRecoveryPhraseShown(): Promise<boolean> {
+  try {
+    const metaPath = path.join(app.getPath('userData'), VAULT_META_FILE);
+    const raw = await fs.readFile(metaPath, 'utf-8');
+    const meta: VaultConfig = JSON.parse(raw);
+    return meta.recoveryPhraseShown === true;
+  } catch {
+    // No vault meta = not shown
+    return false;
+  }
+}
+
 /** Get the one-time recovery phrase (only available during first-time setup). */
 export function getRecoveryPhrase(): string | null {
   return recoveryPhrase;
@@ -460,6 +484,10 @@ export function getRecoveryPhrase(): string | null {
 /** Clear the recovery phrase from memory (after user has saved it). */
 export function clearRecoveryPhrase(): void {
   recoveryPhrase = null;
+  if (recoveryPhraseTimer) {
+    clearTimeout(recoveryPhraseTimer);
+    recoveryPhraseTimer = null;
+  }
 }
 
 /** Mark recovery phrase as shown in vault metadata. */

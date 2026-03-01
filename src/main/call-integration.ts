@@ -14,8 +14,13 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { getSanitizedEnv } from './settings';
 
-const execAsync = promisify(exec);
+const _execRaw = promisify(exec);
+/** Wrapper that strips API keys from child process environment */
+function execAsync(command: string, options?: { cwd?: string; timeout?: number; maxBuffer?: number }) {
+  return _execRaw(command, { encoding: 'utf-8', ...options, env: getSanitizedEnv() as NodeJS.ProcessEnv });
+}
 
 export interface VirtualAudioStatus {
   available: boolean;

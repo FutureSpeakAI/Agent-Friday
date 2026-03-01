@@ -9,6 +9,7 @@ import { readFile as fsReadFile, writeFile as fsWriteFile, readdir } from 'fs/pr
 import { tmpdir } from 'os';
 import path from 'path';
 import { clipboard, BrowserWindow } from 'electron';
+import { getSanitizedEnv } from './settings';
 
 interface ToolResult {
   result?: string;
@@ -256,7 +257,7 @@ function runPS(script: string, timeoutMs = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = exec(
       `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
-      { timeout: timeoutMs, maxBuffer: 1024 * 1024 },
+      { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
       (err, stdout, stderr) => {
         try { unlinkSync(tmpFile); } catch { /* cleanup */ }
         if (err) {

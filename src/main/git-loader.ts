@@ -7,6 +7,7 @@
  */
 
 import { exec } from 'child_process';
+import { getSanitizedEnv } from './settings';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
@@ -525,7 +526,7 @@ class GitLoader {
   /** Helper to run shell commands */
   private execAsync(command: string, timeoutMs = 30000): Promise<string> {
     return new Promise((resolve, reject) => {
-      exec(command, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      exec(command, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv }, (err, stdout, stderr) => {
         if (err) {
           reject(new Error(`Command failed: ${err.message}\n${stderr}`));
         } else {

@@ -14,6 +14,7 @@ import MemoryExplorer from './components/MemoryExplorer';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
+import VaultKeyphrase from './components/VaultKeyphrase';
 import SuperpowersPanel from './components/SuperpowersPanel';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
@@ -200,7 +201,7 @@ export default function App() {
   const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
   const [voiceMode, setVoiceMode] = useState(true);
   const [appPhase, setAppPhase] = useState<
-    'checking' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
+    'checking' | 'vault-keyphrase' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
   >('checking');
   const [agentName, setAgentName] = useState('');
   const [evolutionState, setEvolutionState] = useState<{
@@ -485,7 +486,21 @@ export default function App() {
 
       if (cancelled) return;
 
+      // Check if recovery phrase has been shown (Sovereign Vault first-run gate)
+      let phraseShown = true;
+      try {
+        phraseShown = await window.eve.vault.isRecoveryPhraseShown();
+      } catch (e) { console.warn('[Agent] Vault phrase-shown check failed:', e); }
+
+      if (cancelled) return;
+
       if (onboardingDone) {
+        // Returning user — but ensure vault keyphrase was completed
+        if (!phraseShown) {
+          setAppPhase('vault-keyphrase');
+          return;
+        }
+
         // Returning user — skip gate + onboarding, go straight to normal
         setAppPhase('normal');
 
@@ -505,6 +520,12 @@ export default function App() {
 
         // Connect immediately
         connectToGemini();
+        return;
+      }
+
+      // New user — vault keyphrase is the VERY FIRST step
+      if (!phraseShown) {
+        setAppPhase('vault-keyphrase');
         return;
       }
 
@@ -996,6 +1017,16 @@ export default function App() {
   return (
     <MoodProvider semanticState={semanticState}>
     <div style={styles.container}>
+      {/* VaultKeyphrase — absolute FIRST step for new users (before API key entry) */}
+      {appPhase === 'vault-keyphrase' && (
+        <VaultKeyphrase
+          onConfirmed={() => {
+            // After vault keyphrase confirmed, proceed to API key gate
+            setAppPhase('gate');
+          }}
+        />
+      )}
+
       {/* WelcomeGate — shown when API keys are missing */}
       {appPhase === 'gate' && (
         <WelcomeGate
@@ -1010,7 +1041,7 @@ export default function App() {
       <div style={{
         opacity: ['creating', 'feature-setup', 'normal'].includes(appPhase) ? 1 : 0,
         transition: 'opacity 2s ease-in',
-        pointerEvents: ['gate', 'onboarding', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
+        pointerEvents: ['vault-keyphrase', 'gate', 'onboarding', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
         position: 'absolute' as const,
         inset: 0,
       }}>
@@ -1030,7 +1061,7 @@ export default function App() {
       <div style={styles.dragBar} />
 
       {/* ─── HudOverlay — holographic HUD with API panel, app tray, evolution controls ─── */}
-      {!['checking', 'gate'].includes(appPhase) && (
+      {!['checking', 'vault-keyphrase', 'gate'].includes(appPhase) && (
         <HudOverlay
           apiStatus={apiStatus}
           semanticState={semanticState}
