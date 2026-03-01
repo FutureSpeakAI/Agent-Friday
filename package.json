@@ -54,13 +54,7 @@
         "nsis",
         "zip"
       ],
-      "icon": "build/icon.png",
-      "signtoolOptions": {
-        "sign": "build/sign.js",
-        "signingHashAlgorithms": [
-          "sha256"
-        ]
-      }
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
