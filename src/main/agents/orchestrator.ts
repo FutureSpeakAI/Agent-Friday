@@ -1,18 +1,28 @@
 /**
- * 2C — Multi-Agent Orchestrator
+ * 2C — Multi-Agent Orchestrator (Phase 4: Orchestration Bridge)
  *
  * Decomposes complex goals into sub-tasks via Claude planning step,
- * spawns child agents, tracks dependencies, and aggregates results
- * into a cohesive final output.
+ * spawns child agents through the Delegation Engine, tracks dependencies
+ * via wave-based execution, and aggregates results into a cohesive output.
+ *
+ * Phase 4 upgrade: replaces inline ctx.callClaude() with real agent spawning
+ * through delegationEngine.spawnSubAgent(), enabling:
+ *   - Real sub-agent execution (research uses Gemini search, etc.)
+ *   - Trust-tier inheritance across the delegation tree
+ *   - Depth-limited recursive delegation (cLaw Second Law)
+ *   - Agent Office visualization (sub-agents appear as sprites)
+ *   - Halt propagation (cancelling orchestrator stops all children)
+ *   - Partial result collection from interrupted sub-agents
  */
 
 import { AgentDefinition, AgentContext } from './agent-types';
-import { settingsManager } from '../settings';
+import { delegationEngine, TrustTier } from './delegation-engine';
 
 // Late-bound import to avoid circular dependency: orchestrator -> agent-runner -> builtin-agents -> orchestrator
-function getAgentRunner() {
-  return require('./agent-runner').agentRunner;
-}
+// Wrapped in _deps for test stubbing (vi.mock cannot intercept runtime require())
+export const _deps = {
+  getAgentRunner: (): any => require('./agent-runner').agentRunner,
+};
 
 interface SubTask {
   agentType: string;
@@ -38,8 +48,9 @@ async function decomposeGoal(
   context: string,
   callClaude: (prompt: string, maxTokens?: number) => Promise<string>
 ): Promise<PlanStep[]> {
-  const availableAgents: Array<{ name: string; description: string }> = getAgentRunner().getAgentTypes();
+  const availableAgents: Array<{ name: string; description: string }> = _deps.getAgentRunner().getAgentTypes();
   const agentList = availableAgents
+    .filter((a) => a.name !== 'orchestrate') // Prevent recursive orchestration in plan
     .map((a) => `- "${a.name}": ${a.description}`)
     .join('\n');
 
@@ -86,6 +97,7 @@ Example for "Research AI governance and draft a briefing email to the board":
 
   // Validate and clean
   const agentNames = new Set(availableAgents.map((a) => a.name));
+  agentNames.delete('orchestrate'); // Prevent recursive orchestration
   const plan: PlanStep[] = rawPlan.map((task, i) => {
     if (!agentNames.has(task.agentType)) {
       throw new Error(`Invalid agent type "${task.agentType}" in plan step ${i}`);
@@ -125,7 +137,71 @@ function resolveInputTemplates(
 }
 
 /**
+ * Poll agent runner until all given task IDs reach a terminal state.
+ * Returns when all tasks are completed, failed, or cancelled.
+ */
+async function waitForAgentTasks(
+  taskIds: string[],
+  ctx: AgentContext,
+  maxWaitMs: number = 5 * 60 * 1000
+): Promise<void> {
+  const runner = _deps.getAgentRunner();
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    if (ctx.isCancelled()) return;
+
+    const allDone = taskIds.every((id) => {
+      const task = runner.get(id);
+      return task && (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled');
+    });
+
+    if (allDone) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/**
+ * Group plan steps into dependency waves for parallel execution.
+ * Each wave contains steps whose dependencies are all in earlier waves.
+ */
+function computeWaves(plan: PlanStep[]): number[][] {
+  const waves: number[][] = [];
+  const assigned = new Set<number>();
+
+  while (assigned.size < plan.length) {
+    const wave: number[] = [];
+    for (const step of plan) {
+      if (assigned.has(step.id)) continue;
+      const depsReady = step.dependsOn.every((d) => assigned.has(d));
+      if (depsReady) {
+        wave.push(step.id);
+      }
+    }
+    if (wave.length === 0) {
+      // Circular dependency — break and run remaining sequentially
+      for (const step of plan) {
+        if (!assigned.has(step.id)) wave.push(step.id);
+      }
+      waves.push(wave);
+      break;
+    }
+    waves.push(wave);
+    for (const id of wave) assigned.add(id);
+  }
+
+  return waves;
+}
+
+/**
  * The orchestrate agent definition — registered as a built-in agent.
+ *
+ * Phase 4: Now spawns real sub-agents via the Delegation Engine instead
+ * of using inline Claude calls. This means sub-agents:
+ *   - Execute their full logic (e.g., research agent uses Gemini search)
+ *   - Appear in the Agent Office visualization
+ *   - Inherit trust tiers (cLaw First Law)
+ *   - Can be halted via delegation tree (cLaw Third Law / interruptibility)
  */
 export const orchestrateAgent: AgentDefinition = {
   name: 'orchestrate',
@@ -139,57 +215,61 @@ export const orchestrateAgent: AgentDefinition = {
     ctx.log(`Orchestrating: "${goal}"`);
     ctx.setProgress(5);
 
-    // Step 1: Decompose goal into plan
+    // ── Delegation Engine Registration ──────────────────────────────
+    // Determine trust tier (from delegation metadata if this orchestrator
+    // was itself spawned as a sub-agent, otherwise default to 'local')
+    const delegationMeta = input.__delegation as
+      | { trustTier?: TrustTier; depth?: number }
+      | undefined;
+    const trustTier: TrustTier = delegationMeta?.trustTier || 'local';
+
+    // Register as delegation root only if not already in a delegation tree
+    const isAlreadyDelegated = delegationEngine.isInTree(ctx.taskId);
+    if (!isAlreadyDelegated) {
+      delegationEngine.registerRoot(ctx.taskId, 'orchestrate', goal, trustTier);
+      ctx.log(`Delegation root registered (trust=${trustTier})`);
+    } else {
+      ctx.log(`Already in delegation tree (trust=${delegationEngine.getTrustTier(ctx.taskId)})`);
+    }
+
+    // ── Step 1: Decompose goal into plan ─────────────────────────────
     ctx.log('Planning sub-tasks...');
+    ctx.setPhase('planning');
+    ctx.think('planning', `Decomposing goal into sub-tasks: "${goal}"`);
+
     let plan: PlanStep[];
     try {
       plan = await decomposeGoal(goal, context, ctx.callClaude);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      delegationEngine.reportCompletion(ctx.taskId, null, msg);
       throw new Error(`Planning failed: ${msg}`);
     }
 
     ctx.log(`Plan: ${plan.length} sub-tasks`);
     for (const step of plan) {
-      const deps = step.dependsOn.length > 0 ? ` (after ${step.dependsOn.map((d) => `#${d}`).join(', ')})` : ' (independent)';
+      const deps =
+        step.dependsOn.length > 0
+          ? ` (after ${step.dependsOn.map((d) => `#${d}`).join(', ')})`
+          : ' (independent)';
       ctx.log(`  #${step.id} [${step.agentType}] ${step.description}${deps}`);
     }
+    ctx.think('planning', `Plan ready: ${plan.length} sub-tasks across ${computeWaves(plan).length} waves`);
     ctx.setProgress(15);
 
-    if (ctx.isCancelled()) return 'Cancelled during planning';
+    if (ctx.isCancelled()) {
+      await delegationEngine.haltTree(ctx.taskId);
+      return 'Cancelled during planning';
+    }
 
-    // Step 2: Execute plan respecting dependencies
+    // ── Step 2: Execute plan via Delegation Engine ────────────────────
+    ctx.setPhase('executing');
     const results = new Map<number, string>();
-    const taskIds = new Map<number, string>(); // plan step index → AgentTask ID
+    const taskIdMap = new Map<number, string>(); // plan step index → AgentTask ID
     const completed = new Set<number>();
     const failed = new Set<number>();
 
-    // Group tasks by dependency wave
-    const waves: number[][] = [];
-    const assigned = new Set<number>();
-
-    while (assigned.size < plan.length) {
-      const wave: number[] = [];
-      for (const step of plan) {
-        if (assigned.has(step.id)) continue;
-        // All dependencies must be assigned already (completed or in earlier waves)
-        const depsReady = step.dependsOn.every((d) => assigned.has(d));
-        if (depsReady) {
-          wave.push(step.id);
-        }
-      }
-      if (wave.length === 0) {
-        // Circular dependency or other issue — break and run remaining sequentially
-        for (const step of plan) {
-          if (!assigned.has(step.id)) wave.push(step.id);
-        }
-        waves.push(wave);
-        break;
-      }
-      waves.push(wave);
-      for (const id of wave) assigned.add(id);
-    }
-
+    const waves = computeWaves(plan);
     ctx.log(`Execution plan: ${waves.length} waves`);
 
     const progressPerStep = 70 / plan.length;
@@ -198,11 +278,15 @@ export const orchestrateAgent: AgentDefinition = {
     for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
       const wave = waves[waveIdx];
       ctx.log(`\nWave ${waveIdx + 1}/${waves.length}: ${wave.length} parallel task(s)`);
+      ctx.think('executing', `Starting wave ${waveIdx + 1}/${waves.length} with ${wave.length} task(s)`);
 
-      if (ctx.isCancelled()) return 'Cancelled during execution';
+      if (ctx.isCancelled()) {
+        await delegationEngine.haltTree(ctx.taskId);
+        return 'Cancelled during execution';
+      }
 
-      // Spawn all tasks in this wave
-      const wavePromises: Promise<void>[] = [];
+      // Spawn all tasks in this wave via delegation engine
+      const waveTaskIds: string[] = [];
 
       for (const stepIdx of wave) {
         const step = plan[stepIdx];
@@ -217,51 +301,103 @@ export const orchestrateAgent: AgentDefinition = {
           continue;
         }
 
-        // Resolve template references in input
+        // Resolve template references in input (e.g., {{results_0}})
         const resolvedInput = resolveInputTemplates(step.input, results);
 
-        const promise = (async () => {
-          try {
-            ctx.log(`  #${stepIdx} [${step.agentType}] starting: ${step.description}`);
+        // Spawn via delegation engine (which calls agentRunner.spawn internally)
+        const spawnResult = await delegationEngine.spawnSubAgent({
+          agentType: step.agentType,
+          description: step.description,
+          input: resolvedInput,
+          parentTaskId: ctx.taskId,
+          parentContext: `Orchestrating: "${goal}"\nThis is step #${step.id + 1} of ${plan.length}: ${step.description}`,
+        });
 
-            // Use Claude directly rather than spawning sub-agents for simplicity
-            // This avoids agent inception issues and keeps the orchestrator cohesive
-            const agentPrompt = buildAgentPrompt(step.agentType, step.description, resolvedInput);
-            const result = await ctx.callClaude(agentPrompt, 3000);
-
-            results.set(stepIdx, result);
-            completed.add(stepIdx);
-            ctx.log(`  #${stepIdx} [${step.agentType}] completed ✓`);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            failed.add(stepIdx);
-            results.set(stepIdx, `[FAILED: ${msg}]`);
-            ctx.log(`  #${stepIdx} [${step.agentType}] failed: ${msg}`);
-          }
-
+        if (spawnResult.success && spawnResult.taskId) {
+          taskIdMap.set(stepIdx, spawnResult.taskId);
+          waveTaskIds.push(spawnResult.taskId);
+          ctx.log(`  #${stepIdx} [${step.agentType}] spawned → ${spawnResult.taskId.slice(0, 8)}`);
+          ctx.think(
+            'delegating',
+            `Spawned ${step.agentType} sub-agent for: ${step.description.slice(0, 80)}`
+          );
+        } else {
+          ctx.log(`  #${stepIdx} [${step.agentType}] spawn failed: ${spawnResult.error}`);
+          failed.add(stepIdx);
+          results.set(stepIdx, `[SPAWN FAILED: ${spawnResult.error}]`);
           completedCount++;
           ctx.setProgress(15 + Math.round(completedCount * progressPerStep));
-        })();
-
-        wavePromises.push(promise);
+        }
       }
 
-      // Wait for all tasks in this wave to complete before moving to next
-      await Promise.all(wavePromises);
+      // Wait for all spawned tasks in this wave to complete
+      if (waveTaskIds.length > 0) {
+        ctx.think('waiting', `Waiting for ${waveTaskIds.length} sub-agent(s) in wave ${waveIdx + 1}`);
+        await waitForAgentTasks(waveTaskIds, ctx);
+      }
+
+      // Collect results from completed tasks and bridge to delegation engine
+      const runner = _deps.getAgentRunner();
+      for (const stepIdx of wave) {
+        if (failed.has(stepIdx)) continue; // Already failed (dep or spawn)
+
+        const agentTaskId = taskIdMap.get(stepIdx);
+        if (!agentTaskId) continue;
+
+        const task = runner.get(agentTaskId);
+        if (!task) {
+          failed.add(stepIdx);
+          results.set(stepIdx, '[Agent task not found]');
+          completedCount++;
+          ctx.setProgress(15 + Math.round(completedCount * progressPerStep));
+          continue;
+        }
+
+        // Bridge: report completion to delegation engine
+        delegationEngine.reportCompletion(
+          agentTaskId,
+          task.result || null,
+          task.error || null
+        );
+
+        if (task.status === 'completed' && task.result) {
+          results.set(stepIdx, task.result);
+          completed.add(stepIdx);
+          ctx.log(`  #${stepIdx} [${plan[stepIdx].agentType}] completed ✓`);
+        } else if (task.status === 'cancelled') {
+          failed.add(stepIdx);
+          results.set(stepIdx, '[CANCELLED]');
+          ctx.log(`  #${stepIdx} [${plan[stepIdx].agentType}] cancelled`);
+        } else {
+          failed.add(stepIdx);
+          results.set(stepIdx, `[FAILED: ${task.error || 'Unknown error'}]`);
+          ctx.log(`  #${stepIdx} [${plan[stepIdx].agentType}] failed: ${task.error || 'Unknown error'}`);
+        }
+
+        completedCount++;
+        ctx.setProgress(15 + Math.round(completedCount * progressPerStep));
+      }
     }
 
     ctx.setProgress(90);
 
-    if (ctx.isCancelled()) return 'Cancelled during aggregation';
+    if (ctx.isCancelled()) {
+      await delegationEngine.haltTree(ctx.taskId);
+      return 'Cancelled during aggregation';
+    }
 
-    // Step 3: Aggregate results
+    // ── Step 3: Aggregate results ────────────────────────────────────
+    ctx.setPhase('aggregating');
     ctx.log('\nAggregating results...');
+    ctx.think('synthesising', 'Aggregating all sub-task results into cohesive output');
 
     const resultParts: string[] = [];
     for (const step of plan) {
       const result = results.get(step.id);
       const status = completed.has(step.id) ? '✓' : failed.has(step.id) ? '✗' : '?';
-      resultParts.push(`## Step ${step.id + 1}: ${step.description} [${status}]\n**Agent**: ${step.agentType}\n\n${result || '[No result]'}`);
+      resultParts.push(
+        `## Step ${step.id + 1}: ${step.description} [${status}]\n**Agent**: ${step.agentType}\n\n${result || '[No result]'}`
+      );
     }
 
     const aggregationPrompt = `You are aggregating the results of a multi-step task.
@@ -284,60 +420,12 @@ Keep it well-structured and actionable. Don't just concatenate — synthesise.`;
 
     const summary = `${plan.length} sub-tasks executed (${completed.size} succeeded, ${failed.size} failed)`;
     ctx.log(`\nOrchestration complete: ${summary}`);
+    ctx.think('complete', `Orchestration finished: ${summary}`);
 
-    return `# Orchestrated Result\n_${summary}_\n\n${finalResult}\n\n---\n\n## Raw Sub-Task Results\n\n${resultParts.join('\n\n---\n\n')}`;
+    // Report orchestrator completion to delegation engine
+    const fullOutput = `# Orchestrated Result\n_${summary}_\n\n${finalResult}\n\n---\n\n## Raw Sub-Task Results\n\n${resultParts.join('\n\n---\n\n')}`;
+    delegationEngine.reportCompletion(ctx.taskId, fullOutput, null);
+
+    return fullOutput;
   },
 };
-
-/**
- * Build a Claude prompt that mimics what the individual agent would do,
- * but inline within the orchestrator's Claude calls.
- */
-function buildAgentPrompt(
-  agentType: string,
-  description: string,
-  input: Record<string, unknown>
-): string {
-  switch (agentType) {
-    case 'research':
-      return `You are a research analyst. Research the following topic thoroughly and provide a comprehensive briefing.
-
-TOPIC: ${input.topic || input.query || description}
-
-Provide a well-structured briefing (300-600 words) with key findings, analysis, and actionable takeaways.`;
-
-    case 'summarize':
-      return `Summarise the following text as a ${input.style || 'concise briefing'}. Highlight key points and use clear structure.
-
-TEXT:
-${String(input.text || input.content || '').slice(0, 10000)}
-
-Provide a clear, well-structured summary.`;
-
-    case 'code-review':
-      return `You are a senior engineer. Review this code for bugs, security issues, performance, and best practices.
-
-LANGUAGE: ${input.language || 'auto-detect'}
-FOCUS: ${input.focus || 'all areas'}
-
-CODE:
-\`\`\`
-${String(input.code || '').slice(0, 12000)}
-\`\`\`
-
-Provide a detailed, actionable code review.`;
-
-    case 'draft-email':
-      return `Draft a professional email:
-
-TO: ${input.to || 'recipient'}
-SUBJECT: ${input.subject || ''}
-KEY POINTS: ${input.key_points || input.points || ''}
-TONE: ${input.tone || 'professional but warm'}
-
-Write a natural, well-structured email. The sender is ${settingsManager.getAgentConfig().userName || 'the user'}.`;
-
-    default:
-      return `Task: ${description}\n\nInput: ${JSON.stringify(input, null, 2)}\n\nExecute this task and provide a clear result.`;
-  }
-}
