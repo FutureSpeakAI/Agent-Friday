@@ -836,6 +836,22 @@ Please ensure `npm run typecheck` and `npm run lint` pass with zero errors befor
 
 ---
 
+## AI Contributors
+
+Agent Friday is built in collaboration with AI models. We credit every model for the work it does — and soon, every unique agent instance too.
+
+| Model | Role | Key Contributions |
+|-------|------|-------------------|
+| **Google Gemini 3.1 Pro** | Desktop UI & Visual Design | Holographic desktop environment — 13 evolution structures (Cubes, Icosahedron, Network, Dome, Astrolabe, Tesseract, Quantum, Mandelbrot, Möbius, Grid, Cables, None, Eden), Three.js rendering pipeline, bloom post-processing, mood-reactive visuals, HUD overlay |
+| **Anthropic Claude Opus 4** | Architecture & Core Systems | System architecture, cLaws integrity engine, memory consolidation, trust graph, agent coordination, IPC bridge, personality evolution, psychological profiling |
+| **Anthropic Claude Sonnet 4** | Reasoning & Analysis | In-app deep reasoning, memory analysis, communication drafting, research synthesis, psychological profile generation |
+| **Google Gemini 2.5 Flash** | Voice & Real-time AI | Real-time bidirectional voice (WebSocket), live tool routing, search grounding, embeddings (text-embedding-004) |
+| **Google Gemini 2.0 Flash** | Art Therapy & Image Gen | Weekly art evolution sessions (art therapist role), structure transition recommendations, Nano Banana 2 image generation |
+
+> *As Agent Friday's unique agent instances develop their own identities and contributions, they will be credited here alongside the models that power them.*
+
+---
+
 ## Acknowledgments
 
 - **[PageIndex](https://github.com/VectifyAI/PageIndex)** by **[Vectify AI](https://vectify.ai)** (Mingtian Zhang, Yu Tang, and the PageIndex Team) — The brilliant vectorless, reasoning-based RAG framework that powers Agent Friday's document intelligence. PageIndex replaces traditional vector-based retrieval with a hierarchical tree structure navigated by LLM reasoning, achieving 98.7% accuracy on FinanceBench. Our TypeScript port integrates their complete indexing and search pipeline. MIT License.
