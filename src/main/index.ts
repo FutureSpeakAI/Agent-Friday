@@ -64,6 +64,7 @@ import { integrityManager, getCanonicalLaws } from './integrity';
 import { setConsentWindow } from './consent-gate';
 import { officeManager } from './agent-office/office-manager';
 import { pythonBridge } from './soc-bridge';
+import { containerEngine } from './container-engine';
 import { gitLoader } from './git-loader';
 import { trustGraph } from './trust-graph';
 import { meetingIntelligence } from './meeting-intelligence';
@@ -118,6 +119,7 @@ import {
   registerMemoryPersonalityBridgeHandlers,
   registerAgentTrustHandlers,
   registerMultimediaHandlers,
+  registerContainerEngineHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -412,6 +414,10 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Trust graph init failed:', err);
     });
 
+    containerEngine.initialize().catch((err) => {
+      console.warn('[Friday] Container engine init failed:', err);
+    });
+
     initializeArtEvolution().then(() => {
       // Check if weekly evolution is due (non-blocking)
       checkAndEvolve().then((record) => {
@@ -632,6 +638,7 @@ app.whenReady().then(async () => {
   registerMemoryPersonalityBridgeHandlers();
   registerAgentTrustHandlers();
   registerMultimediaHandlers();
+  registerContainerEngineHandlers();
 
   // ── Vault IPC handlers ────────────────────────────────────────────
   {
@@ -732,6 +739,7 @@ app.on('window-all-closed', async () => {
   communications.stop();
   fileTransferEngine.shutdown();
   agentNetwork.stop().catch(() => {});
+  containerEngine.shutdown().catch(() => {});
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
   if (process.platform !== 'darwin') app.quit();

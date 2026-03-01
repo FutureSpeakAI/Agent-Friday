@@ -38,6 +38,7 @@ export type ErrorSource =
   | 'agent-network'
   | 'ecosystem'
   | 'persistence'
+  | 'container'
   | 'unknown';
 
 // ── Base Error Class ─────────────────────────────────────────────────
