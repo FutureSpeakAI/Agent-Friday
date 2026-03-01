@@ -24,6 +24,7 @@ import { officeManager } from '../agent-office/office-manager';
 import { openRouter } from '../openrouter';
 import { awarenessMesh } from './awareness-mesh';
 import { capabilityMap } from './capability-map';
+import { symbiontProtocol } from './symbiont-protocol';
 
 const MAX_CONCURRENT = 5;   // Bumped from 3 for better parallelism
 const MAX_TASKS = 100;
@@ -501,10 +502,34 @@ class AgentRunner {
     // Deregister from awareness mesh so peers see updated state
     awarenessMesh.deregisterAgent(task.id, task.result || undefined);
 
+    // Record execution metrics in Symbiont Protocol for performance tracking
+    const duration = task.completedAt - (task.startedAt || task.createdAt);
+    symbiontProtocol.recordExecution({
+      id: task.id,
+      agentType: task.agentType,
+      taskId: task.id,
+      outcome: task.status as 'completed' | 'failed' | 'cancelled',
+      durationMs: duration,
+      hadError: !!task.error,
+      errorMessage: task.error,
+      role: task.role || 'solo',
+      teamId: task.teamId,
+      trustTier: 'local', // Default; delegation engine manages actual tier
+      completedAt: task.completedAt,
+    });
+
+    // Apply self-healing corrections if any agents are underperforming
+    const corrections = symbiontProtocol.getPendingCorrections();
+    for (const correction of corrections) {
+      if (correction.action === 'disable-agent') {
+        capabilityMap.setEnabled(correction.agentType, false);
+        console.warn(`[Symbiont] Disabled underperforming agent: ${correction.agentType} — ${correction.reason}`);
+      }
+    }
+
     this.emitUpdate(task);
     this.emitOfficeEvent('agent:completed', task);
 
-    const duration = task.completedAt - (task.startedAt || task.createdAt);
     console.log(
       `[AgentRunner] ${task.agentType} [${task.role}] ${task.status} in ${Math.round(duration / 1000)}s: ${task.id.slice(0, 8)}`
     );

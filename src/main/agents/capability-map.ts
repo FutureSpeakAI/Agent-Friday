@@ -20,6 +20,7 @@
  */
 
 import type { TrustTier } from './delegation-engine';
+import { symbiontProtocol } from './symbiont-protocol';
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 
@@ -325,10 +326,20 @@ class CapabilityMap {
         reasons.push('available');
       }
 
+      // Symbiont Protocol: apply performance-based score adjustment
+      if (score > 0) {
+        const perfBoost = symbiontProtocol.getPerformanceBoost(cap.name);
+        if (perfBoost !== 0) {
+          score += perfBoost;
+          const direction = perfBoost > 0 ? '+' : '';
+          reasons.push(`perf: ${direction}${(perfBoost * 100).toFixed(0)}%`);
+        }
+      }
+
       if (score > 0) {
         matches.push({
           capability: cap,
-          score: Math.min(1, score),
+          score: Math.min(1, Math.max(0.01, score)), // Floor at 0.01 (never fully eliminate)
           reason: reasons.join('; '),
         });
       }
