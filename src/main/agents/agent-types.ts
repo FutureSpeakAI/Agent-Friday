@@ -52,6 +52,8 @@ export interface AgentDefinition {
 }
 
 export interface AgentContext {
+  /** The task ID for this agent (matches AgentTask.id) */
+  taskId: string;
   /** Append a log line visible in the agent dashboard */
   log: (message: string) => void;
   /** Update progress (0-100) */
