@@ -509,6 +509,7 @@ export class AgentNetwork {
     // Generate identity on first run
     if (!this.state.keyPair) {
       await this.generateIdentity();
+      await this.save(); // Flush immediately — vault init depends on these keys
     }
 
     const peerCount = this.state.peers.filter((p) => p.status === 'paired').length;
