@@ -33,3 +33,4 @@ export { registerMemoryQualityHandlers } from './memory-quality-handlers';
 export { registerPersonalityCalibrationHandlers } from './personality-calibration-handlers';
 export { registerMemoryPersonalityBridgeHandlers } from './memory-personality-bridge-handlers';
 export { registerAgentTrustHandlers } from './agent-trust-handlers';
+export { registerMultimediaHandlers } from './multimedia-handlers';
