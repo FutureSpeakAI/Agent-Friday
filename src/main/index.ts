@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { startServer } from './server';
@@ -77,6 +77,7 @@ import { unifiedInbox } from './unified-inbox';
 import { outboundIntelligence } from './outbound-intelligence';
 import { intelligenceRouter } from './intelligence-router';
 import { agentNetwork } from './agent-network';
+import { fileTransferEngine } from './network/file-transfer';
 import { initializeArtEvolution, checkAndEvolve, forceEvolve, getArtEvolutionState, getLatestEvolution } from './art-evolution';
 import { superpowerEcosystem } from './superpower-ecosystem';
 import { stateExport } from './state-export';
@@ -84,6 +85,7 @@ import { memoryQuality } from './memory-quality';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { multimediaEngine } from './multimedia-engine';
+import { initializeVault, isVaultUnlocked } from './vault';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -497,7 +499,27 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Intelligence router init failed:', err);
     });
 
-    agentNetwork.initialize().catch((err) => {
+    agentNetwork.initialize().then(async () => {
+      // Initialize Sovereign Vault after agent keys are available
+      const privateKey = agentNetwork.getSigningPrivateKey();
+      if (privateKey) {
+        try {
+          const recoveryPhrase = await initializeVault(privateKey);
+          if (recoveryPhrase) {
+            // First-time vault setup — send recovery phrase to renderer
+            mainWindow?.webContents.send('vault:recovery-phrase', recoveryPhrase);
+            console.log('[Friday] Sovereign Vault initialized (first run — recovery phrase generated)');
+          } else {
+            console.log(`[Friday] Sovereign Vault initialized (unlocked: ${isVaultUnlocked()})`);
+          }
+        } catch (err) {
+          console.warn('[Friday] Vault initialization failed:', err);
+        }
+      }
+
+      // Initialize Trusted File Transfer engine
+      await fileTransferEngine.initialize();
+    }).catch((err) => {
       console.warn('[Friday] Agent network init failed:', err);
     });
 
@@ -583,6 +605,69 @@ app.whenReady().then(async () => {
   registerAgentTrustHandlers();
   registerMultimediaHandlers();
 
+  // ── Vault IPC handlers ────────────────────────────────────────────
+  {
+    const vault = require('./vault');
+    ipcMain.handle('vault:is-unlocked', () => vault.isVaultUnlocked());
+    ipcMain.handle('vault:is-initialized', () => vault.isVaultInitialized());
+    ipcMain.handle('vault:get-recovery-phrase', () => vault.getRecoveryPhrase());
+    ipcMain.handle('vault:clear-recovery-phrase', () => { vault.clearRecoveryPhrase(); return true; });
+    ipcMain.handle('vault:mark-recovery-phrase-shown', () => vault.markRecoveryPhraseShown());
+    ipcMain.handle('vault:recover', async (_event: any, phrase: string) => {
+      const privateKey = agentNetwork.getSigningPrivateKey();
+      if (!privateKey) return { ok: false, error: 'No agent keys available' };
+      try {
+        const success = await vault.recoverVault(privateKey, phrase);
+        if (success) {
+          await vault.rekeyVaultFiles(privateKey, phrase);
+        }
+        return { ok: success };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Recovery failed' };
+      }
+    });
+    console.log('[IPC] Vault handlers registered');
+  }
+
+  // ── File Transfer IPC handlers ─────────────────────────────────
+  {
+    ipcMain.handle('file-transfer:prepare', async (_event: any, filePath: string, remoteAgentId: string, remoteAgentName: string, description?: string) => {
+      return fileTransferEngine.prepareOutboundTransfer(filePath, remoteAgentId, remoteAgentName, description);
+    });
+    ipcMain.handle('file-transfer:get-chunk', (_event: any, transferId: string, chunkIndex: number) => {
+      return fileTransferEngine.getOutboundChunk(transferId, chunkIndex);
+    });
+    ipcMain.handle('file-transfer:evaluate', (_event: any, request: any, senderTrustLevel: number) => {
+      return fileTransferEngine.evaluateTransferRequest(request, senderTrustLevel);
+    });
+    ipcMain.handle('file-transfer:accept', (_event: any, request: any, remoteAgentId: string, remoteAgentName: string) => {
+      return fileTransferEngine.acceptInboundTransfer(request, remoteAgentId, remoteAgentName);
+    });
+    ipcMain.handle('file-transfer:process-chunk', (_event: any, chunk: any) => {
+      return fileTransferEngine.processInboundChunk(chunk);
+    });
+    ipcMain.handle('file-transfer:finalize', async (_event: any, transferId: string) => {
+      return fileTransferEngine.finalizeInboundTransfer(transferId);
+    });
+    ipcMain.handle('file-transfer:cancel', (_event: any, transferId: string) => {
+      return fileTransferEngine.cancelTransfer(transferId);
+    });
+    ipcMain.handle('file-transfer:get-active', () => {
+      return fileTransferEngine.getActiveTransfers().map((t) => ({
+        ...t,
+        receivedChunks: Array.from(t.receivedChunks),
+        chunkBuffers: undefined, // Don't send raw buffers over IPC
+      }));
+    });
+    ipcMain.handle('file-transfer:get-progress', (_event: any, transferId: string) => {
+      return fileTransferEngine.getTransferProgress(transferId);
+    });
+    ipcMain.handle('file-transfer:get-audit', () => {
+      return fileTransferEngine.getAuditLog();
+    });
+    console.log('[IPC] File transfer handlers registered');
+  }
+
   // ── Hot-reload registration ─────────────────────────────────────
   registerHotReload('personality.ts', async () => {
     invalidateModuleCache('src/main/personality.ts');
@@ -616,6 +701,7 @@ app.on('window-all-closed', async () => {
   contextGraph.stop();
   stopContextStreamBridge();
   communications.stop();
+  fileTransferEngine.shutdown();
   agentNetwork.stop().catch(() => {});
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();

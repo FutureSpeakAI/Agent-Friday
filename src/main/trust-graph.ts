@@ -210,7 +210,9 @@ class TrustGraph {
     this.filePath = path.join(app.getPath('userData'), 'trust-graph.json');
 
     try {
-      const data = await fs.readFile(this.filePath, 'utf-8');
+      // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
+      const { vaultRead } = require('./vault');
+      const data = await vaultRead(this.filePath);
       const saved = JSON.parse(data);
       this.persons = saved.persons || [];
       if (saved.config) {
@@ -943,10 +945,11 @@ class TrustGraph {
   private scheduleSave(): void {
     this.savePromise = this.savePromise
       .then(async () => {
-        await fs.writeFile(
+        // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
+        const { vaultWrite } = require('./vault');
+        await vaultWrite(
           this.filePath,
           JSON.stringify({ persons: this.persons, config: this.config }, null, 2),
-          'utf-8'
         );
       })
       .catch((err) => {

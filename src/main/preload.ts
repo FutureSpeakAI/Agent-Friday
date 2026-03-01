@@ -1131,6 +1131,20 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  vault: {
+    isUnlocked: () => ipcRenderer.invoke('vault:is-unlocked'),
+    isInitialized: () => ipcRenderer.invoke('vault:is-initialized'),
+    getRecoveryPhrase: () => ipcRenderer.invoke('vault:get-recovery-phrase'),
+    clearRecoveryPhrase: () => ipcRenderer.invoke('vault:clear-recovery-phrase'),
+    markRecoveryPhraseShown: () => ipcRenderer.invoke('vault:mark-recovery-phrase-shown'),
+    recover: (phrase: string) => ipcRenderer.invoke('vault:recover', phrase),
+    onRecoveryPhrase: (callback: (phrase: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, phrase: string) => callback(phrase);
+      ipcRenderer.on('vault:recovery-phrase', handler);
+      return () => { ipcRenderer.removeListener('vault:recovery-phrase', handler); };
+    },
+  },
+
   multimedia: {
     createPodcast: (request: any) => ipcRenderer.invoke('multimedia:create-podcast', request),
     createVisual: (request: any) => ipcRenderer.invoke('multimedia:create-visual', request),

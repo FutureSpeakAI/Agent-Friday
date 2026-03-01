@@ -226,7 +226,9 @@ class SettingsManager {
     this.filePath = path.join(userDataDir, 'friday-settings.json');
 
     try {
-      const data = await fsAsync.readFile(this.filePath, 'utf-8');
+      // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
+      const { vaultRead } = require('./vault');
+      const data = await vaultRead(this.filePath);
       const saved = JSON.parse(data);
       this.settings = { ...DEFAULTS, ...saved };
     } catch {
@@ -520,7 +522,9 @@ class SettingsManager {
   private async save(): Promise<void> {
     // Serialize writes to prevent concurrent file corruption
     this.savePromise = this.savePromise.then(async () => {
-      await fsAsync.writeFile(this.filePath, JSON.stringify(this.settings, null, 2), 'utf-8');
+      // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
+      const { vaultWrite } = require('./vault');
+      await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
     }).catch((err) => {
       console.error('[Settings] Save failed:', err);
     });
