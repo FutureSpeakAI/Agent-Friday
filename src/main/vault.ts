@@ -114,6 +114,8 @@ export interface VaultConfig {
  * @returns The 12-word recovery phrase (only on FIRST initialization, otherwise null)
  */
 export async function initializeVault(signingPrivateKeyBase64: string): Promise<string | null> {
+  const t0 = Date.now();
+  console.log('[Vault] Initialization starting...');
   const userDataDir = app.getPath('userData');
   const saltPath = path.join(userDataDir, SALT_FILE);
   const metaPath = path.join(userDataDir, VAULT_META_FILE);
@@ -121,6 +123,7 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
   // Get machine fingerprint (async to avoid blocking the event loop on Windows)
   try {
     machineFingerprint = await machineId({ original: true });
+    console.log(`[Vault] Machine ID resolved in ${Date.now() - t0}ms`);
   } catch {
     // Fallback: use hostname + platform as fingerprint (less unique but functional)
     machineFingerprint = `${require('os').hostname()}-${process.platform}-${process.arch}`;
@@ -144,9 +147,9 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
       // Same machine — auto-unlock
       try {
         vaultSalt = await fs.readFile(saltPath);
-        vaultKey = deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
+        vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
         vaultUnlocked = true;
-        console.log('[Vault] Auto-unlocked (same machine)');
+        console.log(`[Vault] Auto-unlocked (same machine) in ${Date.now() - t0}ms`);
         return null;
       } catch (err) {
         console.error('[Vault] Auto-unlock failed:', err);
@@ -173,7 +176,7 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
   await fs.writeFile(saltPath, vaultSalt);
 
   // Derive vault key
-  vaultKey = deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
+  vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
   vaultUnlocked = true;
 
   // Generate 12-word recovery phrase
@@ -198,7 +201,7 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
   };
   await fs.writeFile(metaPath, JSON.stringify(vaultMeta, null, 2));
 
-  console.log('[Vault] First-time initialization complete');
+  console.log(`[Vault] First-time initialization complete in ${Date.now() - t0}ms`);
   return recoveryPhrase;
 }
 
@@ -222,7 +225,7 @@ export async function recoverVault(
   const metaPath = path.join(userDataDir, VAULT_META_FILE);
 
   // Try to derive key using recovery phrase instead of machine fingerprint
-  const candidateKey = deriveVaultKey(signingPrivateKeyBase64, phrase.trim().toLowerCase(), vaultSalt);
+  const candidateKey = await deriveVaultKey(signingPrivateKeyBase64, phrase.trim().toLowerCase(), vaultSalt);
 
   // Attempt to decrypt a known file to verify the key works
   // Try the agent-network.json as our canary file
@@ -247,7 +250,7 @@ export async function recoverVault(
   }
 
   // Recovery successful — re-key vault with new machine fingerprint
-  vaultKey = deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
+  vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
   vaultUnlocked = true;
 
   // Update vault metadata with new machine hash
@@ -274,24 +277,35 @@ export async function recoverVault(
 // ── Key Derivation ────────────────────────────────────────────────────
 
 /**
- * Derive the AES-256 vault key using scrypt.
+ * Derive the AES-256 vault key using scrypt (async).
  *
  * Input material: Ed25519 private key bytes + binding factor (machineId or recovery phrase)
  * This ensures:
  *   1. The vault is bound to this specific agent identity
  *   2. The vault is bound to this specific machine (or recovery phrase for migration)
  *   3. The key derivation is computationally expensive (scrypt N=2^20)
+ *
+ * CRITICAL: Uses async crypto.scrypt() — NOT scryptSync() — to avoid blocking
+ * the Node.js event loop. scrypt with N=2^20 takes 5-30 seconds on first launch;
+ * the sync variant freezes the entire UI during that time.
  */
-function deriveVaultKey(privateKeyBase64: string, bindingFactor: string, salt: Buffer): Buffer {
+async function deriveVaultKey(privateKeyBase64: string, bindingFactor: string, salt: Buffer): Promise<Buffer> {
   const keyMaterial = Buffer.concat([
     Buffer.from(privateKeyBase64, 'base64'),
     Buffer.from(bindingFactor, 'utf-8'),
   ]);
 
-  return crypto.scryptSync(keyMaterial, salt, KEY_LENGTH, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
+  const t0 = Date.now();
+  return new Promise<Buffer>((resolve, reject) => {
+    crypto.scrypt(keyMaterial, salt, KEY_LENGTH, {
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+    }, (err, derivedKey) => {
+      console.log(`[Vault] scrypt key derivation completed in ${Date.now() - t0}ms`);
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
   });
 }
 
@@ -523,7 +537,7 @@ export async function rekeyVaultFiles(
     return;
   }
 
-  const oldKey = deriveVaultKey(oldPrivateKey, oldPhrase.trim().toLowerCase(), vaultSalt);
+  const oldKey = await deriveVaultKey(oldPrivateKey, oldPhrase.trim().toLowerCase(), vaultSalt);
   const userDataDir = app.getPath('userData');
 
   // Files to rekey
