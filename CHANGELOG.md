@@ -20,13 +20,16 @@ All notable changes to Agent Friday are documented in this file.
 
 ### Fixed
 
-- **First-launch crypto hang** — Replaced blocking `machineIdSync()` with async `machineId()` in vault initialization, eliminating a 5-30 second UI freeze on Windows caused by synchronous WMI system UUID reads
+- **First-launch crypto hang (hermeneutic circle fix)** — Traced the full initialization chain and identified THREE synchronous blocking operations. The primary villain was `crypto.scryptSync(N=2^20)` in vault key derivation, which blocks the entire Node.js event loop for 5-30 seconds. Replaced with async `crypto.scrypt()` (runs in libuv background thread). Also replaced `dialog.showMessageBoxSync()` with async `dialog.showMessageBox()` in HMAC init. Previous fix (`machineIdSync` → `machineId`) was necessary but insufficient.
 - **Identity save race condition** — Agent network now flushes crypto identity to disk immediately on first run instead of deferring via 2-second debounce timer, ensuring vault initialization has keys available
 - **All test failures resolved** — Fixed 6 test failures across agent-network persistence and trust graph decay tests by introducing a late-bound `getVault()` pattern with graceful fallback
 - **All TypeScript errors resolved** — Fixed missing renderer type declarations (`vault.isRecoveryPhraseShown`, `integrity.reset`), TS4094 errors in orchestrator exports, and nullable vault return types
 
 ### Changed
 
+- Vault key derivation uses async `crypto.scrypt()` instead of blocking `crypto.scryptSync()`
+- HMAC security warning uses async `dialog.showMessageBox()` instead of blocking `showMessageBoxSync()`
+- Vault initialization includes timing diagnostics for future debugging
 - Vault module import uses `machineId` (async) instead of `machineIdSync` (sync)
 - Agent network identity persistence is immediate on first run (no debounce)
 - Test infrastructure: persistence tests now clear init-phase mock writes for isolation
