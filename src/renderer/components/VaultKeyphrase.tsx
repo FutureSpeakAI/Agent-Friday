@@ -114,9 +114,13 @@ export default function VaultKeyphrase({ onConfirmed }: VaultKeyphraseProps) {
         {step === 'loading' && (
           <div style={styles.section}>
             <p style={styles.bodyText}>
-              Generating your vault encryption keys...
+              Generating your vault encryption keys using high-strength key derivation.
+              This takes 10–30 seconds — your keys are being forged with maximum security.
             </p>
             <div style={styles.spinner} />
+            <p style={{ ...styles.bodyText, fontSize: 12, color: '#666680', textAlign: 'center' as const, marginTop: 8 }}>
+              scrypt(N=2²⁰) — military-grade key stretching
+            </p>
           </div>
         )}
 
