@@ -463,9 +463,10 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
   }
 
   private async _doSave(tier: 'shortTerm' | 'mediumTerm' | 'longTerm'): Promise<void> {
-    // Always save JSON (canonical source)
+    // Always save JSON (canonical source) — vault-encrypted if unlocked
     const filePath = path.join(this.memoryDir, `${tier}.json`);
-    await fs.writeFile(filePath, JSON.stringify(this.store[tier], null, 2), 'utf-8');
+    const { vaultWrite } = require('./vault');
+    await vaultWrite(filePath, JSON.stringify(this.store[tier], null, 2));
 
     // Sign memory stores after save (integrity protection)
     if (tier === 'longTerm' || tier === 'mediumTerm') {
@@ -504,11 +505,12 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
   }
 
   private async load(): Promise<void> {
-    // Load from JSON first (always available)
+    // Load from JSON first (always available) — vault-decrypted if unlocked
+    const { vaultRead } = require('./vault');
     for (const tier of ['shortTerm', 'mediumTerm', 'longTerm'] as const) {
       const filePath = path.join(this.memoryDir, `${tier}.json`);
       try {
-        const data = await fs.readFile(filePath, 'utf-8');
+        const data = await vaultRead(filePath);
         (this.store as any)[tier] = JSON.parse(data);
       } catch {
         // File doesn't exist yet, keep defaults
