@@ -27,7 +27,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { app } from 'electron';
-import { machineIdSync } from 'node-machine-id';
+import { machineId } from 'node-machine-id';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -118,9 +118,9 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
   const saltPath = path.join(userDataDir, SALT_FILE);
   const metaPath = path.join(userDataDir, VAULT_META_FILE);
 
-  // Get machine fingerprint
+  // Get machine fingerprint (async to avoid blocking the event loop on Windows)
   try {
-    machineFingerprint = machineIdSync({ original: true });
+    machineFingerprint = await machineId({ original: true });
   } catch {
     // Fallback: use hostname + platform as fingerprint (less unique but functional)
     machineFingerprint = `${require('os').hostname()}-${process.platform}-${process.arch}`;
