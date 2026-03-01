@@ -22,6 +22,7 @@ import { agentTeams } from './agent-teams';
 import { settingsManager } from '../settings';
 import { officeManager } from '../agent-office/office-manager';
 import { openRouter } from '../openrouter';
+import { awarenessMesh } from './awareness-mesh';
 
 const MAX_CONCURRENT = 5;   // Bumped from 3 for better parallelism
 const MAX_TASKS = 100;
@@ -111,6 +112,13 @@ class AgentRunner {
     this.emitOfficeEvent('agent:queued', task);
     this.processQueue();
 
+    // Register in awareness mesh for cross-tree coordination
+    awarenessMesh.registerAgent(task.id, agentType, description, {
+      role,
+      teamId: options.teamId,
+      parentId: options.parentId,
+    });
+
     console.log(`[AgentRunner] Spawned ${agentType} [${role}]: "${description}" (${task.id.slice(0, 8)})`);
     return task;
   }
@@ -153,6 +161,7 @@ class AgentRunner {
       task.status = 'cancelled';
       task.completedAt = Date.now();
       this.queue = this.queue.filter((id) => id !== taskId);
+      awarenessMesh.deregisterAgent(task.id);
       this.emitUpdate(task);
       this.emitOfficeEvent('agent:cancelled', task);
       return true;
@@ -206,6 +215,9 @@ class AgentRunner {
         phase: 'hard-stopped',
         text: 'Agent terminated immediately by user',
       });
+
+      // Deregister from awareness mesh
+      awarenessMesh.deregisterAgent(task.id);
 
       // Do NOT decrement this.running here — the .finally() callback in
       // processQueue handles the decrement when executeTask resolves/rejects.
@@ -361,6 +373,7 @@ class AgentRunner {
       setProgress: (percent: number) => {
         if (this.hardStopped.has(task.id)) return;
         task.progress = Math.max(0, Math.min(100, percent));
+        awarenessMesh.updateAgent(task.id, { progress: task.progress });
         this.emitUpdate(task);
       },
 
@@ -392,12 +405,17 @@ class AgentRunner {
       setPhase: (phase: string) => {
         if (this.hardStopped.has(task.id)) return;
         task.currentPhase = phase;
+        awarenessMesh.updateAgent(task.id, { phase });
         this.emitUpdate(task);
         this.emitOfficeEvent('agent:phase', task);
       },
 
       getAwareness: () => {
-        task.awareness = this.getAwarenessSummary(task.id);
+        // Use awareness mesh if agent is registered, else fallback
+        const meshContext = awarenessMesh.getAwarenessContext(task.id);
+        task.awareness = meshContext !== 'Not registered in awareness mesh.'
+          ? meshContext
+          : this.getAwarenessSummary(task.id);
         return task.awareness;
       },
 
@@ -474,6 +492,10 @@ class AgentRunner {
     task.completedAt = Date.now();
     this.cancelled.delete(task.id);
     this.hardStopped.delete(task.id);
+
+    // Deregister from awareness mesh so peers see updated state
+    awarenessMesh.deregisterAgent(task.id, task.result || undefined);
+
     this.emitUpdate(task);
     this.emitOfficeEvent('agent:completed', task);
 
