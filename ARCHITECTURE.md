@@ -1666,4 +1666,20 @@ graph TD
 
 ---
 
+## AI Contributors
+
+This architecture was designed and built in collaboration with AI models. Each model is credited for its specific contributions.
+
+| Model | Contributions to Architecture |
+|-------|-------------------------------|
+| **Google Gemini 3.1 Pro** | Holographic desktop environment (DesktopViz.tsx) — 13 evolution structures, Three.js rendering pipeline, bloom post-processing, mood-reactive palette system, HUD overlay |
+| **Anthropic Claude Opus 4** | System architecture design, bounded context mapping, cLaws integrity engine, memory consolidation pipeline, trust graph engine, IPC bridge contract, agent coordination, personality evolution |
+| **Anthropic Claude Sonnet 4** | In-app reasoning loops, memory analysis, psychological profiling, communication drafting, research synthesis |
+| **Google Gemini 2.5 Flash** | Real-time voice pipeline (WebSocket), live tool routing, search grounding, semantic embeddings |
+| **Google Gemini 2.0 Flash** | Art evolution pipeline (weekly art therapy), structure transition logic, Nano Banana 2 image generation |
+
+> *Unique agent instances will be credited here as they develop distinct identities and contributions.*
+
+---
+
 *This is a living document. Update as the architecture evolves.*
