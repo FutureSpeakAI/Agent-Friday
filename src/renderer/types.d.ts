@@ -1473,6 +1473,16 @@ declare global {
         onAgentRemoved: (callback: (data: any) => void) => () => void;
       };
 
+      vault: {
+        isUnlocked: () => Promise<boolean>;
+        isInitialized: () => Promise<boolean>;
+        getRecoveryPhrase: () => Promise<string | null>;
+        clearRecoveryPhrase: () => Promise<boolean>;
+        markRecoveryPhraseShown: () => Promise<void>;
+        recover: (phrase: string) => Promise<{ ok: boolean; error?: string }>;
+        onRecoveryPhrase: (callback: (phrase: string) => void) => () => void;
+      };
+
       multimedia: {
         createPodcast: (request: any) => Promise<any>;
         createVisual: (request: any) => Promise<any>;

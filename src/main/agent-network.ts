@@ -81,7 +81,10 @@ export type AgentMessageType =
   | 'task-response'           // Return task results
   | 'task-status-update'      // Intermediate status
   | 'ping'                    // Keepalive / presence check
-  | 'pong';                   // Keepalive response
+  | 'pong'                    // Keepalive response
+  | 'file-transfer-request'   // Request to send a file
+  | 'file-transfer-response'  // Accept/reject file transfer
+  | 'file-transfer-chunk';    // File data chunk
 
 export interface AgentMessage {
   /** Unique message ID */
@@ -104,6 +107,8 @@ export interface AgentMessage {
   nonce?: string;
   /** Auth tag for AES-GCM (base64, present only if encrypted) */
   authTag?: string;
+  /** cLaw attestation — proves this agent operates under valid Fundamental Laws */
+  clawAttestation?: import('./claw-attestation').ClawAttestation;
 }
 
 export type DelegationStatus =
@@ -536,6 +541,11 @@ export class AgentNetwork {
     return this.state.identity?.agentId ?? null;
   }
 
+  /** Get the Ed25519 signing private key (base64). Used by Sovereign Vault for key derivation. */
+  getSigningPrivateKey(): string | null {
+    return this.state.keyPair?.signingPrivateKey ?? null;
+  }
+
   // ── Pairing ───────────────────────────────────────────────────────
 
   /** Generate a pairing code for out-of-band exchange. */
@@ -748,6 +758,18 @@ export class AgentNetwork {
       this.state.keyPair.signingPrivateKey,
     );
 
+    // Attach cLaw attestation — proves this agent operates under valid Fundamental Laws
+    try {
+      const { generateAttestation } = require('./claw-attestation');
+      message.clawAttestation = generateAttestation(
+        this.state.keyPair.signingPrivateKey,
+        this.state.keyPair.signingPublicKey,
+      );
+    } catch (err) {
+      console.warn('[AgentNetwork/cLaw] Failed to generate attestation:', err);
+      // Continue without attestation — peer will flag but not silently drop
+    }
+
     // Encrypt if we have a shared secret (paired peer)
     if (peer.sharedSecret) {
       message = encryptMessage(message, peer.sharedSecret);
@@ -802,6 +824,37 @@ export class AgentNetwork {
       if (!verifyMessageSignature(processed, peer.identity.signingPublicKey)) return null;
     } else {
       return null; // Unknown sender, not a pair-request
+    }
+
+    // ── cLaw Attestation Verification ──────────────────────────────
+    // Verify the peer operates under valid Fundamental Laws.
+    // Failed attestation flags the message but does NOT silently drop it —
+    // the user is informed and can manually override via trust overrides.
+    try {
+      const { verifyAttestation, hasUserOverride } = require('./claw-attestation');
+      const attestationResult = verifyAttestation(
+        processed.clawAttestation,
+        peer?.identity?.signingPublicKey,
+      );
+
+      if (!attestationResult.valid) {
+        const senderId = message.fromAgentId;
+        if (hasUserOverride(senderId)) {
+          console.warn(
+            `[AgentNetwork/cLaw] Attestation failed for ${senderId} (${attestationResult.code}: ${attestationResult.reason}) — USER OVERRIDE ACTIVE, allowing`,
+          );
+        } else {
+          console.warn(
+            `[AgentNetwork/cLaw] Attestation failed for ${senderId} (${attestationResult.code}: ${attestationResult.reason}) — message flagged`,
+          );
+          // Attach attestation failure info to payload so the UI can inform the user
+          (processed.payload as Record<string, unknown>).__clawAttestationFailed = true;
+          (processed.payload as Record<string, unknown>).__clawAttestationReason = attestationResult.reason;
+          (processed.payload as Record<string, unknown>).__clawAttestationCode = attestationResult.code;
+        }
+      }
+    } catch (err) {
+      console.warn('[AgentNetwork/cLaw] Attestation verification error:', err);
     }
 
     // Update last seen
@@ -1075,7 +1128,9 @@ export class AgentNetwork {
   private async load(): Promise<void> {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
-      const raw = await fs.readFile(filePath, 'utf-8');
+      // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
+      const { vaultRead } = require('./vault');
+      const raw = await vaultRead(filePath);
       const data = JSON.parse(raw);
       if (data.keyPair) this.state.keyPair = data.keyPair;
       if (data.identity) this.state.identity = data.identity;
@@ -1093,7 +1148,9 @@ export class AgentNetwork {
   private async save(): Promise<void> {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
-      await fs.writeFile(filePath, JSON.stringify(this.state, null, 2));
+      // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
+      const { vaultWrite } = require('./vault');
+      await vaultWrite(filePath, JSON.stringify(this.state, null, 2));
     } catch (err) {
       console.error('[AgentNetwork] Save failed:', err);
     }

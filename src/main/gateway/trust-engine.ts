@@ -134,7 +134,9 @@ class TrustEngine {
     this.identitiesPath = path.join(gatewayDir, 'identities.json');
 
     try {
-      const data = await fs.readFile(this.identitiesPath, 'utf-8');
+      // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
+      const { vaultRead } = require('../vault');
+      const data = await vaultRead(this.identitiesPath);
       this.identities = JSON.parse(data);
       console.log(`[TrustEngine] Loaded ${this.identities.length} paired identities`);
     } catch {
@@ -378,10 +380,11 @@ class TrustEngine {
 
   private async saveIdentities(): Promise<void> {
     try {
-      await fs.writeFile(
+      // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
+      const { vaultWrite } = require('../vault');
+      await vaultWrite(
         this.identitiesPath,
         JSON.stringify(this.identities, null, 2),
-        'utf-8'
       );
     } catch (err) {
       console.warn('[TrustEngine] Failed to save identities:', err);
