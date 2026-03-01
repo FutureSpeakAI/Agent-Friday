@@ -1,8 +1,8 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-02-28
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
+> **Last updated**: 2026-03-01
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
 
 ---
 
@@ -349,6 +349,12 @@ graph TD
         TEAMS[agent-teams.ts<br/>Team Coordination]
         VOICE_AG[agent-voice.ts<br/>ElevenLabs TTS]
         ORCH[orchestrator.ts<br/>Task Decomposition]
+        CONTAINER[container-engine.ts<br/>Sandboxed Execution]
+        DELEGATION[delegation-engine.ts<br/>Trust-Gated Delegation]
+        ORCH_BRIDGE[orchestration-bridge.ts<br/>Orchestrator ↔ Delegation]
+        AWARENESS[awareness-mesh.ts<br/>Inter-Agent Broadcasting]
+        CAPMAP[capability-map.ts<br/>Intelligent Agent Routing]
+        SYMBIONT[symbiont-protocol.ts<br/>Cross-Agent Learning]
         OFFICE_MGR[office-manager.ts<br/>Pixel Office State]
     end
 
@@ -1591,6 +1597,12 @@ graph TD
 | `agents/` | `agent-teams.ts` | Agents | Multi-agent coordination |
 | `agents/` | `agent-voice.ts` | Agents | ElevenLabs TTS for agents |
 | `agents/` | `orchestrator.ts` | Agents | Task decomposition |
+| `agents/` | `container-engine.ts` | Agents (Track XI) | Sandboxed execution with cLaw governance |
+| `agents/` | `delegation-engine.ts` | Agents (Track XI) | Trust-gated task delegation between agents |
+| `agents/` | `orchestration-bridge.ts` | Agents (Track XI) | Wires orchestrator to delegation engine |
+| `agents/` | `awareness-mesh.ts` | Agents (Track XI) | Inter-agent state broadcasting + heartbeat |
+| `agents/` | `capability-map.ts` | Agents (Track XI) | Intelligent task-to-agent routing |
+| `agents/` | `symbiont-protocol.ts` | Agents (Track XI) | Cross-agent learning + self-improvement |
 | `connectors/` | `registry.ts` | Connectors | Connector registry and lifecycle |
 | `connectors/` | `adobe.ts` | Connectors | Adobe Creative Cloud integration |
 | `connectors/` | `comms-hub.ts` | Connectors | Communications hub connector |

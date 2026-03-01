@@ -110,7 +110,7 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
 | **Trust architecture** | Single trust level | 5-tier trust engine (local > owner-dm > approved-dm > group > public) with per-tier tool filtering, rate limiting, and memory isolation |
 | **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing and audit logging |
-| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 18+ connector modules, self-operating computer bridge |
+| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 18 connector modules, self-operating computer bridge |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -322,6 +322,18 @@ Background task execution powered by Claude, with specialised team members and d
 | **Orchestrate** | Task decomposition | Breaks complex goals into sub-tasks across multiple agents |
 
 Agents run concurrently (up to 5 parallel), with real-time chain-of-thought progress streaming, spoken results via ElevenLabs TTS for distinct voices, and a pixel-art **Agent Office** visualization where you can watch your team work in real time.
+
+### Multi-Agent Network (Track XI)
+
+A full peer-to-peer multi-agent operating system built on cryptographic identity:
+
+- **Ed25519 + X25519 identity** — Every agent instance generates a unique cryptographic identity at first launch for signing, encryption, and peer authentication
+- **Container Engine** — Sandboxed execution environments with cLaw governance, resource limits, and automatic cleanup
+- **Delegation Engine** — Structured task delegation between agents with trust-gated approval, progress tracking, and result verification
+- **Orchestration Bridge** — Wires the orchestrator to the delegation engine so complex tasks decompose across multiple agent instances
+- **Awareness Mesh** — Inter-agent coordination layer for broadcasting state changes, capability updates, and heartbeat signals across the network
+- **Capability Map** — Intelligent agent routing that matches tasks to the best-suited agent based on declared capabilities and historical performance
+- **Symbiont Protocol** — Self-improving agent performance through cross-agent learning, pattern sharing, and collaborative skill refinement
 
 ### Agent Office
 
@@ -547,6 +559,12 @@ agent-friday/
         agent-teams.ts                 # Multi-agent team coordination
         agent-voice.ts                 # ElevenLabs TTS for agent speech
         orchestrator.ts                # Task decomposition across agents
+        container-engine.ts            # Sandboxed execution with cLaw governance
+        delegation-engine.ts           # Trust-gated task delegation between agents
+        orchestration-bridge.ts        # Wires orchestrator to delegation engine
+        awareness-mesh.ts              # Inter-agent state broadcasting + heartbeat
+        capability-map.ts              # Intelligent task-to-agent routing
+        symbiont-protocol.ts           # Cross-agent learning + self-improvement
 
       connectors/                      # Integration plugins (18 modules)
         registry.ts                    # Connector auto-discovery + registration
@@ -656,7 +674,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 197 source files, ~82,000 lines of TypeScript**
+**Total: 208 source files, ~98,000 lines of TypeScript, 3,270 tests across 53 test suites**
 
 ### Technology Stack
 
@@ -675,6 +693,7 @@ agent-friday/
 | **Desktop Automation** | Self-Operating Computer (Python) | Mouse, keyboard, screen reading via JSONL bridge |
 | **Code Intelligence** | GitLoader | On-the-fly GitHub repo analysis |
 | **Trust Intelligence** | Trust Graph Engine | Multi-dimensional people credibility scoring with hermeneutic re-evaluation |
+| **Multi-Agent Network** | Track XI (7 subsystems) | P2P agent identity, container engine, delegation, awareness mesh, capability routing, symbiont protocol |
 | **Protocols** | MCP (Model Context Protocol) | Dynamic tool registration |
 | **Browser** | Puppeteer-core + WebSocket | Tab control, screenshots, DOM |
 | **Calendar** | Google APIs (OAuth2) | Google Calendar + Gmail integration |
@@ -684,7 +703,7 @@ agent-friday/
 ### Security Model
 
 - **Asimov's cLaws** — Three Laws enforced at the personality system level with HMAC-SHA256 integrity verification
-- **Sovereign Vault** — All sensitive state files (settings, memories, trust graph, agent network) encrypted at rest with AES-256-GCM. Vault key derived from Ed25519 private key + machine fingerprint via scrypt (N=2²⁰). 12-word recovery phrase for machine migration
+- **Sovereign Vault** — All sensitive state files (settings, memories, trust graph, agent network) encrypted at rest with AES-256-GCM. Vault key derived from Ed25519 private key + async machine fingerprint via scrypt (N=2²⁰). 12-word recovery phrase for machine migration
 - **cLaw Attestation** — Every outbound P2P message includes a cryptographic attestation (SHA-256 hash of canonical laws + Ed25519 signature + timestamp). Peer agents verify governance compliance; attestations expire after 5 minutes
 - **End-to-End Encryption** — Agent-to-agent messages encrypted with AES-256-GCM using shared secrets from X25519 ECDH key agreement
 - **Trusted File Transfer** — Files between agents are chunked (512 KB), individually SHA-256 hashed, and verified with whole-file integrity check. Trust levels gate acceptance (≥70% auto-accept, 30-70% prompt user, <30% auto-reject). Dangerous extensions always blocked
@@ -835,6 +854,7 @@ The Trust Graph is Agent Friday's model of the people in your world. It tracks m
 | World Monitor not available | Install World Monitor and set its path in Settings |
 | Image generation not working | Ensure Gemini API key is set (Nano Banana 2 uses the Gemini key) |
 | Build fails | Run `npm run typecheck` to identify TypeScript errors |
+| App hangs on first launch | Fixed in v2.1.0 — vault initialization was using a blocking synchronous call; now fully async |
 | Packaged app shows blank screen | Ensure `npm run build` succeeds before `npm run package` |
 | Integrity warning on startup | Core law files may have been modified; check `integrity/core-laws.ts` |
 | SOC bridge not working | Ensure Python 3.10+ is installed and the SOC package is available |
