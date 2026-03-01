@@ -321,6 +321,8 @@ describe('AgentNetwork Class', () => {
 
     network = new AgentNetwork();
     await network.initialize();
+    // Clear writes from initialize() so persistence tests only see their own saves
+    mockFs.writeFile.mockClear();
   });
 
   afterEach(async () => {
