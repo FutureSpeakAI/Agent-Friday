@@ -802,7 +802,8 @@ class CommitmentTracker {
     setTimeout(() => {
       this.saveQueued = false;
       this.save().catch(err => {
-        console.warn('[CommitmentTracker] Save failed:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn('[CommitmentTracker] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }, 2000);
   }

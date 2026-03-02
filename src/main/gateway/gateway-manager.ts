@@ -67,7 +67,8 @@ class GatewayManager {
     // Wire the adapter's message callback to our handler
     adapter.onMessage = (msg) => {
       this.handleInbound(msg).catch((err) => {
-        console.error(`[Gateway] Error handling ${msg.channel} message:`, err);
+        // Crypto Sprint 16: Sanitize — gateway errors may contain P2P auth data.
+        console.error(`[Gateway] Error handling ${msg.channel} message:`, err instanceof Error ? err.message : 'Unknown error');
       });
     };
 
@@ -206,7 +207,8 @@ class GatewayManager {
             { role: 'assistant', content: result.response },
           ])
           .catch((err) => {
-            console.warn('[Gateway] Memory extraction failed:', err);
+            // Crypto Sprint 16: Sanitize — memory extraction errors may contain API data.
+            console.warn('[Gateway] Memory extraction failed:', err instanceof Error ? err.message : 'Unknown error');
           });
       }
 

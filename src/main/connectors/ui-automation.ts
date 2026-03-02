@@ -9,7 +9,7 @@
  * interop bridge to .NET and Win32.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -147,8 +147,10 @@ function runPS(script: string, timeout: number = DEFAULT_TIMEOUT_MS): string {
   try {
     // BOM + UTF-8 so PowerShell reads Unicode correctly.
     writeFileSync(tmpFile, '\uFEFF' + script, 'utf-8');
-    const result = execSync(
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
+    // Crypto Sprint 13: Use execFileSync to avoid shell interpolation of temp path.
+    const result = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile],
       {
         timeout,
         maxBuffer: 10 * 1024 * 1024, // 10 MB

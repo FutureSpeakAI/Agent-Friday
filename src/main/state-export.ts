@@ -8,7 +8,7 @@
  * 4. Incremental backups → only re-export files changed since last backup
  *
  * Architecture:
- * - AES-256-GCM encryption with PBKDF2-derived key (100k iterations, user passphrase)
+ * - AES-256-GCM encryption with PBKDF2-derived key (600k iterations SHA-512, user passphrase)
  * - HMAC integrity verification on archive contents
  * - Import validates every file BEFORE overwriting anything (fail-closed)
  * - FutureSpeak has ZERO access to backup data (offline-capable, no phone-home)
@@ -138,7 +138,9 @@ export interface BackupRecord {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const PBKDF2_ITERATIONS = 100_000;
+// Crypto Sprint 2: Upgraded from 100K → 600K per OWASP 2023 recommendation for SHA-512.
+// Old backups remain decryptable because the iteration count is stored in the archive header.
+const PBKDF2_ITERATIONS = 600_000;
 const SALT_BYTES = 32;
 const IV_BYTES = 16;
 const KEY_BYTES = 32; // AES-256
@@ -281,8 +283,8 @@ export class StateExportEngine {
   private historyPath: string = '';
   private initialized = false;
   private savePromise: Promise<void> = Promise.resolve();
-  /** Encrypted passphrase for auto-backups (encrypted via Electron safeStorage) */
-  private autoBackupPassphrase: Buffer | null = null;
+  /** Encrypted passphrase for auto-backups (encrypted via vault identityKey) */
+  private autoBackupPassphrase: string | null = null;
 
   constructor(config: Partial<PersistenceConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -317,7 +319,7 @@ export class StateExportEngine {
     // Load encrypted auto-backup passphrase if set
     try {
       const passFile = path.join(this.userDataPath, '.backup-passphrase');
-      this.autoBackupPassphrase = await fs.readFile(passFile);
+      this.autoBackupPassphrase = await fs.readFile(passFile, 'utf-8');
       this.config.autoBackupPassphraseSet = true;
     } catch {
       this.autoBackupPassphrase = null;
@@ -734,23 +736,21 @@ export class StateExportEngine {
   // ── Scheduled Backup ────────────────────────────────────────────
 
   /**
-   * Set the auto-backup passphrase (encrypted via Electron safeStorage).
-   * Passphrase is encrypted at rest using OS credential store.
+   * Set the auto-backup passphrase (encrypted via vault identityKey).
+   * Passphrase is encrypted at rest using XSalsa20-Poly1305.
    */
   async setAutoBackupPassphrase(passphrase: string): Promise<void> {
-    // We can't use safeStorage in tests, so we store encrypted via AES
-    // with a machine-specific key. In production, use Electron safeStorage.
-    const { safeStorage } = await import('electron');
-    if (!safeStorage.isEncryptionAvailable()) {
+    const { encryptPrivateKey, isVaultUnlocked } = await import('./vault');
+    if (!isVaultUnlocked()) {
       throw new PersistentError(
         'persistence',
-        'OS encryption not available — cannot store auto-backup passphrase securely',
+        'Vault is locked — cannot store auto-backup passphrase securely',
       );
     }
 
-    const encrypted = safeStorage.encryptString(passphrase);
+    const encrypted = encryptPrivateKey(passphrase);
     const passFile = path.join(this.userDataPath, '.backup-passphrase');
-    await fs.writeFile(passFile, encrypted);
+    await fs.writeFile(passFile, encrypted, 'utf-8');
     this.autoBackupPassphrase = encrypted;
     this.config.autoBackupPassphraseSet = true;
   }
@@ -772,8 +772,8 @@ export class StateExportEngine {
 
     // Decrypt the passphrase
     try {
-      const { safeStorage } = await import('electron');
-      const passphrase = safeStorage.decryptString(this.autoBackupPassphrase);
+      const { decryptPrivateKey } = await import('./vault');
+      const passphrase = decryptPrivateKey(this.autoBackupPassphrase);
 
       if (this.config.incrementalEnabled) {
         return this.exportIncremental(passphrase);
@@ -1001,7 +1001,8 @@ export class StateExportEngine {
         );
         await fs.writeFile(this.historyPath, data, 'utf-8');
       })
-      .catch(err => console.error('[StateExport] Save failed:', err));
+      // Crypto Sprint 17: Sanitize error output.
+      .catch(err => console.error('[StateExport] Save failed:', err instanceof Error ? err.message : 'Unknown error'));
   }
 
   private emptyManifest(): ArchiveManifest {

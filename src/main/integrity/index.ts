@@ -27,7 +27,8 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import crypto from 'crypto';
-import { initializeHmac, sign, verify, isInitialized } from './hmac';
+import { initializeHmac, sign, verify, isInitialized, signObject } from './hmac';
+import { vaultWrite, vaultRead, isVaultUnlocked } from '../vault';
 import { getCanonicalLaws, getIntegrityAwarenessContext, getMemoryChangeContext } from './core-laws';
 import { checkMemoryIntegrity, buildMemorySnapshots } from './memory-watchdog';
 import {
@@ -40,9 +41,36 @@ import {
 
 // Re-export everything for convenience
 export { getCanonicalLaws, getIntegrityAwarenessContext, getMemoryChangeContext, getSafeModePesonality } from './core-laws';
-export { initializeHmac, sign, verify, signBytes, verifyBytes } from './hmac';
+export { initializeHmac, destroyHmac, sign, verify, signBytes, verifyBytes, signObject, verifyObject } from './hmac';
 export type { IntegrityState, IntegrityManifest, MemoryChangeReport, IntegrityAttestation } from './types';
 export { toAttestation, serializeAttestation, deserializeAttestation } from './types';
+
+// ── Meta-Signature Helpers (MEDIUM-002 / GAP-3) ──────────────────────
+
+/**
+ * Compute a meta-signature over the manifest body (excluding metaSignature itself).
+ * This prevents an attacker from replacing individual signature fields in the
+ * manifest file — the meta-signature covers ALL fields as a unit.
+ */
+function computeMetaSignature(manifest: IntegrityManifest): string {
+  // Build a copy without metaSignature to avoid circular signing
+  const { metaSignature: _, ...body } = manifest;
+  return signObject(body);
+}
+
+/**
+ * Verify the meta-signature of a loaded manifest.
+ * Returns true if valid or if metaSignature is absent (legacy manifests).
+ */
+function verifyMetaSignature(manifest: IntegrityManifest): boolean {
+  if (!manifest.metaSignature) {
+    // Legacy manifest without meta-signature — allow but log
+    console.warn('[Integrity] Manifest has no meta-signature (legacy format) — will be upgraded on next save');
+    return true;
+  }
+  const expected = computeMetaSignature(manifest);
+  return expected === manifest.metaSignature;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -70,8 +98,10 @@ class IntegrityManager {
   async initialize(): Promise<void> {
     this.manifestPath = path.join(app.getPath('userData'), MANIFEST_FILE);
 
-    // Step 1: Initialize HMAC engine (loads or generates signing key)
-    await initializeHmac();
+    // Step 1: Verify HMAC engine is initialized (key injected by vault boot sequence)
+    if (!isInitialized()) {
+      console.warn('[Integrity] HMAC engine not initialized — vault may not be unlocked yet. Integrity checks will be limited.');
+    }
 
     // Step 2: Load existing manifest (if any)
     await this.loadManifest();
@@ -81,7 +111,8 @@ class IntegrityManager {
 
     this.state.initialized = true;
     this.state.lastVerified = Date.now();
-    this.state.nonce = crypto.randomBytes(4).toString('hex');
+    // Crypto Sprint 4: 16 bytes (128-bit) nonce for integrity state session tracking.
+    this.state.nonce = crypto.randomBytes(16).toString('hex');
     this.state.sessionId = crypto.randomUUID().slice(0, 12);
 
     console.log(`[Integrity] Initialized — laws: ${this.state.lawsIntact ? '✓' : '✗ TAMPERED'}, ` +
@@ -158,8 +189,9 @@ class IntegrityManager {
         this.state.lawsIntact = true;
       }
     } catch (err) {
+      // Crypto Sprint 17: Sanitize error output.
       // cLaw: fail CLOSED — if we can't verify, assume the worst
-      console.error('[Integrity/cLaw] Core verification FAILED with error — entering safe mode:', err);
+      console.error('[Integrity/cLaw] Core verification FAILED with error — entering safe mode:', err instanceof Error ? err.message : 'Unknown error');
       this.state.lawsIntact = false;
       this.state.safeMode = true;
       this.state.safeModeReason = 'Integrity verification system encountered an error. ' +
@@ -340,7 +372,7 @@ class IntegrityManager {
   ): Promise<{ success: boolean; message: string }> {
     try {
       if (!isInitialized()) {
-        await initializeHmac();
+        throw new Error('[Integrity] HMAC engine not initialized — vault must be unlocked before resetting integrity');
       }
 
       // Re-sign everything with canonical laws form
@@ -365,7 +397,8 @@ class IntegrityManager {
       this.state.safeMode = false;
       this.state.safeModeReason = null;
       this.state.lastVerified = Date.now();
-      this.state.nonce = crypto.randomBytes(4).toString('hex');
+      // Crypto Sprint 4: 16 bytes (128-bit) nonce for integrity state session tracking.
+    this.state.nonce = crypto.randomBytes(16).toString('hex');
 
       await this.saveManifest();
 
@@ -454,9 +487,24 @@ class IntegrityManager {
 
   private async loadManifest(): Promise<void> {
     try {
-      const data = await fs.readFile(this.manifestPath, 'utf-8');
-      this.manifest = JSON.parse(data);
-      console.log('[Integrity] Manifest loaded');
+      // Crypto Sprint 2: Read manifest through vaultRead (handles both encrypted and plaintext).
+      // Legacy plaintext manifests will be read as-is and encrypted on next save.
+      const data = await vaultRead(this.manifestPath);
+      const loaded = JSON.parse(data) as IntegrityManifest;
+
+      // cLaw Security Fix (MEDIUM-002 / GAP-3): Verify meta-signature
+      // This must happen AFTER HMAC init (which happens before loadManifest is called)
+      if (isInitialized() && !verifyMetaSignature(loaded)) {
+        console.error('[Integrity/cLaw] Manifest meta-signature INVALID — manifest may have been tampered with on disk');
+        console.error('[Integrity/cLaw] Entering safe mode as a precaution');
+        this.state.safeMode = true;
+        this.state.safeModeReason = 'The integrity manifest file appears to have been modified externally. ' +
+          'This could indicate tampering. Click the integrity shield icon and press "Reset Asimov\'s cLaws" to restore normal operation.';
+        // Still load the manifest so the user can reset (otherwise we'd lose all signatures)
+      }
+
+      this.manifest = loaded;
+      console.log('[Integrity] Manifest loaded' + (loaded.metaSignature ? ' (meta-signature verified ✓)' : ' (legacy format, no meta-signature)'));
     } catch {
       // No manifest yet — first run
       this.manifest = null;
@@ -467,9 +515,14 @@ class IntegrityManager {
   private async saveManifest(): Promise<void> {
     if (!this.manifest) return;
     try {
-      await fs.writeFile(this.manifestPath, JSON.stringify(this.manifest, null, 2), 'utf-8');
+      // cLaw Security Fix (MEDIUM-002 / GAP-3): Compute meta-signature before saving
+      this.manifest.metaSignature = computeMetaSignature(this.manifest);
+      // Crypto Sprint 2: Route manifest through vaultWrite for encryption at rest.
+      // The manifest contains memory snapshots (fact/observation text) and HMAC signatures.
+      // An attacker with disk access could read memory contents without decrypting the vault.
+      await vaultWrite(this.manifestPath, JSON.stringify(this.manifest, null, 2));
     } catch (err) {
-      console.error('[Integrity] Failed to save manifest:', err);
+      console.error('[Integrity] Failed to save manifest:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

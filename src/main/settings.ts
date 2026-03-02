@@ -264,6 +264,31 @@ class SettingsManager {
     console.log('[Settings] Initialized (autoLaunch:', this.settings.autoLaunch + ')');
   }
 
+  /**
+   * Re-read settings from disk after the vault is unlocked.
+   *
+   * During two-phase boot, settings are first loaded in Phase A (vault locked),
+   * which means encrypted files fall back to defaults. This method is called
+   * in Phase B (after vault unlock) to re-read the now-decryptable settings.
+   *
+   * Skips migration logic (already done in initialize()) — only re-reads + merges.
+   */
+  async reloadFromVault(): Promise<void> {
+    if (!this.filePath) return; // Not initialized yet
+
+    try {
+      const { vaultRead } = require('./vault');
+      const data = await vaultRead(this.filePath);
+      const saved = JSON.parse(data);
+      this.settings = { ...DEFAULTS, ...saved };
+      this.applyApiKeys();
+      console.log('[Settings] Reloaded from vault (post-unlock)');
+    } catch {
+      // File doesn't exist or is still plaintext defaults — keep current settings
+      console.log('[Settings] No encrypted settings to reload (using current values)');
+    }
+  }
+
   get(): FridaySettings {
     return { ...this.settings };
   }
@@ -385,14 +410,24 @@ class SettingsManager {
       }
     }
 
-    // Block direct modification of API keys through generic setSetting
-    // (must use setApiKey() which has explicit key-name validation)
-    const apiKeyFields = new Set([
+    // Crypto Sprint 6 (HIGH): Block direct modification of ALL sensitive credential fields
+    // through the generic setSetting IPC. This is an allowlist-complement approach: we block
+    // API keys, bot tokens, OAuth tokens, owner IDs, and gateway config. These fields must
+    // only be set through dedicated, confirmation-gated APIs.
+    const sensitiveFields = new Set([
+      // API keys (must use setApiKey())
       'geminiApiKey', 'anthropicApiKey', 'elevenLabsApiKey',
       'firecrawlApiKey', 'perplexityApiKey', 'openaiApiKey', 'openrouterApiKey',
+      // Bot tokens and owner IDs — hijackable by compromised renderer
+      'telegramBotToken', 'telegramOwnerId',
+      'discordBotToken', 'discordOwnerId',
+      // OAuth tokens
+      'googleCalendarTokens',
+      // Gateway control — enabling opens the app to inbound connections
+      'gatewayEnabled',
     ]);
-    if (apiKeyFields.has(key)) {
-      console.warn(`[Settings] API key "${key}" must be set via setApiKey(), not setSetting()`);
+    if (sensitiveFields.has(key)) {
+      console.warn(`[Settings] Sensitive field "${key}" cannot be set via setSetting()`);
       return;
     }
 
@@ -489,6 +524,15 @@ class SettingsManager {
     return this.settings.agentVoicesEnabled && !!this.settings.elevenLabsApiKey;
   }
 
+  /**
+   * Apply API keys to process.env for legacy consumers.
+   *
+   * SECURITY NOTE (Crypto Sprint 2): API keys in process.env are readable by
+   * any code in the main process, visible in /proc/PID/environ on Linux, and
+   * may appear in crash dumps. Consumers should migrate to settingsManager
+   * getters (getAnthropicApiKey(), getGeminiApiKey(), etc.) and this method
+   * will be removed in a future release.
+   */
   private applyApiKeys(): void {
     if (this.settings.geminiApiKey) {
       process.env.GEMINI_API_KEY = this.settings.geminiApiKey;
@@ -513,6 +557,21 @@ class SettingsManager {
     }
   }
 
+  /**
+   * Remove API keys from process.env on shutdown.
+   * Prevents keys from lingering in process memory after the app closes.
+   */
+  clearApiKeysFromEnv(): void {
+    const keysToRemove = [
+      'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY',
+      'FIRECRAWL_API_KEY', 'PERPLEXITY_API_KEY', 'OPENAI_API_KEY',
+      'OPENROUTER_API_KEY',
+    ];
+    for (const key of keysToRemove) {
+      delete process.env[key];
+    }
+  }
+
   private maskKey(key: string): string {
     if (!key) return '';
     if (key.length <= 8) return '••••••••';
@@ -526,7 +585,8 @@ class SettingsManager {
       const { vaultWrite } = require('./vault');
       await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
     }).catch((err) => {
-      console.error('[Settings] Save failed:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error('[Settings] Save failed:', err instanceof Error ? err.message : 'Unknown error');
     });
     return this.savePromise;
   }

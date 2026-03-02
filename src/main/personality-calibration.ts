@@ -816,7 +816,8 @@ class PersonalityCalibrationEngine {
       const data = JSON.stringify(this.state, null, 2);
       await fs.writeFile(this.filePath, data, 'utf-8');
     } catch (err) {
-      console.warn('[PersonalityCalibration] Save failed:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[PersonalityCalibration] Save failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

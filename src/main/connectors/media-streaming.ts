@@ -16,7 +16,7 @@
  *   detect   -- capability check (OBS installed OR FFmpeg in PATH)
  */
 
-import { execFile, execSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -71,8 +71,10 @@ function runPS(script: string, timeout = PS_TIMEOUT): string {
   );
   try {
     fs.writeFileSync(tmp, script, 'utf-8');
-    const out = execSync(
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmp}"`,
+    // Crypto Sprint 13: Use execFileSync to avoid shell interpolation of temp path.
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmp],
       {
         timeout,
         encoding: 'utf-8',
@@ -271,7 +273,8 @@ function obsRequest(requestType: string, requestData?: Record<string, unknown>):
 function findFFmpeg(): string | null {
   // Check PATH first
   try {
-    const out = execSync('where ffmpeg.exe', {
+    // Crypto Sprint 13: Use execFileSync — no shell needed for `where`.
+    const out = execFileSync('where', ['ffmpeg.exe'], {
       encoding: 'utf-8',
       timeout: 5_000,
       windowsHide: true,
@@ -300,7 +303,8 @@ function findFFmpeg(): string | null {
  */
 function findFFprobe(): string | null {
   try {
-    const out = execSync('where ffprobe.exe', {
+    // Crypto Sprint 13: Use execFileSync — no shell needed for `where`.
+    const out = execFileSync('where', ['ffprobe.exe'], {
       encoding: 'utf-8',
       timeout: 5_000,
       windowsHide: true,

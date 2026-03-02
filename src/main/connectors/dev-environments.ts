@@ -9,6 +9,7 @@ import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
+import { getSanitizedEnv } from '../settings';
 
 const execFileAsync = promisify(execFile);
 const fsAccess = promisify(fs.access);
@@ -68,6 +69,9 @@ function venvPip(venvPath: string): string {
     : path.join(venvPath, 'bin', 'pip');
 }
 
+// Crypto Sprint 3: shell: true is restricted to Windows only (needed for .cmd files
+// like npm.cmd, pip.cmd, etc.). On Linux/macOS, shell is disabled to prevent
+// shell metacharacter injection if any args are derived from untrusted input.
 async function run(
   command: string, args: string[],
   options: { cwd?: string; timeoutMs?: number; stdin?: string; env?: NodeJS.ProcessEnv } = {},
@@ -75,7 +79,10 @@ async function run(
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
-      cwd: options.cwd, env: options.env ?? process.env, shell: true, windowsHide: true,
+      // Crypto Sprint 15 (HIGH): Default to getSanitizedEnv() to prevent API key leakage
+      // to child processes (jupyter, conda, pip, python, psql, mysql, npm, docker-compose).
+      cwd: options.cwd, env: options.env ?? getSanitizedEnv() as NodeJS.ProcessEnv,
+      shell: process.platform === 'win32', windowsHide: true,
     });
     let stdout = '', stderr = '', killed = false;
     const timer = setTimeout(() => {
@@ -122,8 +129,9 @@ async function jupyterStart(args: Record<string, unknown>): Promise<string> {
   const port = (args.port as number) ?? 8888;
   const directory = (args.directory as string) ?? process.cwd();
   return new Promise((resolve, reject) => {
+    // Crypto Sprint 3: shell only on Windows (needed for .cmd wrappers)
     const proc = spawn('jupyter', ['notebook', '--no-browser', `--port=${port}`, `--notebook-dir=${directory}`],
-      { shell: true, windowsHide: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      { shell: process.platform === 'win32', windowsHide: true, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', resd = false;
     const timer = setTimeout(() => {
       if (!resd) { resd = true; proc.unref();

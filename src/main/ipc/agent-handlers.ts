@@ -6,23 +6,20 @@ import { agentRunner } from '../agents/agent-runner';
 import { clipboardIntelligence } from '../clipboard-intelligence';
 import { projectAwareness } from '../project-awareness';
 import { documentIngestion } from '../document-ingestion';
+import { assertString, assertSafePath, assertObject } from './validate';
 
 export function registerAgentHandlers(): void {
   // ── Background agents ───────────────────────────────────────────────
+  // Crypto Sprint 8: Replace ad-hoc checks with shared validators + validate input object.
   ipcMain.handle(
     'agents:spawn',
-    (_event, agentType: string, description: string, input: Record<string, unknown>) => {
-      // Validate inputs
-      if (!agentType || typeof agentType !== 'string') {
-        throw new Error('agents:spawn requires a string agentType');
+    (_event, agentType: unknown, description: unknown, input: unknown) => {
+      assertString(agentType, 'agents:spawn agentType', 256);
+      assertString(description, 'agents:spawn description', 10_000);
+      if (input !== undefined && input !== null) {
+        assertObject(input, 'agents:spawn input');
       }
-      if (!description || typeof description !== 'string') {
-        throw new Error('agents:spawn requires a string description');
-      }
-      if (description.length > 10000) {
-        throw new Error('agents:spawn description too long (max 10000 chars)');
-      }
-      return agentRunner.spawn(agentType, description, input || {});
+      return agentRunner.spawn(agentType as string, description as string, (input || {}) as Record<string, unknown>);
     },
   );
 
@@ -39,26 +36,42 @@ export function registerAgentHandlers(): void {
   ipcMain.handle('clipboard:get-current', () => clipboardIntelligence.getCurrent());
 
   // ── Project awareness ───────────────────────────────────────────────
-  ipcMain.handle('project:watch', async (_event, rootPath: string) => {
-    return projectAwareness.watchProject(rootPath);
+
+  // Crypto Sprint 8 (HIGH): Validate project paths to prevent traversal / UNC attacks.
+  ipcMain.handle('project:watch', async (_event, rootPath: unknown) => {
+    assertSafePath(rootPath, 'project:watch rootPath');
+    return projectAwareness.watchProject(rootPath as string);
   });
 
   ipcMain.handle('project:list', () => projectAwareness.getProjects());
 
-  ipcMain.handle('project:get', (_event, rootPath: string) => {
-    return projectAwareness.getProject(rootPath);
+  // Crypto Sprint 8 (HIGH): Validate project path.
+  ipcMain.handle('project:get', (_event, rootPath: unknown) => {
+    assertSafePath(rootPath, 'project:get rootPath');
+    return projectAwareness.getProject(rootPath as string);
   });
 
   // ── Document ingestion ──────────────────────────────────────────────
   ipcMain.handle('documents:pick-and-ingest', async () => documentIngestion.pickAndIngest());
 
-  ipcMain.handle('documents:ingest-file', async (_event, filePath: string) => {
-    return documentIngestion.ingestFile(filePath);
+  // Crypto Sprint 8 (CRITICAL): Validate file path — no downstream validation exists.
+  // Without this, renderer could pass '../../../etc/passwd' or '\\\\attacker\\share' paths.
+  ipcMain.handle('documents:ingest-file', async (_event, filePath: unknown) => {
+    assertSafePath(filePath, 'documents:ingest-file filePath');
+    return documentIngestion.ingestFile(filePath as string);
   });
 
   ipcMain.handle('documents:list', () => documentIngestion.getAll());
 
-  ipcMain.handle('documents:get', (_event, id: string) => documentIngestion.getById(id));
+  // Crypto Sprint 8 (MEDIUM): Validate id is a string.
+  ipcMain.handle('documents:get', (_event, id: unknown) => {
+    assertString(id, 'documents:get id', 256);
+    return documentIngestion.getById(id as string);
+  });
 
-  ipcMain.handle('documents:search', (_event, query: string) => documentIngestion.search(query));
+  // Crypto Sprint 8 (MEDIUM): Validate search query.
+  ipcMain.handle('documents:search', (_event, query: unknown) => {
+    assertString(query, 'documents:search query', 10_000);
+    return documentIngestion.search(query as string);
+  });
 }

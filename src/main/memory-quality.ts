@@ -1002,7 +1002,8 @@ export class MemoryQualityEngine {
         );
         await fs.writeFile(this.filePath, data, 'utf-8');
       })
-      .catch(err => console.error('[MemoryQuality] Save failed:', err));
+      // Crypto Sprint 17: Sanitize error output.
+      .catch(err => console.error('[MemoryQuality] Save failed:', err instanceof Error ? err.message : 'Unknown error'));
   }
 }
 

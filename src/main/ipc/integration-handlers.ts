@@ -15,6 +15,7 @@ import { createTelegramAdapter } from '../gateway/adapters/telegram';
 import { callIntegration } from '../call-integration';
 import { sessionHealth } from '../session-health';
 import { settingsManager } from '../settings';
+import { assertToolCallArgs, assertString } from './validate';
 
 export function registerIntegrationHandlers(): void {
   // ── Intelligence ────────────────────────────────────────────────────
@@ -37,18 +38,26 @@ export function registerIntegrationHandlers(): void {
   );
 
   // ── Self-improvement ────────────────────────────────────────────────
-  ipcMain.handle('self-improve:read-file', async (_event, filePath: string) => {
-    return readProjectFile(filePath);
+  // Note: readProjectFile/listProjectFiles/proposeCodeChange all have internal validatePath()
+  // that confines paths to PROJECT_ROOT. These type checks are defense-in-depth at the IPC layer.
+  ipcMain.handle('self-improve:read-file', async (_event, filePath: unknown) => {
+    assertString(filePath, 'self-improve:read-file filePath', 1_000);
+    return readProjectFile(filePath as string);
   });
 
-  ipcMain.handle('self-improve:list-files', async (_event, dirPath: string) => {
-    return listProjectFiles(dirPath);
+  ipcMain.handle('self-improve:list-files', async (_event, dirPath: unknown) => {
+    assertString(dirPath, 'self-improve:list-files dirPath', 1_000);
+    return listProjectFiles(dirPath as string);
   });
 
+  // Crypto Sprint 8 (CRITICAL): Cap newContent size to prevent memory exhaustion.
   ipcMain.handle(
     'self-improve:propose',
-    async (_event, filePath: string, newContent: string, description: string) => {
-      return proposeCodeChange(filePath, newContent, description);
+    async (_event, filePath: unknown, newContent: unknown, description: unknown) => {
+      assertString(filePath, 'self-improve:propose filePath', 1_000);
+      assertString(newContent, 'self-improve:propose newContent', 1_000_000); // 1MB cap
+      assertString(description, 'self-improve:propose description', 10_000);
+      return proposeCodeChange(filePath as string, newContent as string, description as string);
     },
   );
 
@@ -59,10 +68,12 @@ export function registerIntegrationHandlers(): void {
   // ── Connector registry ──────────────────────────────────────────────
   ipcMain.handle('connectors:list-tools', () => connectorRegistry.getAllTools());
 
+  // Crypto Sprint 8 (CRITICAL): Validate tool name and args before dispatching.
   ipcMain.handle(
     'connectors:call-tool',
-    async (_event, toolName: string, args: Record<string, unknown>) => {
-      return connectorRegistry.executeTool(toolName, args);
+    async (_event, toolName: unknown, args: unknown) => {
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'connectors:call-tool');
+      return connectorRegistry.executeTool(validatedName, validatedArgs);
     },
   );
 
@@ -94,12 +105,18 @@ export function registerIntegrationHandlers(): void {
   ipcMain.handle('gateway:get-pending-pairings', () => gatewayManager.getPendingPairings());
   ipcMain.handle('gateway:get-paired-identities', () => gatewayManager.getPairedIdentities());
 
-  ipcMain.handle('gateway:approve-pairing', async (_event, code: string, tier?: string) => {
-    return gatewayManager.approvePairing(code, tier as any);
+  // Crypto Sprint 21: Validate pairing code and trust tier at IPC boundary.
+  ipcMain.handle('gateway:approve-pairing', async (_event, code: unknown, tier?: unknown) => {
+    assertString(code, 'gateway:approve-pairing code', 200);
+    if (tier !== undefined && tier !== null) {
+      assertString(tier, 'gateway:approve-pairing tier', 50);
+    }
+    return gatewayManager.approvePairing(code as string, tier as any);
   });
 
-  ipcMain.handle('gateway:revoke-pairing', async (_event, identityId: string) => {
-    return gatewayManager.revokePairing(identityId);
+  ipcMain.handle('gateway:revoke-pairing', async (_event, identityId: unknown) => {
+    assertString(identityId, 'gateway:revoke-pairing identityId', 500);
+    return gatewayManager.revokePairing(identityId as string);
   });
 
   ipcMain.handle('gateway:get-active-sessions', () => gatewayManager.getActiveSessions());
@@ -109,15 +126,19 @@ export function registerIntegrationHandlers(): void {
     return callIntegration.isVirtualAudioAvailable();
   });
 
-  ipcMain.handle('call:enter-call-mode', (_event, meetingUrl?: string) => {
-    return callIntegration.enterCallMode(meetingUrl);
+  ipcMain.handle('call:enter-call-mode', (_event, meetingUrl?: unknown) => {
+    if (meetingUrl !== undefined && meetingUrl !== null) {
+      assertString(meetingUrl, 'call:enter-call-mode meetingUrl', 2_048);
+    }
+    return callIntegration.enterCallMode(meetingUrl as string | undefined);
   });
 
   ipcMain.handle('call:exit-call-mode', () => callIntegration.exitCallMode());
   ipcMain.handle('call:is-in-call-mode', () => callIntegration.isInCallMode());
 
-  ipcMain.handle('call:open-meeting-url', (_event, url: string) => {
-    return callIntegration.openMeetingUrl(url);
+  ipcMain.handle('call:open-meeting-url', (_event, url: unknown) => {
+    assertString(url, 'call:open-meeting-url url', 2_048);
+    return callIntegration.openMeetingUrl(url as string);
   });
 
   ipcMain.handle('call:get-context-string', () => callIntegration.getContextString());

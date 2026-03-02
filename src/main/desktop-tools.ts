@@ -3,13 +3,14 @@
  * Replaces the broken MCP Desktop Commander with direct PowerShell-based tools.
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import { readFile as fsReadFile, writeFile as fsWriteFile, readdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { clipboard, BrowserWindow } from 'electron';
 import { getSanitizedEnv } from './settings';
+import { assertSafePath } from './ipc/validate';
 
 interface ToolResult {
   result?: string;
@@ -255,8 +256,10 @@ function runPS(script: string, timeoutMs = 15000): Promise<string> {
   writeFileSync(tmpFile, script, 'utf-8');
 
   return new Promise((resolve, reject) => {
-    const child = exec(
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpFile}"`,
+    // Crypto Sprint 13: Use execFile to avoid shell interpolation of temp path.
+    const child = execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile],
       { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
       (err, stdout, stderr) => {
         try { unlinkSync(tmpFile); } catch { /* cleanup */ }
@@ -856,6 +859,8 @@ if ($proc) {
 
 async function readFile(filePath: string): Promise<ToolResult> {
   try {
+    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
+    assertSafePath(filePath, 'desktop-tools readFile path');
     const MAX_SIZE = 50 * 1024; // 50KB
     const buffer = await fsReadFile(filePath);
     if (buffer.length > MAX_SIZE) {
@@ -870,6 +875,8 @@ async function readFile(filePath: string): Promise<ToolResult> {
 
 async function writeFile(filePath: string, content: string): Promise<ToolResult> {
   try {
+    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
+    assertSafePath(filePath, 'desktop-tools writeFile path');
     await fsWriteFile(filePath, content, 'utf-8');
     // Notify renderer about file modification
     if (mainWindowRef && !mainWindowRef.isDestroyed()) {
@@ -888,6 +895,8 @@ async function writeFile(filePath: string, content: string): Promise<ToolResult>
 
 async function listDirectory(dirPath: string): Promise<ToolResult> {
   try {
+    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
+    assertSafePath(dirPath, 'desktop-tools listDirectory path');
     const entries = await readdir(dirPath, { withFileTypes: true });
     if (entries.length === 0) {
       return { result: '(empty directory)' };

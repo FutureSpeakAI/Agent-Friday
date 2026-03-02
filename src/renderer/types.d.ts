@@ -1478,14 +1478,11 @@ declare global {
       };
 
       vault: {
-        isUnlocked: () => Promise<boolean>;
         isInitialized: () => Promise<boolean>;
-        isRecoveryPhraseShown: () => Promise<boolean>;
-        getRecoveryPhrase: () => Promise<string | null>;
-        clearRecoveryPhrase: () => Promise<boolean>;
-        markRecoveryPhraseShown: () => Promise<void>;
-        recover: (phrase: string) => Promise<{ ok: boolean; error?: string }>;
-        onRecoveryPhrase: (callback: (phrase: string) => void) => () => void;
+        isUnlocked: () => Promise<boolean>;
+        initializeNew: (passphrase: string) => Promise<{ ok: boolean; error?: string }>;
+        unlock: (passphrase: string) => Promise<{ ok: boolean; error?: string }>;
+        onBootComplete: (callback: () => void) => () => void;
       };
 
       multimedia: {

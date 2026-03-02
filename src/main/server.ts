@@ -12,6 +12,7 @@ import { connectorRegistry } from './connectors/registry';
 import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
 import { settingsManager } from './settings';
 import { integrityManager } from './integrity';
+import { assertMessageArray } from './ipc/validate';
 
 /**
  * cLaw Security Fix (CRITICAL-001): Safe mode tool filtering.
@@ -58,12 +59,28 @@ export async function startServer(): Promise<number> {
 
   app.use(express.json({ limit: '10mb' }));
 
+  // Crypto Sprint 6 (MEDIUM — DNS Rebinding): Validate the Host header to ensure requests
+  // are actually coming from localhost. In a DNS rebinding attack, a malicious website
+  // resolves an attacker domain to 127.0.0.1 — the Host header will contain the attacker's
+  // domain, not "localhost". Rejecting non-localhost Host headers blocks this attack.
+  app.use((req, res, next) => {
+    const host = req.headers.host || '';
+    if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)) {
+      res.status(403).json({ error: 'Forbidden: invalid Host header' });
+      return;
+    }
+    next();
+  });
+
   // Security headers
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    // Crypto Sprint 5: Restrictive CSP for the API server — it should never serve
+    // page-rendering resources. Any error pages or HTML-bearing responses get locked down.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
     next();
   });
 
@@ -75,8 +92,15 @@ export async function startServer(): Promise<number> {
     // Security hardening: session token ONLY via Authorization header.
     // Query parameter fallback removed — tokens in URLs leak via referrer headers,
     // server logs, browser history, and proxy logs.
-    if (token === sessionToken) {
-      return next();
+    // Crypto Sprint 4 (HIGH-TIMING): Use constant-time comparison to prevent
+    // timing side-channel attacks on the session token. Regular === leaks
+    // information about how many leading characters match.
+    if (token && token.length === sessionToken.length) {
+      const tokenBuf = Buffer.from(token, 'utf-8');
+      const expectedBuf = Buffer.from(sessionToken, 'utf-8');
+      if (crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
+        return next();
+      }
     }
 
     // cLaw Security Fix (HIGH-002): Removed no-Origin auth bypass.
@@ -105,13 +129,25 @@ export async function startServer(): Promise<number> {
       return;
     }
 
+    // Crypto Sprint 9: Validate history array structure and size.
+    // Without this, an attacker could send a malformed history (huge array, non-object
+    // entries, missing role/content) to crash downstream handlers or exhaust memory.
+    let validatedHistory: Array<{ role: string; content: string }>;
     try {
-      const result = await handleClaude(message, history);
+      validatedHistory = assertMessageArray(history, '/api/chat history');
+    } catch (validationErr) {
+      res.status(400).json({ error: 'Invalid history format: each entry must have role and content strings (max 500 messages)' });
+      return;
+    }
+
+    try {
+      const result = await handleClaude(message, validatedHistory);
       res.json(result);
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : 'Internal server error';
-      console.error('[Server] Chat error:', err);
-      res.status(500).json({ error: errMsg });
+      // Crypto Sprint 9: Never leak raw error messages to the client.
+      // Crypto Sprint 10: Sanitize log output — full error objects may contain API keys.
+      console.error('[Server] Chat error:', err instanceof Error ? err.message : 'Unknown error');
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -148,9 +184,10 @@ export async function startServer(): Promise<number> {
       console.log('[Server] Transcribed:', transcript.slice(0, 80));
       res.json({ transcript });
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : 'Transcription failed';
-      console.error('[Server] Transcription error:', err);
-      res.status(500).json({ error: errMsg });
+      // Crypto Sprint 9: Never leak raw error messages to the client.
+      // Crypto Sprint 10: Sanitize log output — full error objects may contain API keys.
+      console.error('[Server] Transcription error:', err instanceof Error ? err.message : 'Unknown error');
+      res.status(500).json({ error: 'Transcription failed' });
     }
   });
 
@@ -209,8 +246,9 @@ export async function startServer(): Promise<number> {
 
       // Check for Gemini API-level errors
       if (data.error) {
+        // Crypto Sprint 9: Log full error internally but return generic message to client.
         console.error('[Server] Gemini TTS API error:', data.error.message || JSON.stringify(data.error).slice(0, 300));
-        res.status(500).json({ error: data.error.message || 'Gemini TTS error' });
+        res.status(500).json({ error: 'TTS generation failed' });
         return;
       }
 
@@ -227,9 +265,10 @@ export async function startServer(): Promise<number> {
         res.status(500).json({ error: 'No audio generated' });
       }
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : 'TTS failed';
-      console.error('[Server] TTS error:', err);
-      res.status(500).json({ error: errMsg });
+      // Crypto Sprint 9: Never leak raw error messages to the client.
+      // Crypto Sprint 10: Sanitize log output — full error objects may contain API keys.
+      console.error('[Server] TTS error:', err instanceof Error ? err.message : 'Unknown error');
+      res.status(500).json({ error: 'TTS failed' });
     }
   });
 
@@ -243,7 +282,8 @@ export async function startServer(): Promise<number> {
 
     // Handle bind errors (e.g., address in use)
     server.on('error', (err: Error) => {
-      console.error('[Server] Failed to bind:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error('[Server] Failed to bind:', err instanceof Error ? err.message : 'Unknown error');
       reject(err);
     });
   });

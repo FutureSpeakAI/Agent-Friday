@@ -270,7 +270,8 @@ export function failClosedTrust<T>(
   try {
     return fn();
   } catch (err) {
-    console.error(`[cLaw/FailClosed] Trust resolution failed (${context}), using most restrictive tier:`, err);
+    // Crypto Sprint 17: Sanitize error output.
+    console.error(`[cLaw/FailClosed] Trust resolution failed (${context}), using most restrictive tier:`, err instanceof Error ? err.message : 'Unknown error');
     return fallback;
   }
 }
@@ -286,7 +287,7 @@ export function failClosedIntegrity(
   try {
     return fn();
   } catch (err) {
-    console.error(`[cLaw/FailClosed] Integrity check failed (${context}), assuming violation:`, err);
+    console.error(`[cLaw/FailClosed] Integrity check failed (${context}), assuming violation:`, err instanceof Error ? err.message : 'Unknown error');
     return false; // false = integrity NOT intact → triggers safe mode
   }
 }

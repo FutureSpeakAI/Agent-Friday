@@ -644,7 +644,9 @@ function generateSubprocessConnector(
   lines.push('function startBridge(bridgePath) {');
   lines.push(`  proc = spawn(${JSON.stringify(runtime.command)}, [${runtime.args.map(a => JSON.stringify(a)).join(', ')}${runtime.args.length > 0 ? ', ' : ''}bridgePath], {`);
   lines.push('    stdio: ["pipe", "pipe", "pipe"],');
-  lines.push('    env: { ...process.env },');
+  // Crypto Sprint 6 (CRITICAL): Do NOT pass process.env to adapter bridge subprocesses.
+  // Only pass the minimal env needed for the runtime (PATH, HOME, TEMP, etc.).
+  lines.push('    env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !(/API_KEY|SECRET|_TOKEN$/i.test(k)))),');
   lines.push('  });');
   lines.push('');
   lines.push('  const rl = readline.createInterface({ input: proc.stdout });');
@@ -794,7 +796,7 @@ function generateGenericBridge(
   lines.push('#!/usr/bin/env node');
   lines.push('// Generic JSONL bridge — delegates to language runtime via subprocess');
   lines.push('const readline = require("readline");');
-  lines.push('const { execSync } = require("child_process");');
+  // Crypto Sprint 15: Removed dead execSync import — bridge never uses it.
   lines.push('');
   lines.push('const rl = readline.createInterface({ input: process.stdin });');
   lines.push('');

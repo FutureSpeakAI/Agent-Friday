@@ -1,6 +1,6 @@
 {
   "name": "agent-friday",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Agent Friday — the world's first AGI OS",
   "author": "FutureSpeak.AI",
   "license": "MIT",
@@ -38,7 +38,8 @@
     ],
     "asarUnpack": [
       "node_modules/puppeteer-core/**/*",
-      "node_modules/sharp/**/*"
+      "node_modules/sharp/**/*",
+      "node_modules/sodium-native/**/*"
     ],
     "extraResources": [
       {
@@ -57,7 +58,9 @@
       "icon": "build/icon.png",
       "signtoolOptions": {
         "sign": "./build/sign.js",
-        "signingHashAlgorithms": ["sha256"],
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
         "publisherName": "FutureSpeak.AI"
       }
     },
@@ -93,12 +96,12 @@
     "express": "^4.21.2",
     "googleapis": "^171.4.0",
     "gpt-tokenizer": "^3.4.0",
-    "node-machine-id": "^1.1.12",
     "openai": "^6.25.0",
     "pdfjs-dist": "^5.4.624",
     "puppeteer-core": "^24.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "sodium-native": "^4.3.3",
     "three": "^0.183.1"
   },
   "devDependencies": {

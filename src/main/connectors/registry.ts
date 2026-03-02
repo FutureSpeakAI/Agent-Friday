@@ -78,7 +78,8 @@ class ConnectorRegistry {
           const available = await mod.detect();
           return { ...mod, available };
         } catch (err) {
-          console.warn(`[ConnectorRegistry] Detection failed for ${mod.id}:`, err);
+          // Crypto Sprint 17: Sanitize error output.
+          console.warn(`[ConnectorRegistry] Detection failed for ${mod.id}:`, err instanceof Error ? err.message : 'Unknown error');
           return { ...mod, available: false };
         }
       })

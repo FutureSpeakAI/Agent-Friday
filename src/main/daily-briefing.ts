@@ -746,7 +746,8 @@ class DailyBriefingEngine {
     setTimeout(() => {
       this.saveQueued = false;
       this.save().catch(err => {
-        console.warn('[DailyBriefing] Save failed:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn('[DailyBriefing] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }, 2000);
   }

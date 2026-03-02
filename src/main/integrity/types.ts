@@ -11,6 +11,8 @@
  *    to the agent, who naturally asks the user about them.
  */
 
+import crypto from 'crypto';
+
 // ── Integrity State ───────────────────────────────────────────────────
 
 export interface IntegrityState {
@@ -99,6 +101,14 @@ export interface IntegrityManifest {
 
   /** Version of the signing protocol (for future upgrades) */
   version: number;
+
+  /**
+   * cLaw Security Fix (MEDIUM-002 / GAP-3): Meta-signature over the manifest itself.
+   * HMAC-SHA256 over all fields EXCEPT this one, proving the manifest hasn't been
+   * tampered with on disk. Without this, an attacker could replace individual
+   * signature fields and the system would accept them as valid.
+   */
+  metaSignature?: string;
 }
 
 // ── Compact Attestation (Track X foundation) ─────────────────────────
@@ -136,7 +146,7 @@ export function toAttestation(
   return {
     digest,
     ts: Date.now(),
-    nonce: state.nonce || Math.random().toString(16).slice(2, 10),
+    nonce: state.nonce || crypto.randomBytes(4).toString('hex'),
     sessionId,
     intact: state.lawsIntact && state.identityIntact && state.memoriesIntact,
     safeMode: state.safeMode,

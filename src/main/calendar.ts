@@ -45,6 +45,9 @@ class CalendarIntegration {
   }
 
   async init(): Promise<void> {
+    // Clean up any existing state to support vault-reload calls (Phase B)
+    this.stop();
+
     const credPath = path.join(this.dataDir, CREDENTIALS_FILE);
     if (!fs.existsSync(credPath)) {
       console.log('[Calendar] No credentials file found — calendar disabled');
@@ -82,7 +85,8 @@ class CalendarIntegration {
               const existing = JSON.parse(existingRaw);
               await vaultWrite(tokenPath, JSON.stringify({ ...existing, ...tokens }));
             } catch (err) {
-              console.warn('[Calendar] Token refresh persistence failed:', err);
+              // Crypto Sprint 13: Sanitize — OAuth tokens in scope.
+              console.warn('[Calendar] Token refresh persistence failed:', err instanceof Error ? err.message : 'Unknown error');
             }
           }
         });
@@ -103,7 +107,8 @@ class CalendarIntegration {
         console.log('[Calendar] No token found — user needs to authenticate via settings');
       }
     } catch (err) {
-      console.warn('[Calendar] Init error:', err);
+      // Crypto Sprint 13: Sanitize — OAuth credentials loading in this path.
+      console.warn('[Calendar] Init error:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
@@ -124,7 +129,7 @@ class CalendarIntegration {
       width: 500,
       height: 700,
       title: 'Sign in to Google Calendar',
-      webPreferences: { nodeIntegration: false, contextIsolation: true },
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
     });
 
     authWindow.loadURL(authUrl);
@@ -150,7 +155,8 @@ class CalendarIntegration {
             resolve(true);
           }
         } catch (err) {
-          console.error('[Calendar] Auth error:', err);
+          // Crypto Sprint 13: Sanitize — OAuth exchange errors can contain client secrets.
+          console.error('[Calendar] Auth error:', err instanceof Error ? err.message : 'Unknown error');
           authWindow.close();
           resolve(false);
         }

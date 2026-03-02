@@ -415,7 +415,8 @@ ${sourceContent.slice(0, 30000)}`,
           });
         }
       } catch (err) {
-        console.error(`[Multimedia] TTS error for segment ${i + 1}:`, err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.error(`[Multimedia] TTS error for segment ${i + 1}:`, err instanceof Error ? err.message : 'Unknown error');
       }
 
       // Small delay between API calls to avoid rate limits

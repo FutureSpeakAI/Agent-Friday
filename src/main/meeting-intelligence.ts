@@ -300,7 +300,8 @@ class MeetingIntelligence {
           meeting.briefingText = briefing.briefingText;
         }
       } catch (err) {
-        console.warn('[MeetingIntel] Briefing generation failed:', err);
+        // Crypto Sprint 16: Sanitize — briefing uses Gemini API.
+        console.warn('[MeetingIntel] Briefing generation failed:', err instanceof Error ? err.message : 'Unknown error');
       }
     }
 
@@ -365,7 +366,8 @@ class MeetingIntelligence {
 
     // Run post-meeting processing asynchronously
     this.postMeetingProcessing(meeting).catch((err) => {
-      console.warn('[MeetingIntel] Post-meeting processing error:', err);
+      // Crypto Sprint 16: Sanitize — post-meeting processing uses Gemini API.
+      console.warn('[MeetingIntel] Post-meeting processing error:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     return meeting;
@@ -487,7 +489,8 @@ class MeetingIntelligence {
         }
       }
     } catch (err) {
-      console.warn('[MeetingIntel] Summary generation failed:', err);
+      // Crypto Sprint 16: Sanitize — summary generation uses Gemini API.
+      console.warn('[MeetingIntel] Summary generation failed:', err instanceof Error ? err.message : 'Unknown error');
     }
 
     // Store key facts from meeting in long-term memory
@@ -610,7 +613,8 @@ Respond in this exact JSON format:
         return this.parseSummaryResponse(text);
       }
     } catch (err) {
-      console.warn('[MeetingIntel] Summary API call failed:', err);
+      // Crypto Sprint 13: Sanitize — API key is in scope; raw err could leak it.
+      console.warn('[MeetingIntel] Summary API call failed:', err instanceof Error ? err.message : 'Unknown error');
       return null;
     }
   }
@@ -958,7 +962,8 @@ Respond in this exact JSON format:
         const data = JSON.stringify({ meetings: this.meetings, config: this.config }, null, 2);
         await fs.writeFile(this.filePath, data, 'utf-8');
       } catch (err) {
-        console.warn('[MeetingIntel] Save failed:', err);
+        // Crypto Sprint 16: Sanitize error output.
+        console.warn('[MeetingIntel] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       }
     });
     await this.saveQueue;

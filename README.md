@@ -46,7 +46,7 @@ The cLaws aren't enforced by prompts alone. Agent Friday includes a **multi-laye
 
 - **HMAC-SHA256 signing** — Core law text is signed at build time. On every startup, the signature is verified. If the laws have been modified, the agent enters **Safe Mode** and refuses to operate until integrity is restored.
 - **Memory Watchdog** — A continuous background monitor that watches for attempts to inject, overwrite, or corrupt the agent's personality constraints through memory manipulation.
-- **Sovereign Vault** — All critical state files (personality, settings, memories, trust graph) are encrypted at rest with AES-256-GCM. The vault key is derived from the agent's Ed25519 private key + machine fingerprint via scrypt, making offline tampering infeasible.
+- **Sovereign Vault v2** — All critical state files (personality, settings, memories, trust graph) are encrypted at rest with AES-256-GCM. The vault uses a passphrase-only root of trust: your passphrase (≥8 words) derives all keys through Argon2id (256MB memory-hard) + BLAKE2b KDF, with no platform keystore dependency. All key material is held in guard-paged, mlocked memory (SecureBuffer). The passphrase is the only key — there is no recovery phrase, no cloud backup, no master key on disk.
 - **cLaw Attestation** — Every agent-to-agent message carries a cryptographic attestation proving the sender operates under valid Fundamental Laws. Peers reject messages from agents with invalid or expired governance.
 - **Integrity Shield UI** — A real-time status indicator in the renderer showing law integrity status (verified/warning/critical), with detailed audit information.
 
@@ -521,8 +521,9 @@ agent-friday/
       network/                         # P2P network protocols
         file-transfer.ts               # Trust-gated chunked file transfer (512KB chunks, SHA-256)
 
-      types/                           # TypeScript type declarations
-        node-machine-id.d.ts           # Type shim for node-machine-id
+      crypto/                          # Cryptographic primitives (sodium-native)
+        passphrase-kdf.ts             # Argon2id + BLAKE2b key derivation chain
+        secure-buffer.ts              # Guard-paged, mlocked memory (sodium_malloc)
 
       # ── Workflows & Git ──
       workflow-recorder.ts             # Record replayable workflow sequences
@@ -674,7 +675,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 208 source files, ~98,000 lines of TypeScript, 3,270 tests across 53 test suites**
+**Total: 210 source files, ~98,000 lines of TypeScript, 3,496 tests across 63 test suites**
 
 ### Technology Stack
 
@@ -703,7 +704,7 @@ agent-friday/
 ### Security Model
 
 - **Asimov's cLaws** — Three Laws enforced at the personality system level with HMAC-SHA256 integrity verification
-- **Sovereign Vault** — All sensitive state files (settings, memories, trust graph, agent network) encrypted at rest with AES-256-GCM. Vault key derived from Ed25519 private key + async machine fingerprint via scrypt (N=2²⁰). 12-word recovery phrase for machine migration
+- **Sovereign Vault v2** — All sensitive state files (settings, memories, trust graph, agent network) encrypted at rest with AES-256-GCM. Passphrase-only root of trust: user passphrase (≥8 words) → Argon2id (opslimit=4, memlimit=256MB) → masterKey → BLAKE2b KDF → {vaultKey, hmacKey, identityKey}. No platform keystore dependency, no recovery phrase — the passphrase IS the key. All key material held in SecureBuffer (sodium_malloc + guard pages + mlock)
 - **cLaw Attestation** — Every outbound P2P message includes a cryptographic attestation (SHA-256 hash of canonical laws + Ed25519 signature + timestamp). Peer agents verify governance compliance; attestations expire after 5 minutes
 - **End-to-End Encryption** — Agent-to-agent messages encrypted with AES-256-GCM using shared secrets from X25519 ECDH key agreement
 - **Trusted File Transfer** — Files between agents are chunked (512 KB), individually SHA-256 hashed, and verified with whole-file integrity check. Trust levels gate acceptance (≥70% auto-accept, 30-70% prompt user, <30% auto-reject). Dangerous extensions always blocked
@@ -801,7 +802,7 @@ macOS and Linux builds are supported but primarily tested on Windows.
 
 - **No telemetry** — Agent Friday does not phone home or collect usage data
 - **Local storage** — All memory, settings, trust graph data, and conversation data stay on your machine
-- **Encryption at rest** — The Sovereign Vault encrypts all sensitive state files with AES-256-GCM, bound to this machine's fingerprint
+- **Encryption at rest** — The Sovereign Vault v2 encrypts all sensitive state files with AES-256-GCM, derived from your passphrase via Argon2id — fully portable across machines
 - **Screen capture** is local-only — images are sent directly to Gemini for context and never stored
 - **Obsidian sync** is opt-in — bidirectional vault sync only if you configure a vault path
 - **Webcam** access is tool-gated — the agent must explicitly request permission
@@ -854,7 +855,8 @@ The Trust Graph is Agent Friday's model of the people in your world. It tracks m
 | World Monitor not available | Install World Monitor and set its path in Settings |
 | Image generation not working | Ensure Gemini API key is set (Nano Banana 2 uses the Gemini key) |
 | Build fails | Run `npm run typecheck` to identify TypeScript errors |
-| App hangs on first launch | Fixed in v2.1.0 — vault initialization was using a blocking synchronous call; now fully async |
+| App hangs on first launch | Fixed in v2.1.0 — vault initialization now fully async |
+| Forgot vault passphrase | The passphrase is the only key — there is no recovery mechanism. You must remember your passphrase. If lost, delete `.vault-salt`, `.vault-canary`, and `.vault-meta.json` from the data directory to start fresh (all encrypted data will be lost) |
 | Packaged app shows blank screen | Ensure `npm run build` succeeds before `npm run package` |
 | Integrity warning on startup | Core law files may have been modified; check `integrity/core-laws.ts` |
 | SOC bridge not working | Ensure Python 3.10+ is installed and the SOC package is available |
@@ -883,6 +885,7 @@ Agent Friday is built in collaboration with AI models. We credit every model for
 |-------|------|-------------------|
 | **Google Gemini 3.1 Pro** | Desktop UI & Visual Design | Holographic desktop environment — 13 evolution structures (Cubes, Icosahedron, Network, Dome, Astrolabe, Tesseract, Quantum, Mandelbrot, Möbius, Grid, Cables, None, Eden), Three.js rendering pipeline, bloom post-processing, mood-reactive visuals, HUD overlay |
 | **Anthropic Claude Opus 4** | Architecture & Core Systems | System architecture, cLaws integrity engine, memory consolidation, trust graph, agent coordination, IPC bridge, personality evolution, psychological profiling |
+| **Anthropic Claude Opus 4.6** | Cryptographic Security & Architecture | Sovereign Vault v2 (passphrase-only root of trust), SecureBuffer (guard-paged memory), Argon2id key derivation, two-phase boot architecture, Phase B state reload, passphrase rate-limiting, cLaw integrity hardening, 198 crypto tests, comprehensive security audit |
 | **Anthropic Claude Sonnet 4** | Reasoning & Analysis | In-app deep reasoning, memory analysis, communication drafting, research synthesis, psychological profile generation |
 | **Google Gemini 2.5 Flash** | Voice & Real-time AI | Real-time bidirectional voice (WebSocket), live tool routing, search grounding, embeddings (text-embedding-004) |
 | **Google Gemini 2.0 Flash** | Art Therapy & Image Gen | Weekly art evolution sessions (art therapist role), structure transition recommendations, Nano Banana 2 image generation |

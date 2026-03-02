@@ -122,7 +122,8 @@ export async function generateVoiceSample(
     console.warn('[VoiceAudition] No audio in response for', voiceName);
     return null;
   } catch (err) {
-    console.error('[VoiceAudition] Failed to generate sample:', err);
+    // Crypto Sprint 13: Sanitize — API key is in scope; raw err could leak it.
+    console.error('[VoiceAudition] Failed to generate sample:', err instanceof Error ? err.message : 'Unknown error');
     return null;
   }
 }

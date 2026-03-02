@@ -1,105 +1,58 @@
 /**
  * HMAC Engine — Cryptographic signing and verification for integrity protection.
  *
- * Uses HMAC-SHA256 with a key protected by Electron's safeStorage API,
- * which encrypts using the OS credential store:
- *   - Windows: DPAPI (Data Protection API)
- *   - macOS: Keychain
- *   - Linux: libsecret / kwallet
+ * v2: The signing key is injected by the vault after passphrase-based derivation.
+ * No Electron dependency. No safeStorage. No file I/O for key management.
  *
- * The signing key is generated on first run, encrypted by the OS, and stored
- * in a separate file from the data it signs. An attacker would need both the
- * encrypted key file AND access to the OS credential store to forge signatures.
+ * The key is derived via:
+ *   Passphrase → Argon2id → masterKey → crypto_kdf(id=2, ctx="AF_HMAC_") → hmacKey
+ *
+ * The key lives in a SecureBuffer (guard-paged, mlocked, zeroed on destroy).
+ * An attacker with OS admin access cannot extract it from DPAPI/Keychain
+ * because those mechanisms are no longer used.
  */
 
 import crypto from 'crypto';
 import fs from 'fs/promises';
-import path from 'path';
-import { app, safeStorage, dialog } from 'electron';
+
+import { SecureBuffer } from '../crypto/secure-buffer';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const KEY_FILE_NAME = '.integrity-key';
-const KEY_LENGTH = 32; // 256-bit HMAC key
 const ALGORITHM = 'sha256';
 
 // ── State ─────────────────────────────────────────────────────────────
 
-let signingKey: Buffer | null = null;
+let signingKey: SecureBuffer | null = null;
 let initialized = false;
-let safeStorageAvailable = false;
 
 // ── Initialization ────────────────────────────────────────────────────
 
 /**
- * Initialize the HMAC engine: load or generate the signing key.
- * Must be called after app.whenReady() since safeStorage requires it.
+ * Initialize the HMAC engine with a pre-derived signing key.
+ *
+ * Called by the boot sequence AFTER the vault is unlocked.
+ * The key is derived from the user's passphrase — no I/O, no Electron APIs.
+ *
+ * @param key - The HMAC signing key (SecureBuffer from vault KDF)
  */
-export async function initializeHmac(): Promise<void> {
+export function initializeHmac(key: SecureBuffer): void {
   if (initialized) return;
 
-  const keyPath = path.join(app.getPath('userData'), KEY_FILE_NAME);
-
-  // Check if safeStorage is available (DPAPI on Windows, Keychain on macOS)
-  const canEncrypt = safeStorage.isEncryptionAvailable();
-  safeStorageAvailable = canEncrypt;
-
-  // cLaw Security Fix (HIGH-001): Loud warning when OS credential store is unavailable.
-  // Without safeStorage, HMAC keys are stored in plaintext — tamper detection still works
-  // (attacker must find the key file) but the security bar is much lower.
-  if (!canEncrypt) {
-    const msg = '[Integrity/HMAC] WARNING: OS credential store (safeStorage) is NOT available. '
-      + 'HMAC signing keys will be stored unencrypted. Integrity tamper detection will still '
-      + 'function, but an attacker with filesystem access could forge signatures. '
-      + 'On Linux, install libsecret or kwallet. On Windows/macOS this should not happen.';
-    console.error(msg);
-    try {
-      // Async dialog — does NOT block the event loop (unlike showMessageBoxSync)
-      await dialog.showMessageBox({
-        type: 'warning',
-        title: 'Agent Friday — Security Warning',
-        message: 'OS Credential Store Unavailable',
-        detail: 'The integrity system cannot encrypt its signing keys because the OS credential store '
-          + 'is not available. The agent will still function, but tamper-detection is weakened.\n\n'
-          + 'On Linux, install libsecret (GNOME) or kwallet (KDE) to resolve this.',
-        buttons: ['I Understand'],
-      });
-    } catch {
-      // Dialog may fail in headless/CI environments — that's OK, console warning suffices
-    }
-  }
-
-  try {
-    // Try to load existing key
-    const encryptedKey = await fs.readFile(keyPath);
-
-    if (canEncrypt) {
-      // Decrypt the stored key using OS credential store
-      const decrypted = safeStorage.decryptString(encryptedKey);
-      signingKey = Buffer.from(decrypted, 'hex');
-    } else {
-      // Fallback: key stored as-is (less secure, but still provides tamper detection)
-      signingKey = encryptedKey;
-    }
-
-    console.log('[Integrity/HMAC] Signing key loaded');
-  } catch {
-    // First run — generate a new key
-    signingKey = crypto.randomBytes(KEY_LENGTH);
-
-    if (canEncrypt) {
-      // Encrypt with OS credential store before writing
-      const encrypted = safeStorage.encryptString(signingKey.toString('hex'));
-      await fs.writeFile(keyPath, encrypted);
-    } else {
-      // Fallback: store raw key
-      await fs.writeFile(keyPath, signingKey);
-    }
-
-    console.log('[Integrity/HMAC] New signing key generated and stored');
-  }
-
+  signingKey = key;
   initialized = true;
+
+  console.log('[Integrity/HMAC] Signing key injected (vault-derived, SecureBuffer)');
+}
+
+/**
+ * Clean up HMAC state on shutdown.
+ * The SecureBuffer is owned by the vault — we just clear our reference.
+ */
+export function destroyHmac(): void {
+  signingKey = null;
+  initialized = false;
+  console.log('[Integrity/HMAC] State cleared');
 }
 
 // ── Signing ───────────────────────────────────────────────────────────
@@ -112,9 +65,11 @@ export function sign(data: string): string {
     throw new Error('[Integrity/HMAC] Not initialized — call initializeHmac() first');
   }
 
-  const hmac = crypto.createHmac(ALGORITHM, signingKey);
-  hmac.update(data, 'utf8');
-  return hmac.digest('hex');
+  return signingKey.withAccess('readonly', (key) => {
+    const hmac = crypto.createHmac(ALGORITHM, key);
+    hmac.update(data, 'utf8');
+    return hmac.digest('hex');
+  });
 }
 
 /**
@@ -129,9 +84,11 @@ export function signBytes(data: Buffer): Buffer {
     throw new Error('[Integrity/HMAC] Not initialized — call initializeHmac() first');
   }
 
-  const hmac = crypto.createHmac(ALGORITHM, signingKey);
-  hmac.update(data);
-  return hmac.digest();
+  return signingKey.withAccess('readonly', (key) => {
+    const hmac = crypto.createHmac(ALGORITHM, key);
+    hmac.update(data);
+    return hmac.digest();
+  });
 }
 
 /**
@@ -168,10 +125,29 @@ export function verify(data: string, expectedSignature: string): boolean {
 }
 
 /**
- * Sign a JSON-serializable object by converting to canonical JSON string.
+ * Recursively sort all object keys for deterministic serialization.
+ *
+ * Deep-sorts ALL object keys at every nesting level to ensure
+ * HMAC signatures are stable regardless of key insertion order.
+ */
+function deepSortKeys(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map(deepSortKeys);
+  if (typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = deepSortKeys((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
+ * Sign a JSON-serializable object by converting to canonical (deep-sorted) JSON string.
  */
 export function signObject(obj: unknown): string {
-  const canonical = JSON.stringify(obj, Object.keys(obj as object).sort());
+  const canonical = JSON.stringify(deepSortKeys(obj));
   return sign(canonical);
 }
 
@@ -179,7 +155,7 @@ export function signObject(obj: unknown): string {
  * Verify a JSON-serializable object's signature.
  */
 export function verifyObject(obj: unknown, expectedSignature: string): boolean {
-  const canonical = JSON.stringify(obj, Object.keys(obj as object).sort());
+  const canonical = JSON.stringify(deepSortKeys(obj));
   return verify(canonical, expectedSignature);
 }
 
@@ -212,12 +188,4 @@ export async function verifyFile(filePath: string, expectedSignature: string): P
  */
 export function isInitialized(): boolean {
   return initialized;
-}
-
-/**
- * Check if OS safeStorage is available for key encryption.
- * cLaw Security Fix (HIGH-001): Expose this so other modules can degrade gracefully.
- */
-export function isSafeStorageAvailable(): boolean {
-  return safeStorageAvailable;
 }

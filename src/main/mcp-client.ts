@@ -12,6 +12,20 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { mcpConfig, MCPServerConfig } from './mcp-config';
+import { getSanitizedEnv } from './settings';
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Crypto Sprint 14: Redact API keys from MCP tool arg/result log entries.
+ * MCP servers often receive API keys as arguments; logging them is a leak vector.
+ */
+function redactKeys(str: string): string {
+  return str
+    .replace(/(?:AIza|sk-|sk_|ant-|fc-|pplx-|ya29\.|xox[bpsa]-|key[=:])[A-Za-z0-9_.-]{15,}/g, '[REDACTED]')
+    .replace(/(?:Bearer\s+)[A-Za-z0-9_.-]{20,}/g, 'Bearer [REDACTED]')
+    .replace(/bot[0-9]{8,}:[A-Za-z0-9_-]{30,}/gi, '[REDACTED-BOT-TOKEN]');
+}
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -93,10 +107,10 @@ class MCPManager {
       await this.disconnectServer(config.id);
     }
 
-    // Build env: always inherit process.env, overlay non-empty config.env values.
-    // This ensures settingsManager-populated keys (e.g. FIRECRAWL_API_KEY) are
-    // available even if the config file has empty strings from first-run defaults.
-    const spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+    // Crypto Sprint 6 (CRITICAL): Use getSanitizedEnv() instead of process.env to prevent
+    // leaking ALL API keys to third-party MCP server subprocesses. Each MCP server only
+    // receives its own config.env overrides, not the full set of application secrets.
+    const spawnEnv: Record<string, string> = getSanitizedEnv() as Record<string, string>;
     if (config.env) {
       for (const [key, value] of Object.entries(config.env)) {
         if (value) spawnEnv[key] = value; // Only override if config has a non-empty value
@@ -248,9 +262,10 @@ class MCPManager {
       throw new Error(`MCP server ${serverId} not connected`);
     }
 
-    console.log(`[MCP] Calling ${serverId}::${name}`, JSON.stringify(args).slice(0, 200));
+    // Crypto Sprint 14: Redact API keys before logging tool arguments and results.
+    console.log(`[MCP] Calling ${serverId}::${name}`, redactKeys(JSON.stringify(args).slice(0, 200)));
     const result = await conn.client.callTool({ name, arguments: args });
-    console.log(`[MCP] Result for ${name}:`, JSON.stringify(result).slice(0, 200));
+    console.log(`[MCP] Result for ${name}:`, redactKeys(JSON.stringify(result).slice(0, 200)));
     return result.content;
   }
 

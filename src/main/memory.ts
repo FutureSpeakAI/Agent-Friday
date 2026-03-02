@@ -115,6 +115,25 @@ class MemoryManager {
     this.initialized = true;
   }
 
+  /**
+   * Re-read memory stores from disk after the vault is unlocked.
+   *
+   * During two-phase boot, memory is first loaded in Phase A (vault locked),
+   * which means encrypted files fall back to empty defaults. This method is called
+   * in Phase B (after vault unlock) to re-read the now-decryptable memory stores.
+   */
+  async reloadFromVault(): Promise<void> {
+    if (!this.memoryDir) return; // Not initialized yet
+
+    try {
+      await this.load();
+      this.pruneExpired();
+      console.log('[Memory] Reloaded from vault (post-unlock)');
+    } catch (err) {
+      console.warn('[Memory] Vault reload failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+  }
+
   getShortTerm(): ShortTermEntry[] {
     return this.store.shortTerm;
   }
@@ -285,8 +304,9 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
       if (Array.isArray(extracted.personMentions) && extracted.personMentions.length > 0) {
         const tg = getTrustGraph();
         if (tg) {
-          tg.processPersonMentions(extracted.personMentions).catch((err: unknown) => {
-            console.warn('[Memory] Trust graph person mention processing failed:', err);
+          // Crypto Sprint 17: Sanitize error output.
+        tg.processPersonMentions(extracted.personMentions).catch((err: unknown) => {
+            console.warn('[Memory] Trust graph person mention processing failed:', err instanceof Error ? err.message : 'Unknown error');
           });
         }
       }
@@ -302,7 +322,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
         `[Memory] Extracted ${extracted.longTerm?.length || 0} long-term, ${extracted.mediumTerm?.length || 0} medium-term, ${extracted.personMentions?.length || 0} person mentions`
       );
     } catch (err) {
-      console.warn('[Memory] Extraction failed:', err);
+      console.warn('[Memory] Extraction failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
@@ -351,7 +371,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
     const vaultPath = this.getVaultPath();
     if (vaultPath) {
       deleteNote(vaultPath, 'memories', id).catch((err) =>
-        console.warn('[Memory] Obsidian delete failed:', err)
+        console.warn('[Memory] Obsidian delete failed:', err instanceof Error ? err.message : 'Unknown error')
       );
     }
   }
@@ -365,7 +385,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
     const vaultPath = this.getVaultPath();
     if (vaultPath) {
       deleteNote(vaultPath, 'observations', id).catch((err) =>
-        console.warn('[Memory] Obsidian delete failed:', err)
+        console.warn('[Memory] Obsidian delete failed:', err instanceof Error ? err.message : 'Unknown error')
       );
     }
   }
@@ -457,7 +477,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
     this.saveQueue = this.saveQueue.then(async () => {
       await this._doSave(tier);
     }).catch((err) => {
-      console.error(`[Memory] Save failed for ${tier}:`, err);
+      console.error(`[Memory] Save failed for ${tier}:`, err instanceof Error ? err.message : 'Unknown error');
     });
     return this.saveQueue;
   }
@@ -479,7 +499,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
           const mtSnap = this.store.mediumTerm.map((e) => ({ id: e.id, observation: e.observation }));
           await im.signMemories(ltSnap, mtSnap, ltJson, mtJson);
         } catch (err) {
-          console.warn('[Memory] Integrity signing failed:', err);
+          console.warn('[Memory] Integrity signing failed:', err instanceof Error ? err.message : 'Unknown error');
         }
       }
     }
@@ -499,7 +519,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
           }
         }
       } catch (err) {
-        console.warn(`[Memory] Obsidian sync failed for ${tier}:`, err);
+        console.warn(`[Memory] Obsidian sync failed for ${tier}:`, err instanceof Error ? err.message : 'Unknown error');
       }
     }
   }
@@ -537,7 +557,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
 
         console.log('[Memory] Merged Obsidian vault entries');
       } catch (err) {
-        console.warn('[Memory] Obsidian vault read failed:', err);
+        console.warn('[Memory] Obsidian vault read failed:', err instanceof Error ? err.message : 'Unknown error');
       }
     }
   }
