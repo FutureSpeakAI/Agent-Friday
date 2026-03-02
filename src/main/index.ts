@@ -534,28 +534,35 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Intelligence router init failed:', err);
     });
 
+    const vaultChainT0 = Date.now();
+    console.log('[Friday] Starting vault initialization chain...');
     agentNetwork.initialize().then(async () => {
+      console.log(`[Friday] Agent network initialized in ${Date.now() - vaultChainT0}ms`);
+
       // Initialize Sovereign Vault after agent keys are available
       const privateKey = agentNetwork.getSigningPrivateKey();
       if (privateKey) {
+        console.log(`[Friday] Ed25519 private key available, starting vault init (${Date.now() - vaultChainT0}ms elapsed)`);
         try {
           const recoveryPhrase = await initializeVault(privateKey);
           if (recoveryPhrase) {
             // First-time vault setup — send recovery phrase to renderer
             mainWindow?.webContents.send('vault:recovery-phrase', recoveryPhrase);
-            console.log('[Friday] Sovereign Vault initialized (first run — recovery phrase generated)');
+            console.log(`[Friday] Sovereign Vault initialized — recovery phrase generated (${Date.now() - vaultChainT0}ms total)`);
           } else {
-            console.log(`[Friday] Sovereign Vault initialized (unlocked: ${isVaultUnlocked()})`);
+            console.log(`[Friday] Sovereign Vault initialized — unlocked: ${isVaultUnlocked()} (${Date.now() - vaultChainT0}ms total)`);
           }
         } catch (err) {
-          console.warn('[Friday] Vault initialization failed:', err);
+          console.warn(`[Friday] Vault initialization failed after ${Date.now() - vaultChainT0}ms:`, err);
         }
+      } else {
+        console.warn(`[Friday] No Ed25519 private key available — vault cannot initialize (${Date.now() - vaultChainT0}ms elapsed)`);
       }
 
       // Initialize Trusted File Transfer engine
       await fileTransferEngine.initialize();
     }).catch((err) => {
-      console.warn('[Friday] Agent network init failed:', err);
+      console.warn(`[Friday] Agent network init failed after ${Date.now() - vaultChainT0}ms:`, err);
     });
 
     superpowerEcosystem.initialize().catch((err) => {
