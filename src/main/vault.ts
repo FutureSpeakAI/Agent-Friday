@@ -26,6 +26,7 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { app } from 'electron';
 import { machineId } from 'node-machine-id';
 
@@ -120,14 +121,44 @@ export async function initializeVault(signingPrivateKeyBase64: string): Promise<
   const saltPath = path.join(userDataDir, SALT_FILE);
   const metaPath = path.join(userDataDir, VAULT_META_FILE);
 
-  // Get machine fingerprint (async to avoid blocking the event loop on Windows)
+  // Get machine fingerprint.
+  //
+  // CRITICAL: machineId() from node-machine-id spawns a child process
+  // (REG QUERY on Windows) to read the MachineGuid from the registry.
+  // On machines with Windows Smart App Control, SmartScreen, or aggressive
+  // antivirus, the child process can be BLOCKED or hang indefinitely.
+  // An unresolved `await machineId()` freezes the entire vault init chain,
+  // causing the recovery-phrase spinner to spin forever.
+  //
+  // Fix: race machineId() against a 5-second timeout. If it fails or times
+  // out, use a deterministic fallback derived from local system properties
+  // (no child processes required).
   try {
-    machineFingerprint = await machineId({ original: true });
-    console.log(`[Vault] Machine ID resolved in ${Date.now() - t0}ms`);
-  } catch {
-    // Fallback: use hostname + platform as fingerprint (less unique but functional)
-    machineFingerprint = `${require('os').hostname()}-${process.platform}-${process.arch}`;
-    console.warn('[Vault] Machine ID unavailable, using fallback fingerprint');
+    machineFingerprint = await Promise.race([
+      machineId({ original: true }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('machineId timed out after 5000ms')), 5000),
+      ),
+    ]);
+    console.log(`[Vault] Machine ID resolved via registry in ${Date.now() - t0}ms`);
+  } catch (midErr) {
+    // Fallback: deterministic fingerprint from local system properties.
+    // This never spawns a child process, so it cannot be blocked by
+    // Windows security policies. The values are stable across reboots
+    // on the same hardware (hostname, platform, arch, CPU model, RAM, homedir).
+    const parts = [
+      os.hostname(),
+      os.platform(),
+      os.arch(),
+      os.cpus()?.[0]?.model || 'unknown-cpu',
+      String(os.totalmem()),
+      os.homedir(),
+    ];
+    machineFingerprint = crypto.createHash('sha256').update(parts.join('|')).digest('hex');
+    console.warn(
+      `[Vault] machineId() failed (${midErr instanceof Error ? midErr.message : midErr}), ` +
+      `using system-property fallback fingerprint (${Date.now() - t0}ms)`,
+    );
   }
 
   // Check if vault already exists
