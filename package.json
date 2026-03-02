@@ -54,7 +54,12 @@
         "nsis",
         "zip"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "signtoolOptions": {
+        "sign": "./build/sign.js",
+        "signingHashAlgorithms": ["sha256"],
+        "publisherName": "FutureSpeak.AI"
+      }
     },
     "nsis": {
       "oneClick": false,
