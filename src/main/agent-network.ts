@@ -1171,14 +1171,16 @@ export class AgentNetwork {
         try { await fs.unlink(filePath); } catch { /* ignore */ }
 
         // Also reset vault metadata — the vault key was derived from the
-        // now-lost private key, so vault-meta.json and vault-salt.bin are
+        // now-lost private key, so .vault-meta.json and .vault-salt are
         // stale references to a key hierarchy that no longer exists.
+        // NOTE: Vault files use dot-prefixed names (.vault-meta.json, .vault-salt)
+        // and live in userData root (not friday-data/).
         const userDataDir = path.dirname(this.dataDir);
-        const vaultMetaPath = path.join(userDataDir, 'vault-meta.json');
-        const vaultSaltPath = path.join(userDataDir, 'vault-salt.bin');
+        const vaultMetaPath = path.join(userDataDir, '.vault-meta.json');
+        const vaultSaltPath = path.join(userDataDir, '.vault-salt');
         try { await fs.unlink(vaultMetaPath); } catch { /* ignore */ }
         try { await fs.unlink(vaultSaltPath); } catch { /* ignore */ }
-        console.log('[AgentNetwork] Cleared stale vault metadata (vault-meta.json + vault-salt.bin)');
+        console.log('[AgentNetwork] Cleared stale vault metadata (.vault-meta.json + .vault-salt)');
         return;
       }
 
