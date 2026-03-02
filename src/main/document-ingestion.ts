@@ -80,7 +80,8 @@ class DocumentIngestion {
         const doc = await this.ingestFile(filePath);
         if (doc) docs.push(doc);
       } catch (err) {
-        console.warn(`[DocumentIngestion] Failed to ingest ${filePath}:`, err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn(`[DocumentIngestion] Failed to ingest ${filePath}:`, err instanceof Error ? err.message : 'Unknown error');
       }
     }
 
@@ -195,7 +196,7 @@ class DocumentIngestion {
       const data = await pdfParse(buffer);
       return data.text || '';
     } catch (err) {
-      console.warn('[DocumentIngestion] PDF parse failed (is pdf-parse installed?):', err);
+      console.warn('[DocumentIngestion] PDF parse failed (is pdf-parse installed?):', err instanceof Error ? err.message : 'Unknown error');
       return '[PDF text extraction unavailable — install pdf-parse]';
     }
   }
@@ -207,7 +208,7 @@ class DocumentIngestion {
       const result = await mammoth.extractRawText({ buffer });
       return result.value || '';
     } catch (err) {
-      console.warn('[DocumentIngestion] DOCX parse failed (is mammoth installed?):', err);
+      console.warn('[DocumentIngestion] DOCX parse failed (is mammoth installed?):', err instanceof Error ? err.message : 'Unknown error');
       return '[DOCX text extraction unavailable — install mammoth]';
     }
   }

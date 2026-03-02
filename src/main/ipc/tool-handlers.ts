@@ -21,6 +21,14 @@ import {
   checkDependencies,
 } from '../soc-bridge';
 import { gitLoader, buildGitLoaderToolDeclarations } from '../git-loader';
+import {
+  assertToolCallArgs,
+  assertSafeUrl,
+  assertString,
+  assertNumber,
+  assertObject,
+  assertStringArray,
+} from './validate';
 
 export interface ToolHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -30,10 +38,12 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── Desktop tools ───────────────────────────────────────────────────
   ipcMain.handle('desktop:list-tools', () => DESKTOP_TOOL_DECLARATIONS);
 
+  // Crypto Sprint 8 (CRITICAL): Validate tool name and args before dispatching.
   ipcMain.handle(
     'desktop:call-tool',
-    async (_event, toolName: string, args: Record<string, unknown>) => {
-      return callDesktopTool(toolName, args);
+    async (_event, toolName: unknown, args: unknown) => {
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'desktop:call-tool');
+      return callDesktopTool(validatedName, validatedArgs);
     },
   );
 
@@ -52,10 +62,12 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── Browser tools ───────────────────────────────────────────────────
   ipcMain.handle('browser:list-tools', () => BROWSER_TOOL_DECLARATIONS);
 
+  // Crypto Sprint 8 (CRITICAL): Validate tool name and args before dispatching.
   ipcMain.handle(
     'browser:call-tool',
-    async (_event, toolName: string, args: Record<string, unknown>) => {
-      return executeBrowserTool(toolName, args);
+    async (_event, toolName: unknown, args: unknown) => {
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'browser:call-tool');
+      return executeBrowserTool(validatedName, validatedArgs);
     },
   );
 
@@ -70,9 +82,11 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── Scheduler ───────────────────────────────────────────────────────
   ipcMain.handle('scheduler:list-tools', () => SCHEDULER_TOOL_DECLARATIONS);
 
+  // Crypto Sprint 8 (HIGH): Validate params is a plain object before unsafe `as any` cast.
   ipcMain.handle(
     'scheduler:create-task',
-    async (_event, params: Record<string, unknown>) => {
+    async (_event, params: unknown) => {
+      assertObject(params, 'scheduler:create-task params');
       return taskScheduler.createTask(params as any);
     },
   );
@@ -98,32 +112,45 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── Self-Operating Computer + Browser-Use ─────────────────────────
   ipcMain.handle('soc:list-tools', () => buildSocToolDeclarations());
 
-  ipcMain.handle('soc:call-tool', async (_event, toolName: string, args: Record<string, unknown>) => {
+  // Crypto Sprint 8 (HIGH): Replace unsafe `as` casts with runtime type checks + cap max_steps.
+  ipcMain.handle('soc:call-tool', async (_event, toolName: unknown, args: unknown) => {
     try {
-      switch (toolName) {
-        case 'operate_computer':
-          return await operateComputer(
-            args.objective as string,
-            (args.model as string) || 'gpt-4-with-ocr',
-            (args.max_steps as number) || 10,
-          );
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'soc:call-tool');
+      const MAX_STEPS = 100; // Hard cap to prevent runaway loops
+
+      switch (validatedName) {
+        case 'operate_computer': {
+          assertString(validatedArgs.objective, 'soc:operate_computer objective', 50_000);
+          const model = typeof validatedArgs.model === 'string' ? validatedArgs.model : 'gpt-4-with-ocr';
+          const maxSteps = typeof validatedArgs.max_steps === 'number' && Number.isFinite(validatedArgs.max_steps)
+            ? Math.min(Math.max(1, validatedArgs.max_steps), MAX_STEPS) : 10;
+          return await operateComputer(validatedArgs.objective as string, model, maxSteps);
+        }
         case 'take_screenshot':
           return await takeScreenshot();
-        case 'click_screen':
-          return await clickScreen(args.x as number, args.y as number);
-        case 'type_text':
-          return await typeText(args.text as string);
-        case 'press_keys':
-          return await pressKeys(args.keys as string[]);
-        case 'browser_task':
-          return await browserTask(
-            args.task as string,
-            (args.model as string) || 'gpt-4o',
-            (args.max_steps as number) || 20,
-            (args.headless as boolean) || false,
-          );
+        case 'click_screen': {
+          assertNumber(validatedArgs.x, 'soc:click_screen x', 0, 100_000);
+          assertNumber(validatedArgs.y, 'soc:click_screen y', 0, 100_000);
+          return await clickScreen(validatedArgs.x as number, validatedArgs.y as number);
+        }
+        case 'type_text': {
+          assertString(validatedArgs.text, 'soc:type_text text', 50_000);
+          return await typeText(validatedArgs.text as string);
+        }
+        case 'press_keys': {
+          assertStringArray(validatedArgs.keys, 'soc:press_keys keys', 50, 100);
+          return await pressKeys(validatedArgs.keys as string[]);
+        }
+        case 'browser_task': {
+          assertString(validatedArgs.task, 'soc:browser_task task', 50_000);
+          const model = typeof validatedArgs.model === 'string' ? validatedArgs.model : 'gpt-4o';
+          const maxSteps = typeof validatedArgs.max_steps === 'number' && Number.isFinite(validatedArgs.max_steps)
+            ? Math.min(Math.max(1, validatedArgs.max_steps), MAX_STEPS) : 20;
+          const headless = typeof validatedArgs.headless === 'boolean' ? validatedArgs.headless : false;
+          return await browserTask(validatedArgs.task as string, model, maxSteps, headless);
+        }
         default:
-          return { error: `Unknown SOC tool: ${toolName}` };
+          return { error: `Unknown SOC tool: ${validatedName}` };
       }
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
@@ -163,9 +190,12 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── GitLoader ─────────────────────────────────────────────────────
   ipcMain.handle('git:list-tools', () => buildGitLoaderToolDeclarations());
 
-  ipcMain.handle('git:load', async (_event, repoUrl: string, options?: Record<string, unknown>) => {
+  // Crypto Sprint 8 (CRITICAL): Validate URL scheme to prevent file://, ssh://, data:// protocols.
+  // file:// would read arbitrary local files; ssh:// could trigger credential prompts or key theft.
+  ipcMain.handle('git:load', async (_event, repoUrl: unknown, options?: Record<string, unknown>) => {
     try {
-      const repo = await gitLoader.load(repoUrl, options || {});
+      assertSafeUrl(repoUrl, 'git:load repoUrl', 'git');
+      const repo = await gitLoader.load(repoUrl as string, options || {});
       return {
         id: repo.id,
         name: repo.name,
@@ -233,36 +263,40 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
     }
   });
 
-  ipcMain.handle('git:call-tool', async (_event, toolName: string, args: Record<string, unknown>) => {
+  // Crypto Sprint 8 (CRITICAL): Validate tool name, args, and URL schemes.
+  ipcMain.handle('git:call-tool', async (_event, toolName: unknown, args: unknown) => {
     try {
-      switch (toolName) {
-        case 'git_load_repo':
-          return await gitLoader.load(args.repo_url as string, {
-            branch: args.branch as string,
-            includePatterns: args.include_patterns as string[],
-            excludePatterns: args.exclude_patterns as string[],
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'git:call-tool');
+      switch (validatedName) {
+        case 'git_load_repo': {
+          assertSafeUrl(validatedArgs.repo_url, 'git:call-tool repo_url', 'git');
+          return await gitLoader.load(validatedArgs.repo_url as string, {
+            branch: typeof validatedArgs.branch === 'string' ? validatedArgs.branch : undefined,
+            includePatterns: Array.isArray(validatedArgs.include_patterns) ? validatedArgs.include_patterns as string[] : undefined,
+            excludePatterns: Array.isArray(validatedArgs.exclude_patterns) ? validatedArgs.exclude_patterns as string[] : undefined,
           });
+        }
         case 'git_get_tree':
-          return gitLoader.getTree(args.repo_id as string);
+          return gitLoader.getTree(validatedArgs.repo_id as string);
         case 'git_get_file': {
-          const file = gitLoader.getFile(args.repo_id as string, args.file_path as string);
-          return file || { error: `File not found: ${args.file_path}` };
+          const file = gitLoader.getFile(validatedArgs.repo_id as string, validatedArgs.file_path as string);
+          return file || { error: `File not found: ${validatedArgs.file_path}` };
         }
         case 'git_search':
-          return gitLoader.search(args.repo_id as string, args.query as string, {
-            filePattern: args.file_pattern as string,
-            maxResults: args.max_results as number,
+          return gitLoader.search(validatedArgs.repo_id as string, validatedArgs.query as string, {
+            filePattern: typeof validatedArgs.file_pattern === 'string' ? validatedArgs.file_pattern : undefined,
+            maxResults: typeof validatedArgs.max_results === 'number' ? validatedArgs.max_results : undefined,
           });
         case 'git_get_readme':
-          return gitLoader.getReadme(args.repo_id as string);
+          return gitLoader.getReadme(validatedArgs.repo_id as string);
         case 'git_get_summary':
-          return gitLoader.getSummary(args.repo_id as string);
+          return gitLoader.getSummary(validatedArgs.repo_id as string);
         case 'git_list_loaded':
           return gitLoader.listLoaded();
         case 'git_unload_repo':
-          return await gitLoader.unload(args.repo_id as string);
+          return await gitLoader.unload(validatedArgs.repo_id as string);
         default:
-          return { error: `Unknown git tool: ${toolName}` };
+          return { error: `Unknown git tool: ${validatedName}` };
       }
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };

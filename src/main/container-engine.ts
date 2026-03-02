@@ -36,7 +36,8 @@
  *   - Inversion: Escape mitigations in security policy (volume, channel, runtime)
  */
 
-import { spawn, execSync, ChildProcess } from 'child_process';
+// Crypto Sprint 14: Removed execSync — all exec calls now use execFileSync (no shell).
+import { spawn, execFileSync, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -300,7 +301,8 @@ class ContainerEngine {
   /** Check if Docker daemon is running and accessible */
   private checkDockerAvailable(): boolean {
     try {
-      execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+      // Crypto Sprint 14: execFileSync — no shell interpolation needed for 'docker info'.
+      execFileSync('docker', ['info'], { stdio: 'pipe', timeout: 5000 });
       return true;
     } catch {
       return false;
@@ -310,7 +312,8 @@ class ContainerEngine {
   /** Ensure the sandbox Docker image exists, build if needed */
   private async ensureImage(): Promise<void> {
     try {
-      execSync(`docker image inspect ${this.config.imageName}`, { stdio: 'pipe', timeout: 10000 });
+      // Crypto Sprint 11: Use execFileSync to avoid shell injection via imageName.
+      execFileSync('docker', ['image', 'inspect', this.config.imageName], { stdio: 'pipe', timeout: 10000 });
       console.log(`[ContainerEngine] Image '${this.config.imageName}' found`);
     } catch {
       console.log(`[ContainerEngine] Image '${this.config.imageName}' not found — building...`);
@@ -329,13 +332,15 @@ class ContainerEngine {
 
     try {
       const contextDir = path.dirname(dockerfilePath);
-      execSync(
-        `docker build -t ${this.config.imageName} -f "${dockerfilePath}" "${contextDir}"`,
+      // Crypto Sprint 11: Use execFileSync to avoid shell injection via imageName/paths.
+      execFileSync(
+        'docker', ['build', '-t', this.config.imageName, '-f', dockerfilePath, contextDir],
         { stdio: 'pipe', timeout: 120_000 }
       );
       console.log(`[ContainerEngine] Image '${this.config.imageName}' built successfully`);
     } catch (err) {
-      console.error('[ContainerEngine] Failed to build sandbox image:', err);
+      // Crypto Sprint 11: Log only message, not full error object (may contain paths/tokens).
+      console.error('[ContainerEngine] Failed to build sandbox image:', err instanceof Error ? err.message : String(err));
       this.config.dockerAvailable = false;
     }
   }
@@ -866,8 +871,10 @@ if __name__ == "__main__":
     const args = this.buildDockerRunArgs(instance);
 
     try {
-      const result = execSync(
-        `docker run ${args.join(' ')}`,
+      // Crypto Sprint 10: Use execFileSync to prevent shell injection via docker args.
+      // args is already an array from buildDockerRunArgs — pass directly, no shell.
+      const result = execFileSync(
+        'docker', ['run', ...args],
         { stdio: 'pipe', timeout: 30_000, encoding: 'utf-8' }
       );
 
@@ -1190,7 +1197,8 @@ if __name__ == "__main__":
       // Force kill if still running
       if (instance.containerId) {
         try {
-          execSync(`docker kill ${instance.containerId}`, { stdio: 'pipe', timeout: 5000 });
+          // Crypto Sprint 10: Use execFileSync to prevent shell injection via containerId.
+          execFileSync('docker', ['kill', instance.containerId], { stdio: 'pipe', timeout: 5000 });
         } catch {
           // Container may already be stopped
         }
@@ -1211,7 +1219,8 @@ if __name__ == "__main__":
       await this.cleanupContainer(instance);
       return true;
     } catch (err) {
-      console.error(`[ContainerEngine] Error cancelling container ${taskId}:`, err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error(`[ContainerEngine] Error cancelling container ${taskId}:`, err instanceof Error ? err.message : 'Unknown error');
       return false;
     }
   }
@@ -1235,7 +1244,8 @@ if __name__ == "__main__":
     // Remove Docker container (if not already auto-removed)
     if (instance.containerId) {
       try {
-        execSync(`docker rm -f ${instance.containerId}`, { stdio: 'pipe', timeout: 10000 });
+        // Crypto Sprint 10: Use execFileSync to prevent shell injection via containerId.
+        execFileSync('docker', ['rm', '-f', instance.containerId], { stdio: 'pipe', timeout: 10000 });
       } catch {
         // Container may already be removed (--rm flag)
       }

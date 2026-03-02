@@ -7,12 +7,15 @@
 
 import { ipcMain } from 'electron';
 import { multimediaEngine } from '../multimedia-engine';
+import { assertObject, assertString } from './validate';
 
 export function registerMultimediaHandlers(): void {
   // ── Podcast creation ────────────────────────────────────────────
-  ipcMain.handle('multimedia:create-podcast', async (_event, request) => {
+  // Crypto Sprint 20: Validate IPC inputs.
+  ipcMain.handle('multimedia:create-podcast', async (_event, request: unknown) => {
     try {
-      const result = await multimediaEngine.generatePodcast(request);
+      assertObject(request, 'multimedia:create-podcast request');
+      const result = await multimediaEngine.generatePodcast(request as any);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -22,9 +25,10 @@ export function registerMultimediaHandlers(): void {
   });
 
   // ── Visual creation (infographic, diagram, etc.) ────────────────
-  ipcMain.handle('multimedia:create-visual', async (_event, request) => {
+  ipcMain.handle('multimedia:create-visual', async (_event, request: unknown) => {
     try {
-      const result = await multimediaEngine.generateVisual(request);
+      assertObject(request, 'multimedia:create-visual request');
+      const result = await multimediaEngine.generateVisual(request as any);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -34,9 +38,10 @@ export function registerMultimediaHandlers(): void {
   });
 
   // ── Audio message creation ──────────────────────────────────────
-  ipcMain.handle('multimedia:create-audio-message', async (_event, request) => {
+  ipcMain.handle('multimedia:create-audio-message', async (_event, request: unknown) => {
     try {
-      const result = await multimediaEngine.createAudioMessage(request);
+      assertObject(request, 'multimedia:create-audio-message request');
+      const result = await multimediaEngine.createAudioMessage(request as any);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -46,9 +51,10 @@ export function registerMultimediaHandlers(): void {
   });
 
   // ── Music generation ────────────────────────────────────────────
-  ipcMain.handle('multimedia:create-music', async (_event, request) => {
+  ipcMain.handle('multimedia:create-music', async (_event, request: unknown) => {
     try {
-      const result = await multimediaEngine.generateMusic(request);
+      assertObject(request, 'multimedia:create-music request');
+      const result = await multimediaEngine.generateMusic(request as any);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -62,9 +68,10 @@ export function registerMultimediaHandlers(): void {
     return multimediaEngine.getPermissions();
   });
 
-  ipcMain.handle('multimedia:update-permissions', async (_event, permissions) => {
+  ipcMain.handle('multimedia:update-permissions', async (_event, permissions: unknown) => {
     try {
-      multimediaEngine.updatePermissions(permissions);
+      assertObject(permissions, 'multimedia:update-permissions permissions');
+      multimediaEngine.updatePermissions(permissions as any);
       return { ok: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -72,13 +79,17 @@ export function registerMultimediaHandlers(): void {
     }
   });
 
-  ipcMain.handle('multimedia:can-create', (_event, level: string) => {
+  ipcMain.handle('multimedia:can-create', (_event, level: unknown) => {
+    assertString(level, 'multimedia:can-create level', 50);
     return multimediaEngine.canCreate(level as any);
   });
 
   // ── Media listing ───────────────────────────────────────────────
-  ipcMain.handle('multimedia:list-media', async (_event, type?: string) => {
+  ipcMain.handle('multimedia:list-media', async (_event, type?: unknown) => {
     try {
+      if (type !== undefined && type !== null) {
+        assertString(type, 'multimedia:list-media type', 50);
+      }
       const media = await multimediaEngine.listMedia(type as any);
       return { ok: true, media };
     } catch (err) {

@@ -15,14 +15,16 @@
  */
 
 import { ToolDeclaration, ToolResult } from './registry';
-import { settingsManager } from '../settings';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { settingsManager, getSanitizedEnv } from '../settings';
+// Crypto Sprint 14: execFile (no shell) + shell.openExternal for URLs.
+import { execFile, spawn, ChildProcess } from 'child_process';
+import { shell } from 'electron';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -979,14 +981,18 @@ async function startServer(args: Record<string, unknown>): Promise<string> {
   const openBrowser = args.openBrowser !== false;
 
   // Set environment variable for variant
-  const env = { ...process.env, VITE_VARIANT: variant };
+  // Crypto Sprint 15 (HIGH): Use getSanitizedEnv() to prevent API key leakage to Vite server.
+  const env = { ...getSanitizedEnv(), VITE_VARIANT: variant } as NodeJS.ProcessEnv;
 
   // Spawn the dev server
-  serverProcess = spawn('npm.cmd', ['run', 'dev'], {
+  // Crypto Sprint 3: shell only on Windows (npm.cmd needs cmd.exe).
+  // Args are hardcoded so this is low-risk, but belt-and-suspenders.
+  const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  serverProcess = spawn(npmBin, ['run', 'dev'], {
     cwd: wmDir,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
+    shell: process.platform === 'win32',
     detached: false,
   });
 
@@ -1020,7 +1026,8 @@ async function startServer(args: Record<string, unknown>): Promise<string> {
   // Open in browser if requested
   if (openBrowser) {
     try {
-      await execAsync(`start "" "${DEV_SERVER_BASE}"`);
+      // Crypto Sprint 14: shell.openExternal — safe URL opening, no shell interpolation.
+      await shell.openExternal(DEV_SERVER_BASE);
     } catch {
       // Non-critical — dashboard is still accessible
     }
@@ -1043,7 +1050,11 @@ async function stopServer(): Promise<string> {
 
   // Try to kill any existing process on port 3000
   try {
-    await execAsync(`powershell -Command "Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`);
+    // Crypto Sprint 14: execFile with array args — no shell interpolation.
+    await execFileAsync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }',
+    ]);
     serverRunning = false;
     return 'World Monitor server stopped (killed process on port 3000).';
   } catch {

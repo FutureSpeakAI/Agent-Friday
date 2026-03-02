@@ -42,7 +42,8 @@ class AuditLog {
         this.stream.write(line);
       }
     } catch (err) {
-      console.warn('[AuditLog] Write failed:', err);
+      // Crypto Sprint 16: Sanitize error output.
+      console.warn('[AuditLog] Write failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
@@ -110,7 +111,8 @@ class AuditLog {
       const filePath = path.join(this.gatewayDir, `audit-${month}.jsonl`);
       this.stream = createWriteStream(filePath, { flags: 'a' });
       this.stream.on('error', (err) => {
-        console.warn('[AuditLog] Stream error:', err);
+        // Crypto Sprint 16: Sanitize error output.
+        console.warn('[AuditLog] Stream error:', err instanceof Error ? err.message : 'Unknown error');
       });
     }
   }

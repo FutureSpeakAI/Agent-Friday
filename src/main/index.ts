@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { startServer } from './server';
@@ -9,7 +9,27 @@ const logPath = path.join(app.getPath('userData'), 'crash.log');
 
 function writeCrashLog(label: string, err: unknown): void {
   const ts = new Date().toISOString();
-  const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
+  let msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err);
+
+  // Crypto Sprint 6 (HIGH): Sanitize crash log entries to prevent API key leakage.
+  // Many HTTP libraries include request URLs (containing API keys) in error messages.
+  // Redact anything that looks like an API key (20+ alphanumeric chars) or known prefixes.
+  // Crypto Sprint 14: Extended — added sk_ (ElevenLabs), fc- (Firecrawl), pplx- (Perplexity),
+  // ya29. (Google OAuth), xox[bpsa]- (Slack), bot token patterns (Telegram/Discord).
+  msg = msg.replace(/(?:AIza|sk-|sk_|ant-|fc-|pplx-|ya29\.|xox[bpsa]-|key=)[A-Za-z0-9_.-]{15,}/g, '[REDACTED]');
+  msg = msg.replace(/(?:Bearer\s+)[A-Za-z0-9_.-]{20,}/g, 'Bearer [REDACTED]');
+  msg = msg.replace(/bot[0-9]{8,}:[A-Za-z0-9_-]{30,}/gi, '[REDACTED-BOT-TOKEN]');
+
+  // Cap crash.log file size to 5MB to prevent disk exhaustion from crash loops
+  try {
+    const stats = fs.statSync(logPath);
+    if (stats.size > 5 * 1024 * 1024) {
+      fs.writeFileSync(logPath, `[${ts}] Log rotated (exceeded 5MB)\n\n`);
+    }
+  } catch {
+    // File doesn't exist yet — ok
+  }
+
   const entry = `[${ts}] ${label}: ${msg}\n\n`;
   try {
     fs.appendFileSync(logPath, entry);
@@ -19,7 +39,8 @@ function writeCrashLog(label: string, err: unknown): void {
 }
 
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught exception:', err);
+  // Crypto Sprint 13: Sanitize — raw err objects may contain API keys in closured scope.
+  console.error('[FATAL] Uncaught exception:', err.message);
   writeCrashLog('uncaughtException', err);
   dialog.showErrorBox(
     'Agent Friday — Unexpected Error',
@@ -28,8 +49,30 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[ERROR] Unhandled promise rejection:', reason);
+  // Crypto Sprint 13: Sanitize — raw reason may contain secrets.
+  console.error('[ERROR] Unhandled promise rejection:', reason instanceof Error ? reason.message : 'Unknown error');
   writeCrashLog('unhandledRejection', reason);
+});
+
+// ── TLS Hardening (Crypto Sprint 2) ─────────────────────────────────
+// Ensure TLS certificate verification is NEVER disabled, even if a dependency
+// or environment variable tries to set NODE_TLS_REJECT_UNAUTHORIZED=0.
+// This prevents MITM attacks on API connections (Anthropic, Gemini, etc.)
+// in corporate proxy environments or compromised networks.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+  console.error('[Security] ⚠ NODE_TLS_REJECT_UNAUTHORIZED=0 detected — overriding to enforce TLS verification');
+  delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+}
+// Freeze the property to prevent runtime modification
+Object.defineProperty(process.env, 'NODE_TLS_REJECT_UNAUTHORIZED', {
+  get: () => undefined,
+  set: (val: string) => {
+    if (val === '0') {
+      console.error('[Security] ⚠ Blocked attempt to disable TLS verification');
+      return;
+    }
+  },
+  configurable: false,
 });
 
 // ── Domain module imports (initialization + lifecycle) ───────────────
@@ -86,7 +129,15 @@ import { memoryQuality } from './memory-quality';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { multimediaEngine } from './multimedia-engine';
-import { initializeVault, isVaultUnlocked } from './vault';
+import {
+  initializeNewVault,
+  unlockVault,
+  isVaultUnlocked,
+  isVaultInitialized,
+  getHmacKey,
+  destroyVault,
+} from './vault';
+import { initializeHmac, destroyHmac } from './integrity';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -163,6 +214,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true, // Crypto Sprint 5: Sandbox renderer to limit OS-level access on compromise
     },
   });
 
@@ -173,6 +225,26 @@ function createWindow() {
   mainWindow.maximize();
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+
+  // Crypto Sprint 5 (HIGH — Navigation Safety): Block navigation to external URLs.
+  // Without this, an attacker with HTML injection could redirect the main window
+  // to a malicious page that still has access to the preload bridge (200+ IPC handlers).
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed = ['http://localhost:', 'file://'];
+    if (!allowed.some(prefix => url.startsWith(prefix))) {
+      event.preventDefault();
+      console.warn('[Security] Blocked navigation to:', url);
+    }
+  });
+
+  // Crypto Sprint 5 (HIGH — Popup Safety): Prevent window.open() / target="_blank"
+  // from spawning new Electron windows that would inherit the preload bridge.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
   });
 
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
@@ -224,7 +296,8 @@ app.whenReady().then(async () => {
       app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
     }
   } catch (err) {
-    console.warn('[Friday] Settings init failed:', err);
+    // Crypto Sprint 17: Sanitize error output.
+    console.warn('[Friday] Settings init failed:', err instanceof Error ? err.message : 'Unknown error');
   }
 
   // Initialize memory system (personality depends on it)
@@ -232,50 +305,12 @@ app.whenReady().then(async () => {
     await memoryManager.initialize();
     console.log('[Friday] Memory system initialized');
   } catch (err) {
-    console.warn('[Friday] Memory init failed:', err);
+    console.warn('[Friday] Memory init failed:', err instanceof Error ? err.message : 'Unknown error');
   }
 
-  // Initialize integrity system (depends on settings + memory)
-  try {
-    await integrityManager.initialize();
-
-    // Check memory integrity on startup
-    const longTerm = memoryManager.getLongTerm();
-    const mediumTerm = memoryManager.getMediumTerm();
-    const memoryChanges = integrityManager.checkMemories(longTerm, mediumTerm);
-    if (memoryChanges) {
-      console.log('[Friday] Memory changes detected since last session — agent will be notified');
-    }
-
-    // Verify agent identity integrity
-    const agentCfg = settingsManager.getAgentConfig();
-    if (agentCfg.onboardingComplete) {
-      const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
-      const identityOk = integrityManager.verifyIdentity(identityJson);
-      if (!identityOk) {
-        console.warn('[Friday] Agent identity has been modified externally — agent will be notified');
-      }
-    }
-
-    // Sign everything on first run (when no manifest exists yet)
-    // NOTE: signAll() internally uses getCanonicalLaws('') for law signatures,
-    // regardless of what lawsText is passed. This prevents false safe mode
-    // triggers when userName changes between sessions.
-    const state = integrityManager.getState();
-    if (state.initialized && state.lawsIntact && !integrityManager.isInSafeMode()) {
-      const lawsText = getCanonicalLaws(''); // Always canonical empty-string form
-      const identityJson = JSON.stringify(agentCfg, Object.keys(agentCfg).sort());
-      const ltJson = JSON.stringify(longTerm, null, 2);
-      const mtJson = JSON.stringify(mediumTerm, null, 2);
-      const ltSnap = longTerm.map((e) => ({ id: e.id, fact: e.fact }));
-      const mtSnap = mediumTerm.map((e) => ({ id: e.id, observation: e.observation }));
-      await integrityManager.signAll(lawsText, identityJson, ltSnap, mtSnap, ltJson, mtJson);
-    }
-
-    console.log('[Friday] Integrity system initialized');
-  } catch (err) {
-    console.warn('[Friday] Integrity init failed:', err);
-  }
+  // NOTE: Integrity system initialization is deferred to Phase B (after vault
+  // unlock) because it requires the HMAC signing key derived from the passphrase.
+  // See completeBootAfterUnlock() for the full integrity init sequence.
 
   // Start the Express API server
   serverPort = await startServer();
@@ -286,7 +321,7 @@ app.whenReady().then(async () => {
     await mcpClient.connect();
     console.log('[Friday] MCP client connected');
   } catch (err) {
-    console.warn('[Friday] MCP client failed to connect:', err);
+    console.warn('[Friday] MCP client failed to connect:', err instanceof Error ? err.message : 'Unknown error');
   }
 
   // ── Content Security Policy (CSP) ──────────────────────────────────
@@ -339,7 +374,7 @@ app.whenReady().then(async () => {
       trayImage = trayImage.resize({ width: 16, height: 16 });
     }
   } catch (err) {
-    console.warn('[Tray] Failed to load icon from', iconPath, err);
+    console.warn('[Tray] Failed to load icon from', iconPath, err instanceof Error ? err.message : 'Unknown error');
     trayImage = nativeImage.createEmpty();
   }
   tray = new Tray(trayImage);
@@ -384,39 +419,39 @@ app.whenReady().then(async () => {
     await intelligenceEngine.initialize();
     console.log('[Friday] Intelligence engine initialized');
   } catch (err) {
-    console.warn('[Friday] Intelligence engine init failed:', err);
+    console.warn('[Friday] Intelligence engine init failed:', err instanceof Error ? err.message : 'Unknown error');
   }
 
   ensureProfileOnDisk().catch((err) => {
-    console.warn('[Friday] Profile write failed:', err);
+    console.warn('[Friday] Profile write failed:', err instanceof Error ? err.message : 'Unknown error');
   });
 
   if (mainWindow) {
     taskScheduler.initialize(mainWindow).catch((err) => {
-      console.warn('[Friday] Scheduler init failed:', err);
+      console.warn('[Friday] Scheduler init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     predictor.initialize(mainWindow);
     ambientEngine.initialize();
 
     sentimentEngine.initialize().catch((err) => {
-      console.warn('[Friday] Sentiment init failed:', err);
+      console.warn('[Friday] Sentiment init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     episodicMemory.initialize().catch((err) => {
-      console.warn('[Friday] Episodic memory init failed:', err);
+      console.warn('[Friday] Episodic memory init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     relationshipMemory.initialize().catch((err) => {
-      console.warn('[Friday] Relationship memory init failed:', err);
+      console.warn('[Friday] Relationship memory init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     trustGraph.initialize().catch((err) => {
-      console.warn('[Friday] Trust graph init failed:', err);
+      console.warn('[Friday] Trust graph init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     containerEngine.initialize().catch((err) => {
-      console.warn('[Friday] Container engine init failed:', err);
+      console.warn('[Friday] Container engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     initializeArtEvolution().then(() => {
@@ -426,10 +461,10 @@ app.whenReady().then(async () => {
           console.log(`[Friday] Art evolution triggered: → structure ${record.targetIndex}`);
         }
       }).catch((err) => {
-        console.warn('[Friday] Art evolution check failed:', err);
+        console.warn('[Friday] Art evolution check failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }).catch((err) => {
-      console.warn('[Friday] Art evolution init failed:', err);
+      console.warn('[Friday] Art evolution init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     semanticSearch.initialize().then(async () => {
@@ -464,7 +499,7 @@ app.whenReady().then(async () => {
         console.log(`[Friday] Indexed ${items.length} existing memories for semantic search`);
       }
     }).catch((err) => {
-      console.warn('[Friday] Semantic search init failed:', err);
+      console.warn('[Friday] Semantic search init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     memoryConsolidation.initialize();
@@ -480,7 +515,7 @@ app.whenReady().then(async () => {
     gitLoader.initialize().then(() => {
       console.log('[Friday] GitLoader initialized');
     }).catch((err) => {
-      console.warn('[Friday] GitLoader init failed:', err);
+      console.warn('[Friday] GitLoader init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     // Initialize office manager (pixel-art agent visualization)
@@ -492,101 +527,86 @@ app.whenReady().then(async () => {
       meetingPrep.init(mainWindow!);
       console.log('[Friday] Calendar + meeting prep initialized');
     }).catch((err) => {
-      console.warn('[Friday] Calendar init failed:', err);
+      console.warn('[Friday] Calendar init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     // Initialize Meeting Intelligence engine
     meetingIntelligence.initialize().then(() => {
       console.log('[Friday] Meeting Intelligence initialized');
     }).catch((err) => {
-      console.warn('[Friday] Meeting Intelligence init failed:', err);
+      console.warn('[Friday] Meeting Intelligence init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     communications.init().catch((err) => {
-      console.warn('[Friday] Communications init failed:', err);
+      console.warn('[Friday] Communications init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     commitmentTracker.initialize().catch((err) => {
-      console.warn('[Friday] Commitment tracker init failed:', err);
+      console.warn('[Friday] Commitment tracker init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     dailyBriefingEngine.initialize().catch((err) => {
-      console.warn('[Friday] Daily briefing init failed:', err);
+      console.warn('[Friday] Daily briefing init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     workflowRecorder.initialize().catch((err) => {
-      console.warn('[Friday] Workflow recorder init failed:', err);
+      console.warn('[Friday] Workflow recorder init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     workflowExecutor.initialize().catch((err) => {
-      console.warn('[Friday] Workflow executor init failed:', err);
+      console.warn('[Friday] Workflow executor init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     unifiedInbox.initialize().catch((err) => {
-      console.warn('[Friday] Unified inbox init failed:', err);
+      console.warn('[Friday] Unified inbox init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     outboundIntelligence.initialize().catch((err) => {
-      console.warn('[Friday] Outbound intelligence init failed:', err);
+      console.warn('[Friday] Outbound intelligence init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     intelligenceRouter.initialize().catch((err) => {
-      console.warn('[Friday] Intelligence router init failed:', err);
+      console.warn('[Friday] Intelligence router init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
-    const vaultChainT0 = Date.now();
-    console.log('[Friday] Starting vault initialization chain...');
-    agentNetwork.initialize().then(async () => {
-      console.log(`[Friday] Agent network initialized in ${Date.now() - vaultChainT0}ms`);
+    // ── Sovereign Vault v2: Two-Phase Boot ─────────────────────────
+    // Phase A (here): UI shell, settings, memory, Express, MCP, window.
+    //   The vault is NOT unlocked yet — passphrase entry happens in the
+    //   renderer via PassphraseGate. Agent network and engines that need
+    //   secrets are deferred to Phase B (completeBootAfterUnlock).
+    //
+    // Phase B (triggered by vault:initialize-new or vault:unlock IPC):
+    //   Vault unlocked → inject hmacKey → integrity system → agent network
+    //   → file transfer → notify renderer via vault:boot-complete.
+    console.log('[Friday] Phase A complete — waiting for vault passphrase...');
 
-      // Initialize Sovereign Vault after agent keys are available
-      const privateKey = agentNetwork.getSigningPrivateKey();
-      if (privateKey) {
-        console.log(`[Friday] Ed25519 private key available, starting vault init (${Date.now() - vaultChainT0}ms elapsed)`);
-        try {
-          const recoveryPhrase = await initializeVault(privateKey);
-          if (recoveryPhrase) {
-            // First-time vault setup — send recovery phrase to renderer
-            mainWindow?.webContents.send('vault:recovery-phrase', recoveryPhrase);
-            console.log(`[Friday] Sovereign Vault initialized — recovery phrase generated (${Date.now() - vaultChainT0}ms total)`);
-          } else {
-            console.log(`[Friday] Sovereign Vault initialized — unlocked: ${isVaultUnlocked()} (${Date.now() - vaultChainT0}ms total)`);
-          }
-        } catch (err) {
-          console.warn(`[Friday] Vault initialization failed after ${Date.now() - vaultChainT0}ms:`, err);
-        }
-      } else {
-        console.warn(`[Friday] No Ed25519 private key available — vault cannot initialize (${Date.now() - vaultChainT0}ms elapsed)`);
-      }
-
-      // Initialize Trusted File Transfer engine
-      await fileTransferEngine.initialize();
-    }).catch((err) => {
-      console.warn(`[Friday] Agent network init failed after ${Date.now() - vaultChainT0}ms:`, err);
+    // File transfer can initialize without vault (it reads files, not secrets)
+    fileTransferEngine.initialize().catch((err) => {
+      console.warn('[Friday] File transfer engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     superpowerEcosystem.initialize().catch((err) => {
-      console.warn('[Friday] Superpower ecosystem init failed:', err);
+      console.warn('[Friday] Superpower ecosystem init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     stateExport.initialize().catch((err) => {
-      console.warn('[Friday] State export engine init failed:', err);
+      console.warn('[Friday] State export engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     memoryQuality.initialize().catch((err) => {
-      console.warn('[Friday] Memory quality engine init failed:', err);
+      console.warn('[Friday] Memory quality engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     personalityCalibration.initialize().catch((err) => {
-      console.warn('[Friday] Personality calibration init failed:', err);
+      console.warn('[Friday] Personality calibration init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     memoryPersonalityBridge.initialize().catch((err) => {
-      console.warn('[Friday] Memory-personality bridge init failed:', err);
+      console.warn('[Friday] Memory-personality bridge init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     multimediaEngine.initialize().catch((err) => {
-      console.warn('[Friday] Multimedia engine init failed:', err);
+      console.warn('[Friday] Multimedia engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     // Start the context stream bridge (after all engines are initialized)
@@ -595,7 +615,7 @@ app.whenReady().then(async () => {
     console.log('[Friday] Context stream bridge + graph started');
 
     connectorRegistry.initialize().catch((err) => {
-      console.warn('[Friday] Connector registry init failed:', err);
+      console.warn('[Friday] Connector registry init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     const gatewaySettings = settingsManager.get();
@@ -607,7 +627,7 @@ app.whenReady().then(async () => {
         }
         console.log('[Friday] Messaging gateway initialized');
       }).catch((err) => {
-        console.warn('[Friday] Gateway init failed:', err);
+        console.warn('[Friday] Gateway init failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }
   }
@@ -649,46 +669,192 @@ app.whenReady().then(async () => {
   registerContainerEngineHandlers();
   registerDelegationEngineHandlers(mainWindow ?? undefined);
 
-  // ── Vault IPC handlers ────────────────────────────────────────────
+  // ── Vault v2 IPC handlers ────────────────────────────────────────
+  //
+  // Two-phase boot: The renderer sends vault:initialize-new (first time)
+  // or vault:unlock (returning user). On success, completeBootAfterUnlock()
+  // starts all engines that depend on vault secrets.
   {
-    const vault = require('./vault');
-    ipcMain.handle('vault:is-unlocked', () => vault.isVaultUnlocked());
-    ipcMain.handle('vault:is-initialized', () => vault.isVaultInitialized());
-    ipcMain.handle('vault:is-recovery-phrase-shown', () => vault.isRecoveryPhraseShown());
-    ipcMain.handle('vault:get-recovery-phrase', () => vault.getRecoveryPhrase());
-    ipcMain.handle('vault:clear-recovery-phrase', () => { vault.clearRecoveryPhrase(); return true; });
-    ipcMain.handle('vault:mark-recovery-phrase-shown', () => vault.markRecoveryPhraseShown());
-    ipcMain.handle('vault:recover', async (_event: any, phrase: string) => {
-      const privateKey = agentNetwork.getSigningPrivateKey();
-      if (!privateKey) return { ok: false, error: 'No agent keys available' };
+    ipcMain.handle('vault:is-initialized', () => isVaultInitialized());
+    ipcMain.handle('vault:is-unlocked', () => isVaultUnlocked());
+
+    // Crypto Sprint 8 (HIGH): Cap passphrase length to prevent Argon2id DoS.
+    // A 1GB string would cause Argon2id to allocate 256MB+ and hash a huge input,
+    // potentially crashing the process. 1KB is more than enough for any passphrase.
+    const MAX_PASSPHRASE = 1024;
+
+    ipcMain.handle('vault:initialize-new', async (_event: any, passphrase: string) => {
       try {
-        const success = await vault.recoverVault(privateKey, phrase);
-        if (success) {
-          await vault.rekeyVaultFiles(privateKey, phrase);
+        if (typeof passphrase !== 'string' || passphrase.length > MAX_PASSPHRASE) {
+          return { ok: false, error: `Passphrase must be a string of max ${MAX_PASSPHRASE} characters` };
         }
-        return { ok: success };
+        await initializeNewVault(passphrase);
+        await completeBootAfterUnlock();
+        return { ok: true };
       } catch (err: any) {
-        return { ok: false, error: err?.message || 'Recovery failed' };
+        return { ok: false, error: err?.message || 'Vault initialization failed' };
       }
     });
-    console.log('[IPC] Vault handlers registered');
+
+    ipcMain.handle('vault:unlock', async (_event: any, passphrase: string) => {
+      try {
+        if (typeof passphrase !== 'string' || passphrase.length > MAX_PASSPHRASE) {
+          return { ok: false, error: `Passphrase must be a string of max ${MAX_PASSPHRASE} characters` };
+        }
+        const success = await unlockVault(passphrase);
+        if (!success) {
+          return { ok: false, error: 'Incorrect passphrase' };
+        }
+        await completeBootAfterUnlock();
+        return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Vault unlock failed' };
+      }
+    });
+
+    console.log('[IPC] Vault v2 handlers registered');
+  }
+
+  /**
+   * Phase B of two-phase boot: Run after vault is unlocked.
+   *
+   * 1. Re-load settings and memory (encrypted files now decryptable)
+   * 2. Inject hmacKey into HMAC engine
+   * 3. Initialize integrity system
+   * 4. Initialize agent network (private keys now decryptable)
+   * 5. Notify renderer that boot is complete
+   *
+   * CRITICAL: Settings and memory are first loaded in Phase A (vault locked),
+   * which means encrypted files fall back to defaults. After vault unlock,
+   * we MUST re-read them so API keys, personality, and memories are restored.
+   */
+  /** Run an async task with a timeout. Returns undefined (and logs) on timeout. */
+  async function withTimeout<T>(label: string, fn: () => Promise<T>, ms = 30_000): Promise<T | undefined> {
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[Friday] ${label} timed out after ${ms}ms — skipping`);
+        resolve(undefined);
+      }, ms);
+    });
+    try {
+      const result = await Promise.race([fn(), timeout]);
+      return result;
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
+
+  async function completeBootAfterUnlock(): Promise<void> {
+    const t0 = Date.now();
+    console.log('[Friday] Phase B: Vault unlocked — starting secret-dependent engines...');
+
+    // 1. Re-load settings and memory now that vault can decrypt
+    try {
+      await settingsManager.reloadFromVault();
+      console.log(`[Friday] Settings reloaded from vault (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Settings reload failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    try {
+      await memoryManager.reloadFromVault();
+      console.log(`[Friday] Memory reloaded from vault (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Memory reload failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    try {
+      await trustGraph.reloadFromVault();
+      console.log(`[Friday] Trust graph reloaded from vault (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Trust graph reload failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    // Calendar tokens may also be encrypted — reinitialize to pick them up
+    try {
+      await calendarIntegration.init();
+      console.log(`[Friday] Calendar reloaded from vault (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Calendar reload failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    // 2. Inject HMAC signing key
+    const hmacKey = getHmacKey();
+    if (hmacKey) {
+      initializeHmac(hmacKey);
+      console.log(`[Friday] HMAC engine initialized (${Date.now() - t0}ms)`);
+    } else {
+      console.warn('[Friday] No HMAC key available from vault');
+    }
+
+    // 3. Re-initialize integrity system (now that HMAC is ready)
+    // Timeout: integrity reads + hashes all protected files; 30s should be ample.
+    try {
+      await withTimeout('Integrity init', () => integrityManager.initialize(), 30_000);
+      console.log(`[Friday] Integrity system initialized (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Integrity init failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    // 4. Initialize agent network (private keys now decryptable via vault)
+    // Timeout: generates Ed25519 keypair + reads peer list; 30s should be ample.
+    try {
+      await withTimeout('Agent network init', () => agentNetwork.initialize(), 30_000);
+      console.log(`[Friday] Agent network initialized (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.warn('[Friday] Agent network init failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+
+    console.log(`[Friday] Phase B complete — all engines started (${Date.now() - t0}ms total)`);
+
+    // 5. Notify renderer
+    mainWindow?.webContents.send('vault:boot-complete');
   }
 
   // ── File Transfer IPC handlers ─────────────────────────────────
   {
+    // Crypto Sprint 8 (CRITICAL): Validate file path to prevent arbitrary file exfiltration.
+    // filePath must not contain traversal, UNC, or shell metacharacters.
     ipcMain.handle('file-transfer:prepare', async (_event: any, filePath: string, remoteAgentId: string, remoteAgentName: string, description?: string) => {
+      if (!filePath || typeof filePath !== 'string' || filePath.length > 1000) {
+        throw new Error('file-transfer:prepare requires a valid filePath string');
+      }
+      if (/\.\.[/\\]/.test(filePath) || /^\\\\/.test(filePath) || /[\r\n\0;&|`$]/.test(filePath)) {
+        throw new Error('file-transfer:prepare rejected: filePath contains dangerous patterns');
+      }
+      if (!remoteAgentId || typeof remoteAgentId !== 'string') {
+        throw new Error('file-transfer:prepare requires a string remoteAgentId');
+      }
+      if (!remoteAgentName || typeof remoteAgentName !== 'string') {
+        throw new Error('file-transfer:prepare requires a string remoteAgentName');
+      }
       return fileTransferEngine.prepareOutboundTransfer(filePath, remoteAgentId, remoteAgentName, description);
     });
     ipcMain.handle('file-transfer:get-chunk', (_event: any, transferId: string, chunkIndex: number) => {
       return fileTransferEngine.getOutboundChunk(transferId, chunkIndex);
     });
-    ipcMain.handle('file-transfer:evaluate', (_event: any, request: any, senderTrustLevel: number) => {
+    // Crypto Sprint 8 (HIGH): Validate request is an object and trust level is a finite number.
+    ipcMain.handle('file-transfer:evaluate', (_event: any, request: any, senderTrustLevel: unknown) => {
+      if (!request || typeof request !== 'object') {
+        throw new Error('file-transfer:evaluate requires a request object');
+      }
+      if (typeof senderTrustLevel !== 'number' || !Number.isFinite(senderTrustLevel)) {
+        throw new Error('file-transfer:evaluate requires a finite number senderTrustLevel');
+      }
       return fileTransferEngine.evaluateTransferRequest(request, senderTrustLevel);
     });
     ipcMain.handle('file-transfer:accept', (_event: any, request: any, remoteAgentId: string, remoteAgentName: string) => {
+      if (!request || typeof request !== 'object') {
+        throw new Error('file-transfer:accept requires a request object');
+      }
       return fileTransferEngine.acceptInboundTransfer(request, remoteAgentId, remoteAgentName);
     });
+    // Crypto Sprint 8 (CRITICAL): Validate chunk is a non-null object (was typed `any`).
     ipcMain.handle('file-transfer:process-chunk', (_event: any, chunk: any) => {
+      if (!chunk || typeof chunk !== 'object') {
+        throw new Error('file-transfer:process-chunk requires a chunk object');
+      }
       return fileTransferEngine.processInboundChunk(chunk);
     });
     ipcMain.handle('file-transfer:finalize', async (_event: any, transferId: string) => {
@@ -751,6 +917,12 @@ app.on('window-all-closed', async () => {
   containerEngine.shutdown().catch(() => {});
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
+
+  // ── Sovereign Vault v2: zero all key material on shutdown ──
+  destroyHmac();
+  destroyVault();
+  settingsManager.clearApiKeysFromEnv();
+
   if (process.platform !== 'darwin') app.quit();
 });
 

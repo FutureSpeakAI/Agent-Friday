@@ -149,8 +149,9 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
           ? parsed.keyDecisions
           : [];
       }
+    // Crypto Sprint 17: Sanitize error output.
     } catch (err) {
-      console.warn('[EpisodicMemory] Claude analysis failed, using fallback:', err);
+      console.warn('[EpisodicMemory] Claude analysis failed, using fallback:', err instanceof Error ? err.message : 'Unknown error');
       // Fallback: basic summary from first/last turns
       const firstUser = transcript.find((t) => t.role === 'user');
       summary = firstUser
@@ -192,7 +193,7 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
 
     // Update relationship memory with this episode
     relationshipMemory.updateFromEpisode(episode).catch((err) => {
-      console.warn('[EpisodicMemory] Relationship memory update failed:', err);
+      console.warn('[EpisodicMemory] Relationship memory update failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     console.log(
@@ -368,7 +369,7 @@ If no key decisions were made, use an empty array. Keep topics concise (1-3 word
 
       await fs.writeFile(path.join(dir, filename), `${frontmatter}\n${body}\n`, 'utf-8');
     } catch (err) {
-      console.warn('[EpisodicMemory] Vault sync failed:', err);
+      console.warn('[EpisodicMemory] Vault sync failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

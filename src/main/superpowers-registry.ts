@@ -511,7 +511,8 @@ class SuperpowersRegistry {
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       this.save().catch((err) => {
-        console.warn('[Superpowers] Save failed:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn('[Superpowers] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }, 2000);
   }

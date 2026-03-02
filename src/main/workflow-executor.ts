@@ -896,7 +896,8 @@ class WorkflowExecutor {
         );
       })
       .catch((err) => {
-        console.error(`${LOG_PREFIX} Save failed:`, err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.error(`${LOG_PREFIX} Save failed:`, err instanceof Error ? err.message : 'Unknown error');
       });
   }
 
@@ -906,7 +907,7 @@ class WorkflowExecutor {
       JSON.stringify(this.permissions, null, 2),
       'utf-8',
     ).catch((err) => {
-      console.error(`${LOG_PREFIX} Permission save failed:`, err);
+      console.error(`${LOG_PREFIX} Permission save failed:`, err instanceof Error ? err.message : 'Unknown error');
     });
   }
 }

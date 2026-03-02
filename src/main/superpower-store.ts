@@ -561,7 +561,8 @@ export class SuperpowerStore {
       // For now, we store the serialized data
       this.lastSavedData = data;
     } catch (err) {
-      console.error('[SuperpowerStore] Failed to save:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error('[SuperpowerStore] Failed to save:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

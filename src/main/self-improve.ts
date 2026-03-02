@@ -238,7 +238,8 @@ export async function handleChangeResponse(
         }
       }
     } catch (err) {
-      console.error('[SelfImprove] Failed to write change:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error('[SelfImprove] Failed to write change:', err instanceof Error ? err.message : 'Unknown error');
       pending.resolve(false);
       return;
     }

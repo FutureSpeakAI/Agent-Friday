@@ -108,7 +108,13 @@ Example for "Research AI governance and draft a briefing email to the board":
     throw new Error('Failed to decompose goal — Claude did not return valid JSON');
   }
 
-  const rawPlan = JSON.parse(match[0]) as SubTask[];
+  // Crypto Sprint 19: Safe-parse — guard against malformed JSON.
+  let rawPlan: SubTask[];
+  try {
+    rawPlan = JSON.parse(match[0]) as SubTask[];
+  } catch (err) {
+    throw new Error(`Failed to decompose goal — Claude returned malformed JSON: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
 
   // Validate and clean
   const agentNames = new Set(availableAgents.map((a: { name: string }) => a.name));

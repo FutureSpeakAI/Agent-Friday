@@ -14,7 +14,7 @@ import MemoryExplorer from './components/MemoryExplorer';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
-import VaultKeyphrase from './components/VaultKeyphrase';
+import PassphraseGate from './components/PassphraseGate';
 import SuperpowersPanel from './components/SuperpowersPanel';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
@@ -201,7 +201,7 @@ export default function App() {
   const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
   const [voiceMode, setVoiceMode] = useState(true);
   const [appPhase, setAppPhase] = useState<
-    'checking' | 'vault-keyphrase' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
+    'checking' | 'passphrase-gate' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
   >('checking');
   const [agentName, setAgentName] = useState('');
   const [evolutionState, setEvolutionState] = useState<{
@@ -486,22 +486,24 @@ export default function App() {
 
       if (cancelled) return;
 
-      // Check if recovery phrase has been shown (Sovereign Vault first-run gate)
-      let phraseShown = true;
+      // Sovereign Vault v2: Check if vault is initialized and unlocked
+      let vaultInitialized = false;
+      let vaultUnlocked = false;
       try {
-        phraseShown = await window.eve.vault.isRecoveryPhraseShown();
-      } catch (e) { console.warn('[Agent] Vault phrase-shown check failed:', e); }
+        vaultInitialized = await window.eve.vault.isInitialized();
+        vaultUnlocked = await window.eve.vault.isUnlocked();
+      } catch (e) { console.warn('[Agent] Vault status check failed:', e); }
 
       if (cancelled) return;
 
-      if (onboardingDone) {
-        // Returning user — but ensure vault keyphrase was completed
-        if (!phraseShown) {
-          setAppPhase('vault-keyphrase');
-          return;
-        }
+      // If vault not initialized OR not unlocked → passphrase gate (always first)
+      if (!vaultInitialized || !vaultUnlocked) {
+        setAppPhase('passphrase-gate');
+        return;
+      }
 
-        // Returning user — skip gate + onboarding, go straight to normal
+      if (onboardingDone) {
+        // Returning user — vault is unlocked, skip gate + onboarding
         setAppPhase('normal');
 
         // Load agent name
@@ -520,12 +522,6 @@ export default function App() {
 
         // Connect immediately
         connectToGemini();
-        return;
-      }
-
-      // New user — vault keyphrase is the VERY FIRST step
-      if (!phraseShown) {
-        setAppPhase('vault-keyphrase');
         return;
       }
 
@@ -1017,11 +1013,11 @@ export default function App() {
   return (
     <MoodProvider semanticState={semanticState}>
     <div style={styles.container}>
-      {/* VaultKeyphrase — absolute FIRST step for new users (before API key entry) */}
-      {appPhase === 'vault-keyphrase' && (
-        <VaultKeyphrase
-          onConfirmed={() => {
-            // After vault keyphrase confirmed, proceed to API key gate
+      {/* PassphraseGate — vault must be unlocked before anything else */}
+      {appPhase === 'passphrase-gate' && (
+        <PassphraseGate
+          onUnlocked={() => {
+            // Vault is unlocked, Phase B boot complete — proceed to API key gate
             setAppPhase('gate');
           }}
         />

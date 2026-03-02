@@ -12,15 +12,13 @@
  *   https://vb-audio.com/Cable/
  */
 
-import { exec } from 'child_process';
+import { shell } from 'electron';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getSanitizedEnv } from './settings';
 
-const _execRaw = promisify(exec);
-/** Wrapper that strips API keys from child process environment */
-function execAsync(command: string, options?: { cwd?: string; timeout?: number; maxBuffer?: number }) {
-  return _execRaw(command, { encoding: 'utf-8', ...options, env: getSanitizedEnv() as NodeJS.ProcessEnv });
-}
+// Crypto Sprint 14: Use execFile (no shell) instead of broken promisify(exec) reference.
+const execFileAsync = promisify(execFile);
 
 export interface VirtualAudioStatus {
   available: boolean;
@@ -39,10 +37,11 @@ class CallIntegration {
   async isVirtualAudioAvailable(): Promise<VirtualAudioStatus> {
     const installUrl = 'https://vb-audio.com/Cable/';
     try {
-      const { stdout } = await execAsync(
-        'powershell -Command "Get-CimInstance Win32_SoundDevice | Where-Object { $_.Name -like \'*CABLE*\' -or $_.Name -like \'*VB-Audio*\' -or $_.Name -like \'*Virtual*Cable*\' } | Select-Object -ExpandProperty Name"',
-        { timeout: 5000 }
-      );
+      // Crypto Sprint 14: execFile with array args — no shell interpolation.
+      const { stdout } = await execFileAsync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        "Get-CimInstance Win32_SoundDevice | Where-Object { $_.Name -like '*CABLE*' -or $_.Name -like '*VB-Audio*' -or $_.Name -like '*Virtual*Cable*' } | Select-Object -ExpandProperty Name",
+      ], { timeout: 5000, encoding: 'utf-8', env: getSanitizedEnv() as NodeJS.ProcessEnv });
       const devices = stdout.trim().split('\n').map((d) => d.trim()).filter(Boolean);
       return { available: devices.length > 0, devices, installUrl };
     } catch {
@@ -95,22 +94,24 @@ class CallIntegration {
    */
   async openMeetingUrl(url: string): Promise<void> {
     // Validate URL
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      throw new Error('Invalid meeting URL — must start with http:// or https://');
+    // Crypto Sprint 2: Only accept HTTPS. No legitimate meeting service uses plain HTTP.
+    if (!url.startsWith('https://')) {
+      throw new Error('Invalid meeting URL — must start with https:// (HTTP is not allowed)');
     }
 
-    return new Promise((resolve, reject) => {
-      // On Windows, use `start` to open URL in default browser
-      exec(`start "" "${url}"`, (err) => {
-        if (err) {
-          console.warn('[CallIntegration] Failed to open meeting URL:', err);
-          reject(err);
-        } else {
-          console.log('[CallIntegration] Opened meeting URL:', url);
-          resolve();
-        }
-      });
-    });
+    // Crypto Sprint 5 (HIGH — Command Injection): Replace exec(`start "" "${url}"`)
+    // with Electron's shell.openExternal(), which safely handles URL opening without
+    // shell interpolation. The old approach allowed breakout via `"&calc"` suffixes.
+    try {
+      // Validate URL is well-formed before opening (defense in depth)
+      new URL(url);
+      await shell.openExternal(url);
+      console.log('[CallIntegration] Opened meeting URL:', url);
+    } catch (err) {
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[CallIntegration] Failed to open meeting URL:', err instanceof Error ? err.message : 'Unknown error');
+      throw err;
+    }
   }
 
   /**

@@ -840,8 +840,9 @@ class MemoryPersonalityBridge {
   // ── Persistence ───────────────────────────────────────────────
 
   private enqueueSave(): void {
+    // Crypto Sprint 17: Sanitize error output.
     this.saveQueue = this.saveQueue.then(() => this.save()).catch((err) => {
-      console.error('[MemoryPersonalityBridge] Save failed:', err);
+      console.error('[MemoryPersonalityBridge] Save failed:', err instanceof Error ? err.message : 'Unknown error');
     });
   }
 

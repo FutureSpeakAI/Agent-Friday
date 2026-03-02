@@ -10,11 +10,13 @@ import { ipcMain } from 'electron';
 import { superpowersRegistry } from '../superpowers-registry';
 import type { SuperpowerPermissions } from '../superpowers-registry';
 import { superpowerStore } from '../superpower-store';
+import { assertSafeUrl, assertString } from './validate';
 
 export function registerSuperpowersHandlers(): void {
   // Initialize the registry (loads persisted state, syncs with GitLoader)
   superpowersRegistry.initialize().catch((err) => {
-    console.warn('[Superpowers] Registry init failed:', err);
+    // Crypto Sprint 17: Sanitize error output.
+    console.warn('[Superpowers] Registry init failed:', err instanceof Error ? err.message : 'Unknown error');
   });
 
   // ── List / Get ───────────────────────────────────────────────────────
@@ -81,17 +83,21 @@ export function registerSuperpowersHandlers(): void {
   );
 
   // ── Install from URL ────────────────────────────────────────────────
-  ipcMain.handle('superpowers:install', async (_event, repoUrl: string) => {
-    if (!repoUrl || typeof repoUrl !== 'string') {
-      throw new Error('superpowers:install requires a string repoUrl');
-    }
-    // Basic URL validation
-    if (!repoUrl.includes('github.com') && !repoUrl.includes('gitlab.com') && !repoUrl.includes('bitbucket.org')) {
+  // Crypto Sprint 18: Validate URL protocol at IPC boundary (defense-in-depth).
+  // Blocks file://, ssh://, data://, javascript: schemes before reaching gitLoader.
+  ipcMain.handle('superpowers:install', async (_event, repoUrl: unknown) => {
+    assertString(repoUrl, 'superpowers:install repoUrl', 2_000);
+    assertSafeUrl(repoUrl, 'superpowers:install repoUrl', 'git');
+    if (
+      !(repoUrl as string).includes('github.com') &&
+      !(repoUrl as string).includes('gitlab.com') &&
+      !(repoUrl as string).includes('bitbucket.org')
+    ) {
       // Allow it but warn — could be a raw git URL
-      console.warn('[Superpowers] Non-standard repo URL:', repoUrl);
+      console.warn('[Superpowers] Non-standard repo URL');
     }
     try {
-      const superpower = await superpowersRegistry.install(repoUrl);
+      const superpower = await superpowersRegistry.install(repoUrl as string);
       return superpower;
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };

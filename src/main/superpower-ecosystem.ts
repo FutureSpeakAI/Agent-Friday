@@ -523,8 +523,8 @@ export class SuperpowerEcosystem {
       const raw = await fs.readFile(this.filePath, 'utf-8');
       const data = JSON.parse(raw);
       if (data.developerKeys) this.developerKeys = data.developerKeys;
-      if (Array.isArray(data.transactions)) this.transactions = data.transactions;
-      if (Array.isArray(data.publishedPackages)) this.publishedPackages = data.publishedPackages;
+      if (Array.isArray(data.transactions)) this.transactions = data.transactions.slice(-5000);
+      if (Array.isArray(data.publishedPackages)) this.publishedPackages = data.publishedPackages.slice(-500);
       if (data.config) this.config = { ...this.config, ...data.config };
     } catch {
       // Fresh install
@@ -761,6 +761,12 @@ export class SuperpowerEcosystem {
       this.publishedPackages[idx] = pkg;
     } else {
       this.publishedPackages.push(pkg);
+
+      // Crypto Sprint 7 (HIGH): Cap published packages to prevent unbounded growth
+      const MAX_PUBLISHED = 500;
+      if (this.publishedPackages.length > MAX_PUBLISHED) {
+        this.publishedPackages = this.publishedPackages.slice(-MAX_PUBLISHED);
+      }
     }
 
     this.queueSave();
@@ -953,6 +959,13 @@ export class SuperpowerEcosystem {
     };
 
     this.transactions.push(tx);
+
+    // Crypto Sprint 7 (HIGH): Cap transactions to prevent unbounded growth
+    const MAX_TRANSACTIONS = 5000;
+    if (this.transactions.length > MAX_TRANSACTIONS) {
+      this.transactions = this.transactions.slice(-MAX_TRANSACTIONS);
+    }
+
     this.queueSave();
     return tx;
   }
@@ -1190,7 +1203,8 @@ export class SuperpowerEcosystem {
       }, null, 2);
       await fs.writeFile(this.filePath, data, 'utf-8');
     } catch (err) {
-      console.error('[SuperpowerEcosystem] Save failed:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.error('[SuperpowerEcosystem] Save failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

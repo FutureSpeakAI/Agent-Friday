@@ -5,7 +5,7 @@
  */
 
 import { BrowserWindow } from 'electron';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { settingsManager, getSanitizedEnv } from './settings';
 
 export interface CapturedNotification {
@@ -130,8 +130,12 @@ try {
 }
 `.trim();
 
-      exec(
-        `powershell.exe -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
+      // Crypto Sprint 3: exec() → execFile() to avoid shell metacharacter injection.
+      // execFile() bypasses cmd.exe — the script is passed as a direct argument
+      // to powershell.exe, not interpreted by an intermediate shell.
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
         { timeout: 10_000, maxBuffer: 512 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
         (err, stdout) => {
           if (err) {

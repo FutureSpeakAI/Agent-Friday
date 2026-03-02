@@ -6,6 +6,7 @@ import { settingsManager } from '../settings';
 import { buildGeminiLiveSystemInstruction } from '../personality';
 import { mcpClient } from '../mcp-client';
 import { memoryManager } from '../memory';
+import { assertToolCallArgs, assertString, assertSafePath } from './validate';
 
 export interface CoreHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -21,12 +22,15 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   // ── Settings ────────────────────────────────────────────────────────
   ipcMain.handle('settings:get', () => settingsManager.getMasked());
 
-  ipcMain.handle('settings:set', async (_event, key: string, value: unknown) => {
-    // Validate key is a non-empty string
-    if (!key || typeof key !== 'string') {
-      throw new Error('settings:set requires a string key');
+  // Crypto Sprint 8 (HIGH): Validate key length and cap serialized value size.
+  ipcMain.handle('settings:set', async (_event, key: unknown, value: unknown) => {
+    assertString(key, 'settings:set key', 256);
+    // Cap serialized value size to prevent memory exhaustion
+    const serialized = JSON.stringify(value);
+    if (serialized && serialized.length > 100_000) {
+      throw new Error('settings:set value too large (max 100KB serialized)');
     }
-    await settingsManager.setSetting(key, value);
+    await settingsManager.setSetting(key as string, value);
   });
 
   ipcMain.handle('settings:set-auto-launch', async (_event, enabled: boolean) => {
@@ -37,10 +41,14 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     await settingsManager.setAutoScreenCapture(enabled);
   });
 
+  // Crypto Sprint 8 (HIGH): Validate vault path is a safe filesystem path.
   ipcMain.handle(
     'settings:set-obsidian-vault-path',
-    async (_event, vaultPath: string) => {
-      await settingsManager.setObsidianVaultPath(vaultPath);
+    async (_event, vaultPath: unknown) => {
+      if (vaultPath !== '' && vaultPath !== null && vaultPath !== undefined) {
+        assertSafePath(vaultPath, 'settings:set-obsidian-vault-path vaultPath');
+      }
+      await settingsManager.setObsidianVaultPath(vaultPath as string);
       if (vaultPath) {
         const { syncLongTermToVault, syncMediumTermToVault, ensureVaultStructure } =
           require('../obsidian-memory');
@@ -50,7 +58,8 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
           await syncMediumTermToVault(vaultPath, memoryManager.getMediumTerm());
           console.log('[Friday] Synced existing memories to Obsidian vault');
         } catch (err) {
-          console.warn('[Friday] Failed to sync memories to vault:', err);
+          // Crypto Sprint 16: Sanitize — Obsidian sync errors could contain file paths with secrets.
+          console.warn('[Friday] Failed to sync memories to vault:', err instanceof Error ? err.message : 'Unknown error');
         }
       }
     },
@@ -70,10 +79,12 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   // ── MCP ─────────────────────────────────────────────────────────────
   ipcMain.handle('mcp:list-tools', async () => mcpClient.listTools());
 
+  // Crypto Sprint 8 (CRITICAL): Validate tool name and args before dispatching.
   ipcMain.handle(
     'mcp:call-tool',
-    async (_event, toolName: string, args: Record<string, unknown>) => {
-      return mcpClient.callTool(toolName, args);
+    async (_event, toolName: unknown, args: unknown) => {
+      const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'mcp:call-tool');
+      return mcpClient.callTool(validatedName, validatedArgs);
     },
   );
 
@@ -95,20 +106,16 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   });
 
   // ── Shell ──────────────────────────────────────────────────────────
-  ipcMain.handle('shell:show-in-folder', (_event, filePath: string) => {
-    shell.showItemInFolder(filePath);
+  // Crypto Sprint 16: Upgraded to assertSafePath (adds null-byte check, traversal check,
+  // and uses the shared validator from validate.ts instead of ad-hoc regexes).
+  ipcMain.handle('shell:show-in-folder', (_event, filePath: unknown) => {
+    assertSafePath(filePath, 'shell:show-in-folder filePath');
+    shell.showItemInFolder(filePath as string);
   });
 
-  ipcMain.handle('shell:open-path', async (_event, filePath: string) => {
-    // Validate path is a string and doesn't contain shell metacharacters
-    if (!filePath || typeof filePath !== 'string') {
-      throw new Error('shell:open-path requires a valid file path');
-    }
-    // Block obviously dangerous patterns (command injection via path)
-    if (/[;&|`$]/.test(filePath)) {
-      throw new Error('shell:open-path rejected: path contains shell metacharacters');
-    }
-    return shell.openPath(filePath);
+  ipcMain.handle('shell:open-path', async (_event, filePath: unknown) => {
+    assertSafePath(filePath, 'shell:open-path filePath');
+    return shell.openPath(filePath as string);
   });
 
   // ── Window controls ─────────────────────────────────────────────────

@@ -148,7 +148,8 @@ export async function checkAndEvolve(): Promise<ArtEvolutionRecord | null> {
     const record = await runEvolution();
     return record;
   } catch (e) {
-    console.error('[ArtEvolution] Evolution failed:', e);
+    // Crypto Sprint 17: Sanitize error output.
+    console.error('[ArtEvolution] Evolution failed:', e instanceof Error ? e.message : 'Unknown error');
     return null;
   }
 }
@@ -160,7 +161,7 @@ export async function forceEvolve(): Promise<ArtEvolutionRecord | null> {
   try {
     return await runEvolution();
   } catch (e) {
-    console.error('[ArtEvolution] Forced evolution failed:', e);
+    console.error('[ArtEvolution] Forced evolution failed:', e instanceof Error ? e.message : 'Unknown error');
     return null;
   }
 }
@@ -341,11 +342,16 @@ async function callGeminiForEvolution(
 ): Promise<GeminiEvolutionResult> {
   const prompt = buildGeminiPrompt(influenceReport, currentIndex, sessionCount, traits);
 
+  // Crypto Sprint 3 (HIGH-001): API key moved from URL query parameter to header.
+  // Query-string keys leak into server logs, proxy logs, Referer headers, and browser history.
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
@@ -456,7 +462,7 @@ async function save(): Promise<void> {
   try {
     await fs.writeFile(filePath, JSON.stringify(artState, null, 2), 'utf-8');
   } catch (e) {
-    console.error('[ArtEvolution] Failed to save state:', e);
+    console.error('[ArtEvolution] Failed to save state:', e instanceof Error ? e.message : 'Unknown error');
   }
 }
 

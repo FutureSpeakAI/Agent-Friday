@@ -238,7 +238,8 @@ class MeetingPrep {
       console.log(`[MeetingPrep] Briefing prepared for "${event.summary}" in ${minutesUntil}m`);
       return briefing;
     } catch (err) {
-      console.warn('[MeetingPrep] Briefing error:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[MeetingPrep] Briefing error:', err instanceof Error ? err.message : 'Unknown error');
       return null;
     }
   }

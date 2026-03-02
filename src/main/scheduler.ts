@@ -203,7 +203,8 @@ class TaskScheduler {
     // Research tasks run silently in the background
     if (task.action === 'research') {
       getIntelligenceEngine().runResearch(task.payload).catch((err: unknown) => {
-        console.warn(`[Scheduler] Research task failed: ${task.description}`, err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn(`[Scheduler] Research task failed: ${task.description}`, err instanceof Error ? err.message : 'Unknown error');
       });
       return;
     }

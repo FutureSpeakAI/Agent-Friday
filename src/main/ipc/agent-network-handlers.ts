@@ -11,7 +11,22 @@ import {
   type AgentIdentity,
   type AgentMessage,
   type AgentNetworkConfig,
+  type PairedAgent,
 } from '../agent-network';
+
+/**
+ * Crypto Sprint 4 (CRITICAL-001): Strip cryptographic secrets from peer objects
+ * before sending to the renderer process.
+ *
+ * The renderer NEVER needs: sharedSecret, hkdfSalt, or safetyNumber.
+ * These are main-process-only values used for P2P encryption.
+ * Leaking them to the renderer would let a compromised renderer (XSS, devtools)
+ * decrypt all inter-agent messages.
+ */
+function stripPeerSecrets(peer: PairedAgent): Omit<PairedAgent, 'sharedSecret' | 'hkdfSalt'> {
+  const { sharedSecret, hkdfSalt, ...safe } = peer;
+  return safe;
+}
 
 export function registerAgentNetworkHandlers(): void {
   // ── Identity ─────────────────────────────────────────────────────────
@@ -58,20 +73,25 @@ export function registerAgentNetworkHandlers(): void {
 
   // ── Peers ────────────────────────────────────────────────────────────
 
+  // Crypto Sprint 4 (CRITICAL-001): Strip cryptographic secrets before sending to renderer.
+  // The renderer never needs sharedSecret, hkdfSalt, or safetyNumber — these are
+  // internal to the main process encryption layer. Exposing them would allow a
+  // compromised renderer (XSS, devtools) to decrypt all P2P messages.
   ipcMain.handle('agent-net:get-peer', (_event, agentId: string) => {
-    return agentNetwork.getPeer(agentId);
+    const peer = agentNetwork.getPeer(agentId);
+    return peer ? stripPeerSecrets(peer) : null;
   });
 
   ipcMain.handle('agent-net:get-all-peers', () => {
-    return agentNetwork.getAllPeers();
+    return agentNetwork.getAllPeers().map(stripPeerSecrets);
   });
 
   ipcMain.handle('agent-net:get-paired-peers', () => {
-    return agentNetwork.getPairedPeers();
+    return agentNetwork.getPairedPeers().map(stripPeerSecrets);
   });
 
   ipcMain.handle('agent-net:get-pending-pairing-requests', () => {
-    return agentNetwork.getPendingPairingRequests();
+    return agentNetwork.getPendingPairingRequests().map(stripPeerSecrets);
   });
 
   // ── Trust ────────────────────────────────────────────────────────────
@@ -189,6 +209,20 @@ export function registerAgentNetworkHandlers(): void {
 
   ipcMain.handle('agent-net:get-pending-inbound-delegations', () => {
     return agentNetwork.getPendingInboundDelegations();
+  });
+
+  // ── SAS Verification (Crypto Sprint 3 — HIGH-004) ───────────────────
+
+  ipcMain.handle('agent-net:get-safety-number', (_event, agentId: string) => {
+    return agentNetwork.getSafetyNumber(agentId);
+  });
+
+  ipcMain.handle('agent-net:verify-sas', (_event, agentId: string) => {
+    return agentNetwork.verifySAS(agentId);
+  });
+
+  ipcMain.handle('agent-net:is-sas-verified', (_event, agentId: string) => {
+    return agentNetwork.isSASVerified(agentId);
   });
 
   // ── Stats & Config ───────────────────────────────────────────────────

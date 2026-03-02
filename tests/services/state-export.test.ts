@@ -116,7 +116,7 @@ function buildTestArchive(
     format: 'agent-friday-backup-v1',
     salt: salt.toString('hex'),
     iv: iv.toString('hex'),
-    iterations: 100_000,
+    iterations: 600_000, // Crypto Sprint 2: upgraded from 100K
     ciphertext: ciphertext.toString('base64'),
     authTag: authTag.toString('hex'),
   };
@@ -514,7 +514,7 @@ describe('StateExportEngine — exportState', () => {
     expect(writeCall).toBeDefined();
     const archive: EncryptedArchive = JSON.parse(writeCall![1] as string);
     expect(archive.format).toBe('agent-friday-backup-v1');
-    expect(archive.iterations).toBe(100_000);
+    expect(archive.iterations).toBe(600_000); // Crypto Sprint 2: upgraded from 100K
   });
 
   it('records backup in history', async () => {
@@ -684,7 +684,7 @@ describe('StateExportEngine — validateArchive', () => {
       format: 'agent-friday-backup-v1',
       salt: salt.toString('hex'),
       iv: enc.iv.toString('hex'),
-      iterations: 100_000,
+      iterations: 600_000, // Crypto Sprint 2: upgraded from 100K
       ciphertext: enc.ciphertext.toString('base64'),
       authTag: enc.authTag.toString('hex'),
     };

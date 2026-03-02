@@ -970,6 +970,13 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         // Guard: prevent mic from streaming to this WS until Gemini confirms setup
         setupCompleteRef.current = false;
 
+        // Crypto Sprint 3 (HIGH-001): Known limitation — the browser WebSocket API
+        // does NOT support custom headers (no Authorization / x-goog-api-key).
+        // Google's Multimodal Live API requires ?key= for WebSocket auth.
+        // Mitigations: (1) wss:// ensures TLS encryption in transit, (2) the key is
+        // a scoped Google AI Studio key (not a GCP service account), (3) the URL
+        // is not logged by this app. Moving to a main-process WebSocket proxy that
+        // can set headers would eliminate this, but is a significant refactor.
         const ws = new WebSocket(`${GEMINI_WS_URL}?key=${apiKey}`);
         wsRef.current = ws;
 

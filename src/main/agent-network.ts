@@ -21,18 +21,33 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 
-// ── CRITICAL DESIGN DECISION ─────────────────────────────────────────
+import { encryptPrivateKey, decryptPrivateKey } from './vault';
+
+// ── DESIGN DECISION (v2) ─────────────────────────────────────────────
 //
-// agent-network.json MUST ALWAYS be read/written as PLAINTEXT.
-// It contains the Ed25519 private key that is the ROOT of the vault's
-// key hierarchy: vaultKey = scrypt(Ed25519PrivateKey + machineId, salt).
+// agent-network.json is written as PLAINTEXT JSON with individually
+// encrypted private key fields. The file itself is NOT vault-encrypted
+// because the vault must already be unlocked before agent-network
+// initializes (two-phase boot sequence).
 //
-// Encrypting this file with the vault creates a circular dependency:
-//   load() needs vault key → vault key needs private key → private key is in the file
+// Sovereign Vault v2: The root of trust is a user-chosen passphrase,
+// not the Ed25519 private key. The key hierarchy is:
+//   Passphrase → Argon2id → masterKey → identityKey (via crypto_kdf)
 //
-// This is Heidegger's Vorverständnis problem: the foundational pre-understanding
-// (the private key) cannot be part of the interpretive chain that depends on it.
-// Raw fs I/O is the ONLY correct approach for this file.
+// Private key fields (Ed25519, X25519, shared secrets) are encrypted
+// with the identityKey using XSalsa20-Poly1305 (via vault.encryptPrivateKey).
+// Format: "enc:<base64 of nonce+ciphertext>". This eliminates all
+// dependency on OS credential stores (DPAPI/Keychain/libsecret).
+//
+// Legacy "safe:" prefixed keys (v1, DPAPI/Keychain) cannot be decrypted
+// in v2 — a fresh identity is generated if encountered.
+// ─────────────────────────────────────────────────────────────────────
+
+// ── Private key protection ───────────────────────────────────────────
+// Sovereign Vault v2: Private keys are encrypted/decrypted using the
+// vault's identityKey (XSalsa20-Poly1305). See vault.ts for:
+//   encryptPrivateKey(keyBase64) → "enc:..."
+//   decryptPrivateKey(stored)    → original keyBase64
 // ─────────────────────────────────────────────────────────────────────
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -74,6 +89,24 @@ export interface PairedAgent {
   trustLevel: number;
   /** ECDH shared secret for AES-256-GCM encryption (hex) */
   sharedSecret: string;
+  /**
+   * HKDF salt for AES key derivation (hex). Crypto Sprint 2.
+   * Deterministic: SHA-256(sorted exchange public keys). Provides key domain
+   * separation between peer pairs. Undefined for legacy peers (uses empty salt).
+   */
+  hkdfSalt?: string;
+  /**
+   * Short Authentication String for MITM detection. Crypto Sprint 3 (HIGH-004).
+   * A 6-digit code derived from the shared secret and both peers' public keys.
+   * Both sides compute the same SAS independently — if a MITM substituted keys,
+   * the SAS values will differ. Users compare via voice/visual to confirm.
+   */
+  safetyNumber?: string;
+  /**
+   * Whether the user has verified the SAS with their peer. Crypto Sprint 3.
+   * Until verified, a MITM attack cannot be ruled out.
+   */
+  sasVerified?: boolean;
   /** Last known activity timestamp */
   lastSeen: number;
   /** Pairing lifecycle state */
@@ -162,7 +195,7 @@ export interface TaskDelegation {
 }
 
 export interface PairingCode {
-  /** 6-character alphanumeric code for out-of-band pairing */
+  /** 8-character alphanumeric code for out-of-band pairing (LOW-003: upgraded from 6) */
   code: string;
   /** Our identity (shared with the pairing partner) */
   identity: AgentIdentity;
@@ -221,7 +254,12 @@ const DEFAULT_CONFIG: AgentNetworkConfig = {
   maxMessageSizeBytes: 1024 * 1024,  // 1MB
 };
 const MAX_MESSAGE_LOG = 200;
-const PAIRING_CODE_LENGTH = 6;
+/**
+ * cLaw Security Fix (LOW-003): Increased from 6 to 8 characters.
+ * 6 chars × log2(32) = ~25 bits entropy — brute-forceable in minutes.
+ * 8 chars × log2(32) = ~40 bits entropy — requires billions of attempts.
+ */
+const PAIRING_CODE_LENGTH = 8;
 const PAIRING_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No 0/O/1/I confusion
 
 // ── Crypto Helpers ────────────────────────────────────────────────────
@@ -291,9 +329,80 @@ function ed25519Verify(data: string, signatureHex: string, publicKeyB64: string)
   }
 }
 
-/** Encrypt payload with AES-256-GCM using shared secret. */
-function encryptPayload(payload: string, sharedSecretHex: string): { encrypted: string; nonce: string; authTag: string } {
-  const key = Buffer.from(sharedSecretHex, 'hex').subarray(0, 32); // Take first 32 bytes
+/**
+ * Compute a deterministic HKDF salt from both peers' X25519 exchange public keys.
+ *
+ * Crypto Sprint 2: Both sides independently compute SHA-256(sort([pubA, pubB])) —
+ * no protocol exchange needed. This provides per-pairing key domain separation:
+ * the AES key is bound to this specific peer pair. Sorting ensures both sides
+ * produce the same salt regardless of who initiated the pairing.
+ *
+ * @returns 32-byte salt as hex string
+ */
+function computeHkdfSalt(ourExchangePubKeyB64: string, theirExchangePubKeyB64: string): string {
+  const keys = [ourExchangePubKeyB64, theirExchangePubKeyB64].sort();
+  return crypto.createHash('sha256').update(keys.join('|')).digest('hex');
+}
+
+/**
+ * Compute a Short Authentication String (SAS) for MITM detection.
+ * Crypto Sprint 3 (HIGH-004).
+ *
+ * The SAS is derived from the ECDH shared secret AND both peers' exchange
+ * public keys. Both sides compute the same value independently because:
+ *   - The shared secret is identical (ECDH property)
+ *   - Public keys are sorted for canonical ordering
+ *
+ * If a MITM substituted keys, each peer would have a DIFFERENT shared secret
+ * (ECDH with the MITM's key, not the legitimate peer's), so the SAS values
+ * would diverge. Users verify by comparing the 6-digit code out-of-band.
+ *
+ * Security: 6 digits = 10^6 = ~20 bits. An attacker has a 1-in-1,000,000
+ * chance of a collision per attempt. Combined with the 5-minute pairing TTL,
+ * brute-force is infeasible.
+ */
+export function computeSAS(
+  sharedSecret: string,
+  ourExchangePubKeyB64: string,
+  theirExchangePubKeyB64: string,
+): string {
+  const sorted = [ourExchangePubKeyB64, theirExchangePubKeyB64].sort();
+  const data = `SAS|${sharedSecret}|${sorted[0]}|${sorted[1]}`;
+  const hash = crypto.createHash('sha256').update(data).digest();
+  // Take first 4 bytes as big-endian uint32, modulo 1,000,000 for 6-digit code
+  const num = hash.readUInt32BE(0) % 1_000_000;
+  return num.toString().padStart(6, '0');
+}
+
+/**
+ * Derive a proper AES-256 key from an ECDH shared secret using HKDF.
+ *
+ * cLaw Security Fix (HIGH-003): The raw ECDH output is a Diffie-Hellman point
+ * coordinate, NOT uniformly random key material. Using it directly as an AES
+ * key is cryptographically unsound because:
+ *   - The raw point has algebraic structure (not indistinguishable from random)
+ *   - X25519 output is 32 bytes but may have leading zeros or bias
+ *
+ * HKDF (RFC 5869) extracts entropy with HMAC-SHA256, then expands it into
+ * proper uniformly-distributed keying material. The info parameter binds the
+ * key to its purpose, preventing cross-protocol key reuse attacks.
+ */
+function deriveAesKey(sharedSecretHex: string, hkdfSaltHex?: string): Buffer {
+  const ikm = Buffer.from(sharedSecretHex, 'hex');
+  // Crypto Sprint 2: Use per-pairing salt when available (new peers), or empty salt (legacy peers).
+  // The salt provides key domain separation: even if two peer pairs had the same ECDH output
+  // (astronomically unlikely with X25519), their AES keys would differ.
+  const salt = hkdfSaltHex ? Buffer.from(hkdfSaltHex, 'hex') : Buffer.alloc(0);
+  // HKDF-SHA256: extract-then-expand.
+  // info string binds this key derivation to the Agent Friday P2P protocol.
+  return Buffer.from(
+    crypto.hkdfSync('sha256', ikm, salt, 'AgentFriday-P2P-AES256GCM-v1', 32),
+  );
+}
+
+/** Encrypt payload with AES-256-GCM using HKDF-derived key from shared secret. */
+function encryptPayload(payload: string, sharedSecretHex: string, hkdfSaltHex?: string): { encrypted: string; nonce: string; authTag: string } {
+  const key = deriveAesKey(sharedSecretHex, hkdfSaltHex);
   const nonce = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
   const encrypted = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()]);
@@ -305,9 +414,9 @@ function encryptPayload(payload: string, sharedSecretHex: string): { encrypted: 
   };
 }
 
-/** Decrypt payload with AES-256-GCM using shared secret. */
-function decryptPayload(encryptedB64: string, nonceB64: string, authTagB64: string, sharedSecretHex: string): string {
-  const key = Buffer.from(sharedSecretHex, 'hex').subarray(0, 32);
+/** Decrypt payload with AES-256-GCM using HKDF-derived key from shared secret. */
+function decryptPayload(encryptedB64: string, nonceB64: string, authTagB64: string, sharedSecretHex: string, hkdfSaltHex?: string): string {
+  const key = deriveAesKey(sharedSecretHex, hkdfSaltHex);
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(nonceB64, 'base64'));
   decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
   const decrypted = Buffer.concat([
@@ -333,9 +442,31 @@ function generatePairingCode(): string {
   return code;
 }
 
-/** Canonical JSON for signing (sorted keys, deterministic). */
-function canonicalize(obj: Record<string, unknown>): string {
-  return JSON.stringify(obj, Object.keys(obj).sort());
+/**
+ * Canonical JSON for signing (deep-sorted keys, deterministic).
+ *
+ * cLaw Security Fix (HIGH-001): The previous implementation used a shallow
+ * Object.keys().sort() replacer, which only sorted top-level keys. Nested
+ * objects retained insertion-order keys, making signatures non-deterministic.
+ * This recursive version deep-sorts ALL object keys at every nesting level,
+ * guaranteeing identical JSON output regardless of key insertion order.
+ */
+function canonicalize(obj: unknown): string {
+  return JSON.stringify(deepSortKeys(obj));
+}
+
+/** Recursively sort all object keys for deterministic serialization. */
+function deepSortKeys(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) return value.map(deepSortKeys);
+  if (typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = deepSortKeys((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
 }
 
 // ── Persistence State ─────────────────────────────────────────────────
@@ -357,7 +488,15 @@ interface AgentNetworkState {
 
 /**
  * Create a signed message from components.
- * The signature covers: fromAgentId + toAgentId + timestamp + type + canonical payload.
+ *
+ * cLaw Security Fix (HIGH-002): The message ID is now included in the signed
+ * data to prevent replay attacks. Previously the signable was:
+ *   fromAgentId|toAgentId|timestamp|type|payload
+ * An attacker could replay the exact same message since the signature would
+ * still be valid. Now the signable includes the unique message ID:
+ *   id|fromAgentId|toAgentId|timestamp|type|payload
+ * Combined with the replay detection cache in processInboundMessage(), this
+ * ensures each message can only be processed once.
  */
 export function createSignedMessage(
   fromAgentId: string,
@@ -369,7 +508,8 @@ export function createSignedMessage(
   const id = crypto.randomUUID();
   const timestamp = Date.now();
 
-  const signable = `${fromAgentId}|${toAgentId}|${timestamp}|${type}|${canonicalize(payload)}`;
+  // HIGH-002: Include message ID in signable to bind signature to this specific message
+  const signable = `${id}|${fromAgentId}|${toAgentId}|${timestamp}|${type}|${canonicalize(payload)}`;
   const signature = ed25519Sign(signable, privateKey);
 
   return {
@@ -386,9 +526,12 @@ export function createSignedMessage(
 
 /**
  * Verify a message's Ed25519 signature against the sender's public key.
+ *
+ * cLaw Security Fix (HIGH-002): Now includes message ID in the signable
+ * to match the updated createSignedMessage() format.
  */
 export function verifyMessageSignature(message: AgentMessage, senderPublicKey: string): boolean {
-  const signable = `${message.fromAgentId}|${message.toAgentId}|${message.timestamp}|${message.type}|${canonicalize(message.payload)}`;
+  const signable = `${message.id}|${message.fromAgentId}|${message.toAgentId}|${message.timestamp}|${message.type}|${canonicalize(message.payload)}`;
   return ed25519Verify(signable, message.signature, senderPublicKey);
 }
 
@@ -396,9 +539,9 @@ export function verifyMessageSignature(message: AgentMessage, senderPublicKey: s
  * Encrypt a message's payload using the shared secret with the recipient.
  * Returns a new message with encrypted payload.
  */
-export function encryptMessage(message: AgentMessage, sharedSecretHex: string): AgentMessage {
+export function encryptMessage(message: AgentMessage, sharedSecretHex: string, hkdfSaltHex?: string): AgentMessage {
   const payloadStr = JSON.stringify(message.payload);
-  const { encrypted, nonce, authTag } = encryptPayload(payloadStr, sharedSecretHex);
+  const { encrypted, nonce, authTag } = encryptPayload(payloadStr, sharedSecretHex, hkdfSaltHex);
   return {
     ...message,
     payload: { _encrypted: encrypted },
@@ -412,15 +555,36 @@ export function encryptMessage(message: AgentMessage, sharedSecretHex: string): 
  * Decrypt a message's payload using the shared secret.
  * Returns a new message with decrypted payload.
  */
-export function decryptMessage(message: AgentMessage, sharedSecretHex: string): AgentMessage {
+export function decryptMessage(message: AgentMessage, sharedSecretHex: string, hkdfSaltHex?: string): AgentMessage {
   if (!message.encrypted || !message.nonce || !message.authTag) return message;
   const encryptedData = (message.payload as Record<string, string>)._encrypted;
   if (!encryptedData) return message;
 
-  const decrypted = decryptPayload(encryptedData, message.nonce, message.authTag, sharedSecretHex);
+  let decrypted: string;
+  try {
+    // Try with current salt (may be undefined for legacy peers)
+    decrypted = decryptPayload(encryptedData, message.nonce, message.authTag, sharedSecretHex, hkdfSaltHex);
+  } catch {
+    // Crypto Sprint 2: Backward compatibility — if we have a salt but the message was
+    // encrypted by a pre-upgrade peer (using empty salt), retry without salt.
+    // This only applies during the upgrade transition period.
+    if (hkdfSaltHex) {
+      decrypted = decryptPayload(encryptedData, message.nonce, message.authTag, sharedSecretHex);
+    } else {
+      throw new Error('Decryption failed — invalid shared secret or tampered message');
+    }
+  }
+  // Crypto Sprint 5 (MEDIUM): Wrap JSON.parse in try/catch to prevent crashes from
+  // corrupted, partially-decrypted, or replay-attacked payloads.
+  let parsedPayload: Record<string, unknown>;
+  try {
+    parsedPayload = JSON.parse(decrypted);
+  } catch {
+    throw new Error('Decrypted message payload is not valid JSON — possible corruption or replay');
+  }
   return {
     ...message,
-    payload: JSON.parse(decrypted),
+    payload: parsedPayload,
     encrypted: false,
     nonce: undefined,
     authTag: undefined,
@@ -476,11 +640,21 @@ export function canAutoApprove(
 // AGENT NETWORK ENGINE (Singleton)
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * cLaw Security Fix (HIGH-002): Replay detection cache.
+ * Stores recently seen message IDs with their timestamps to reject duplicates.
+ * Entries are pruned after REPLAY_WINDOW_MS to prevent unbounded growth.
+ */
+const REPLAY_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_REPLAY_CACHE_SIZE = 5000;
+
 export class AgentNetwork {
   private state: AgentNetworkState;
   private dataDir = '';
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private activePairingCode: PairingCode | null = null;
+  /** HIGH-002: Replay detection — maps messageId → receivedTimestamp */
+  private replayCache: Map<string, number> = new Map();
 
   constructor() {
     this.state = {
@@ -608,7 +782,23 @@ export class AgentNetwork {
       remoteIdentity.exchangePublicKey,
     );
 
+    // Crypto Sprint 2: Compute deterministic HKDF salt from both peers' exchange public keys.
+    // Both sides derive the same salt independently — no protocol exchange required.
+    const hkdfSalt = computeHkdfSalt(
+      this.state.identity.exchangePublicKey,
+      remoteIdentity.exchangePublicKey,
+    );
+
     const trustLevel = deriveAgentTrust(ownerTrust);
+
+    // Crypto Sprint 3 (HIGH-004): Compute Short Authentication String for MITM detection.
+    // Both peers independently derive the same 6-digit code from the shared secret
+    // and public keys. A MITM substituting keys would cause divergent SAS values.
+    const safetyNumber = computeSAS(
+      sharedSecret,
+      this.state.identity.exchangePublicKey,
+      remoteIdentity.exchangePublicKey,
+    );
 
     const peer: PairedAgent = {
       identity: remoteIdentity,
@@ -616,6 +806,9 @@ export class AgentNetwork {
       ownerPersonId,
       trustLevel,
       sharedSecret,
+      hkdfSalt,
+      safetyNumber,
+      sasVerified: false,
       lastSeen: Date.now(),
       status: 'paired',
       autoApproveTaskTypes: [],
@@ -665,6 +858,45 @@ export class AgentNetwork {
     this.state.peers.push(peer);
     this.queueSave();
     return peer;
+  }
+
+  // ── SAS Verification (Crypto Sprint 3 — HIGH-004) ────────────────
+
+  /**
+   * Get the safety number (SAS) for a paired agent.
+   *
+   * Returns the 6-digit verification code that both peers should
+   * compare out-of-band (voice call, in-person) to detect MITM attacks.
+   * Returns null if the agent isn't paired or has no SAS.
+   */
+  getSafetyNumber(agentId: string): string | null {
+    const peer = this.state.peers.find((p) => p.identity.agentId === agentId);
+    if (!peer || peer.status !== 'paired') return null;
+    return peer.safetyNumber ?? null;
+  }
+
+  /**
+   * Mark the SAS as verified for a paired agent.
+   *
+   * Called after the user has compared the safety number with their peer
+   * and confirmed they match. This indicates the pairing is MITM-free.
+   */
+  verifySAS(agentId: string): boolean {
+    const peer = this.state.peers.find((p) => p.identity.agentId === agentId);
+    if (!peer || peer.status !== 'paired' || !peer.safetyNumber) return false;
+
+    peer.sasVerified = true;
+    console.log(`[AgentNetwork] SAS verified for peer ${agentId.slice(0, 8)}... — pairing is MITM-free`);
+    this.queueSave();
+    return true;
+  }
+
+  /**
+   * Check whether SAS has been verified for a peer.
+   */
+  isSASVerified(agentId: string): boolean {
+    const peer = this.state.peers.find((p) => p.identity.agentId === agentId);
+    return peer?.sasVerified === true;
   }
 
   /** Block an agent (reject all future communication). */
@@ -786,13 +1018,14 @@ export class AgentNetwork {
         this.state.keyPair.signingPublicKey,
       );
     } catch (err) {
-      console.warn('[AgentNetwork/cLaw] Failed to generate attestation:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[AgentNetwork/cLaw] Failed to generate attestation:', err instanceof Error ? err.message : 'Unknown error');
       // Continue without attestation — peer will flag but not silently drop
     }
 
     // Encrypt if we have a shared secret (paired peer)
     if (peer.sharedSecret) {
-      message = encryptMessage(message, peer.sharedSecret);
+      message = encryptMessage(message, peer.sharedSecret, peer.hkdfSalt);
     }
 
     this.state.messagesSent++;
@@ -822,11 +1055,28 @@ export class AgentNetwork {
     // Blocked peer — reject everything
     if (peer?.status === 'blocked') return null;
 
+    // cLaw Security Fix (HIGH-002): Replay detection — reject previously seen messages
+    if (this.replayCache.has(message.id)) {
+      console.warn(`[AgentNetwork/cLaw] Replay detected — message ${message.id} already processed, rejecting`);
+      return null;
+    }
+    // Also reject messages with suspiciously old timestamps (> 10 minutes)
+    const messageAge = Date.now() - message.timestamp;
+    if (messageAge > REPLAY_WINDOW_MS) {
+      console.warn(`[AgentNetwork/cLaw] Stale message rejected — ${message.id} is ${Math.round(messageAge / 1000)}s old`);
+      return null;
+    }
+    // Also reject messages from the future (> 1 minute clock skew)
+    if (messageAge < -60_000) {
+      console.warn(`[AgentNetwork/cLaw] Future-dated message rejected — ${message.id} is ${Math.round(-messageAge / 1000)}s in the future`);
+      return null;
+    }
+
     // Decrypt if encrypted and we have a shared secret
     let processed = message;
     if (message.encrypted && peer?.sharedSecret) {
       try {
-        processed = decryptMessage(message, peer.sharedSecret);
+        processed = decryptMessage(message, peer.sharedSecret, peer.hkdfSalt);
       } catch {
         return null; // Decryption failed
       }
@@ -836,8 +1086,8 @@ export class AgentNetwork {
     if (message.type === 'pair-request') {
       const senderIdentity = (processed.payload as { identity?: AgentIdentity }).identity;
       if (!senderIdentity) return null;
-      // Reconstruct original signable from unencrypted payload
-      const signable = `${message.fromAgentId}|${message.toAgentId}|${message.timestamp}|${message.type}|${canonicalize(processed.payload)}`;
+      // Reconstruct original signable from unencrypted payload (HIGH-002: includes message ID)
+      const signable = `${message.id}|${message.fromAgentId}|${message.toAgentId}|${message.timestamp}|${message.type}|${canonicalize(processed.payload)}`;
       if (!ed25519Verify(signable, message.signature, senderIdentity.signingPublicKey)) return null;
     } else if (peer) {
       // Verify signature using known peer public key
@@ -874,13 +1124,17 @@ export class AgentNetwork {
         }
       }
     } catch (err) {
-      console.warn('[AgentNetwork/cLaw] Attestation verification error:', err);
+      console.warn('[AgentNetwork/cLaw] Attestation verification error:', err instanceof Error ? err.message : 'Unknown error');
     }
 
     // Update last seen
     if (peer) {
       peer.lastSeen = Date.now();
     }
+
+    // cLaw Security Fix (HIGH-002): Record message ID in replay cache
+    this.replayCache.set(message.id, Date.now());
+    this.pruneReplayCache();
 
     this.state.messagesReceived++;
     this.logMessage({
@@ -1149,9 +1403,8 @@ export class AgentNetwork {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
 
-      // RAW fs.readFile — NEVER use vaultRead here.
-      // This file is the ROOT of the vault key hierarchy.
-      // See the design decision comment at the top of this file.
+      // RAW fs.readFile — this file is plaintext JSON with individually
+      // encrypted private key fields. See design decision at top of file.
       const raw = await fs.readFile(filePath, 'utf-8');
 
       // Detect corrupted/encrypted files from a prior buggy session.
@@ -1163,31 +1416,49 @@ export class AgentNetwork {
         console.warn(
           '[AgentNetwork] agent-network.json appears to be encrypted/corrupted ' +
           '(first char: 0x' + raw.charCodeAt(0).toString(16) + '). ' +
-          'This was caused by a circular dependency bug where the vault encrypted ' +
-          'the file containing the key needed to decrypt it. ' +
           'Discarding corrupted state — a fresh identity will be generated.',
         );
         // Remove the corrupted file so save() creates a clean one
         try { await fs.unlink(filePath); } catch { /* ignore */ }
-
-        // Also reset vault metadata — the vault key was derived from the
-        // now-lost private key, so .vault-meta.json and .vault-salt are
-        // stale references to a key hierarchy that no longer exists.
-        // NOTE: Vault files use dot-prefixed names (.vault-meta.json, .vault-salt)
-        // and live in userData root (not friday-data/).
-        const userDataDir = path.dirname(this.dataDir);
-        const vaultMetaPath = path.join(userDataDir, '.vault-meta.json');
-        const vaultSaltPath = path.join(userDataDir, '.vault-salt');
-        try { await fs.unlink(vaultMetaPath); } catch { /* ignore */ }
-        try { await fs.unlink(vaultSaltPath); } catch { /* ignore */ }
-        console.log('[AgentNetwork] Cleared stale vault metadata (.vault-meta.json + .vault-salt)');
         return;
       }
 
       const data = JSON.parse(raw);
-      if (data.keyPair) this.state.keyPair = data.keyPair;
+
+      // Decrypt private key fields (v2: identityKey, legacy: plaintext passthrough)
+      if (data.keyPair) {
+        try {
+          data.keyPair.signingPrivateKey = decryptPrivateKey(data.keyPair.signingPrivateKey);
+          data.keyPair.exchangePrivateKey = decryptPrivateKey(data.keyPair.exchangePrivateKey);
+        } catch (err) {
+          // Crypto Sprint 15: Sanitize error — decryption errors may contain key material fragments.
+          console.error('[AgentNetwork] Failed to decrypt private keys — generating fresh identity:', err instanceof Error ? err.message : 'Unknown error');
+          // Clear the corrupted/v1 keyPair so generateIdentity() runs
+          data.keyPair = null;
+          data.identity = null;
+        }
+        this.state.keyPair = data.keyPair;
+      }
       if (data.identity) this.state.identity = data.identity;
-      if (Array.isArray(data.peers)) this.state.peers = data.peers;
+      if (Array.isArray(data.peers)) {
+        // Decrypt shared secrets
+        for (const peer of data.peers) {
+          if (peer.sharedSecret) {
+            try {
+              peer.sharedSecret = decryptPrivateKey(peer.sharedSecret);
+            } catch {
+              console.warn(`[AgentNetwork] Failed to decrypt shared secret for peer ${peer.identity?.agentId} — wiping`);
+              peer.sharedSecret = '';
+              peer.status = 'pending-inbound'; // Require re-pairing
+            }
+          }
+        }
+        // Note: Legacy peers loaded from disk will not have hkdfSalt — they continue
+        // using empty HKDF salt for backward compatibility. The salt is only set for
+        // NEW pairings created after the Crypto Sprint 2 upgrade, where both sides
+        // deterministically compute the same salt from their exchange public keys.
+        this.state.peers = data.peers;
+      }
       if (Array.isArray(data.delegations)) this.state.delegations = data.delegations;
       if (data.config) Object.assign(this.state.config, data.config);
       if (typeof data.messagesSent === 'number') this.state.messagesSent = data.messagesSent;
@@ -1202,20 +1473,53 @@ export class AgentNetwork {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
 
-      // RAW fs.writeFile — NEVER use vaultWrite here.
-      // This file is the ROOT of the vault key hierarchy.
-      // Encrypting it with the vault creates a circular dependency that
-      // permanently locks the user out on next launch.
-      // See the design decision comment at the top of this file.
-      await fs.writeFile(filePath, JSON.stringify(this.state, null, 2), 'utf-8');
+      // RAW fs.writeFile — this file is plaintext JSON with individually
+      // encrypted private key fields. See design decision at top of file.
+
+      // Encrypt private key fields with identityKey before writing to disk.
+      // We create a serialization copy so in-memory state retains plaintext
+      // keys for runtime use.
+      const serializable = JSON.parse(JSON.stringify(this.state));
+      if (serializable.keyPair) {
+        serializable.keyPair.signingPrivateKey = encryptPrivateKey(serializable.keyPair.signingPrivateKey);
+        serializable.keyPair.exchangePrivateKey = encryptPrivateKey(serializable.keyPair.exchangePrivateKey);
+      }
+      // Also protect shared secrets stored in peer entries
+      if (Array.isArray(serializable.peers)) {
+        for (const peer of serializable.peers) {
+          if (peer.sharedSecret) {
+            peer.sharedSecret = encryptPrivateKey(peer.sharedSecret);
+          }
+        }
+      }
+
+      await fs.writeFile(filePath, JSON.stringify(serializable, null, 2), 'utf-8');
     } catch (err) {
-      console.error('[AgentNetwork] Save failed:', err);
+      console.error('[AgentNetwork] Save failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
   private queueSave(): void {
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.save(), SAVE_DEBOUNCE_MS);
+  }
+
+  /** cLaw Security Fix (HIGH-002): Evict expired entries from the replay cache. */
+  private pruneReplayCache(): void {
+    const cutoff = Date.now() - REPLAY_WINDOW_MS;
+    if (this.replayCache.size <= MAX_REPLAY_CACHE_SIZE) {
+      // Only prune by time if within size limit
+      for (const [id, ts] of this.replayCache) {
+        if (ts < cutoff) this.replayCache.delete(id);
+      }
+    } else {
+      // Over size limit — aggressively prune oldest entries
+      const entries = [...this.replayCache.entries()].sort((a, b) => a[1] - b[1]);
+      const toRemove = entries.slice(0, entries.length - MAX_REPLAY_CACHE_SIZE);
+      for (const [id] of toRemove) {
+        this.replayCache.delete(id);
+      }
+    }
   }
 
   private pruneDelegations(): void {

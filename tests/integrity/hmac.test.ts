@@ -19,31 +19,21 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 
-// ── Electron Mock ────────────────────────────────────────────────────
-// HMAC engine depends on Electron's app.getPath and safeStorage.
-// We mock safeStorage with identity transforms so the key is stored
-// as plaintext in a temp directory — good enough for testing the
-// cryptographic logic without the OS credential store.
+// ── Setup ────────────────────────────────────────────────────────────
+// v2: HMAC engine no longer depends on Electron. The signing key is
+// injected as a SecureBuffer by the vault after passphrase derivation.
+// We create a test SecureBuffer with random bytes for testing.
 
 const testUserData = path.join(
   os.tmpdir(),
   `af-test-hmac-${crypto.randomUUID().slice(0, 8)}`,
 );
 
-vi.mock('electron', () => ({
-  app: {
-    getPath: vi.fn(() => testUserData),
-  },
-  safeStorage: {
-    isEncryptionAvailable: vi.fn(() => false), // Use fallback raw storage
-    encryptString: vi.fn((str: string) => Buffer.from(str, 'utf-8')),
-    decryptString: vi.fn((buf: Buffer) => buf.toString('utf-8')),
-  },
-}));
-
-// Import AFTER mocking — vitest hoists vi.mock but the import must be below
+// Import AFTER any mocks
+import { SecureBuffer } from '../../src/main/crypto/secure-buffer';
 import {
   initializeHmac,
+  destroyHmac,
   sign,
   verify,
   signObject,
@@ -58,10 +48,15 @@ import {
 describe('HMAC Integrity Engine', () => {
   beforeAll(async () => {
     await fs.mkdir(testUserData, { recursive: true });
-    await initializeHmac();
+    // v2: Inject a test signing key (random 32-byte SecureBuffer)
+    const rawKey = crypto.randomBytes(32);
+    const hmacKey = SecureBuffer.from(rawKey);
+    destroyHmac(); // ensure clean state
+    initializeHmac(hmacKey);
   });
 
   afterAll(async () => {
+    destroyHmac();
     await fs.rm(testUserData, { recursive: true, force: true }).catch(() => {});
   });
 
@@ -72,8 +67,9 @@ describe('HMAC Integrity Engine', () => {
       expect(isInitialized()).toBe(true);
     });
 
-    it('should be idempotent — calling initializeHmac twice is safe', async () => {
-      await initializeHmac(); // Should not throw or change key
+    it('should be idempotent — calling initializeHmac twice is safe', () => {
+      const otherKey = SecureBuffer.from(crypto.randomBytes(32));
+      initializeHmac(otherKey); // Should not throw or replace existing key
       expect(isInitialized()).toBe(true);
     });
   });

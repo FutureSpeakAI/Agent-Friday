@@ -8,7 +8,7 @@
  * All operations run headless with alerts suppressed.
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -49,8 +49,10 @@ function runPS(script: string): string {
   );
   try {
     fs.writeFileSync(tmp, script, 'utf-8');
-    const out = execSync(
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmp}"`,
+    // Crypto Sprint 13: Use execFileSync to avoid shell interpolation of temp path.
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmp],
       {
         timeout: PS_TIMEOUT,
         encoding: 'utf-8',

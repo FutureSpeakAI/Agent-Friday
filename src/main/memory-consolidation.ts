@@ -60,14 +60,16 @@ class MemoryConsolidation {
     // Run initial consolidation after a short delay (let other systems boot)
     setTimeout(() => {
       this.run().catch((err) => {
-        console.warn('[Consolidation] Initial run failed:', err);
+        // Crypto Sprint 16: Sanitize — consolidation makes API calls; errors may contain auth data.
+        console.warn('[Consolidation] Initial run failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }, 30_000);
 
     // Schedule periodic consolidation
     this.timer = setInterval(() => {
       this.run().catch((err) => {
-        console.warn('[Consolidation] Periodic run failed:', err);
+        // Crypto Sprint 16: Sanitize — consolidation makes API calls; errors may contain auth data.
+        console.warn('[Consolidation] Periodic run failed:', err instanceof Error ? err.message : 'Unknown error');
       });
     }, CONSOLIDATION_INTERVAL_MS);
 
@@ -330,7 +332,8 @@ Rules:
 
       return insightCount;
     } catch (err) {
-      console.warn('[Consolidation] Cross-episode analysis failed:', err);
+      // Crypto Sprint 16: Sanitize — cross-episode uses Gemini API.
+      console.warn('[Consolidation] Cross-episode analysis failed:', err instanceof Error ? err.message : 'Unknown error');
       return 0;
     }
   }
@@ -369,7 +372,8 @@ MERGED FACT:`,
 
       return cleaned.length > 5 ? cleaned : null;
     } catch (err) {
-      console.warn('[Consolidation] Claude merge failed:', err);
+      // Crypto Sprint 16: Sanitize — Claude API errors may contain auth headers.
+      console.warn('[Consolidation] Claude merge failed:', err instanceof Error ? err.message : 'Unknown error');
       return null;
     }
   }

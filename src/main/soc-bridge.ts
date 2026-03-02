@@ -86,7 +86,8 @@ class PythonToolBridge {
       });
 
       this.proc.on('error', (err) => {
-        console.error('[SOC Bridge] Process error:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.error('[SOC Bridge] Process error:', err instanceof Error ? err.message : 'Unknown error');
         this.ready = false;
         reject(err);
       });

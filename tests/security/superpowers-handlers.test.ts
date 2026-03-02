@@ -337,7 +337,7 @@ describe('Superpowers IPC Handlers — Phase 4', () => {
     });
 
     it('superpowers:install rejects missing repoUrl', async () => {
-      await expect(invoke('superpowers:install', '')).rejects.toThrow('requires a string repoUrl');
+      await expect(invoke('superpowers:install', '')).rejects.toThrow('must not be empty');
     });
 
     it('superpowers:uninstall rejects missing id', async () => {
@@ -483,9 +483,9 @@ describe('Superpowers IPC Handlers — Phase 4', () => {
     it('install warns on non-standard repo URL but allows it', async () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       await invoke('superpowers:install', 'https://my-git-server.com/repo');
+      // Crypto Sprint 18: URL no longer logged (could contain tokens in query strings)
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Non-standard repo URL'),
-        expect.any(String),
+        '[Superpowers] Non-standard repo URL',
       );
       consoleSpy.mockRestore();
     });

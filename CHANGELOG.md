@@ -4,6 +4,54 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [2.2.0] — 2026-03-02
+
+### Added
+
+- **Sovereign Vault v2 — Passphrase-Only Root of Trust**: Complete redesign of the cryptographic foundation. Replaced DPAPI/Keychain/safeStorage dependency with a pure passphrase-derived key hierarchy. User's passphrase (≥8 words) → Argon2id (256MB, 4 iterations) → masterKey → BLAKE2b KDF → {vaultKey, hmacKey, identityKey}
+- **SecureBuffer**: Guard-paged, mlocked memory wrapping `sodium_malloc()` with NOACCESS/READONLY/READWRITE protection states, canary bytes, and withAccess() borrow pattern for minimum exposure
+- **PassphraseGate UI**: Full-screen sovereign vault gate with two modes (CREATE for first-time, UNLOCK for returning), progressive rate-limiting (5s→15s→60s after failed attempts), and "THIS IS YOUR ONLY KEY" warning modal
+- **Two-Phase Boot Architecture**: Phase A (vault locked, graceful plaintext fallback) → Phase B (vault unlocked, encrypted state reloaded, HMAC key injected, integrity verified, agent network initialized)
+- **Phase B State Reload**: Settings, Memory, Trust Graph, and Calendar all implement `reloadFromVault()` for seamless post-unlock restoration
+- **Passphrase-derived HMAC v2**: HMAC signing key injected from vault derivation instead of machine-bound key, enabling cross-machine portability
+- **Identity Encryption v2**: Ed25519/X25519 private keys encrypted with XSalsa20-Poly1305 using vault-derived identity key instead of machine-bound encryption
+- **Phase B Initialization Timeouts**: `withTimeout<T>()` helper wrapping integrity and agent-network init with 30-second timeouts for graceful degradation instead of hanging
+- **198 crypto-specific tests** across 8 test suites covering SecureBuffer, PassphraseKDF, Vault v2, HMAC v2, Identity Encryption, cLaw Attestation, P2P Crypto, and deep-sort-keys
+
+### Changed
+
+- Vault key derivation migrated from `crypto.scrypt(N=2²⁰)` + machine fingerprint to `Argon2id(opslimit=4, memlimit=256MB)` + user passphrase via `sodium-native`
+- HMAC key source changed from machine-bound derivation to vault-derived sub-key (context "AF_HMAC_")
+- Identity key encryption changed from machine-bound to vault-derived sub-key (context "AF_IDENT")
+- All vault-encrypted files use random 12-byte IVs per write (no IV reuse)
+- TypeScript type declarations (`types.d.ts`) updated from v1 vault API to v2 API surface
+- `node-machine-id` dependency fully removed — no platform keystore dependencies remain
+- `sodium-native` added as the sole cryptographic dependency (libsodium bindings)
+
+### Removed
+
+- **DPAPI/Keychain/safeStorage dependency** — No platform-specific key storage. Vault is fully portable
+- **12-word recovery phrase system** — Replaced with passphrase-only model (the passphrase IS the recovery mechanism)
+- **Machine fingerprint binding** — Keys no longer tied to hardware, enabling machine migration by entering the same passphrase
+
+### Security
+
+- All key material held in `sodium_malloc` backed SecureBuffer with guard pages, mlock, and canary bytes
+- Argon2id parameters tuned for 1-4 second derivation time (anti-brute-force by design)
+- Canary verification distinguishes wrong passphrase from vault corruption
+- Progressive client-side rate-limiting on failed unlock attempts
+- Legacy `safe:` prefix detection with clear error messaging for v1→v2 migration
+- Zero vault-related TypeScript errors (verified via `tsc --noEmit`)
+
+### Stats
+
+- 210 source files, ~98,000 lines of TypeScript
+- 3,496 tests across 63 test suites — all passing
+- 198 crypto-specific tests across 8 suites
+- 0 TypeScript errors (excluding 4 pre-existing cast warnings in intelligence-router-handlers and onboarding-handlers)
+
+---
+
 ## [2.1.0] — 2026-03-01
 
 ### Added
