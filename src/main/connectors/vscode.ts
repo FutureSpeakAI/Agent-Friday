@@ -11,7 +11,7 @@
  *   detect   - Async probe that returns true when the `code` CLI is reachable.
  */
 
-import { execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -103,7 +103,8 @@ function resolveCodeBin(): string {
   // 1. Try `code` directly (it may be in PATH)
   for (const candidate of ['code', 'code-insiders']) {
     try {
-      execSync(`${candidate} --version`, { timeout: 5_000, stdio: 'pipe' });
+      // Crypto Sprint 11: Use execFileSync to avoid shell interpolation.
+      execFileSync(candidate, ['--version'], { timeout: 5_000, stdio: 'pipe' });
       resolvedCodeBin = candidate;
       return resolvedCodeBin;
     } catch {
@@ -112,10 +113,12 @@ function resolveCodeBin(): string {
   }
 
   // 2. Windows fallback: probe known install locations
+  // Crypto Sprint 3: Store raw path (no shell quoting) — callers use execFileSync/spawn
+  // with args arrays, which handle paths with spaces safely.
   if (process.platform === 'win32') {
     for (const p of WINDOWS_CODE_PATHS) {
       if (p && fs.existsSync(p)) {
-        resolvedCodeBin = `"${p}"`;
+        resolvedCodeBin = p;
         return resolvedCodeBin;
       }
     }
@@ -134,14 +137,21 @@ function resolveCodeBin(): string {
 /**
  * Run a VS Code CLI command synchronously and return trimmed stdout.
  * Throws on non-zero exit or timeout.
+ *
+ * Crypto Sprint 3: Refactored from execSync(template-string) to execFileSync
+ * with a proper args array. This prevents shell metacharacter injection —
+ * each argument is passed directly to the process, not interpreted by a shell.
+ * On Windows, shell: true is required for .cmd files but args are still safe
+ * as discrete array elements (Node.js escapes each one individually).
  */
-function runCode(args: string): string {
+function runCode(args: string[]): string {
   const bin = resolveCodeBin();
-  const output = execSync(`${bin} ${args}`, {
+  const output = execFileSync(bin, args, {
     timeout: CLI_TIMEOUT,
     stdio: ['pipe', 'pipe', 'pipe'],
     encoding: 'utf-8',
     windowsHide: true,
+    shell: process.platform === 'win32', // .cmd files need cmd.exe on Windows
   });
   return (output ?? '').trim();
 }
@@ -149,18 +159,18 @@ function runCode(args: string): string {
 /**
  * Run a VS Code CLI command asynchronously (fire-and-forget).
  * Used for commands that launch a GUI and never exit on their own (e.g. opening a file).
+ *
+ * Crypto Sprint 3: Refactored to accept args array instead of string.
+ * Removes shell: true on non-Windows platforms; on Windows, it is required
+ * for .cmd files but the args array prevents metacharacter injection.
  */
-function runCodeDetached(args: string): void {
+function runCodeDetached(args: string[]): void {
   const bin = resolveCodeBin();
-  // On Windows the bin may be quoted; split so spawn works correctly.
-  const isQuoted = bin.startsWith('"') && bin.endsWith('"');
-  const command = isQuoted ? bin.slice(1, -1) : bin;
-
-  const child = spawn(command, args.split(/\s+/), {
+  const child = spawn(bin, args, {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-    shell: true,
+    shell: process.platform === 'win32', // .cmd files need cmd.exe on Windows
   });
   child.unref();
 }
@@ -241,19 +251,19 @@ async function vscodeOpen(args: Record<string, unknown>): Promise<ToolResult> {
   const column = args.column != null ? Number(args.column) : undefined;
 
   try {
-    const flags: string[] = [];
-    if (reuseWindow) flags.push('--reuse-window');
+    // Crypto Sprint 3: Build args as array — no shell string concatenation.
+    const cliArgs: string[] = [];
+    if (reuseWindow) cliArgs.push('--reuse-window');
 
-    let target: string;
     if (line != null) {
       // --goto expects path:line:column
       const col = column ?? 1;
-      target = `--goto "${filePath}:${line}:${col}"`;
+      cliArgs.push('--goto', `${filePath}:${line}:${col}`);
     } else {
-      target = `"${filePath}"`;
+      cliArgs.push(filePath);
     }
 
-    runCodeDetached(`${flags.join(' ')} ${target}`);
+    runCodeDetached(cliArgs);
     const desc = line != null
       ? `${filePath}:${line}${column != null ? ':' + column : ''}`
       : filePath;
@@ -269,8 +279,10 @@ async function vscodeDiff(args: Record<string, unknown>): Promise<ToolResult> {
   if (!file1 || !file2) return { error: 'Missing required arguments: file1 and file2' };
 
   try {
-    const label = args.label ? ` --label "${String(args.label)}"` : '';
-    runCodeDetached(`--diff "${file1}" "${file2}"${label}`);
+    // Crypto Sprint 3: Proper args array — no shell string concatenation.
+    const cliArgs = ['--diff', file1, file2];
+    if (args.label) cliArgs.push('--label', String(args.label));
+    runCodeDetached(cliArgs);
     return { result: `Opened diff view: ${file1} <-> ${file2}` };
   } catch (err: unknown) {
     return { error: `Failed to open diff: ${err instanceof Error ? err.message : String(err)}` };
@@ -279,7 +291,7 @@ async function vscodeDiff(args: Record<string, unknown>): Promise<ToolResult> {
 
 async function vscodeExtensionsList(): Promise<ToolResult> {
   try {
-    const raw = runCode('--list-extensions --show-versions');
+    const raw = runCode(['--list-extensions', '--show-versions']);
     if (!raw) return { result: JSON.stringify([]) };
 
     const extensions = raw
@@ -304,7 +316,7 @@ async function vscodeExtensionInstall(args: Record<string, unknown>): Promise<To
   if (!extensionId) return { error: 'Missing required argument: extension_id' };
 
   try {
-    const output = runCode(`--install-extension "${extensionId}" --force`);
+    const output = runCode(['--install-extension', extensionId, '--force']);
     const success = output.toLowerCase().includes('successfully installed')
       || output.toLowerCase().includes('already installed')
       || !output.toLowerCase().includes('error');
@@ -323,7 +335,7 @@ async function vscodeExtensionUninstall(args: Record<string, unknown>): Promise<
   if (!extensionId) return { error: 'Missing required argument: extension_id' };
 
   try {
-    const output = runCode(`--uninstall-extension "${extensionId}"`);
+    const output = runCode(['--uninstall-extension', extensionId]);
     return { result: `Extension ${extensionId} uninstalled. ${truncate(output)}` };
   } catch (err: unknown) {
     return { error: `Failed to uninstall extension ${extensionId}: ${err instanceof Error ? err.message : String(err)}` };
@@ -338,7 +350,7 @@ async function vscodeWorkspaceOpen(args: Record<string, unknown>): Promise<ToolR
     if (!fs.existsSync(workspacePath)) {
       return { error: `Workspace file not found: ${workspacePath}` };
     }
-    runCodeDetached(`"${workspacePath}"`);
+    runCodeDetached([workspacePath]);
     return { result: `Opened workspace: ${workspacePath}` };
   } catch (err: unknown) {
     return { error: `Failed to open workspace: ${err instanceof Error ? err.message : String(err)}` };
@@ -353,7 +365,7 @@ async function vscodeNewFile(args: Record<string, unknown>): Promise<ToolResult>
     const ext = language ? (LANG_EXTENSION_MAP[language] || `.${language}`) : '.txt';
     const tmpPath = tempFile(ext);
     fs.writeFileSync(tmpPath, content, 'utf-8');
-    runCodeDetached(`"${tmpPath}"`);
+    runCodeDetached([tmpPath]);
     return { result: `Created temp file and opened in VS Code: ${tmpPath}` };
   } catch (err: unknown) {
     return { error: `Failed to create new file: ${err instanceof Error ? err.message : String(err)}` };
@@ -430,9 +442,10 @@ async function vscodeRecentFiles(): Promise<ToolResult> {
     if (storagePath.endsWith('.vscdb')) {
       try {
         // Try using sqlite3 CLI if available
+        // Crypto Sprint 12: Use execFileSync to prevent shell injection via storagePath / query.
         const query = `SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList';`;
-        const raw = execSync(
-          `sqlite3 "${storagePath}" "${query}"`,
+        const raw = execFileSync(
+          'sqlite3', [storagePath, query],
           { timeout: CLI_TIMEOUT, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
         ).trim();
 
@@ -516,7 +529,9 @@ async function vscodeTerminalRun(args: Record<string, unknown>): Promise<ToolRes
     const ext = isWindows ? '.cmd' : '.sh';
     const scriptPath = tempFile(ext);
 
-    const titleLine = terminalName ? `title ${terminalName}` : '';
+    // Crypto Sprint 13: Sanitize terminalName to prevent injection in script content.
+    const safeName = terminalName?.replace(/[&|<>^%"\\`$;\n\r]/g, '') ?? '';
+    const titleLine = safeName ? `title ${safeName}` : '';
     if (isWindows) {
       const script = [
         '@echo off',
@@ -532,7 +547,7 @@ async function vscodeTerminalRun(args: Record<string, unknown>): Promise<ToolRes
     } else {
       const script = [
         '#!/bin/bash',
-        terminalName ? `echo -ne "\\033]0;${terminalName}\\007"` : '',
+        safeName ? `echo -ne "\\033]0;${safeName}\\007"` : '',
         `echo "[VS Code Terminal] Running command..."`,
         `echo`,
         command,
@@ -544,16 +559,18 @@ async function vscodeTerminalRun(args: Record<string, unknown>): Promise<ToolRes
     }
 
     // Open an integrated terminal in VS Code that runs our script.
-    // The `-` argument tells code to read stdin, but more practically we use
-    // the --goto approach to open the script, or fall back to a direct terminal.
-    // Actually the most reliable approach: use `code --reuse-window` to ensure
-    // VS Code is active, then execute via shell integration.
+    // Crypto Sprint 13 (CRITICAL — Shell Injection): The previous implementation
+    // interpolated the AI-controlled `command` directly into a sendSequence JSON
+    // payload inside a shell string, allowing metacharacter injection. Now we
+    // send the internally-generated `scriptPath` instead — the command is safely
+    // contained in the temp script file written above.
     const bin = resolveCodeBin();
+    const safeText = isWindows ? scriptPath : `bash "${scriptPath}"`;
     const child = spawn(
       isWindows ? 'cmd.exe' : '/bin/sh',
       isWindows
-        ? ['/c', `${bin} --reuse-window && timeout /t 1 >nul && ${bin} --command workbench.action.terminal.newWithCwd && timeout /t 1 >nul && ${bin} --command workbench.action.terminal.sendSequence --args "{\\"text\\":\\"${command.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}\\\\n\\"}" 2>nul || start "" "${scriptPath}"`]
-        : ['-c', `${bin} --reuse-window && sleep 0.5 && ${bin} --command workbench.action.terminal.sendSequence '{"text":"${command.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}\\n"}' 2>/dev/null || open "${scriptPath}"`],
+        ? ['/c', `"${bin}" --reuse-window && timeout /t 1 >nul && "${bin}" --command workbench.action.terminal.newWithCwd && timeout /t 1 >nul && "${bin}" --command workbench.action.terminal.sendSequence --args "{\\"text\\":\\"${safeText.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}\\\\n\\"}" 2>nul || start "" "${scriptPath}"`]
+        : ['-c', `${bin} --reuse-window && sleep 0.5 && ${bin} --command workbench.action.terminal.sendSequence '{"text":"${safeText}\\n"}' 2>/dev/null || open "${scriptPath}"`],
       {
         detached: true,
         stdio: 'ignore',

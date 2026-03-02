@@ -10,46 +10,65 @@ import {
   stateExport,
   type PersistenceConfig,
 } from '../state-export';
+import { assertPassphrase, assertSafePath } from './validate';
 
 export function registerStateExportHandlers(): void {
   // ── Export ─────────────────────────────────────────────────────────
 
+  // Crypto Sprint 8 (CRITICAL): Validate passphrase length + output path.
   ipcMain.handle(
     'persistence:export-state',
-    (_event, passphrase: string, outputPath?: string) => {
-      return stateExport.exportState(passphrase, outputPath);
+    (_event, passphrase: unknown, outputPath?: unknown) => {
+      assertPassphrase(passphrase, 'persistence:export-state passphrase');
+      if (outputPath !== undefined && outputPath !== null) {
+        assertSafePath(outputPath, 'persistence:export-state outputPath');
+      }
+      return stateExport.exportState(passphrase as string, outputPath as string | undefined);
     },
   );
 
+  // Crypto Sprint 8 (CRITICAL): Validate passphrase length + output path.
   ipcMain.handle(
     'persistence:export-incremental',
-    (_event, passphrase: string, outputPath?: string) => {
-      return stateExport.exportIncremental(passphrase, outputPath);
+    (_event, passphrase: unknown, outputPath?: unknown) => {
+      assertPassphrase(passphrase, 'persistence:export-incremental passphrase');
+      if (outputPath !== undefined && outputPath !== null) {
+        assertSafePath(outputPath, 'persistence:export-incremental outputPath');
+      }
+      return stateExport.exportIncremental(passphrase as string, outputPath as string | undefined);
     },
   );
 
   // ── Import ────────────────────────────────────────────────────────
 
+  // Crypto Sprint 8 (CRITICAL): Validate archive path + passphrase.
   ipcMain.handle(
     'persistence:import-state',
-    (_event, archivePath: string, passphrase: string) => {
-      return stateExport.importState(archivePath, passphrase);
+    (_event, archivePath: unknown, passphrase: unknown) => {
+      assertSafePath(archivePath, 'persistence:import-state archivePath');
+      assertPassphrase(passphrase, 'persistence:import-state passphrase');
+      return stateExport.importState(archivePath as string, passphrase as string);
     },
   );
 
+  // Crypto Sprint 8 (CRITICAL): Validate archive path + passphrase.
   ipcMain.handle(
     'persistence:validate-archive',
-    (_event, archivePath: string, passphrase: string) => {
-      return stateExport.validateArchive(archivePath, passphrase);
+    (_event, archivePath: unknown, passphrase: unknown) => {
+      assertSafePath(archivePath, 'persistence:validate-archive archivePath');
+      assertPassphrase(passphrase, 'persistence:validate-archive passphrase');
+      return stateExport.validateArchive(archivePath as string, passphrase as string);
     },
   );
 
   // ── Scheduled Backup ──────────────────────────────────────────────
 
+  // Crypto Sprint 8 (HIGH): Validate passphrase length.
   ipcMain.handle(
     'persistence:set-auto-passphrase',
-    (_event, passphrase: string) => {
-      return stateExport.setAutoBackupPassphrase(passphrase);
+    (_event, passphrase: unknown) => {
+      assertPassphrase(passphrase, 'persistence:set-auto-passphrase passphrase');
+      return stateExport.setAutoBackupPassphrase(passphrase as string);
     },
   );
 

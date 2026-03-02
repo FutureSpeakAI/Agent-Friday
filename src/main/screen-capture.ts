@@ -38,7 +38,8 @@ class ScreenCaptureManager {
           }
         }
       } catch (err) {
-        console.warn('[ScreenCapture] Capture error:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.warn('[ScreenCapture] Capture error:', err instanceof Error ? err.message : 'Unknown error');
       }
     }, this.captureIntervalMs);
 

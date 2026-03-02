@@ -373,8 +373,9 @@ Rules:
       if (parsed.moodSummary) {
         this.state.averageMood = parsed.moodSummary;
       }
+    // Crypto Sprint 17: Sanitize error output.
     } catch (err) {
-      console.warn('[RelationshipMemory] Claude analysis failed:', err);
+      console.warn('[RelationshipMemory] Claude analysis failed:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 

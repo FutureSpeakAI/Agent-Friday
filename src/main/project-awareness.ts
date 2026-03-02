@@ -13,15 +13,12 @@
 import { BrowserWindow } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
-import { exec } from 'child_process';
+// Crypto Sprint 14: execFile (no shell) prevents command injection via project paths.
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getSanitizedEnv } from './settings';
 
-const _execPromise = promisify(exec);
-/** Wrapper that strips API keys from child process environment */
-function execAsync(command: string, options?: { cwd?: string; timeout?: number; maxBuffer?: number }) {
-  return _execPromise(command, { encoding: 'utf-8', ...options, env: getSanitizedEnv() as NodeJS.ProcessEnv });
-}
+const execFileAsync = promisify(execFile);
 
 export interface ProjectProfile {
   id: string;
@@ -197,7 +194,8 @@ class ProjectAwareness {
         if (fileNames.includes(f)) keyFiles.push(f);
       }
     } catch (err) {
-      console.warn(`[ProjectAwareness] Failed to read directory: ${normalized}`, err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn(`[ProjectAwareness] Failed to read directory: ${normalized}`, err instanceof Error ? err.message : 'Unknown error');
     }
 
     // Git info
@@ -206,13 +204,15 @@ class ProjectAwareness {
     const recentChanges: string[] = [];
 
     try {
-      const { stdout: branch } = await execAsync('git rev-parse --abbrev-ref HEAD', {
-        cwd: normalized,
+      // Crypto Sprint 14: execFile with array args — project paths can't inject shell commands.
+      const gitEnv = getSanitizedEnv() as NodeJS.ProcessEnv;
+      const { stdout: branch } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: normalized, encoding: 'utf-8', env: gitEnv,
       });
       gitBranch = branch.trim();
 
-      const { stdout: status } = await execAsync('git status --short', {
-        cwd: normalized,
+      const { stdout: status } = await execFileAsync('git', ['status', '--short'], {
+        cwd: normalized, encoding: 'utf-8', env: gitEnv,
       });
       const statusLines = status.trim().split('\n').filter(Boolean);
       gitStatus = statusLines.length === 0
@@ -220,9 +220,9 @@ class ProjectAwareness {
         : `${statusLines.length} changed files`;
 
       // Recent commits
-      const { stdout: log } = await execAsync(
-        'git log --oneline -5 --format="%h %s"',
-        { cwd: normalized }
+      const { stdout: log } = await execFileAsync(
+        'git', ['log', '--oneline', '-5', '--format=%h %s'],
+        { cwd: normalized, encoding: 'utf-8', env: gitEnv }
       );
       recentChanges.push(
         ...log

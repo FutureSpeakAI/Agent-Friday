@@ -248,6 +248,33 @@ class TrustGraph {
     console.log(`[TrustGraph] Initialized with ${this.persons.length} persons`);
   }
 
+  /**
+   * Re-read trust graph from disk after the vault is unlocked.
+   *
+   * During two-phase boot, the trust graph is first loaded in Phase A
+   * (vault locked), which means encrypted files fall back to empty data.
+   * This method is called in Phase B to re-read the now-decryptable graph.
+   */
+  async reloadFromVault(): Promise<void> {
+    if (!this.filePath) return; // Not initialized yet
+
+    try {
+      const { vaultRead } = getVault();
+      const data = await vaultRead(this.filePath);
+      const saved = JSON.parse(data);
+      this.persons = saved.persons || [];
+      if (saved.config) {
+        this.config = { ...DEFAULT_CONFIG, ...saved.config };
+      }
+      this.applyDecay();
+      this.pruneEvidence();
+      console.log(`[TrustGraph] Reloaded from vault (${this.persons.length} persons)`);
+    } catch {
+      // File doesn't exist or is still plaintext defaults — keep current data
+      console.log('[TrustGraph] No encrypted trust graph to reload (using current values)');
+    }
+  }
+
   /* ── Person Resolution (Hermeneutic) ── */
 
   /**
@@ -971,7 +998,8 @@ class TrustGraph {
         );
       })
       .catch((err) => {
-        console.error('[TrustGraph] Save failed:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.error('[TrustGraph] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       });
   }
 

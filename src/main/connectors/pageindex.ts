@@ -73,7 +73,8 @@ function loadIndex(docName: string): PageIndexTree | null {
     const data = fs.readFileSync(indexPath, 'utf-8');
     return JSON.parse(data) as PageIndexTree;
   } catch (err) {
-    console.warn(`[PageIndex] Failed to load index for ${docName}:`, err);
+    // Crypto Sprint 17: Sanitize error output.
+    console.warn(`[PageIndex] Failed to load index for ${docName}:`, err instanceof Error ? err.message : 'Unknown error');
     return null;
   }
 }

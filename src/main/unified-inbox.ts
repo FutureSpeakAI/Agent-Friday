@@ -957,7 +957,8 @@ class UnifiedInbox {
         );
       })
       .catch((err) => {
-        console.error('[UnifiedInbox] Save failed:', err);
+        // Crypto Sprint 17: Sanitize error output.
+        console.error('[UnifiedInbox] Save failed:', err instanceof Error ? err.message : 'Unknown error');
       });
   }
 

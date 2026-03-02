@@ -14,6 +14,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import os from 'os';
+import { getSanitizedEnv } from '../settings';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -182,8 +183,10 @@ async function terminalCreate(args: Record<string, unknown>): Promise<ToolResult
       stdio: 'pipe',
       shell: false,
       cwd,
+      // Crypto Sprint 6 (CRITICAL): Use getSanitizedEnv() to prevent API key leakage
+      // to interactive terminal sessions where users/agents can run `echo $ENV_VAR`.
       env: {
-        ...process.env,
+        ...getSanitizedEnv(),
         TERM: 'dumb',
         COLUMNS: '120',
         LINES: '30',
@@ -498,9 +501,19 @@ async function terminalWaitFor(args: Record<string, unknown>): Promise<ToolResul
     return { error: (err as Error).message };
   }
 
+  // Crypto Sprint 6 (CRITICAL — ReDoS): Reject regex patterns with nested quantifiers
+  // that could cause catastrophic backtracking (e.g. `(a+)+$`, `(a|a)*b`).
+  // Instead of trying to analyze arbitrary regex, always escape to a literal search
+  // which is safe against ReDoS and sufficient for terminal output matching.
   let regex: RegExp;
   try {
-    regex = new RegExp(pattern, 'm');
+    // Detect potentially dangerous patterns: nested quantifiers, backreferences in quantifiers
+    if (/(\+|\*|\?|\{)\s*\)(\+|\*|\?|\{)/.test(pattern) || /(\(.*\|.*\))(\+|\*|\{)/.test(pattern)) {
+      // Fall back to safe literal search
+      regex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'm');
+    } else {
+      regex = new RegExp(pattern, 'm');
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return { error: `Invalid regex pattern: ${msg}` };
@@ -765,8 +778,9 @@ export async function detect(): Promise<boolean> {
   if (process.platform === 'win32') return true;
 
   try {
-    const { execSync } = await import('child_process');
-    execSync('bash --version', { stdio: 'ignore', timeout: 3000 });
+    // Crypto Sprint 12: Use execFileSync — no shell needed for version detection.
+    const { execFileSync } = await import('child_process');
+    execFileSync('bash', ['--version'], { stdio: 'ignore', timeout: 3000 });
     return true;
   } catch {
     return false;

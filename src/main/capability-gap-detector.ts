@@ -575,7 +575,29 @@ export class CapabilityGapDetector {
       }
     }
 
+    // Crypto Sprint 7 (HIGH): Remove terminal-state proposals to prevent unbounded growth.
+    // Only keep active proposals + a bounded number of recent terminal ones for history.
+    this.enforceProposalLimit();
+
     return { gapsPruned, proposalsExpired };
+  }
+
+  /**
+   * Crypto Sprint 7 (HIGH): Enforce proposal limit by removing old terminal-state proposals.
+   * Active proposals (pending, presented) are always kept. Terminal ones (expired, declined,
+   * installed) are trimmed to the most recent entries when the total exceeds the cap.
+   */
+  private enforceProposalLimit(): void {
+    const maxProposals = this.config.maxGaps * 2; // 400 (2× gap limit)
+    if (this.proposals.length <= maxProposals) return;
+
+    const terminal = new Set(['expired', 'declined', 'installed']);
+    const active = this.proposals.filter(p => !terminal.has(p.status));
+    const old = this.proposals.filter(p => terminal.has(p.status));
+
+    // Keep all active + most recent terminal entries up to the cap
+    const terminalBudget = Math.max(0, maxProposals - active.length);
+    this.proposals = active.concat(old.slice(-terminalBudget));
   }
 
   /**

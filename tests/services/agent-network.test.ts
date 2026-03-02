@@ -97,6 +97,12 @@ function deriveTestSharedSecret(ourExPrivB64: string, theirExPubB64: string): st
   return crypto.diffieHellman({ privateKey: priv, publicKey: pub }).toString('hex');
 }
 
+/** Crypto Sprint 2: Mirrors computeHkdfSalt() in agent-network.ts */
+function computeTestHkdfSalt(ourExPubB64: string, theirExPubB64: string): string {
+  const keys = [ourExPubB64, theirExPubB64].sort();
+  return crypto.createHash('sha256').update(keys.join('|')).digest('hex');
+}
+
 function makePeer(
   keys: ReturnType<typeof generateTestKeys>,
   overrides: Partial<PairedAgent> = {},
@@ -342,7 +348,12 @@ describe('AgentNetwork Class', () => {
       remoteKeys.exchangePrivateKey,
       networkIdentity.exchangePublicKey,
     );
-    return { remoteKeys, remoteIdentity, peer: peer!, sharedSecret, networkIdentity };
+    // Crypto Sprint 2: Both sides compute the same deterministic HKDF salt
+    const hkdfSalt = computeTestHkdfSalt(
+      networkIdentity.exchangePublicKey,
+      remoteIdentity.exchangePublicKey,
+    );
+    return { remoteKeys, remoteIdentity, peer: peer!, sharedSecret, hkdfSalt, networkIdentity };
   }
 
   // ── Initialization ───────────────────────────────────────────────
@@ -420,10 +431,10 @@ describe('AgentNetwork Class', () => {
       expect(offer!.identity).toEqual(network.getIdentity());
     });
 
-    it('pairing code is 6 characters from the safe charset', () => {
+    it('pairing code is 8 characters from the safe charset', () => {
       const offer = network.generatePairingOffer()!;
-      expect(offer.code).toHaveLength(6);
-      expect(offer.code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
+      expect(offer.code).toHaveLength(8);
+      expect(offer.code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
     });
 
     it('pairing code has expiry in the future', () => {
@@ -1101,9 +1112,9 @@ describe('AgentNetwork Class', () => {
 
   describe('End-to-End Messaging', () => {
     it('full cycle: send encrypted → receive → decrypt → verify', () => {
-      const { remoteKeys, sharedSecret, networkIdentity, remoteIdentity } = pairRemoteAgent();
+      const { remoteKeys, sharedSecret, hkdfSalt, networkIdentity, remoteIdentity } = pairRemoteAgent();
 
-      // Remote creates and encrypts a message to us
+      // Remote creates and encrypts a message to us (with HKDF salt — Crypto Sprint 2)
       let inbound = createSignedMessage(
         remoteKeys.agentId,
         networkIdentity.agentId,
@@ -1111,7 +1122,7 @@ describe('AgentNetwork Class', () => {
         { result: 'quantum computing summary', confidence: 0.95 },
         remoteKeys.signingPrivateKey,
       );
-      inbound = encryptMessage(inbound, sharedSecret);
+      inbound = encryptMessage(inbound, sharedSecret, hkdfSalt);
 
       // We process it
       const processed = network.processInboundMessage(inbound);
@@ -1124,19 +1135,19 @@ describe('AgentNetwork Class', () => {
       expect(reply).not.toBeNull();
       expect(reply!.encrypted).toBe(true);
 
-      // Remote decrypts our reply
-      const decrypted = decryptMessage(reply!, sharedSecret);
+      // Remote decrypts our reply (with HKDF salt — Crypto Sprint 2)
+      const decrypted = decryptMessage(reply!, sharedSecret, hkdfSalt);
       expect(decrypted.payload).toEqual({ ack: true });
     });
 
     it('tampered encrypted message is rejected', () => {
-      const { remoteKeys, sharedSecret, networkIdentity } = pairRemoteAgent();
+      const { remoteKeys, sharedSecret, hkdfSalt, networkIdentity } = pairRemoteAgent();
 
       let msg = createSignedMessage(
         remoteKeys.agentId, networkIdentity.agentId, 'ping', { x: 1 },
         remoteKeys.signingPrivateKey,
       );
-      msg = encryptMessage(msg, sharedSecret);
+      msg = encryptMessage(msg, sharedSecret, hkdfSalt);
 
       // Tamper with the encrypted data
       (msg.payload as any)._encrypted = 'tampered-base64-data';

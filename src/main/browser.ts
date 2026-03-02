@@ -231,7 +231,8 @@ class BrowserManager {
       await client.detach();
       return 'Browser minimized.';
     } catch (err) {
-      console.warn('[Browser] Minimize failed, trying fallback:', err);
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[Browser] Minimize failed, trying fallback:', err instanceof Error ? err.message : 'Unknown error');
       // Fallback: move the window off-screen
       try {
         const pages = await this.browser.pages();

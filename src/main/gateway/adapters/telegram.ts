@@ -46,7 +46,8 @@ class TelegramAdapter implements ChannelAdapter {
     this.polling = true;
     // Fire-and-forget the poll loop — it runs until stop() is called
     this.pollLoop().catch((err) => {
-      console.error('[Telegram] Poll loop crashed:', err);
+      // Crypto Sprint 16: Sanitize — Telegram errors may contain bot token.
+      console.error('[Telegram] Poll loop crashed:', err instanceof Error ? err.message : 'Unknown error');
       this.polling = false;
     });
   }
@@ -154,7 +155,8 @@ class TelegramAdapter implements ChannelAdapter {
           try {
             this.onMessage?.(gatewayMsg);
           } catch (err) {
-            console.error('[Telegram] onMessage handler error:', err);
+            // Crypto Sprint 16: Sanitize error output.
+            console.error('[Telegram] onMessage handler error:', err instanceof Error ? err.message : 'Unknown error');
           }
         }
       } catch (err: any) {

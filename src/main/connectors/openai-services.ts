@@ -156,7 +156,9 @@ async function generateImageNanoBanana(
 
   return new Promise((resolve) => {
     const postData = JSON.stringify(requestBody);
-    const apiPath = `/v1beta/models/${NANO_BANANA_MODEL}:generateContent?key=${apiKey}`;
+    // Crypto Sprint 3 (HIGH-001): API key moved from URL query parameter to header.
+    // Query-string keys leak into server logs, proxy logs, and Referer headers.
+    const apiPath = `/v1beta/models/${NANO_BANANA_MODEL}:generateContent`;
 
     const options: https.RequestOptions = {
       hostname: GEMINI_API_HOST,
@@ -166,6 +168,7 @@ async function generateImageNanoBanana(
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(postData),
+        'x-goog-api-key': apiKey,
       },
       timeout: REQUEST_TIMEOUT_MS,
     };

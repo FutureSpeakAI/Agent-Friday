@@ -114,7 +114,8 @@ class SemanticSearchEngine {
           });
         }
       } catch (err) {
-        console.warn(`[SemanticSearch] Bulk embedding batch failed:`, err);
+        // Crypto Sprint 16: Sanitize — Gemini API errors may contain URL with API key.
+        console.warn(`[SemanticSearch] Bulk embedding batch failed:`, err instanceof Error ? err.message : 'Unknown error');
       }
     }
 
@@ -152,7 +153,8 @@ class SemanticSearchEngine {
       queryEmbedding = embeddings[0];
       if (!queryEmbedding || queryEmbedding.length === 0) return [];
     } catch (err) {
-      console.warn('[SemanticSearch] Query embedding failed:', err);
+      // Crypto Sprint 16: Sanitize — Gemini API errors may contain URL with API key.
+      console.warn('[SemanticSearch] Query embedding failed:', err instanceof Error ? err.message : 'Unknown error');
       return [];
     }
 
@@ -233,7 +235,8 @@ class SemanticSearchEngine {
       await this.save();
       console.log(`[SemanticSearch] Indexed ${batch.length} entries`);
     } catch (err) {
-      console.warn('[SemanticSearch] Batch embedding failed:', err);
+      // Crypto Sprint 16: Sanitize — Gemini API errors may contain URL with API key.
+      console.warn('[SemanticSearch] Batch embedding failed:', err instanceof Error ? err.message : 'Unknown error');
       // Put items back for retry
       this.pendingBatch.push(...batch);
     }

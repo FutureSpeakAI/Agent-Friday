@@ -109,7 +109,12 @@ const TRUST_POLICIES: Record<TrustTier, TrustPolicy> = {
 
 // ── Pairing Code Config ──────────────────────────────────────────────
 
-const PAIRING_CODE_LENGTH = 6;
+/**
+ * cLaw Security Fix (LOW-003): Increased from 6 to 8 characters.
+ * 6 chars × log2(32) = ~25 bits — brute-forceable in minutes.
+ * 8 chars × log2(32) = ~40 bits — requires billions of attempts.
+ */
+const PAIRING_CODE_LENGTH = 8;
 const PAIRING_CODE_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
 
@@ -127,8 +132,11 @@ class TrustEngine {
   private pendingPairings: Map<string, PendingPairing> = new Map();
   private rateLimits: Map<string, RateLimitEntry> = new Map();
   private ownerIds: Map<string, string> = new Map(); // channel → ownerId
+  private rateLimitSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   async initialize(): Promise<void> {
+    // Crypto Sprint 7 (CRITICAL): Periodic sweep of stale rateLimits entries
+    this.rateLimitSweepTimer = setInterval(() => this.sweepRateLimits(), 60_000);
     const gatewayDir = path.join(app.getPath('userData'), 'gateway');
     await fs.mkdir(gatewayDir, { recursive: true });
     this.identitiesPath = path.join(gatewayDir, 'identities.json');
@@ -178,8 +186,9 @@ class TrustEngine {
 
       return 'public';
     } catch (err) {
+      // Crypto Sprint 17: Sanitize error output.
       // cLaw: fail CLOSED — most restrictive tier on any error
-      console.error('[TrustEngine/cLaw] resolveTrust failed, defaulting to public (most restrictive):', err);
+      console.error('[TrustEngine/cLaw] resolveTrust failed, defaulting to public (most restrictive):', err instanceof Error ? err.message : 'Unknown error');
       return 'public';
     }
   }
@@ -219,11 +228,35 @@ class TrustEngine {
   }
 
   /**
+   * Crypto Sprint 7 (CRITICAL): Sweep stale entries from the rateLimits map.
+   * Entries with no recent timestamps are deleted to prevent unbounded growth
+   * from unique sender IDs flooding the gateway.
+   */
+  private sweepRateLimits(): void {
+    const now = Date.now();
+    const staleThresholdMs = 300_000; // 5 minutes
+    for (const [key, entry] of this.rateLimits) {
+      const newest = entry.timestamps.length > 0
+        ? Math.max(...entry.timestamps)
+        : 0;
+      if (now - newest > staleThresholdMs) {
+        this.rateLimits.delete(key);
+      }
+    }
+  }
+
+  /**
    * Check rate limiting for a sender. Returns true if allowed, false if rate-limited.
    */
   checkRateLimit(senderId: string, policy: TrustPolicy): boolean {
     const now = Date.now();
     const windowMs = 60_000; // 1 minute window
+
+    // Crypto Sprint 7 (CRITICAL): Hard cap — reject if map is too large (DoS protection)
+    if (!this.rateLimits.has(senderId) && this.rateLimits.size >= 10_000) {
+      console.warn('[TrustEngine] Rate limit map at capacity (10k entries) — rejecting new sender');
+      return false;
+    }
 
     let entry = this.rateLimits.get(senderId);
     if (!entry) {
@@ -387,7 +420,8 @@ class TrustEngine {
         JSON.stringify(this.identities, null, 2),
       );
     } catch (err) {
-      console.warn('[TrustEngine] Failed to save identities:', err);
+      // Crypto Sprint 16: Sanitize — trust engine errors may contain crypto material.
+      console.warn('[TrustEngine] Failed to save identities:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 }

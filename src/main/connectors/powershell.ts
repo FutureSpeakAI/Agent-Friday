@@ -13,7 +13,8 @@
  *  - Errors are returned as { error: "..." }, never thrown.
  */
 
-import { execSync, spawn } from 'child_process';
+// Crypto Sprint 14: Replaced execSync with execFileSync (no shell) in detect().
+import { execFileSync, spawn } from 'child_process';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -818,7 +819,8 @@ export async function execute(
  */
 export async function detect(): Promise<boolean> {
   try {
-    execSync('powershell.exe -NoProfile -NonInteractive -Command "echo ok"', {
+    // Crypto Sprint 14: execFileSync with array args — no shell interpolation.
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'echo ok'], {
       timeout: 5000,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],

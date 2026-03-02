@@ -1,378 +1,237 @@
 /**
- * Sovereign Vault — At-rest encryption for all agent state files.
+ * Sovereign Vault v2 — Passphrase-Only Root of Trust
  *
- * Provides AES-256-GCM encryption of every sensitive file on disk:
+ * At-rest encryption for all agent state files using AES-256-GCM.
+ * The entire key hierarchy derives from a user-chosen passphrase —
+ * no OS credential store, no machine binding, no recovery backdoor.
+ *
+ * Key hierarchy:
+ *   Passphrase (≥8 words, never stored)
+ *     + salt (16 bytes, .vault-salt)
+ *     ▼ Argon2id (opslimit=4, memlimit=256MB)
+ *     masterKey (32 bytes, destroyed after ~100ms)
+ *     ├─ vaultKey    (AES-256-GCM for all vault files)
+ *     ├─ hmacKey     (HMAC-SHA256 integrity signing)
+ *     └─ identityKey (wraps Ed25519/X25519 private keys)
+ *
+ * Files encrypted:
  *   - Agent identity & private keys (agent-network.json)
  *   - Memory stores (shortTerm/mediumTerm/longTerm.json)
  *   - Settings & API keys (friday-settings.json)
  *   - Trust graph (trust-graph.json)
  *   - Gateway identities (gateway/identities.json)
  *
- * Key derivation:
- *   vaultKey = scrypt(Ed25519PrivateKey + machineId, salt, N=2^20)
- *
- * On the same machine, the vault auto-unlocks using the agent's Ed25519
- * private key (loaded from agent-network.json) + the machine fingerprint.
- * If migrating to a new machine, a 12-word recovery phrase is required.
- *
- * HMAC stacking: The existing integrity/hmac.ts layer operates on PLAINTEXT
- * before encryption. On read, vault decrypts first, then HMAC verifies.
- * This means both tamper-detection AND encryption protect every file.
- *
  * Cipher format (per-file):
  *   [12-byte IV][16-byte authTag][...ciphertext...]
+ *
+ * HMAC stacking: The integrity/hmac.ts layer operates on PLAINTEXT
+ * before encryption. On read, vault decrypts first, then HMAC verifies.
  */
 
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import { app } from 'electron';
-import { machineId } from 'node-machine-id';
+
+import { SecureBuffer } from './crypto/secure-buffer';
+import {
+  generateSalt,
+  readSalt,
+  writeSalt,
+  deriveAllKeys,
+  createCanary,
+  verifyCanary,
+  isVaultInitialized as checkVaultInitialized,
+  writeVaultMeta,
+  validatePassphrase,
+  secretboxEncrypt,
+  secretboxDecrypt,
+  type DerivedKeys,
+} from './crypto/passphrase-kdf';
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const SCRYPT_N = 2 ** 20;  // ~1 second on modern hardware
-const SCRYPT_R = 8;
-const SCRYPT_P = 1;
-const KEY_LENGTH = 32;       // AES-256
 const IV_LENGTH = 12;        // GCM standard
 const TAG_LENGTH = 16;       // GCM auth tag
-const SALT_FILE = '.vault-salt';
-const VAULT_META_FILE = '.vault-meta.json';
 const ALGORITHM = 'aes-256-gcm';
-
-// BIP-39-style word list (simplified 2048-word subset)
-// Using the official BIP-39 English wordlist first 256 words for compactness
-// A 12-word phrase from 256 words gives 96 bits of entropy — sufficient for recovery
-const WORDLIST = [
-  'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-  'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-  'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
-  'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
-  'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-  'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album',
-  'alcohol', 'alert', 'alien', 'all', 'alley', 'allow', 'almost', 'alone',
-  'alpha', 'already', 'also', 'alter', 'always', 'amateur', 'amazing', 'among',
-  'amount', 'amused', 'analyst', 'anchor', 'ancient', 'anger', 'angle', 'angry',
-  'animal', 'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique',
-  'anxiety', 'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april',
-  'arch', 'arctic', 'area', 'arena', 'argue', 'arm', 'armed', 'armor',
-  'army', 'around', 'arrange', 'arrest', 'arrive', 'arrow', 'art', 'artefact',
-  'artist', 'artwork', 'ask', 'aspect', 'assault', 'asset', 'assist', 'assume',
-  'asthma', 'athlete', 'atom', 'attack', 'attend', 'attitude', 'attract', 'auction',
-  'audit', 'august', 'aunt', 'author', 'auto', 'autumn', 'average', 'avocado',
-  'avoid', 'awake', 'aware', 'awesome', 'awful', 'awkward', 'axis', 'baby',
-  'bachelor', 'bacon', 'badge', 'bag', 'balance', 'balcony', 'ball', 'bamboo',
-  'banana', 'banner', 'bar', 'barely', 'bargain', 'barrel', 'base', 'basic',
-  'basket', 'battle', 'beach', 'bean', 'beauty', 'because', 'become', 'beef',
-  'before', 'begin', 'behave', 'behind', 'believe', 'below', 'belt', 'bench',
-  'benefit', 'best', 'betray', 'better', 'between', 'beyond', 'bicycle', 'bid',
-  'bike', 'bind', 'biology', 'bird', 'birth', 'bitter', 'black', 'blade',
-  'blame', 'blanket', 'blast', 'bleak', 'bless', 'blind', 'blood', 'blossom',
-  'blow', 'blue', 'blur', 'blush', 'board', 'boat', 'body', 'boil',
-  'bomb', 'bone', 'bonus', 'book', 'boost', 'border', 'boring', 'borrow',
-  'boss', 'bottom', 'bounce', 'box', 'boy', 'bracket', 'brain', 'brand',
-  'brass', 'brave', 'bread', 'breeze', 'brick', 'bridge', 'brief', 'bright',
-  'bring', 'brisk', 'broccoli', 'broken', 'bronze', 'broom', 'brother', 'brown',
-  'brush', 'bubble', 'buddy', 'budget', 'buffalo', 'build', 'bulb', 'bulk',
-  'bullet', 'bundle', 'bunny', 'burden', 'burger', 'burst', 'bus', 'business',
-  'busy', 'butter', 'buyer', 'buzz', 'cabbage', 'cabin', 'cable', 'cactus',
-];
 
 // ── State ─────────────────────────────────────────────────────────────
 
-let vaultKey: Buffer | null = null;
-let vaultSalt: Buffer | null = null;
+let vaultKey: SecureBuffer | null = null;
+let hmacKey: SecureBuffer | null = null;
+let identityKey: SecureBuffer | null = null;
 let vaultUnlocked = false;
-let recoveryPhrase: string | null = null; // Only populated during first-time setup
-let recoveryPhraseTimer: ReturnType<typeof setTimeout> | null = null; // Auto-clear safety net
-let machineFingerprint: string = '';
-
-// ── Interfaces ────────────────────────────────────────────────────────
-
-export interface VaultConfig {
-  /** Whether the vault has been initialized (first-run setup completed) */
-  initialized: boolean;
-  /** When the vault was created */
-  createdAt: number;
-  /** Hash of the machine fingerprint used at creation (for migration detection) */
-  machineHash: string;
-  /** Whether recovery phrase was shown to user */
-  recoveryPhraseShown: boolean;
-}
 
 // ── Initialization ────────────────────────────────────────────────────
 
 /**
- * Initialize the Sovereign Vault.
+ * Initialize a new vault on first run.
  *
- * Called AFTER agentNetwork.initialize() so that Ed25519 keys are available.
- * On the same machine: auto-derives vault key from privateKey + machineId.
- * On a new machine: vault stays locked until recoverVault() is called.
+ * 1. Validates the passphrase (≥8 words)
+ * 2. Generates a random salt
+ * 3. Derives all keys via Argon2id + BLAKE2b KDF
+ * 4. Creates canary file (for future passphrase verification)
+ * 5. Writes vault metadata
  *
- * @param signingPrivateKeyBase64 - The agent's Ed25519 private key (base64)
- * @returns The 12-word recovery phrase (only on FIRST initialization, otherwise null)
+ * After this call, the vault is unlocked and all encryption functions work.
+ *
+ * @param passphrase - User-chosen sentence (≥8 words)
+ * @throws if passphrase validation fails or vault already initialized
  */
-export async function initializeVault(signingPrivateKeyBase64: string): Promise<string | null> {
+export async function initializeNewVault(passphrase: string): Promise<void> {
   const t0 = Date.now();
-  console.log('[Vault] Initialization starting...');
+  console.log('[Vault] First-time initialization starting...');
+
   const userDataDir = app.getPath('userData');
-  const saltPath = path.join(userDataDir, SALT_FILE);
-  const metaPath = path.join(userDataDir, VAULT_META_FILE);
 
-  // Get machine fingerprint.
-  //
-  // CRITICAL: machineId() from node-machine-id spawns a child process
-  // (REG QUERY on Windows) to read the MachineGuid from the registry.
-  // On machines with Windows Smart App Control, SmartScreen, or aggressive
-  // antivirus, the child process can be BLOCKED or hang indefinitely.
-  // An unresolved `await machineId()` freezes the entire vault init chain,
-  // causing the recovery-phrase spinner to spin forever.
-  //
-  // Fix: race machineId() against a 5-second timeout. If it fails or times
-  // out, use a deterministic fallback derived from local system properties
-  // (no child processes required).
-  try {
-    machineFingerprint = await Promise.race([
-      machineId({ original: true }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('machineId timed out after 5000ms')), 5000),
-      ),
-    ]);
-    console.log(`[Vault] Machine ID resolved via registry in ${Date.now() - t0}ms`);
-  } catch (midErr) {
-    // Fallback: deterministic fingerprint from local system properties.
-    // This never spawns a child process, so it cannot be blocked by
-    // Windows security policies. The values are stable across reboots
-    // on the same hardware (hostname, platform, arch, CPU model, RAM, homedir).
-    const parts = [
-      os.hostname(),
-      os.platform(),
-      os.arch(),
-      os.cpus()?.[0]?.model || 'unknown-cpu',
-      String(os.totalmem()),
-      os.homedir(),
-    ];
-    machineFingerprint = crypto.createHash('sha256').update(parts.join('|')).digest('hex');
-    console.warn(
-      `[Vault] machineId() failed (${midErr instanceof Error ? midErr.message : midErr}), ` +
-      `using system-property fallback fingerprint (${Date.now() - t0}ms)`,
-    );
+  // Guard: don't re-initialize
+  if (await checkVaultInitialized(userDataDir)) {
+    throw new Error('[Vault] Already initialized — use unlockVault() instead');
   }
 
-  // Check if vault already exists
-  let meta: VaultConfig | null = null;
-  try {
-    const metaRaw = await fs.readFile(metaPath, 'utf-8');
-    meta = JSON.parse(metaRaw);
-  } catch {
-    // No vault yet — first run
+  // Validate passphrase
+  const validationError = validatePassphrase(passphrase);
+  if (validationError) {
+    throw new Error(`[Vault] ${validationError}`);
   }
 
-  if (meta?.initialized) {
-    // Existing vault — try auto-unlock with same machine
-    const currentMachineHash = hashString(machineFingerprint);
+  // Generate and store salt
+  const salt = generateSalt();
+  await writeSalt(userDataDir, salt);
 
-    if (currentMachineHash === meta.machineHash) {
-      // Same machine — auto-unlock
-      try {
-        vaultSalt = await fs.readFile(saltPath);
-        vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
-        vaultUnlocked = true;
+  // Derive all keys (Argon2id + BLAKE2b KDF)
+  const keys = deriveAllKeys(passphrase, salt);
+  setKeys(keys);
 
-        // EDGE CASE: Vault initialized on a previous launch but the user never
-        // saw the recovery phrase (e.g., app was killed before the keyphrase
-        // screen finished, or the UI failed to display it). Generate a new
-        // recovery phrase so the keyphrase gate can complete.
-        if (!meta.recoveryPhraseShown) {
-          recoveryPhrase = generateRecoveryPhrase();
-          recoveryPhraseTimer = setTimeout(() => {
-            if (recoveryPhrase) {
-              console.warn('[Vault] Auto-clearing recovery phrase from memory (10-minute safety timeout)');
-              recoveryPhrase = null;
-              recoveryPhraseTimer = null;
-            }
-          }, 10 * 60 * 1000);
-          console.log(`[Vault] Auto-unlocked + regenerated recovery phrase (never shown) in ${Date.now() - t0}ms`);
-          return recoveryPhrase;
-        }
+  // Create canary for future passphrase verification
+  await createCanary(keys.vaultKey, userDataDir);
 
-        console.log(`[Vault] Auto-unlocked (same machine) in ${Date.now() - t0}ms`);
-        return null;
-      } catch (err) {
-        console.error('[Vault] Auto-unlock failed:', err);
-        // Vault stays locked — user needs recovery phrase
-        return null;
-      }
-    } else {
-      // Different machine — vault stays locked
-      console.warn('[Vault] Machine mismatch — vault locked. Recovery phrase required.');
-      try {
-        vaultSalt = await fs.readFile(saltPath);
-      } catch {
-        // Salt missing on new machine — critical error
-        console.error('[Vault] Salt file missing — vault unrecoverable without fresh setup');
-      }
-      return null;
-    }
-  }
-
-  // ── First-time initialization ──────────────────────────────────────
-
-  // Generate salt
-  vaultSalt = crypto.randomBytes(32);
-  await fs.writeFile(saltPath, vaultSalt);
-
-  // Derive vault key
-  vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
-  vaultUnlocked = true;
-
-  // Generate 12-word recovery phrase
-  recoveryPhrase = generateRecoveryPhrase();
-
-  // Safety net: auto-clear recovery phrase from memory after 10 minutes
-  // even if the renderer never calls clearRecoveryPhrase()
-  recoveryPhraseTimer = setTimeout(() => {
-    if (recoveryPhrase) {
-      console.warn('[Vault] Auto-clearing recovery phrase from memory (10-minute safety timeout)');
-      recoveryPhrase = null;
-      recoveryPhraseTimer = null;
-    }
-  }, 10 * 60 * 1000);
-
-  // Save vault metadata
-  const vaultMeta: VaultConfig = {
-    initialized: true,
-    createdAt: Date.now(),
-    machineHash: hashString(machineFingerprint),
-    recoveryPhraseShown: false,
-  };
-  await fs.writeFile(metaPath, JSON.stringify(vaultMeta, null, 2));
+  // Write vault metadata
+  await writeVaultMeta(userDataDir);
 
   console.log(`[Vault] First-time initialization complete in ${Date.now() - t0}ms`);
-  return recoveryPhrase;
 }
 
 /**
- * Unlock the vault on a new machine using the 12-word recovery phrase.
+ * Unlock an existing vault with the user's passphrase.
  *
- * The recovery phrase is used as an alternative key-derivation input
- * (replacing machineFingerprint) to decrypt the vault, then re-keys
- * the vault with the new machine's fingerprint.
+ * 1. Reads stored salt
+ * 2. Derives keys via Argon2id + BLAKE2b KDF
+ * 3. Verifies canary (wrong passphrase → false, no data exposed)
+ *
+ * @param passphrase - The user's passphrase sentence
+ * @returns true if unlock succeeded, false if wrong passphrase
  */
-export async function recoverVault(
-  signingPrivateKeyBase64: string,
-  phrase: string,
-): Promise<boolean> {
-  if (!vaultSalt) {
-    console.error('[Vault] Cannot recover — no salt loaded');
+export async function unlockVault(passphrase: string): Promise<boolean> {
+  const t0 = Date.now();
+  console.log('[Vault] Unlock starting...');
+
+  const userDataDir = app.getPath('userData');
+
+  // Read stored salt
+  const salt = await readSalt(userDataDir);
+  if (!salt) {
+    console.error('[Vault] No salt file found — vault not initialized');
     return false;
   }
 
-  const userDataDir = app.getPath('userData');
-  const metaPath = path.join(userDataDir, VAULT_META_FILE);
+  // Derive keys
+  const keys = deriveAllKeys(passphrase, salt);
 
-  // Try to derive key using recovery phrase instead of machine fingerprint
-  const candidateKey = await deriveVaultKey(signingPrivateKeyBase64, phrase.trim().toLowerCase(), vaultSalt);
-
-  // Attempt to decrypt a known file to verify the key works
-  // Try the agent-network.json as our canary file
-  const canaryPath = path.join(userDataDir, 'friday-data', 'agent-network.json');
-  try {
-    const encrypted = await fs.readFile(canaryPath);
-
-    // If file is plaintext JSON, it hasn't been encrypted yet — accept the key
-    try {
-      JSON.parse(encrypted.toString('utf-8'));
-      // File is plaintext — recovery phrase is accepted, re-key with new machine
-    } catch {
-      // File is encrypted — try to decrypt with candidate key
-      const decrypted = vaultDecryptWithKey(encrypted, candidateKey);
-      if (!decrypted) {
-        console.error('[Vault] Recovery failed — wrong phrase');
-        return false;
-      }
-    }
-  } catch {
-    // Canary file doesn't exist — accept the key (empty vault)
+  // Verify canary
+  const canaryOk = await verifyCanary(keys.vaultKey, userDataDir);
+  if (!canaryOk) {
+    console.warn(`[Vault] Canary verification failed — wrong passphrase (${Date.now() - t0}ms)`);
+    // Destroy the incorrectly-derived keys
+    keys.vaultKey.destroy();
+    keys.hmacKey.destroy();
+    keys.identityKey.destroy();
+    return false;
   }
 
-  // Recovery successful — re-key vault with new machine fingerprint
-  vaultKey = await deriveVaultKey(signingPrivateKeyBase64, machineFingerprint, vaultSalt);
-  vaultUnlocked = true;
+  // Success — store keys in module state
+  setKeys(keys);
 
-  // Update vault metadata with new machine hash
-  try {
-    const metaRaw = await fs.readFile(metaPath, 'utf-8');
-    const meta: VaultConfig = JSON.parse(metaRaw);
-    meta.machineHash = hashString(machineFingerprint);
-    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
-  } catch {
-    // If meta is missing, create fresh
-    const newMeta: VaultConfig = {
-      initialized: true,
-      createdAt: Date.now(),
-      machineHash: hashString(machineFingerprint),
-      recoveryPhraseShown: true,
-    };
-    await fs.writeFile(metaPath, JSON.stringify(newMeta, null, 2));
-  }
-
-  console.log('[Vault] Recovery successful — vault re-keyed for new machine');
+  console.log(`[Vault] Unlocked successfully in ${Date.now() - t0}ms`);
   return true;
 }
 
-// ── Key Derivation ────────────────────────────────────────────────────
-
 /**
- * Derive the AES-256 vault key using scrypt (async).
+ * Borrow the identity key for a short-lived operation.
  *
- * Input material: Ed25519 private key bytes + binding factor (machineId or recovery phrase)
- * This ensures:
- *   1. The vault is bound to this specific agent identity
- *   2. The vault is bound to this specific machine (or recovery phrase for migration)
- *   3. The key derivation is computationally expensive (scrypt N=2^20)
+ * The identity key wraps/unwraps Ed25519 and X25519 private keys.
+ * It spends most of its life in NOACCESS state; this function
+ * temporarily unlocks it for the callback, then re-locks.
  *
- * CRITICAL: Uses async crypto.scrypt() — NOT scryptSync() — to avoid blocking
- * the Node.js event loop. scrypt with N=2^20 takes 5-30 seconds on first launch;
- * the sync variant freezes the entire UI during that time.
+ * @param fn - Callback receiving the identityKey SecureBuffer
+ * @returns The callback's return value
  */
-async function deriveVaultKey(privateKeyBase64: string, bindingFactor: string, salt: Buffer): Promise<Buffer> {
-  const keyMaterial = Buffer.concat([
-    Buffer.from(privateKeyBase64, 'base64'),
-    Buffer.from(bindingFactor, 'utf-8'),
-  ]);
-
-  const t0 = Date.now();
-  return new Promise<Buffer>((resolve, reject) => {
-    crypto.scrypt(keyMaterial, salt, KEY_LENGTH, {
-      N: SCRYPT_N,
-      r: SCRYPT_R,
-      p: SCRYPT_P,
-    }, (err, derivedKey) => {
-      console.log(`[Vault] scrypt key derivation completed in ${Date.now() - t0}ms`);
-      if (err) reject(err);
-      else resolve(derivedKey);
-    });
+export async function withIdentityKey<T>(fn: (key: SecureBuffer) => T | Promise<T>): Promise<T> {
+  if (!identityKey || !vaultUnlocked) {
+    throw new Error('[Vault] Not unlocked — cannot access identity key');
+  }
+  // The SecureBuffer.withAccessAsync handles unlock→callback→re-lock
+  return identityKey.withAccessAsync('readonly', async (buf) => {
+    // Create a temporary readonly view for the callback
+    // The callback receives the whole SecureBuffer so it can use secretboxEncrypt/Decrypt
+    return fn(identityKey!);
   });
 }
 
-// ── Encryption / Decryption ───────────────────────────────────────────
+/**
+ * Get the HMAC signing key (for injection into hmac.ts).
+ * Returns null if vault is not unlocked.
+ */
+export function getHmacKey(): SecureBuffer | null {
+  return hmacKey;
+}
+
+/**
+ * Destroy all key material on shutdown.
+ * Must be called in the app's shutdown handler.
+ */
+export function destroyVault(): void {
+  if (vaultKey) { vaultKey.destroy(); vaultKey = null; }
+  if (hmacKey) { hmacKey.destroy(); hmacKey = null; }
+  if (identityKey) { identityKey.destroy(); identityKey = null; }
+  vaultUnlocked = false;
+  console.log('[Vault] All key material destroyed');
+}
+
+// ── Status Queries ────────────────────────────────────────────────────
+
+/** Is the vault currently unlocked and ready for encryption? */
+export function isVaultUnlocked(): boolean {
+  return vaultUnlocked;
+}
+
+/** Was the vault initialized (first-run setup completed)? */
+export async function isVaultInitialized(): Promise<boolean> {
+  const userDataDir = app.getPath('userData');
+  return checkVaultInitialized(userDataDir);
+}
+
+// ── AES-256-GCM Encryption (for vault files) ─────────────────────────
 
 /**
  * Encrypt plaintext bytes with AES-256-GCM.
  * Returns: [12-byte IV][16-byte authTag][ciphertext]
+ *
+ * Uses the vaultKey (derived from passphrase via Argon2id + KDF).
  */
 function vaultEncrypt(plaintext: Buffer): Buffer {
-  if (!vaultKey) throw new Error('[Vault] Not unlocked');
+  if (!vaultKey || !vaultUnlocked) {
+    throw new Error('[Vault] Not unlocked');
+  }
 
   const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, vaultKey, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
 
-  return Buffer.concat([iv, tag, encrypted]);
+  return vaultKey.withAccess('readonly', (key) => {
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([iv, tag, encrypted]);
+  });
 }
 
 /**
@@ -380,27 +239,10 @@ function vaultEncrypt(plaintext: Buffer): Buffer {
  * (wrong key, tampered data, etc.)
  */
 function vaultDecrypt(data: Buffer): Buffer | null {
-  if (!vaultKey) throw new Error('[Vault] Not unlocked');
-
-  if (data.length < IV_LENGTH + TAG_LENGTH) return null;
-
-  const iv = data.subarray(0, IV_LENGTH);
-  const tag = data.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
-  const ciphertext = data.subarray(IV_LENGTH + TAG_LENGTH);
-
-  try {
-    const decipher = crypto.createDecipheriv(ALGORITHM, vaultKey, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  } catch {
-    return null;
+  if (!vaultKey || !vaultUnlocked) {
+    throw new Error('[Vault] Not unlocked');
   }
-}
 
-/**
- * Decrypt with a specific key (used during recovery to test candidate keys).
- */
-function vaultDecryptWithKey(data: Buffer, key: Buffer): Buffer | null {
   if (data.length < IV_LENGTH + TAG_LENGTH) return null;
 
   const iv = data.subarray(0, IV_LENGTH);
@@ -408,9 +250,11 @@ function vaultDecryptWithKey(data: Buffer, key: Buffer): Buffer | null {
   const ciphertext = data.subarray(IV_LENGTH + TAG_LENGTH);
 
   try {
-    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return vaultKey.withAccess('readonly', (key) => {
+      const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    });
   } catch {
     return null;
   }
@@ -429,7 +273,11 @@ function vaultDecryptWithKey(data: Buffer, key: Buffer): Buffer | null {
  */
 export async function vaultWrite(filePath: string, content: string): Promise<void> {
   if (!vaultUnlocked || !vaultKey) {
-    // Graceful degradation: write plaintext if vault isn't ready
+    // Graceful degradation: write plaintext if vault isn't ready.
+    // LOG A WARNING so plaintext writes are always visible in logs.
+    console.warn(
+      `[Vault] ⚠ PLAINTEXT WRITE — vault locked, writing unencrypted: ${path.basename(filePath)}`,
+    );
     await fs.writeFile(filePath, content, 'utf-8');
     return;
   }
@@ -459,7 +307,8 @@ export async function vaultRead(filePath: string): Promise<string> {
   const raw = await fs.readFile(filePath);
 
   if (!vaultUnlocked || !vaultKey) {
-    // Vault not ready — return raw content
+    // Vault not ready — return raw content (unencrypted read)
+    console.warn(`[Vault] ⚠ PLAINTEXT READ — vault locked, reading unencrypted: ${path.basename(filePath)}`);
     return raw.toString('utf-8');
   }
 
@@ -471,6 +320,7 @@ export async function vaultRead(filePath: string): Promise<string> {
 
   // Decryption failed — file is probably still plaintext (pre-vault era)
   // Return as-is; it'll be encrypted on next save
+  console.warn(`[Vault] ⚠ LEGACY PLAINTEXT — file not encrypted, will encrypt on next write: ${path.basename(filePath)}`);
   return raw.toString('utf-8');
 }
 
@@ -482,142 +332,125 @@ export async function vaultReadJSON<T = unknown>(filePath: string): Promise<T> {
   return JSON.parse(content) as T;
 }
 
-// ── Recovery Phrase Generation ────────────────────────────────────────
+// ── Binary Vault I/O (Crypto Sprint 3 — MEDIUM-003) ───────────────────
 
 /**
- * Generate a 12-word recovery phrase from cryptographically random bytes.
- * Each word is selected from a 256-word list (8 bits per word).
- * 12 words × 8 bits = 96 bits of entropy.
- */
-function generateRecoveryPhrase(): string {
-  const bytes = crypto.randomBytes(12);
-  const words: string[] = [];
-  for (let i = 0; i < 12; i++) {
-    words.push(WORDLIST[bytes[i]]);
-  }
-  return words.join(' ');
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
-/**
- * Hash a string with SHA-256 (for machine fingerprint comparison).
- */
-function hashString(input: string): string {
-  return crypto.createHash('sha256').update(input, 'utf-8').digest('hex');
-}
-
-// ── Status Queries ────────────────────────────────────────────────────
-
-/** Is the vault currently unlocked and ready for encryption? */
-export function isVaultUnlocked(): boolean {
-  return vaultUnlocked;
-}
-
-/** Was the vault initialized (first-run setup completed)? */
-export async function isVaultInitialized(): Promise<boolean> {
-  try {
-    const metaPath = path.join(app.getPath('userData'), VAULT_META_FILE);
-    const raw = await fs.readFile(metaPath, 'utf-8');
-    const meta: VaultConfig = JSON.parse(raw);
-    return meta.initialized;
-  } catch {
-    return false;
-  }
-}
-
-/** Has the recovery phrase been shown and confirmed by the user? */
-export async function isRecoveryPhraseShown(): Promise<boolean> {
-  try {
-    const metaPath = path.join(app.getPath('userData'), VAULT_META_FILE);
-    const raw = await fs.readFile(metaPath, 'utf-8');
-    const meta: VaultConfig = JSON.parse(raw);
-    return meta.recoveryPhraseShown === true;
-  } catch {
-    // No vault meta = not shown
-    return false;
-  }
-}
-
-/** Get the one-time recovery phrase (only available during first-time setup). */
-export function getRecoveryPhrase(): string | null {
-  return recoveryPhrase;
-}
-
-/** Clear the recovery phrase from memory (after user has saved it). */
-export function clearRecoveryPhrase(): void {
-  recoveryPhrase = null;
-  if (recoveryPhraseTimer) {
-    clearTimeout(recoveryPhraseTimer);
-    recoveryPhraseTimer = null;
-  }
-}
-
-/** Mark recovery phrase as shown in vault metadata. */
-export async function markRecoveryPhraseShown(): Promise<void> {
-  try {
-    const metaPath = path.join(app.getPath('userData'), VAULT_META_FILE);
-    const raw = await fs.readFile(metaPath, 'utf-8');
-    const meta: VaultConfig = JSON.parse(raw);
-    meta.recoveryPhraseShown = true;
-    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
-  } catch (err) {
-    console.warn('[Vault] Failed to mark recovery phrase shown:', err);
-  }
-}
-
-/**
- * Re-encrypt all vault files after recovery (re-keying).
+ * Write binary data to disk with vault encryption.
  *
- * After vault recovery on a new machine, existing encrypted files use the
- * old key (derived with recovery phrase). This function reads each file
- * with the old key, then re-encrypts with the new key (derived with new
- * machine fingerprint).
+ * Unlike vaultWrite (which takes string content), this operates directly
+ * on Buffers for binary data like transferred files, images, etc.
  *
- * @param oldPrivateKey - The agent's Ed25519 private key (base64)
- * @param oldPhrase - The recovery phrase used to unlock
+ * If the vault is locked, falls back to plaintext write with a warning.
+ *
+ * @param filePath - Absolute path to write to
+ * @param data - Binary data to encrypt and write
  */
-export async function rekeyVaultFiles(
-  oldPrivateKey: string,
-  oldPhrase: string,
-): Promise<void> {
-  if (!vaultSalt || !vaultKey) {
-    console.error('[Vault] Cannot rekey — vault not ready');
+export async function vaultWriteBinary(filePath: string, data: Buffer): Promise<void> {
+  if (!vaultUnlocked || !vaultKey) {
+    console.warn(
+      `[Vault] ⚠ PLAINTEXT WRITE — vault locked, writing unencrypted: ${path.basename(filePath)}`,
+    );
+    await fs.writeFile(filePath, data);
     return;
   }
 
-  const oldKey = await deriveVaultKey(oldPrivateKey, oldPhrase.trim().toLowerCase(), vaultSalt);
-  const userDataDir = app.getPath('userData');
+  const encrypted = vaultEncrypt(data);
+  await fs.writeFile(filePath, encrypted);
+}
 
-  // Files to rekey
-  const filesToRekey = [
-    path.join(userDataDir, 'friday-data', 'agent-network.json'),
-    path.join(userDataDir, 'friday-settings.json'),
-    path.join(userDataDir, 'trust-graph.json'),
-    path.join(userDataDir, 'memory', 'shortTerm.json'),
-    path.join(userDataDir, 'memory', 'mediumTerm.json'),
-    path.join(userDataDir, 'memory', 'longTerm.json'),
-    path.join(userDataDir, 'gateway', 'identities.json'),
-  ];
+/**
+ * Read and decrypt a vault-encrypted binary file.
+ *
+ * Handles both encrypted and plaintext files transparently
+ * (same approach as vaultRead but returns Buffer instead of string).
+ *
+ * @param filePath - Absolute path to read from
+ * @returns Decrypted binary content
+ */
+export async function vaultReadBinary(filePath: string): Promise<Buffer> {
+  const raw = await fs.readFile(filePath);
 
-  let rekeyed = 0;
-  for (const fp of filesToRekey) {
-    try {
-      const raw = await fs.readFile(fp);
-
-      // Try decrypting with old key
-      const decrypted = vaultDecryptWithKey(raw, oldKey);
-      if (decrypted) {
-        // Re-encrypt with new vault key
-        const reencrypted = vaultEncrypt(decrypted);
-        await fs.writeFile(fp, reencrypted);
-        rekeyed++;
-      }
-      // If decryption fails, file is plaintext or uses new key already — skip
-    } catch {
-      // File doesn't exist — skip
-    }
+  if (!vaultUnlocked || !vaultKey) {
+    console.warn(`[Vault] ⚠ PLAINTEXT READ — vault locked, reading unencrypted: ${path.basename(filePath)}`);
+    return raw;
   }
 
-  console.log(`[Vault] Re-keyed ${rekeyed} files for new machine`);
+  // Try to decrypt
+  const decrypted = vaultDecrypt(raw);
+  if (decrypted) {
+    return decrypted;
+  }
+
+  // Decryption failed — file is plaintext (pre-encryption era)
+  console.warn(`[Vault] ⚠ LEGACY PLAINTEXT — file not encrypted, will encrypt on next write: ${path.basename(filePath)}`);
+  return raw;
+}
+
+// ── Identity Key Helpers (for agent-network.ts) ───────────────────────
+
+/**
+ * Encrypt a private key (base64 string) with the identity key.
+ * Returns a prefixed string: "enc:<base64 of nonce+ciphertext>"
+ *
+ * Used by agent-network.ts to protect Ed25519/X25519 private keys at rest.
+ */
+export function encryptPrivateKey(keyBase64: string): string {
+  if (!identityKey || !vaultUnlocked) {
+    // Graceful degradation: return plaintext if vault not ready.
+    // LOG A WARNING so unprotected keys are always visible in logs.
+    if (keyBase64) {
+      console.warn('[Vault] ⚠ PLAINTEXT KEY — vault locked, private key NOT encrypted');
+    }
+    return keyBase64;
+  }
+  const plaintext = Buffer.from(keyBase64, 'utf-8');
+  const encrypted = secretboxEncrypt(plaintext, identityKey);
+  return `enc:${encrypted.toString('base64')}`;
+}
+
+/**
+ * Decrypt a private key protected with encryptPrivateKey().
+ * Handles both "enc:" prefix (v2) and plaintext (legacy).
+ *
+ * @returns The base64-encoded private key
+ * @throws If key has "enc:" prefix but vault is locked
+ */
+export function decryptPrivateKey(stored: string): string {
+  if (stored.startsWith('enc:')) {
+    if (!identityKey || !vaultUnlocked) {
+      throw new Error('[Vault] Cannot decrypt private key — vault locked');
+    }
+    const data = Buffer.from(stored.slice(4), 'base64');
+    const decrypted = secretboxDecrypt(data, identityKey);
+    if (!decrypted) {
+      throw new Error('[Vault] Failed to decrypt private key — corrupted or wrong key');
+    }
+    return decrypted.toString('utf-8');
+  }
+
+  // Legacy: "safe:" prefix from v1 — cannot decrypt without safeStorage
+  if (stored.startsWith('safe:')) {
+    throw new Error(
+      '[Vault] Cannot decrypt v1 safeStorage-protected key. ' +
+      'This key was encrypted with the old DPAPI/Keychain system which has been removed. ' +
+      'The agent identity must be regenerated.',
+    );
+  }
+
+  // Plaintext fallback (pre-vault files)
+  return stored;
+}
+
+// ── Internal Helpers ──────────────────────────────────────────────────
+
+function setKeys(keys: DerivedKeys): void {
+  // Destroy old keys if any
+  if (vaultKey) vaultKey.destroy();
+  if (hmacKey) hmacKey.destroy();
+  if (identityKey) identityKey.destroy();
+
+  vaultKey = keys.vaultKey;
+  hmacKey = keys.hmacKey;
+  identityKey = keys.identityKey;
+  vaultUnlocked = true;
 }

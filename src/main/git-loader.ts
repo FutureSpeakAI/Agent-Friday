@@ -6,7 +6,8 @@
  * Inspired by GitNexus: repos are loaded into memory for fast agent querying.
  */
 
-import { exec } from 'child_process';
+// Crypto Sprint 10: Removed `exec` import — all callers use `execFile` (no shell).
+import { execFile } from 'child_process';
 import { getSanitizedEnv } from './settings';
 import { promises as fs } from 'fs';
 import * as path from 'path';
@@ -183,9 +184,11 @@ class GitLoader {
     await fs.mkdir(path.dirname(localPath), { recursive: true });
 
     // Shallow clone with depth 1 for speed
+    // Crypto Sprint 9: Use execFileAsync (no shell) to prevent injection via branch name.
     console.log(`[GitLoader] Cloning ${cloneUrl} (branch: ${branch})...`);
-    await this.execAsync(
-      `git clone --depth 1 --branch ${branch} --single-branch "${cloneUrl}" "${localPath}"`,
+    await this.execFileAsync(
+      'git',
+      ['clone', '--depth', '1', '--branch', branch, '--single-branch', cloneUrl, localPath],
       60000,
     );
 
@@ -353,9 +356,17 @@ class GitLoader {
     const contextLines = options.contextLines || 2;
     const results: SearchResult[] = [];
 
+    // Crypto Sprint 6 (CRITICAL — ReDoS): Reject regex patterns with nested quantifiers
+    // that could cause catastrophic backtracking when tested against every line of every file.
     let regex: RegExp;
     try {
-      regex = new RegExp(query, 'gi');
+      // Detect potentially dangerous patterns: nested quantifiers, alternation in quantifiers
+      if (/(\+|\*|\?|\{)\s*\)(\+|\*|\?|\{)/.test(query) || /(\(.*\|.*\))(\+|\*|\{)/.test(query)) {
+        // Fall back to safe literal search
+        regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      } else {
+        regex = new RegExp(query, 'gi');
+      }
     } catch {
       // If not valid regex, escape it for literal search
       regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
@@ -523,10 +534,14 @@ class GitLoader {
     return true;
   }
 
-  /** Helper to run shell commands */
-  private execAsync(command: string, timeoutMs = 30000): Promise<string> {
+  /**
+   * Crypto Sprint 9: Shell-free command execution using execFile.
+   * Arguments are passed as an array — no shell interpolation, no injection risk.
+   * Use this instead of execAsync for any command with untrusted arguments.
+   */
+  private execFileAsync(cmd: string, args: string[], timeoutMs = 30000): Promise<string> {
     return new Promise((resolve, reject) => {
-      exec(command, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv }, (err, stdout, stderr) => {
+      execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv }, (err, stdout, stderr) => {
         if (err) {
           reject(new Error(`Command failed: ${err.message}\n${stderr}`));
         } else {
@@ -535,6 +550,9 @@ class GitLoader {
       });
     });
   }
+
+  // Crypto Sprint 10: Removed dead `execAsync` shell method.
+  // All callers migrated to `execFileAsync` (Sprint 9) — no remaining references.
 }
 
 /* ── Singleton ─────────────────────────────────────────────────────── */

@@ -932,6 +932,10 @@ contextBridge.exposeInMainWorld('eve', {
     getDelegationsForAgent: (agentId: string) =>
       ipcRenderer.invoke('agent-net:get-delegations-for-agent', agentId),
     getPendingInboundDelegations: () => ipcRenderer.invoke('agent-net:get-pending-inbound-delegations'),
+    // SAS Verification (Crypto Sprint 3 — HIGH-004)
+    getSafetyNumber: (agentId: string) => ipcRenderer.invoke('agent-net:get-safety-number', agentId),
+    verifySAS: (agentId: string) => ipcRenderer.invoke('agent-net:verify-sas', agentId),
+    isSASVerified: (agentId: string) => ipcRenderer.invoke('agent-net:is-sas-verified', agentId),
     getStats: () => ipcRenderer.invoke('agent-net:get-stats'),
     getConfig: () => ipcRenderer.invoke('agent-net:get-config'),
     updateConfig: (partial: Record<string, unknown>) =>
@@ -1132,17 +1136,14 @@ contextBridge.exposeInMainWorld('eve', {
   },
 
   vault: {
-    isUnlocked: () => ipcRenderer.invoke('vault:is-unlocked'),
     isInitialized: () => ipcRenderer.invoke('vault:is-initialized'),
-    isRecoveryPhraseShown: () => ipcRenderer.invoke('vault:is-recovery-phrase-shown'),
-    getRecoveryPhrase: () => ipcRenderer.invoke('vault:get-recovery-phrase'),
-    clearRecoveryPhrase: () => ipcRenderer.invoke('vault:clear-recovery-phrase'),
-    markRecoveryPhraseShown: () => ipcRenderer.invoke('vault:mark-recovery-phrase-shown'),
-    recover: (phrase: string) => ipcRenderer.invoke('vault:recover', phrase),
-    onRecoveryPhrase: (callback: (phrase: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, phrase: string) => callback(phrase);
-      ipcRenderer.on('vault:recovery-phrase', handler);
-      return () => { ipcRenderer.removeListener('vault:recovery-phrase', handler); };
+    isUnlocked: () => ipcRenderer.invoke('vault:is-unlocked'),
+    initializeNew: (passphrase: string) => ipcRenderer.invoke('vault:initialize-new', passphrase),
+    unlock: (passphrase: string) => ipcRenderer.invoke('vault:unlock', passphrase),
+    onBootComplete: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('vault:boot-complete', handler);
+      return () => { ipcRenderer.removeListener('vault:boot-complete', handler); };
     },
   },
 

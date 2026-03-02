@@ -700,7 +700,8 @@ class WorkflowRecorderEngine {
     setTimeout(() => {
       this.saveQueued = false;
       this.save().catch(err =>
-        console.error('[WorkflowRecorder] Save error:', err)
+        // Crypto Sprint 17: Sanitize error output.
+        console.error('[WorkflowRecorder] Save error:', err instanceof Error ? err.message : 'Unknown error')
       );
     }, 2000);
   }

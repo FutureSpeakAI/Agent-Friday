@@ -105,7 +105,8 @@ Focus on: actionable insights, interesting developments, things they'd genuinely
         console.log(`[Intelligence] Briefing ready: ${topic} (${briefing.id})`);
       }
     } catch (err) {
-      console.warn(`[Intelligence] Research failed for "${topic}":`, err);
+      // Crypto Sprint 16: Sanitize — research makes Perplexity/Gemini API calls.
+      console.warn(`[Intelligence] Research failed for "${topic}":`, err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
@@ -195,7 +196,8 @@ Focus on: actionable insights, interesting developments, things they'd genuinely
 
         created.push(`"${topic.topic}" (${topic.schedule})`);
       } catch (err) {
-        console.warn(`[Intelligence] Failed to create task for "${topic.topic}":`, err);
+        // Crypto Sprint 16: Sanitize — scheduler errors could contain API data.
+        console.warn(`[Intelligence] Failed to create task for "${topic.topic}":`, err instanceof Error ? err.message : 'Unknown error');
       }
     }
 

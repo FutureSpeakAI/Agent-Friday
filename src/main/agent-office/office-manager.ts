@@ -5,7 +5,7 @@
  * and forwards agent lifecycle events to the office renderer.
  */
 
-import { BrowserWindow, ipcMain, screen } from 'electron';
+import { BrowserWindow, ipcMain, screen, shell } from 'electron';
 import path from 'path';
 import { app } from 'electron';
 import { buildDefaultLayout } from './office-layout';
@@ -91,11 +91,27 @@ class AgentOfficeManager {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true, // Crypto Sprint 5: Sandbox renderer
       },
     });
 
     this.officeWindow.once('ready-to-show', () => {
       this.officeWindow?.show();
+    });
+
+    // Crypto Sprint 5 (HIGH — Navigation + Popup Safety): Same as main window.
+    this.officeWindow.webContents.on('will-navigate', (event, url) => {
+      const allowed = ['http://localhost:', 'file://'];
+      if (!allowed.some(prefix => url.startsWith(prefix))) {
+        event.preventDefault();
+        console.warn('[Security] Blocked office window navigation to:', url);
+      }
+    });
+    this.officeWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
     });
 
     // Load with office query param so renderer knows to show office view

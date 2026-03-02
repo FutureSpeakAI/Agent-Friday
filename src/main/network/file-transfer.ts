@@ -515,12 +515,15 @@ class FileTransferEngine {
     }
 
     // Sanitize filename and save
+    // Crypto Sprint 3 (MEDIUM-003): Files are encrypted at rest using vault encryption.
+    // This prevents an OS-level admin from reading received files directly from disk.
     const safeName = sanitizeFileName(transfer.fileName);
     const timestamp = Date.now();
     const savePath = path.join(this.transfersDir, `${timestamp}_${safeName}`);
 
     try {
-      await fs.writeFile(savePath, assembled);
+      const { vaultWriteBinary } = require('../vault');
+      await vaultWriteBinary(savePath, assembled);
     } catch (err: any) {
       transfer.status = 'failed';
       transfer.error = `Failed to save file: ${err?.message || 'unknown'}`;
@@ -584,6 +587,42 @@ class FileTransferEngine {
   }
 
   /**
+   * Read a completed transfer's file content (decrypted from vault).
+   *
+   * Crypto Sprint 3 (MEDIUM-003): Received files are now vault-encrypted at rest.
+   * This method transparently decrypts them. Falls back to raw read if vault
+   * is locked or file is plaintext (pre-encryption transfers).
+   *
+   * @param transferId - Transfer ID or local file path
+   * @returns Decrypted file buffer, or null if not found
+   */
+  async readTransferredFile(transferId: string): Promise<Buffer | null> {
+    // Crypto Sprint 4 (HIGH-PATH-001): Only accept transfer IDs from the internal map.
+    // Previously this accepted arbitrary file paths, enabling path traversal attacks
+    // where a compromised renderer could read any file on disk via crafted paths.
+    const transfer = this.transfers.get(transferId);
+    if (!transfer?.localPath) return null;
+
+    const filePath = transfer.localPath;
+
+    // Defense-in-depth: verify the resolved path is inside the transfers directory
+    const resolved = path.resolve(filePath);
+    const transfersBase = path.resolve(this.transfersDir);
+    if (!resolved.startsWith(transfersBase + path.sep) && resolved !== transfersBase) {
+      console.warn(`[FileTransfer] ⚠ Path traversal blocked: ${path.basename(filePath)} escapes transfers directory`);
+      return null;
+    }
+
+    try {
+      const { vaultReadBinary } = require('../vault');
+      return await vaultReadBinary(filePath);
+    } catch {
+      // Fallback to raw read if vault module unavailable
+      return fs.readFile(filePath);
+    }
+  }
+
+  /**
    * Get the audit log.
    */
   getAuditLog(): TransferAuditEntry[] {
@@ -612,7 +651,8 @@ class FileTransferEngine {
     }
 
     this.saveAuditLog().catch((err) =>
-      console.warn('[FileTransfer] Failed to save audit log:', err),
+      // Crypto Sprint 17: Sanitize error output.
+      console.warn('[FileTransfer] Failed to save audit log:', err instanceof Error ? err.message : 'Unknown error'),
     );
   }
 
@@ -621,7 +661,7 @@ class FileTransferEngine {
       const { vaultWrite } = require('../vault');
       await vaultWrite(this.auditPath, JSON.stringify(this.auditLog, null, 2));
     } catch (err) {
-      console.warn('[FileTransfer] Failed to save audit log:', err);
+      console.warn('[FileTransfer] Failed to save audit log:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
 
@@ -660,6 +700,14 @@ class FileTransferEngine {
  * Sanitize a file name for safe local storage.
  * Removes path separators, null bytes, and other dangerous characters.
  */
+// Crypto Sprint 4 (MEDIUM-SANITIZE): Windows reserved device names.
+// Writing to these names causes I/O errors or device access on Windows.
+const WINDOWS_RESERVED = new Set([
+  'CON', 'PRN', 'AUX', 'NUL',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
+
 function sanitizeFileName(name: string): string {
   // Remove path separators and null bytes
   let safe = name.replace(/[/\\:\0]/g, '_');
@@ -671,6 +719,12 @@ function sanitizeFileName(name: string): string {
   if (safe.length > 200) {
     const ext = path.extname(safe);
     safe = safe.slice(0, 200 - ext.length) + ext;
+  }
+  // Crypto Sprint 4: Block Windows reserved device names (CON, PRN, NUL, COM1-9, LPT1-9).
+  // A P2P peer could send a file named "CON" which causes I/O errors on Windows.
+  const nameWithoutExt = safe.replace(/\.[^.]*$/, '').toUpperCase();
+  if (WINDOWS_RESERVED.has(nameWithoutExt)) {
+    safe = `_${safe}`;
   }
   // Fallback
   if (!safe || safe === '_') safe = 'unnamed_file';

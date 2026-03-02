@@ -74,8 +74,9 @@ export async function ensureProfileOnDisk(): Promise<void> {
         console.log('[Profile] Intelligence file updated (learnings section added)');
       }
     }
+  // Crypto Sprint 17: Sanitize error output.
   } catch (err) {
-    console.warn('[Profile] Failed to write intelligence file:', err);
+    console.warn('[Profile] Failed to write intelligence file:', err instanceof Error ? err.message : 'Unknown error');
   }
 }
 
@@ -300,7 +301,7 @@ Write a single dense paragraph (4-8 sentences) that captures every meaningful in
 
     console.log(`[Profile] Consolidated ${recentEntries.length} entries into narrative (${narrative.length} chars)`);
   } catch (err) {
-    console.warn('[Profile] Consolidation failed:', err);
+    console.warn('[Profile] Consolidation failed:', err instanceof Error ? err.message : 'Unknown error');
   } finally {
     isConsolidating = false;
   }
@@ -346,11 +347,11 @@ export async function appendLearning(insight: string, category: string): Promise
     // Trigger consolidation if threshold crossed (non-blocking)
     if (updatedRecent.length >= CONSOLIDATION_THRESHOLD) {
       consolidateLearnings().catch((err) =>
-        console.warn('[Profile] Background consolidation failed:', err)
+        console.warn('[Profile] Background consolidation failed:', err instanceof Error ? err.message : 'Unknown error')
       );
     }
   } catch (err) {
-    console.warn('[Profile] Failed to append learning:', err);
+    console.warn('[Profile] Failed to append learning:', err instanceof Error ? err.message : 'Unknown error');
   }
 }
 

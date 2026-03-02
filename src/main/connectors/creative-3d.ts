@@ -12,7 +12,7 @@
  *   detect   — Async check for whether any supported 3D app is installed
  */
 
-import { execFile, execSync, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -92,7 +92,8 @@ function resolveBlenderBin(): string | null {
 
   // 1. Try PATH
   try {
-    execSync('blender --version', { timeout: 5_000, stdio: 'pipe', windowsHide: true });
+    // Crypto Sprint 12: Use execFileSync — no shell needed for version detection.
+    execFileSync('blender', ['--version'], { timeout: 5_000, stdio: 'pipe', windowsHide: true });
     cachedBlenderPath = 'blender';
     return cachedBlenderPath;
   } catch { /* not in PATH */ }

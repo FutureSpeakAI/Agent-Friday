@@ -62,8 +62,12 @@ export function registerSuperpowerEcosystemHandlers(): void {
 
   // ── Developer Tools ────────────────────────────────────────────────
 
+  // Crypto Sprint 10: Only expose the public key to the renderer process.
+  // The full keypair (including privateKey) must never cross the IPC boundary —
+  // any XSS or compromised renderer module could exfiltrate it.
   ipcMain.handle('ecosystem:get-developer-keys', () => {
-    return superpowerEcosystem.getDeveloperKeys();
+    const keys = superpowerEcosystem.getDeveloperKeys();
+    return { publicKey: keys.publicKey };
   });
 
   ipcMain.handle('ecosystem:has-developer-keys', () => {
