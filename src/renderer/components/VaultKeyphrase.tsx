@@ -16,7 +16,10 @@ interface VaultKeyphraseProps {
   onConfirmed: () => void;
 }
 
-type Step = 'loading' | 'display' | 'confirm' | 'done';
+type Step = 'loading' | 'display' | 'confirm' | 'done' | 'timeout';
+
+/** How long to wait for the recovery phrase before showing diagnostics */
+const VAULT_TIMEOUT_MS = 120_000; // 2 minutes
 
 export default function VaultKeyphrase({ onConfirmed }: VaultKeyphraseProps) {
   const [step, setStep] = useState<Step>('loading');
@@ -24,11 +27,13 @@ export default function VaultKeyphrase({ onConfirmed }: VaultKeyphraseProps) {
   const [confirmInput, setConfirmInput] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Listen for the recovery phrase from the vault
   useEffect(() => {
     let mounted = true;
+    const startTime = Date.now();
 
     // Try to get the recovery phrase — it may already be generated
     const tryGetPhrase = async () => {
@@ -53,12 +58,27 @@ export default function VaultKeyphrase({ onConfirmed }: VaultKeyphraseProps) {
 
     // Also poll in case the phrase was generated before we mounted
     tryGetPhrase();
-    const pollTimer = setInterval(tryGetPhrase, 1000);
+    const pollTimer = setInterval(() => {
+      if (!mounted) return;
+      tryGetPhrase();
+      // Update elapsed time counter for the loading display
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setElapsedSec(elapsed);
+    }, 1000);
+
+    // Timeout: if no recovery phrase arrives within VAULT_TIMEOUT_MS,
+    // transition to an error state instead of spinning forever
+    const timeoutTimer = setTimeout(() => {
+      if (mounted) {
+        setStep((current) => (current === 'loading' ? 'timeout' : current));
+      }
+    }, VAULT_TIMEOUT_MS);
 
     return () => {
       mounted = false;
       cleanup();
       clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
     };
   }, []);
 
@@ -120,7 +140,39 @@ export default function VaultKeyphrase({ onConfirmed }: VaultKeyphraseProps) {
             <div style={styles.spinner} />
             <p style={{ ...styles.bodyText, fontSize: 12, color: '#666680', textAlign: 'center' as const, marginTop: 8 }}>
               scrypt(N=2²⁰) — military-grade key stretching
+              {elapsedSec > 0 && ` (${elapsedSec}s)`}
             </p>
+          </div>
+        )}
+
+        {/* Timeout state — vault init failed or took too long */}
+        {step === 'timeout' && (
+          <div style={styles.section}>
+            <p style={{ ...styles.bodyText, color: '#f59e0b' }}>
+              Vault initialization is taking longer than expected ({Math.floor(VAULT_TIMEOUT_MS / 1000)}s).
+              This may indicate a problem with the cryptographic key generation.
+            </p>
+            <p style={styles.bodyText}>
+              Try the following:
+            </p>
+            <ul style={{ ...styles.bodyText, paddingLeft: 20 }}>
+              <li style={{ marginBottom: 8 }}>Close Agent Friday completely and relaunch it</li>
+              <li style={{ marginBottom: 8 }}>
+                If this persists, delete the vault data folder and restart:
+                <code style={styles.codePath}> %APPDATA%\Agent Friday\</code>
+              </li>
+            </ul>
+            <div style={styles.buttonRow}>
+              <button
+                onClick={() => {
+                  setStep('loading');
+                  setElapsedSec(0);
+                }}
+                style={styles.primaryButton}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
 
@@ -366,5 +418,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     animation: 'spin 1s linear infinite',
     margin: '20px auto',
+  },
+  codePath: {
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 12,
+    color: '#00f0ff',
+    background: 'rgba(0,0,0,0.3)',
+    padding: '2px 6px',
+    borderRadius: 4,
   },
 };
