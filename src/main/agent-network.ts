@@ -21,23 +21,19 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 
-// Late-bound vault import — avoids circular deps and allows test mocking
-interface VaultIO { vaultRead: (p: string) => Promise<string>; vaultWrite: (p: string, c: string) => Promise<void> }
-let _vault: VaultIO | null = null;
-function getVault(): VaultIO {
-  if (!_vault) {
-    try {
-      _vault = require('./vault');
-    } catch {
-      // Vault not available — use raw fs fallback
-      _vault = {
-        vaultRead: async (p: string) => (await fs.readFile(p, 'utf-8')),
-        vaultWrite: async (p: string, c: string) => { await fs.writeFile(p, c, 'utf-8'); },
-      };
-    }
-  }
-  return _vault!;
-}
+// ── CRITICAL DESIGN DECISION ─────────────────────────────────────────
+//
+// agent-network.json MUST ALWAYS be read/written as PLAINTEXT.
+// It contains the Ed25519 private key that is the ROOT of the vault's
+// key hierarchy: vaultKey = scrypt(Ed25519PrivateKey + machineId, salt).
+//
+// Encrypting this file with the vault creates a circular dependency:
+//   load() needs vault key → vault key needs private key → private key is in the file
+//
+// This is Heidegger's Vorverständnis problem: the foundational pre-understanding
+// (the private key) cannot be part of the interpretive chain that depends on it.
+// Raw fs I/O is the ONLY correct approach for this file.
+// ─────────────────────────────────────────────────────────────────────
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -502,20 +498,25 @@ export class AgentNetwork {
   // ── Initialization ────────────────────────────────────────────────
 
   async initialize(): Promise<void> {
+    const t0 = Date.now();
     this.dataDir = path.join(app.getPath('userData'), 'friday-data');
     await fs.mkdir(this.dataDir, { recursive: true });
+    console.log(`[AgentNetwork] Loading state from ${this.dataDir}...`);
     await this.load();
+    console.log(`[AgentNetwork] State loaded in ${Date.now() - t0}ms — keyPair: ${this.state.keyPair ? 'present' : 'absent'}`);
 
-    // Generate identity on first run
+    // Generate identity on first run (or after corrupted state was discarded)
     if (!this.state.keyPair) {
+      console.log('[AgentNetwork] No keypair found — generating fresh identity...');
       await this.generateIdentity();
       await this.save(); // Flush immediately — vault init depends on these keys
+      console.log(`[AgentNetwork] Fresh identity generated and saved in ${Date.now() - t0}ms`);
     }
 
     const peerCount = this.state.peers.filter((p) => p.status === 'paired').length;
     const delCount = this.state.delegations.length;
     console.log(
-      `[AgentNetwork] Initialized — ID: ${this.state.identity?.agentId ?? 'none'}, ` +
+      `[AgentNetwork] Initialized in ${Date.now() - t0}ms — ID: ${this.state.identity?.agentId ?? 'none'}, ` +
       `${peerCount} peers, ${delCount} delegations`,
     );
   }
@@ -1147,9 +1148,40 @@ export class AgentNetwork {
   private async load(): Promise<void> {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
-      // Vault-aware read: decrypts if vault is unlocked, falls back to plaintext
-      const { vaultRead } = getVault();
-      const raw = await vaultRead(filePath);
+
+      // RAW fs.readFile — NEVER use vaultRead here.
+      // This file is the ROOT of the vault key hierarchy.
+      // See the design decision comment at the top of this file.
+      const raw = await fs.readFile(filePath, 'utf-8');
+
+      // Detect corrupted/encrypted files from a prior buggy session.
+      // Valid JSON always starts with '{'. If the first character is not '{'
+      // the file was encrypted by a previous version that incorrectly used
+      // vaultWrite(). We must discard it and generate a fresh identity.
+      const trimmed = raw.trimStart();
+      if (trimmed.length > 0 && trimmed[0] !== '{') {
+        console.warn(
+          '[AgentNetwork] agent-network.json appears to be encrypted/corrupted ' +
+          '(first char: 0x' + raw.charCodeAt(0).toString(16) + '). ' +
+          'This was caused by a circular dependency bug where the vault encrypted ' +
+          'the file containing the key needed to decrypt it. ' +
+          'Discarding corrupted state — a fresh identity will be generated.',
+        );
+        // Remove the corrupted file so save() creates a clean one
+        try { await fs.unlink(filePath); } catch { /* ignore */ }
+
+        // Also reset vault metadata — the vault key was derived from the
+        // now-lost private key, so vault-meta.json and vault-salt.bin are
+        // stale references to a key hierarchy that no longer exists.
+        const userDataDir = path.dirname(this.dataDir);
+        const vaultMetaPath = path.join(userDataDir, 'vault-meta.json');
+        const vaultSaltPath = path.join(userDataDir, 'vault-salt.bin');
+        try { await fs.unlink(vaultMetaPath); } catch { /* ignore */ }
+        try { await fs.unlink(vaultSaltPath); } catch { /* ignore */ }
+        console.log('[AgentNetwork] Cleared stale vault metadata (vault-meta.json + vault-salt.bin)');
+        return;
+      }
+
       const data = JSON.parse(raw);
       if (data.keyPair) this.state.keyPair = data.keyPair;
       if (data.identity) this.state.identity = data.identity;
@@ -1167,9 +1199,13 @@ export class AgentNetwork {
   private async save(): Promise<void> {
     try {
       const filePath = path.join(this.dataDir, 'agent-network.json');
-      // Vault-aware write: encrypts if vault is unlocked, falls back to plaintext
-      const { vaultWrite } = getVault();
-      await vaultWrite(filePath, JSON.stringify(this.state, null, 2));
+
+      // RAW fs.writeFile — NEVER use vaultWrite here.
+      // This file is the ROOT of the vault key hierarchy.
+      // Encrypting it with the vault creates a circular dependency that
+      // permanently locks the user out on next launch.
+      // See the design decision comment at the top of this file.
+      await fs.writeFile(filePath, JSON.stringify(this.state, null, 2), 'utf-8');
     } catch (err) {
       console.error('[AgentNetwork] Save failed:', err);
     }
