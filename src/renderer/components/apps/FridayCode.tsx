@@ -114,7 +114,7 @@ export default function FridayCode({ visible, onClose }: Props) {
   // Load repos
   const loadRepos = useCallback(async () => {
     const gitLoader = (window as any).eve?.gitLoader;
-    if (!gitLoader?.listRepos) {
+    if (!gitLoader?.listLoaded) {
       setGitAvailable(false);
       return;
     }
@@ -123,7 +123,7 @@ export default function FridayCode({ visible, onClose }: Props) {
     setGitError('');
 
     try {
-      const result = await gitLoader.listRepos();
+      const result = await gitLoader.listLoaded();
       const repoList = Array.isArray(result) ? result : [];
       setRepos(repoList.map((r: any) => ({
         name: r.name || r.path?.split('/').pop() || 'Unknown',
@@ -182,8 +182,8 @@ export default function FridayCode({ visible, onClose }: Props) {
     // Try to read file content via gitLoader or fallback
     try {
       const gitLoader = (window as any).eve?.gitLoader;
-      if (gitLoader?.readFile && selectedRepo) {
-        const content = await gitLoader.readFile(selectedRepo, entry.path);
+      if (gitLoader?.getFile && selectedRepo) {
+        const content = await gitLoader.getFile(selectedRepo, entry.path);
         if (typeof content === 'string') {
           setCode(content);
           setFileName(entry.name);
@@ -244,7 +244,7 @@ export default function FridayCode({ visible, onClose }: Props) {
     setRunError('');
 
     try {
-      const result = await container.execute(runLanguage, code);
+      const result = await container.execute({ code, language: runLanguage });
       if (typeof result === 'string') {
         setOutput(result);
       } else if (result?.stdout || result?.stderr) {

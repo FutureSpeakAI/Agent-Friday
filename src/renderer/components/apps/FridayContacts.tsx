@@ -10,7 +10,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
 
+/** Raw PersonNode from trust graph backend */
+interface PersonNode {
+  id: string;
+  primaryName: string;
+  aliases: { value: string; type: string; confidence: number }[];
+  trust: { overall: number; reliability: number; expertise: { domain: string; score: number }[] };
+  notes: string;
+  domains: string[];
+  lastSeen: number;
+  firstSeen: number;
+  interactionCount: number;
+}
+
+/** Flattened view-model for the contact list */
 interface Contact {
+  id: string;
   name: string;
   trustScore: number;
   lastInteraction?: string;
@@ -22,9 +37,9 @@ interface Contact {
 
 interface Commitment {
   id: string;
-  person: string;
+  personName: string;
   description: string;
-  dueDate?: string;
+  deadline: number | null;
   status?: string;
 }
 
@@ -48,11 +63,26 @@ export default function FridayContacts({ visible, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [contactsRes, commitmentsRes] = await Promise.all([
+      const [personsRes, commitmentsRes] = await Promise.all([
         (window as any).eve.trustGraph.getAll(),
         (window as any).eve.commitments.getAll(),
       ]);
-      setContacts(Array.isArray(contactsRes) ? contactsRes : []);
+      // Transform PersonNode[] → Contact[]
+      const persons: PersonNode[] = Array.isArray(personsRes) ? personsRes : [];
+      setContacts(
+        persons.map((p) => ({
+          id: p.id,
+          name: p.primaryName,
+          trustScore: Math.round(p.trust?.overall ?? 50),
+          lastInteraction: p.lastSeen
+            ? new Date(p.lastSeen).toLocaleDateString([], { month: 'short', day: 'numeric' })
+            : undefined,
+          notes: p.notes || undefined,
+          tags: p.domains?.length ? p.domains : undefined,
+          email: p.aliases?.find((a) => a.type === 'email')?.value,
+          phone: p.aliases?.find((a) => a.type === 'phone')?.value,
+        })),
+      );
       setCommitments(Array.isArray(commitmentsRes) ? commitmentsRes : []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load contacts');
@@ -71,16 +101,35 @@ export default function FridayContacts({ visible, onClose }: Props) {
 
   const personCommitments = selected
     ? commitments.filter(
-        (cm) => cm.person?.toLowerCase() === selected.name.toLowerCase()
+        (cm) => cm.personName?.toLowerCase() === selected.name.toLowerCase()
       )
     : [];
 
   const handleSelectContact = async (contact: Contact) => {
     try {
-      const detail = await (window as any).eve.trustGraph.get(contact.name);
-      setSelected(detail || contact);
-      setNoteInput(detail?.notes || contact.notes || '');
-      setTrustInput(String(detail?.trustScore ?? contact.trustScore ?? 50));
+      const result = await (window as any).eve.trustGraph.lookup(contact.name);
+      const person: PersonNode | null = result?.person ?? null;
+      if (person) {
+        const refreshed: Contact = {
+          id: person.id,
+          name: person.primaryName,
+          trustScore: Math.round(person.trust?.overall ?? 50),
+          lastInteraction: person.lastSeen
+            ? new Date(person.lastSeen).toLocaleDateString([], { month: 'short', day: 'numeric' })
+            : undefined,
+          notes: person.notes || undefined,
+          tags: person.domains?.length ? person.domains : undefined,
+          email: person.aliases?.find((a) => a.type === 'email')?.value,
+          phone: person.aliases?.find((a) => a.type === 'phone')?.value,
+        };
+        setSelected(refreshed);
+        setNoteInput(refreshed.notes || '');
+        setTrustInput(String(refreshed.trustScore));
+      } else {
+        setSelected(contact);
+        setNoteInput(contact.notes || '');
+        setTrustInput(String(contact.trustScore ?? 50));
+      }
     } catch {
       setSelected(contact);
       setNoteInput(contact.notes || '');
@@ -92,10 +141,20 @@ export default function FridayContacts({ visible, onClose }: Props) {
     if (!selected) return;
     setSaving(true);
     try {
-      await (window as any).eve.trustGraph.update?.(selected.name, {
-        notes: noteInput,
-        trustScore: Number(trustInput) || selected.trustScore,
-      });
+      // Save notes via trust graph
+      if (noteInput !== (selected.notes || '')) {
+        await (window as any).eve.trustGraph.updateNotes(selected.id, noteInput);
+      }
+      // If trust score changed, record as manual evidence
+      const newScore = Number(trustInput) || selected.trustScore;
+      if (newScore !== selected.trustScore) {
+        await (window as any).eve.trustGraph.updateEvidence(selected.name, {
+          type: 'user_stated',
+          description: `Trust score manually adjusted to ${newScore}%`,
+          impact: (newScore - selected.trustScore) / 100,
+          domain: 'general',
+        });
+      }
       await loadData();
     } catch (err: any) {
       setError(err?.message || 'Failed to save');
@@ -248,8 +307,10 @@ export default function FridayContacts({ visible, onClose }: Props) {
                         <div style={s.commitmentDot(cm.status)} />
                         <div style={{ flex: 1 }}>
                           <div style={s.primaryText}>{cm.description}</div>
-                          {cm.dueDate && (
-                            <div style={s.mutedText}>Due: {cm.dueDate}</div>
+                          {cm.deadline && (
+                            <div style={s.mutedText}>
+                              Due: {new Date(cm.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                            </div>
                           )}
                         </div>
                         <span
@@ -258,7 +319,7 @@ export default function FridayContacts({ visible, onClose }: Props) {
                             color:
                               cm.status === 'overdue'
                                 ? '#ef4444'
-                                : cm.status === 'complete'
+                                : cm.status === 'completed'
                                 ? '#22c55e'
                                 : '#f97316',
                           }}
@@ -501,7 +562,7 @@ const s: Record<string, any> = {
     marginTop: 5,
     flexShrink: 0,
     background:
-      status === 'overdue' ? '#ef4444' : status === 'complete' ? '#22c55e' : '#f97316',
+      status === 'overdue' ? '#ef4444' : status === 'completed' ? '#22c55e' : '#f97316',
   }),
   statusBadge: {
     fontSize: 11,

@@ -105,14 +105,23 @@ export default function FridayDocs({ visible, onClose }: Props) {
     setIngesting(true);
     setError(null);
     try {
-      // Use a file picker dialog via IPC
-      const filePath = await (window as any).eve.dialog?.openFile?.()
-        || prompt('Enter file path to ingest:');
-      if (!filePath) {
-        setIngesting(false);
-        return;
+      const docs = (window as any).eve.documents;
+      // pickAndIngest combines native file dialog + ingestion in one call
+      if (docs?.pickAndIngest) {
+        const result = await docs.pickAndIngest();
+        if (!result) {
+          setIngesting(false);
+          return;
+        }
+      } else {
+        // Fallback: prompt for path + ingestFile
+        const filePath = prompt('Enter file path to ingest:');
+        if (!filePath) {
+          setIngesting(false);
+          return;
+        }
+        await docs.ingestFile(filePath);
       }
-      await (window as any).eve.documents.ingest(filePath);
       await loadDocs();
     } catch (err: any) {
       setError(err?.message || 'Failed to ingest document');
