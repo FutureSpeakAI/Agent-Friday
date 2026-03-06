@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useMood } from '../contexts/MoodContext';
 import { EVOLUTION_PATH } from './DesktopViz';
+import AppLaunchpad from './AppLaunchpad';
 import type { SemanticState } from './FridayCore';
 import '../styles/desktop-viz.css';
 
@@ -32,11 +33,8 @@ export interface HudOverlayProps {
   semanticState: SemanticState;
   evolutionIndex: number;
   onEvolutionChange?: (index: number) => void;
-  onOpenDashboard?: () => void;
-  onOpenSuperpowers?: () => void;
-  onOpenAgents?: () => void;
-  onOpenSettings?: () => void;
-  onOpenMemory?: () => void;
+  /** Universal app opener — called with app registry ID */
+  onOpenApp: (id: string) => void;
   clockStr?: string;
   /** Dev mode — shows extra controls */
   devMode?: boolean;
@@ -68,11 +66,7 @@ export default function HudOverlay({
   semanticState,
   evolutionIndex,
   onEvolutionChange,
-  onOpenDashboard,
-  onOpenSuperpowers,
-  onOpenAgents,
-  onOpenSettings,
-  onOpenMemory,
+  onOpenApp,
   clockStr,
   devMode = false,
 }: HudOverlayProps) {
@@ -170,32 +164,9 @@ export default function HudOverlay({
         ))}
       </div>
 
-      {/* ── App Tray ── */}
+      {/* ── App Tray — full categorized launchpad ── */}
       <div id="desktop-app-tray" className={appTrayOpen ? 'open' : ''}>
-        <div className="app-icon" onClick={onOpenDashboard} title="Command Center (Ctrl+Shift+D)">
-          <span className="icon-emoji">◈</span>
-          <span>Command</span>
-        </div>
-        <div className="app-icon" onClick={onOpenSuperpowers} title="Superpowers (Ctrl+Shift+P)">
-          <span className="icon-emoji">🔮</span>
-          <span>Powers</span>
-        </div>
-        <div className="app-icon" onClick={onOpenAgents} title="Agents (Ctrl+Shift+A)">
-          <span className="icon-emoji">⚡</span>
-          <span>Agents</span>
-        </div>
-        <div className="app-icon" onClick={onOpenSettings} title="Settings">
-          <span className="icon-emoji">⚙</span>
-          <span>Settings</span>
-        </div>
-        <div className="app-icon" onClick={onOpenMemory} title="Memory Explorer (Ctrl+Shift+M)">
-          <span className="icon-emoji">🧠</span>
-          <span>Memory</span>
-        </div>
-        <div className="app-icon" onClick={() => { window.eve?.shell?.openPath?.('https://discord.gg/8af2bFqn'); }} title="Discord Community">
-          <span className="icon-emoji">💬</span>
-          <span>Discord</span>
-        </div>
+        <AppLaunchpad onOpenApp={(id) => { setAppTrayOpen(false); onOpenApp(id); }} />
       </div>
 
       {/* ── Footer ── */}

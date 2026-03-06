@@ -11,6 +11,7 @@ import { browserToolDefs, executeBrowserTool } from './browser';
 import { connectorRegistry } from './connectors/registry';
 import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
 import { settingsManager } from './settings';
+import { llmClient, type ChatMessage, type ToolDefinition } from './llm-client';
 import { integrityManager } from './integrity';
 import { assertMessageArray } from './ipc/validate';
 
@@ -341,10 +342,22 @@ export async function runClaudeToolLoop(
   // Clone messages to avoid mutating the caller's array
   const messages = [...options.messages];
 
+  // TODO: Refactor the Anthropic branch below to use llmClient.complete() from llm-client.ts.
+  // This is deferred because the tool loop uses Anthropic-specific types throughout
+  // (Anthropic.ContentBlockParam, Anthropic.ToolResultBlockParam, etc.) that require
+  // careful conversion to the unified ChatMessage/ToolCall types. The OpenRouter branch
+  // should also be migrated to llmClient once the Anthropic branch is proven stable.
+  // See: llm-client.ts for the unified LLMRequest/LLMResponse/ChatMessage types.
+
   // Check if we should use OpenRouter
   const provider = settingsManager.getPreferredProvider();
   if (provider === 'openrouter' && openRouter.isConfigured()) {
     return runOpenRouterToolLoop({ ...options, messages });
+  }
+
+  // Route to local LLM provider (Ollama, TGI, vLLM, HuggingFace cloud)
+  if (provider === 'local') {
+    return runLocalToolLoop({ ...options, tools, messages });
   }
 
   // Default: direct Anthropic SDK
@@ -452,6 +465,134 @@ export async function runClaudeToolLoop(
   return {
     response: textBlock && 'text' in textBlock ? textBlock.text : 'No response generated.',
     model: 'claude-opus-4-6',
+    toolCalls: toolIterations,
+  };
+}
+
+/**
+ * Local LLM tool loop — routes through the unified LLMClient abstraction.
+ *
+ * Supports any OpenAI-compatible backend: Ollama, TGI, vLLM, HuggingFace Inference API.
+ * Converts Anthropic-typed inputs → unified ChatMessage/ToolDefinition types,
+ * then delegates to llmClient.complete() which handles provider selection and
+ * automatic fallback if the local endpoint is unreachable.
+ */
+async function runLocalToolLoop(
+  options: ClaudeToolLoopOptions
+): Promise<ClaudeToolLoopResult> {
+  const {
+    systemPrompt,
+    messages: anthropicMessages,
+    tools: anthropicTools,
+    maxIterations = 25,
+    browserToolNames = new Set<string>(),
+    connectorToolNames = new Set<string>(),
+  } = options;
+
+  // Convert Anthropic tool format → unified ToolDefinition format
+  const tools: ToolDefinition[] = anthropicTools.map((t) => ({
+    name: t.name,
+    description: t.description || '',
+    input_schema: t.input_schema as Record<string, unknown>,
+  }));
+
+  // Convert Anthropic messages → unified ChatMessage format
+  const messages: ChatMessage[] = anthropicMessages.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+  }));
+
+  // Tool executor — routes to browser, connector, or MCP based on tool name
+  async function executeToolCall(
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<string> {
+    let result: unknown;
+    if (browserToolNames.has(name)) {
+      result = await executeBrowserTool(name, args);
+    } else if (connectorToolNames.has(name)) {
+      const connResult = await connectorRegistry.executeTool(name, args);
+      result = connResult.result || connResult.error || '(no output)';
+    } else {
+      result = await mcpClient.callTool(name, args);
+    }
+    return typeof result === 'string' ? result : JSON.stringify(result);
+  }
+
+  let response = await llmClient.complete(
+    {
+      messages,
+      systemPrompt,
+      tools: tools.length > 0 ? tools : undefined,
+      maxTokens: 4096,
+    },
+    'local'
+  );
+
+  // Log which provider actually served (may fall back from local → anthropic)
+  if (response.provider !== 'local') {
+    console.warn(
+      `[Server] Local provider unavailable — fell back to ${response.provider} (${response.model})`
+    );
+  }
+
+  // Tool-use loop (same pattern as Anthropic/OpenRouter branches)
+  let toolIterations = 0;
+  while (response.stopReason === 'tool_use' && response.toolCalls.length > 0) {
+    toolIterations++;
+    if (toolIterations > maxIterations) {
+      console.warn(`[Server] Local tool loop exceeded ${maxIterations} iterations — breaking`);
+      return {
+        response:
+          'I hit my tool-use limit for this request. Please try breaking your request into smaller steps.',
+        model: response.model,
+        toolCalls: toolIterations,
+      };
+    }
+
+    // Add assistant message with tool calls to conversation
+    messages.push({
+      role: 'assistant',
+      content: response.content || null,
+      tool_calls: response.toolCalls,
+    });
+
+    // Execute each tool call and add results
+    for (const tc of response.toolCalls) {
+      try {
+        const resultContent = await executeToolCall(
+          tc.name,
+          tc.input as Record<string, unknown>
+        );
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: resultContent,
+        });
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: `Error: ${errMsg}`,
+        });
+      }
+    }
+
+    response = await llmClient.complete(
+      {
+        messages,
+        systemPrompt,
+        tools: tools.length > 0 ? tools : undefined,
+        maxTokens: 4096,
+      },
+      'local'
+    );
+  }
+
+  return {
+    response: response.content || 'No response generated.',
+    model: response.model,
     toolCalls: toolIterations,
   };
 }

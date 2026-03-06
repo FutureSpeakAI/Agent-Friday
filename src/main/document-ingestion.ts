@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { semanticSearch } from './semantic-search';
+import { llmClient } from './llm-client';
 
 export interface IngestedDocument {
   id: string;
@@ -215,25 +216,12 @@ class DocumentIngestion {
 
   private async summarize(filename: string, content: string): Promise<string> {
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-
       const preview = content.slice(0, 4000);
 
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 200,
-        messages: [
-          {
-            role: 'user',
-            content: `Summarize this document in 2-3 sentences. Focus on what the document is about and key information.\n\nFilename: ${filename}\n\nContent:\n${preview}`,
-          },
-        ],
-      });
-
-      const text = response.content.find((b: any) => b.type === 'text')?.text || '';
+      const text = await llmClient.text(
+        `Summarize this document in 2-3 sentences. Focus on what the document is about and key information.\n\nFilename: ${filename}\n\nContent:\n${preview}`,
+        { maxTokens: 200 }
+      );
       return text.trim() || `Document: ${filename}`;
     } catch {
       return `Document: ${filename} (${(content.length / 1024).toFixed(1)}KB of text)`;

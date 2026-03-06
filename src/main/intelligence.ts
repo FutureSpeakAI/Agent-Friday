@@ -13,6 +13,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { memoryManager } from './memory';
+import { llmClient } from './llm-client';
 import { taskScheduler } from './scheduler';
 
 export interface Briefing {
@@ -77,16 +78,7 @@ Current time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute
 Focus on: actionable insights, interesting developments, things they'd genuinely want to know. Skip generic filler.`;
 
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 512,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      const content = response.content.find((b: any) => b.type === 'text')?.text || '';
+      const content = await llmClient.text(prompt, { maxTokens: 512 });
 
       if (content.trim()) {
         const briefing: Briefing = {

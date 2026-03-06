@@ -13,7 +13,6 @@
 
 import { BrowserWindow } from 'electron';
 import crypto from 'crypto';
-import Anthropic from '@anthropic-ai/sdk';
 import { AgentTask, AgentStatus, AgentDefinition, AgentContext, AgentRole, AgentThought } from './agent-types';
 import { builtinAgents } from './builtin-agents';
 import { findPersonaForAgentType, type AgentPersona } from './agent-personas';
@@ -21,7 +20,7 @@ import { agentVoice } from './agent-voice';
 import { agentTeams } from './agent-teams';
 import { settingsManager } from '../settings';
 import { officeManager } from '../agent-office/office-manager';
-import { openRouter } from '../openrouter';
+import { llmClient } from '../llm-client';
 import { awarenessMesh } from './awareness-mesh';
 import { capabilityMap } from './capability-map';
 import { symbiontProtocol } from './symbiont-protocol';
@@ -538,37 +537,12 @@ class AgentRunner {
   /* ── Private: AI Model API ────────────────────────────────────────── */
 
   /**
-   * Call the preferred AI provider (Anthropic direct or OpenRouter).
-   * OpenRouter gives access to 200+ models through a single API.
+   * Call the preferred AI provider via the unified LLM abstraction layer.
+   * The LLMClient automatically routes to the user's preferred provider
+   * (Anthropic direct or OpenRouter) based on their settings.
    */
   private async callClaude(prompt: string, maxTokens = 2048, signal?: AbortSignal): Promise<string> {
-    const provider = settingsManager.getPreferredProvider();
-
-    // Use OpenRouter if preferred and configured
-    if (provider === 'openrouter' && openRouter.isConfigured()) {
-      const model = settingsManager.getOpenrouterModel();
-      return openRouter.complete(model, prompt, { maxTokens, signal });
-    }
-
-    // Default: direct Anthropic SDK
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY not configured. Please set it in Settings.');
-    }
-
-    const anthropic = new Anthropic({ apiKey });
-
-    const response = await anthropic.messages.create(
-      {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: maxTokens,
-        messages: [{ role: 'user', content: prompt }],
-      },
-      signal ? { signal } : undefined
-    );
-
-    const textBlock = response.content.find((b) => b.type === 'text');
-    return textBlock && 'text' in textBlock ? textBlock.text : '';
+    return llmClient.text(prompt, { maxTokens, signal });
   }
 
   /* ── Private: Voice Synthesis ─────────────────────────────────────── */

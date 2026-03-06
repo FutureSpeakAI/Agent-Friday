@@ -143,7 +143,7 @@ contextBridge.exposeInMainWorld('eve', {
     get: () => ipcRenderer.invoke('settings:get'),
     setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-launch', enabled),
     setAutoScreenCapture: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-screen-capture', enabled),
-    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter', value: string) =>
+    setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string) =>
       ipcRenderer.invoke('settings:set-api-key', key, value),
     setObsidianVaultPath: (vaultPath: string) =>
       ipcRenderer.invoke('settings:set-obsidian-vault-path', vaultPath),
@@ -885,6 +885,8 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.invoke('router:update-config', partial),
     getPromptContext: () =>
       ipcRenderer.invoke('router:get-prompt-context'),
+    discoverLocalModels: () =>
+      ipcRenderer.invoke('router:discover-local-models') as Promise<{ found: number; models: string[] }>,
   },
 
   agentNetwork: {
@@ -1218,6 +1220,60 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  // ── OS Primitives ──────────────────────────────────────────────────
+
+  fileSearch: {
+    search: (query: Record<string, unknown>) =>
+      ipcRenderer.invoke('file-search:search', query),
+    recentFiles: (limit?: number, extensions?: string[]) =>
+      ipcRenderer.invoke('file-search:recent', limit, extensions),
+    findDuplicates: (dirPath: string, mode?: 'name' | 'size') =>
+      ipcRenderer.invoke('file-search:duplicates', dirPath, mode),
+  },
+
+  fileWatcher: {
+    addWatch: (dirPath: string) =>
+      ipcRenderer.invoke('file-watcher:add-watch', dirPath),
+    removeWatch: (dirPath: string) =>
+      ipcRenderer.invoke('file-watcher:remove-watch', dirPath),
+    getWatched: () =>
+      ipcRenderer.invoke('file-watcher:get-watched'),
+    getEvents: (limit?: number) =>
+      ipcRenderer.invoke('file-watcher:get-events', limit),
+    getContext: () =>
+      ipcRenderer.invoke('file-watcher:context'),
+    onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on('file:modified', handler);
+      return () => { ipcRenderer.removeListener('file:modified', handler); };
+    },
+  },
+
+  osEvents: {
+    getPowerState: () =>
+      ipcRenderer.invoke('os-events:power-state'),
+    getRecentEvents: (limit?: number) =>
+      ipcRenderer.invoke('os-events:recent', limit),
+    getDisplays: () =>
+      ipcRenderer.invoke('os-events:displays'),
+    getFileAssociation: (ext: string) =>
+      ipcRenderer.invoke('os-events:file-association', ext),
+    getFileAssociations: (extensions: string[]) =>
+      ipcRenderer.invoke('os-events:file-associations', extensions),
+    openWithDefault: (filePath: string) =>
+      ipcRenderer.invoke('os-events:open-with-default', filePath),
+    getStartupPrograms: () =>
+      ipcRenderer.invoke('os-events:startup-programs'),
+    getContext: () =>
+      ipcRenderer.invoke('os-events:context'),
+    onOsEvent: (callback: (event: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('os:event', handler);
+      return () => { ipcRenderer.removeListener('os:event', handler); };
+    },
+  },
+
+  // Legacy alias — kept for backward compatibility with existing code
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
     ipcRenderer.on('file:modified', handler);

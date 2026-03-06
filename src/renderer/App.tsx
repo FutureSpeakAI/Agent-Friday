@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo, Suspense } from 'react';
 import FridayCore, { SemanticState } from './components/FridayCore';
 import DesktopViz from './components/DesktopViz';
 import HudOverlay from './components/HudOverlay';
@@ -6,16 +6,11 @@ import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
 import StatusBar from './components/StatusBar';
 import TextInput from './components/TextInput';
-import Settings from './components/Settings';
-import AgentDashboard from './components/AgentDashboard';
-import Dashboard from './components/Dashboard';
 import QuickActions from './components/QuickActions';
-import MemoryExplorer from './components/MemoryExplorer';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
 import WelcomeGate from './components/WelcomeGate';
 import PassphraseGate from './components/PassphraseGate';
-import SuperpowersPanel from './components/SuperpowersPanel';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
@@ -23,6 +18,8 @@ import { MoodProvider, useMood } from './contexts/MoodContext';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useWakeWord } from './hooks/useWakeWord';
 import { useDesktopEvolution } from './hooks/useDesktopEvolution';
+import { useAppManager } from './hooks/useAppManager';
+import { APP_REGISTRY } from './registry/app-registry';
 import {
   playConnectedChime,
   playListeningPing,
@@ -187,12 +184,8 @@ export default function App() {
   // handled at the bottom of the component in the return statement.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState('Initializing...');
-  const [showSettings, setShowSettings] = useState(false);
-  const [showAgentDashboard, setShowAgentDashboard] = useState(false);
-  const [showDashboard, setShowDashboard] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
-  const [showMemoryExplorer, setShowMemoryExplorer] = useState(false);
-  const [showSuperpowers, setShowSuperpowers] = useState(false);
+  const appManager = useAppManager();
   const [connectionError, setConnectionError] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
@@ -901,28 +894,35 @@ export default function App() {
       // Ctrl+Shift+D toggles command center dashboard
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
         e.preventDefault();
-        setShowDashboard((s) => !s);
+        appManager.toggleApp('dashboard');
         return;
       }
 
       // Ctrl+Shift+M toggles memory explorer
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyM') {
         e.preventDefault();
-        setShowMemoryExplorer((s) => !s);
+        appManager.toggleApp('memory');
         return;
       }
 
       // Ctrl+Shift+A toggles agent dashboard
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyA') {
         e.preventDefault();
-        setShowAgentDashboard((s) => !s);
+        appManager.toggleApp('agents');
         return;
       }
 
       // Ctrl+Shift+P toggles superpowers panel
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
         e.preventDefault();
-        setShowSuperpowers((s) => !s);
+        appManager.toggleApp('superpowers');
+        return;
+      }
+
+      // Ctrl+Shift+C toggles calendar
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+        e.preventDefault();
+        appManager.toggleApp('calendar');
         return;
       }
 
@@ -1063,11 +1063,7 @@ export default function App() {
           semanticState={semanticState}
           evolutionIndex={desktopEvolution.evolutionIndex}
           onEvolutionChange={desktopEvolution.setEvolution}
-          onOpenDashboard={() => setShowDashboard(true)}
-          onOpenSuperpowers={() => setShowSuperpowers(true)}
-          onOpenAgents={() => setShowAgentDashboard(true)}
-          onOpenSettings={() => setShowSettings(true)}
-          onOpenMemory={() => setShowMemoryExplorer(true)}
+          onOpenApp={appManager.openApp}
           clockStr={clockStr}
           devMode={false}
         />
@@ -1125,7 +1121,7 @@ export default function App() {
       )}
 
       {/* Action feed — animated tool execution indicators + agent cards */}
-      <ActionFeed actions={activeActions} onOpenAgentDashboard={() => setShowAgentDashboard(true)} />
+      <ActionFeed actions={activeActions} onOpenAgentDashboard={() => appManager.openApp('agents')} />
 
       {/* File modification toasts — clickable paths to open in Explorer */}
       <FileToast />
@@ -1144,7 +1140,7 @@ export default function App() {
         onRetry={handleRetry}
         onOpenSettings={() => {
           setConnectionError('');
-          setShowSettings(true);
+          appManager.openApp('settings');
         }}
       />
 
@@ -1233,20 +1229,15 @@ export default function App() {
         isConnected={geminiLive.isConnected}
       />
 
-      {/* Command center dashboard overlay */}
-      <Dashboard visible={showDashboard} onClose={() => setShowDashboard(false)} />
-
-      {/* Memory explorer overlay */}
-      <MemoryExplorer visible={showMemoryExplorer} onClose={() => setShowMemoryExplorer(false)} />
-
-      {/* Agent dashboard overlay */}
-      <AgentDashboard visible={showAgentDashboard} onClose={() => setShowAgentDashboard(false)} />
-
-      {/* Settings overlay */}
-      <Settings visible={showSettings} onClose={() => setShowSettings(false)} />
-
-      {/* Superpowers overlay */}
-      <SuperpowersPanel visible={showSuperpowers} onClose={() => setShowSuperpowers(false)} />
+      {/* ── App Registry — dynamic overlays for all registered apps ── */}
+      {APP_REGISTRY.map((app) => (
+        <Suspense key={app.id} fallback={null}>
+          <app.component
+            visible={appManager.isOpen(app.id)}
+            onClose={() => appManager.closeApp(app.id)}
+          />
+        </Suspense>
+      ))}
     </div>
     </MoodProvider>
   );

@@ -19,6 +19,7 @@ import crypto from 'crypto';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
+import type { HuggingFaceProvider } from './providers/hf-provider';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export interface ModelCapability {
   /** Provider this model is accessed through */
   provider: ProviderName;
   /** Which provider to route through (may differ for OpenRouter models) */
-  routeVia: 'anthropic' | 'openrouter' | 'google';
+  routeVia: 'anthropic' | 'openrouter' | 'google' | 'local';
   /** Maximum context window in tokens */
   contextWindow: number;
   /** Cost per million input tokens (USD) */
@@ -158,6 +159,21 @@ export interface RoutingConfig {
   maxDecisionHistory: number;
   /** Fallback model when primary selection fails */
   fallbackModelId: string;
+  /**
+   * Controls when local models are eligible for automatic routing.
+   * - 'disabled':     Local models never chosen by the router (user can still force via settings)
+   * - 'background':   Only non-interactive tasks (memory ops, extraction, summarization)
+   * - 'conservative': Simple/moderate tasks only (conversation, extraction, basic creative)
+   * - 'all':          Local models compete equally for all task types
+   * Default: 'conservative' — safe for most users
+   */
+  localModelPolicy: 'disabled' | 'background' | 'conservative' | 'all';
+  /**
+   * Minimum capability score (0-1) a local model must have for the task category
+   * to be considered. Prevents local models from winning on cost alone.
+   * Default: 0.55 — only tasks where the local model is at least moderately capable
+   */
+  localMinCapability: number;
 }
 
 export interface RouterStats {
@@ -191,6 +207,22 @@ const LATENCY_MAX_MS: Record<LatencyTier, number> = {
 };
 
 const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+/**
+ * Get the number of in-flight requests to the local inference server.
+ * Uses lazy require to avoid circular dependency with llm-client.
+ * Returns 0 if the provider is not available or not registered.
+ */
+function getLocalInflightCount(): number {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { llmClient } = require('./llm-client');
+    const provider = llmClient.getProvider?.('local') as HuggingFaceProvider | undefined;
+    return provider?.getInflightCount?.() ?? 0;
+  } catch {
+    return 0;
+  }
+}
 
 // ── Built-in Model Registry ───────────────────────────────────────────
 
@@ -380,6 +412,100 @@ const DEFAULT_MODELS: ModelCapability[] = [
     rateLimit: 200,
     consecutiveFailures: 0,
   },
+
+  // ── Local / HuggingFace models ──
+  // These are registered as defaults but marked unavailable until
+  // auto-discovery confirms a local endpoint is reachable.
+  {
+    modelId: 'local/llama-3.3-70b',
+    name: 'Llama 3.3 70B (Local)',
+    provider: 'local',
+    routeVia: 'local',
+    contextWindow: 131072,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 40,
+    strengths: { reasoning: 0.72, code: 0.75, creative: 0.68, extraction: 0.75, 'tool-use': 0.60, conversation: 0.72 },
+    supportsToolUse: true,
+    supportsVision: false,
+    supportsAudio: false,
+    available: false,         // Enabled by auto-discovery
+    lastChecked: 0,
+    rateLimit: 0,             // No rate limit for local
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'local/qwen-2.5-coder-32b',
+    name: 'Qwen 2.5 Coder 32B (Local)',
+    provider: 'local',
+    routeVia: 'local',
+    contextWindow: 32768,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 60,
+    strengths: { reasoning: 0.60, code: 0.88, creative: 0.45, extraction: 0.65, 'tool-use': 0.55, conversation: 0.55 },
+    supportsToolUse: false,
+    supportsVision: false,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'local/deepseek-r1',
+    name: 'DeepSeek R1 (Local)',
+    provider: 'local',
+    routeVia: 'local',
+    contextWindow: 131072,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 30,
+    strengths: { reasoning: 0.92, code: 0.90, creative: 0.65, extraction: 0.82, 'tool-use': 0.55, conversation: 0.60 },
+    supportsToolUse: false,
+    supportsVision: false,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'local/mistral-large',
+    name: 'Mistral Large (Local)',
+    provider: 'local',
+    routeVia: 'local',
+    contextWindow: 131072,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 45,
+    strengths: { reasoning: 0.78, code: 0.76, creative: 0.72, extraction: 0.80, 'tool-use': 0.65, conversation: 0.75 },
+    supportsToolUse: true,
+    supportsVision: false,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'local/phi-4',
+    name: 'Phi 4 (Local)',
+    provider: 'local',
+    routeVia: 'local',
+    contextWindow: 16384,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 120,
+    strengths: { reasoning: 0.55, code: 0.62, creative: 0.48, extraction: 0.60, 'tool-use': 0.40, conversation: 0.65 },
+    supportsToolUse: false,
+    supportsVision: false,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
 ];
 
 // ── Exported Pure Functions (for testability) ─────────────────────────
@@ -457,6 +583,50 @@ export function scoreModel(
   if (!model.available) return zeroScore(model.modelId);
   if (model.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) return zeroScore(model.modelId);
 
+  // ── Local model policy enforcement ──
+  // Prevents local models from competing in routing decisions where they shouldn't.
+  // The user can still force local via settings.preferredProvider — this only
+  // affects *automatic* routing.
+  const isLocal = model.routeVia === 'local' || model.provider === 'local';
+  if (isLocal) {
+    const policy = config.localModelPolicy;
+
+    // 'disabled' — local models never win automatic routing
+    if (policy === 'disabled') return zeroScore(model.modelId);
+
+    // 'background' — only non-interactive background tasks
+    const backgroundCategories: Set<TaskCategory> = new Set([
+      'extraction', 'embedding',
+    ]);
+    if (policy === 'background' && !backgroundCategories.has(task.category)) {
+      return zeroScore(model.modelId);
+    }
+
+    // 'conservative' — simple/moderate tasks in safe categories
+    if (policy === 'conservative') {
+      // Block expert/complex tasks from routing to local
+      if (task.complexity === 'expert' || task.complexity === 'complex') {
+        return zeroScore(model.modelId);
+      }
+      // Block categories where quality degradation is most noticeable
+      const conservativeBlocked: Set<TaskCategory> = new Set([
+        'reasoning', 'audio', 'vision',
+      ]);
+      if (conservativeBlocked.has(task.category)) {
+        return zeroScore(model.modelId);
+      }
+    }
+
+    // 'all' — no additional restrictions, local competes equally
+
+    // Minimum capability threshold — applies to ALL local policies except 'disabled'
+    // Prevents local models from winning on cost alone when they're weak at the task
+    const categoryStrength = model.strengths[task.category] ?? 0;
+    if (categoryStrength < config.localMinCapability) {
+      return zeroScore(model.modelId);
+    }
+  }
+
   // ── Capability score (0-1) ──
   const categoryStrength = model.strengths[task.category] ?? 0.5;
   const complexityNeeded = COMPLEXITY_WEIGHTS[task.complexity];
@@ -481,6 +651,17 @@ export function scoreModel(
   const estimatedTimeMs = (estimatedOutputTokens / model.tokensPerSecond) * 1000;
   let speedScore = Math.min(1, maxLatency / Math.max(estimatedTimeMs, 100));
   if (config.preferSpeed) speedScore = Math.pow(speedScore, 0.5); // Boost speed importance
+
+  // Penalize local models that are already serving requests (Ollama is typically sequential).
+  // Each in-flight request adds estimated queuing delay, degrading the speed score.
+  if (isLocal) {
+    const inflightCount = getLocalInflightCount();
+    if (inflightCount > 0) {
+      // Each queued request roughly doubles the wait time
+      const queuePenalty = Math.pow(0.5, inflightCount);
+      speedScore *= queuePenalty;
+    }
+  }
 
   // ── Context score (0-1) ──
   const contextUtilization = task.estimatedInputTokens / model.contextWindow;
@@ -588,6 +769,8 @@ class IntelligenceRouter {
     maxRequestCostUsd: 1.0,
     maxDecisionHistory: 500,
     fallbackModelId: 'anthropic/claude-sonnet-4',
+    localModelPolicy: 'conservative',
+    localMinCapability: 0.55,
   };
   private filePath = '';
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -779,6 +962,139 @@ class IntelligenceRouter {
       model.consecutiveFailures = 0;
       this.scheduleSave();
     }
+  }
+
+  // ── Local Model Discovery ─────────────────────────────────────────
+
+  /**
+   * Probe the local inference endpoint and discover available models.
+   * Updates the model registry with actual availability.
+   *
+   * Called on startup and can be re-invoked from settings when
+   * the user changes the local endpoint configuration.
+   */
+  async discoverLocalModels(): Promise<{ found: number; models: string[] }> {
+    let hfProvider: HuggingFaceProvider;
+    try {
+      // Late-require to avoid circular dependency at module load time
+      const { llmClient } = require('./llm-client');
+      const provider = llmClient.getProvider?.('local');
+      if (!provider) {
+        return { found: 0, models: [] };
+      }
+      hfProvider = provider as HuggingFaceProvider;
+    } catch {
+      return { found: 0, models: [] };
+    }
+
+    // Check if the local endpoint is healthy
+    const healthy = await hfProvider.checkHealth();
+    if (!healthy) {
+      // Mark all local models as unavailable
+      for (const model of this.models) {
+        if (model.provider === 'local') {
+          model.available = false;
+          model.lastChecked = Date.now();
+        }
+      }
+      console.log('[Router] Local inference endpoint unreachable — local models disabled');
+      return { found: 0, models: [] };
+    }
+
+    // Discover what models are served by the endpoint
+    let remoteModelIds: string[] = [];
+    try {
+      const remoteModels = await hfProvider.listModels();
+      remoteModelIds = remoteModels.map((m) => m.id);
+    } catch {
+      // Health passed but listing failed — assume a single model is served
+      // (common with TGI which only serves one model at a time)
+      remoteModelIds = [];
+    }
+
+    const discoveredNames: string[] = [];
+
+    // Strategy 1: Match remote model IDs to our known local/ entries
+    for (const model of this.models) {
+      if (model.provider !== 'local') continue;
+
+      // Extract the base name (e.g., 'llama-3.3-70b' from 'local/llama-3.3-70b')
+      const baseName = model.modelId.replace('local/', '');
+
+      // Check if any remote model ID contains our base name (fuzzy match)
+      const matched = remoteModelIds.length === 0 || remoteModelIds.some((rid) => {
+        const ridLower = rid.toLowerCase();
+        return ridLower.includes(baseName) ||
+          baseName.includes(ridLower.split('/').pop() || '');
+      });
+
+      if (matched || remoteModelIds.length === 0) {
+        // If no specific model list (single-model TGI), enable the first
+        // plausible model. If we have a list, only enable matches.
+        if (remoteModelIds.length === 0 && discoveredNames.length > 0) {
+          // Already enabled one generic model — skip rest
+          continue;
+        }
+        model.available = true;
+        model.lastChecked = Date.now();
+        model.consecutiveFailures = 0;
+        discoveredNames.push(model.name);
+      } else {
+        model.available = false;
+        model.lastChecked = Date.now();
+      }
+    }
+
+    // Strategy 2: Register any remote models that don't match known entries
+    for (const rid of remoteModelIds) {
+      const ridLower = rid.toLowerCase();
+      const alreadyKnown = this.models.some((m) =>
+        m.provider === 'local' && (
+          ridLower.includes(m.modelId.replace('local/', '')) ||
+          m.modelId.replace('local/', '').includes(ridLower.split('/').pop() || '')
+        )
+      );
+
+      if (!alreadyKnown) {
+        // Register as a new local model with moderate default capabilities
+        const newModel: ModelCapability = {
+          modelId: `local/${rid.replace(/\//g, '-').toLowerCase()}`,
+          name: `${rid} (Local)`,
+          provider: 'local',
+          routeVia: 'local',
+          contextWindow: 32768,
+          inputCostPerMillion: 0,
+          outputCostPerMillion: 0,
+          tokensPerSecond: 40,
+          strengths: {
+            reasoning: 0.60,
+            code: 0.60,
+            creative: 0.55,
+            extraction: 0.65,
+            'tool-use': 0.50,
+            conversation: 0.60,
+          },
+          supportsToolUse: false,
+          supportsVision: false,
+          supportsAudio: false,
+          available: true,
+          lastChecked: Date.now(),
+          rateLimit: 0,
+          consecutiveFailures: 0,
+        };
+        this.models.push(newModel);
+        discoveredNames.push(newModel.name);
+      }
+    }
+
+    if (discoveredNames.length > 0) {
+      console.log(`[Router] Discovered ${discoveredNames.length} local model(s): ${discoveredNames.join(', ')}`);
+      this.scheduleSave();
+    } else {
+      console.log('[Router] Local endpoint healthy but no matching models found');
+    }
+
+    return { found: discoveredNames.length, models: discoveredNames };
   }
 
   // ── Decision History ─────────────────────────────────────────────
