@@ -21,6 +21,7 @@ export { registerContextGraphHandlers } from './context-graph-handlers';
 export { registerContextToolRouterHandlers } from './context-tool-router-handlers';
 export { registerCommitmentTrackerHandlers } from './commitment-tracker-handlers';
 export { registerDailyBriefingHandlers } from './daily-briefing-handlers';
+export { registerBriefingDeliveryHandlers } from './briefing-delivery-handlers';
 export { registerWorkflowRecorderHandlers } from './workflow-recorder-handlers';
 export { registerWorkflowExecutorHandlers } from './workflow-executor-handlers';
 export { registerUnifiedInboxHandlers } from './unified-inbox-handlers';

@@ -58,6 +58,18 @@ export class BriefingPipeline {
   private lastStreamId: string | null = null;
   private recentTriggers: BriefingTrigger[] = [];
   private triggerCounter = 0;
+  private triggerCallbacks: ((trigger: BriefingTrigger) => void)[] = [];
+
+  /**
+   * Register a callback to be notified when a briefing trigger fires.
+   * Returns an unsubscribe function.
+   */
+  onTrigger(cb: (trigger: BriefingTrigger) => void): () => void {
+    this.triggerCallbacks.push(cb);
+    return () => {
+      this.triggerCallbacks = this.triggerCallbacks.filter(c => c !== cb);
+    };
+  }
 
   /**
    * Start observing context graph work stream changes.
@@ -136,6 +148,11 @@ export class BriefingPipeline {
     // Prune if over capacity
     if (this.recentTriggers.length > MAX_TRIGGERS) {
       this.recentTriggers = this.recentTriggers.slice(0, MAX_TRIGGERS);
+    }
+
+    // Notify downstream subscribers
+    for (const cb of this.triggerCallbacks) {
+      cb(trigger);
     }
 
     this.lastStreamId = currentId;

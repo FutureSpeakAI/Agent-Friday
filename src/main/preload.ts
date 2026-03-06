@@ -717,6 +717,18 @@ contextBridge.exposeInMainWorld('eve', {
     config: () => ipcRenderer.invoke('briefing:config'),
   },
 
+  briefingDelivery: {
+    list: () => ipcRenderer.invoke('briefing:list'),
+    dismiss: (id: string) => ipcRenderer.invoke('briefing:dismiss', id),
+    onNew: (callback: (briefing: { id: string; topic: string; content: string; priority: string; timestamp: number }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, briefing: { id: string; topic: string; content: string; priority: string; timestamp: number }) => callback(briefing);
+      ipcRenderer.on('briefing:new', handler);
+      return () => {
+        ipcRenderer.removeListener('briefing:new', handler);
+      };
+    },
+  },
+
   workflowRecorder: {
     startRecording: (name: string) =>
       ipcRenderer.invoke('workflow:start-recording', name),
