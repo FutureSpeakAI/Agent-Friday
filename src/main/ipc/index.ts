@@ -41,6 +41,7 @@ export { registerContainerEngineHandlers } from './container-engine-handlers';
 export { registerExecutionDelegateHandlers } from './execution-delegate-handlers';
 export { registerDelegationEngineHandlers } from './delegation-engine-handlers';
 export { registerOsPrimitivesHandlers } from './os-primitives-handlers';
+export { registerAppContextHandlers } from './app-context-handlers';
 export { registerNotesHandlers } from './notes-handlers';
 export { registerFilesHandlers } from './files-handlers';
 export { registerWeatherHandlers } from './weather-handlers';

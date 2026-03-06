@@ -17,7 +17,7 @@
 // ── Types ──────────────────────────────────────────────────────────
 
 interface EntityRef {
-  type: 'file' | 'app' | 'url' | 'person' | 'topic' | 'project';
+  type: 'file' | 'app' | 'url' | 'person' | 'topic' | 'tool' | 'project' | 'channel';
   value: string;
   normalizedValue: string;
   firstSeen: number;
