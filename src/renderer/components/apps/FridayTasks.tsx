@@ -14,22 +14,23 @@ import AppShell from '../AppShell';
 interface ScheduledTask {
   id: string;
   description: string;
-  cronExpression?: string;
-  runAt?: string;
+  type: 'once' | 'recurring';
+  cronPattern?: string;
+  triggerTime?: number;
   action: string;
-  payload?: any;
-  status?: string;
-  nextRun?: string;
-  createdAt?: string;
+  payload?: string;
+  enabled: boolean;
+  createdAt?: number;
+  lastTriggered?: number;
 }
 
 interface Commitment {
   id: string;
-  person: string;
+  personName: string;
   description: string;
-  dueDate?: string;
+  deadline: number | null;
   status?: string;
-  createdAt?: string;
+  createdAt?: number;
 }
 
 interface Props {
@@ -65,7 +66,7 @@ export default function FridayTasks({ visible, onClose }: Props) {
     setError(null);
     try {
       const [tasksRes, commitmentsRes] = await Promise.all([
-        (window as any).eve.scheduler.list(),
+        (window as any).eve.scheduler.listTasks(),
         (window as any).eve.commitments.getAll(),
       ]);
       setTasks(Array.isArray(tasksRes) ? tasksRes : []);
@@ -84,7 +85,7 @@ export default function FridayTasks({ visible, onClose }: Props) {
   const handleCancel = async (taskId: string) => {
     setCancelling(taskId);
     try {
-      await (window as any).eve.scheduler.cancel(taskId);
+      await (window as any).eve.scheduler.deleteTask(taskId);
       await loadData();
     } catch (err: any) {
       setError(err?.message || 'Failed to cancel task');
@@ -98,12 +99,13 @@ export default function FridayTasks({ visible, onClose }: Props) {
     setCreating(true);
     setError(null);
     try {
-      await (window as any).eve.scheduler.create({
+      await (window as any).eve.scheduler.createTask({
         description: newDesc.trim(),
-        cronExpression: newCron.trim() || undefined,
-        runAt: newRunAt || undefined,
-        action: newAction,
-        payload: {},
+        type: newCron.trim() ? 'recurring' : 'once',
+        cron_pattern: newCron.trim() || undefined,
+        trigger_time: newRunAt ? new Date(newRunAt).getTime() : undefined,
+        action: newAction === 'reminder' ? 'remind' : newAction === 'notification' ? 'remind' : newAction,
+        payload: '',
       });
       setNewDesc('');
       setNewCron('');
@@ -123,10 +125,15 @@ export default function FridayTasks({ visible, onClose }: Props) {
     setCreatingCm(true);
     setError(null);
     try {
-      await (window as any).eve.commitments.create({
-        person: cmPerson.trim(),
+      await (window as any).eve.commitments.add({
         description: cmDesc.trim(),
-        dueDate: cmDue || undefined,
+        personName: cmPerson.trim(),
+        direction: 'user_promised' as const,
+        source: 'manual' as const,
+        deadline: cmDue ? new Date(cmDue).getTime() : null,
+        domain: 'general',
+        confidence: 1.0,
+        contextSnippet: 'Manual entry via Tasks app',
       });
       setCmPerson('');
       setCmDesc('');
@@ -152,9 +159,9 @@ export default function FridayTasks({ visible, onClose }: Props) {
 
   const overdueCommitments = commitments.filter((c) => c.status === 'overdue');
   const upcomingCommitments = commitments.filter(
-    (c) => c.status !== 'overdue' && c.status !== 'complete'
+    (c) => c.status !== 'overdue' && c.status !== 'completed'
   );
-  const completedCommitments = commitments.filter((c) => c.status === 'complete');
+  const completedCommitments = commitments.filter((c) => c.status === 'completed');
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'tasks', label: 'Scheduled Tasks', count: tasks.length },
@@ -214,12 +221,14 @@ export default function FridayTasks({ visible, onClose }: Props) {
                     <div style={s.taskTitle}>{t.description}</div>
                     <div style={s.taskMeta}>
                       <span style={s.monoSmall}>{t.action}</span>
-                      {t.cronExpression && (
-                        <span style={s.monoSmall}>cron: {t.cronExpression}</span>
+                      <span style={s.monoSmall}>{t.type}</span>
+                      {t.cronPattern && (
+                        <span style={s.monoSmall}>cron: {t.cronPattern}</span>
                       )}
-                      {t.runAt && <span style={s.monoSmall}>at: {t.runAt}</span>}
-                      {t.nextRun && (
-                        <span style={s.secondaryText}>Next: {t.nextRun}</span>
+                      {t.triggerTime && (
+                        <span style={s.monoSmall}>
+                          at: {new Date(t.triggerTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -227,11 +236,11 @@ export default function FridayTasks({ visible, onClose }: Props) {
                     <span
                       style={{
                         ...s.statusPill,
-                        color: getStatusColor(t.status),
-                        borderColor: `${getStatusColor(t.status)}44`,
+                        color: t.enabled ? '#22c55e' : '#8888a0',
+                        borderColor: t.enabled ? '#22c55e44' : '#8888a044',
                       }}
                     >
-                      {t.status || 'scheduled'}
+                      {t.enabled ? 'active' : 'disabled'}
                     </span>
                     <button
                       style={s.cancelBtn}
@@ -388,17 +397,20 @@ function CommitmentRow({ commitment: c }: { commitment: Commitment }) {
   const color =
     c.status === 'overdue'
       ? '#ef4444'
-      : c.status === 'complete'
+      : c.status === 'completed'
       ? '#22c55e'
       : '#f97316';
+  const deadlineStr = c.deadline
+    ? new Date(c.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })
+    : null;
   return (
     <div style={s.commitmentCard}>
       <div style={{ ...s.commitDot, background: color }} />
       <div style={{ flex: 1 }}>
         <div style={s.primaryText}>{c.description}</div>
         <div style={s.commitMeta}>
-          <span style={s.secondaryText}>👤 {c.person}</span>
-          {c.dueDate && <span style={s.mutedText}>Due: {c.dueDate}</span>}
+          <span style={s.secondaryText}>👤 {c.personName}</span>
+          {deadlineStr && <span style={s.mutedText}>Due: {deadlineStr}</span>}
         </div>
       </div>
       <span style={{ ...s.statusPill, color, borderColor: `${color}44` }}>
