@@ -86,7 +86,7 @@ export default function FridayTerminal({ visible, onClose }: TerminalProps) {
     setRunning(true);
 
     try {
-      const result = await (window as any).eve?.container?.execute(language, cmd);
+      const result = await (window as any).eve?.container?.execute({ code: cmd, language });
 
       if (result) {
         if (result.stdout) {

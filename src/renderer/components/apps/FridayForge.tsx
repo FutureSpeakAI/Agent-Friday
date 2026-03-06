@@ -64,7 +64,7 @@ export default function FridayForge({ visible, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const result = await (window as any).eve.ecosystem.listRegistry();
+      const result = await (window as any).eve.ecosystem.searchRegistry({});
       setRegistry(Array.isArray(result) ? result : []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load registry');
@@ -84,7 +84,7 @@ export default function FridayForge({ visible, onClose }: Props) {
 
   const loadGaps = useCallback(async () => {
     try {
-      const result = await (window as any).eve.capabilityGaps.getAll();
+      const result = await (window as any).eve.capabilityGaps.top();
       setGaps(Array.isArray(result) ? result : []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load capability gaps');
@@ -114,7 +114,7 @@ export default function FridayForge({ visible, onClose }: Props) {
     }
     setSearching(true);
     try {
-      const result = await (window as any).eve.ecosystem.search(query.trim());
+      const result = await (window as any).eve.ecosystem.searchRegistry({ query: query.trim() });
       setRegistry(Array.isArray(result) ? result : []);
     } catch (err: any) {
       setError(err?.message || 'Search failed');
