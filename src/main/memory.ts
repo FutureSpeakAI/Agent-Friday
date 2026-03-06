@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { settingsManager } from './settings';
+import { llmClient } from './llm-client';
 import {
   ensureVaultStructure,
   writeLongTermNote,
@@ -220,18 +221,7 @@ If nothing new to extract, return: {"longTerm": [], "mediumTerm": [], "personMen
     }
 
     try {
-      // Use Anthropic SDK directly for extraction (cheapest reliable option)
-      const { default: AnthropicSdk } = await import('@anthropic-ai/sdk');
-      const anthropic = new AnthropicSdk({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: finalPrompt }],
-      });
-
-      const textBlock = response.content.find((b) => b.type === 'text');
-      const text = textBlock && 'text' in textBlock ? textBlock.text : '';
+      const text = await llmClient.text(finalPrompt, { maxTokens: 1024 });
 
       // Extract JSON from response (handle potential markdown wrapping)
       const jsonMatch = text.match(/\{[\s\S]*\}/);

@@ -14,6 +14,7 @@ import { memoryManager, MediumTermEntry, LongTermEntry } from './memory';
 import { episodicMemory } from './episodic-memory';
 import { semanticSearch } from './semantic-search';
 import { appendLearning } from './friday-profile';
+import { llmClient } from './llm-client';
 import crypto from 'crypto';
 
 const CONSOLIDATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -250,11 +251,6 @@ class MemoryConsolidation {
     const existingFacts = memoryManager.getLongTerm().map((e) => e.fact);
 
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-
       const episodeSummaries = episodes
         .map(
           (ep) =>
@@ -263,13 +259,7 @@ class MemoryConsolidation {
         )
         .join('\n');
 
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 400,
-        messages: [
-          {
-            role: 'user',
-            content: `Analyse these recent conversation summaries for cross-conversation patterns and insights. Return ONLY valid JSON.
+      const text = await llmClient.text(`Analyse these recent conversation summaries for cross-conversation patterns and insights. Return ONLY valid JSON.
 
 RECENT CONVERSATIONS:
 ${episodeSummaries}
@@ -289,13 +279,7 @@ Rules:
 - Don't repeat what's already known
 - Focus on meta-patterns: recurring interests, work rhythms, communication evolution
 - Max 3 insights per cycle
-- If nothing new, return {"insights": []}`,
-          },
-        ],
-      });
-
-      const text =
-        response.content.find((b: any) => b.type === 'text')?.text || '';
+- If nothing new, return {"insights": []}`, { maxTokens: 400 });
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return 0;
 
@@ -343,31 +327,14 @@ Rules:
    */
   private async claudeMerge(entries: LongTermEntry[]): Promise<string | null> {
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-
       const facts = entries.map((e) => `- ${e.fact}`).join('\n');
 
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 100,
-        messages: [
-          {
-            role: 'user',
-            content: `These memory entries overlap or say the same thing. Merge them into ONE clear, concise fact. Return ONLY the merged text, nothing else.
+      const text = await llmClient.text(`These memory entries overlap or say the same thing. Merge them into ONE clear, concise fact. Return ONLY the merged text, nothing else.
 
 ENTRIES:
 ${facts}
 
-MERGED FACT:`,
-          },
-        ],
-      });
-
-      const text =
-        response.content.find((b: any) => b.type === 'text')?.text || '';
+MERGED FACT:`, { maxTokens: 100 });
       const cleaned = text.trim().replace(/^["']|["']$/g, '');
 
       return cleaned.length > 5 ? cleaned : null;

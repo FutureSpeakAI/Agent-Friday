@@ -95,6 +95,8 @@ export interface FridaySettings extends AgentConfig {
   autoLaunch: boolean;
   autoScreenCapture: boolean;
   obsidianVaultPath: string;
+  /** Additional directories to watch for file changes */
+  fileWatchPaths: string[];
   geminiApiKey: string;
   anthropicApiKey: string;
   elevenLabsApiKey: string;
@@ -102,10 +104,20 @@ export interface FridaySettings extends AgentConfig {
   perplexityApiKey: string;
   openaiApiKey: string;
   openrouterApiKey: string;
-  /** Which model provider to prefer for agent tasks: 'anthropic' | 'openrouter' */
-  preferredProvider: 'anthropic' | 'openrouter';
+  /** Which model provider to prefer for agent tasks: 'anthropic' | 'openrouter' | 'local' */
+  preferredProvider: 'anthropic' | 'openrouter' | 'local';
   /** OpenRouter model to use for agent tasks (e.g. 'anthropic/claude-sonnet-4') */
   openrouterModel: string;
+  /** HuggingFace API token for cloud inference */
+  huggingfaceApiKey: string;
+  /** HuggingFace Inference API endpoint (default: HF cloud) */
+  huggingfaceEndpoint: string;
+  /** Local inference endpoint (TGI, vLLM, Ollama) */
+  localInferenceEndpoint: string;
+  /** Whether local model inference is enabled */
+  localModelEnabled: boolean;
+  /** Default model for local inference */
+  localModelId: string;
   agentVoicesEnabled: boolean;
   wakeWordEnabled: boolean;
   notificationWhisperEnabled: boolean;
@@ -158,6 +170,7 @@ const DEFAULTS: FridaySettings = {
   autoLaunch: false,
   autoScreenCapture: true,
   obsidianVaultPath: '',
+  fileWatchPaths: [],
   geminiApiKey: '',
   anthropicApiKey: '',
   elevenLabsApiKey: '',
@@ -167,6 +180,11 @@ const DEFAULTS: FridaySettings = {
   openrouterApiKey: '',
   preferredProvider: 'anthropic',
   openrouterModel: 'anthropic/claude-sonnet-4',
+  huggingfaceApiKey: '',
+  huggingfaceEndpoint: 'https://api-inference.huggingface.co/v1',
+  localInferenceEndpoint: 'http://localhost:11434/v1',
+  localModelEnabled: false,
+  localModelId: '',
   agentVoicesEnabled: true,
   wakeWordEnabled: true,
   notificationWhisperEnabled: true,
@@ -257,6 +275,9 @@ class SettingsManager {
     if (!this.settings.openrouterApiKey && process.env.OPENROUTER_API_KEY) {
       this.settings.openrouterApiKey = process.env.OPENROUTER_API_KEY;
     }
+    if (!this.settings.huggingfaceApiKey && process.env.HF_TOKEN) {
+      this.settings.huggingfaceApiKey = process.env.HF_TOKEN;
+    }
 
     // Apply API keys to process.env so the rest of the app can use them
     this.applyApiKeys();
@@ -306,6 +327,7 @@ class SettingsManager {
       hasPerplexityKey: !!this.settings.perplexityApiKey,
       hasOpenaiKey: !!this.settings.openaiApiKey,
       hasOpenrouterKey: !!this.settings.openrouterApiKey,
+      hasHuggingfaceKey: !!this.settings.huggingfaceApiKey,
       geminiKeyHint: this.maskKey(this.settings.geminiApiKey),
       anthropicKeyHint: this.maskKey(this.settings.anthropicApiKey),
       elevenLabsKeyHint: this.maskKey(this.settings.elevenLabsApiKey),
@@ -313,8 +335,12 @@ class SettingsManager {
       perplexityKeyHint: this.maskKey(this.settings.perplexityApiKey),
       openaiKeyHint: this.maskKey(this.settings.openaiApiKey),
       openrouterKeyHint: this.maskKey(this.settings.openrouterApiKey),
+      huggingfaceKeyHint: this.maskKey(this.settings.huggingfaceApiKey),
       preferredProvider: this.settings.preferredProvider,
       openrouterModel: this.settings.openrouterModel,
+      localModelEnabled: this.settings.localModelEnabled,
+      localInferenceEndpoint: this.settings.localInferenceEndpoint,
+      localModelId: this.settings.localModelId || '',
       agentVoicesEnabled: this.settings.agentVoicesEnabled,
       wakeWordEnabled: this.settings.wakeWordEnabled,
       notificationWhisperEnabled: this.settings.notificationWhisperEnabled,
@@ -360,7 +386,7 @@ class SettingsManager {
     return this.settings.obsidianVaultPath;
   }
 
-  async setApiKey(key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter', value: string): Promise<void> {
+  async setApiKey(key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string): Promise<void> {
     if (key === 'gemini') {
       this.settings.geminiApiKey = value;
     } else if (key === 'anthropic') {
@@ -375,6 +401,8 @@ class SettingsManager {
       this.settings.openaiApiKey = value;
     } else if (key === 'openrouter') {
       this.settings.openrouterApiKey = value;
+    } else if (key === 'huggingface') {
+      this.settings.huggingfaceApiKey = value;
     }
 
     this.applyApiKeys();
@@ -417,7 +445,7 @@ class SettingsManager {
     const sensitiveFields = new Set([
       // API keys (must use setApiKey())
       'geminiApiKey', 'anthropicApiKey', 'elevenLabsApiKey',
-      'firecrawlApiKey', 'perplexityApiKey', 'openaiApiKey', 'openrouterApiKey',
+      'firecrawlApiKey', 'perplexityApiKey', 'openaiApiKey', 'openrouterApiKey', 'huggingfaceApiKey',
       // Bot tokens and owner IDs — hijackable by compromised renderer
       'telegramBotToken', 'telegramOwnerId',
       'discordBotToken', 'discordOwnerId',
@@ -503,7 +531,11 @@ class SettingsManager {
     return this.settings.openrouterApiKey;
   }
 
-  getPreferredProvider(): 'anthropic' | 'openrouter' {
+  getHuggingfaceApiKey(): string {
+    return this.settings.huggingfaceApiKey;
+  }
+
+  getPreferredProvider(): 'anthropic' | 'openrouter' | 'local' {
     return this.settings.preferredProvider || 'anthropic';
   }
 
@@ -555,6 +587,9 @@ class SettingsManager {
     if (this.settings.openrouterApiKey) {
       process.env.OPENROUTER_API_KEY = this.settings.openrouterApiKey;
     }
+    if (this.settings.huggingfaceApiKey) {
+      process.env.HF_TOKEN = this.settings.huggingfaceApiKey;
+    }
   }
 
   /**
@@ -565,7 +600,7 @@ class SettingsManager {
     const keysToRemove = [
       'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY',
       'FIRECRAWL_API_KEY', 'PERPLEXITY_API_KEY', 'OPENAI_API_KEY',
-      'OPENROUTER_API_KEY',
+      'OPENROUTER_API_KEY', 'HF_TOKEN',
     ];
     for (const key of keysToRemove) {
       delete process.env[key];
@@ -605,6 +640,7 @@ const SENSITIVE_ENV_KEYS = [
   'PERPLEXITY_API_KEY',
   'OPENAI_API_KEY',
   'OPENROUTER_API_KEY',
+  'HF_TOKEN',
   // Common secret env vars that should never leak
   'AWS_SECRET_ACCESS_KEY',
   'AZURE_CLIENT_SECRET',

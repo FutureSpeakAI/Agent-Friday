@@ -6,6 +6,7 @@
 
 import { ipcMain, clipboard, shell } from 'electron';
 import { memoryManager } from './memory';
+import { llmClient } from './llm-client';
 import crypto from 'crypto';
 
 // Late-bound trust graph import to avoid circular dependencies
@@ -15,23 +16,6 @@ function getTrustGraph() {
     try { _trustGraph = require('./trust-graph').trustGraph; } catch { /* not ready yet */ }
   }
   return _trustGraph;
-}
-
-/**
- * Call Claude Sonnet for drafting. Uses the same pattern as agent-runner.ts.
- */
-async function callClaude(prompt: string, systemPrompt?: string): Promise<string> {
-  const Anthropic = require('@anthropic-ai/sdk');
-  const anthropic = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    system: systemPrompt || '',
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  return response.content.find((b: any) => b.type === 'text')?.text || '';
 }
 
 interface DraftRequest {
@@ -181,7 +165,7 @@ Write the ${request.type} body. Make it sound natural and human, not AI-generate
     }
 
     try {
-      const response = await callClaude(prompt, 'You are a professional communications assistant. Write clear, natural-sounding messages that match the requested tone. Never include meta-commentary about the draft.');
+      const response = await llmClient.text(prompt, { systemPrompt: 'You are a professional communications assistant. Write clear, natural-sounding messages that match the requested tone. Never include meta-commentary about the draft.', maxTokens: 1024 });
 
       // Parse subject if generated
       let subject = request.subject || '';
@@ -263,7 +247,7 @@ Instruction: ${instruction}
 Write ONLY the refined version. Maintain the same overall intent and tone unless the instruction says otherwise.`;
 
     try {
-      const refined = await callClaude(prompt, 'You are a professional communications assistant. Refine the draft precisely as instructed.');
+      const refined = await llmClient.text(prompt, { systemPrompt: 'You are a professional communications assistant. Refine the draft precisely as instructed.', maxTokens: 1024 });
 
       const newDraft: Draft = {
         id: crypto.randomUUID(),

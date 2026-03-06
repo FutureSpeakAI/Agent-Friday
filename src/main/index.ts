@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { startServer } from './server';
 import { mcpClient } from './mcp-client';
+import { initializeProviders } from './providers';
 
 // ── Global error handlers (must be first) ───────────────────────────
 const logPath = path.join(app.getPath('userData'), 'crash.log');
@@ -172,6 +173,7 @@ import {
   registerMultimediaHandlers,
   registerContainerEngineHandlers,
   registerDelegationEngineHandlers,
+  registerOsPrimitivesHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -298,6 +300,14 @@ app.whenReady().then(async () => {
   } catch (err) {
     // Crypto Sprint 17: Sanitize error output.
     console.warn('[Friday] Settings init failed:', err instanceof Error ? err.message : 'Unknown error');
+  }
+
+  // Initialize LLM providers (must come after settings — API keys depend on it)
+  try {
+    initializeProviders();
+    console.log('[Friday] LLM providers initialized');
+  } catch (err) {
+    console.warn('[Friday] Provider init failed:', err instanceof Error ? err.message : 'Unknown error');
   }
 
   // Initialize memory system (personality depends on it)
@@ -565,7 +575,12 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Outbound intelligence init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
-    intelligenceRouter.initialize().catch((err) => {
+    intelligenceRouter.initialize().then(() => {
+      // Auto-discover local models (non-blocking — probes local inference endpoint)
+      intelligenceRouter.discoverLocalModels().catch((err) => {
+        console.warn('[Friday] Local model discovery failed:', err instanceof Error ? err.message : 'Unknown error');
+      });
+    }).catch((err) => {
       console.warn('[Friday] Intelligence router init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
@@ -668,6 +683,7 @@ app.whenReady().then(async () => {
   registerMultimediaHandlers();
   registerContainerEngineHandlers();
   registerDelegationEngineHandlers(mainWindow ?? undefined);
+  registerOsPrimitivesHandlers();
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
   //
