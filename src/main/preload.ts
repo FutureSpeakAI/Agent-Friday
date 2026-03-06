@@ -640,6 +640,13 @@ contextBridge.exposeInMainWorld('eve', {
     contextString: () => ipcRenderer.invoke('context-graph:context-string'),
     promptContext: () => ipcRenderer.invoke('context-graph:prompt-context'),
     status: () => ipcRenderer.invoke('context-graph:status'),
+    onStreamUpdate: (callback: (payload: { activeStream: any; recentEntities: any[]; streamHistory: any[] }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { activeStream: any; recentEntities: any[]; streamHistory: any[] }) => callback(payload);
+      ipcRenderer.on('context:stream-update', handler);
+      return () => {
+        ipcRenderer.removeListener('context:stream-update', handler);
+      };
+    },
   },
 
   toolRouter: {

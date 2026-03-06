@@ -18,6 +18,8 @@ export { registerMeetingIntelligenceHandlers } from './meeting-intelligence-hand
 export { registerCapabilityGapHandlers } from './capability-gap-handlers';
 export { registerContextStreamHandlers } from './context-stream-handlers';
 export { registerContextGraphHandlers } from './context-graph-handlers';
+export { registerContextPushHandlers } from './context-push-handlers';
+export type { ContextPushCleanup } from './context-push-handlers';
 export { registerContextToolRouterHandlers } from './context-tool-router-handlers';
 export { registerCommitmentTrackerHandlers } from './commitment-tracker-handlers';
 export { registerDailyBriefingHandlers } from './daily-briefing-handlers';
