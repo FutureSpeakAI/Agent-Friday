@@ -1348,6 +1348,18 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  appContext: {
+    get: (appId: string) =>
+      ipcRenderer.invoke('app-context:get', appId),
+    onUpdate: (callback: (ctx: { activeStream: any; entities: any[]; briefingSummary: string | null }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ctx: any) => callback(ctx);
+      ipcRenderer.on('app-context:update', handler);
+      return () => {
+        ipcRenderer.removeListener('app-context:update', handler);
+      };
+    },
+  },
+
   // Legacy alias — kept for backward compatibility with existing code
   onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
