@@ -43,6 +43,14 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.invoke('browser:call-tool', name, args),
   },
 
+  toolExecution: {
+    execute: (toolCall: { id: string; type: string; name: string; input: unknown }) =>
+      ipcRenderer.invoke('tool:execute', toolCall),
+    confirmResponse: (decisionId: string, approved: boolean) =>
+      ipcRenderer.invoke('tool:confirm-response', { decisionId, approved }),
+    listTools: () => ipcRenderer.invoke('tool:list-tools'),
+  },
+
   sessionHealth: {
     get: () => ipcRenderer.invoke('session-health:get'),
     reset: () => ipcRenderer.invoke('session-health:reset'),
