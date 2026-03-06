@@ -146,4 +146,10 @@ export function registerIntelligenceRouterHandlers(): void {
   ipcMain.handle('router:get-prompt-context', () => {
     return intelligenceRouter.getPromptContext();
   });
+
+  // ── Local Model Discovery ──────────────────────────────────────────
+
+  ipcMain.handle('router:discover-local-models', async () => {
+    return intelligenceRouter.discoverLocalModels();
+  });
 }

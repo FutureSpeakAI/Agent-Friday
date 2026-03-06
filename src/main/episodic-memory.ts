@@ -13,6 +13,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { settingsManager } from './settings';
+import { llmClient } from './llm-client';
 import { semanticSearch } from './semantic-search';
 import { relationshipMemory } from './relationship-memory';
 
@@ -107,14 +108,7 @@ class EpisodicMemoryStore {
     let keyDecisions: string[] = [];
 
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 512,
+      const response = await llmClient.complete({
         messages: [
           {
             role: 'user',
@@ -134,10 +128,10 @@ Return JSON in this exact format:
 If no key decisions were made, use an empty array. Keep topics concise (1-3 words each).`,
           },
         ],
+        maxTokens: 512,
       });
 
-      const text =
-        response.content.find((b: any) => b.type === 'text')?.text || '';
+      const text = response.content;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
 
       if (jsonMatch) {

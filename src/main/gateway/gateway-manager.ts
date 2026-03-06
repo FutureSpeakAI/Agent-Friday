@@ -15,7 +15,8 @@
  *   filter tools → runClaudeToolLoop → send response → audit + memory
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
+import { llmClient } from '../llm-client';
 import { mcpClient } from '../mcp-client';
 import { connectorRegistry } from '../connectors/registry';
 import { runClaudeToolLoop } from '../server';

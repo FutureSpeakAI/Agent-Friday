@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { Episode } from './episodic-memory';
 import { settingsManager } from './settings';
+import { llmClient } from './llm-client';
 
 interface SharedReference {
   reference: string;
@@ -247,11 +248,6 @@ class RelationshipMemory {
     if (episode.durationSeconds < 120 && episode.turnCount < 6) return;
 
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const anthropic = new Anthropic.default({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
-
       const config = settingsManager.getAgentConfig();
       const uName = config.userName || 'User';
       const aName = config.agentName || 'Agent';
@@ -262,9 +258,7 @@ class RelationshipMemory {
             .slice(-4000)
         : episode.summary;
 
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 300,
+      const response = await llmClient.complete({
         messages: [
           {
             role: 'user',
@@ -290,10 +284,10 @@ Rules:
 - Be selective — only genuinely relationship-relevant observations`,
           },
         ],
+        maxTokens: 300,
       });
 
-      const text =
-        response.content.find((b: any) => b.type === 'text')?.text || '';
+      const text = response.content;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return;
 

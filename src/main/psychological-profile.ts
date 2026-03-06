@@ -12,7 +12,7 @@
  * they need from an AI companion.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { llmClient } from './llm-client';
 import type { PsychologicalProfile, IntakeResponses } from './settings';
 import { settingsManager } from './settings';
 
@@ -55,14 +55,6 @@ Return ONLY the JSON object. No markdown fencing, no explanation.`;
 export async function generatePsychologicalProfile(
   responses: IntakeResponses
 ): Promise<PsychologicalProfile> {
-  const apiKey = settingsManager.getAnthropicApiKey() || process.env.ANTHROPIC_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('Anthropic API key not available for psychological profiling');
-  }
-
-  const anthropic = new Anthropic({ apiKey });
-
   const userMessage = `Here are the intake responses to analyze:
 
 1. Voice preference: "${responses.voicePreference}"
@@ -73,15 +65,7 @@ export async function generatePsychologicalProfile(
 
   console.log('[PsychProfile] Generating psychological profile from intake responses...');
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    system: ANALYSIS_PROMPT,
-    messages: [{ role: 'user', content: userMessage }],
-  });
-
-  const text =
-    response.content[0].type === 'text' ? response.content[0].text : '';
+  const text = await llmClient.text(userMessage, { systemPrompt: ANALYSIS_PROMPT, maxTokens: 1024 });
 
   try {
     const profile: PsychologicalProfile = JSON.parse(text);

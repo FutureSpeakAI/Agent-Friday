@@ -548,8 +548,13 @@ declare global {
           perplexityKeyHint: string;
           firecrawlKeyHint: string;
           openrouterKeyHint: string;
-          preferredProvider: 'anthropic' | 'openrouter';
+          preferredProvider: 'anthropic' | 'openrouter' | 'local';
           openrouterModel: string;
+          localModelEnabled: boolean;
+          localInferenceEndpoint: string;
+          localModelId: string;
+          hasHuggingfaceKey: boolean;
+          huggingfaceKeyHint: string;
           agentVoicesEnabled: boolean;
           wakeWordEnabled: boolean;
           notificationWhisperEnabled: boolean;
@@ -565,7 +570,7 @@ declare global {
         }>;
         setAutoLaunch: (enabled: boolean) => Promise<void>;
         setAutoScreenCapture: (enabled: boolean) => Promise<void>;
-        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter', value: string) => Promise<void>;
+        setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string) => Promise<void>;
         setObsidianVaultPath: (vaultPath: string) => Promise<void>;
         set: (key: string, value: unknown) => Promise<void>;
       };
@@ -1310,6 +1315,7 @@ declare global {
         getConfig: () => Promise<any>;
         updateConfig: (partial: Record<string, unknown>) => Promise<any>;
         getPromptContext: () => Promise<any>;
+        discoverLocalModels: () => Promise<{ found: number; models: string[] }>;
       };
 
       agentNetwork: {

@@ -13,7 +13,7 @@
  *   Permissions                 → Trust-gated creative autonomy
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { llmClient } from './llm-client';
 import { settingsManager } from './settings';
 import * as fs from 'fs';
 import * as fsAsync from 'fs/promises';
@@ -272,9 +272,6 @@ class MultimediaEngine {
     speakers: PodcastSpeaker[],
     request: PodcastRequest,
   ): Promise<ScriptSegment[]> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error('Anthropic API key not configured');
-
     const targetDuration = DURATION_TARGETS[request.duration] || 480;
     // Rough estimate: 150 words/minute spoken → words needed
     const targetWords = Math.floor((targetDuration / 60) * 150);
@@ -283,10 +280,7 @@ class MultimediaEngine {
       `Speaker ${i + 1} (${s.role}): ${s.personality}`
     ).join('\n');
 
-    const anthropic = new Anthropic({ apiKey });
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
+    const response = await llmClient.complete({
       messages: [{
         role: 'user',
         content: `You are a podcast script writer. Generate a ${request.format} podcast script from the following source material.
@@ -322,10 +316,10 @@ Example:
 SOURCE MATERIAL:
 ${sourceContent.slice(0, 30000)}`,
       }],
+      maxTokens: 8192,
     });
 
-    const textBlock = response.content.find((b) => b.type === 'text');
-    const rawText = textBlock && 'text' in textBlock ? textBlock.text : '[]';
+    const rawText = response.content || '[]';
 
     // Extract JSON array from response (may be wrapped in markdown code block)
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
@@ -486,9 +480,6 @@ ${sourceContent.slice(0, 30000)}`,
   }
 
   private async generateVisualCode(request: VisualRequest): Promise<string> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error('Anthropic API key not configured');
-
     const styleGuide: Record<string, string> = {
       professional: 'Clean corporate design. Navy, white, subtle grays. Helvetica/Inter fonts. Grid-based layout.',
       playful: 'Vibrant colors, rounded shapes, friendly fonts. Fun but readable.',
@@ -496,10 +487,7 @@ ${sourceContent.slice(0, 30000)}`,
       rich: 'Dense information design. Multiple visual elements, color coding, detailed annotations.',
     };
 
-    const anthropic = new Anthropic({ apiKey });
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
+    const response = await llmClient.complete({
       messages: [{
         role: 'user',
         content: `Generate a complete, self-contained HTML file that creates a ${request.type}.
@@ -521,10 +509,10 @@ ${request.source.slice(0, 20000)}
 
 Return ONLY the complete HTML file, no explanation.`,
       }],
+      maxTokens: 8192,
     });
 
-    const textBlock = response.content.find((b) => b.type === 'text');
-    let html = textBlock && 'text' in textBlock ? textBlock.text : '';
+    let html = response.content;
 
     // Strip markdown code fence if present
     html = html.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '');

@@ -10,6 +10,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { settingsManager } from './settings';
 import { memoryManager } from './memory';
+import { llmClient } from './llm-client';
 
 // Late-bound trust graph import to avoid circular dependencies
 let _trustGraph: any = null;
@@ -274,16 +275,7 @@ Write a single dense paragraph (4-8 sentences) that captures every meaningful in
 - Do NOT include timestamps or category tags — just clean narrative
 - Do NOT include any preamble or explanation — return ONLY the paragraph`;
 
-    const Anthropic = require('@anthropic-ai/sdk');
-    const anthropic = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const narrative = response.content.find((b: any) => b.type === 'text')?.text?.trim() || '';
+    const narrative = (await llmClient.text(prompt, { maxTokens: 1024 })).trim();
 
     if (!narrative) {
       console.warn('[Profile] Consolidation returned empty — keeping raw entries');

@@ -69,7 +69,7 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     'settings:set-api-key',
     async (
       _event,
-      key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter',
+      key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface',
       value: string,
     ) => {
       await settingsManager.setApiKey(key, value);
