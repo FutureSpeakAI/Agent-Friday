@@ -38,6 +38,7 @@ export { registerMemoryPersonalityBridgeHandlers } from './memory-personality-br
 export { registerAgentTrustHandlers } from './agent-trust-handlers';
 export { registerMultimediaHandlers } from './multimedia-handlers';
 export { registerContainerEngineHandlers } from './container-engine-handlers';
+export { registerExecutionDelegateHandlers } from './execution-delegate-handlers';
 export { registerDelegationEngineHandlers } from './delegation-engine-handlers';
 export { registerOsPrimitivesHandlers } from './os-primitives-handlers';
 export { registerNotesHandlers } from './notes-handlers';
