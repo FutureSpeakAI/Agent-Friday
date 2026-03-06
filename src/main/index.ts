@@ -174,6 +174,10 @@ import {
   registerContainerEngineHandlers,
   registerDelegationEngineHandlers,
   registerOsPrimitivesHandlers,
+  registerNotesHandlers,
+  registerFilesHandlers,
+  registerWeatherHandlers,
+  registerSystemMonitorHandlers,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -684,6 +688,10 @@ app.whenReady().then(async () => {
   registerContainerEngineHandlers();
   registerDelegationEngineHandlers(mainWindow ?? undefined);
   registerOsPrimitivesHandlers();
+  registerNotesHandlers();
+  registerFilesHandlers();
+  registerWeatherHandlers();
+  registerSystemMonitorHandlers();
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
   //

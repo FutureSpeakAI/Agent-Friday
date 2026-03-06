@@ -1220,6 +1220,54 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  // ── Notes ──────────────────────────────────────────────────────────
+
+  notes: {
+    list: () =>
+      ipcRenderer.invoke('notes:list'),
+    get: (id: string) =>
+      ipcRenderer.invoke('notes:get', id),
+    create: (input: { title: string; content: string }) =>
+      ipcRenderer.invoke('notes:create', input),
+    update: (id: string, patch: { title?: string; content?: string }) =>
+      ipcRenderer.invoke('notes:update', id, patch),
+    delete: (id: string) =>
+      ipcRenderer.invoke('notes:delete', id),
+    search: (query: string) =>
+      ipcRenderer.invoke('notes:search', query),
+  },
+
+  // ── Files ─────────────────────────────────────────────────────────
+
+  files: {
+    listDirectory: (dirPath: string) =>
+      ipcRenderer.invoke('files:list-directory', dirPath),
+    open: (filePath: string) =>
+      ipcRenderer.invoke('files:open', filePath),
+    showInFolder: (filePath: string) =>
+      ipcRenderer.invoke('files:show-in-folder', filePath),
+  },
+
+  // ── Weather ───────────────────────────────────────────────────────
+
+  weather: {
+    getCurrent: () =>
+      ipcRenderer.invoke('weather:current'),
+    getForecast: () =>
+      ipcRenderer.invoke('weather:forecast'),
+    setLocation: (lat: number, lon: number, city: string, region?: string) =>
+      ipcRenderer.invoke('weather:set-location', lat, lon, city, region),
+  },
+
+  // ── System Monitor ────────────────────────────────────────────────
+
+  system: {
+    getStats: () =>
+      ipcRenderer.invoke('system:stats'),
+    getProcesses: (limit?: number) =>
+      ipcRenderer.invoke('system:processes', limit),
+  },
+
   // ── OS Primitives ──────────────────────────────────────────────────
 
   fileSearch: {

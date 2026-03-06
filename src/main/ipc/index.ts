@@ -37,3 +37,7 @@ export { registerMultimediaHandlers } from './multimedia-handlers';
 export { registerContainerEngineHandlers } from './container-engine-handlers';
 export { registerDelegationEngineHandlers } from './delegation-engine-handlers';
 export { registerOsPrimitivesHandlers } from './os-primitives-handlers';
+export { registerNotesHandlers } from './notes-handlers';
+export { registerFilesHandlers } from './files-handlers';
+export { registerWeatherHandlers } from './weather-handlers';
+export { registerSystemMonitorHandlers } from './system-monitor-handlers';
