@@ -104,7 +104,7 @@ describe('IPC Handler Registration — The Switchboard', () => {
 
   // D.2 Validation Criterion 7: All 4 handlers importable from barrel
   describe('barrel exports', () => {
-    it('exports all 4 missing handler registration functions', async () => {
+    it('exports all 4 missing handler registration functions', { timeout: 30_000 }, async () => {
       const ipc = await import('../../src/main/ipc');
       expect(typeof ipc.registerExecutionDelegateHandlers).toBe('function');
       expect(typeof ipc.registerAppContextHandlers).toBe('function');

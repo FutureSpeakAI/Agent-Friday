@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface FilesProps {
   visible: boolean;
@@ -141,6 +142,7 @@ export default function FridayFiles({ visible, onClose }: FilesProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Files" icon="📁" width={820}>
+      <ContextBar appId="friday-files" />
       {!backendAvailable ? (
         <div style={s.placeholder}>
           <div style={s.placeholderIcon}>📁</div>
