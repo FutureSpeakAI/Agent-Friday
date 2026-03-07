@@ -104,8 +104,8 @@ export interface FridaySettings extends AgentConfig {
   perplexityApiKey: string;
   openaiApiKey: string;
   openrouterApiKey: string;
-  /** Which model provider to prefer for agent tasks: 'anthropic' | 'openrouter' | 'local' */
-  preferredProvider: 'anthropic' | 'openrouter' | 'local';
+  /** Which model provider to prefer for agent tasks: 'anthropic' | 'openrouter' | 'local' | 'ollama' */
+  preferredProvider: 'anthropic' | 'openrouter' | 'local' | 'ollama';
   /** OpenRouter model to use for agent tasks (e.g. 'anthropic/claude-sonnet-4') */
   openrouterModel: string;
   /** HuggingFace API token for cloud inference */
@@ -535,7 +535,7 @@ class SettingsManager {
     return this.settings.huggingfaceApiKey;
   }
 
-  getPreferredProvider(): 'anthropic' | 'openrouter' | 'local' {
+  getPreferredProvider(): 'anthropic' | 'openrouter' | 'local' | 'ollama' {
     return this.settings.preferredProvider || 'anthropic';
   }
 
