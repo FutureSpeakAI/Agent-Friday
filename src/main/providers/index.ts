@@ -9,6 +9,7 @@ import { llmClient } from '../llm-client';
 import { AnthropicProvider } from './anthropic-provider';
 import { OpenRouterProvider } from './openrouter-provider';
 import { HuggingFaceProvider } from './hf-provider';
+import { OllamaProvider } from './ollama-provider';
 import { settingsManager } from '../settings';
 
 /**
@@ -29,9 +30,16 @@ export function initializeProviders(): void {
   const huggingface = new HuggingFaceProvider();
   llmClient.registerProvider(huggingface);
 
+  // Always register Ollama (native API — available when Ollama is running)
+  const ollama = new OllamaProvider();
+  llmClient.registerProvider(ollama);
+
   // Set default provider based on user preference
   const preferred = settingsManager.getPreferredProvider();
-  if (preferred === 'local' && huggingface.isAvailable()) {
+  if (preferred === 'ollama' && ollama.isAvailable()) {
+    llmClient.setDefaultProvider('ollama');
+    console.log('[Providers] Default provider: Ollama (native)');
+  } else if (preferred === 'local' && huggingface.isAvailable()) {
     llmClient.setDefaultProvider('local');
     console.log('[Providers] Default provider: Local (HuggingFace)');
   } else if (preferred === 'openrouter' && openrouter.isAvailable()) {
@@ -43,7 +51,7 @@ export function initializeProviders(): void {
   }
 
   // Log availability
-  const available = ['anthropic', 'openrouter', 'local'] as const;
+  const available = ['anthropic', 'openrouter', 'local', 'ollama'] as const;
   for (const name of available) {
     const status = llmClient.isProviderAvailable(name) ? '✓' : '✗';
     console.log(`[Providers]   ${status} ${name}`);
@@ -54,3 +62,4 @@ export function initializeProviders(): void {
 export { AnthropicProvider } from './anthropic-provider';
 export { OpenRouterProvider } from './openrouter-provider';
 export { HuggingFaceProvider } from './hf-provider';
+export { OllamaProvider } from './ollama-provider';
