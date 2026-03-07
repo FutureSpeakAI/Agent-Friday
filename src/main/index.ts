@@ -114,6 +114,7 @@ import { trustGraph } from './trust-graph';
 import { meetingIntelligence } from './meeting-intelligence';
 import { startContextStreamBridge, stopContextStreamBridge } from './context-stream-bridge';
 import { contextGraph } from './context-graph';
+import { liveContextBridge } from './live-context-bridge';
 import { commitmentTracker } from './commitment-tracker';
 import { dailyBriefingEngine } from './daily-briefing';
 import { workflowRecorder } from './workflow-recorder';
@@ -631,7 +632,8 @@ app.whenReady().then(async () => {
     // Start the context stream bridge (after all engines are initialized)
     startContextStreamBridge();
     contextGraph.start();
-    console.log('[Friday] Context stream bridge + graph started');
+    liveContextBridge.start(mainWindow!);
+    console.log('[Friday] Context stream bridge + graph + live context bridge started');
 
     connectorRegistry.initialize().catch((err) => {
       console.warn('[Friday] Connector registry init failed:', err instanceof Error ? err.message : 'Unknown error');
@@ -933,6 +935,7 @@ app.on('window-all-closed', async () => {
   calendarIntegration.stop();
   meetingPrep.stop();
   meetingIntelligence.stop();
+  liveContextBridge.stop();
   contextGraph.stop();
   stopContextStreamBridge();
   communications.stop();
