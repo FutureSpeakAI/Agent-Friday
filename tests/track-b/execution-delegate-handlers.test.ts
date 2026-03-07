@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({
   ipcMain: mocks.mockIpcMain,
+  app: { getPath: () => '/tmp/test', on: vi.fn() },
 }));
 
 vi.mock('../../src/main/execution-delegate', () => ({
@@ -51,6 +52,12 @@ vi.mock('../../src/main/safety-pipeline', () => ({
 vi.mock('../../src/main/tool-registry', () => ({
   toolRegistry: {
     getDefinitions: mocks.mockGetDefinitions,
+  },
+}));
+
+vi.mock('../../src/main/live-context-bridge', () => ({
+  liveContextBridge: {
+    feedExecutionResult: vi.fn(),
   },
 }));
 
