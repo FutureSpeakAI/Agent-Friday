@@ -179,6 +179,11 @@ import {
   registerFilesHandlers,
   registerWeatherHandlers,
   registerSystemMonitorHandlers,
+  registerExecutionDelegateHandlers,
+  registerAppContextHandlers,
+  registerContextPushHandlers,
+  registerBriefingDeliveryHandlers,
+  type ContextPushCleanup,
 } from './ipc';
 
 // ── Application state ───────────────────────────────────────────────
@@ -186,6 +191,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let serverPort = 3333;
+let contextPushCleanup: ContextPushCleanup | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -694,6 +700,10 @@ app.whenReady().then(async () => {
   registerFilesHandlers();
   registerWeatherHandlers();
   registerSystemMonitorHandlers();
+  registerExecutionDelegateHandlers();
+  registerAppContextHandlers();
+  contextPushCleanup = registerContextPushHandlers(mainWindow!);
+  registerBriefingDeliveryHandlers();
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
   //
@@ -935,6 +945,7 @@ app.on('window-all-closed', async () => {
   calendarIntegration.stop();
   meetingPrep.stop();
   meetingIntelligence.stop();
+  contextPushCleanup?.();
   liveContextBridge.stop();
   contextGraph.stop();
   stopContextStreamBridge();
