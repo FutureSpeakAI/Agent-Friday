@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface GatewayChannel {
   id: string;
@@ -146,6 +147,7 @@ export default function FridayGateway({ visible, onClose }: FridayGatewayProps) 
 
   return (
     <AppShell visible={visible} onClose={onClose} icon="🔗" title="Gateway" width={720}>
+      <ContextBar appId="friday-gateway" />
       {error && <div style={s.errorBar}>{error}</div>}
 
       {/* Power Toggle */}

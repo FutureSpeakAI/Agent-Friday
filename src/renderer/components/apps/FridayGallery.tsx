@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface GalleryProps {
   visible: boolean;
@@ -84,6 +85,7 @@ export default function FridayGallery({ visible, onClose }: GalleryProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Gallery" icon="🖼️" width={880}>
+      <ContextBar appId="friday-gallery" />
       {/* Filter Tabs */}
       <div style={s.tabRow}>
         {TABS.map((tab) => (

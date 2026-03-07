@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 type MediaTab = 'podcast' | 'visual' | 'audio' | 'library';
 
@@ -363,6 +364,7 @@ export default function FridayMedia({ visible, onClose }: FridayMediaProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} icon="🎬" title="Media Studio" width={860}>
+      <ContextBar appId="friday-media" />
       {error && <div style={s.errorBar}>{error}</div>}
       {renderTabBar()}
 

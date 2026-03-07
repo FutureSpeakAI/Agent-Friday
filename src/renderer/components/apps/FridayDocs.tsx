@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface DocEntry {
   id: string;
@@ -150,6 +151,7 @@ export default function FridayDocs({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Documents" icon="📄" width={1000}>
+      <ContextBar appId="friday-docs" />
       {loading && !searching ? (
         <div style={s.center}>
           <span style={s.spinner}>⟳</span>

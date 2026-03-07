@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface WeatherProps {
   visible: boolean;
@@ -104,6 +105,7 @@ export default function FridayWeather({ visible, onClose }: WeatherProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Weather" icon="🌤️" width={560}>
+      <ContextBar appId="friday-weather" />
       {loading ? (
         <div style={s.center}>
           <span style={s.loadingText}>Fetching weather...</span>

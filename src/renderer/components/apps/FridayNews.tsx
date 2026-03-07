@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface NewsItem {
   id?: string;
@@ -183,6 +184,7 @@ export default function FridayNews({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="News" icon="📰" width={940}>
+      <ContextBar appId="friday-news" />
       {/* Tab Bar */}
       <div style={s.tabRow}>
         <div style={s.tabGroup}>
