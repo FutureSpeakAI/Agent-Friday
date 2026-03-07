@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface Props {
   visible: boolean;
@@ -326,6 +327,7 @@ export default function FridayCode({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Code" icon="💻" width={950} maxHeightVh={92}>
+      <ContextBar appId="friday-code" />
       {/* Tab bar */}
       <div style={s.tabBar}>
         {([
