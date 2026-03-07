@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface RegistryEntry {
   id: string;
@@ -195,6 +196,7 @@ export default function FridayForge({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Forge" icon="🛠️" width={980}>
+      <ContextBar appId="friday-forge" />
       {/* Tab Bar */}
       <div style={s.tabBar}>
         {tabs.map((t) => (
