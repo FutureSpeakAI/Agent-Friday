@@ -39,7 +39,7 @@ export type TaskComplexity = 'trivial' | 'simple' | 'moderate' | 'complex' | 'ex
 
 export type LatencyTier = 'realtime' | 'fast' | 'standard' | 'batch';
 
-export type ProviderName = 'anthropic' | 'openrouter' | 'google' | 'local';
+export type ProviderName = 'anthropic' | 'openrouter' | 'google' | 'local' | 'ollama';
 
 export interface TaskProfile {
   /** Primary category */

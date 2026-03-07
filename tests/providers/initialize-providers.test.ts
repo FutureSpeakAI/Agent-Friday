@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   anthropicIsAvailable: vi.fn(() => true),
   openrouterIsAvailable: vi.fn(() => true),
   hfIsAvailable: vi.fn(() => false),
+  ollamaIsAvailable: vi.fn(() => false),
 }));
 
 vi.mock('../../src/main/llm-client', () => ({
@@ -64,6 +65,15 @@ vi.mock('../../src/main/providers/hf-provider', () => {
   };
 });
 
+vi.mock('../../src/main/providers/ollama-provider', () => {
+  return {
+    OllamaProvider: class {
+      name = 'ollama' as const;
+      isAvailable() { return mocks.ollamaIsAvailable(); }
+    },
+  };
+});
+
 import { initializeProviders } from '../../src/main/providers/index';
 
 describe('initializeProviders', () => {
@@ -73,18 +83,20 @@ describe('initializeProviders', () => {
     mocks.anthropicIsAvailable.mockReturnValue(true);
     mocks.openrouterIsAvailable.mockReturnValue(true);
     mocks.hfIsAvailable.mockReturnValue(false);
+    mocks.ollamaIsAvailable.mockReturnValue(false);
     mocks.isProviderAvailable.mockReturnValue(false);
   });
 
-  it('registers all three providers with the LLM client', () => {
+  it('registers all four providers with the LLM client', () => {
     initializeProviders();
-    expect(mocks.registerProvider).toHaveBeenCalledTimes(3);
+    expect(mocks.registerProvider).toHaveBeenCalledTimes(4);
     const names = mocks.registerProvider.mock.calls.map(
       (call: unknown[]) => (call[0] as { name: string }).name
     );
     expect(names).toContain('anthropic');
     expect(names).toContain('openrouter');
     expect(names).toContain('local');
+    expect(names).toContain('ollama');
   });
 
   it('defaults to anthropic when preferred provider is anthropic', () => {
