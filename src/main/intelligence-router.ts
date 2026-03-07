@@ -165,9 +165,10 @@ export interface RoutingConfig {
    * - 'background':   Only non-interactive tasks (memory ops, extraction, summarization)
    * - 'conservative': Simple/moderate tasks only (conversation, extraction, basic creative)
    * - 'all':          Local models compete equally for all task types
-   * Default: 'conservative' — safe for most users
+   * - 'preferred':    Local models get scoring bonus, cloud is gated escape hatch
+   * Default: 'preferred' — local-first with cloud as escape hatch
    */
-  localModelPolicy: 'disabled' | 'background' | 'conservative' | 'all';
+  localModelPolicy: 'disabled' | 'background' | 'conservative' | 'all' | 'preferred';
   /**
    * Minimum capability score (0-1) a local model must have for the task category
    * to be considered. Prevents local models from winning on cost alone.
@@ -587,6 +588,7 @@ export function scoreModel(
   // Prevents local models from competing in routing decisions where they shouldn't.
   // The user can still force local via settings.preferredProvider — this only
   // affects *automatic* routing.
+  let localBonus = 0;
   const isLocal = model.routeVia === 'local' || model.provider === 'local';
   if (isLocal) {
     const policy = config.localModelPolicy;
@@ -618,6 +620,15 @@ export function scoreModel(
     }
 
     // 'all' — no additional restrictions, local competes equally
+
+    // 'preferred' — local models get a scoring bonus, competing strongly against cloud
+    // Does NOT block any complexity level — lets local try everything
+    if (policy === 'preferred') {
+      const catStrength = model.strengths[task.category] ?? 0;
+      if (catStrength >= 0.4) {
+        localBonus = 0.3;
+      }
+    }
 
     // Minimum capability threshold — applies to ALL local policies except 'disabled'
     // Prevents local models from winning on cost alone when they're weak at the task
@@ -687,7 +698,8 @@ export function scoreModel(
     costScore * weights.cost +
     speedScore * weights.speed +
     contextScore * weights.context +
-    reliabilityScore * weights.reliability;
+    reliabilityScore * weights.reliability +
+    localBonus;
 
   return {
     modelId: model.modelId,
@@ -769,7 +781,7 @@ class IntelligenceRouter {
     maxRequestCostUsd: 1.0,
     maxDecisionHistory: 500,
     fallbackModelId: 'anthropic/claude-sonnet-4',
-    localModelPolicy: 'conservative',
+    localModelPolicy: 'preferred',
     localMinCapability: 0.55,
   };
   private filePath = '';

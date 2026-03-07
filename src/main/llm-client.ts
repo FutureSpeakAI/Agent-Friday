@@ -16,7 +16,9 @@
  * the model/provider, or callers can specify directly.
  */
 
-import { ProviderName, TaskCategory } from './intelligence-router';
+import { ProviderName, TaskCategory, type TaskComplexity } from './intelligence-router';
+import { assessConfidence } from './confidence-assessor';
+import { CloudGate } from './cloud-gate';
 
 // ── Core Types ─────────────────────────────────────────────────────────
 
@@ -325,3 +327,140 @@ class LLMClient {
 
 /** Singleton LLM client — import this everywhere */
 export const llmClient = new LLMClient();
+
+// ── Local-First Routing Wrapper ────────────────────────────────────────
+
+/**
+ * Confidence thresholds by task complexity.
+ * Higher complexity demands higher confidence to avoid cloud escalation.
+ */
+const CONFIDENCE_THRESHOLDS: Record<string, number> = {
+  trivial: 0.3,
+  simple: 0.3,
+  moderate: 0.5,
+  complex: 0.7,
+  expert: 0.7,
+};
+
+export interface LocalFirstOptions {
+  /** Task complexity — determines confidence threshold for escalation */
+  complexity?: TaskComplexity;
+  /** Override the default confidence threshold */
+  confidenceThreshold?: number;
+  /** Cloud provider to escalate to when confidence is low */
+  cloudProvider?: ProviderName;
+  /** Callback for routing events (e.g., logging to context stream) */
+  onRoutingEvent?: (event: RoutingEvent) => void;
+}
+
+export interface RoutingEvent {
+  type: 'local-attempt' | 'confidence-assessed' | 'escalation-requested' | 'escalation-result' | 'final-response';
+  provider?: ProviderName;
+  confidence?: number;
+  escalate?: boolean;
+  allowed?: boolean;
+  reason?: string;
+  timestamp: number;
+}
+
+/**
+ * Route a request local-first with confidence assessment and cloud gating.
+ *
+ * Flow:
+ *   1. Execute request via local provider
+ *   2. Run ConfidenceAssessor on the response
+ *   3. If confidence is below threshold → request CloudGate escalation
+ *   4. If gate allows → retry with cloud provider
+ *   5. Return final response
+ *
+ * This function does NOT modify the existing chat()/complete() behavior.
+ * It is an opt-in wrapper for the local-first routing pattern.
+ */
+export async function routeLocalFirst(
+  request: LLMRequest,
+  options: LocalFirstOptions = {},
+): Promise<LLMResponse> {
+  const complexity = options.complexity ?? 'moderate';
+  const threshold = options.confidenceThreshold ?? CONFIDENCE_THRESHOLDS[complexity] ?? 0.5;
+  const cloudProvider = options.cloudProvider ?? 'anthropic';
+  const emit = options.onRoutingEvent ?? (() => {});
+
+  // Step 1: Execute locally
+  emit({
+    type: 'local-attempt',
+    provider: 'local',
+    timestamp: Date.now(),
+  });
+
+  const localResponse = await llmClient.complete(request, 'local');
+
+  // Step 2: Assess confidence
+  const confidence = assessConfidence(request, localResponse, request.tools);
+
+  emit({
+    type: 'confidence-assessed',
+    provider: 'local',
+    confidence: confidence.score,
+    escalate: confidence.score < threshold,
+    timestamp: Date.now(),
+  });
+
+  // If confidence is sufficient, return the local response
+  if (confidence.score >= threshold) {
+    emit({
+      type: 'final-response',
+      provider: 'local',
+      confidence: confidence.score,
+      timestamp: Date.now(),
+    });
+    return localResponse;
+  }
+
+  // Step 3: Request escalation through CloudGate
+  emit({
+    type: 'escalation-requested',
+    provider: cloudProvider,
+    confidence: confidence.score,
+    timestamp: Date.now(),
+  });
+
+  const gate = CloudGate.getInstance();
+  const decision = await gate.requestEscalation({
+    taskCategory: (request.taskHint ?? 'general') as import('./cloud-gate').TaskCategory,
+    confidence,
+    promptPreview: typeof request.messages[0]?.content === 'string'
+      ? request.messages[0].content
+      : 'Complex request',
+    targetProvider: cloudProvider,
+  });
+
+  emit({
+    type: 'escalation-result',
+    allowed: decision.allowed,
+    reason: decision.reason,
+    timestamp: Date.now(),
+  });
+
+  // Step 4: If gate denies, return local response as-is
+  if (!decision.allowed) {
+    emit({
+      type: 'final-response',
+      provider: 'local',
+      confidence: confidence.score,
+      reason: `escalation-denied:${decision.reason}`,
+      timestamp: Date.now(),
+    });
+    return localResponse;
+  }
+
+  // Step 5: Retry with cloud provider
+  const cloudResponse = await llmClient.complete(request, cloudProvider);
+
+  emit({
+    type: 'final-response',
+    provider: cloudProvider,
+    timestamp: Date.now(),
+  });
+
+  return cloudResponse;
+}
