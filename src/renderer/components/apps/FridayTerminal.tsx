@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface TerminalProps {
   visible: boolean;
@@ -159,6 +160,7 @@ export default function FridayTerminal({ visible, onClose }: TerminalProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Terminal" icon="⌨️" width={780}>
+      <ContextBar appId="friday-terminal" />
       {/* Language Selector + Controls */}
       <div style={s.toolbar}>
         <div style={s.langRow}>

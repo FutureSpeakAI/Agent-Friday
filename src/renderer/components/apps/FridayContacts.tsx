@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 /** Raw PersonNode from trust graph backend */
 interface PersonNode {
@@ -177,6 +178,7 @@ export default function FridayContacts({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Contacts" icon="👤" width={960}>
+      <ContextBar appId="friday-contacts" />
       {loading ? (
         <div style={s.center}>
           <span style={s.spinner}>⟳</span>

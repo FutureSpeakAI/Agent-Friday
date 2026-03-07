@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface MonitorProps {
   visible: boolean;
@@ -115,6 +116,7 @@ export default function FridayMonitor({ visible, onClose }: MonitorProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="System Monitor" icon="📊" width={720}>
+      <ContextBar appId="friday-monitor" />
       {loading && !stats && !error && (
         <div style={s.center}>
           <span style={s.spinner}>⟳</span>
