@@ -11,7 +11,15 @@ import { ipcMain } from 'electron';
 import { executionDelegate } from '../execution-delegate';
 import { safetyPipeline } from '../safety-pipeline';
 import { toolRegistry } from '../tool-registry';
+import { liveContextBridge } from '../live-context-bridge';
 import { assertString, assertObject } from './validate';
+
+/** Check if a ToolResult came from actual execution (not pending/denied). */
+function wasExecuted(result: { content: string | any[]; is_error?: boolean }): boolean {
+  if (typeof result.content !== 'string') return true;
+  return !result.content.startsWith('Tool execution denied:') &&
+         !result.content.startsWith('Tool execution pending');
+}
 
 export function registerExecutionDelegateHandlers(): void {
   // ── tool:execute ─────────────────────────────────────────────────
@@ -20,12 +28,19 @@ export function registerExecutionDelegateHandlers(): void {
     const tc = toolCall as Record<string, unknown>;
     assertString(tc.name, 'tool:execute toolCall.name');
 
-    return executionDelegate.execute({
+    const result = await executionDelegate.execute({
       id: typeof tc.id === 'string' ? tc.id : '',
       type: (tc.type as 'function' | 'tool_use') ?? 'tool_use',
       name: tc.name as string,
       input: tc.input ?? {},
     });
+
+    // Feed back to context system (non-blocking, skip pending/denied)
+    if (wasExecuted(result)) {
+      try { liveContextBridge.feedExecutionResult(result); } catch { /* non-blocking */ }
+    }
+
+    return result;
   });
 
   // ── tool:confirm-response ────────────────────────────────────────
@@ -44,9 +59,15 @@ export function registerExecutionDelegateHandlers(): void {
 
       if (p.approved) {
         safetyPipeline.confirm(p.decisionId as string);
-        return executionDelegate.executeAfterConfirmation(
+        const result = await executionDelegate.executeAfterConfirmation(
           p.decisionId as string,
         );
+
+        if (wasExecuted(result)) {
+          try { liveContextBridge.feedExecutionResult(result); } catch { /* non-blocking */ }
+        }
+
+        return result;
       } else {
         safetyPipeline.deny(p.decisionId as string);
         return {
