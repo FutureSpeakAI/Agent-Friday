@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface CalendarEvent {
   id: string;
@@ -191,6 +192,7 @@ export default function FridayCalendar({ visible, onClose }: FridayCalendarProps
 
   return (
     <AppShell visible={visible} onClose={onClose} icon="📅" title="Calendar" width={720}>
+      <ContextBar appId="friday-calendar" />
       {/* Auth Banner */}
       {authenticated === false && (
         <div style={s.authBanner}>

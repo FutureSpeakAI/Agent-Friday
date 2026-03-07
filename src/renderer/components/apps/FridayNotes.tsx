@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface NotesProps {
   visible: boolean;
@@ -174,6 +175,7 @@ export default function FridayNotes({ visible, onClose }: NotesProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Notes" icon="📝" width={900}>
+      <ContextBar appId="friday-notes" />
       {usingLocal && !loading && (
         <div style={s.localNotice}>
           <span>💾</span>

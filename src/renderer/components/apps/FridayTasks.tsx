@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface ScheduledTask {
   id: string;
@@ -171,6 +172,7 @@ export default function FridayTasks({ visible, onClose }: Props) {
 
   return (
     <AppShell visible={visible} onClose={onClose} title="Tasks" icon="✅" width={920}>
+      <ContextBar appId="friday-tasks" />
       {/* Tab bar */}
       <div style={s.tabBar}>
         {tabs.map((t) => (
