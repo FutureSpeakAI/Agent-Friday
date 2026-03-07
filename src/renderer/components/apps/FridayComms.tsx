@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 type CommTab = 'inbox' | 'drafts' | 'compose';
 
@@ -256,6 +257,7 @@ export default function FridayComms({ visible, onClose }: FridayCommsProps) {
 
   return (
     <AppShell visible={visible} onClose={onClose} icon="✉️" title="Mail" width={900}>
+      <ContextBar appId="friday-comms" />
       {error && <div style={s.errorBar}>{error}</div>}
       {renderTabBar()}
 

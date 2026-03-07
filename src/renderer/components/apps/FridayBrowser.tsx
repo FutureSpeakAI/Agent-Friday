@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '../AppShell';
+import ContextBar from '../ContextBar';
 
 interface ToolDef {
   name: string;
@@ -145,6 +146,7 @@ export default function FridayBrowser({ visible, onClose }: FridayBrowserProps) 
 
   return (
     <AppShell visible={visible} onClose={onClose} icon="🌐" title="Browser Tools" width={960}>
+      <ContextBar appId="friday-browser" />
       {error && <div style={s.errorBar}>{error}</div>}
 
       {/* Stats Bar */}
