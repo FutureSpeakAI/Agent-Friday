@@ -548,7 +548,7 @@ declare global {
           perplexityKeyHint: string;
           firecrawlKeyHint: string;
           openrouterKeyHint: string;
-          preferredProvider: 'anthropic' | 'openrouter' | 'local';
+          preferredProvider: 'anthropic' | 'openrouter' | 'local' | 'ollama';
           openrouterModel: string;
           localModelEnabled: boolean;
           localInferenceEndpoint: string;
@@ -573,6 +573,13 @@ declare global {
         setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string) => Promise<void>;
         setObsidianVaultPath: (vaultPath: string) => Promise<void>;
         set: (key: string, value: unknown) => Promise<void>;
+      };
+
+      hardware: {
+        detect: () => Promise<Record<string, unknown>>;
+        getTier: (profile: Record<string, unknown>) => Promise<string>;
+        getModelList: (tier: string) => Promise<string[]>;
+        recommend: (profile: Record<string, unknown>) => Promise<Record<string, unknown>>;
       };
 
       clipboard: {

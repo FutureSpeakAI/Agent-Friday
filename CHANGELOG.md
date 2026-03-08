@@ -4,6 +4,25 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [2.3.1] — 2026-03-08
+
+### Added — Graceful Degradation & Local-First Operation
+
+- **Tier-aware WelcomeGate**: On Standard+ hardware (6 GB+ VRAM), all API keys are optional. A "Run Locally" button lets users skip cloud configuration entirely and run via Ollama. Hardware tier is detected in parallel with settings load and displayed as a badge
+- **Intelligence router auto-configuration**: When no cloud API keys are present and `preferredProvider` is `'ollama'`, the router automatically switches its fallback model from `anthropic/claude-sonnet-4` to a local model and sets `localModelPolicy: 'preferred'`
+- **Psychological profile graceful fallback**: If the LLM call fails during onboarding (no API key, unreachable provider, invalid JSON response), a balanced default profile is used instead of blocking the setup flow
+- **Sub-agent voice graceful degradation**: `agentVoice.speak()` returns `null` instead of throwing when no ElevenLabs API key is configured. `synthesizeAndSpeak()` in the agent runner detects this and delivers text-only results via IPC, so sub-agents (Atlas, Nova, Cipher) work without voice synthesis
+
+### Changed
+
+- `WelcomeGate.tsx` — Hardware tier detection, `effectiveConfigs` that override `required: false` for local-capable tiers, `handleSkipLocal()` callback, tier-aware UI text and layout
+- `agent-voice.ts` — `speak()` return type changed to `Promise<VoiceSynthResult | null>`; no-key path returns `null` with console log instead of throwing
+- `agent-runner.ts` — `synthesizeAndSpeak()` handles `null` voice result by sending text-only IPC payload
+- `intelligence-router.ts` — New `autoConfigureForLocalIfNeeded()` method called during `initialize()`; imports `settingsManager` for key detection
+- `psychological-profile.ts` — `generatePsychologicalProfile()` catches LLM errors and JSON parse failures, returning `DEFAULT_PROFILE` instead of throwing
+
+---
+
 ## [2.3.0] — 2026-03-08
 
 ### Added — Sprint 7: Integration Wiring

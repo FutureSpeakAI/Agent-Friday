@@ -4,6 +4,10 @@
  * Provides text-to-speech synthesis using ElevenLabs API.
  * Each sub-agent persona gets a unique voice, making them
  * distinguishable from Friday (who uses Gemini Live native audio).
+ *
+ * GRACEFUL DEGRADATION: When no ElevenLabs API key is configured,
+ * speak() returns null instead of throwing. Callers should fall back
+ * to text-only delivery when the result is null.
  */
 
 import { settingsManager } from '../settings';
@@ -17,12 +21,14 @@ export interface VoiceSynthResult {
 class AgentVoiceService {
   /**
    * Synthesize text to speech using ElevenLabs API.
-   * Returns an MP3 audio buffer ready for playback.
+   * Returns an MP3 audio buffer ready for playback, or null if
+   * ElevenLabs is not configured (graceful degradation to text-only).
    */
-  async speak(text: string, voiceId: string): Promise<VoiceSynthResult> {
+  async speak(text: string, voiceId: string): Promise<VoiceSynthResult | null> {
     const apiKey = settingsManager.getElevenLabsApiKey();
     if (!apiKey) {
-      throw new Error('ElevenLabs API key not configured — add it in Settings');
+      console.log('[AgentVoice] No ElevenLabs API key — degrading to text-only delivery');
+      return null;
     }
 
     if (!text || text.trim().length === 0) {
