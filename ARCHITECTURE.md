@@ -1,8 +1,8 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-03-01
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite.
+> **Last updated**: 2026-03-08
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
 
 ---
 
@@ -1120,16 +1120,26 @@ sequenceDiagram
     App ->> Integrity: Verify core law signatures
     Integrity -->> App: HMAC verified ✓
 
-    Note over User, Agent: === PHASE 1: API KEY GATE ===
+    Note over User, Agent: === PHASE 1: API KEY GATE (Tier-Aware) ===
 
     User ->> Gate: Opens app for first time
-    Gate ->> User: "Enter Gemini API key"
-    User ->> Gate: Enters Gemini key
-    Gate ->> User: "Enter Anthropic API key"
-    User ->> Gate: Enters Anthropic key
-    Gate ->> App: onKeysReady()
+    Gate ->> Gate: Detect hardware tier in parallel with settings load
+    alt Standard+ hardware (6GB+ VRAM)
+        Gate ->> User: All keys optional, "Run Locally" button shown
+        alt User enters cloud keys
+            User ->> Gate: Enters Gemini/Anthropic keys
+            Gate ->> App: onKeysReady()
+        else User clicks "Run Locally"
+            Gate ->> Gate: Set preferredProvider='ollama'
+            Gate ->> App: onKeysReady()
+        end
+    else Light/Whisper hardware
+        Gate ->> User: "Enter Gemini API key" (required)
+        User ->> Gate: Enters keys
+        Gate ->> App: onKeysReady()
+    end
     App ->> App: setAppPhase('onboarding')
-    App ->> Gemini: Connect with Charon voice
+    App ->> Gemini: Connect with Charon voice (or skip if no Gemini key)
 
     Note over User, Agent: === PHASE 2: "HER" INTAKE ===
 
@@ -1144,8 +1154,12 @@ sequenceDiagram
     Note over User, Agent: === PHASE 3: PSYCHOLOGICAL PROFILE ===
 
     Setup ->> Claude: save_intake_responses → psych:generate
-    Claude ->> Claude: Analyze: voice pref → gender comfort<br/>Social → extroversion, self-awareness<br/>Mother → attachment style, trust patterns
-    Claude -->> App: PsychologicalProfile saved
+    alt LLM available (cloud or local)
+        Claude ->> Claude: Analyze: voice pref → gender comfort<br/>Social → extroversion, self-awareness<br/>Mother → attachment style, trust patterns
+        Claude -->> App: PsychologicalProfile saved
+    else LLM unavailable
+        App ->> App: Use DEFAULT_PROFILE (balanced warm defaults)
+    end
 
     Note over User, Agent: === PHASE 4: USER CUSTOMIZATION ===
 
@@ -1700,7 +1714,7 @@ graph TD
 | `components/` | `HudOverlay.tsx` | UI | Holographic HUD — agent name, structure label, status |
 | `components/` | `FridayCore.tsx` | 3D | Legacy 3D desktop (superseded by DesktopViz) |
 | `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
-| `components/` | `WelcomeGate.tsx` | UI | API key entry gate (~508 lines) |
+| `components/` | `WelcomeGate.tsx` | UI | Tier-aware API key entry gate (~600 lines) |
 | `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
 | `components/` | `IntegrityShield.tsx` | UI | cLaw integrity status indicator |
 | `components/` | `AgentOffice/index.tsx` | Canvas | Pixel-art office renderer |

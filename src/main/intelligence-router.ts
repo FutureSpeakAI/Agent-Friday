@@ -20,6 +20,7 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import type { HuggingFaceProvider } from './providers/hf-provider';
+import { settingsManager } from './settings';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -808,6 +809,12 @@ class IntelligenceRouter {
     // Check if budget needs reset
     this.checkBudgetReset();
 
+    // ── Auto-configure for local-only operation ──
+    // When no cloud API keys are configured and preferredProvider is 'ollama',
+    // switch the fallback model to a local one so routing doesn't dead-end
+    // on an unreachable Anthropic endpoint.
+    this.autoConfigureForLocalIfNeeded();
+
     console.log(
       `[Router] Initialized — ${this.models.length} models registered, ` +
       `${this.decisions.length} decisions in history, ` +
@@ -819,6 +826,41 @@ class IntelligenceRouter {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
+    }
+  }
+
+  /**
+   * When the user has no cloud API keys (Anthropic, Gemini, OpenRouter)
+   * and their preferred provider is 'ollama', reconfigure routing defaults
+   * to avoid dead-ending on unreachable cloud fallbacks.
+   */
+  private autoConfigureForLocalIfNeeded(): void {
+    const hasAnthropicKey = !!settingsManager.getAnthropicApiKey();
+    const hasGeminiKey = !!settingsManager.getGeminiApiKey();
+    const preferred = settingsManager.getPreferredProvider();
+
+    // Only auto-configure when explicitly set to local-first and no cloud keys
+    if (preferred !== 'ollama' || hasAnthropicKey || hasGeminiKey) return;
+
+    // Find the first available local model to use as fallback
+    const localModel = this.models.find(
+      (m) => (m.provider === 'local' || m.provider === 'ollama') && m.available
+    );
+
+    const currentFallback = this.config.fallbackModelId;
+    const isCloudFallback = currentFallback.startsWith('anthropic/') ||
+      currentFallback.startsWith('google/') ||
+      currentFallback.startsWith('openrouter/');
+
+    if (isCloudFallback) {
+      const newFallback = localModel?.modelId || 'ollama/llama3';
+      this.config.fallbackModelId = newFallback;
+      this.config.localModelPolicy = 'preferred';
+      console.log(
+        `[Router] No cloud API keys detected — auto-configured for local-only operation ` +
+        `(fallback: ${newFallback}, policy: preferred)`
+      );
+      this.scheduleSave();
     }
   }
 
