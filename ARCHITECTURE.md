@@ -1403,7 +1403,7 @@ graph TD
     end
 
     subgraph "Trust Boundary: IPC"
-        PRELOAD[Preload Script<br/>contextBridge whitelist<br/>22+ namespaces]
+        PRELOAD[Preload Script<br/>contextBridge whitelist<br/>28+ namespaces]
     end
 
     subgraph "Trust Zone: External APIs"
@@ -1470,7 +1470,7 @@ graph TD
 
 | Boundary | Risk | Mitigation |
 |----------|------|------------|
-| Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` (22+ namespaces, explicit function exposure) |
+| Preload bridge | Arbitrary IPC | Whitelisted channels in `contextBridge.exposeInMainWorld` (28+ namespaces, explicit function exposure) |
 | Shell execution | Command injection | `run_command` tool with PowerShell sanitisation; Asimov's cLaws consent gate for destructive operations |
 | MCP processes | Malicious servers | User-configured only, stdio isolation, no network exposure |
 | API keys in settings | Plaintext storage | Encrypted at rest by Sovereign Vault (AES-256-GCM, scrypt-derived key bound to machine fingerprint); transparent read with graceful degradation for unencrypted legacy files |
@@ -1497,14 +1497,14 @@ graph TD
 
 ## Appendix A: File Inventory
 
-### Main Process (`src/main/`) — 158 files
+### Main Process (`src/main/`) — 225 files
 
 | Directory | File | Domain | Purpose |
 |-----------|------|--------|---------|
 | root | `index.ts` | Core | Entry point, window creation, IPC hub |
 | root | `server.ts` | Core | Express API + Anthropic SDK client |
 | root | `settings.ts` | Core | Persistent JSON settings store |
-| root | `preload.ts` | Core | IPC bridge, 30+ namespaces |
+| root | `preload.ts` | Core | IPC bridge, 28+ namespaces (~1600 lines) |
 | root | `desktop-tools.ts` | Core | OS-level tool declarations + execution |
 | root | `openrouter.ts` | Core | OpenRouter multi-model API client |
 | root | `errors.ts` | Core | Shared error types and utilities |
@@ -1650,9 +1650,37 @@ graph TD
 | `ipc/` | `unified-inbox-handlers.ts` | IPC | Unified inbox IPC handlers |
 | `ipc/` | `workflow-executor-handlers.ts` | IPC | Workflow executor IPC handlers |
 | `ipc/` | `workflow-recorder-handlers.ts` | IPC | Workflow recorder IPC handlers |
+| `ipc/` | `agent-trust-handlers.ts` | IPC | Agent trust management IPC handlers |
+| `ipc/` | `app-context-handlers.ts` | IPC | Application context IPC handlers |
+| `ipc/` | `briefing-delivery-handlers.ts` | IPC | Briefing delivery IPC handlers |
+| `ipc/` | `container-engine-handlers.ts` | IPC | Container engine IPC handlers |
+| `ipc/` | `context-push-handlers.ts` | IPC | Context push IPC handlers |
+| `ipc/` | `delegation-engine-handlers.ts` | IPC | Task delegation IPC handlers |
+| `ipc/` | `execution-delegate-handlers.ts` | IPC | Execution delegation IPC handlers |
+| `ipc/` | `files-handlers.ts` | IPC | File operations IPC handlers |
+| `ipc/` | `hardware-handlers.ts` | IPC | Hardware detection & GPU profiling IPC handlers (Sprint 7) |
+| `ipc/` | `multimedia-handlers.ts` | IPC | Multimedia processing IPC handlers |
+| `ipc/` | `notes-handlers.ts` | IPC | Notes management IPC handlers |
+| `ipc/` | `ollama-handlers.ts` | IPC | Ollama local model management IPC handlers (Sprint 7) |
+| `ipc/` | `os-primitives-handlers.ts` | IPC | OS primitives IPC handlers |
+| `ipc/` | `setup-handlers.ts` | IPC | Setup wizard & first-run IPC handlers (Sprint 7) |
+| `ipc/` | `system-monitor-handlers.ts` | IPC | System monitor IPC handlers |
+| `ipc/` | `validate.ts` | IPC | Input validation utilities (assertString, assertObject, assertNumber, assertStringArray) |
+| `ipc/` | `vision-pipeline-handlers.ts` | IPC | Vision pipeline IPC — model inference, screen capture, image understanding (Sprint 7) |
+| `ipc/` | `voice-pipeline-handlers.ts` | IPC | Voice pipeline IPC — whisper, capture, TTS, profiles, speech synthesis (Sprint 7) |
+| `ipc/` | `weather-handlers.ts` | IPC | Weather data IPC handlers |
+| `voice/` | `whisper-provider.ts` | Voice | Local Whisper STT model management |
+| `voice/` | `audio-capture.ts` | Voice | Microphone audio capture |
+| `voice/` | `transcription-pipeline.ts` | Voice | STT orchestration pipeline |
+| `voice/` | `tts-engine.ts` | Voice | Text-to-speech engine |
+| `voice/` | `voice-profile-manager.ts` | Voice | Voice profile CRUD |
+| `voice/` | `speech-synthesis.ts` | Voice | Speech synthesis playback orchestration |
+| `vision/` | `vision-provider.ts` | Vision | Vision model inference |
+| `vision/` | `screen-context.ts` | Vision | Screen capture & auto-capture |
+| `vision/` | `image-understanding.ts` | Vision | High-level image analysis |
 | `pageindex/` | 7 modules | Documents | Vectorless RAG engine (PageIndex port) |
 
-### Renderer (`src/renderer/`) — 40 files
+### Renderer (`src/renderer/`) — 69 files
 
 | Directory | File | Layer | Purpose |
 |-----------|------|-------|---------|
@@ -1697,7 +1725,7 @@ graph TD
 | `components/dashboard/` | `AgentCard.tsx` | Sub | Agent summary card |
 | `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
-### Grand Total: 197 source files, ~82,000 lines of TypeScript
+### Grand Total: 294 source files, ~110,000 lines of TypeScript
 
 ---
 

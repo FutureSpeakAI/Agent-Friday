@@ -64,17 +64,17 @@ if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
   console.error('[Security] ⚠ NODE_TLS_REJECT_UNAUTHORIZED=0 detected — overriding to enforce TLS verification');
   delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
 }
-// Freeze the property to prevent runtime modification
-Object.defineProperty(process.env, 'NODE_TLS_REJECT_UNAUTHORIZED', {
-  get: () => undefined,
-  set: (val: string) => {
-    if (val === '0') {
-      console.error('[Security] ⚠ Blocked attempt to disable TLS verification');
-      return;
-    }
-  },
-  configurable: false,
-});
+// Guard against runtime re-disabling of TLS verification.
+// NOTE: Electron's process.env is a native bridge and does NOT support
+// accessor descriptors (getter/setter), so we use a periodic check instead.
+const _tlsGuardInterval = setInterval(() => {
+  if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+    console.error('[Security] ⚠ Blocked attempt to disable TLS verification');
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  }
+}, 5_000);
+// Clean up on exit so the timer doesn't hold the process open
+process.once('exit', () => clearInterval(_tlsGuardInterval));
 
 // ── Domain module imports (initialization + lifecycle) ───────────────
 import { memoryManager } from './memory';
@@ -141,6 +141,10 @@ import {
 } from './vault';
 import { initializeHmac, destroyHmac } from './integrity';
 
+// ── Sprint 3-6 domain modules (wired in Sprint 7) ──────────────────
+import { HardwareProfiler } from './hardware/hardware-profiler';
+import { OllamaLifecycle } from './ollama-lifecycle';
+
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
   registerCoreHandlers,
@@ -183,6 +187,11 @@ import {
   registerAppContextHandlers,
   registerContextPushHandlers,
   registerBriefingDeliveryHandlers,
+  registerHardwareHandlers,
+  registerSetupHandlers,
+  registerOllamaHandlers,
+  registerVoicePipelineHandlers,
+  registerVisionPipelineHandlers,
   type ContextPushCleanup,
 } from './ipc';
 
@@ -635,6 +644,19 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Multimedia engine init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
+    // ── Sprint 7: Hardware detection + Ollama lifecycle ─────────────
+    HardwareProfiler.getInstance().detect().then((profile) => {
+      console.log(`[Friday] Hardware detected: ${profile.gpu?.name ?? 'no GPU'}, ${Math.round((profile.vram?.total ?? 0) / (1024 * 1024 * 1024))}GB VRAM`);
+    }).catch((err) => {
+      console.warn('[Friday] Hardware detection failed:', err instanceof Error ? err.message : 'Unknown error');
+    });
+
+    OllamaLifecycle.getInstance().start().then(() => {
+      console.log('[Friday] Ollama lifecycle started');
+    }).catch((err) => {
+      console.warn('[Friday] Ollama start failed:', err instanceof Error ? err.message : 'Unknown error');
+    });
+
     // Start the context stream bridge (after all engines are initialized)
     startContextStreamBridge();
     contextGraph.start();
@@ -704,6 +726,14 @@ app.whenReady().then(async () => {
   registerAppContextHandlers();
   contextPushCleanup = registerContextPushHandlers(mainWindow!);
   registerBriefingDeliveryHandlers();
+
+  // ── Sprint 7: Sprint 3-6 module IPC handlers ────────────────────
+  registerHardwareHandlers({ getMainWindow });
+  registerSetupHandlers({ getMainWindow });
+  registerOllamaHandlers({ getMainWindow });
+  registerVoicePipelineHandlers({ getMainWindow });
+  registerVisionPipelineHandlers({ getMainWindow });
+  console.log('[IPC] Sprint 3-6 module handlers registered');
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
   //
@@ -953,6 +983,7 @@ app.on('window-all-closed', async () => {
   fileTransferEngine.shutdown();
   agentNetwork.stop().catch(() => {});
   containerEngine.shutdown().catch(() => {});
+  OllamaLifecycle.getInstance().stop();
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
 
