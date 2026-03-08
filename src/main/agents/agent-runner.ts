@@ -566,10 +566,25 @@ class AgentRunner {
       task.logs.push(`[Voice] ${persona.name} synthesizing speech...`);
       this.emitUpdate(task);
 
-      const { audioBuffer, durationEstimate } = await agentVoice.speak(
-        spokenText,
-        persona.voiceId
-      );
+      const voiceResult = await agentVoice.speak(spokenText, persona.voiceId);
+
+      if (!voiceResult) {
+        // ElevenLabs not configured — degrade to text-only delivery
+        this.mainWindow?.webContents.send('agents:speak', {
+          taskId: task.id,
+          personaId: persona.id,
+          personaName: persona.name,
+          personaRole: persona.role,
+          audioBase64: null,
+          contentType: null,
+          durationEstimate: 0,
+          spokenText,
+        });
+        task.logs.push(`[Voice] ${persona.name} — no voice service, delivered text-only`);
+        return;
+      }
+
+      const { audioBuffer, durationEstimate } = voiceResult;
 
       this.mainWindow?.webContents.send('agents:speak', {
         taskId: task.id,

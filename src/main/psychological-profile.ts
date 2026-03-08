@@ -49,8 +49,29 @@ Return a JSON object with these exact fields:
 Return ONLY the JSON object. No markdown fencing, no explanation.`;
 
 /**
+ * Sensible default profile used when LLM profiling fails or is unavailable.
+ * Calibrated for a friendly-but-patient approach that works for most people.
+ */
+const DEFAULT_PROFILE: PsychologicalProfile = {
+  openness: 0.5,
+  trustReadiness: 0.5,
+  emotionalDepth: 0.5,
+  humorAsArmor: false,
+  guardedness: 0.5,
+  connectionStyle: 'warm',
+  needsFromAI: 'A reliable, respectful companion who adapts to their pace',
+  approachStrategy: 'Be warm and genuine but not pushy. Let the relationship develop naturally over time.',
+  motherRelationshipInsight: 'Profile generated from defaults — no psychological analysis was performed',
+  rawAnalysis: 'Default profile — LLM analysis was unavailable. Agent should calibrate based on real-time interaction.',
+};
+
+/**
  * Generates a psychological profile from the user's intake responses.
- * Uses Claude Sonnet for nuanced psychological analysis.
+ * Uses the preferred LLM provider for nuanced psychological analysis.
+ *
+ * GRACEFUL DEGRADATION: If the LLM call fails (no API key, unreachable
+ * provider, invalid response), returns a sensible default profile rather
+ * than blocking the entire onboarding flow.
  */
 export async function generatePsychologicalProfile(
   responses: IntakeResponses
@@ -65,7 +86,14 @@ export async function generatePsychologicalProfile(
 
   console.log('[PsychProfile] Generating psychological profile from intake responses...');
 
-  const text = await llmClient.text(userMessage, { systemPrompt: ANALYSIS_PROMPT, maxTokens: 1024 });
+  let text: string;
+  try {
+    text = await llmClient.text(userMessage, { systemPrompt: ANALYSIS_PROMPT, maxTokens: 1024 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[PsychProfile] LLM call failed — using default profile: ${msg}`);
+    return { ...DEFAULT_PROFILE };
+  }
 
   try {
     const profile: PsychologicalProfile = JSON.parse(text);
@@ -95,7 +123,7 @@ export async function generatePsychologicalProfile(
 
     return profile;
   } catch (parseErr) {
-    console.error('[PsychProfile] Failed to parse Claude response:', text);
-    throw new Error(`Psychological profile parse error: ${parseErr}`);
+    console.warn('[PsychProfile] Failed to parse LLM response — using default profile:', text);
+    return { ...DEFAULT_PROFILE };
   }
 }

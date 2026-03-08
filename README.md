@@ -151,9 +151,9 @@ On first launch, you'll experience a guided onboarding inspired by the OS1 setup
 
 1. **Hardware Detection** — Automatic GPU/CPU/RAM/VRAM profiling to determine your hardware tier
 2. **Model Setup** — Downloads and configures local Ollama models matched to your hardware capability
-3. **API Key Gate** — Enter cloud API keys (required for voice mode; optional for text-only local operation)
+3. **API Key Gate** — Tier-aware key entry: on Standard+ hardware (6 GB+ VRAM), all API keys are optional and a "Run Locally" button lets you skip straight to local-only operation. On lighter hardware, Gemini is recommended for voice mode
 4. **Intake Interview** — A calm, plainspoken setup voice asks three pointed questions
-5. **Psychological Profile** — Your LLM (cloud or local) analyses your responses to calibrate the agent's approach
+5. **Psychological Profile** — Your LLM (cloud or local) analyses your responses to calibrate the agent's approach. If the LLM is unavailable, a balanced default profile is used so onboarding never blocks
 6. **Agent Customization** — You choose everything: name, voice, gender, personality, backstory
 7. **Cinematic Reveal** — A warm golden glow fills the screen as your agent's 3D desktop materialises
 8. **First Words** — Your agent speaks its psychologically-tuned first greeting
