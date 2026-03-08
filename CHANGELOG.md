@@ -4,6 +4,41 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [2.3.0] — 2026-03-08
+
+### Added — Sprint 7: Integration Wiring
+
+- **5 new IPC handler modules** wiring 90 new IPC channels to their backend implementations:
+  - `hardware-handlers.ts` — 16 channels: GPU/CPU/RAM/VRAM detection, hardware profiles, thermals, display info
+  - `setup-handlers.ts` — 18 channels: Setup wizard, profile creation, intake responses, customization, first-run flow
+  - `ollama-handlers.ts` — 7 channels: Local model management (list, pull, delete, status, generate, chat, embeddings)
+  - `voice-pipeline-handlers.ts` — 32 channels: Whisper STT (5), audio capture (4), transcription pipeline (4), TTS engine (6), voice profiles (6), speech synthesis (7)
+  - `vision-pipeline-handlers.ts` — 17 channels: Vision model inference (6), screen capture (6), image understanding (5)
+- **29 event forwarding streams** from main process to renderer via `webContents.send()`: audio capture events (4), transcription pipeline events (3), speech synthesis events (4), screen context events (1), image understanding events (1), plus 16 additional hardware/setup/ollama streams
+- **6 new preload bridge namespaces** in `preload.ts`: `hardware`, `setup`, `profile`, `ollama`, `voice`, `vision`
+- **`validate.ts`** — Shared input validation utilities (assertString, assertObject, assertNumber, assertStringArray) with length limits used across all Sprint 7 handlers
+- **5 new test suites** (82 new tests):
+  - `tests/ipc/hardware-handlers.test.ts` — 16 tests
+  - `tests/ipc/setup-handlers.test.ts` — 13 tests
+  - `tests/ipc/ollama-handlers.test.ts` — 11 tests
+  - `tests/ipc/voice-pipeline-handlers.test.ts` — 23 tests
+  - `tests/ipc/vision-pipeline-handlers.test.ts` — 19 tests
+
+### Fixed
+
+- **Electron boot crash (TLS hardening)**: `Object.defineProperty(process.env, 'NODE_TLS_REJECT_UNAUTHORIZED', { get, set })` crashes Electron's native C++ process.env bridge. Replaced with `setInterval` periodic guard that checks and deletes the env var every 5 seconds
+- **VRAM display TypeError**: `profile.vramMB` → `Math.round((profile.vram?.total ?? 0) / (1024 * 1024 * 1024))` to match actual `HardwareProfile` interface
+- **Async IPC handler test pattern**: Changed `expect(() => invoke(...)).toThrow()` to `await expect(invoke(...)).rejects.toThrow()` for async handlers that validate and throw — async throws become rejected promises, not synchronous exceptions
+
+### Stats
+
+- Total source files: 294 (was 210)
+- Total tests: 4,347 across 127 test suites (was 3,496 across 63)
+- IPC handler modules: 47 (was 28)
+- Preload bridge namespaces: 28+
+
+---
+
 ## [2.2.0] — 2026-03-02
 
 ### Added

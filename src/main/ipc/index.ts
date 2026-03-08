@@ -46,3 +46,15 @@ export { registerNotesHandlers } from './notes-handlers';
 export { registerFilesHandlers } from './files-handlers';
 export { registerWeatherHandlers } from './weather-handlers';
 export { registerSystemMonitorHandlers } from './system-monitor-handlers';
+
+// ── Sprint 7: Integration Wiring — Sprint 3-6 module handlers ─────
+export { registerHardwareHandlers } from './hardware-handlers';
+export type { HardwareHandlerDeps } from './hardware-handlers';
+export { registerSetupHandlers } from './setup-handlers';
+export type { SetupHandlerDeps } from './setup-handlers';
+export { registerOllamaHandlers } from './ollama-handlers';
+export type { OllamaHandlerDeps } from './ollama-handlers';
+export { registerVoicePipelineHandlers } from './voice-pipeline-handlers';
+export type { VoicePipelineHandlerDeps } from './voice-pipeline-handlers';
+export { registerVisionPipelineHandlers } from './vision-pipeline-handlers';
+export type { VisionPipelineHandlerDeps } from './vision-pipeline-handlers';

@@ -1367,6 +1367,292 @@ contextBridge.exposeInMainWorld('eve', {
     return () => { ipcRenderer.removeListener('file:modified', handler); };
   },
 
+  // ── Sprint 7: Hardware Detection & Tier Recommendation ──────────
+
+  hardware: {
+    detect: () => ipcRenderer.invoke('hardware:detect'),
+    getProfile: () => ipcRenderer.invoke('hardware:get-profile'),
+    refresh: () => ipcRenderer.invoke('hardware:refresh'),
+    getEffectiveVRAM: () => ipcRenderer.invoke('hardware:get-effective-vram'),
+    getTier: (profile: Record<string, unknown>) => ipcRenderer.invoke('hardware:get-tier', profile),
+    getModelList: (tier: string) => ipcRenderer.invoke('hardware:get-model-list', tier),
+    estimateVRAM: (models: string[]) => ipcRenderer.invoke('hardware:estimate-vram', models),
+    recommend: (profile: Record<string, unknown>) => ipcRenderer.invoke('hardware:recommend', profile),
+    loadTierModels: (tier: string) => ipcRenderer.invoke('hardware:load-tier-models', tier),
+    getLoadedModels: () => ipcRenderer.invoke('hardware:get-loaded-models'),
+    getVRAMUsage: () => ipcRenderer.invoke('hardware:get-vram-usage'),
+    loadModel: (name: string) => ipcRenderer.invoke('hardware:load-model', name),
+    unloadModel: (name: string) => ipcRenderer.invoke('hardware:unload-model', name),
+    evictLeastRecent: () => ipcRenderer.invoke('hardware:evict-least-recent'),
+    getOrchestratorState: () => ipcRenderer.invoke('hardware:get-orchestrator-state'),
+    markModelUsed: (name: string) => ipcRenderer.invoke('hardware:mark-model-used', name),
+    onDetected: (callback: (profile: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('hardware:event:detected', handler);
+      return () => { ipcRenderer.removeListener('hardware:event:detected', handler); };
+    },
+    onModelLoaded: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('hardware:event:model-loaded', handler);
+      return () => { ipcRenderer.removeListener('hardware:event:model-loaded', handler); };
+    },
+    onModelUnloaded: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('hardware:event:model-unloaded', handler);
+      return () => { ipcRenderer.removeListener('hardware:event:model-unloaded', handler); };
+    },
+    onVRAMWarning: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('hardware:event:vram-warning', handler);
+      return () => { ipcRenderer.removeListener('hardware:event:vram-warning', handler); };
+    },
+  },
+
+  // ── Sprint 7: Setup Wizard ──────────────────────────────────────
+
+  setup: {
+    isFirstRun: () => ipcRenderer.invoke('setup:is-first-run'),
+    getState: () => ipcRenderer.invoke('setup:get-state'),
+    start: () => ipcRenderer.invoke('setup:start'),
+    skip: () => ipcRenderer.invoke('setup:skip'),
+    confirmTier: (tier: string) => ipcRenderer.invoke('setup:confirm-tier', tier),
+    startDownload: () => ipcRenderer.invoke('setup:start-download'),
+    getDownloadProgress: () => ipcRenderer.invoke('setup:get-download-progress'),
+    complete: () => ipcRenderer.invoke('setup:complete'),
+    reset: () => ipcRenderer.invoke('setup:reset'),
+    onStateChanged: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('setup:event:state-changed', handler);
+      return () => { ipcRenderer.removeListener('setup:event:state-changed', handler); };
+    },
+    onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('setup:event:download-progress', handler);
+      return () => { ipcRenderer.removeListener('setup:event:download-progress', handler); };
+    },
+    onComplete: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('setup:event:complete', handler);
+      return () => { ipcRenderer.removeListener('setup:event:complete', handler); };
+    },
+    onError: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('setup:event:error', handler);
+      return () => { ipcRenderer.removeListener('setup:event:error', handler); };
+    },
+  },
+
+  // ── Sprint 7: Profile Manager ───────────────────────────────────
+
+  profile: {
+    create: (opts: Record<string, unknown>) => ipcRenderer.invoke('profile:create', opts),
+    get: (id: string) => ipcRenderer.invoke('profile:get', id),
+    getActive: () => ipcRenderer.invoke('profile:get-active'),
+    setActive: (id: string) => ipcRenderer.invoke('profile:set-active', id),
+    update: (id: string, data: Record<string, unknown>) => ipcRenderer.invoke('profile:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('profile:delete', id),
+    export: (id: string) => ipcRenderer.invoke('profile:export', id),
+    import: (json: string) => ipcRenderer.invoke('profile:import', json),
+    list: () => ipcRenderer.invoke('profile:list'),
+    onChanged: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('profile:event:changed', handler);
+      return () => { ipcRenderer.removeListener('profile:event:changed', handler); };
+    },
+    onCreated: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('profile:event:created', handler);
+      return () => { ipcRenderer.removeListener('profile:event:created', handler); };
+    },
+    onDeleted: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('profile:event:deleted', handler);
+      return () => { ipcRenderer.removeListener('profile:event:deleted', handler); };
+    },
+  },
+
+  // ── Sprint 7: Ollama Lifecycle ──────────────────────────────────
+
+  ollama: {
+    start: () => ipcRenderer.invoke('ollama:start'),
+    stop: () => ipcRenderer.invoke('ollama:stop'),
+    getHealth: () => ipcRenderer.invoke('ollama:get-health'),
+    getAvailableModels: () => ipcRenderer.invoke('ollama:get-available-models'),
+    getLoadedModels: () => ipcRenderer.invoke('ollama:get-loaded-models'),
+    isModelAvailable: (name: string) => ipcRenderer.invoke('ollama:is-model-available', name),
+    pullModel: (name: string) => ipcRenderer.invoke('ollama:pull-model', name),
+    onHealthy: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('ollama:event:healthy', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:healthy', handler); };
+    },
+    onUnhealthy: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('ollama:event:unhealthy', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:unhealthy', handler); };
+    },
+    onHealthChange: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('ollama:event:health-change', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:health-change', handler); };
+    },
+    onModelLoaded: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('ollama:event:model-loaded', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:model-loaded', handler); };
+    },
+    onModelUnloaded: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('ollama:event:model-unloaded', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:model-unloaded', handler); };
+    },
+    onPullProgress: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('ollama:event:pull-progress', handler);
+      return () => { ipcRenderer.removeListener('ollama:event:pull-progress', handler); };
+    },
+  },
+
+  // ── Sprint 7: Voice Pipeline ────────────────────────────────────
+
+  voice: {
+    whisper: {
+      loadModel: (size?: string) => ipcRenderer.invoke('voice:whisper:load-model', size),
+      unloadModel: () => ipcRenderer.invoke('voice:whisper:unload-model'),
+      isReady: () => ipcRenderer.invoke('voice:whisper:is-ready'),
+      transcribe: (audio: number[]) => ipcRenderer.invoke('voice:whisper:transcribe', audio),
+      getAvailableModels: () => ipcRenderer.invoke('voice:whisper:get-available-models'),
+    },
+    capture: {
+      start: () => ipcRenderer.invoke('voice:capture:start'),
+      stop: () => ipcRenderer.invoke('voice:capture:stop'),
+      isCapturing: () => ipcRenderer.invoke('voice:capture:is-capturing'),
+      getAudioLevel: () => ipcRenderer.invoke('voice:capture:get-audio-level'),
+    },
+    pipeline: {
+      start: () => ipcRenderer.invoke('voice:pipeline:start'),
+      stop: () => ipcRenderer.invoke('voice:pipeline:stop'),
+      isListening: () => ipcRenderer.invoke('voice:pipeline:is-listening'),
+      getStats: () => ipcRenderer.invoke('voice:pipeline:get-stats'),
+    },
+    tts: {
+      loadEngine: (backend?: string) => ipcRenderer.invoke('voice:tts:load-engine', backend),
+      unloadEngine: () => ipcRenderer.invoke('voice:tts:unload-engine'),
+      isReady: () => ipcRenderer.invoke('voice:tts:is-ready'),
+      synthesize: (text: string, opts?: Record<string, unknown>) => ipcRenderer.invoke('voice:tts:synthesize', text, opts),
+      getAvailableVoices: () => ipcRenderer.invoke('voice:tts:get-available-voices'),
+      getInfo: () => ipcRenderer.invoke('voice:tts:get-info'),
+    },
+    profiles: {
+      getActive: () => ipcRenderer.invoke('voice:profiles:get-active'),
+      setActive: (id: string) => ipcRenderer.invoke('voice:profiles:set-active', id),
+      list: () => ipcRenderer.invoke('voice:profiles:list'),
+      create: (opts: Record<string, unknown>) => ipcRenderer.invoke('voice:profiles:create', opts),
+      delete: (id: string) => ipcRenderer.invoke('voice:profiles:delete', id),
+      preview: (profileId: string) => ipcRenderer.invoke('voice:profiles:preview', profileId),
+    },
+    speech: {
+      speak: (text: string, opts?: Record<string, unknown>) => ipcRenderer.invoke('voice:speech:speak', text, opts),
+      speakImmediate: (text: string) => ipcRenderer.invoke('voice:speech:speak-immediate', text),
+      stop: () => ipcRenderer.invoke('voice:speech:stop'),
+      pause: () => ipcRenderer.invoke('voice:speech:pause'),
+      resume: () => ipcRenderer.invoke('voice:speech:resume'),
+      isSpeaking: () => ipcRenderer.invoke('voice:speech:is-speaking'),
+      getQueueLength: () => ipcRenderer.invoke('voice:speech:get-queue-length'),
+    },
+    onVoiceStart: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:voice-start', handler);
+      return () => { ipcRenderer.removeListener('voice:event:voice-start', handler); };
+    },
+    onVoiceEnd: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:voice-end', handler);
+      return () => { ipcRenderer.removeListener('voice:event:voice-end', handler); };
+    },
+    onAudioChunk: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:audio-chunk', handler);
+      return () => { ipcRenderer.removeListener('voice:event:audio-chunk', handler); };
+    },
+    onCaptureError: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:capture-error', handler);
+      return () => { ipcRenderer.removeListener('voice:event:capture-error', handler); };
+    },
+    onTranscript: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:transcript', handler);
+      return () => { ipcRenderer.removeListener('voice:event:transcript', handler); };
+    },
+    onPartial: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:partial', handler);
+      return () => { ipcRenderer.removeListener('voice:event:partial', handler); };
+    },
+    onPipelineError: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:pipeline-error', handler);
+      return () => { ipcRenderer.removeListener('voice:event:pipeline-error', handler); };
+    },
+    onUtteranceStart: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:utterance-start', handler);
+      return () => { ipcRenderer.removeListener('voice:event:utterance-start', handler); };
+    },
+    onUtteranceEnd: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:utterance-end', handler);
+      return () => { ipcRenderer.removeListener('voice:event:utterance-end', handler); };
+    },
+    onQueueEmpty: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:queue-empty', handler);
+      return () => { ipcRenderer.removeListener('voice:event:queue-empty', handler); };
+    },
+    onInterrupted: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('voice:event:interrupted', handler);
+      return () => { ipcRenderer.removeListener('voice:event:interrupted', handler); };
+    },
+  },
+
+  // ── Sprint 7: Vision Pipeline ───────────────────────────────────
+
+  vision: {
+    loadModel: (opts?: Record<string, unknown>) => ipcRenderer.invoke('vision:load-model', opts),
+    unloadModel: () => ipcRenderer.invoke('vision:unload-model'),
+    describe: (imageBase64: string, opts?: Record<string, unknown>) => ipcRenderer.invoke('vision:describe', imageBase64, opts),
+    answer: (imageBase64: string, question: string) => ipcRenderer.invoke('vision:answer', imageBase64, question),
+    isReady: () => ipcRenderer.invoke('vision:is-ready'),
+    getModelInfo: () => ipcRenderer.invoke('vision:get-model-info'),
+    screen: {
+      captureScreen: () => ipcRenderer.invoke('vision:screen:capture-screen'),
+      captureWindow: (windowId: string) => ipcRenderer.invoke('vision:screen:capture-window', windowId),
+      captureRegion: (region: Record<string, unknown>) => ipcRenderer.invoke('vision:screen:capture-region', region),
+      getContext: () => ipcRenderer.invoke('vision:screen:get-context'),
+      startAutoCapture: (intervalMs?: number) => ipcRenderer.invoke('vision:screen:start-auto-capture', intervalMs),
+      stopAutoCapture: () => ipcRenderer.invoke('vision:screen:stop-auto-capture'),
+    },
+    understand: {
+      processImage: (imageBase64: string, opts?: Record<string, unknown>) => ipcRenderer.invoke('vision:understand:process-image', imageBase64, opts),
+      processClipboard: () => ipcRenderer.invoke('vision:understand:process-clipboard'),
+      handleDrop: (imageBase64: string) => ipcRenderer.invoke('vision:understand:handle-drop', imageBase64),
+      handleFileSelect: (filePath: string) => ipcRenderer.invoke('vision:understand:handle-file-select', filePath),
+      getLastResult: () => ipcRenderer.invoke('vision:understand:get-last-result'),
+    },
+    onContextUpdate: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('vision:event:context-update', handler);
+      return () => { ipcRenderer.removeListener('vision:event:context-update', handler); };
+    },
+    onImageResult: (callback: (data: Record<string, unknown>) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
+      ipcRenderer.on('vision:event:image-result', handler);
+      return () => { ipcRenderer.removeListener('vision:event:image-result', handler); };
+    },
+  },
+
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
