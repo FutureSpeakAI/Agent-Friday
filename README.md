@@ -586,12 +586,14 @@ agent-friday/
         adapters/
           telegram.ts                  # Telegram Bot API adapter
 
-      ipc/                             # Domain-specific IPC handlers (28 modules)
+      ipc/                             # Domain-specific IPC handlers (47 modules)
         index.ts                       # Handler registration hub
+        validate.ts                    # Input validation (assertString, assertObject, assertNumber)
         core-handlers.ts               # Settings, personality, app lifecycle
         memory-handlers.ts             # All memory operations
         agent-handlers.ts              # Agent task management
         agent-network-handlers.ts      # Agent network coordination
+        agent-trust-handlers.ts        # Agent trust management
         tool-handlers.ts               # Tool execution routing
         onboarding-handlers.ts         # Onboarding flow
         integration-handlers.ts        # Connectors, MCP, browser, SOC, GitLoader
@@ -601,20 +603,50 @@ agent-friday/
         superpower-ecosystem-handlers.ts  # Superpower ecosystem ops
         capability-gap-handlers.ts     # Capability gap detection
         commitment-tracker-handlers.ts # Commitment tracking
+        container-engine-handlers.ts   # Container engine
         context-graph-handlers.ts      # Context graph queries
+        context-push-handlers.ts       # Context push
         context-stream-handlers.ts     # Context streaming
         context-tool-router-handlers.ts  # Context-aware routing
         daily-briefing-handlers.ts     # Daily briefing
+        delegation-engine-handlers.ts  # Task delegation
+        execution-delegate-handlers.ts # Execution delegation
+        files-handlers.ts             # File operations
+        hardware-handlers.ts          # Hardware detection & GPU profiling (Sprint 7)
         intelligence-router-handlers.ts  # Intelligence routing
         meeting-intelligence-handlers.ts # Meeting intelligence
         memory-personality-bridge-handlers.ts  # Memory-personality bridge
         memory-quality-handlers.ts     # Memory quality scoring
+        multimedia-handlers.ts         # Multimedia processing
+        notes-handlers.ts             # Notes management
+        ollama-handlers.ts            # Ollama local model management (Sprint 7)
+        os-primitives-handlers.ts     # OS primitives
         outbound-intelligence-handlers.ts  # Outbound intelligence
         personality-calibration-handlers.ts  # Personality calibration
+        setup-handlers.ts             # Setup wizard & first-run (Sprint 7)
         state-export-handlers.ts       # State export/import
+        system-monitor-handlers.ts     # System monitoring
         unified-inbox-handlers.ts      # Unified inbox
+        vision-pipeline-handlers.ts   # Vision pipeline — model, screen, images (Sprint 7)
+        voice-pipeline-handlers.ts    # Voice pipeline — whisper, TTS, profiles (Sprint 7)
+        weather-handlers.ts           # Weather data
+        app-context-handlers.ts       # App context
+        briefing-delivery-handlers.ts # Briefing delivery
         workflow-executor-handlers.ts  # Workflow execution
         workflow-recorder-handlers.ts  # Workflow recording
+
+      voice/                           # Voice pipeline modules (Sprint 7)
+        whisper-provider.ts            # Local Whisper STT model management
+        audio-capture.ts               # Microphone audio capture
+        transcription-pipeline.ts      # STT orchestration pipeline
+        tts-engine.ts                  # Text-to-speech engine
+        voice-profile-manager.ts       # Voice profile CRUD
+        speech-synthesis.ts            # Speech synthesis playback
+
+      vision/                          # Vision pipeline modules (Sprint 7)
+        vision-provider.ts             # Vision model inference
+        screen-context.ts              # Screen capture & auto-capture
+        image-understanding.ts         # High-level image analysis
 
       pageindex/                       # Vectorless RAG engine (PageIndex port)
         index.ts                       # Public API barrel export
@@ -675,7 +707,7 @@ agent-friday/
           MoodTimeline.tsx             # SVG mood chart
 ```
 
-**Total: 210 source files, ~98,000 lines of TypeScript, 3,496 tests across 63 test suites**
+**Total: 294 source files, ~110,000 lines of TypeScript, 4,347 tests across 127 test suites**
 
 ### Technology Stack
 
