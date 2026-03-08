@@ -125,14 +125,15 @@ Download the latest installer from the [Releases page](https://github.com/Future
 ### Prerequisites (for development)
 
 - **Node.js 20+** (with npm)
-- **API Keys** (entered during first-run setup):
-  - [Google Gemini](https://aistudio.google.com/apikey) — Required (voice + search + embeddings + image generation via Nano Banana 2)
-  - [Anthropic Claude](https://console.anthropic.com/) — Required (reasoning + memory analysis)
+- **API Keys** (entered during first-run setup — see [Hardware Profiles](#hardware-profiles) for which keys your setup needs):
+  - [Google Gemini](https://aistudio.google.com/apikey) — Required for voice mode + image generation; optional for text-only local operation
+  - [Anthropic Claude](https://console.anthropic.com/) — Recommended for deep reasoning + memory analysis; optional if running locally via Ollama
   - [OpenRouter](https://openrouter.ai/keys) — Optional (access to 200+ models: Llama, Mistral, Gemma, Command R, etc.)
-  - [ElevenLabs](https://elevenlabs.io/) — Optional (enhanced voice synthesis for sub-agents)
+  - [ElevenLabs](https://elevenlabs.io/) — Optional (distinctive voices for sub-agents Atlas, Nova, Cipher)
   - [Firecrawl](https://firecrawl.dev/) — Optional (web scraping)
   - [Perplexity](https://docs.perplexity.ai/) — Optional (web search with citations)
   - [OpenAI](https://platform.openai.com/) — Optional (o3 reasoning, Whisper transcription, embeddings)
+- **Ollama** (optional) — [Download](https://ollama.ai/) for local model inference; the setup wizard auto-detects and configures models based on your hardware
 - **VB-Cable** (optional) — [Download](https://vb-audio.com/Cable/) for live call participation
 
 ### Install & Run (from source)
@@ -148,13 +149,14 @@ npm run dev
 
 On first launch, you'll experience a guided onboarding inspired by the OS1 setup scene from *Her*:
 
-1. **API Key Gate** — Enter your Gemini and Anthropic keys
-2. **Intake Interview** — A calm, plainspoken setup voice asks three pointed questions
-3. **Psychological Profile** — Claude Sonnet analyses your responses to calibrate the agent's approach
-4. **Agent Customization** — You choose everything: name, voice, gender, personality, backstory
-5. **Cinematic Reveal** — A warm golden glow fills the screen as your agent's 3D desktop materialises
-6. **First Words** — Your agent speaks its psychologically-tuned first greeting
-7. **Feature Walkthrough** — Guided setup of 12 integrations (Obsidian, browser, calendar, email, AI services, and more)
+1. **Hardware Detection** — Automatic GPU/CPU/RAM/VRAM profiling to determine your hardware tier
+2. **Model Setup** — Downloads and configures local Ollama models matched to your hardware capability
+3. **API Key Gate** — Enter cloud API keys (required for voice mode; optional for text-only local operation)
+4. **Intake Interview** — A calm, plainspoken setup voice asks three pointed questions
+5. **Psychological Profile** — Your LLM (cloud or local) analyses your responses to calibrate the agent's approach
+6. **Agent Customization** — You choose everything: name, voice, gender, personality, backstory
+7. **Cinematic Reveal** — A warm golden glow fills the screen as your agent's 3D desktop materialises
+8. **First Words** — Your agent speaks its psychologically-tuned first greeting
 
 ### Build an Installer
 
@@ -171,7 +173,7 @@ The installer lands in `release/`. Supports Windows (NSIS + ZIP), macOS (DMG + Z
 
 ### Voice-First with Robust Text Interface
 
-Agent Friday v2.0.0 is a **voice-first** AGI OS with a full-featured text interface. The central UI pairs real-time voice conversation with a full-width chat panel and streaming AI responses:
+Agent Friday is a **voice-first** AGI OS with a full-featured text interface. Voice mode streams real-time conversation via Gemini Live; text mode works with any configured provider including fully-local Ollama models. The central UI pairs voice interaction with a full-width chat panel and streaming AI responses:
 
 - **Always-active text input** — type and send immediately; auto-connects to Gemini on first message
 - **Streaming replies** — see the agent's response arrive in real time, token by token
@@ -820,13 +822,143 @@ API keys entered through the settings UI are automatically synced to `process.en
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
 | **OS** | Windows 10 (64-bit) | Windows 11 |
-| **RAM** | 4 GB | 8+ GB |
+| **RAM** | 4 GB | 16+ GB |
 | **Node.js** | 20.x | 22.x LTS |
-| **Internet** | Required for API calls | Broadband for voice streaming |
+| **GPU** | None (cloud-only mode) | 8+ GB VRAM (local inference) |
+| **Storage** | 500 MB (app only) | 20+ GB (local models) |
+| **Internet** | Required for cloud-only mode | Optional for local-capable tiers |
 | **Microphone** | Any input device | Quality USB/headset mic |
 | **Display** | 1280x720 | 1920x1080+ |
 
 macOS and Linux builds are supported but primarily tested on Windows.
+
+### Hardware Profiles
+
+Agent Friday automatically detects your hardware and recommends a tier. Each tier represents a different balance between local privacy and cloud capability.
+
+#### Sovereign — 100% Local Operation
+
+*Everything runs on your machine. No data leaves your system. No API keys needed.*
+
+| Component | Spec |
+|-----------|------|
+| **GPU** | 24 GB VRAM (RTX 4090, RTX 3090, A5000+) |
+| **RAM** | 32+ GB |
+| **Storage** | 60+ GB free (models) |
+| **Internet** | Not required |
+
+**What runs locally:** 70B reasoning model (llama3.1:70b), 8B fast model, embeddings (nomic-embed-text), vision (moondream), local Whisper STT, local Kokoro/Piper TTS, local image generation via Stable Diffusion
+
+**What you get:** Full conversational AI, voice interaction, vision/screen understanding, memory, trust graph, all connector tools — completely offline. Deep reasoning quality approaches cloud frontier models. No API costs.
+
+**Best for:** Privacy-maximalist users, air-gapped environments, users who want zero cloud dependency
+
+#### Full — Local Intelligence, Cloud for Frontier Reasoning
+
+*Handles most tasks locally. Cloud models available for complex reasoning and research.*
+
+| Component | Spec |
+|-----------|------|
+| **GPU** | 8–12 GB VRAM (RTX 4060 Ti, RTX 3060 12GB, RTX A4000) |
+| **RAM** | 16+ GB |
+| **Storage** | 15+ GB free |
+| **Internet** | Recommended but not required for core operation |
+
+**What runs locally:** 8B reasoning model (llama3.1:8b), embeddings, vision model (moondream), local STT/TTS
+
+**What uses cloud (optional):** Claude/Gemini for complex multi-step reasoning, Perplexity for deep web research, Nano Banana 2 for image generation, ElevenLabs for sub-agent voices
+
+**API keys:** Optional — add Gemini for voice streaming, Claude for frontier reasoning, or run text-only with no keys at all
+
+**Best for:** Most users who want local-first with cloud as an escape hatch for hard problems
+
+#### Standard — Local Chat, Cloud for Power Features
+
+*Basic local LLM handles everyday conversation. Cloud APIs extend capability.*
+
+| Component | Spec |
+|-----------|------|
+| **GPU** | 6–8 GB VRAM (RTX 3060, RTX 2060, GTX 1660 Super) |
+| **RAM** | 8+ GB |
+| **Storage** | 10+ GB free |
+| **Internet** | Required for voice mode and advanced features |
+
+**What runs locally:** 8B reasoning model, embeddings
+
+**What uses cloud:** Voice mode (Gemini Live), vision/screen capture analysis, image generation, deep reasoning, web research, sub-agent voices
+
+**API keys:** Gemini recommended (voice + image gen), Claude optional (deep reasoning)
+
+**Best for:** Users with mid-range hardware who want local chat with cloud-powered voice and tools
+
+#### Light — Minimal Local, Cloud-Powered
+
+*Embeddings run locally for semantic search. Everything else is cloud.*
+
+| Component | Spec |
+|-----------|------|
+| **GPU** | 2–4 GB VRAM (GTX 1050 Ti, integrated graphics with dedicated VRAM) |
+| **RAM** | 8 GB |
+| **Storage** | 2+ GB free |
+| **Internet** | Required |
+
+**What runs locally:** Embeddings only (nomic-embed-text) for local semantic memory search
+
+**What uses cloud:** All LLM reasoning, voice, vision, image generation, research
+
+**API keys:** Gemini + Claude recommended; most capabilities depend on cloud APIs
+
+**Data exposure:** Conversation content, queries, and context are sent to cloud providers for processing — see [Cloud Data Protection](#cloud-data-protection) below
+
+**Best for:** Users with older hardware who still want the full Agent Friday experience
+
+#### Whisper — Cloud-Only
+
+*No local models. All intelligence provided by cloud APIs.*
+
+| Component | Spec |
+|-----------|------|
+| **GPU** | None required |
+| **RAM** | 4 GB |
+| **Storage** | 500 MB (app only) |
+| **Internet** | Required (always) |
+
+**What runs locally:** UI, settings, memory storage (encrypted), trust graph, connector tools
+
+**What uses cloud:** Everything — LLM reasoning, voice, vision, embeddings, image generation, research
+
+**API keys:** Gemini + Claude required for meaningful operation
+
+**Data exposure:** All AI interactions transit cloud APIs — see [Cloud Data Protection](#cloud-data-protection) below
+
+**Best for:** Users who want to try Agent Friday without GPU investment, or laptop-only users with no discrete GPU
+
+### Cloud Data Protection
+
+When your hardware tier requires cloud APIs, your data transits third-party services. Agent Friday applies several protections:
+
+**What stays local (always, regardless of tier):**
+- Memory database — all learned facts, patterns, and user knowledge
+- Trust Graph — person profiles, trust scores, relationship evidence
+- Sovereign Vault — encrypted settings, API keys, agent identity keys
+- Conversation history — full chat logs
+- Connector tool results — file contents, calendar data, email metadata
+- Psychological profile — personality calibration data
+
+**What transits cloud APIs (when cloud is used):**
+- Current conversation context sent to the LLM provider (Anthropic, Google, OpenRouter)
+- Voice audio streams sent to Gemini Live (for voice mode)
+- Screen captures sent to vision models (when screen context is active)
+- Text sent to ElevenLabs (for sub-agent voice synthesis)
+
+**Protections applied:**
+- **Minimum context principle** — The intelligence router sends only the context window needed for the current task, not your entire memory
+- **No persistent cloud storage** — Cloud providers process requests statelessly; Agent Friday does not use any provider's conversation history or training features
+- **Encrypted at rest** — All local data (including API keys) is encrypted by the Sovereign Vault with AES-256-GCM via Argon2id-derived keys
+- **API key isolation** — Keys use HTTP headers (not URL parameters), preventing leakage in logs or referrer headers
+- **Localhost binding** — The Express API server binds to `127.0.0.1` only; no network exposure
+- **Provider choice** — You choose which providers to enable; disabling a provider means zero data flows to it
+- **Audit trail** — The intelligence router logs which provider handled each request (visible in Settings → Debug)
 
 ---
 
@@ -835,7 +967,8 @@ macOS and Linux builds are supported but primarily tested on Windows.
 - **No telemetry** — Agent Friday does not phone home or collect usage data
 - **Local storage** — All memory, settings, trust graph data, and conversation data stay on your machine
 - **Encryption at rest** — The Sovereign Vault v2 encrypts all sensitive state files with AES-256-GCM, derived from your passphrase via Argon2id — fully portable across machines
-- **Screen capture** is local-only — images are sent directly to Gemini for context and never stored
+- **Local-first architecture** — On capable hardware (6GB+ VRAM), Agent Friday runs reasoning, embeddings, and vision entirely via Ollama with no cloud dependency
+- **Screen capture** is local-only — images are sent to the configured vision model (local or cloud) for context and never stored
 - **Obsidian sync** is opt-in — bidirectional vault sync only if you configure a vault path
 - **Webcam** access is tool-gated — the agent must explicitly request permission
 - **Self-improvement** changes require explicit user approval before any code is modified
@@ -850,13 +983,16 @@ macOS and Linux builds are supported but primarily tested on Windows.
 ## FAQ
 
 **What makes this different from ChatGPT / Claude desktop?**
-Agent Friday is a full AGI operating system, not a chat window. It sees your screen, controls your mouse, manages your files, connects to your tools, builds trust models of the people in your world, remembers your patterns, and adapts its personality to who you are. It runs locally with full privacy.
+Agent Friday is a full AGI operating system, not a chat window. It sees your screen, controls your mouse, manages your files, connects to your tools, builds trust models of the people in your world, remembers your patterns, and adapts its personality to who you are. On capable hardware, it runs entirely locally with full privacy — no API keys required for text-based operation.
 
 **Is it always listening?**
 No. The microphone is **never** activated without explicit user action. Voice mode is off by default — you must click the voice toggle to enable it, then click the orb or press Space to start listening. Wake word detection is also disabled by default. Audio is processed via Gemini's WebSocket API and is not stored.
 
 **Where is my data?**
-All memory, settings, trust graph, and conversation data stay on your local machine in `{userData}/`. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection.
+All memory, settings, trust graph, and conversation data stay on your local machine in `{userData}/`, encrypted by the Sovereign Vault. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection. When cloud APIs are used, only the current conversation context is sent — your stored memory, trust graph, and history never leave your machine. See [Cloud Data Protection](#cloud-data-protection) for details.
+
+**Do I need API keys?**
+It depends on your hardware and how you want to interact. With 6GB+ VRAM and Ollama installed, you can run text-based interaction with no API keys at all. Voice mode requires a Gemini API key. Sub-agent voices require ElevenLabs. Deep reasoning benefits from Claude. The setup wizard detects your hardware and tells you exactly what you need. See [Hardware Profiles](#hardware-profiles) for the full breakdown.
 
 **Can it actually control my computer?**
 Yes — mouse clicks, keyboard input, app launching, file management, terminal commands. But every destructive or irreversible action requires your explicit approval first (Asimov's cLaws, Second Law).
