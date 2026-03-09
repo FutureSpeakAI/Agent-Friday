@@ -10,7 +10,7 @@ interface UseGeminiLiveOptions {
   onToolStart?: (id: string, name: string) => void;
   onToolEnd?: (id: string, name: string, success: boolean) => void;
   onAgentFinalized?: (config: Record<string, unknown>) => void;
-  onPhaseChange?: (phase: 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal') => void;
+  onPhaseChange?: (phase: 'onboarding' | 'creating' | 'normal') => void;
 }
 
 export interface GeminiLiveState {
@@ -1530,10 +1530,9 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                     await window.eve.psychProfile.generate(responses);
                     resultText = 'Intake responses saved and psychological profile generated. You may now transition to agent customization.';
                   } else if (fc.name === 'transition_to_customization') {
-                    // Signal renderer to enter customization phase
-                    console.log('[GeminiLive] Transitioning to customization phase');
-                    optionsRef.current.onPhaseChange?.('customizing');
-                    resultText = 'Transitioning to agent customization phase. Guide the user through choosing their agent\'s name, voice, personality, and backstory.';
+                    // The wizard handles customization flow — this is a no-op during wizard onboarding
+                    console.log('[GeminiLive] transition_to_customization called (wizard handles flow)');
+                    resultText = 'Acknowledged. Continue with the personal intake questions.';
                   } else if (fc.name === 'mark_feature_setup_step') {
                     // Feature configured — record it and continue conversation naturally
                     const step = String(fc.args?.step || '');

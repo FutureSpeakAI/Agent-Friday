@@ -1,7 +1,8 @@
 import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { startServer } from './server';
+import { startServer, flushTextSession } from './server';
+import { chatHistoryStore } from './chat-history';
 import { mcpClient } from './mcp-client';
 import { initializeProviders } from './providers';
 
@@ -131,6 +132,11 @@ import { memoryQuality } from './memory-quality';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { multimediaEngine } from './multimedia-engine';
+import { perfMonitor } from './perf-monitor';
+import { osEvents } from './os-events';
+import { fileWatcher } from './file-watcher';
+import { briefingPipeline } from './briefing-pipeline';
+import { briefingDelivery } from './briefing-delivery';
 import {
   initializeNewVault,
   unlockVault,
@@ -192,6 +198,7 @@ import {
   registerOllamaHandlers,
   registerVoicePipelineHandlers,
   registerVisionPipelineHandlers,
+  registerChatHistoryHandlers,
   type ContextPushCleanup,
 } from './ipc';
 
@@ -281,7 +288,7 @@ function createWindow() {
     }
   });
 
-  if (isDev) {
+  if (isDev && process.env.VITE_DEV_SERVER === '1') {
     mainWindow.loadURL('http://localhost:5199').catch(() => {
       mainWindow!.loadURL(`http://localhost:${serverPort}`);
     });
@@ -470,6 +477,10 @@ app.whenReady().then(async () => {
 
     episodicMemory.initialize().catch((err) => {
       console.warn('[Friday] Episodic memory init failed:', err instanceof Error ? err.message : 'Unknown error');
+    });
+
+    chatHistoryStore.initialize().catch((err) => {
+      console.warn('[Friday] Chat history store init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     relationshipMemory.initialize().catch((err) => {
@@ -663,6 +674,22 @@ app.whenReady().then(async () => {
     liveContextBridge.start(mainWindow!);
     console.log('[Friday] Context stream bridge + graph + live context bridge started');
 
+    // ── Phase 0.1: Previously orphaned singletons ─────────────────
+    perfMonitor.initialize();
+    console.log('[Friday] Performance monitor initialized');
+
+    osEvents.initialize(mainWindow!);
+    console.log('[Friday] OS events engine initialized');
+
+    fileWatcher.initialize(mainWindow!);
+    console.log('[Friday] File watcher initialized');
+
+    briefingPipeline.start();
+    console.log('[Friday] Briefing pipeline started');
+
+    briefingDelivery.start(mainWindow!);
+    console.log('[Friday] Briefing delivery started');
+
     connectorRegistry.initialize().catch((err) => {
       console.warn('[Friday] Connector registry init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
@@ -733,6 +760,7 @@ app.whenReady().then(async () => {
   registerOllamaHandlers({ getMainWindow });
   registerVoicePipelineHandlers({ getMainWindow });
   registerVisionPipelineHandlers({ getMainWindow });
+  registerChatHistoryHandlers();
   console.log('[IPC] Sprint 3-6 module handlers registered');
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
@@ -959,6 +987,10 @@ app.whenReady().then(async () => {
 // ── Application lifecycle ───────────────────────────────────────────
 app.on('before-quit', () => {
   isQuitting = true;
+  // Seal any active text chat session into an episode before shutdown
+  flushTextSession().catch(() => {});
+  // Flush any pending chat history writes
+  chatHistoryStore.flush().catch(() => {});
 });
 
 app.on('window-all-closed', async () => {
@@ -981,6 +1013,11 @@ app.on('window-all-closed', async () => {
   stopContextStreamBridge();
   communications.stop();
   fileTransferEngine.shutdown();
+  osEvents.stop();
+  fileWatcher.stop();
+  briefingPipeline.stop();
+  briefingDelivery.stop();
+  perfMonitor.shutdown();
   agentNetwork.stop().catch(() => {});
   containerEngine.shutdown().catch(() => {});
   OllamaLifecycle.getInstance().stop();

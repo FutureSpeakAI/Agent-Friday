@@ -21,6 +21,7 @@ import { buildTrustAwarenessBlock } from './agent-trust';
 import { personalityCalibration } from './personality-calibration';
 import { memoryPersonalityBridge } from './memory-personality-bridge';
 import { meetingIntelligence } from './meeting-intelligence';
+import { superpowerStore } from './superpower-store';
 
 /**
  * Setup Assistant personality — used during onboarding before the agent identity is configured.
@@ -500,6 +501,11 @@ export async function buildSystemPrompt(): Promise<string> {
   const connectorCtx = connectorRegistry.buildToolRoutingContext();
   if (connectorCtx) {
     parts.push(connectorCtx);
+  }
+
+  const superpowerCtx = superpowerStore.getPromptContext();
+  if (superpowerCtx) {
+    parts.push(`## ${superpowerCtx}`);
   }
 
   // Gateway injection defense — present in ALL prompts (local + gateway)

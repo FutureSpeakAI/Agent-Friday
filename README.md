@@ -92,7 +92,7 @@ These aren't features. They're the foundation everything else is built on.
 
 Agent Friday is the AGI OS — a desktop AI operating system that lives on your screen as a 3D holographic interface with 13 distinct evolution structures, bloom post-processing, and mood-reactive rendering. It talks, listens, remembers, learns your patterns, manages your tools, builds trust models of the people in your world, and evolves its visual form weekly through AI-powered art therapy sessions. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
 
-Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **VEO 3** (video generation), **Gemini 2.0 Flash** (music & audio), **ComfyUI** (local Stable Diffusion), **ElevenLabs** (voice synthesis & cloning), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
+Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **VEO 3** (video generation), **Gemini 2.0 Flash** (music, audio & sub-agent TTS), **Kokoro/Piper** (local TTS), **ComfyUI** (local Stable Diffusion), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
 
 **This is not a chatbot.** It's an operating system layer with a soul — and now, a polymath creative engine.
 
@@ -129,7 +129,7 @@ Download the latest installer from the [Releases page](https://github.com/Future
   - [Google Gemini](https://aistudio.google.com/apikey) — Required for voice mode + image generation; optional for text-only local operation
   - [Anthropic Claude](https://console.anthropic.com/) — Recommended for deep reasoning + memory analysis; optional if running locally via Ollama
   - [OpenRouter](https://openrouter.ai/keys) — Optional (access to 200+ models: Llama, Mistral, Gemma, Command R, etc.)
-  - [ElevenLabs](https://elevenlabs.io/) — Optional (distinctive voices for sub-agents Atlas, Nova, Cipher)
+  - *Sub-agent voices* — Gemini TTS (cloud, uses same Gemini key) or Kokoro/Piper (local, no key needed) provide distinct voices for Atlas, Nova, and Cipher
   - [Firecrawl](https://firecrawl.dev/) — Optional (web scraping)
   - [Perplexity](https://docs.perplexity.ai/) — Optional (web search with citations)
   - [OpenAI](https://platform.openai.com/) — Optional (o3 reasoning, Whisper transcription, embeddings)
@@ -149,14 +149,13 @@ npm run dev
 
 On first launch, you'll experience a guided onboarding inspired by the OS1 setup scene from *Her*:
 
-1. **Hardware Detection** — Automatic GPU/CPU/RAM/VRAM profiling to determine your hardware tier
-2. **Model Setup** — Downloads and configures local Ollama models matched to your hardware capability
-3. **API Key Gate** — Tier-aware key entry: on Standard+ hardware (6 GB+ VRAM), all API keys are optional and a "Run Locally" button lets you skip straight to local-only operation. On lighter hardware, Gemini is recommended for voice mode
-4. **Intake Interview** — A calm, plainspoken setup voice asks three pointed questions
-5. **Psychological Profile** — Your LLM (cloud or local) analyses your responses to calibrate the agent's approach. If the LLM is unavailable, a balanced default profile is used so onboarding never blocks
-6. **Agent Customization** — You choose everything: name, voice, gender, personality, backstory
-7. **Cinematic Reveal** — A warm golden glow fills the screen as your agent's 3D desktop materialises
-8. **First Words** — Your agent speaks its psychologically-tuned first greeting
+1. **Awakening** — Cinematic splash with animated logo and particle effects
+2. **Directives** — Asimov's cLaws presentation — the Three Laws revealed one at a time
+3. **Engines** — Automatic GPU/CPU/RAM/VRAM profiling with tier detection + tier-aware API key entry (on Standard+ hardware all keys are optional with a "Run Locally" option)
+4. **Sovereignty** — Vault passphrase setup with data sovereignty explanation
+5. **Identity** — Agent naming, voice gender, and voice feel selection
+6. **Interview** — Gemini Live voice interview with waveform visualisation — calibration questions to shape the agent's personality
+7. **Reveal** — Terminal-style boot sequence with cinematic agent name reveal and 3D desktop materialisation
 
 ### Build an Installer
 
@@ -323,8 +322,8 @@ Agent Friday is a **true polymath** — a unified creative agent capable of gene
 | **Video** | Gemini VEO 3 + FFmpeg | Text-to-video, image-to-video, stitching, conversion |
 | **Music** | Gemini 2.0 Flash | Text-to-music with style, mood, tempo, and duration control |
 | **Sound Effects** | Gemini 2.0 Flash | Procedural sound effect synthesis from text descriptions |
-| **Speech** | ElevenLabs | High-quality TTS, voice cloning, multi-voice podcast creation |
-| **Podcast** | ElevenLabs multi-voice | Script-to-podcast with distinct speakers and dialogue |
+| **Speech** | Gemini TTS / Kokoro / Piper | High-quality TTS with multi-backend fallback chain |
+| **Podcast** | Multi-voice TTS | Script-to-podcast with distinct speakers and dialogue |
 | **Code** | Multi-provider AI (Gemini/Claude/OpenAI/Ollama) | File editing, shell execution, git ops, diagnostics |
 | **Document** | PageIndex + Office | PDF intelligence, document creation and editing |
 
@@ -335,7 +334,7 @@ Agent Friday is a **true polymath** — a unified creative agent capable of gene
 3. **Polymath dispatches** — Routes to the best available tool with automatic parameter mapping and fallback chains
 4. **The Stage presents** — Every output lands in a unified feed with domain filtering, pinning, and export
 
-**Fallback chains** ensure creative requests always succeed: if ComfyUI isn't running, image generation falls back to Nano Banana 2, then DALL-E 3. If ElevenLabs isn't configured, speech falls back to Google Cloud TTS.
+**Fallback chains** ensure creative requests always succeed: if ComfyUI isn't running, image generation falls back to Nano Banana 2, then DALL-E 3. Speech synthesis uses a provider chain (Gemini TTS → local Kokoro/Piper → text-only) based on your preferred provider setting.
 
 **The Stage** (🎭 Ctrl+Shift+G) is the unified creative output hub:
 - **Create tab** — Type a prompt, see real-time intent classification, dispatch with one click
@@ -366,7 +365,7 @@ Background task execution powered by Claude, with specialised team members and d
 | **Draft Email** | Communication | Professional emails calibrated to tone and context |
 | **Orchestrate** | Task decomposition | Breaks complex goals into sub-tasks across multiple agents |
 
-Agents run concurrently (up to 5 parallel), with real-time chain-of-thought progress streaming, spoken results via ElevenLabs TTS for distinct voices, and a pixel-art **Agent Office** visualization where you can watch your team work in real time.
+Agents run concurrently (up to 5 parallel), with real-time chain-of-thought progress streaming, spoken results via multi-backend TTS (Gemini cloud or local Kokoro/Piper) for distinct voices, and a pixel-art **Agent Office** visualization where you can watch your team work in real time.
 
 ### Multi-Agent Network (Track XI)
 
@@ -439,7 +438,7 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | Connector | What It Does |
 |-----------|-------------|
 | **Adobe** | Photoshop, Illustrator, Premiere Pro automation via ExtendScript |
-| **Audio & Music Gen** | AI music (Gemini 2.0 Flash), sound effects, speech (ElevenLabs), voice cloning, podcast creation, FFmpeg mixing/effects |
+| **Audio & Music Gen** | AI music (Gemini 2.0 Flash), sound effects, speech (Gemini TTS / Kokoro / Piper), podcast creation, FFmpeg mixing/effects |
 | **Coding Agent Kit** | File editing, shell execution, git ops, diagnostics, multi-provider AI reasoning, session management |
 | **Comms Hub** | Slack, Teams, Discord unified messaging |
 | **ComfyUI** | Local Stable Diffusion via ComfyUI — txt2img, img2img, model/sampler management, custom workflows |
@@ -609,7 +608,7 @@ agent-friday/
         agent-types.ts                 # Shared agent type definitions
         agent-personas.ts              # Distinct agent personality profiles
         agent-teams.ts                 # Multi-agent team coordination
-        agent-voice.ts                 # ElevenLabs TTS for agent speech
+        agent-voice.ts                 # Multi-backend TTS for agent speech (Gemini → Kokoro/Piper → text-only)
         orchestrator.ts                # Task decomposition across agents
         container-engine.ts            # Sandboxed execution with cLaw governance
         delegation-engine.ts           # Trust-gated task delegation between agents
@@ -739,7 +738,8 @@ agent-friday/
         HudOverlay.tsx                 # Holographic HUD — agent name, structure label, status
         FridayCore.tsx                 # Legacy 3D desktop (superseded by DesktopViz)
         VoiceOrb.tsx                   # Central voice interaction orb
-        WelcomeGate.tsx                # API key entry gate
+        OnboardingWizard.tsx            # 7-step cinematic first-run wizard
+        onboarding/                    # Step components (Awakening, Directives, Engines, Sovereignty, Identity, Interview, Reveal)
         AgentCreation.tsx              # Cinematic reveal animation
         AgentOffice/                   # Pixel-art agent workspace
           index.tsx                    # Office renderer + sprite animation
@@ -781,7 +781,7 @@ agent-friday/
 | **Image Generation** | Nano Banana 2 (Gemini 3.1 Flash Image) | Pro-quality image generation, 512px to 4K, 14 aspect ratios |
 | **Multi-Model** | OpenRouter API | Access to 200+ models (Llama, Mistral, Gemma, etc.) |
 | **Embeddings** | Gemini text-embedding-004 | Semantic search (768 dimensions) |
-| **Agent Voices** | ElevenLabs TTS | Distinct voices for sub-agents |
+| **Agent Voices** | Gemini TTS (cloud) / Kokoro + Piper (local) | Distinct voices for sub-agents with automatic fallback |
 | **Document Intelligence** | PageIndex (Vectify AI) + OpenAI GPT-4o | Vectorless tree-based RAG (~99% accuracy) |
 | **Desktop Automation** | Self-Operating Computer (Python) | Mouse, keyboard, screen reading via JSONL bridge |
 | **Code Intelligence** | GitLoader | On-the-fly GitHub repo analysis |
@@ -847,7 +847,7 @@ All settings persist in `{userData}/friday-settings.json`:
 | Category | What's Stored |
 |----------|--------------|
 | **Identity** | Agent name, voice, traits, backstory, identity line |
-| **API Keys** | Gemini, Anthropic, OpenRouter, ElevenLabs, Firecrawl, Perplexity, OpenAI |
+| **API Keys** | Gemini, Anthropic, OpenRouter, Firecrawl, Perplexity, OpenAI |
 | **Integrations** | Obsidian vault path, Calendar/Gmail OAuth tokens, World Monitor path |
 | **Psychology** | Openness, trust readiness, connection style, approach strategy |
 | **Features** | Voice toggle, notifications, clipboard intelligence, screen capture |
@@ -924,7 +924,7 @@ Agent Friday automatically detects your hardware and recommends a tier. Each tie
 
 **What runs locally:** 8B reasoning model (llama3.1:8b), embeddings, vision model (moondream), local STT/TTS
 
-**What uses cloud (optional):** Claude/Gemini for complex multi-step reasoning, Perplexity for deep web research, Nano Banana 2 for image generation, ElevenLabs for sub-agent voices
+**What uses cloud (optional):** Claude/Gemini for complex multi-step reasoning, Perplexity for deep web research, Nano Banana 2 for image generation, Gemini TTS for sub-agent voices (or use local Kokoro/Piper instead)
 
 **API keys:** Optional — add Gemini for voice streaming, Claude for frontier reasoning, or run text-only with no keys at all
 
@@ -1007,7 +1007,7 @@ When your hardware tier requires cloud APIs, your data transits third-party serv
 - Current conversation context sent to the LLM provider (Anthropic, Google, OpenRouter)
 - Voice audio streams sent to Gemini Live (for voice mode)
 - Screen captures sent to vision models (when screen context is active)
-- Text sent to ElevenLabs (for sub-agent voice synthesis)
+- Text sent to Gemini TTS (for sub-agent voice synthesis, when using cloud provider; local Kokoro/Piper keeps everything on-device)
 
 **Protections applied:**
 - **Minimum context principle** — The intelligence router sends only the context window needed for the current task, not your entire memory
@@ -1050,7 +1050,7 @@ No. The microphone is **never** activated without explicit user action. Voice mo
 All memory, settings, trust graph, and conversation data stay on your local machine in `{userData}/`, encrypted by the Sovereign Vault. Obsidian vault sync is opt-in. No telemetry, no cloud storage, no data collection. When cloud APIs are used, only the current conversation context is sent — your stored memory, trust graph, and history never leave your machine. See [Cloud Data Protection](#cloud-data-protection) for details.
 
 **Do I need API keys?**
-It depends on your hardware and how you want to interact. With 6GB+ VRAM and Ollama installed, you can run text-based interaction with no API keys at all. Voice mode requires a Gemini API key. Sub-agent voices require ElevenLabs. Deep reasoning benefits from Claude. The setup wizard detects your hardware and tells you exactly what you need. See [Hardware Profiles](#hardware-profiles) for the full breakdown.
+It depends on your hardware and how you want to interact. With 6GB+ VRAM and Ollama installed, you can run text-based interaction with no API keys at all. Voice mode requires a Gemini API key. Sub-agent voices work automatically — Gemini TTS (cloud, uses same Gemini key) or Kokoro/Piper (local, no key needed). Deep reasoning benefits from Claude. The setup wizard detects your hardware and tells you exactly what you need. See [Hardware Profiles](#hardware-profiles) for the full breakdown.
 
 **Can it actually control my computer?**
 Yes — mouse clicks, keyboard input, app launching, file management, terminal commands. But every destructive or irreversible action requires your explicit approval first (Asimov's cLaws, Second Law).
@@ -1075,7 +1075,7 @@ The Trust Graph is Agent Friday's model of the people in your world. It tracks m
 |-------|---------|
 | No voice response | Ensure voice mode is enabled (click 🎤 button); check Gemini API key in Settings; ensure microphone permissions are granted |
 | "MCP client failed to connect" | Ensure `npx` works or install Desktop Commander globally |
-| Agents have no voice | Add an ElevenLabs API key in Settings |
+| Agents have no voice | Ensure Gemini API key is set (cloud TTS) or that Kokoro/Piper models are installed in `~/.nexus-os/models/tts/` (local TTS) |
 | Can't join calls | Install [VB-Cable](https://vb-audio.com/Cable/) and select "CABLE Output" as meeting mic |
 | Connector tools missing | Connectors auto-detect software at startup; restart after installing new software |
 | World Monitor not available | Install World Monitor and set its path in Settings |
@@ -1127,7 +1127,7 @@ Agent Friday is built in collaboration with AI models. We credit every model for
 - [Google Gemini](https://ai.google.dev/) — Real-time voice AI + Nano Banana 2 image generation
 - [Anthropic Claude](https://anthropic.com/) — Deep reasoning engine
 - [OpenRouter](https://openrouter.ai/) — Multi-model API gateway
-- [ElevenLabs](https://elevenlabs.io/) — Multi-agent voice synthesis
+- [Kokoro](https://github.com/hexgrad/kokoro) / [Piper](https://github.com/rhasspy/piper) — Local text-to-speech for sub-agent voices
 - [Electron](https://www.electronjs.org/) — Desktop application framework
 - [Model Context Protocol](https://modelcontextprotocol.io/) — Tool integration standard
 

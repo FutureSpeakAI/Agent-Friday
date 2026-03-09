@@ -125,10 +125,8 @@ export function useWakeWord({ enabled, isConnected, onWake }: UseWakeWordOptions
           return;
         }
 
-        // Only log every few errors to avoid spam
-        if (networkErrorCountRef.current <= 2 || networkErrorCountRef.current % 4 === 0) {
-          console.warn(`[WakeWord] Network error (${networkErrorCountRef.current}/${MAX_NETWORK_ERRORS}), backing off...`);
-        }
+        // Only log the final disable message — skip per-error noise
+        // (in Electron, network errors are expected when no speech service is available)
         return;
       }
 

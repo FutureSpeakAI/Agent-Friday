@@ -22,6 +22,8 @@
  *   - Uninstall is clean: no files, no tools, no dangling state.
  */
 
+import fs from 'fs/promises';
+import path from 'path';
 import type {
   AdaptedConnector,
   SuperpowerSandboxConfig,
@@ -29,6 +31,7 @@ import type {
 } from './adapter-engine';
 import { validateAdaptedConnector } from './adapter-engine';
 import type { ToolDeclaration, ConnectorCategory } from './connectors/registry';
+import { contextToolRouter } from './context-tool-router';
 
 // ── Superpower Data Model ───────────────────────────────────────────
 
@@ -292,6 +295,9 @@ export class SuperpowerStore {
     sp.enabled = true;
     sp.installedAt = Date.now();
 
+    // Register tools with the context-aware tool router
+    this.registerToolsWithRouter(sp);
+
     this.queueSave();
     console.log(`[SuperpowerStore] Installed: ${sp.name} (${sp.tools.length} tools)`);
 
@@ -311,6 +317,7 @@ export class SuperpowerStore {
     }
 
     sp.enabled = true;
+    this.registerToolsWithRouter(sp);
     this.queueSave();
     return sp;
   }
@@ -323,6 +330,7 @@ export class SuperpowerStore {
     if (!sp) throw new Error(`Superpower not found: ${id}`);
 
     sp.enabled = false;
+    this.unregisterToolsFromRouter(sp);
     this.queueSave();
     return sp;
   }
@@ -339,6 +347,7 @@ export class SuperpowerStore {
 
     sp.status = 'uninstalled';
     sp.enabled = false;
+    this.unregisterToolsFromRouter(sp);
 
     // Remove from store entirely
     this.superpowers.delete(id);
@@ -514,6 +523,34 @@ export class SuperpowerStore {
     };
   }
 
+  // ── Tool Router Integration ────────────────────────────────────
+
+  /**
+   * Register a superpower's tools with the context-aware tool router.
+   */
+  private registerToolsWithRouter(sp: Superpower): void {
+    try {
+      contextToolRouter.registerToolsFromDeclarations(
+        sp.tools.map(t => ({ name: t.name, description: t.description })),
+      );
+    } catch {
+      // Non-fatal — router may not be initialized yet during startup
+    }
+  }
+
+  /**
+   * Unregister a superpower's tools from the context-aware tool router.
+   */
+  private unregisterToolsFromRouter(sp: Superpower): void {
+    try {
+      for (const tool of sp.tools) {
+        contextToolRouter.unregisterTool(tool.name);
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
   // ── Prompt Context ──────────────────────────────────────────────
 
   /**
@@ -551,17 +588,24 @@ export class SuperpowerStore {
 
   /**
    * Save all superpowers to disk.
+   * Writes atomically via temp file + rename to avoid corruption.
    */
   private async saveToDisk(): Promise<void> {
     if (!this.filePath) return;
 
     try {
       const data = JSON.stringify(this.getAll(), null, 2);
-      // In production, this would use fs.writeFile
-      // For now, we store the serialized data
       this.lastSavedData = data;
+
+      // Ensure directory exists
+      const dir = path.dirname(this.filePath);
+      await fs.mkdir(dir, { recursive: true });
+
+      // Atomic write: write to temp file, then rename
+      const tmpPath = `${this.filePath}.tmp`;
+      await fs.writeFile(tmpPath, data, 'utf-8');
+      await fs.rename(tmpPath, this.filePath);
     } catch (err) {
-      // Crypto Sprint 17: Sanitize error output.
       console.error('[SuperpowerStore] Failed to save:', err instanceof Error ? err.message : 'Unknown error');
     }
   }
@@ -572,9 +616,15 @@ export class SuperpowerStore {
   private async loadFromDisk(): Promise<Superpower[] | null> {
     if (!this.filePath) return null;
 
-    // In production, this would use fs.readFile
-    // For now, return null (fresh start)
-    return null;
+    try {
+      const raw = await fs.readFile(this.filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) return data;
+      return null;
+    } catch {
+      // File doesn't exist or is corrupted — fresh start
+      return null;
+    }
   }
 
   // Exposed for testing

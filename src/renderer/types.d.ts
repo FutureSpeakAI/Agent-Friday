@@ -105,6 +105,12 @@ declare global {
         addImmediate: (fact: string, category: string) => Promise<void>;
       };
 
+      chatHistory: {
+        load: () => Promise<Array<{ id: string; role: string; content: string; model?: string; timestamp: number }>>;
+        save: (messages: Array<{ id: string; role: string; content: string; model?: string; timestamp: number }>) => Promise<void>;
+        clear: () => Promise<void>;
+      };
+
       desktop: {
         listTools: () => Promise<
           Array<{ name: string; description: string; parameters: Record<string, unknown> }>

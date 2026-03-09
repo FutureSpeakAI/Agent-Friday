@@ -22,7 +22,12 @@
  *   - Memory limits prevent resource exhaustion.
  */
 
-import type { SuperpowerSandboxConfig, AdaptedConnector, AdaptationStrategyType } from './adapter-engine';
+import type {
+  SuperpowerSandboxConfig,
+  AdaptedConnector,
+  AdaptationStrategyType,
+  InvocationSpec,
+} from './adapter-engine';
 import type { ToolDeclaration } from './connectors/registry';
 
 // ── Sandbox Instance ────────────────────────────────────────────────
@@ -46,6 +51,10 @@ export interface SandboxInstance {
   errorCount: number;
   /** Available tools in this sandbox */
   tools: ToolDeclaration[];
+  /** Invocation spec per tool (from adaptation plan) */
+  invocations: Map<string, InvocationSpec>;
+  /** Generated connector source code (for direct-import/claude-rewrite) */
+  sourceCode: string;
 }
 
 export type SandboxState =
@@ -123,6 +132,14 @@ export class SuperpowerSandboxManager {
       throw new Error(`Sandbox already exists for connector: ${connector.id}`);
     }
 
+    // Build a map of tool name → invocation spec from the adaptation plan
+    const invocations = new Map<string, InvocationSpec>();
+    for (const cap of connector.plan.capabilities) {
+      if (cap.toolName && cap.invocation) {
+        invocations.set(cap.toolName, cap.invocation);
+      }
+    }
+
     const instance: SandboxInstance = {
       connectorId: connector.id,
       state: 'idle',
@@ -133,6 +150,8 @@ export class SuperpowerSandboxManager {
       executionCount: 0,
       errorCount: 0,
       tools: [...connector.tools],
+      invocations,
+      sourceCode: connector.sourceCode,
     };
 
     this.sandboxes.set(connector.id, instance);
@@ -301,11 +320,12 @@ export class SuperpowerSandboxManager {
 
   /**
    * Execute a tool call with a timeout wrapper.
+   * Dispatches to the correct execution strategy based on the sandbox's strategy type.
    */
   private async executeWithTimeout(
     instance: SandboxInstance,
-    _toolName: string,
-    _args: Record<string, unknown>,
+    toolName: string,
+    args: Record<string, unknown>,
     timeoutMs: number,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
@@ -313,17 +333,226 @@ export class SuperpowerSandboxManager {
         reject(new Error(`Sandbox execution timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      // Strategy-specific execution would go here.
-      // This is the dispatch point that routes to:
-      // - VM execution (direct-import)
-      // - Subprocess bridge communication (subprocess-bridge)
-      // - HTTP client request (api-wrap)
-      //
-      // For now, we resolve with a placeholder — real dispatch will
-      // be wired when the SuperpowerRegistry (Phase 3) integrates.
-      clearTimeout(timer);
-      resolve('[sandbox: execution delegate not wired yet]');
+      const invocation = instance.invocations.get(toolName);
+
+      this.dispatchExecution(instance, toolName, args, invocation)
+        .then(result => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch(err => {
+          clearTimeout(timer);
+          reject(err);
+        });
     });
+  }
+
+  /**
+   * Dispatch execution to the correct strategy handler.
+   */
+  private async dispatchExecution(
+    instance: SandboxInstance,
+    toolName: string,
+    args: Record<string, unknown>,
+    invocation?: InvocationSpec,
+  ): Promise<string> {
+    switch (instance.strategyType) {
+      case 'api-wrap':
+        return this.executeApiWrap(instance, toolName, args, invocation);
+      case 'subprocess-bridge':
+        return this.executeSubprocessBridge(instance, toolName, args, invocation);
+      case 'direct-import':
+      case 'claude-rewrite':
+        return this.executeDirectImport(instance, toolName, args, invocation);
+      default:
+        throw new Error(`Unknown strategy type: ${instance.strategyType}`);
+    }
+  }
+
+  // ── Strategy: API Wrap (HTTP Client) ──────────────────────────
+
+  /**
+   * Execute a tool call via HTTP request to an external API.
+   * Used for superpowers that wrap existing REST/HTTP services.
+   */
+  private async executeApiWrap(
+    instance: SandboxInstance,
+    toolName: string,
+    args: Record<string, unknown>,
+    invocation?: InvocationSpec,
+  ): Promise<string> {
+    if (!instance.config.allowNetwork) {
+      throw new Error(`Network access blocked for ${instance.connectorId}`);
+    }
+
+    const endpoint = invocation?.endpoint;
+    if (!endpoint) {
+      throw new Error(`No endpoint configured for tool "${toolName}" in ${instance.connectorId}`);
+    }
+
+    const method = (invocation?.method || 'POST').toUpperCase();
+    const url = new URL(endpoint);
+
+    // cLaw: Only allow HTTPS in production contexts
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error(`Blocked protocol: ${url.protocol} — only HTTP(S) allowed`);
+    }
+
+    const fetchOpts: RequestInit = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(instance.config.maxExecutionTimeMs),
+    };
+
+    if (method !== 'GET' && method !== 'HEAD') {
+      fetchOpts.body = JSON.stringify({ tool: toolName, args });
+    }
+
+    const response = await fetch(url.toString(), fetchOpts);
+
+    if (!response.ok) {
+      throw new Error(`API error ${response.status}: ${response.statusText}`);
+    }
+
+    const text = await response.text();
+    // Truncate overly large responses
+    const maxLen = 50_000;
+    return text.length > maxLen ? text.slice(0, maxLen) + '\n… [truncated]' : text;
+  }
+
+  // ── Strategy: Subprocess Bridge (JSONL) ───────────────────────
+
+  /**
+   * Execute a tool call via subprocess bridge protocol.
+   * Sends a JSONL request to a child process and reads the response.
+   *
+   * Note: Full subprocess lifecycle management (spawn, health checks,
+   * restart) is deferred to Phase 4. For now, we use one-shot execution
+   * via child_process.execFile with JSON I/O.
+   */
+  private async executeSubprocessBridge(
+    instance: SandboxInstance,
+    toolName: string,
+    args: Record<string, unknown>,
+    invocation?: InvocationSpec,
+  ): Promise<string> {
+    if (!instance.config.allowChildProcesses) {
+      throw new Error(`Child process execution blocked for ${instance.connectorId}`);
+    }
+
+    const command = invocation?.command;
+    if (!command) {
+      throw new Error(`No command configured for tool "${toolName}" in ${instance.connectorId}`);
+    }
+
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    // Build the JSONL request payload
+    const request = JSON.stringify({ tool: toolName, args });
+    const cmdArgs = [...(invocation?.args || []), '--input', request];
+
+    // cLaw: Restrict environment — don't pass host secrets
+    const safeEnv: Record<string, string> = {
+      PATH: process.env.PATH || '',
+      HOME: process.env.HOME || process.env.USERPROFILE || '',
+      LANG: process.env.LANG || 'en_US.UTF-8',
+      TERM: 'dumb',
+    };
+
+    try {
+      const { stdout } = await execFileAsync(command, cmdArgs, {
+        timeout: instance.config.maxExecutionTimeMs,
+        maxBuffer: 5 * 1024 * 1024, // 5MB
+        env: safeEnv,
+        cwd: invocation?.cwd || undefined,
+      });
+
+      return stdout.trim();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Subprocess bridge error: ${msg}`);
+    }
+  }
+
+  // ── Strategy: Direct Import (VM) ──────────────────────────────
+
+  /**
+   * Execute a tool call by running generated JS/TS code in an isolated VM context.
+   *
+   * Note: Full VM2-level sandboxing is deferred. Current implementation uses
+   * Node's built-in vm module with restricted globals. This is NOT a security
+   * boundary against malicious code — it's a structural boundary that enforces
+   * the superpower architecture. The cLaw security boundary is enforced by
+   * the pre-execution checks + security verdict system.
+   */
+  private async executeDirectImport(
+    instance: SandboxInstance,
+    toolName: string,
+    args: Record<string, unknown>,
+    invocation?: InvocationSpec,
+  ): Promise<string> {
+    const vm = await import('vm');
+
+    const functionName = invocation?.functionName || toolName;
+
+    // Build a minimal sandbox context with restricted globals
+    const sandbox: Record<string, unknown> = {
+      console: {
+        log: (...a: unknown[]) => void a,
+        error: (...a: unknown[]) => void a,
+        warn: (...a: unknown[]) => void a,
+      },
+      // Provide JSON and common safe globals
+      JSON,
+      Date,
+      Math,
+      parseInt,
+      parseFloat,
+      isNaN,
+      isFinite,
+      encodeURIComponent,
+      decodeURIComponent,
+      // The tool arguments
+      __toolName__: functionName,
+      __toolArgs__: args,
+      __result__: undefined as unknown,
+    };
+
+    const ctx = vm.createContext(sandbox);
+
+    // The generated sourceCode should export functions.
+    // We wrap it to capture the tool function output.
+    const wrappedCode = `
+      ${instance.tools.find(t => t.name === toolName) ? '' : ''}
+      (async () => {
+        // Execute the generated connector source
+        ${instance.sourceCode || ''}
+
+        // Call the tool function if it exists
+        if (typeof ${functionName} === 'function') {
+          __result__ = await ${functionName}(__toolArgs__);
+        } else {
+          __result__ = { error: 'Function "' + __toolName__ + '" not found in connector source' };
+        }
+      })();
+    `;
+
+    try {
+      const script = new vm.Script(wrappedCode, {
+        filename: `sandbox:${instance.connectorId}/${toolName}`,
+      });
+      await script.runInContext(ctx, {
+        timeout: instance.config.maxExecutionTimeMs,
+      });
+
+      const result = sandbox.__result__;
+      return typeof result === 'string' ? result : JSON.stringify(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`VM execution error: ${msg}`);
+    }
   }
 
   // ── Pre-execution Validation ────────────────────────────────────

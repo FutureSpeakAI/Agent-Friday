@@ -4,6 +4,78 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.1.0] — 2026-03-09 — The Awakening Update
+
+### Summary
+
+Agent Friday gets a **cinematic 7-step onboarding wizard**, **multi-backend sub-agent TTS** (Gemini cloud + local Kokoro/Piper), a revamped **FridayFiles** file manager, **chat history** persistence, and hardened crypto primitives. ElevenLabs dependency removed — sub-agent voices now work with the same Gemini API key or fully offline via local TTS.
+
+### Added — Cinematic Onboarding Wizard
+
+- **OnboardingWizard.tsx** — 7-step first-run wizard replacing the old WelcomeGate + voice-only onboarding:
+  - **Step 0: Awakening** — Animated splash with logo, particles, and tagline auto-advance
+  - **Step 1: Directives** — Asimov's cLaws presented one at a time with scrolling reveal
+  - **Step 2: Engines** — Hardware profiler HUD + tier-aware API key entry (reuses IPC from hardware-profiler)
+  - **Step 3: Sovereignty** — Vault passphrase setup with data sovereignty explanation
+  - **Step 4: Identity** — Agent name, voice gender, and voice feel picker
+  - **Step 5: Interview** — Gemini Live voice interview with animated waveform visualisation
+  - **Step 6: Reveal** — Terminal-style boot sequence with cinematic agent name reveal
+- **Space Grotesk** font added for onboarding display text
+- **lucide-react** added for onboarding iconography
+
+### Added — Multi-Backend Sub-Agent TTS
+
+- **agent-voice.ts** — Complete rewrite: ElevenLabs removed, replaced with dual-backend fallback chain:
+  - **Gemini TTS** (cloud) — Uses the same Gemini API key as the main LLM; Gemini 2.0 Flash `generateContent` with `response_modalities: ['AUDIO']`
+  - **Local TTS** (Kokoro/Piper) — Fully offline, no API key needed; lazy-loads on first call
+  - **Graceful degradation** — Falls through to text-only if no TTS provider available
+  - Provider order determined by `preferredProvider` setting: local/ollama users try local first
+- **agent-personas.ts** — Rewritten: `voiceId: string` → `voices: VoiceMapping` with per-provider mappings:
+  - Atlas: Iapetus (Gemini) / af_heart (Kokoro) — deep, authoritative
+  - Nova: Aoede (Gemini) / af_bella (Kokoro) — warm, energetic
+  - Cipher: Puck (Gemini) / am_adam (Kokoro) — precise, sharp
+- **agent-runner.ts** — Updated to pass `persona.voices` (VoiceMapping) and use dynamic `contentType` from voice result
+
+### Added — Chat History & File Management
+
+- **chat-history.ts** — Persistent conversation history with JSON storage
+- **chat-history-handlers.ts** — IPC handlers for chat history CRUD operations
+- **FridayFiles.tsx** — Major revamp of the file manager UI with improved navigation, file operations, and visual polish
+- **files-manager.ts** — Enhanced file management backend with new operations
+- **files-handlers.ts** — Extended IPC handlers for file operations
+
+### Added — Superpowers & Server Enhancements
+
+- **superpower-sandbox.ts** — Enhanced sandboxed execution environment with improved security
+- **superpower-store.ts** — Extended superpower discovery and installation capabilities
+- **server.ts** — Enhanced Express API with new endpoints and improved routing
+
+### Changed
+
+- **App.tsx** — Simplified phase machine: `gate` and `onboarding` phases merged into single `onboarding` phase handled by OnboardingWizard
+- **DesktopViz.tsx** — Minor rendering improvements
+- **useGeminiLive.ts** — Enhanced voice session handling
+- **useWakeWord.ts** — Minor improvements
+- **global.css** — Space Grotesk font import added
+- **types.d.ts** — New window API type declarations for onboarding
+- **preload.ts** — New IPC bridge channels for onboarding, chat history, and file operations
+- **index.ts** — Updated main process initialization for new handlers
+- **mcp-config.ts** — Configuration updates
+- **personality.ts** — Enhanced personality composition
+- **vault.ts** — Minor vault improvements
+
+### Changed — Crypto Hardening
+
+- **passphrase-kdf.ts** — Refactored Argon2id key derivation with improved error handling
+- **secure-buffer.ts** — Enhanced guard-paged memory management
+
+### Removed
+
+- **WelcomeGate.tsx** — Fully replaced by OnboardingWizard (Engines step subsumes all API key entry logic)
+- **ElevenLabs dependency** — Sub-agent TTS no longer requires ElevenLabs; uses Gemini TTS (cloud) or Kokoro/Piper (local)
+
+---
+
 ## [3.0.0] — 2026-03-08 — The Polymath Update
 
 ### Summary
