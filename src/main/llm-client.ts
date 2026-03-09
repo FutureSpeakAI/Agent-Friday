@@ -19,6 +19,7 @@
 import { ProviderName, TaskCategory, type TaskComplexity } from './intelligence-router';
 import { assessConfidence } from './confidence-assessor';
 import { CloudGate } from './cloud-gate';
+import { privacyShield } from './privacy-shield';
 
 // ── Core Types ─────────────────────────────────────────────────────────
 
@@ -156,6 +157,11 @@ export interface LLMProvider {
   checkHealth?(): Promise<boolean>;
 }
 
+// ── Privacy Shield: Cloud Provider Identification ───────────────────────
+// Data only needs scrubbing when leaving the machine (cloud providers).
+// Local inference (ollama, HuggingFace/TGI) keeps all data on-device.
+const CLOUD_PROVIDERS = new Set<ProviderName>(['anthropic', 'openrouter']);
+
 // ── LLM Client (Main Entry Point) ──────────────────────────────────────
 
 class LLMClient {
@@ -197,11 +203,15 @@ class LLMClient {
    * Routes to the specified provider, or the default if none specified.
    * If the selected provider fails at request time, automatically retries
    * with fallback providers (e.g. local → anthropic → openrouter).
+   *
+   * Privacy Shield: cloud providers receive scrubbed requests (PII replaced
+   * with placeholders) and responses are rehydrated before returning to caller.
+   * Local providers pass through unmodified — data never leaves the machine.
    */
   async complete(request: LLMRequest, providerName?: ProviderName): Promise<LLMResponse> {
     const provider = this.resolveProvider(providerName);
     try {
-      return await provider.complete(request);
+      return await this.shieldedComplete(provider, request);
     } catch (err: unknown) {
       // If this was an explicit provider request and there are fallbacks, try them
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -214,7 +224,7 @@ class LLMClient {
         if (!fallback.isAvailable()) continue;
         try {
           console.warn(`[LLMClient] Retrying with fallback provider '${fallback.name}'`);
-          return await fallback.complete(request);
+          return await this.shieldedComplete(fallback, request);
         } catch {
           // Fallback also failed, try next
           continue;
@@ -229,11 +239,23 @@ class LLMClient {
   /**
    * Stream a completion request.
    * Falls back to other providers if the selected one fails on the first chunk.
+   *
+   * Privacy Shield: outbound requests are scrubbed for cloud providers.
+   * Inbound stream chunks are rehydrated (text + final fullResponse).
    */
   async *stream(request: LLMRequest, providerName?: ProviderName): AsyncGenerator<LLMStreamChunk> {
     const provider = this.resolveProvider(providerName);
+
+    // Privacy Shield: scrub outbound request for cloud providers
+    const isCloud = CLOUD_PROVIDERS.has(provider.name) && privacyShield.isEnabled();
+    const effectiveRequest = isCloud
+      ? privacyShield.scrubRequest(request) as LLMRequest
+      : request;
+
     try {
-      yield* provider.stream(request);
+      for await (const chunk of provider.stream(effectiveRequest)) {
+        yield isCloud ? this.rehydrateChunk(chunk) : chunk;
+      }
       return; // Completed successfully
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -248,7 +270,13 @@ class LLMClient {
       if (!fallback.isAvailable()) continue;
       try {
         console.warn(`[LLMClient] Retrying stream with fallback '${fallback.name}'`);
-        yield* fallback.stream(request);
+        const fbIsCloud = CLOUD_PROVIDERS.has(fallback.name) && privacyShield.isEnabled();
+        const fbRequest = fbIsCloud
+          ? privacyShield.scrubRequest(request) as LLMRequest
+          : request;
+        for await (const chunk of fallback.stream(fbRequest)) {
+          yield fbIsCloud ? this.rehydrateChunk(chunk) : chunk;
+        }
         return;
       } catch {
         continue;
@@ -287,6 +315,45 @@ class LLMClient {
       options.provider
     );
     return response.content;
+  }
+
+  // ── Privacy Shield Helpers ──────────────────────────────────────────
+
+  /**
+   * Execute a completion with Privacy Shield wrapping.
+   * Cloud providers get scrubbed requests and rehydrated responses.
+   * Local providers pass through unmodified.
+   */
+  private async shieldedComplete(provider: LLMProvider, request: LLMRequest): Promise<LLMResponse> {
+    const isCloud = CLOUD_PROVIDERS.has(provider.name) && privacyShield.isEnabled();
+    const effectiveRequest = isCloud
+      ? privacyShield.scrubRequest(request) as LLMRequest
+      : request;
+
+    let response = await provider.complete(effectiveRequest);
+
+    if (isCloud) {
+      response = privacyShield.rehydrateResponse(response) as LLMResponse;
+    }
+
+    return response;
+  }
+
+  /**
+   * Rehydrate PII placeholders in a stream chunk.
+   * Called for each chunk from cloud providers to restore scrubbed values.
+   */
+  private rehydrateChunk(chunk: LLMStreamChunk): LLMStreamChunk {
+    const rehydrated = { ...chunk };
+    if (rehydrated.text) {
+      rehydrated.text = privacyShield.rehydrate(rehydrated.text);
+    }
+    if (rehydrated.fullResponse) {
+      rehydrated.fullResponse = privacyShield.rehydrateResponse(
+        rehydrated.fullResponse
+      ) as LLMResponse;
+    }
+    return rehydrated;
   }
 
   /**

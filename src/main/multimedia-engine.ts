@@ -15,6 +15,7 @@
 
 import { llmClient } from './llm-client';
 import { settingsManager } from './settings';
+import { privacyShield } from './privacy-shield';
 import * as fs from 'fs';
 import * as fsAsync from 'fs/promises';
 import * as path from 'path';
@@ -363,6 +364,10 @@ ${sourceContent.slice(0, 30000)}`,
 
       console.log(`[Multimedia] Synthesizing segment ${i + 1}/${script.length} (${speaker.role})...`);
 
+      // Privacy Shield: scrub podcast text before sending to Google cloud TTS.
+      const shieldOn = privacyShield.isEnabled();
+      const ttsText = shieldOn ? privacyShield.scrub(seg.text).text : seg.text;
+
       try {
         const response = await fetch(
           'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
@@ -378,7 +383,7 @@ ${sourceContent.slice(0, 30000)}`,
                   text: `You are a podcast speaker. ${direction} Speak the user's text aloud naturally and expressively. Do not add, remove, or change any words. Just speak exactly what is provided with the appropriate tone and emotion.`,
                 }],
               },
-              contents: [{ parts: [{ text: seg.text }] }],
+              contents: [{ parts: [{ text: ttsText }] }],
               generation_config: {
                 response_modalities: ['AUDIO'],
                 speech_config: {
@@ -530,6 +535,11 @@ Return ONLY the complete HTML file, no explanation.`,
 
     const emotionDirection = request.emotion ? `Speak with ${request.emotion} emotion.` : '';
 
+    // Privacy Shield: scrub audio message content before sending to Google cloud TTS.
+    const ttsContent = privacyShield.isEnabled()
+      ? privacyShield.scrub(request.content).text
+      : request.content;
+
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
@@ -544,7 +554,7 @@ Return ONLY the complete HTML file, no explanation.`,
               text: `You are composing a ${request.type}. ${emotionDirection} Speak naturally, with genuine feeling. Do not add words beyond what is provided — just speak the text with the right emotion and pacing.`,
             }],
           },
-          contents: [{ parts: [{ text: request.content }] }],
+          contents: [{ parts: [{ text: ttsContent }] }],
           generation_config: {
             response_modalities: ['AUDIO'],
             speech_config: {
@@ -601,6 +611,12 @@ Return ONLY the complete HTML file, no explanation.`,
 
     const styleNote = request.style ? ` Style: ${request.style}.` : '';
 
+    // Privacy Shield: scrub music generation prompt (may contain personal context).
+    const shieldOn = privacyShield.isEnabled();
+    const cleanMood = shieldOn ? privacyShield.scrub(request.mood).text : request.mood;
+    const cleanStyle = shieldOn && request.style ? privacyShield.scrub(request.style).text : request.style;
+    const cleanStyleNote = cleanStyle ? ` Style: ${cleanStyle}.` : '';
+
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
@@ -612,10 +628,10 @@ Return ONLY the complete HTML file, no explanation.`,
         body: JSON.stringify({
           system_instruction: {
             parts: [{
-              text: `You are a music creator. Create a ${request.type} audio piece. Mood: ${request.mood}.${styleNote} Duration: approximately ${request.duration} seconds. Create the audio directly — do not speak or explain, just produce the musical content.`,
+              text: `You are a music creator. Create a ${request.type} audio piece. Mood: ${cleanMood}.${cleanStyleNote} Duration: approximately ${request.duration} seconds. Create the audio directly — do not speak or explain, just produce the musical content.`,
             }],
           },
-          contents: [{ parts: [{ text: `Create a ${request.mood} ${request.type} piece, approximately ${request.duration} seconds long.` }] }],
+          contents: [{ parts: [{ text: `Create a ${cleanMood} ${request.type} piece, approximately ${request.duration} seconds long.` }] }],
           generation_config: {
             response_modalities: ['AUDIO'],
             speech_config: {

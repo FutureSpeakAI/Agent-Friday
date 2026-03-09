@@ -25,6 +25,7 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import { app } from 'electron';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 
 const execFileAsync = promisify(execFile);
 
@@ -156,7 +157,7 @@ async function geminiAudioRequest(
     system_instruction: {
       parts: [{ text: systemPrompt }],
     },
-    contents: [{ parts: [{ text: userPrompt }] }],
+    contents: [{ parts: [{ text: privacyShield.scrub(userPrompt).text }] }],
     generation_config: {
       response_modalities: ['AUDIO'],
       speech_config: {
@@ -257,7 +258,7 @@ async function elevenLabsTTS(
   if (!apiKey) throw new Error('ElevenLabs API key not configured');
 
   const body = JSON.stringify({
-    text,
+    text: privacyShield.scrub(text).text,
     model_id: 'eleven_turbo_v2_5',
     voice_settings: { stability, similarity_boost: similarityBoost },
   });
@@ -440,7 +441,7 @@ async function handleCreatePodcast(args: Record<string, unknown>): Promise<ToolR
     const { multimediaEngine } = await import('../multimedia-engine');
 
     const result = await multimediaEngine.generatePodcast({
-      sources: [{ type: 'text', content: topic }],
+      sources: [{ type: 'text', content: privacyShield.scrub(topic).text }],
       format,
       speakers: [], // Use presets
       duration,
@@ -453,7 +454,7 @@ async function handleCreatePodcast(args: Record<string, unknown>): Promise<ToolR
         success: true,
         path: result.audioPath,
         duration: Math.round(result.duration),
-        title: result.title,
+        title: privacyShield.rehydrate(result.title),
         segments: result.scriptSegments.length,
         format,
         tone,

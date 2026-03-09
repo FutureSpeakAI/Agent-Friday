@@ -16,6 +16,7 @@
 
 import { ToolDeclaration, ToolResult } from './registry';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -144,7 +145,7 @@ async function generateImageNanoBanana(
     : '1K';
 
   const requestBody = {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts: [{ text: privacyShield.scrub(prompt).text }] }],
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
       imageConfig: {
@@ -201,7 +202,7 @@ async function generateImageNanoBanana(
           let mimeType = 'image/png';
 
           for (const part of parts) {
-            if (part.text) textResponse = part.text;
+            if (part.text) textResponse = privacyShield.rehydrate(part.text);
             if (part.inline_data) {
               imageData = part.inline_data.data;
               mimeType = part.inline_data.mime_type || 'image/png';
@@ -257,7 +258,7 @@ async function generateImageDallE(prompt: string, args: Record<string, unknown>)
 
   const { status, data } = await apiRequest('/images/generations', {
     model: 'dall-e-3',
-    prompt,
+    prompt: privacyShield.scrub(prompt).text,
     n: 1,
     size,
     quality,
@@ -275,7 +276,7 @@ async function generateImageDallE(prompt: string, args: Record<string, unknown>)
   }
 
   const imageUrl = data.data?.[0]?.url;
-  const revisedPrompt = data.data?.[0]?.revised_prompt;
+  const revisedPrompt = privacyShield.rehydrate(data.data?.[0]?.revised_prompt || '');
 
   if (!imageUrl) return 'ERROR: No image URL returned from DALL-E 3.';
 
@@ -336,7 +337,7 @@ async function reasonThrough(args: Record<string, unknown>): Promise<string> {
     messages: [
       {
         role: 'user',
-        content: problem,
+        content: privacyShield.scrub(problem).text,
       },
     ],
     reasoning_effort: effort,
@@ -348,7 +349,8 @@ async function reasonThrough(args: Record<string, unknown>): Promise<string> {
     return `ERROR: o3 reasoning failed (${status}): ${data.error?.message || JSON.stringify(data).slice(0, 500)}`;
   }
 
-  const content = data.choices?.[0]?.message?.content || '(no content returned)';
+  const rawContent = data.choices?.[0]?.message?.content || '(no content returned)';
+  const content = privacyShield.rehydrate(rawContent);
   const usage = data.usage;
 
   let usageInfo = '';
@@ -445,7 +447,7 @@ async function transcribeAudio(args: Record<string, unknown>): Promise<string> {
             return;
           }
 
-          const text = parsed.text || '(no transcription)';
+          const text = privacyShield.rehydrate(parsed.text || '(no transcription)');
           const duration = parsed.duration ? `${Math.round(parsed.duration)}s` : 'unknown';
           const lang = parsed.language || 'detected';
 
@@ -475,7 +477,7 @@ async function generateEmbedding(args: Record<string, unknown>): Promise<string>
 
   const { status, data } = await apiRequest('/embeddings', {
     model: 'text-embedding-3-small',
-    input: text,
+    input: privacyShield.scrub(text).text,
     dimensions: 512, // Compact but effective
   });
 

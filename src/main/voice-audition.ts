@@ -10,6 +10,7 @@
  */
 
 import { settingsManager } from './settings';
+import { privacyShield } from './privacy-shield';
 
 /** All available Gemini TTS voices */
 export const GEMINI_VOICES = [
@@ -71,6 +72,11 @@ export async function generateVoiceSample(
 
   const phrase = customPhrase || AUDITION_PHRASE;
 
+  // Privacy Shield: scrub custom phrases before sending to Google cloud TTS.
+  const ttsPhrase = privacyShield.isEnabled()
+    ? privacyShield.scrub(phrase).text
+    : phrase;
+
   try {
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
@@ -86,7 +92,7 @@ export async function generateVoiceSample(
               text: 'You are a voice assistant. Speak the user\'s text aloud naturally and expressively. Do not add, remove, or change any words. Just speak exactly what is provided.',
             }],
           },
-          contents: [{ parts: [{ text: phrase }] }],
+          contents: [{ parts: [{ text: ttsPhrase }] }],
           generation_config: {
             response_modalities: ['AUDIO'],
             speech_config: {

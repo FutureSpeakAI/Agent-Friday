@@ -18,8 +18,11 @@ interface InterviewStepProps {
   onBack?: () => void;
 }
 
-/** Timeout (ms) before connection is considered failed. */
-const CONNECTION_TIMEOUT_MS = 10_000;
+/** Timeout (ms) before connection is considered failed.
+ * connectToGemini gathers tool declarations from multiple sources (desktop,
+ * onboarding, browser, connectors, MCP) before opening the WebSocket, so
+ * the total time from call to audio can exceed 10s on cold start. */
+const CONNECTION_TIMEOUT_MS = 30_000;
 
 const VOICE_MAP: Record<string, Record<string, string>> = {
   warm:   { male: 'Enceladus', female: 'Aoede',    neutral: 'Achird' },
