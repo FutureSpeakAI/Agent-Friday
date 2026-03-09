@@ -38,9 +38,7 @@
       "package.json"
     ],
     "asarUnpack": [
-      "node_modules/puppeteer-core/**/*",
-      "node_modules/sharp/**/*",
-      "node_modules/sodium-native/**/*"
+      "node_modules/puppeteer-core/**/*"
     ],
     "extraResources": [
       {
@@ -98,13 +96,9 @@
     "googleapis": "^171.4.0",
     "gpt-tokenizer": "^3.4.0",
     "libsodium-wrappers-sumo": "^0.7.16",
-    "lucide-react": "^0.577.0",
     "openai": "^6.25.0",
     "pdfjs-dist": "^5.4.624",
-    "puppeteer-core": "^24.0.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "three": "^0.183.1"
+    "puppeteer-core": "^24.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
@@ -122,11 +116,15 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "lucide-react": "^0.577.0",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.8.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sharp": "^0.34.5",
+    "three": "^0.183.1",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^6.0.0",
