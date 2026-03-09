@@ -202,6 +202,15 @@ import {
   type ContextPushCleanup,
 } from './ipc';
 
+// ── Single Instance Lock ─────────────────────────────────────────────
+// Prevent multiple instances from racing on the vault or corrupting
+// encrypted stores. Must run before app.whenReady().
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  // Another instance already holds the lock — exit immediately
+  app.quit();
+}
+
 // ── Application state ───────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -210,6 +219,15 @@ let serverPort = 3333;
 let contextPushCleanup: ContextPushCleanup | null = null;
 
 const isDev = !app.isPackaged;
+
+// When a second instance is launched, focus the existing window instead
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 // ── Window creation ─────────────────────────────────────────────────
 /** Resolve the app icon path for both dev and packaged modes */
@@ -271,7 +289,13 @@ function createWindow() {
   // from spawning new Electron windows that would inherit the preload bridge.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://') || url.startsWith('http://')) {
-      shell.openExternal(url);
+      // Validate URL is well-formed before opening (defense in depth)
+      try {
+        new URL(url);
+        shell.openExternal(url);
+      } catch {
+        console.warn('[Security] Blocked malformed external URL:', url);
+      }
     }
     return { action: 'deny' };
   });
@@ -316,6 +340,23 @@ function createWindow() {
 
 // ── Application ready ───────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // ── IPC Error Boundary (Crypto Sprint — Path Leakage Prevention) ──
+  // Wrap ipcMain.handle so that every handler's errors are sanitized
+  // before reaching the renderer. Internal details (file paths, stack
+  // traces, dependency versions) are logged server-side but never sent
+  // to the renderer, preventing information disclosure to attackers.
+  const originalHandle = ipcMain.handle.bind(ipcMain);
+  (ipcMain as typeof ipcMain).handle = (channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown) => {
+    return originalHandle(channel, async (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => {
+      try {
+        return await listener(event, ...args);
+      } catch (err: unknown) {
+        console.error(`[IPC] ${channel} error:`, err);
+        throw new Error('Internal error');
+      }
+    });
+  };
+
   // Initialize settings first (API keys depend on it)
   try {
     await settingsManager.initialize();

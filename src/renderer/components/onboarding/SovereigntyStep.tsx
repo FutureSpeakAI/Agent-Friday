@@ -10,9 +10,43 @@ import { Lock, ShieldCheck } from 'lucide-react';
 
 interface SovereigntyStepProps {
   onComplete: () => void;
+  onBack?: () => void;
 }
 
-const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete }) => {
+const MIN_PASSPHRASE_LENGTH = 8;
+
+type StrengthLevel = 'weak' | 'fair' | 'good' | 'strong';
+
+const STRENGTH_META: Record<StrengthLevel, { label: string; color: string; percent: number }> = {
+  weak:   { label: 'Weak',   color: '#ef4444', percent: 25 },
+  fair:   { label: 'Fair',   color: '#f59e0b', percent: 50 },
+  good:   { label: 'Good',   color: '#eab308', percent: 75 },
+  strong: { label: 'Strong', color: '#22c55e', percent: 100 },
+};
+
+/** Simple passphrase strength calculator. */
+function calcStrength(pass: string): StrengthLevel {
+  if (pass.length < MIN_PASSPHRASE_LENGTH) return 'weak';
+
+  let score = 0;
+
+  // Length scoring
+  if (pass.length >= 20) score += 3;
+  else if (pass.length >= 16) score += 2;
+  else if (pass.length >= 12) score += 1;
+
+  // Character variety
+  if (/[a-z]/.test(pass) && /[A-Z]/.test(pass)) score += 1;
+  if (/\d/.test(pass)) score += 1;
+  if (/[^a-zA-Z0-9]/.test(pass)) score += 1;
+
+  if (score >= 5) return 'strong';
+  if (score >= 3) return 'good';
+  if (score >= 1) return 'fair';
+  return 'weak';
+}
+
+const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete, onBack }) => {
   const [passphrase, setPassphrase] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
@@ -42,9 +76,12 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete }) => {
     return () => { cancelled = true; };
   }, [onComplete]);
 
+  const strength = calcStrength(passphrase);
+  const strengthMeta = STRENGTH_META[strength];
   const mismatch = confirm.length > 0 && passphrase !== confirm;
-  const tooShort = passphrase.length > 0 && passphrase.length < 8;
-  const canSubmit = passphrase.length >= 8 && passphrase === confirm && !saving;
+  const tooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH;
+  const strongEnough = strength !== 'weak';
+  const canSubmit = passphrase.length >= MIN_PASSPHRASE_LENGTH && strongEnough && passphrase === confirm && !saving;
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -115,10 +152,26 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete }) => {
               autoFocus
               style={{
                 ...styles.input,
-                borderColor: tooShort ? 'rgba(239, 68, 68, 0.3)' : passphrase.length >= 8 ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+                borderColor: tooShort ? 'rgba(239, 68, 68, 0.3)' : passphrase.length >= MIN_PASSPHRASE_LENGTH ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
               }}
             />
-            {tooShort && <span style={styles.fieldError}>Must be at least 8 characters</span>}
+            {tooShort && <span style={styles.fieldError}>Must be at least {MIN_PASSPHRASE_LENGTH} characters</span>}
+            {/* Strength indicator */}
+            {passphrase.length >= MIN_PASSPHRASE_LENGTH && (
+              <div style={styles.strengthContainer}>
+                <div style={styles.strengthTrack}>
+                  <div style={{
+                    ...styles.strengthFill,
+                    width: `${strengthMeta.percent}%`,
+                    background: strengthMeta.color,
+                    boxShadow: `0 0 6px ${strengthMeta.color}40`,
+                  }} />
+                </div>
+                <span style={{ ...styles.strengthLabel, color: strengthMeta.color }}>
+                  {strengthMeta.label}
+                </span>
+              </div>
+            )}
           </div>
 
           <div style={styles.fieldGroup}>
@@ -155,6 +208,13 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete }) => {
       <p style={styles.hint}>
         If you forget this passphrase, your vault data cannot be recovered.
       </p>
+
+      {/* Back button */}
+      {onBack && (
+        <button onClick={onBack} style={styles.backButton}>
+          &#8592; Back
+        </button>
+      )}
     </div>
   );
 };
@@ -262,6 +322,32 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'rgba(239, 68, 68, 0.7)',
     fontFamily: "'Inter', sans-serif",
   },
+  strengthContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 2,
+  },
+  strengthTrack: {
+    flex: 1,
+    height: 3,
+    borderRadius: 2,
+    background: 'rgba(255, 255, 255, 0.06)',
+    overflow: 'hidden',
+  },
+  strengthFill: {
+    height: '100%',
+    borderRadius: 2,
+    transition: 'width 0.3s ease, background 0.3s ease',
+  },
+  strengthLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.05em',
+    fontFamily: "'Space Grotesk', sans-serif",
+    flexShrink: 0,
+    transition: 'color 0.3s ease',
+  },
   error: {
     color: '#ef4444',
     fontSize: 12,
@@ -287,6 +373,19 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
     maxWidth: 340,
+  },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    padding: '4px 8px',
+    transition: 'color 0.2s ease',
+    position: 'absolute' as const,
+    bottom: 48,
+    left: 48,
   },
 };
 

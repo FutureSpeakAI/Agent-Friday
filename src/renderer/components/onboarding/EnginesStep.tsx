@@ -103,6 +103,7 @@ const KEY_CONFIGS: KeyConfig[] = [
 
 interface EnginesStepProps {
   onComplete: (didSkip?: boolean) => void;
+  onBack?: () => void;
 }
 
 interface HardwareProfile {
@@ -111,7 +112,7 @@ interface HardwareProfile {
   ramMB?: number;
 }
 
-const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete }) => {
+const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
   const [phase, setPhase] = useState<'detecting' | 'form'>('detecting');
   const [hwProfile, setHwProfile] = useState<HardwareProfile | null>(null);
   const [tier, setTier] = useState<TierName | null>(null);
@@ -281,6 +282,13 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete }) => {
         )}
 
         <p style={styles.detectingText}>Profiling hardware capabilities...</p>
+
+        {/* Back button */}
+        {onBack && (
+          <button onClick={onBack} style={styles.backButton}>
+            &#8592; Back
+          </button>
+        )}
       </div>
     );
   }
@@ -410,6 +418,13 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete }) => {
       <p style={styles.hint}>
         All keys stored locally. You can change these anytime in Settings.
       </p>
+
+      {/* Back button */}
+      {onBack && (
+        <button onClick={onBack} style={styles.backButton}>
+          &#8592; Back
+        </button>
+      )}
     </div>
   );
 };
@@ -648,6 +663,19 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
+  },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    padding: '4px 8px',
+    transition: 'color 0.2s ease',
+    position: 'absolute' as const,
+    bottom: 48,
+    left: 48,
   },
 };
 

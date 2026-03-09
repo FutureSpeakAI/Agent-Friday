@@ -5,7 +5,7 @@
  * agent name reveal with glow effect. Calls onComplete when done.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 interface RevealStepProps {
   agentName: string;
@@ -38,7 +38,34 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
   const [showName, setShowName] = useState(false);
   const [nameGlow, setNameGlow] = useState(false);
   const [showContinue, setShowContinue] = useState(false);
+  const [showSkipHint, setShowSkipHint] = useState(false);
+  const [skipped, setSkipped] = useState(false);
   const terminalRef = useRef<HTMLDivElement>(null);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  /** Fast-forward: instantly show all boot lines, name reveal, and continue button. */
+  const fastForward = useCallback(() => {
+    if (skipped) return;
+    setSkipped(true);
+
+    // Cancel all pending timers
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+
+    // Instantly reveal everything
+    setVisibleLines(BOOT_LINES.length);
+    setShowName(true);
+    setNameGlow(true);
+    setShowContinue(true);
+    setShowSkipHint(false);
+
+    // Scroll terminal to bottom
+    requestAnimationFrame(() => {
+      if (terminalRef.current) {
+        terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+      }
+    });
+  }, [skipped]);
 
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -60,11 +87,32 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
     timers.push(setTimeout(() => setNameGlow(true), lastDelay + 1400));
     timers.push(setTimeout(() => setShowContinue(true), lastDelay + 2200));
 
+    // Show skip hint after 2 seconds
+    timers.push(setTimeout(() => setShowSkipHint(true), 2000));
+
+    timersRef.current = timers;
     return () => timers.forEach(clearTimeout);
   }, []);
 
+  // Listen for click / keypress to fast-forward
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Don't intercept if continue button is already showing (let Enter work naturally)
+      if (showContinue) return;
+      fastForward();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [fastForward, showContinue]);
+
+  const handleContainerClick = useCallback(() => {
+    if (!showContinue) {
+      fastForward();
+    }
+  }, [showContinue, fastForward]);
+
   return (
-    <div style={styles.container}>
+    <div style={styles.container} onClick={handleContainerClick}>
       {/* Terminal */}
       <div ref={terminalRef} style={styles.terminal}>
         <div style={styles.terminalHeader}>
@@ -136,6 +184,17 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
         Begin
       </button>
 
+      {/* Skip hint */}
+      {!showContinue && (
+        <div style={{
+          ...styles.skipHint,
+          opacity: showSkipHint ? 0.4 : 0,
+          transition: 'opacity 0.6s ease',
+        }}>
+          Click to skip
+        </div>
+      )}
+
       {/* Keyframes for cursor blink */}
       <style>{`
         @keyframes onb-cursor-blink {
@@ -157,6 +216,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '0 24px',
     position: 'relative',
+    cursor: 'default',
   },
   terminal: {
     width: '100%',
@@ -251,6 +311,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.2s ease',
     zIndex: 2,
+  },
+  skipHint: {
+    fontSize: 11,
+    letterSpacing: '0.1em',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontFamily: "'Space Grotesk', sans-serif",
+    zIndex: 2,
+    cursor: 'pointer',
   },
 };
 

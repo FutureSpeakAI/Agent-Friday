@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import os from 'os';
+import path from 'path';
 
 // ── Mock singletons ─────────────────────────────────────────────────
 
@@ -219,9 +221,10 @@ describe('files IPC handlers', () => {
     const entries = [{ name: 'file.txt', isDirectory: false, size: 100 }];
     mocks.listDirectory.mockResolvedValue(entries);
 
-    const result = await invoke('files:list-directory', 'C:\\Users\\test');
+    const testDir = path.join(os.homedir(), 'test-dir');
+    const result = await invoke('files:list-directory', testDir);
     expect(result).toEqual(entries);
-    expect(mocks.listDirectory).toHaveBeenCalledWith('C:\\Users\\test', false);
+    expect(mocks.listDirectory).toHaveBeenCalledWith(testDir, false);
   });
 
   it('files:list-directory rejects non-string path', async () => {
@@ -230,14 +233,16 @@ describe('files IPC handlers', () => {
 
   it('files:open delegates with validated path', async () => {
     mocks.filesOpen.mockResolvedValue('');
-    await invoke('files:open', 'C:\\Users\\test\\file.txt');
-    expect(mocks.filesOpen).toHaveBeenCalledWith('C:\\Users\\test\\file.txt');
+    const testFile = path.join(os.homedir(), 'test-fixture.txt');
+    await invoke('files:open', testFile);
+    expect(mocks.filesOpen).toHaveBeenCalledWith(testFile);
   });
 
   it('files:show-in-folder delegates and returns true', async () => {
-    const result = await invoke('files:show-in-folder', 'C:\\Users\\test\\file.txt');
+    const testFile = path.join(os.homedir(), 'test-fixture.txt');
+    const result = await invoke('files:show-in-folder', testFile);
     expect(result).toBe(true);
-    expect(mocks.showInFolder).toHaveBeenCalledWith('C:\\Users\\test\\file.txt');
+    expect(mocks.showInFolder).toHaveBeenCalledWith(testFile);
   });
 });
 
