@@ -188,6 +188,48 @@ class ConnectorRegistry {
         description: 'OBS WebSocket, audio device routing, FFmpeg pipelines',
         importPath: './media-streaming',
       },
+      {
+        id: 'comfyui',
+        label: 'ComfyUI Image Generation',
+        category: 'creative',
+        description: 'Local Stable Diffusion image generation via ComfyUI (txt2img, img2img, model management)',
+        importPath: './comfyui',
+      },
+      {
+        id: 'coding-kit',
+        label: 'Coding Agent Kit',
+        category: 'devops',
+        description: 'Agent Friday coding agent — code reading, editing, shell execution, and multi-provider LLM (via pi-coding-agent)',
+        importPath: './coding-kit',
+      },
+      {
+        id: 'video-gen',
+        label: 'Video Generation',
+        category: 'creative',
+        description: 'AI video generation via VEO 3 (Gemini) — text-to-video, image-to-video, plus local FFmpeg stitching and conversion',
+        importPath: './video-gen',
+      },
+      {
+        id: 'audio-gen',
+        label: 'Audio & Music Generation',
+        category: 'creative',
+        description: 'AI music, sound effects, voice synthesis, podcast creation via Gemini 2.0 Flash + ElevenLabs, plus FFmpeg mixing and effects',
+        importPath: './audio-gen',
+      },
+      {
+        id: 'polymath-router',
+        label: 'Polymath Creative Router',
+        category: 'creative',
+        description: 'Unified creative dispatch — intent classification, multi-domain routing, and pipeline orchestration across image/video/audio/code',
+        importPath: './polymath-router',
+      },
+      {
+        id: 'stage-presenter',
+        label: 'The Stage — Creative Output Presenter',
+        category: 'creative',
+        description: 'Unified creative output feed — push, list, pin, export artefacts from all creative domains with render-type hints for the UI',
+        importPath: './stage-presenter',
+      },
       // Tier 3 — Communication & AI
       {
         id: 'comms-hub',

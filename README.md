@@ -92,9 +92,9 @@ These aren't features. They're the foundation everything else is built on.
 
 Agent Friday is the AGI OS — a desktop AI operating system that lives on your screen as a 3D holographic interface with 13 distinct evolution structures, bloom post-processing, and mood-reactive rendering. It talks, listens, remembers, learns your patterns, manages your tools, builds trust models of the people in your world, and evolves its visual form weekly through AI-powered art therapy sessions. Think Jarvis meets the emotional depth of Samantha from *Her* — running locally on your machine with full privacy.
 
-Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
+Built on **Electron + React + Three.js**, powered by **Gemini 2.5 Flash** (real-time voice), **Claude Opus/Sonnet** (deep reasoning), **VEO 3** (video generation), **Gemini 2.0 Flash** (music & audio), **ComfyUI** (local Stable Diffusion), **ElevenLabs** (voice synthesis & cloning), **Nano Banana 2** (image generation), and **OpenRouter** (access to 200+ models), with a plugin architecture that connects to everything from your browser to Blender to your email.
 
-**This is not a chatbot.** It's an operating system layer with a soul.
+**This is not a chatbot.** It's an operating system layer with a soul — and now, a polymath creative engine.
 
 ### What Is an Asimov Agent?
 
@@ -110,7 +110,7 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
 | **Trust architecture** | Single trust level | 5-tier trust engine (local > owner-dm > approved-dm > group > public) with per-tier tool filtering, rate limiting, and memory isolation |
 | **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing and audit logging |
-| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 18 connector modules, self-operating computer bridge |
+| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 24 connector modules, polymath creative engine, self-operating computer bridge |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -311,6 +311,49 @@ Agent Friday uses **Nano Banana 2** (Google Gemini 3.1 Flash Image) as its prima
 - **No extra API key needed** — Uses the same Gemini API key you already have
 - **DALL-E 3 fallback** — Automatically falls back to OpenAI DALL-E 3 if available
 
+### Polymath Creative Engine (v3.0.0)
+
+Agent Friday is a **true polymath** — a unified creative agent capable of generating images, videos, music, sound effects, speech, podcasts, and code through a single natural-language interface. Describe what you want in plain English; the Polymath Router classifies your intent, routes to the best available tool, and presents the result on **The Stage**.
+
+**8 Creative Domains:**
+
+| Domain | Engine | What It Does |
+|--------|--------|-------------|
+| **Image** | ComfyUI (local SD) / Nano Banana 2 / DALL-E 3 | txt2img, img2img, model management, 14 aspect ratios |
+| **Video** | Gemini VEO 3 + FFmpeg | Text-to-video, image-to-video, stitching, conversion |
+| **Music** | Gemini 2.0 Flash | Text-to-music with style, mood, tempo, and duration control |
+| **Sound Effects** | Gemini 2.0 Flash | Procedural sound effect synthesis from text descriptions |
+| **Speech** | ElevenLabs | High-quality TTS, voice cloning, multi-voice podcast creation |
+| **Podcast** | ElevenLabs multi-voice | Script-to-podcast with distinct speakers and dialogue |
+| **Code** | Multi-provider AI (Gemini/Claude/OpenAI/Ollama) | File editing, shell execution, git ops, diagnostics |
+| **Document** | PageIndex + Office | PDF intelligence, document creation and editing |
+
+**How it works:**
+
+1. **You say it** — "Generate a cinematic sunset over mountains" or "Compose a lo-fi hip-hop beat, 90 seconds"
+2. **Polymath classifies** — 140+ keyword patterns determine the creative domain with confidence scoring
+3. **Polymath dispatches** — Routes to the best available tool with automatic parameter mapping and fallback chains
+4. **The Stage presents** — Every output lands in a unified feed with domain filtering, pinning, and export
+
+**Fallback chains** ensure creative requests always succeed: if ComfyUI isn't running, image generation falls back to Nano Banana 2, then DALL-E 3. If ElevenLabs isn't configured, speech falls back to Google Cloud TTS.
+
+**The Stage** (🎭 Ctrl+Shift+G) is the unified creative output hub:
+- **Create tab** — Type a prompt, see real-time intent classification, dispatch with one click
+- **Gallery tab** — Browse all creative outputs with domain filters, pin favorites, view full metadata
+- **Pipelines tab** — Track active generation jobs with progress indicators
+
+### Coding Agent Kit
+
+Full-stack development capabilities powered by the [Agent Friday Coding Kit](https://github.com/FutureSpeakAI/agent-fridays-coding-kit):
+
+- **File operations** — Read, write, and surgically edit files with line-range precision
+- **Code search** — Glob-pattern file discovery and regex content search across entire projects
+- **Shell execution** — Run commands with configurable timeout and output capture
+- **Diagnostics** — TypeScript and ESLint error reporting
+- **AI reasoning** — Multi-provider LLM queries (Gemini, Claude, OpenAI, Ollama) for code questions
+- **Git integration** — Status, diff, and log operations
+- **Session management** — Persistent coding sessions with file history and AI conversation state
+
 ### Intelligent Agents
 
 Background task execution powered by Claude, with specialised team members and distinct personalities:
@@ -396,7 +439,10 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | Connector | What It Does |
 |-----------|-------------|
 | **Adobe** | Photoshop, Illustrator, Premiere Pro automation via ExtendScript |
+| **Audio & Music Gen** | AI music (Gemini 2.0 Flash), sound effects, speech (ElevenLabs), voice cloning, podcast creation, FFmpeg mixing/effects |
+| **Coding Agent Kit** | File editing, shell execution, git ops, diagnostics, multi-provider AI reasoning, session management |
 | **Comms Hub** | Slack, Teams, Discord unified messaging |
+| **ComfyUI** | Local Stable Diffusion via ComfyUI — txt2img, img2img, model/sampler management, custom workflows |
 | **Creative 3D** | Blender, Cinema 4D modeling and rendering |
 | **Dev Environments** | Docker, WSL, Python environments, Jupyter, databases |
 | **Firecrawl** | Web scraping and content extraction |
@@ -409,10 +455,13 @@ Agent Friday connects to your entire workflow through a modular connector regist
 | **OpenRouter** | Access to 200+ models (Llama, Mistral, Gemma, Command R, DeepSeek, etc.) |
 | **PageIndex** | Vectorless document intelligence — index PDFs and answer questions with ~99% accuracy ([PageIndex by Vectify AI](https://github.com/VectifyAI/PageIndex)) |
 | **Perplexity** | Web search with citations |
+| **Polymath Router** | Unified creative dispatch — intent classification across 8 domains, intelligent routing with fallback chains |
 | **PowerShell** | Windows system automation |
+| **The Stage** | Unified creative output feed — push, list, pin, export artefacts across all creative domains |
 | **System Management** | Process management, system info, resource monitoring |
 | **Terminal** | Multi-shell support (bash, zsh, PowerShell, CMD) |
 | **UI Automation** | Mouse, keyboard, screenshot via browser extension |
+| **Video Generation** | AI video via Gemini VEO 3 — txt2vid, img2vid, FFmpeg stitching/conversion |
 | **VS Code** | Editor integration, workspace management |
 | **World Monitor** | Global intelligence across 17 domains (conflict, markets, cyber, weather, etc.) |
 
@@ -465,7 +514,7 @@ agent-friday/
       mcp-config.ts                    # MCP server configuration
       desktop-tools.ts                 # OS-level tool execution
       friday-profile.ts                # Agent profile persistence + Trust Graph enrichment
-      preload.ts                       # IPC bridge (25+ namespaces, 100+ channels)
+      preload.ts                       # IPC bridge (28+ namespaces, 100+ channels)
       prompt-budget.ts                 # Token allocation for personality context
       voice-audition.ts                # Voice preview sample generation
       screen-capture.ts                # Desktop screenshot capture
@@ -569,13 +618,22 @@ agent-friday/
         capability-map.ts              # Intelligent task-to-agent routing
         symbiont-protocol.ts           # Cross-agent learning + self-improvement
 
-      connectors/                      # Integration plugins (18 modules)
+      connectors/                      # Integration plugins (24 modules)
         registry.ts                    # Connector auto-discovery + registration
+        # ── Foundation & DevOps ──
+        powershell.ts, terminal-sessions.ts, vscode.ts, git-devops.ts
+        # ── Creative & Media (Polymath v3.0) ──
+        comfyui.ts                     # Local Stable Diffusion (17 tools)
+        video-gen.ts                   # VEO 3 video generation (10 tools)
+        audio-gen.ts                   # Music/SFX/Speech/Podcast (16 tools)
+        coding-kit.ts                  # Full-stack coding agent (15 tools)
+        polymath-router.ts             # Unified creative dispatch (4 tools)
+        stage-presenter.ts             # Creative output feed (7 tools)
+        # ── Office, Communication & System ──
         adobe.ts, comms-hub.ts, creative-3d.ts, dev-environments.ts,
-        firecrawl.ts, git-devops.ts, media-streaming.ts, office.ts,
-        openai-services.ts, perplexity.ts, powershell.ts,
-        system-management.ts, terminal-sessions.ts, ui-automation.ts,
-        vscode.ts, world-monitor.ts, pageindex.ts
+        firecrawl.ts, media-streaming.ts, office.ts, openai-services.ts,
+        perplexity.ts, system-management.ts, ui-automation.ts,
+        world-monitor.ts, pageindex.ts
 
       gateway/                         # External messaging gateway
         gateway-manager.ts             # Gateway lifecycle + routing
