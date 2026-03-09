@@ -4,6 +4,61 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.2.0] — 2026-03-09 — The Fortified Update
+
+### Summary
+
+Ship-readiness hardening across safety, accessibility, infrastructure, and portability. Resolved **5 security blockers** and **14 warnings** identified in a comprehensive audit. Agent Friday is now single-instance locked, file-system confined, IPC error-bounded, auto-updating, accessible, theme-ready, and cross-platform Chrome-aware.
+
+### Added — Safety & Integrity
+
+- **Single-instance lock** — `app.requestSingleInstanceLock()` prevents vault data races from dual launches; second instance focuses the existing window
+- **IPC error boundary** — Monkey-patched `ipcMain.handle` wraps all 580+ handlers in try/catch; renderer never receives internal stack traces
+- **File system confinement** — All file handlers enforce `assertConfinedPath(os.homedir())` boundary; reads outside home directory throw `ConfinementError`
+- **URL validation** — `shell.openExternal` calls in main window and Agent Office validate with `new URL()` before opening
+- **COM Invoke sanitization** — PowerShell connector validates method names against `^[a-zA-Z_][a-zA-Z0-9_]*$` before string interpolation
+
+### Added — Infrastructure
+
+- **Auto-updater** — `electron-updater` with GitHub Releases provider; checks on launch + every 4 hours; user-prompted download and install; no silent updates
+- **Native crash reporter** — `crashReporter.start()` captures V8-level crash dumps locally (no remote upload); complements existing JS-level crash logging
+- **Production logger** — `src/main/utils/logger.ts` gates debug/info output behind `app.isPackaged`; renderer suppresses `console.log`/`console.debug` in production
+
+### Added — Accessibility
+
+- **ARIA landmarks** — All onboarding steps wrapped in `<section>` with descriptive `aria-label`
+- **Custom control semantics** — Gender and voice feel pickers use `role="radiogroup"` / `role="radio"` with `aria-checked`
+- **Form accessibility** — All inputs linked to `<label>` elements via `htmlFor`/`id`; `aria-required` on required fields; `aria-describedby` for hints
+- **Live regions** — Status updates, errors, and the boot sequence terminal use `aria-live="polite"` / `role="status"` / `role="log"` / `role="alert"`
+- **Progress bar** — Onboarding progress indicator has `role="progressbar"` with `aria-valuenow`/`aria-valuemin`/`aria-valuemax`
+- **Decorative isolation** — Icons, waveforms, and terminal dots marked `aria-hidden="true"`
+
+### Changed — Onboarding UX
+
+- **Back navigation** — All middle steps (Directives through Interview) now have a ← Back button
+- **RevealStep skip** — Click or keypress fast-forwards the 7.7s boot animation; "Click to skip" hint after 2s
+- **Passphrase strength** — Color-coded meter (Weak → Fair → Good → Strong) with real-time feedback; minimum "Fair" required to proceed
+- **InterviewStep resilience** — 10-second connection timeout with explicit failed state; Retry and Skip buttons; event-based connection confirmation replaces fragile timer
+- **CSS variable migration** — ~90 hardcoded colors replaced with `var(--*)` references across all 8 onboarding files; 18 new custom properties added to global.css for opacity scales and onboarding surfaces
+
+### Changed — Build & Distribution
+
+- **Code splitting** — Vite `manualChunks` splits Three.js (525KB), react-markdown (165KB), and React core into separate cacheable chunks; main bundle reduced from ~1.2MB to ~512KB
+- **Cross-platform Chrome** — `browser.ts` now discovers Chrome on Windows, macOS, and Linux using `platform()` detection with fallback to `CHROME_PATH` env var
+- **Dependency triage** — Moved `three`, `react-markdown`, `remark-gfm`, `lucide-react` from dependencies to devDependencies (renderer-only, bundled by Vite)
+- **Stale asarUnpack cleanup** — Removed dead `sodium-native` and `sharp` references from electron-builder config
+- **Vite type reference** — Added `src/renderer/vite-env.d.ts` for `import.meta.env` TypeScript support
+- **Publish config** — Added GitHub Releases provider to electron-builder for auto-updater compatibility
+
+### Stats
+
+- **Tests:** 4,701 / 4,701 (100% pass rate, 133 suites)
+- **TypeScript:** 0 errors
+- **Files changed:** 31 files across 2 sprints (+1,287 / -358 lines)
+- **New files:** `updater.ts`, `logger.ts`, `vite-env.d.ts`
+
+---
+
 ## [3.1.1] — 2026-03-09 — The Airtight Update
 
 ### Summary
