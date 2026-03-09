@@ -1,3 +1,13 @@
+// ── Production console gate ─────────────────────────────────────────
+// Silence debug/log noise in production builds. Keep warn + error so
+// real problems are still visible in packaged-app DevTools.
+if (import.meta.env.PROD) {
+  const noop = () => {};
+  console.log = noop;
+  console.debug = noop;
+  // console.warn and console.error are intentionally preserved
+}
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';

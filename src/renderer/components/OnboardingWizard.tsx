@@ -68,6 +68,13 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
     }
   }, [currentStep, goTo]);
 
+  const prev = useCallback(() => {
+    const idx = STEPS.findIndex((s) => s.key === currentStep);
+    if (idx > 0) {
+      goTo(STEPS[idx - 1].key);
+    }
+  }, [currentStep, goTo]);
+
   // Don't show progress bar on awakening (splash) or reveal (boot sequence)
   const showProgress = currentStep !== 'awakening' && currentStep !== 'reveal';
 
@@ -120,16 +127,17 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
         }}
       >
         {currentStep === 'awakening' && <AwakeningStep onComplete={next} />}
-        {currentStep === 'directives' && <DirectivesStep onComplete={next} />}
+        {currentStep === 'directives' && <DirectivesStep onComplete={next} onBack={prev} />}
         {currentStep === 'engines' && (
-          <EnginesStep onComplete={() => next()} />
+          <EnginesStep onComplete={() => next()} onBack={prev} />
         )}
-        {currentStep === 'sovereignty' && <SovereigntyStep onComplete={next} />}
+        {currentStep === 'sovereignty' && <SovereigntyStep onComplete={next} onBack={prev} />}
         {currentStep === 'identity' && (
           <IdentityStep
             choices={identityChoices}
             onChange={setIdentityChoices}
             onComplete={next}
+            onBack={prev}
           />
         )}
         {currentStep === 'interview' && (
@@ -138,10 +146,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
             connectToGemini={connectToGemini}
             onComplete={(finalName) => {
               if (finalName) {
-                setIdentityChoices((prev) => ({ ...prev, agentName: finalName }));
+                setIdentityChoices((p) => ({ ...p, agentName: finalName }));
               }
               goTo('reveal');
             }}
+            onBack={prev}
           />
         )}
         {currentStep === 'reveal' && (

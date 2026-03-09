@@ -13,6 +13,7 @@ interface IdentityStepProps {
   choices: IdentityChoices;
   onChange: (choices: IdentityChoices) => void;
   onComplete: () => void;
+  onBack?: () => void;
 }
 
 const GENDERS: { value: IdentityChoices['gender']; label: string; desc: string }[] = [
@@ -29,7 +30,7 @@ const VOICE_FEELS: { value: IdentityChoices['voiceFeel']; label: string; desc: s
   { value: 'bright', label: 'Bright', desc: 'Energetic, clear', color: '#00f0ff' },
 ];
 
-const IdentityStep: React.FC<IdentityStepProps> = ({ choices, onChange, onComplete }) => {
+const IdentityStep: React.FC<IdentityStepProps> = ({ choices, onChange, onComplete, onBack }) => {
   const [fadeIn, setFadeIn] = useState(false);
 
   useEffect(() => {
@@ -164,6 +165,13 @@ const IdentityStep: React.FC<IdentityStepProps> = ({ choices, onChange, onComple
       >
         Continue
       </button>
+
+      {/* Back button */}
+      {onBack && (
+        <button onClick={onBack} style={styles.backButton}>
+          &#8592; Back
+        </button>
+      )}
     </div>
   );
 };
@@ -340,6 +348,19 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.2s ease',
     marginTop: 8,
+  },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    padding: '4px 8px',
+    transition: 'color 0.2s ease',
+    position: 'absolute' as const,
+    bottom: 48,
+    left: 48,
   },
 };
 

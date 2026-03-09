@@ -8,14 +8,18 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Mic, SkipForward } from 'lucide-react';
+import { Mic, SkipForward, RefreshCw } from 'lucide-react';
 import type { IdentityChoices } from '../OnboardingWizard';
 
 interface InterviewStepProps {
   identityChoices: IdentityChoices;
   connectToGemini?: (identityContext?: string) => void;
   onComplete: (finalName?: string) => void;
+  onBack?: () => void;
 }
+
+/** Timeout (ms) before connection is considered failed. */
+const CONNECTION_TIMEOUT_MS = 10_000;
 
 const VOICE_MAP: Record<string, Record<string, string>> = {
   warm:   { male: 'Enceladus', female: 'Aoede',    neutral: 'Achird' },
@@ -56,52 +60,105 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   identityChoices,
   connectToGemini,
   onComplete,
+  onBack,
 }) => {
   const [fadeIn, setFadeIn] = useState(false);
-  const [phase, setPhase] = useState<'waiting' | 'connecting' | 'active' | 'done'>('waiting');
+  const [phase, setPhase] = useState<'waiting' | 'connecting' | 'active' | 'failed' | 'done'>('waiting');
   const [statusText, setStatusText] = useState('Preparing voice interview...');
   const [waveformBars, setWaveformBars] = useState<number[]>(new Array(32).fill(0.05));
   const animFrameRef = useRef<number>(0);
   const hasConnectedRef = useRef(false);
+  const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setFadeIn(true), 100);
     return () => clearTimeout(t);
   }, []);
 
+  // Attempt to connect to Gemini voice session
+  const attemptConnection = useCallback(() => {
+    if (!connectToGemini) {
+      setPhase('failed');
+      setStatusText('Voice session unavailable');
+      return;
+    }
+
+    setPhase('connecting');
+    setStatusText('Connecting to voice session...');
+
+    try {
+      const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
+      connectToGemini(ctx);
+
+      // Fallback timeout: if no audio activity detected within CONNECTION_TIMEOUT_MS, assume failure
+      connectionTimerRef.current = setTimeout(() => {
+        setPhase((current) => {
+          // Only transition to failed if we're still in 'connecting' — if already 'active' or 'done', leave it
+          if (current === 'connecting') {
+            setStatusText('Voice connection could not be established');
+            return 'failed';
+          }
+          return current;
+        });
+      }, CONNECTION_TIMEOUT_MS);
+    } catch {
+      setPhase('failed');
+      setStatusText('Voice connection could not be established');
+    }
+  }, [connectToGemini, identityChoices]);
+
   // Start the voice connection after a brief delay
   useEffect(() => {
     if (hasConnectedRef.current) return;
     hasConnectedRef.current = true;
 
-    const timer = setTimeout(() => {
-      if (connectToGemini) {
-        setPhase('connecting');
-        setStatusText('Connecting to voice session...');
-        try {
-          const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
-          connectToGemini(ctx);
-          // After a moment, assume connected
-          setTimeout(() => {
-            setPhase('active');
-            setStatusText('Interview in progress — speak naturally');
-          }, 3000);
-        } catch {
-          setPhase('active');
-          setStatusText('Voice connection unavailable — you can skip this step');
-        }
-      } else {
-        setPhase('active');
-        setStatusText('Voice session unavailable — skip to continue');
-      }
+    const startTimer = setTimeout(() => {
+      attemptConnection();
     }, 1200);
 
-    return () => clearTimeout(timer);
-  }, [connectToGemini]);
+    return () => {
+      clearTimeout(startTimer);
+      if (connectionTimerRef.current) {
+        clearTimeout(connectionTimerRef.current);
+      }
+    };
+  }, [attemptConnection]);
+
+  // Listen for any audio activity to confirm connection is live
+  // The 'gemini-audio-active' event should be dispatched when audio begins streaming
+  useEffect(() => {
+    const handler = () => {
+      // Connection confirmed — clear the fallback timeout and go active
+      if (connectionTimerRef.current) {
+        clearTimeout(connectionTimerRef.current);
+        connectionTimerRef.current = null;
+      }
+      setPhase((current) => {
+        if (current === 'connecting') {
+          setStatusText('Interview in progress — speak naturally');
+          return 'active';
+        }
+        return current;
+      });
+    };
+    window.addEventListener('gemini-audio-active', handler);
+    return () => window.removeEventListener('gemini-audio-active', handler);
+  }, []);
+
+  // Retry handler for the failed state
+  const handleRetry = useCallback(() => {
+    hasConnectedRef.current = false;
+    if (connectionTimerRef.current) {
+      clearTimeout(connectionTimerRef.current);
+      connectionTimerRef.current = null;
+    }
+    hasConnectedRef.current = true;
+    attemptConnection();
+  }, [attemptConnection]);
 
   // Animate waveform bars
   useEffect(() => {
-    if (phase !== 'active' && phase !== 'connecting') return;
+    if (phase !== 'active' && phase !== 'connecting' && phase !== 'failed') return;
 
     let running = true;
     const animate = () => {
@@ -110,7 +167,9 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         prev.map((v) => {
           const target = phase === 'active'
             ? 0.1 + Math.random() * 0.8
-            : 0.05 + Math.random() * 0.15;
+            : phase === 'failed'
+              ? 0.03 + Math.random() * 0.05
+              : 0.05 + Math.random() * 0.15;
           return v + (target - v) * 0.15;
         })
       );
@@ -179,17 +238,21 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       {/* Mic icon */}
       <div style={{
         ...styles.iconWrap,
-        borderColor: phase === 'active'
-          ? 'rgba(0, 240, 255, 0.3)'
-          : 'rgba(0, 240, 255, 0.15)',
+        borderColor: phase === 'failed'
+          ? 'rgba(239, 68, 68, 0.3)'
+          : phase === 'active'
+            ? 'rgba(0, 240, 255, 0.3)'
+            : 'rgba(0, 240, 255, 0.15)',
         boxShadow: phase === 'active'
           ? '0 0 20px rgba(0, 240, 255, 0.1)'
-          : 'none',
+          : phase === 'failed'
+            ? '0 0 20px rgba(239, 68, 68, 0.1)'
+            : 'none',
         transition: 'all 0.4s ease',
       }}>
         <Mic
           size={36}
-          color={phase === 'active' ? '#00f0ff' : 'rgba(0, 240, 255, 0.5)'}
+          color={phase === 'failed' ? '#ef4444' : phase === 'active' ? '#00f0ff' : 'rgba(0, 240, 255, 0.5)'}
         />
       </div>
 
@@ -200,14 +263,18 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
             ? 'Setting up your interview...'
             : phase === 'done'
               ? 'Configuration complete!'
-              : `Speak with your setup assistant`}
+              : phase === 'failed'
+                ? 'Connection failed'
+                : `Speak with your setup assistant`}
         </p>
         <p style={styles.explainerBody}>
           {phase === 'active'
             ? 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally — there are no wrong answers.'
             : phase === 'done'
               ? 'Your agent\'s personality has been configured.'
-              : 'Preparing the voice connection...'}
+              : phase === 'failed'
+                ? 'The voice session could not be established. You can retry or skip to use a default personality profile.'
+                : 'Preparing the voice connection...'}
         </p>
       </div>
 
@@ -219,8 +286,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
             style={{
               ...styles.waveformBar,
               height: `${Math.max(2, height * 60)}px`,
-              opacity: phase === 'active' ? 0.4 + height * 0.6 : 0.15,
-              background: `rgba(0, 240, 255, ${0.3 + height * 0.5})`,
+              opacity: phase === 'active' ? 0.4 + height * 0.6 : phase === 'failed' ? 0.08 : 0.15,
+              background: phase === 'failed' ? `rgba(239, 68, 68, ${0.2 + height * 0.3})` : `rgba(0, 240, 255, ${0.3 + height * 0.5})`,
               transition: 'opacity 0.3s ease',
             }}
           />
@@ -228,10 +295,27 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       </div>
 
       {/* Status */}
-      <p style={styles.statusText}>{statusText}</p>
+      <p style={{
+        ...styles.statusText,
+        color: phase === 'failed' ? 'rgba(239, 68, 68, 0.7)' : 'rgba(0, 240, 255, 0.5)',
+      }}>{statusText}</p>
 
-      {/* Skip button */}
-      {phase !== 'done' && (
+      {/* Failed state: Retry + Skip buttons */}
+      {phase === 'failed' && (
+        <div style={styles.failedButtons}>
+          <button onClick={handleRetry} style={styles.retryButton}>
+            <RefreshCw size={14} />
+            <span>Retry</span>
+          </button>
+          <button onClick={handleSkip} style={styles.skipButton}>
+            <SkipForward size={14} />
+            <span>Skip Interview</span>
+          </button>
+        </div>
+      )}
+
+      {/* Skip button (shown in non-failed, non-done states) */}
+      {phase !== 'done' && phase !== 'failed' && (
         <button onClick={handleSkip} style={styles.skipButton}>
           <SkipForward size={14} />
           <span>Skip Interview</span>
@@ -241,8 +325,17 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       <p style={styles.hint}>
         {phase === 'active'
           ? 'The assistant will configure your agent automatically when the interview is complete.'
-          : 'You can skip this step to use a default personality profile.'}
+          : phase === 'failed'
+            ? 'Skipping will apply a default personality based on your identity choices.'
+            : 'You can skip this step to use a default personality profile.'}
       </p>
+
+      {/* Back button */}
+      {onBack && phase !== 'done' && (
+        <button onClick={onBack} style={styles.backButton}>
+          &#8592; Back
+        </button>
+      )}
     </div>
   );
 };
@@ -340,6 +433,25 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.2s ease',
   },
+  failedButtons: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+  },
+  retryButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 28px',
+    background: 'rgba(0, 240, 255, 0.08)',
+    border: '1px solid rgba(0, 240, 255, 0.25)',
+    borderRadius: 8,
+    color: 'rgba(0, 240, 255, 0.9)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
   hint: {
     fontSize: 10,
     color: 'rgba(255, 255, 255, 0.2)',
@@ -347,6 +459,19 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
     maxWidth: 360,
+  },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    padding: '4px 8px',
+    transition: 'color 0.2s ease',
+    position: 'absolute' as const,
+    bottom: 48,
+    left: 48,
   },
 };
 

@@ -498,12 +498,22 @@ async function executeCommand(args: Record<string, unknown>): Promise<ToolResult
   return safeRun(command, timeoutMs);
 }
 
+/** Valid COM method/property name: must be a safe identifier to prevent injection. */
+const COM_METHOD_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 /** 2. powershell_com_invoke */
 async function comInvoke(args: Record<string, unknown>): Promise<ToolResult> {
   const progId = String(args.progId ?? '');
   const method = String(args.method ?? '');
   if (!progId || !method) {
     return { error: 'Both progId and method are required.' };
+  }
+
+  // Validate method is a safe identifier before interpolation into the script.
+  // Without this check, a malicious method like "Quit(); Remove-Item -Recurse C:\\"
+  // would result in arbitrary PowerShell execution via string interpolation.
+  if (!COM_METHOD_PATTERN.test(method)) {
+    return { error: 'method must be a valid identifier (letters, digits, underscores only).' };
   }
 
   const comArgs = Array.isArray(args.args) ? (args.args as string[]) : [];

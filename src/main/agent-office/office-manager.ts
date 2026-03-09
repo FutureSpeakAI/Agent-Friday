@@ -109,7 +109,13 @@ class AgentOfficeManager {
     });
     this.officeWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('https://') || url.startsWith('http://')) {
-        shell.openExternal(url);
+        // Validate URL is well-formed before opening (defense in depth)
+        try {
+          new URL(url);
+          shell.openExternal(url);
+        } catch {
+          console.warn('[Security] Blocked malformed external URL:', url);
+        }
       }
       return { action: 'deny' };
     });

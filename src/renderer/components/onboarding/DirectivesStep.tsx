@@ -10,6 +10,7 @@ import { Shield, Eye, Zap } from 'lucide-react';
 
 interface DirectivesStepProps {
   onComplete: () => void;
+  onBack?: () => void;
 }
 
 const LAWS = [
@@ -39,7 +40,7 @@ const LAWS = [
   },
 ];
 
-const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete }) => {
+const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete, onBack }) => {
   const [visibleLaws, setVisibleLaws] = useState(0);
   const [showButton, setShowButton] = useState(false);
 
@@ -117,6 +118,13 @@ const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete }) => {
       >
         I Understand
       </button>
+
+      {/* Back button */}
+      {onBack && (
+        <button onClick={onBack} style={styles.backButton}>
+          &#8592; Back
+        </button>
+      )}
     </div>
   );
 };
@@ -218,6 +226,19 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     marginTop: 8,
     transition: 'all 0.2s ease',
+  },
+  backButton: {
+    background: 'none',
+    border: 'none',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    padding: '4px 8px',
+    transition: 'color 0.2s ease',
+    position: 'absolute' as const,
+    bottom: 48,
+    left: 48,
   },
 };
 
