@@ -49,6 +49,7 @@ export interface LoadOptions {
   maxFileSize?: number;      // Skip files larger than this (bytes), default 512KB
   includePatterns?: string[]; // Glob patterns to include
   excludePatterns?: string[]; // Glob patterns to exclude
+  excludeOverrides?: string[]; // Remove these entries from DEFAULT_EXCLUDE (e.g. 'packages' for monorepos)
 }
 
 export interface SearchResult {
@@ -207,7 +208,11 @@ class GitLoader {
 
     // Walk the repo and index files
     const maxFileSize = options.maxFileSize || 512 * 1024; // 512KB default
-    const excludePatterns = [...DEFAULT_EXCLUDE, ...(options.excludePatterns || [])];
+    const overrides = new Set(options.excludeOverrides || []);
+    const excludePatterns = [
+      ...DEFAULT_EXCLUDE.filter((p) => !overrides.has(p)),
+      ...(options.excludePatterns || []),
+    ];
     const includePatterns = options.includePatterns || [];
 
     const files: RepoFile[] = [];

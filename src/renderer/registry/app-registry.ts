@@ -141,6 +141,14 @@ export const APP_REGISTRY: AppDefinition[] = [
     category: 'media',
     component: React.lazy(() => import('../components/apps/FridayCanvas')),
   },
+  {
+    id: 'stage',
+    displayName: 'Stage',
+    icon: '🎭',
+    category: 'media',
+    shortcut: 'Ctrl+Shift+G',
+    component: React.lazy(() => import('../components/apps/FridayStage')),
+  },
 
   // ─── Tools ─────────────────────────────────────────────────────────────
   {
