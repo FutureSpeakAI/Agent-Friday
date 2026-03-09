@@ -1,24 +1,28 @@
 /**
- * SecureBuffer — Guard-paged, mlocked memory for cryptographic key material.
+ * SecureBuffer — Secure memory wrapper for cryptographic key material.
  *
- * Wraps sodium-native's sodium_malloc() which provides:
- *   - Guard pages before and after the allocation (SIGSEGV on overflow/underflow)
- *   - mlock() to prevent the OS from swapping to disk
- *   - Canary bytes to detect corruption
- *   - sodium_memzero() on destroy (guaranteed zeroing, not optimized away)
+ * Electron-compatible implementation that uses standard Node.js Buffers
+ * with guaranteed secure zeroing on destroy. Maintains the same API as
+ * the previous sodium_malloc-based implementation.
  *
- * Memory protection states (via mprotect):
- *   - NOACCESS: Default after alloc. Any read/write → SIGSEGV.
- *   - READONLY: Can read, writes → SIGSEGV.
- *   - READWRITE: Full access (use sparingly, for shortest possible duration).
+ * Previous implementation used sodium-native's sodium_malloc() which
+ * provided guard pages and mlock(). Electron's N-API doesn't support
+ * wrapping externally-allocated guard-paged memory into Buffers, so
+ * we use regular Buffers with logical access control instead.
  *
- * Design principle: Key material spends most of its lifetime in NOACCESS state.
- * The withAccess() helper unlocks → runs callback → re-locks automatically,
- * ensuring the minimum exposure window even if the callback throws.
+ * Security properties preserved:
+ *   - Guaranteed zeroing on destroy (crypto.randomFill to defeat optimizations)
+ *   - Logical NOACCESS/READONLY/READWRITE states (enforced at JS level)
+ *   - withAccess() borrow pattern (minimum exposure window)
+ *   - Source buffer wiping on SecureBuffer.from()
+ *
+ * Security properties lost (acceptable trade-off for Electron compat):
+ *   - Guard pages (SIGSEGV on overflow/underflow)
+ *   - mlock() (OS may swap to disk under memory pressure)
+ *   - mprotect-enforced NOACCESS (now logical, not hardware-enforced)
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const sodium = require('sodium-native');
+import crypto from 'crypto';
 
 export type ProtectionLevel = 'noaccess' | 'readonly' | 'readwrite';
 
@@ -34,8 +38,6 @@ export class SecureBuffer {
   private constructor(buf: Buffer) {
     this._inner = buf;
     this.length = buf.length;
-    // Default state: NOACCESS
-    sodium.sodium_mprotect_noaccess(this._inner);
   }
 
   /**
@@ -43,8 +45,7 @@ export class SecureBuffer {
    * Returns in NOACCESS state.
    */
   static alloc(size: number): SecureBuffer {
-    const buf: Buffer = sodium.sodium_malloc(size);
-    // sodium_malloc returns zeroed memory
+    const buf = Buffer.alloc(size); // Zero-filled
     return new SecureBuffer(buf);
   }
 
@@ -57,13 +58,11 @@ export class SecureBuffer {
    */
   static from(source: Buffer): SecureBuffer {
     const sb = SecureBuffer.alloc(source.length);
-    // Unlock to write
-    sodium.sodium_mprotect_readwrite(sb._inner);
+    sb._protection = 'readwrite';
     source.copy(sb._inner);
     // Wipe the source — it's in non-protected memory
-    sodium.sodium_memzero(source);
+    SecureBuffer.secureZero(source);
     // Leave in READONLY state
-    sodium.sodium_mprotect_readonly(sb._inner);
     sb._protection = 'readonly';
     return sb;
   }
@@ -97,7 +96,6 @@ export class SecureBuffer {
    */
   unlock(): void {
     this.assertAlive();
-    sodium.sodium_mprotect_readwrite(this._inner);
     this._protection = 'readwrite';
   }
 
@@ -106,16 +104,14 @@ export class SecureBuffer {
    */
   readonly(): void {
     this.assertAlive();
-    sodium.sodium_mprotect_readonly(this._inner);
     this._protection = 'readonly';
   }
 
   /**
-   * Set to NOACCESS. Any access → SIGSEGV.
+   * Set to NOACCESS. Logical state — any access via .inner throws.
    */
   lock(): void {
     this.assertAlive();
-    sodium.sodium_mprotect_noaccess(this._inner);
     this._protection = 'noaccess';
   }
 
@@ -129,16 +125,10 @@ export class SecureBuffer {
    */
   withAccess<T>(mode: 'readonly' | 'readwrite', fn: (buf: Buffer) => T): T {
     this.assertAlive();
-    if (mode === 'readwrite') {
-      sodium.sodium_mprotect_readwrite(this._inner);
-    } else {
-      sodium.sodium_mprotect_readonly(this._inner);
-    }
     this._protection = mode;
     try {
       return fn(this._inner);
     } finally {
-      sodium.sodium_mprotect_noaccess(this._inner);
       this._protection = 'noaccess';
     }
   }
@@ -149,38 +139,38 @@ export class SecureBuffer {
    */
   async withAccessAsync<T>(mode: 'readonly' | 'readwrite', fn: (buf: Buffer) => Promise<T>): Promise<T> {
     this.assertAlive();
-    if (mode === 'readwrite') {
-      sodium.sodium_mprotect_readwrite(this._inner);
-    } else {
-      sodium.sodium_mprotect_readonly(this._inner);
-    }
     this._protection = mode;
     try {
       return await fn(this._inner);
     } finally {
-      sodium.sodium_mprotect_noaccess(this._inner);
       this._protection = 'noaccess';
     }
   }
 
   /**
-   * Permanently destroy this buffer. Zeros all bytes, then frees.
+   * Permanently destroy this buffer. Zeros all bytes securely.
    * After this call, any access throws.
    */
   destroy(): void {
     if (this._destroyed) return; // Idempotent
-    // Must be readwrite to zero
-    sodium.sodium_mprotect_readwrite(this._inner);
-    sodium.sodium_memzero(this._inner);
+    SecureBuffer.secureZero(this._inner);
     this._destroyed = true;
     this._protection = 'noaccess';
-    // Note: sodium_malloc'd memory is freed when GC collects the Buffer.
-    // We've zeroed it, which is the important part.
   }
 
   private assertAlive(): void {
     if (this._destroyed) {
       throw new Error('SecureBuffer: use after destroy');
     }
+  }
+
+  /**
+   * Securely zero a buffer. Uses crypto.randomFillSync first (to defeat
+   * compiler optimizations that might skip a simple .fill(0)), then fills
+   * with zeros. This two-step approach ensures the buffer is truly wiped.
+   */
+  private static secureZero(buf: Buffer): void {
+    crypto.randomFillSync(buf);
+    buf.fill(0);
   }
 }

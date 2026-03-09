@@ -58,3 +58,4 @@ export { registerVoicePipelineHandlers } from './voice-pipeline-handlers';
 export type { VoicePipelineHandlerDeps } from './voice-pipeline-handlers';
 export { registerVisionPipelineHandlers } from './vision-pipeline-handlers';
 export type { VisionPipelineHandlerDeps } from './vision-pipeline-handlers';
+export { registerChatHistoryHandlers } from './chat-history-handlers';

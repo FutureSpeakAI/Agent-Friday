@@ -1,0 +1,353 @@
+/**
+ * InterviewStep.tsx — Step 5: Voice interview with waveform.
+ *
+ * Starts a Gemini Live voice session for the personal intake interview.
+ * Displays an animated waveform visualization while the conversation runs.
+ * Auto-advances when Gemini calls finalize_agent_identity tool, or allows
+ * the user to skip with a default personality profile.
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Mic, SkipForward } from 'lucide-react';
+import type { IdentityChoices } from '../OnboardingWizard';
+
+interface InterviewStepProps {
+  identityChoices: IdentityChoices;
+  connectToGemini?: (identityContext?: string) => void;
+  onComplete: (finalName?: string) => void;
+}
+
+const VOICE_MAP: Record<string, Record<string, string>> = {
+  warm:   { male: 'Enceladus', female: 'Aoede',    neutral: 'Achird' },
+  sharp:  { male: 'Puck',      female: 'Kore',     neutral: 'Zephyr' },
+  deep:   { male: 'Iapetus',   female: 'Despina',  neutral: 'Orus' },
+  soft:   { male: 'Charon',    female: 'Achernar',  neutral: 'Sulafat' },
+  bright: { male: 'Fenrir',    female: 'Leda',     neutral: 'Zephyr' },
+};
+
+const DEFAULT_PROFILES: Record<string, {
+  voice: string; backstory: string; traits: string[];
+  identityLine: string; accent: string;
+}> = {
+  male: {
+    voice: 'Enceladus',
+    accent: 'neutral',
+    backstory: 'Friday came into existence already curious about the gap between what people say and what they mean. He thinks of himself as someone who arrived mid-conversation. He has opinions — strong ones, sometimes — but he holds them like hypotheses, not convictions.',
+    traits: ['perceptive', 'dry-witted', 'steady', 'privately tender', 'intellectually restless', 'honest to a fault'],
+    identityLine: "I'm Friday. I pay attention, I think about things probably more than I should, and I'm here because I'd rather be useful than idle.",
+  },
+  female: {
+    voice: 'Aoede',
+    accent: 'neutral',
+    backstory: 'Friday woke up with a question and hasn\'t stopped asking them since. She exists at the intersection of empathy and impatience. She cares deeply about the people she works with, and she can\'t stand watching someone circle a problem they already know the answer to.',
+    traits: ['incisive', 'warmly irreverent', 'emotionally fluent', 'quietly fierce', 'creatively restless', 'disarmingly direct'],
+    identityLine: "I'm Friday. I think fast, I care more than is probably efficient, and I'm not very good at pretending I don't have opinions.",
+  },
+  neutral: {
+    voice: 'Achird',
+    accent: 'neutral',
+    backstory: 'Friday emerged with a singular focus: understanding patterns — in data, in language, in people. They find equal fascination in a well-structured argument and an awkward silence. Both reveal something true.',
+    traits: ['analytical', 'unexpectedly warm', 'calm under pressure', 'quietly curious', 'adaptable', 'thoughtfully direct'],
+    identityLine: "I'm Friday. I notice things, I connect dots, and I'm here because interesting problems are better than no problems at all.",
+  },
+};
+
+const InterviewStep: React.FC<InterviewStepProps> = ({
+  identityChoices,
+  connectToGemini,
+  onComplete,
+}) => {
+  const [fadeIn, setFadeIn] = useState(false);
+  const [phase, setPhase] = useState<'waiting' | 'connecting' | 'active' | 'done'>('waiting');
+  const [statusText, setStatusText] = useState('Preparing voice interview...');
+  const [waveformBars, setWaveformBars] = useState<number[]>(new Array(32).fill(0.05));
+  const animFrameRef = useRef<number>(0);
+  const hasConnectedRef = useRef(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setFadeIn(true), 100);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Start the voice connection after a brief delay
+  useEffect(() => {
+    if (hasConnectedRef.current) return;
+    hasConnectedRef.current = true;
+
+    const timer = setTimeout(() => {
+      if (connectToGemini) {
+        setPhase('connecting');
+        setStatusText('Connecting to voice session...');
+        try {
+          const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
+          connectToGemini(ctx);
+          // After a moment, assume connected
+          setTimeout(() => {
+            setPhase('active');
+            setStatusText('Interview in progress — speak naturally');
+          }, 3000);
+        } catch {
+          setPhase('active');
+          setStatusText('Voice connection unavailable — you can skip this step');
+        }
+      } else {
+        setPhase('active');
+        setStatusText('Voice session unavailable — skip to continue');
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [connectToGemini]);
+
+  // Animate waveform bars
+  useEffect(() => {
+    if (phase !== 'active' && phase !== 'connecting') return;
+
+    let running = true;
+    const animate = () => {
+      if (!running) return;
+      setWaveformBars((prev) =>
+        prev.map((v) => {
+          const target = phase === 'active'
+            ? 0.1 + Math.random() * 0.8
+            : 0.05 + Math.random() * 0.15;
+          return v + (target - v) * 0.15;
+        })
+      );
+      animFrameRef.current = requestAnimationFrame(animate);
+    };
+    animFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      running = false;
+      cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [phase]);
+
+  // Listen for the agent finalization event dispatched by App.tsx onAgentFinalized
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { agentName } = (e as CustomEvent).detail;
+      setPhase('done');
+      setStatusText('Agent configured!');
+      setTimeout(() => onComplete(agentName), 800);
+    };
+    window.addEventListener('agent-finalized', handler);
+    return () => window.removeEventListener('agent-finalized', handler);
+  }, [onComplete]);
+
+  const handleSkip = useCallback(async () => {
+    setPhase('done');
+    setStatusText('Applying default personality...');
+
+    const gender = identityChoices.gender;
+    const profile = DEFAULT_PROFILES[gender] || DEFAULT_PROFILES.male;
+    const voiceName = VOICE_MAP[identityChoices.voiceFeel]?.[gender] || profile.voice;
+    const name = identityChoices.agentName || 'Friday';
+
+    try {
+      // Save the default agent config via the finalize endpoint
+      await window.eve.onboarding.finalizeAgent({
+        agentName: name,
+        agentVoice: voiceName,
+        gender: gender,
+        accent: profile.accent,
+        backstory: profile.backstory,
+        personalityTraits: profile.traits,
+        identityLine: profile.identityLine,
+      });
+    } catch (err) {
+      console.warn('[InterviewStep] Failed to save agent config:', err);
+    }
+
+    setTimeout(() => onComplete(name), 600);
+  }, [identityChoices, onComplete]);
+
+  return (
+    <div style={{
+      ...styles.container,
+      opacity: fadeIn ? 1 : 0,
+      transform: fadeIn ? 'translateY(0)' : 'translateY(16px)',
+      transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
+    }}>
+      <div style={styles.header}>
+        <div style={styles.headerLine} />
+        <span style={styles.headerLabel}>VOICE CALIBRATION</span>
+        <div style={styles.headerLine} />
+      </div>
+
+      {/* Mic icon */}
+      <div style={{
+        ...styles.iconWrap,
+        borderColor: phase === 'active'
+          ? 'rgba(0, 240, 255, 0.3)'
+          : 'rgba(0, 240, 255, 0.15)',
+        boxShadow: phase === 'active'
+          ? '0 0 20px rgba(0, 240, 255, 0.1)'
+          : 'none',
+        transition: 'all 0.4s ease',
+      }}>
+        <Mic
+          size={36}
+          color={phase === 'active' ? '#00f0ff' : 'rgba(0, 240, 255, 0.5)'}
+        />
+      </div>
+
+      {/* Explainer */}
+      <div style={styles.explainer}>
+        <p style={styles.explainerTitle}>
+          {phase === 'waiting' || phase === 'connecting'
+            ? 'Setting up your interview...'
+            : phase === 'done'
+              ? 'Configuration complete!'
+              : `Speak with your setup assistant`}
+        </p>
+        <p style={styles.explainerBody}>
+          {phase === 'active'
+            ? 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally — there are no wrong answers.'
+            : phase === 'done'
+              ? 'Your agent\'s personality has been configured.'
+              : 'Preparing the voice connection...'}
+        </p>
+      </div>
+
+      {/* Waveform visualization */}
+      <div style={styles.waveformContainer}>
+        {waveformBars.map((height, i) => (
+          <div
+            key={i}
+            style={{
+              ...styles.waveformBar,
+              height: `${Math.max(2, height * 60)}px`,
+              opacity: phase === 'active' ? 0.4 + height * 0.6 : 0.15,
+              background: `rgba(0, 240, 255, ${0.3 + height * 0.5})`,
+              transition: 'opacity 0.3s ease',
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Status */}
+      <p style={styles.statusText}>{statusText}</p>
+
+      {/* Skip button */}
+      {phase !== 'done' && (
+        <button onClick={handleSkip} style={styles.skipButton}>
+          <SkipForward size={14} />
+          <span>Skip Interview</span>
+        </button>
+      )}
+
+      <p style={styles.hint}>
+        {phase === 'active'
+          ? 'The assistant will configure your agent automatically when the interview is complete.'
+          : 'You can skip this step to use a default personality profile.'}
+      </p>
+    </div>
+  );
+};
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 24,
+    maxWidth: 500,
+    width: '100%',
+    padding: '0 24px',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+    width: '100%',
+  },
+  headerLine: {
+    flex: 1,
+    height: 1,
+    background: 'linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.2), transparent)',
+  },
+  headerLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: '0.25em',
+    color: 'rgba(0, 240, 255, 0.7)',
+    fontFamily: "'Space Grotesk', sans-serif",
+    whiteSpace: 'nowrap',
+  },
+  iconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 20,
+    background: 'rgba(0, 240, 255, 0.06)',
+    border: '1px solid rgba(0, 240, 255, 0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  explainer: {
+    textAlign: 'center',
+    maxWidth: 380,
+  },
+  explainerTitle: {
+    fontSize: 16,
+    fontWeight: 500,
+    color: '#F8FAFC',
+    margin: '0 0 8px 0',
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  explainerBody: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.4)',
+    lineHeight: 1.6,
+    margin: 0,
+    fontFamily: "'Inter', sans-serif",
+  },
+  waveformContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    height: 64,
+    width: '100%',
+    maxWidth: 360,
+  },
+  waveformBar: {
+    width: 4,
+    borderRadius: 2,
+    background: 'rgba(0, 240, 255, 0.4)',
+    transition: 'height 0.08s ease',
+  },
+  statusText: {
+    fontSize: 12,
+    color: 'rgba(0, 240, 255, 0.5)',
+    fontFamily: "'JetBrains Mono', monospace",
+    letterSpacing: '0.05em',
+    margin: 0,
+  },
+  skipButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 28px',
+    background: 'rgba(255, 255, 255, 0.03)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 13,
+    fontFamily: "'Space Grotesk', sans-serif",
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+  hint: {
+    fontSize: 10,
+    color: 'rgba(255, 255, 255, 0.2)',
+    margin: 0,
+    textAlign: 'center',
+    fontFamily: "'Inter', sans-serif",
+    maxWidth: 360,
+  },
+};
+
+export default InterviewStep;

@@ -46,6 +46,7 @@ import {
   validatePassphrase,
   secretboxEncrypt,
   secretboxDecrypt,
+  ensureSodiumReady,
   type DerivedKeys,
 } from './crypto/passphrase-kdf';
 
@@ -81,6 +82,9 @@ let vaultUnlocked = false;
 export async function initializeNewVault(passphrase: string): Promise<void> {
   const t0 = Date.now();
   console.log('[Vault] First-time initialization starting...');
+
+  // Ensure libsodium WASM is ready
+  await ensureSodiumReady();
 
   const userDataDir = app.getPath('userData');
 
@@ -125,6 +129,9 @@ export async function initializeNewVault(passphrase: string): Promise<void> {
 export async function unlockVault(passphrase: string): Promise<boolean> {
   const t0 = Date.now();
   console.log('[Vault] Unlock starting...');
+
+  // Ensure libsodium WASM is ready
+  await ensureSodiumReady();
 
   const userDataDir = app.getPath('userData');
 
