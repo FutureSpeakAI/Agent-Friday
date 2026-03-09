@@ -10,6 +10,15 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-three': ['three'],
+          'vendor-markdown': ['react-markdown', 'remark-gfm'],
+          'vendor-react': ['react', 'react-dom'],
+        },
+      },
+    },
   },
   resolve: {
     alias: {

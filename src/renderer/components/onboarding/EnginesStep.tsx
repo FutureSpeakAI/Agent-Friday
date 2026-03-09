@@ -234,28 +234,28 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
   if (phase === 'detecting') {
     const tierInfo = tier ? TIER_META[tier] : null;
     return (
-      <div style={styles.container}>
-        <div style={styles.header}>
+      <section style={styles.container} aria-label="System profile detection">
+        <div style={styles.header} aria-hidden="true">
           <div style={styles.headerLine} />
           <span style={styles.headerLabel}>SYSTEM PROFILE</span>
           <div style={styles.headerLine} />
         </div>
 
-        <div style={styles.hwCard}>
+        <div style={styles.hwCard} role="status" aria-live="polite" aria-label="Hardware detection results">
           <div style={styles.hwRow}>
-            <Cpu size={16} color="#00f0ff" />
+            <Cpu size={16} color="#00f0ff" aria-hidden="true" />
             <span style={styles.hwLabel}>GPU</span>
             <span style={styles.hwValue}>{hwProfile?.gpuName || 'Scanning...'}</span>
           </div>
           <div style={styles.hwRow}>
-            <Zap size={16} color="#8A2BE2" />
+            <Zap size={16} color="#8A2BE2" aria-hidden="true" />
             <span style={styles.hwLabel}>VRAM</span>
             <span style={styles.hwValue}>
               {hwProfile ? `${Math.round((hwProfile.vramMB || 0) / 1024)} GB` : 'Scanning...'}
             </span>
           </div>
           <div style={styles.hwRow}>
-            <Database size={16} color="#22c55e" />
+            <Database size={16} color="#22c55e" aria-hidden="true" />
             <span style={styles.hwLabel}>RAM</span>
             <span style={styles.hwValue}>
               {hwProfile ? `${Math.round((hwProfile.ramMB || 0) / 1024)} GB` : 'Scanning...'}
@@ -264,9 +264,9 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
         </div>
 
         {tierInfo && (
-          <div style={styles.tierDisplay}>
+          <div style={styles.tierDisplay} role="status" aria-label={`Hardware tier: ${tierInfo.label}`}>
             <span style={{ ...styles.tierLabel, color: tierInfo.color }}>{tierInfo.label}</span>
-            <div style={styles.tierDots}>
+            <div style={styles.tierDots} aria-hidden="true">
               {[1, 2, 3, 4, 5].map((n) => (
                 <div
                   key={n}
@@ -281,15 +281,15 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
           </div>
         )}
 
-        <p style={styles.detectingText}>Profiling hardware capabilities...</p>
+        <p style={styles.detectingText} aria-live="polite">Profiling hardware capabilities...</p>
 
         {/* Back button */}
         {onBack && (
-          <button onClick={onBack} style={styles.backButton}>
+          <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
             &#8592; Back
           </button>
         )}
-      </div>
+      </section>
     );
   }
 
@@ -299,8 +299,8 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
   const tierInfo = tier ? TIER_META[tier] : null;
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
+    <section style={styles.container} aria-label="Engine configuration">
+      <div style={styles.header} aria-hidden="true">
         <div style={styles.headerLine} />
         <span style={styles.headerLabel}>ENGINE CONFIGURATION</span>
         <div style={styles.headerLine} />
@@ -308,7 +308,7 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
 
       {/* Compact hardware summary */}
       {tierInfo && (
-        <div style={styles.hwSummary}>
+        <div style={styles.hwSummary} role="status" aria-label={`Hardware: ${hwProfile?.gpuName || 'GPU'}, ${Math.round((hwProfile?.vramMB || 0) / 1024)} GB VRAM, tier ${tierInfo.label}`}>
           <span style={styles.hwSummaryText}>
             {hwProfile?.gpuName || 'GPU'} — {Math.round((hwProfile?.vramMB || 0) / 1024)} GB VRAM
           </span>
@@ -325,71 +325,76 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
       )}
 
       {/* Scrollable key form */}
-      <div style={styles.scrollArea}>
+      <div style={styles.scrollArea} role="form" aria-label="API key configuration">
         {/* Required section */}
         {requiredKeys.length > 0 && (
-          <div style={styles.section}>
-            <div style={styles.sectionHead}>
+          <fieldset style={{ ...styles.section, border: 'none', margin: 0, padding: 0 }}>
+            <legend style={styles.sectionHead}>
               <span style={styles.sectionLabel}>Required</span>
               <div style={styles.sectionLine} />
-            </div>
+            </legend>
             {requiredKeys.map((config) => (
               <div key={config.id} style={styles.keyField}>
                 <div style={styles.keyLabelRow}>
-                  <span style={styles.keyLabel}>{config.label}</span>
-                  {existingKeys[config.id] && <span style={styles.keyConfigured}><Check size={10} /> Saved</span>}
+                  <label htmlFor={`key-${config.id}`} style={styles.keyLabel}>{config.label}</label>
+                  {existingKeys[config.id] && <span style={styles.keyConfigured}><Check size={10} aria-hidden="true" /> Saved</span>}
                 </div>
                 <input
+                  id={`key-${config.id}`}
                   type="password"
                   value={keys[config.id] || ''}
                   onChange={(e) => updateKey(config.id, e.target.value)}
                   placeholder={existingKeys[config.id] ? keyHints[config.id] || '••••••••' : config.placeholder}
+                  aria-describedby={`key-desc-${config.id}`}
+                  aria-required={config.required}
                   style={{
                     ...styles.keyInput,
                     borderColor: ((keys[config.id] || '').trim() || existingKeys[config.id])
-                      ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+                      ? 'var(--accent-cyan-20)' : 'var(--onboarding-card-hover)',
                   }}
                 />
-                <span style={styles.keyDesc}>{config.description}</span>
+                <span id={`key-desc-${config.id}`} style={styles.keyDesc}>{config.description}</span>
               </div>
             ))}
-          </div>
+          </fieldset>
         )}
 
         {/* Optional section */}
-        <div style={styles.section}>
-          <div style={styles.sectionHead}>
-            <span style={{ ...styles.sectionLabel, color: 'rgba(255,255,255,0.3)' }}>
+        <fieldset style={{ ...styles.section, border: 'none', margin: 0, padding: 0 }}>
+          <legend style={styles.sectionHead}>
+            <span style={{ ...styles.sectionLabel, color: 'var(--text-30)' }}>
               {isLocalCapable ? 'Cloud Enhancements' : 'Optional'}
             </span>
             <div style={styles.sectionLine} />
-          </div>
+          </legend>
           {optionalKeys.map((config) => (
             <div key={config.id} style={styles.keyField}>
               <div style={styles.keyLabelRow}>
-                <span style={{ ...styles.keyLabel, color: 'rgba(255,255,255,0.4)' }}>{config.label}</span>
-                {existingKeys[config.id] && <span style={styles.keyConfigured}><Check size={10} /> Saved</span>}
+                <label htmlFor={`key-${config.id}`} style={{ ...styles.keyLabel, color: 'var(--text-40)' }}>{config.label}</label>
+                {existingKeys[config.id] && <span style={styles.keyConfigured}><Check size={10} aria-hidden="true" /> Saved</span>}
               </div>
               <input
+                id={`key-${config.id}`}
                 type="password"
                 value={keys[config.id] || ''}
                 onChange={(e) => updateKey(config.id, e.target.value)}
                 placeholder={existingKeys[config.id] ? keyHints[config.id] || '••••••••' : config.placeholder}
+                aria-describedby={`key-desc-${config.id}`}
                 style={{
                   ...styles.keyInput,
                   borderColor: ((keys[config.id] || '').trim() || existingKeys[config.id])
-                    ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+                    ? 'var(--accent-cyan-20)' : 'var(--onboarding-card-hover)',
                 }}
               />
-              <span style={styles.keyDesc}>
+              <span id={`key-desc-${config.id}`} style={styles.keyDesc}>
                 {isLocalCapable && config.localDescription ? config.localDescription : config.description}
               </span>
             </div>
           ))}
-        </div>
+        </fieldset>
       </div>
 
-      {error && <p style={styles.error}>{error}</p>}
+      {error && <p style={styles.error} role="alert">{error}</p>}
 
       <div style={styles.buttonRow}>
         <button
@@ -401,7 +406,7 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
           }}
         >
           {saving ? 'Saving...' : 'Continue'}
-          {!saving && <ChevronRight size={14} style={{ marginLeft: 4 }} />}
+          {!saving && <ChevronRight size={14} style={{ marginLeft: 4 }} aria-hidden="true" />}
         </button>
 
         {isLocalCapable && (
@@ -421,11 +426,11 @@ const EnginesStep: React.FC<EnginesStepProps> = ({ onComplete, onBack }) => {
 
       {/* Back button */}
       {onBack && (
-        <button onClick={onBack} style={styles.backButton}>
+        <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
           &#8592; Back
         </button>
       )}
-    </div>
+    </section>
   );
 };
 
@@ -448,20 +453,20 @@ const styles: Record<string, React.CSSProperties> = {
   headerLine: {
     flex: 1,
     height: 1,
-    background: 'linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.2), transparent)',
+    background: 'linear-gradient(90deg, transparent, var(--accent-cyan-20), transparent)',
   },
   headerLabel: {
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.25em',
-    color: 'rgba(0, 240, 255, 0.7)',
+    color: 'var(--accent-cyan-70)',
     fontFamily: "'Space Grotesk', sans-serif",
     whiteSpace: 'nowrap',
   },
   hwCard: {
     width: '100%',
-    background: 'rgba(255, 255, 255, 0.02)',
-    border: '1px solid rgba(0, 240, 255, 0.1)',
+    background: 'var(--onboarding-card)',
+    border: '1px solid var(--accent-cyan-10)',
     borderRadius: 12,
     padding: '20px 24px',
     display: 'flex',
@@ -477,13 +482,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: '0.15em',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontFamily: "'JetBrains Mono', monospace",
     width: 40,
   },
   hwValue: {
     fontSize: 13,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
     flex: 1,
   },
@@ -510,7 +515,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   detectingText: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.3)',
+    color: 'var(--text-30)',
     fontFamily: "'Space Grotesk', sans-serif",
     margin: 0,
   },
@@ -523,7 +528,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   hwSummaryText: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontFamily: "'JetBrains Mono', monospace",
   },
   tierBadge: {
@@ -567,7 +572,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: '0.15em',
-    color: 'rgba(0, 240, 255, 0.6)',
+    color: 'var(--accent-cyan-50)',
     fontFamily: "'Space Grotesk', sans-serif",
     whiteSpace: 'nowrap',
     textTransform: 'uppercase',
@@ -575,7 +580,7 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLine: {
     flex: 1,
     height: 1,
-    background: 'rgba(255, 255, 255, 0.05)',
+    background: 'var(--onboarding-card)',
   },
   keyField: {
     display: 'flex',
@@ -590,24 +595,24 @@ const styles: Record<string, React.CSSProperties> = {
   keyLabel: {
     fontSize: 11,
     fontWeight: 500,
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: 'var(--text-60)',
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   keyConfigured: {
     fontSize: 10,
-    color: 'rgba(0, 240, 255, 0.6)',
+    color: 'var(--accent-cyan-50)',
     display: 'flex',
     alignItems: 'center',
     gap: 4,
   },
   keyInput: {
-    background: 'rgba(255, 255, 255, 0.03)',
-    border: '1px solid rgba(255, 255, 255, 0.06)',
+    background: 'var(--onboarding-card)',
+    border: '1px solid var(--onboarding-card-hover)',
     borderRadius: 6,
     padding: '8px 12px',
     fontSize: 12,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     outline: 'none',
     fontFamily: "'JetBrains Mono', monospace",
     letterSpacing: '0.02em',
@@ -615,12 +620,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   keyDesc: {
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.25)',
+    color: 'var(--text-20)',
     lineHeight: 1.4,
     fontFamily: "'Inter', sans-serif",
   },
   error: {
-    color: '#ef4444',
+    color: 'var(--accent-red)',
     fontSize: 12,
     margin: 0,
   },
@@ -630,13 +635,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   button: {
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     borderRadius: 8,
     padding: '10px 36px',
     fontSize: 13,
     fontWeight: 500,
-    color: 'rgba(0, 240, 255, 0.9)',
+    color: 'var(--accent-cyan-90)',
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -659,7 +664,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   hint: {
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.2)',
+    color: 'var(--text-20)',
     margin: 0,
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
@@ -667,7 +672,7 @@ const styles: Record<string, React.CSSProperties> = {
   backButton: {
     background: 'none',
     border: 'none',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',

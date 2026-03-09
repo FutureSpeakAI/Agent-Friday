@@ -112,22 +112,22 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
   }, [showContinue, fastForward]);
 
   return (
-    <div style={styles.container} onClick={handleContainerClick}>
+    <section style={styles.container} onClick={handleContainerClick} aria-label="Agent boot sequence and reveal">
       {/* Terminal */}
-      <div ref={terminalRef} style={styles.terminal}>
-        <div style={styles.terminalHeader}>
+      <div ref={terminalRef} style={styles.terminal} aria-label="Boot sequence terminal">
+        <div style={styles.terminalHeader} aria-hidden="true">
           <div style={styles.terminalDot} />
-          <div style={{ ...styles.terminalDot, background: '#f59e0b' }} />
-          <div style={{ ...styles.terminalDot, background: '#22c55e' }} />
+          <div style={{ ...styles.terminalDot, background: 'var(--accent-amber)' }} />
+          <div style={{ ...styles.terminalDot, background: 'var(--accent-green)' }} />
           <span style={styles.terminalTitle}>GENESIS PROTOCOL</span>
         </div>
-        <div style={styles.terminalBody}>
+        <div style={styles.terminalBody} role="log" aria-live="polite">
           {BOOT_LINES.slice(0, visibleLines).map((line, i) => (
             <div
               key={i}
               style={{
                 ...styles.terminalLine,
-                color: line.color || 'rgba(255, 255, 255, 0.5)',
+                color: line.color || 'var(--text-50)',
                 opacity: i === visibleLines - 1 ? 1 : 0.7,
               }}
             >
@@ -138,7 +138,7 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
       </div>
 
       {/* Agent name reveal */}
-      <div style={{
+      <div aria-live="polite" style={{
         ...styles.nameContainer,
         opacity: showName ? 1 : 0,
         transform: showName ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.95)',
@@ -148,7 +148,7 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
         <div style={{
           ...styles.agentName,
           textShadow: nameGlow
-            ? '0 0 40px rgba(0, 240, 255, 0.4), 0 0 80px rgba(0, 240, 255, 0.15), 0 0 120px rgba(0, 240, 255, 0.05)'
+            ? '0 0 40px var(--accent-cyan-30), 0 0 80px var(--accent-cyan-20), 0 0 120px var(--accent-cyan-10)'
             : 'none',
           transition: 'text-shadow 1.2s ease',
         }}>
@@ -164,7 +164,7 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
       </div>
 
       {/* Glow orb behind name */}
-      <div style={{
+      <div aria-hidden="true" style={{
         ...styles.glow,
         opacity: nameGlow ? 1 : 0,
         transition: 'opacity 1.5s ease',
@@ -173,6 +173,7 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
       {/* Continue button */}
       <button
         onClick={onComplete}
+        aria-label="Begin using your agent"
         style={{
           ...styles.button,
           opacity: showContinue ? 1 : 0,
@@ -202,7 +203,7 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
           50% { opacity: 0; }
         }
       `}</style>
-    </div>
+    </section>
   );
 };
 
@@ -221,7 +222,7 @@ const styles: Record<string, React.CSSProperties> = {
   terminal: {
     width: '100%',
     background: 'rgba(0, 0, 0, 0.4)',
-    border: '1px solid rgba(255, 255, 255, 0.06)',
+    border: '1px solid var(--onboarding-border)',
     borderRadius: 12,
     overflow: 'hidden',
     maxHeight: 280,
@@ -231,21 +232,21 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     padding: '10px 14px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-    background: 'rgba(255, 255, 255, 0.02)',
+    borderBottom: '1px solid var(--onboarding-card)',
+    background: 'var(--bg-surface)',
   },
   terminalDot: {
     width: 8,
     height: 8,
     borderRadius: '50%',
-    background: '#ef4444',
+    background: 'var(--accent-red)',
   },
   terminalTitle: {
     marginLeft: 8,
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: '0.15em',
-    color: 'rgba(255, 255, 255, 0.3)',
+    color: 'var(--text-30)',
     fontFamily: "'JetBrains Mono', monospace",
   },
   terminalBody: {
@@ -270,19 +271,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: '0.25em',
-    color: 'rgba(0, 240, 255, 0.5)',
+    color: 'var(--accent-cyan-50)',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   agentName: {
     fontSize: 48,
     fontWeight: 300,
     letterSpacing: '0.15em',
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   nameSubtext: {
     fontSize: 13,
-    color: 'rgba(0, 240, 255, 0.4)',
+    color: 'var(--accent-cyan-30)',
     fontFamily: "'Space Grotesk', sans-serif",
     letterSpacing: '0.1em',
   },
@@ -294,18 +295,18 @@ const styles: Record<string, React.CSSProperties> = {
     width: 400,
     height: 400,
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(0, 240, 255, 0.08) 0%, transparent 70%)',
+    background: 'radial-gradient(circle, var(--accent-cyan-10) 0%, transparent 70%)',
     pointerEvents: 'none',
     zIndex: 1,
   },
   button: {
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     borderRadius: 8,
     padding: '14px 64px',
     fontSize: 16,
     fontWeight: 500,
-    color: 'rgba(0, 240, 255, 0.9)',
+    color: 'var(--accent-cyan-90)',
     letterSpacing: '0.1em',
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -315,7 +316,7 @@ const styles: Record<string, React.CSSProperties> = {
   skipHint: {
     fontSize: 11,
     letterSpacing: '0.1em',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontFamily: "'Space Grotesk', sans-serif",
     zIndex: 2,
     cursor: 'pointer',

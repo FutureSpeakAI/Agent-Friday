@@ -223,28 +223,28 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   }, [identityChoices, onComplete]);
 
   return (
-    <div style={{
+    <section style={{
       ...styles.container,
       opacity: fadeIn ? 1 : 0,
       transform: fadeIn ? 'translateY(0)' : 'translateY(16px)',
       transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
-    }}>
-      <div style={styles.header}>
+    }} aria-label="Voice calibration interview">
+      <div style={styles.header} aria-hidden="true">
         <div style={styles.headerLine} />
         <span style={styles.headerLabel}>VOICE CALIBRATION</span>
         <div style={styles.headerLine} />
       </div>
 
       {/* Mic icon */}
-      <div style={{
+      <div aria-hidden="true" style={{
         ...styles.iconWrap,
         borderColor: phase === 'failed'
           ? 'rgba(239, 68, 68, 0.3)'
           : phase === 'active'
-            ? 'rgba(0, 240, 255, 0.3)'
-            : 'rgba(0, 240, 255, 0.15)',
+            ? 'var(--accent-cyan-30)'
+            : 'var(--accent-cyan-20)',
         boxShadow: phase === 'active'
-          ? '0 0 20px rgba(0, 240, 255, 0.1)'
+          ? '0 0 20px var(--accent-cyan-10)'
           : phase === 'failed'
             ? '0 0 20px rgba(239, 68, 68, 0.1)'
             : 'none',
@@ -252,12 +252,12 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       }}>
         <Mic
           size={36}
-          color={phase === 'failed' ? '#ef4444' : phase === 'active' ? '#00f0ff' : 'rgba(0, 240, 255, 0.5)'}
+          color={phase === 'failed' ? 'var(--accent-red)' : phase === 'active' ? 'var(--accent-cyan)' : 'var(--accent-cyan-50)'}
         />
       </div>
 
       {/* Explainer */}
-      <div style={styles.explainer}>
+      <div style={styles.explainer} aria-live="polite">
         <p style={styles.explainerTitle}>
           {phase === 'waiting' || phase === 'connecting'
             ? 'Setting up your interview...'
@@ -279,7 +279,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       </div>
 
       {/* Waveform visualization */}
-      <div style={styles.waveformContainer}>
+      <div style={styles.waveformContainer} aria-hidden="true">
         {waveformBars.map((height, i) => (
           <div
             key={i}
@@ -295,20 +295,20 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       </div>
 
       {/* Status */}
-      <p style={{
+      <p role="status" aria-live="polite" style={{
         ...styles.statusText,
-        color: phase === 'failed' ? 'rgba(239, 68, 68, 0.7)' : 'rgba(0, 240, 255, 0.5)',
+        color: phase === 'failed' ? 'var(--accent-red)' : 'var(--accent-cyan-50)',
       }}>{statusText}</p>
 
       {/* Failed state: Retry + Skip buttons */}
       {phase === 'failed' && (
         <div style={styles.failedButtons}>
-          <button onClick={handleRetry} style={styles.retryButton}>
-            <RefreshCw size={14} />
+          <button onClick={handleRetry} style={styles.retryButton} aria-label="Retry voice connection">
+            <RefreshCw size={14} aria-hidden="true" />
             <span>Retry</span>
           </button>
-          <button onClick={handleSkip} style={styles.skipButton}>
-            <SkipForward size={14} />
+          <button onClick={handleSkip} style={styles.skipButton} aria-label="Skip interview and use default personality">
+            <SkipForward size={14} aria-hidden="true" />
             <span>Skip Interview</span>
           </button>
         </div>
@@ -316,8 +316,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
 
       {/* Skip button (shown in non-failed, non-done states) */}
       {phase !== 'done' && phase !== 'failed' && (
-        <button onClick={handleSkip} style={styles.skipButton}>
-          <SkipForward size={14} />
+        <button onClick={handleSkip} style={styles.skipButton} aria-label="Skip interview and use default personality">
+          <SkipForward size={14} aria-hidden="true" />
           <span>Skip Interview</span>
         </button>
       )}
@@ -332,11 +332,11 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
 
       {/* Back button */}
       {onBack && phase !== 'done' && (
-        <button onClick={onBack} style={styles.backButton}>
+        <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
           &#8592; Back
         </button>
       )}
-    </div>
+    </section>
   );
 };
 
@@ -359,13 +359,13 @@ const styles: Record<string, React.CSSProperties> = {
   headerLine: {
     flex: 1,
     height: 1,
-    background: 'linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.2), transparent)',
+    background: 'linear-gradient(90deg, transparent, var(--accent-cyan-20), transparent)',
   },
   headerLabel: {
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.25em',
-    color: 'rgba(0, 240, 255, 0.7)',
+    color: 'var(--accent-cyan-70)',
     fontFamily: "'Space Grotesk', sans-serif",
     whiteSpace: 'nowrap',
   },
@@ -373,8 +373,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: 72,
     height: 72,
     borderRadius: 20,
-    background: 'rgba(0, 240, 255, 0.06)',
-    border: '1px solid rgba(0, 240, 255, 0.15)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -386,13 +386,13 @@ const styles: Record<string, React.CSSProperties> = {
   explainerTitle: {
     fontSize: 16,
     fontWeight: 500,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     margin: '0 0 8px 0',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   explainerBody: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     lineHeight: 1.6,
     margin: 0,
     fontFamily: "'Inter', sans-serif",
@@ -409,12 +409,12 @@ const styles: Record<string, React.CSSProperties> = {
   waveformBar: {
     width: 4,
     borderRadius: 2,
-    background: 'rgba(0, 240, 255, 0.4)',
+    background: 'var(--accent-cyan-30)',
     transition: 'height 0.08s ease',
   },
   statusText: {
     fontSize: 12,
-    color: 'rgba(0, 240, 255, 0.5)',
+    color: 'var(--accent-cyan-50)',
     fontFamily: "'JetBrains Mono', monospace",
     letterSpacing: '0.05em',
     margin: 0,
@@ -424,10 +424,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     padding: '10px 28px',
-    background: 'rgba(255, 255, 255, 0.03)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
+    background: 'var(--onboarding-card)',
+    border: '1px solid var(--onboarding-border)',
     borderRadius: 8,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'var(--text-50)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -443,10 +443,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     padding: '10px 28px',
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     borderRadius: 8,
-    color: 'rgba(0, 240, 255, 0.9)',
+    color: 'var(--accent-cyan-90)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -454,7 +454,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   hint: {
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.2)',
+    color: 'var(--text-20)',
     margin: 0,
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
@@ -463,7 +463,7 @@ const styles: Record<string, React.CSSProperties> = {
   backButton: {
     background: 'none',
     border: 'none',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',

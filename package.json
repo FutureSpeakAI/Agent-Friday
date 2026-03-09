@@ -46,6 +46,11 @@
         "to": "icon.png"
       }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "FutureSpeakAI",
+      "repo": "Agent-Friday"
+    },
     "directories": {
       "output": "release"
     },
@@ -92,6 +97,7 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "googleapis": "^171.4.0",
     "gpt-tokenizer": "^3.4.0",
