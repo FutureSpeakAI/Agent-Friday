@@ -221,7 +221,7 @@ describe('files IPC handlers', () => {
 
     const result = await invoke('files:list-directory', 'C:\\Users\\test');
     expect(result).toEqual(entries);
-    expect(mocks.listDirectory).toHaveBeenCalledWith('C:\\Users\\test');
+    expect(mocks.listDirectory).toHaveBeenCalledWith('C:\\Users\\test', false);
   });
 
   it('files:list-directory rejects non-string path', async () => {

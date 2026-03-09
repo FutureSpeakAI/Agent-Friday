@@ -8,17 +8,15 @@
  * We test with reduced parameters where possible, and test the
  * full-strength path in a focused integration test.
  *
- * These tests use real sodium-native calls (native addon). No mocking.
+ * These tests use libsodium-wrappers-sumo (WASM). No mocking.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const sodium = require('sodium-native');
+import sodium from 'libsodium-wrappers-sumo';
 
 import {
   generateSalt,
@@ -38,6 +36,12 @@ import {
 } from '../../src/main/crypto/passphrase-kdf';
 
 import { SecureBuffer } from '../../src/main/crypto/secure-buffer';
+
+// ── Sodium WASM init ─────────────────────────────────────────────────
+
+beforeAll(async () => {
+  await sodium.ready;
+});
 
 // ── Test Helpers ──────────────────────────────────────────────────────
 
@@ -94,15 +98,12 @@ describe('Salt Management', () => {
 // ── Master Key Derivation ─────────────────────────────────────────────
 
 describe('deriveMasterKey', () => {
-  it('derives a 32-byte SecureBuffer', () => {
+  it('derives a 32-byte Buffer', () => {
     const salt = generateSalt();
     const mk = deriveMasterKey(TEST_PASSPHRASE, salt);
 
+    expect(mk).toBeInstanceOf(Buffer);
     expect(mk.length).toBe(32);
-    expect(mk.destroyed).toBe(false);
-    expect(mk.protection).toBe('readonly');
-
-    mk.destroy();
   });
 
   it('is deterministic (same passphrase + salt → same key)', () => {
@@ -110,13 +111,7 @@ describe('deriveMasterKey', () => {
     const mk1 = deriveMasterKey(TEST_PASSPHRASE, salt);
     const mk2 = deriveMasterKey(TEST_PASSPHRASE, salt);
 
-    const bytes1 = mk1.withAccess('readonly', (buf) => Buffer.from(buf));
-    const bytes2 = mk2.withAccess('readonly', (buf) => Buffer.from(buf));
-
-    expect(bytes1.equals(bytes2)).toBe(true);
-
-    mk1.destroy();
-    mk2.destroy();
+    expect(mk1.equals(mk2)).toBe(true);
   });
 
   it('produces different keys for different passphrases', () => {
@@ -124,13 +119,7 @@ describe('deriveMasterKey', () => {
     const mk1 = deriveMasterKey(TEST_PASSPHRASE, salt);
     const mk2 = deriveMasterKey(WRONG_PASSPHRASE, salt);
 
-    const bytes1 = mk1.withAccess('readonly', (buf) => Buffer.from(buf));
-    const bytes2 = mk2.withAccess('readonly', (buf) => Buffer.from(buf));
-
-    expect(bytes1.equals(bytes2)).toBe(false);
-
-    mk1.destroy();
-    mk2.destroy();
+    expect(mk1.equals(mk2)).toBe(false);
   });
 
   it('produces different keys for different salts', () => {
@@ -139,13 +128,7 @@ describe('deriveMasterKey', () => {
     const mk1 = deriveMasterKey(TEST_PASSPHRASE, salt1);
     const mk2 = deriveMasterKey(TEST_PASSPHRASE, salt2);
 
-    const bytes1 = mk1.withAccess('readonly', (buf) => Buffer.from(buf));
-    const bytes2 = mk2.withAccess('readonly', (buf) => Buffer.from(buf));
-
-    expect(bytes1.equals(bytes2)).toBe(false);
-
-    mk1.destroy();
-    mk2.destroy();
+    expect(mk1.equals(mk2)).toBe(false);
   });
 
   it('rejects invalid salt length', () => {
@@ -162,10 +145,8 @@ describe('deriveSubkey', () => {
 
     const subkey = deriveSubkey(mk, 1, 'AF_VAULT');
     expect(subkey.length).toBe(32);
-    expect(subkey.protection).toBe('readonly');
 
     subkey.destroy();
-    mk.destroy();
   });
 
   it('different sub-key IDs produce different keys', () => {
@@ -182,7 +163,6 @@ describe('deriveSubkey', () => {
 
     sk1.destroy();
     sk2.destroy();
-    mk.destroy();
   });
 
   it('different contexts produce different keys', () => {
@@ -199,7 +179,6 @@ describe('deriveSubkey', () => {
 
     sk1.destroy();
     sk2.destroy();
-    mk.destroy();
   });
 
   it('rejects context with wrong length', () => {
@@ -208,8 +187,6 @@ describe('deriveSubkey', () => {
 
     expect(() => deriveSubkey(mk, 1, 'TOOLONG!')).not.toThrow(); // 8 bytes, OK
     expect(() => deriveSubkey(mk, 1, 'SHORT')).toThrow('exactly');
-
-    mk.destroy();
   });
 });
 

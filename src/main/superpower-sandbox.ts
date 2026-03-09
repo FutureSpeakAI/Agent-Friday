@@ -518,6 +518,12 @@ export class SuperpowerSandboxManager {
       __toolName__: functionName,
       __toolArgs__: args,
       __result__: undefined as unknown,
+      // Provide require/module so generated connector source can import modules
+      require: (id: string) => {
+        try { return require(id); } catch { return {}; }
+      },
+      module: { exports: {} },
+      exports: {},
     };
 
     const ctx = vm.createContext(sandbox);

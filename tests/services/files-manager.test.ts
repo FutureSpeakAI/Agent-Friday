@@ -54,7 +54,7 @@ function makeDirent(name: string, isDir: boolean): MockDirent {
 }
 
 function mockStat(size: number, mtime: Date): void {
-  mocks.stat.mockResolvedValueOnce({ size, mtime });
+  mocks.stat.mockResolvedValueOnce({ size, mtime, birthtime: mtime });
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

@@ -119,12 +119,12 @@ describe('Vision Pipeline Handlers — Sprint 7 IPC', () => {
         'vision:load-model', 'vision:unload-model', 'vision:is-ready',
         'vision:get-model-info', 'vision:describe', 'vision:answer',
         // Screen Context
-        'vision:screen:capture', 'vision:screen:capture-window',
+        'vision:screen:capture-screen', 'vision:screen:capture-window',
         'vision:screen:capture-region', 'vision:screen:get-context',
         'vision:screen:start-auto-capture', 'vision:screen:stop-auto-capture',
         // Image Understanding
-        'vision:understand:process', 'vision:understand:clipboard',
-        'vision:understand:drop', 'vision:understand:file-select',
+        'vision:understand:process-image', 'vision:understand:process-clipboard',
+        'vision:understand:handle-drop', 'vision:understand:handle-file-select',
         'vision:understand:get-last-result',
       ];
       for (const ch of expected) {
@@ -172,7 +172,7 @@ describe('Vision Pipeline Handlers — Sprint 7 IPC', () => {
 
   describe('Screen Context', () => {
     it('capture returns base64 string', async () => {
-      const result = await invoke('vision:screen:capture');
+      const result = await invoke('vision:screen:capture-screen');
       expect(mocks.captureScreen).toHaveBeenCalled();
       expect(typeof result).toBe('string');
     });
@@ -200,22 +200,22 @@ describe('Vision Pipeline Handlers — Sprint 7 IPC', () => {
   describe('Image Understanding', () => {
     it('processImage delegates with image and question', async () => {
       const b64 = Buffer.from('test').toString('base64');
-      await invoke('vision:understand:process', b64, 'describe this');
+      await invoke('vision:understand:process-image', b64, 'describe this');
       expect(mocks.processImage).toHaveBeenCalledWith(expect.any(Buffer), 'describe this');
     });
 
     it('processClipboard delegates', async () => {
-      await invoke('vision:understand:clipboard');
+      await invoke('vision:understand:process-clipboard');
       expect(mocks.processClipboardImage).toHaveBeenCalled();
     });
 
     it('handleDrop delegates with file array', async () => {
-      await invoke('vision:understand:drop', ['/path/a.png', '/path/b.jpg']);
+      await invoke('vision:understand:handle-drop', ['/path/a.png', '/path/b.jpg']);
       expect(mocks.handleDrop).toHaveBeenCalledWith(['/path/a.png', '/path/b.jpg']);
     });
 
     it('handleDrop rejects non-array', async () => {
-      await expect(invoke('vision:understand:drop', 'not-array')).rejects.toThrow();
+      await expect(invoke('vision:understand:handle-drop', 'not-array')).rejects.toThrow();
     });
 
     it('getLastResult delegates', () => {
