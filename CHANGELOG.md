@@ -4,6 +4,137 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.0.0] — 2026-03-08 — The Polymath Update
+
+### Summary
+
+Agent Friday becomes a **true polymath creative agent** — capable of generating images, videos, music, sound effects, speech, podcasts, and code through a unified creative engine. 7 implementation tracks, 22 phases, 6 new connector modules, 1 new UI app, and a unified creative dispatch router. Every creative domain flows through **The Stage** — a single output feed with domain filtering, pinning, and export.
+
+### Added — Track A: The Voice (TTS/STT Integration)
+
+- **tts-binding.ts** — Google Cloud TTS integration with streaming audio synthesis, voice selection (Neural2/Studio/WaveNet), SSML support, audio format configuration, and automatic chunking for long text
+- **whisper-binding.ts** — Local Whisper STT via whisper.cpp with model management (tiny→large-v3), language detection, audio preprocessing (WAV conversion, resampling), and configurable transcription parameters
+- **Voice pipeline IPC** — Full renderer↔main bridge for voice synthesis and speech recognition
+
+### Added — Track B: The Canvas (ComfyUI Local Image Generation)
+
+- **comfyui.ts** — ComfyUI connector (17 tools) for local Stable Diffusion image generation:
+  - `comfyui_generate` — txt2img with configurable model, sampler, steps, CFG, resolution
+  - `comfyui_img2img` — Image-to-image transformation with denoising strength
+  - `comfyui_list_models` — Enumerate available checkpoint models
+  - `comfyui_list_samplers` — Available sampling algorithms
+  - `comfyui_list_schedulers` — Available noise schedulers
+  - `comfyui_get_history` — Generation history retrieval
+  - `comfyui_get_queue` — Queue status monitoring
+  - `comfyui_interrupt` — Cancel running generation
+  - `comfyui_upload_image` — Upload reference images for img2img
+  - `comfyui_get_image` — Retrieve generated images by filename
+  - Plus 7 workflow management tools for saving, loading, and executing custom ComfyUI workflows
+- **Auto-detection** — Probes localhost:8188 for ComfyUI availability with configurable host/port
+- **Queue polling** — Monitors generation progress with 500ms polling until completion
+
+### Added — Track C: The Director (AI Video Generation)
+
+- **video-gen.ts** — Video generation connector (10 tools) powered by Gemini VEO 3:
+  - `video_generate` — Text-to-video generation with aspect ratio, duration, and person generation controls
+  - `video_generate_from_image` — Image-to-video with reference frame
+  - `video_check_status` — Poll generation jobs for completion
+  - `video_download` — Download completed videos to local storage
+  - `video_list_jobs` — List all generation jobs with status tracking
+  - `video_get_job` — Get detailed job information
+  - `video_cancel` — Cancel in-progress generation
+  - `video_stitch` — FFmpeg-powered video concatenation
+  - `video_convert` — Format conversion (MP4, WebM, MOV, AVI, GIF) with quality control
+  - `video_get_info` — FFprobe metadata extraction (duration, resolution, codec, bitrate)
+- **Gemini API integration** — Uses `generateVideos` endpoint with operation polling
+- **FFmpeg pipeline** — Local video processing for stitching, conversion, and info extraction
+
+### Added — Track D: The Composer (Audio & Music Generation)
+
+- **audio-gen.ts** — Audio generation connector (16 tools) with dual-engine architecture:
+  - **Music generation** (Gemini 2.0 Flash): `audio_generate_music` — text-to-music with style, mood, tempo, duration
+  - **Sound effects** (Gemini 2.0 Flash): `audio_generate_sfx` — procedural sound effect synthesis
+  - **Speech synthesis** (ElevenLabs): `audio_generate_speech` — high-quality TTS with voice selection, stability/similarity boost, style control
+  - **Voice cloning** (ElevenLabs): `audio_clone_voice` — instant voice cloning from audio samples
+  - **Podcast creation**: `audio_create_podcast` — multi-voice podcast generation with script-to-audio pipeline
+  - **Voice listing**: `audio_list_voices` — enumerate available ElevenLabs voices
+  - **Audio mixing** (FFmpeg): `audio_mix` — multi-track audio mixing with volume control
+  - **Audio effects** (FFmpeg): `audio_apply_effects` — reverb, echo, pitch shift, tempo change, normalize, fade, bass/treble boost
+  - **Format conversion** (FFmpeg): `audio_convert` — transcode between MP3, WAV, FLAC, OGG, AAC, M4A with bitrate/sample rate control
+  - **Audio info** (FFprobe): `audio_get_info` — metadata extraction (duration, format, bitrate, channels, sample rate)
+  - **Audio trim** (FFmpeg): `audio_trim` — precise time-based audio cutting
+  - **Audio concatenate** (FFmpeg): `audio_concatenate` — join multiple audio files
+  - Plus 4 management tools for job tracking and listing
+- **ElevenLabs integration** — Full v1 API client for TTS, voice cloning, and voice management
+- **FFmpeg audio pipeline** — 8 audio processing operations via local FFmpeg
+
+### Added — Track E: The Coder (Coding Agent Kit)
+
+- **coding-kit.ts** — Coding agent connector (15 tools) providing full-stack development capabilities:
+  - `coding_read_file` — Read files with line-range support
+  - `coding_write_file` — Create or overwrite files
+  - `coding_edit_file` — Surgical text replacement edits
+  - `coding_list_directory` — Directory listing with metadata
+  - `coding_search_files` — Glob-pattern file discovery
+  - `coding_search_content` — Regex content search across files
+  - `coding_execute_shell` — Shell command execution with timeout
+  - `coding_get_diagnostics` — TypeScript/ESLint error reporting
+  - `coding_ask_ai` — Multi-provider LLM queries (Gemini, Claude, OpenAI, Ollama) for code reasoning
+  - `coding_git_status` / `coding_git_diff` / `coding_git_log` — Git operations
+  - `coding_create_session` / `coding_get_session` / `coding_list_sessions` — Persistent coding sessions with context tracking
+- **GitLoader integration** — Loads external repo ([agent-fridays-coding-kit](https://github.com/FutureSpeakAI/agent-fridays-coding-kit)) for the AI coding agent runtime
+- **Multi-provider AI** — Routes coding questions to the best available LLM based on task complexity
+- **Session management** — Persistent coding sessions with file history, git context, and AI conversation state
+
+### Added — Track F: Polymath Creative Router
+
+- **polymath-router.ts** — Unified creative dispatch connector (4 tools):
+  - `polymath_classify` — Intent classification across 8 creative domains (image, video, music, sfx, speech, podcast, code, document) with confidence scoring and parameter extraction
+  - `polymath_dispatch` — Intelligent routing to the best available tool for any creative request, with automatic parameter mapping and fallback chains
+  - `polymath_capabilities` — Dynamic capability inventory reporting what creative tools are available
+  - `polymath_batch` — Multi-item creative batch processing with sequential execution and result aggregation
+- **Domain classification** — 140+ keyword patterns across 8 domains with compound-intent resolution
+- **Fallback chains** — If the primary tool is unavailable, automatically falls back to alternatives (e.g., ComfyUI → Nano Banana 2 → DALL-E 3 for image generation)
+- **Parameter extraction** — Parses natural language for aspect ratios, resolutions, durations, styles, and model preferences
+
+### Added — Track G: The Stage (Creative Output Presenter)
+
+- **stage-presenter.ts** — Unified creative output feed connector (7 tools):
+  - `stage_push_output` — Record a new creative output with domain, renderer hint, metadata
+  - `stage_list_outputs` — List recent outputs with domain filtering and pin-only mode
+  - `stage_get_output` — Retrieve a single output by ID with full metadata
+  - `stage_clear_outputs` — Clear output history (by domain or all) with pinned-item preservation
+  - `stage_get_stats` — Aggregate statistics across all creative domains
+  - `stage_pin_output` — Pin/unpin outputs to keep them visible
+  - `stage_export_feed` — Export the feed as structured JSON for archival
+- **FridayStage.tsx** — React component for the unified creative UI:
+  - **Create tab** — Prompt input with real-time intent classification and one-click dispatch
+  - **Gallery tab** — Domain-filtered output grid with pin toggle and detail modal
+  - **Pipelines tab** — Active pipeline tracking with progress indicators
+- **Domain-to-renderer mapping** — Automatic render hints (image-viewer, video-player, audio-player, code-block, document-frame) for UI presentation
+- **500-output capacity** — In-memory store with smart eviction preserving pinned items
+
+### Changed
+
+- **registry.ts** — 6 new connector modules registered: comfyui, coding-kit, video-gen, audio-gen, polymath-router, stage-presenter
+- **app-registry.ts** — New "Stage" app (🎭) added to the media category with Ctrl+Shift+G shortcut
+- **git-loader.ts** — Updated for coding-kit repo integration
+- **superpowers-registry.ts** — Updated for new creative domain superpowers
+- **tts-binding.ts** — Enhanced for Polymath voice pipeline integration
+- **whisper-binding.ts** — Enhanced for Polymath speech-to-text pipeline
+- **tier-recommender.ts** — Updated hardware tier recommendations for creative workloads
+
+### Stats
+
+- Total source files: 300+ (was 294)
+- Total tests: **4,701 across 133 test suites** — all passing (was 4,632 across 132)
+- New connector modules: 6 (comfyui, coding-kit, video-gen, audio-gen, polymath-router, stage-presenter)
+- New tools: 69 (17 + 15 + 10 + 16 + 4 + 7)
+- Creative domains: 8 (image, video, music, sfx, speech, podcast, code, document)
+- New React components: 1 (FridayStage)
+
+---
+
 ## [2.3.1] — 2026-03-08
 
 ### Added — Graceful Degradation & Local-First Operation

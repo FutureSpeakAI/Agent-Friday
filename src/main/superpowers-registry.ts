@@ -110,6 +110,24 @@ const DEFAULT_PERMISSIONS: SuperpowerPermissions = {
   maxMemoryMb: 256,
 };
 
+/* ── First-Party Trusted Repos ────────────────────────────────────── */
+//
+// Sprint 6 Track E Phase 1: Known first-party repos get reduced security
+// scanning. These repos are auto-approved regardless of NASSE score because
+// they are maintained by the Agent Friday team and contain expected patterns
+// (shell execution, filesystem access) that are features, not threats.
+//
+
+/**
+ * Set of GitHub owner/repo identifiers that are first-party trusted.
+ * Repos in this list bypass NASSE auto-approval thresholds and are
+ * always approved with a 'low' risk classification and annotated findings.
+ */
+export const TRUSTED_FIRST_PARTY_REPOS = new Set([
+  'FutureSpeakAI/agent-fridays-coding-kit',
+  'FutureSpeakAI/agent-friday',
+]);
+
 /* ── Registry ─────────────────────────────────────────────────────── */
 
 class SuperpowersRegistry {
@@ -438,7 +456,31 @@ class SuperpowersRegistry {
 
   /* ── Basic Safety Scan (heuristic — placeholder for full NASSE) ── */
 
+  /**
+   * Check if a repo is a trusted first-party repo.
+   * Trusted repos get auto-approved with annotated findings.
+   */
+  private isTrustedRepo(repo: LoadedRepo): boolean {
+    const ownerRepo = `${repo.owner}/${repo.name}`;
+    return TRUSTED_FIRST_PARTY_REPOS.has(ownerRepo);
+  }
+
   private runBasicSafetyScan(repo: LoadedRepo): NasseScore {
+    // Sprint 6 Track E: First-party trusted repos get auto-approved
+    if (this.isTrustedRepo(repo)) {
+      console.log(`[Superpowers] NASSE: ${repo.owner}/${repo.name} is a trusted first-party repo — auto-approved`);
+      return {
+        score: 0,
+        risk: 'low',
+        findings: [
+          'First-party trusted repository — auto-approved',
+          'Shell execution, filesystem access, and network calls are expected features',
+        ],
+        scannedAt: Date.now(),
+        autoApproved: true,
+      };
+    }
+
     const findings: string[] = [];
     let score = 0;
 
