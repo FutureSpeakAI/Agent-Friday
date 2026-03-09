@@ -1,19 +1,48 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import path from 'path';
 import { app } from 'electron';
+import { existsSync } from 'node:fs';
+import { platform } from 'node:os';
 
-const CHROME_PATHS = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  process.env.CHROME_PATH || '',
-].filter(Boolean);
+function getChromePaths(): string[] {
+  const envPath = process.env.CHROME_PATH;
+  const paths: string[] = envPath ? [envPath] : [];
+
+  switch (platform()) {
+    case 'win32':
+      paths.push(
+        path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        path.join(process.env['LOCALAPPDATA'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      );
+      break;
+    case 'darwin':
+      paths.push(
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        path.join(process.env.HOME || '', 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+      );
+      break;
+    case 'linux':
+      paths.push(
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/snap/bin/chromium',
+      );
+      break;
+  }
+
+  return paths.filter(Boolean);
+}
 
 function findChrome(): string {
-  const fs = require('fs');
-  for (const p of CHROME_PATHS) {
-    if (fs.existsSync(p)) return p;
+  for (const p of getChromePaths()) {
+    if (existsSync(p)) return p;
   }
-  throw new Error('Chrome not found. Set CHROME_PATH in .env');
+  throw new Error(
+    `Chrome not found on ${platform()}. Set CHROME_PATH environment variable.`
+  );
 }
 
 class BrowserManager {

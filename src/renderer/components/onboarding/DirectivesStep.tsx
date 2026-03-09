@@ -55,9 +55,9 @@ const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete, onBack }) =
   }, []);
 
   return (
-    <div style={styles.container}>
+    <section style={styles.container} aria-label="Asimov's cLaws directives">
       {/* Header */}
-      <div style={styles.header}>
+      <div style={styles.header} aria-hidden="true">
         <div style={styles.headerLine} />
         <span style={styles.headerLabel}>ASIMOV'S cLAWS</span>
         <div style={styles.headerLine} />
@@ -69,23 +69,26 @@ const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete, onBack }) =
       </p>
 
       {/* Laws */}
-      <div style={styles.lawsContainer}>
+      <ol style={styles.lawsContainer} aria-label="Three laws of Agent Friday" role="list">
         {LAWS.map((law, i) => {
           const Icon = law.icon;
           const isVisible = i < visibleLaws;
           return (
-            <div
+            <li
               key={law.number}
+              aria-hidden={!isVisible}
               style={{
                 ...styles.lawCard,
                 opacity: isVisible ? 1 : 0,
                 transform: isVisible ? 'translateY(0)' : 'translateY(20px)',
                 transition: 'all 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
                 borderColor: isVisible ? `${law.color}22` : 'transparent',
+                listStyle: 'none',
               }}
             >
               <div style={styles.lawHeader}>
                 <div
+                  aria-hidden="true"
                   style={{
                     ...styles.lawIconBox,
                     background: `${law.color}15`,
@@ -100,10 +103,10 @@ const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete, onBack }) =
                 </div>
               </div>
               <p style={styles.lawDescription}>{law.description}</p>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       {/* Acknowledge button */}
       <button
@@ -121,11 +124,11 @@ const DirectivesStep: React.FC<DirectivesStepProps> = ({ onComplete, onBack }) =
 
       {/* Back button */}
       {onBack && (
-        <button onClick={onBack} style={styles.backButton}>
+        <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
           &#8592; Back
         </button>
       )}
-    </div>
+    </section>
   );
 };
 
@@ -148,19 +151,19 @@ const styles: Record<string, React.CSSProperties> = {
   headerLine: {
     flex: 1,
     height: 1,
-    background: 'linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.2), transparent)',
+    background: 'linear-gradient(90deg, transparent, var(--accent-cyan-20), transparent)',
   },
   headerLabel: {
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.25em',
-    color: 'rgba(0, 240, 255, 0.7)',
+    color: 'var(--accent-cyan-70)',
     fontFamily: "'Space Grotesk', sans-serif",
     whiteSpace: 'nowrap',
   },
   subtitle: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     textAlign: 'center',
     lineHeight: 1.6,
     maxWidth: 440,
@@ -174,7 +177,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
   },
   lawCard: {
-    background: 'rgba(255, 255, 255, 0.02)',
+    background: 'var(--onboarding-card)',
     border: '1px solid transparent',
     borderRadius: 12,
     padding: '20px 24px',
@@ -203,24 +206,24 @@ const styles: Record<string, React.CSSProperties> = {
   lawTitle: {
     fontSize: 16,
     fontWeight: 500,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   lawDescription: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.45)',
+    color: 'var(--text-40)',
     lineHeight: 1.6,
     margin: 0,
     fontFamily: "'Inter', sans-serif",
   },
   button: {
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     borderRadius: 8,
     padding: '12px 48px',
     fontSize: 14,
     fontWeight: 500,
-    color: 'rgba(0, 240, 255, 0.9)',
+    color: 'var(--accent-cyan-90)',
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -230,7 +233,7 @@ const styles: Record<string, React.CSSProperties> = {
   backButton: {
     background: 'none',
     border: 'none',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',

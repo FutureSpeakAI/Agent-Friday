@@ -18,6 +18,30 @@
   --accent-orange: #f97316;
   --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.3);
   --glow-purple: 0 0 20px rgba(138, 43, 226, 0.3);
+
+  /* Accent opacity scale */
+  --accent-cyan-90: rgba(0, 240, 255, 0.9);
+  --accent-cyan-70: rgba(0, 240, 255, 0.7);
+  --accent-cyan-50: rgba(0, 240, 255, 0.5);
+  --accent-cyan-30: rgba(0, 240, 255, 0.3);
+  --accent-cyan-20: rgba(0, 240, 255, 0.2);
+  --accent-cyan-10: rgba(0, 240, 255, 0.1);
+
+  /* Text opacity scale */
+  --text-60: rgba(255, 255, 255, 0.6);
+  --text-50: rgba(255, 255, 255, 0.5);
+  --text-40: rgba(255, 255, 255, 0.4);
+  --text-30: rgba(255, 255, 255, 0.3);
+  --text-20: rgba(255, 255, 255, 0.2);
+
+  /* Status colors */
+  --accent-amber: #f59e0b;
+
+  /* Onboarding surfaces */
+  --onboarding-bg: #030303;
+  --onboarding-card: rgba(255, 255, 255, 0.03);
+  --onboarding-card-hover: rgba(255, 255, 255, 0.06);
+  --onboarding-border: rgba(255, 255, 255, 0.08);
 }
 
 * {
