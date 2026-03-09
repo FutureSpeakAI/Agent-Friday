@@ -58,7 +58,7 @@ export function registerVisionPipelineHandlers(deps: VisionPipelineHandlerDeps):
 
   // ── Screen Context (screenshots + auto-capture) ───────────────────
 
-  ipcMain.handle('vision:screen:capture', async () => {
+  ipcMain.handle('vision:screen:capture-screen', async () => {
     const buf = await screen.captureScreen();
     return buf ? buf.toString('base64') : null;
   });
@@ -99,25 +99,25 @@ export function registerVisionPipelineHandlers(deps: VisionPipelineHandlerDeps):
 
   // ── Image Understanding (high-level analysis) ─────────────────────
 
-  ipcMain.handle('vision:understand:process', async (_event, imageBase64: unknown, question?: unknown) => {
-    assertString(imageBase64, 'vision:understand:process image', 50_000_000);
+  ipcMain.handle('vision:understand:process-image', async (_event, imageBase64: unknown, question?: unknown) => {
+    assertString(imageBase64, 'vision:understand:process-image image', 50_000_000);
     if (question !== undefined && question !== null) {
-      assertString(question as unknown, 'vision:understand:process question', 2_000);
+      assertString(question as unknown, 'vision:understand:process-image question', 2_000);
     }
     const buf = Buffer.from(imageBase64 as string, 'base64');
     return imageUnderstanding.processImage(buf, question as string | undefined);
   });
 
-  ipcMain.handle('vision:understand:clipboard', async () => {
+  ipcMain.handle('vision:understand:process-clipboard', async () => {
     return imageUnderstanding.processClipboardImage();
   });
 
-  ipcMain.handle('vision:understand:drop', async (_event, files: unknown) => {
-    assertStringArray(files, 'vision:understand:drop files', 20, 1_000);
+  ipcMain.handle('vision:understand:handle-drop', async (_event, files: unknown) => {
+    assertStringArray(files, 'vision:understand:handle-drop files', 20, 1_000);
     return imageUnderstanding.handleDrop(files as string[]);
   });
 
-  ipcMain.handle('vision:understand:file-select', async () => {
+  ipcMain.handle('vision:understand:handle-file-select', async () => {
     return imageUnderstanding.handleFileSelect();
   });
 

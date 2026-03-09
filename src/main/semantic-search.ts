@@ -1,9 +1,13 @@
 /**
  * semantic-search.ts — Semantic Search Engine for Agent Friday.
  *
- * Uses Gemini text-embedding-004 to generate embeddings for all memory
- * tiers (long-term facts, medium-term observations, episodic summaries).
- * Provides cosine similarity search across the full knowledge base.
+ * Generates vector embeddings for all memory tiers (long-term facts,
+ * medium-term observations, episodic summaries) and provides cosine
+ * similarity search across the full knowledge base.
+ *
+ * Embedding strategy: local-first via Ollama (nomic-embed-text, 768-dim),
+ * falls back to Gemini cloud API (text-embedding-004, 768-dim) when
+ * Ollama is unavailable. Both models produce compatible 768-dim vectors.
  *
  * Embeddings are cached in-memory and persisted to embeddings.json.
  * New memories are auto-indexed on save; bulk re-index runs on init.
@@ -13,6 +17,7 @@ import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import { settingsManager } from './settings';
+import { embeddingPipeline } from './embedding-pipeline';
 
 export interface EmbeddingEntry {
   id: string;
@@ -48,8 +53,12 @@ class SemanticSearchEngine {
     this.memoryDir = path.join(app.getPath('userData'), 'memory');
     await fs.mkdir(this.memoryDir, { recursive: true });
     await this.load();
+
+    // Start local embedding pipeline (Ollama). If unavailable, falls back to Gemini cloud.
+    await embeddingPipeline.start();
+
     this.initialized = true;
-    console.log(`[SemanticSearch] Loaded ${this.entries.size} embeddings`);
+    console.log(`[SemanticSearch] Loaded ${this.entries.size} embeddings (local embeddings: ${embeddingPipeline.isReady() ? 'ready' : 'unavailable, using Gemini cloud'})`);
   }
 
   /**
@@ -243,15 +252,26 @@ class SemanticSearchEngine {
   }
 
   /**
-   * Call Gemini embedding API. Supports batch requests.
+   * Generate embeddings for texts. Tries local Ollama pipeline first (no cloud,
+   * no API key needed), then falls back to Gemini cloud if local is unavailable.
    */
   private async getEmbeddings(texts: string[]): Promise<number[][]> {
-    const apiKey = settingsManager.getGeminiApiKey();
-    if (!apiKey) {
-      throw new Error('No Gemini API key configured');
+    // ── Try local Ollama first (sovereign / local-first) ──────────────
+    if (embeddingPipeline.isReady()) {
+      const localResult = await embeddingPipeline.embedBatch(texts);
+      if (localResult && localResult.length === texts.length) {
+        return localResult;
+      }
+      // Local failed mid-request — fall through to cloud
+      console.warn('[SemanticSearch] Local embedding failed, falling back to Gemini cloud');
     }
 
-    // Gemini batchEmbedContents endpoint
+    // ── Fall back to Gemini cloud API ─────────────────────────────────
+    const apiKey = settingsManager.getGeminiApiKey();
+    if (!apiKey) {
+      throw new Error('No embedding source available (Ollama not running, no Gemini API key)');
+    }
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL}:batchEmbedContents`;
 
     const requests = texts.map((text) => ({
