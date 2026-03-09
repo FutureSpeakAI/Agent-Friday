@@ -1,6 +1,6 @@
 # Contributing to Agent Friday
 
-Thank you for your interest in Agent Friday — the world's first AGI OS, governed by Asimov's cLaws. This document explains how to contribute effectively, what we expect from contributors, and how the project is structured.
+Thank you for your interest in Agent Friday — the first fully local, fully encrypted AI operating system, governed by Asimov's cLaws. This document explains how to contribute effectively, what we expect from contributors, and how the project is structured.
 
 ## The One Rule
 

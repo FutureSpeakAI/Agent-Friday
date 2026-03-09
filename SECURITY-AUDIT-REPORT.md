@@ -1,4 +1,4 @@
-# Agent Friday (AGI OS) — cLaw Security Audit Report
+# Agent Friday — cLaw Security Audit Report
 
 **Date:** 2026-02-27
 **Auditor:** Claude (Automated Security Audit)

@@ -3,8 +3,8 @@
 </p>
 
 <h1 align="center">Agent Friday</h1>
-<p align="center"><strong>The World's First AGI OS — An Asimov Agent by FutureSpeak.AI</strong></p>
-<p align="center">Voice-first AI chief of staff with a robust text interface, genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>.</p>
+<p align="center"><strong>The Most Trustworthy AI in the World</strong></p>
+<p align="center">The first fully local, fully encrypted AI operating system — voice-first with a robust text interface, genuine personality, deep memory, trust intelligence, and real autonomy — governed by <a href="#asimovs-claws">Asimov's cLaws</a>, a cryptographic evolution of <a href="#what-is-an-asimov-agent">OpenClaw</a>.</p>
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
@@ -110,7 +110,7 @@ The concept of applying Asimov's Laws to AI agents was popularised by the [OpenC
 | **Interruptibility** | Not addressed | Absolute halt guarantee — "stop" ceases all operations mid-action, no exceptions |
 | **Trust architecture** | Single trust level | 5-tier trust engine (local > owner-dm > approved-dm > group > public) with per-tier tool filtering, rate limiting, and memory isolation |
 | **Gateway protection** | Not applicable | Injection defense for external messaging channels (Telegram, Discord, Slack) with cryptographic pairing and audit logging |
-| **Scope** | Safety layer for any agent | Full AGI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 24 connector modules, polymath creative engine, self-operating computer bridge |
+| **Scope** | Safety layer for any agent | Fully local, fully encrypted AI operating system: voice, memory, trust intelligence, personality evolution, desktop automation, 24 connector modules, polymath creative engine, self-operating computer bridge |
 
 OpenClaw proved that Asimov's Laws could be meaningfully applied to AI agents. Agent Friday proves they can be made airtight — not as an afterthought bolted onto a generic agent, but as the architectural foundation everything else is built on.
 
@@ -172,7 +172,7 @@ The installer lands in `release/`. Supports Windows (NSIS + ZIP), macOS (DMG + Z
 
 ### Voice-First with Robust Text Interface
 
-Agent Friday is a **voice-first** AGI OS with a full-featured text interface. Voice mode streams real-time conversation via Gemini Live; text mode works with any configured provider including fully-local Ollama models. The central UI pairs voice interaction with a full-width chat panel and streaming AI responses:
+Agent Friday is a **voice-first** AI operating system with a full-featured text interface. Voice mode streams real-time conversation via Gemini Live; text mode works with any configured provider including fully-local Ollama models. The central UI pairs voice interaction with a full-width chat panel and streaming AI responses:
 
 - **Always-active text input** — type and send immediately; auto-connects to Gemini on first message
 - **Streaming replies** — see the agent's response arrive in real time, token by token
@@ -490,7 +490,7 @@ agent-friday/
     main/                              # Electron main process (Node.js)
       index.ts                         # App lifecycle, window management, IPC hub
       server.ts                        # Express API + Claude tool loop
-      personality.ts                   # Dynamic personality composition + AGI OS identity
+      personality.ts                   # Dynamic personality composition + agent identity
       onboarding.ts                    # "Her"-inspired intake flow
       settings.ts                      # Persistent configuration store
       memory.ts                        # 3-tier memory system + person mention extraction
@@ -1145,6 +1145,6 @@ Agent Friday is built in collaboration with AI models. We credit every model for
 </p>
 
 <p align="center">
-  <strong>Agent Friday is an Asimov Agent — the AGI OS, built by <a href="https://futurespeak.ai">FutureSpeak.AI</a></strong><br/>
-  Governed by <a href="#asimovs-claws">Asimov's cLaws</a> — safety-first autonomous AI for the real world.
+  <strong>Agent Friday — the most trustworthy AI in the world, built by <a href="https://futurespeak.ai">FutureSpeak.AI</a></strong><br/>
+  Fully local. Fully encrypted. Governed by <a href="#asimovs-claws">Asimov's cLaws</a> — safety-first autonomous AI for the real world.
 </p>

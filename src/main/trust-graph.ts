@@ -1,5 +1,5 @@
 /**
- * trust-graph.ts — Trust Graph Engine for Agent Friday (AGI OS).
+ * trust-graph.ts — Trust Graph Engine for Agent Friday.
  *
  * Models every person in the user's world with multi-dimensional trust scoring,
  * evidence tracking, person resolution (fuzzy alias matching), and hermeneutic

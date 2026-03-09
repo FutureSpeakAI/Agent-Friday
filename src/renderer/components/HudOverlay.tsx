@@ -1,7 +1,7 @@
 /**
  * HudOverlay.tsx — Holographic HUD Overlay
  *
- * Designed by Gemini, wired for Agent Friday's AGI OS.
+ * Designed by Gemini, wired for Agent Friday.
  * Renders the ethereal HUD elements over the 3D desktop visualization:
  *   - Corner optical arcs with glow dots
  *   - Header: title, laws status, clock
@@ -176,7 +176,7 @@ export default function HudOverlay({
           <div style={{ opacity: 0.5, marginTop: 4 }}>PHASE {evolutionIndex + 1} / {EVOLUTION_PATH.length}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div>AGI OS · v2.0.0</div>
+          <div>Agent Friday · v3.1.1</div>
           <a
             className="discord-link"
             href="#"

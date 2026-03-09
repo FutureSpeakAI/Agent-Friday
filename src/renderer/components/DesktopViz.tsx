@@ -1,7 +1,7 @@
 /**
  * DesktopViz.tsx — Holographic Neural Hub Visualization
  *
- * Designed by Gemini, adapted for Agent Friday's AGI OS.
+ * Designed by Gemini, adapted for Agent Friday.
  * 13 evolution structures, mood-reactive, audio-reactive,
  * post-processed with bloom + holographic shader.
  *
