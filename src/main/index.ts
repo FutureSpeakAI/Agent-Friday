@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, session, Tray, Menu, globalShortcut, nativeImage, dialog, ipcMain, shell, crashReporter } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { startServer, flushTextSession } from './server';
@@ -55,6 +55,17 @@ process.on('unhandledRejection', (reason) => {
   console.error('[ERROR] Unhandled promise rejection:', reason instanceof Error ? reason.message : 'Unknown error');
   writeCrashLog('unhandledRejection', reason);
 });
+
+// ── Native Crash Reporter ────────────────────────────────────────────
+// Captures V8 segfaults and native crashes that the JS error handlers above
+// cannot catch. Dumps are stored locally — nothing is sent to a remote server.
+crashReporter.start({
+  productName: 'Agent Friday',
+  submitURL: '',       // empty = local-only crash dumps, no remote server
+  uploadToServer: false,
+  compress: true,
+});
+console.log('[CrashReporter] Dumps directory:', app.getPath('crashDumps'));
 
 // ── TLS Hardening (Crypto Sprint 2) ─────────────────────────────────
 // Ensure TLS certificate verification is NEVER disabled, even if a dependency
@@ -150,6 +161,7 @@ import { initializeHmac, destroyHmac } from './integrity';
 // ── Sprint 3-6 domain modules (wired in Sprint 7) ──────────────────
 import { HardwareProfiler } from './hardware/hardware-profiler';
 import { OllamaLifecycle } from './ollama-lifecycle';
+import { initAutoUpdater } from './updater';
 
 // ── Extracted IPC handler modules ───────────────────────────────────
 import {
@@ -441,6 +453,10 @@ app.whenReady().then(async () => {
   if (mainWindow) {
     sessionHealth.setMainWindow(mainWindow);
   }
+
+  // ── Auto-Updater (GitHub Releases) ────────────────────────────────
+  // Only active in packaged builds — skipped in dev mode.
+  initAutoUpdater();
 
   // ── System Tray ─────────────────────────────────────────────────
   const iconPath = getIconPath();

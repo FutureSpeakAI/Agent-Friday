@@ -102,20 +102,20 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete, onBack })
   }, [canSubmit, handleSubmit]);
 
   return (
-    <div style={{
+    <section style={{
       ...styles.container,
       opacity: fadeIn ? 1 : 0,
       transform: fadeIn ? 'translateY(0)' : 'translateY(16px)',
       transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
-    }}>
-      <div style={styles.header}>
+    }} aria-label="Data sovereignty — Vault setup">
+      <div style={styles.header} aria-hidden="true">
         <div style={styles.headerLine} />
         <span style={styles.headerLabel}>DATA SOVEREIGNTY</span>
         <div style={styles.headerLine} />
       </div>
 
       {/* Icon */}
-      <div style={styles.iconWrap}>
+      <div style={styles.iconWrap} aria-hidden="true">
         {vaultReady ? (
           <ShieldCheck size={36} color="#22c55e" />
         ) : (
@@ -134,31 +134,34 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete, onBack })
 
       {vaultReady ? (
         /* Already initialized */
-        <div style={styles.readyBox}>
-          <ShieldCheck size={18} color="#22c55e" />
+        <div style={styles.readyBox} role="status" aria-live="polite">
+          <ShieldCheck size={18} color="#22c55e" aria-hidden="true" />
           <span style={styles.readyText}>Vault initialized and secured</span>
         </div>
       ) : (
         /* Passphrase form */
         <>
           <div style={styles.fieldGroup}>
-            <label style={styles.fieldLabel}>Create Passphrase</label>
+            <label htmlFor="vault-passphrase" style={styles.fieldLabel}>Create Passphrase</label>
             <input
+              id="vault-passphrase"
               type="password"
               value={passphrase}
               onChange={(e) => setPassphrase(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Minimum 8 characters"
+              aria-describedby="vault-passphrase-hint"
+              aria-required
               autoFocus
               style={{
                 ...styles.input,
-                borderColor: tooShort ? 'rgba(239, 68, 68, 0.3)' : passphrase.length >= MIN_PASSPHRASE_LENGTH ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+                borderColor: tooShort ? 'rgba(239, 68, 68, 0.3)' : passphrase.length >= MIN_PASSPHRASE_LENGTH ? 'var(--accent-cyan-20)' : 'var(--onboarding-border)',
               }}
             />
-            {tooShort && <span style={styles.fieldError}>Must be at least {MIN_PASSPHRASE_LENGTH} characters</span>}
+            {tooShort && <span role="alert" style={styles.fieldError}>Must be at least {MIN_PASSPHRASE_LENGTH} characters</span>}
             {/* Strength indicator */}
             {passphrase.length >= MIN_PASSPHRASE_LENGTH && (
-              <div style={styles.strengthContainer}>
+              <div style={styles.strengthContainer} role="status" aria-live="polite" aria-label={`Passphrase strength: ${strengthMeta.label}`}>
                 <div style={styles.strengthTrack}>
                   <div style={{
                     ...styles.strengthFill,
@@ -175,24 +178,26 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete, onBack })
           </div>
 
           <div style={styles.fieldGroup}>
-            <label style={styles.fieldLabel}>Confirm Passphrase</label>
+            <label htmlFor="vault-passphrase-confirm" style={styles.fieldLabel}>Confirm Passphrase</label>
             <input
+              id="vault-passphrase-confirm"
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Re-enter passphrase"
+              aria-required
               style={{
                 ...styles.input,
-                borderColor: mismatch ? 'rgba(239, 68, 68, 0.3)' : (confirm && !mismatch) ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255,255,255,0.06)',
+                borderColor: mismatch ? 'rgba(239, 68, 68, 0.3)' : (confirm && !mismatch) ? 'var(--accent-cyan-20)' : 'var(--onboarding-border)',
               }}
             />
-            {mismatch && <span style={styles.fieldError}>Passphrases do not match</span>}
+            {mismatch && <span role="alert" style={styles.fieldError}>Passphrases do not match</span>}
           </div>
         </>
       )}
 
-      {error && <p style={styles.error}>{error}</p>}
+      {error && <p role="alert" style={styles.error}>{error}</p>}
 
       <button
         onClick={vaultReady ? onComplete : handleSubmit}
@@ -205,17 +210,17 @@ const SovereigntyStep: React.FC<SovereigntyStepProps> = ({ onComplete, onBack })
         {saving ? 'Initializing Vault...' : vaultReady ? 'Continue' : 'Initialize Vault'}
       </button>
 
-      <p style={styles.hint}>
+      <p id="vault-passphrase-hint" style={styles.hint}>
         If you forget this passphrase, your vault data cannot be recovered.
       </p>
 
       {/* Back button */}
       {onBack && (
-        <button onClick={onBack} style={styles.backButton}>
+        <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
           &#8592; Back
         </button>
       )}
-    </div>
+    </section>
   );
 };
 
@@ -238,13 +243,13 @@ const styles: Record<string, React.CSSProperties> = {
   headerLine: {
     flex: 1,
     height: 1,
-    background: 'linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.2), transparent)',
+    background: 'linear-gradient(90deg, transparent, var(--accent-cyan-20), transparent)',
   },
   headerLabel: {
     fontSize: 11,
     fontWeight: 600,
     letterSpacing: '0.25em',
-    color: 'rgba(0, 240, 255, 0.7)',
+    color: 'var(--accent-cyan-70)',
     fontFamily: "'Space Grotesk', sans-serif",
     whiteSpace: 'nowrap',
   },
@@ -252,8 +257,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: 72,
     height: 72,
     borderRadius: 20,
-    background: 'rgba(0, 240, 255, 0.06)',
-    border: '1px solid rgba(0, 240, 255, 0.15)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -265,13 +270,13 @@ const styles: Record<string, React.CSSProperties> = {
   explainerTitle: {
     fontSize: 16,
     fontWeight: 500,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     margin: '0 0 8px 0',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   explainerBody: {
     fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     lineHeight: 1.6,
     margin: 0,
     fontFamily: "'Inter', sans-serif",
@@ -301,17 +306,17 @@ const styles: Record<string, React.CSSProperties> = {
   fieldLabel: {
     fontSize: 11,
     fontWeight: 500,
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: 'var(--text-50)',
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
   },
   input: {
-    background: 'rgba(255, 255, 255, 0.03)',
-    border: '1px solid rgba(255, 255, 255, 0.06)',
+    background: 'var(--onboarding-card)',
+    border: '1px solid var(--onboarding-border)',
     borderRadius: 8,
     padding: '10px 14px',
     fontSize: 14,
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     outline: 'none',
     fontFamily: "'JetBrains Mono', monospace",
     letterSpacing: '0.05em',
@@ -319,7 +324,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   fieldError: {
     fontSize: 10,
-    color: 'rgba(239, 68, 68, 0.7)',
+    color: 'var(--accent-red)',
     fontFamily: "'Inter', sans-serif",
   },
   strengthContainer: {
@@ -332,7 +337,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     height: 3,
     borderRadius: 2,
-    background: 'rgba(255, 255, 255, 0.06)',
+    background: 'var(--onboarding-card-hover)',
     overflow: 'hidden',
   },
   strengthFill: {
@@ -349,18 +354,18 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'color 0.3s ease',
   },
   error: {
-    color: '#ef4444',
+    color: 'var(--accent-red)',
     fontSize: 12,
     margin: 0,
   },
   button: {
-    background: 'rgba(0, 240, 255, 0.08)',
-    border: '1px solid rgba(0, 240, 255, 0.25)',
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
     borderRadius: 8,
     padding: '12px 48px',
     fontSize: 14,
     fontWeight: 500,
-    color: 'rgba(0, 240, 255, 0.9)',
+    color: 'var(--accent-cyan-90)',
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',
@@ -368,7 +373,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   hint: {
     fontSize: 10,
-    color: 'rgba(255, 255, 255, 0.2)',
+    color: 'var(--text-20)',
     margin: 0,
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
@@ -377,7 +382,7 @@ const styles: Record<string, React.CSSProperties> = {
   backButton: {
     background: 'none',
     border: 'none',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontSize: 13,
     fontFamily: "'Space Grotesk', sans-serif",
     cursor: 'pointer',

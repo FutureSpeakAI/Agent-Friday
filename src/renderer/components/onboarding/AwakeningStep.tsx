@@ -43,9 +43,9 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
   }, [advance]);
 
   return (
-    <div style={styles.container} onClick={handleClick}>
+    <section style={styles.container} onClick={handleClick} aria-label="Agent Friday — Welcome" role="region">
       {/* Particle dots */}
-      <div style={styles.particles}>
+      <div style={styles.particles} aria-hidden="true">
         {Array.from({ length: 40 }).map((_, i) => (
           <div
             key={i}
@@ -63,10 +63,11 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
       </div>
 
       {/* Central glow */}
-      <div style={styles.glow} />
+      <div style={styles.glow} aria-hidden="true" />
 
       {/* Logo symbol */}
       <div
+        aria-hidden="true"
         style={{
           ...styles.logo,
           opacity: phase !== 'logo' ? 1 : 0,
@@ -78,7 +79,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
       </div>
 
       {/* Title */}
-      <div
+      <h1
         style={{
           ...styles.title,
           opacity: phase === 'title' || phase === 'tagline' || phase === 'ready' ? 1 : 0,
@@ -90,10 +91,11 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
         }}
       >
         AGENT FRIDAY
-      </div>
+      </h1>
 
       {/* Tagline */}
-      <div
+      <p
+        aria-live="polite"
         style={{
           ...styles.tagline,
           opacity: phase === 'tagline' || phase === 'ready' ? 1 : 0,
@@ -101,7 +103,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
         }}
       >
         Your sovereign AI companion
-      </div>
+      </p>
 
       {/* Skip hint */}
       <div
@@ -127,7 +129,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
           50% { opacity: 0.25; transform: translate(-50%, -50%) scale(1.1); }
         }
       `}</style>
-    </div>
+    </section>
   );
 };
 
@@ -153,7 +155,7 @@ const styles: Record<string, React.CSSProperties> = {
   particle: {
     position: 'absolute',
     borderRadius: '50%',
-    background: 'rgba(0, 240, 255, 0.4)',
+    background: 'var(--accent-cyan-30)',
     animation: 'onb-particle-float 5s ease-in-out infinite',
   },
   glow: {
@@ -163,21 +165,21 @@ const styles: Record<string, React.CSSProperties> = {
     width: 500,
     height: 500,
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(0, 240, 255, 0.08) 0%, transparent 70%)',
+    background: 'radial-gradient(circle, var(--accent-cyan-10) 0%, transparent 70%)',
     animation: 'onb-glow-pulse 4s ease-in-out infinite',
     pointerEvents: 'none',
   },
   logo: {
     fontSize: 64,
-    color: '#00f0ff',
-    textShadow: '0 0 40px rgba(0, 240, 255, 0.3), 0 0 80px rgba(0, 240, 255, 0.1)',
+    color: 'var(--accent-cyan)',
+    textShadow: '0 0 40px var(--accent-cyan-30), 0 0 80px var(--accent-cyan-10)',
     zIndex: 2,
   },
   title: {
     fontSize: 32,
     fontWeight: 300,
     letterSpacing: '0.3em',
-    color: '#F8FAFC',
+    color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
     zIndex: 2,
   },
@@ -185,7 +187,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 400,
     letterSpacing: '0.15em',
-    color: 'rgba(0, 240, 255, 0.5)',
+    color: 'var(--accent-cyan-50)',
     fontFamily: "'Space Grotesk', sans-serif",
     zIndex: 2,
   },
@@ -194,7 +196,7 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 48,
     fontSize: 11,
     letterSpacing: '0.1em',
-    color: 'rgba(255, 255, 255, 0.4)',
+    color: 'var(--text-40)',
     fontFamily: "'Space Grotesk', sans-serif",
     zIndex: 2,
   },

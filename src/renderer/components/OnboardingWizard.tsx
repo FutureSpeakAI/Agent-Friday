@@ -79,35 +79,36 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
   const showProgress = currentStep !== 'awakening' && currentStep !== 'reveal';
 
   return (
-    <div style={styles.overlay}>
+    <div style={styles.overlay} role="dialog" aria-label="Onboarding wizard" aria-modal="true">
       {/* Progress indicator */}
       {showProgress && (
-        <div style={styles.progressBar}>
+        <nav style={styles.progressBar} aria-label="Onboarding progress">
           {STEPS.slice(1, -1).map((step, i) => {
             const stepIdx = i + 1; // offset by 1 since we skip awakening
             const isActive = currentIndex === stepIdx;
             const isComplete = currentIndex > stepIdx;
             return (
-              <div key={step.key} style={styles.progressStep}>
+              <div key={step.key} style={styles.progressStep} aria-current={isActive ? 'step' : undefined}>
                 <div
+                  aria-hidden="true"
                   style={{
                     ...styles.progressDot,
                     background: isComplete
                       ? 'var(--accent-cyan)'
                       : isActive
-                        ? 'rgba(0, 240, 255, 0.6)'
+                        ? 'var(--accent-cyan-50)'
                         : 'rgba(255, 255, 255, 0.1)',
-                    boxShadow: isActive ? '0 0 8px rgba(0, 240, 255, 0.4)' : 'none',
+                    boxShadow: isActive ? '0 0 8px var(--accent-cyan-30)' : 'none',
                   }}
                 />
                 <span
                   style={{
                     ...styles.progressLabel,
                     color: isComplete
-                      ? 'rgba(0, 240, 255, 0.7)'
+                      ? 'var(--accent-cyan-70)'
                       : isActive
-                        ? 'rgba(0, 240, 255, 0.9)'
-                        : 'rgba(255, 255, 255, 0.2)',
+                        ? 'var(--accent-cyan-90)'
+                        : 'var(--text-20)',
                   }}
                 >
                   {step.label}
@@ -115,11 +116,12 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
               </div>
             );
           })}
-        </div>
+        </nav>
       )}
 
       {/* Step content — fades on transition */}
       <div
+        aria-live="polite"
         style={{
           ...styles.stepContainer,
           opacity: transitioning ? 0 : 1,
@@ -171,7 +173,7 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'fixed',
     inset: 0,
     zIndex: 200,
-    background: '#030308',
+    background: 'var(--onboarding-bg)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
