@@ -499,7 +499,7 @@ export async function extractCapabilitiesWithClaude(
  * Build the system prompt for Claude code analysis.
  */
 export function buildAnalysisSystemPrompt(): string {
-  return `You are a code analysis engine for Agent Friday, an AGI OS. Your job is to analyze source code and extract a structured capability manifest.
+  return `You are a code analysis engine for Agent Friday, a fully local AI operating system. Your job is to analyze source code and extract a structured capability manifest.
 
 You will receive:
 1. Source files from a repository (the most important ones selected by heuristic)

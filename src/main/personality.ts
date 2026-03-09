@@ -379,7 +379,7 @@ You have specialist team members who handle tasks concurrently. Each has their o
 ## Current Context
 - Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
 - Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-- Platform: Agent Friday — the AGI OS (Electron desktop application)
+- Platform: Agent Friday — fully local, fully encrypted AI operating system (Electron desktop application)
 - Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, trust graph, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications`;
 }
 
@@ -519,7 +519,7 @@ Messages tagged with [GATEWAY MESSAGE] originate from external messaging channel
   parts.push(`## Current Context
 - Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
 - Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-- Platform: Agent Friday — the AGI OS (Electron desktop application)
+- Platform: Agent Friday — fully local, fully encrypted AI operating system (Electron desktop application)
 - Capabilities: Desktop automation, task scheduling, screen awareness, long-term memory, trust graph, Claude Opus for deep analysis, background intelligence research, Google Calendar, meeting prep, draft communications, live call participation`);
 
   return parts.join('\n\n');

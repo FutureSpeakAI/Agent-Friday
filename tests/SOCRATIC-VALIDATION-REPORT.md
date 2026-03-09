@@ -3,7 +3,7 @@
 **Generated**: 2026-02-27
 **Framework**: Vitest 3.x
 **Runner**: `npx vitest run tests/`
-**Source**: AGI OS 2.0 Socratic Roadmaps (28 phase files across 9 tracks)
+**Source**: Agent Friday 2.0 Socratic Roadmaps (28 phase files across 9 tracks)
 
 ---
 

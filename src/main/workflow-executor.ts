@@ -1,5 +1,5 @@
 /**
- * workflow-executor.ts — Intelligent Workflow Replay Engine for Agent Friday (AGI OS).
+ * workflow-executor.ts — Intelligent Workflow Replay Engine for Agent Friday.
  *
  * Track V, Phase 2: Transforms recorded workflow templates into executable
  * adaptive replays. Unlike brittle macros, the executor understands INTENT
