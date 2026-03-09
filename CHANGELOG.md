@@ -4,6 +4,35 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.1.1] — 2026-03-09 — The Airtight Update
+
+### Summary
+
+Full test suite hardening — **4,701 tests, 0 failures** across 133 test suites. Fixed vision IPC channel alignment, wired local embedding pipeline, resolved libsodium ESM resolution for Vitest, cleaned up repo by removing 687 tracked files of development artifacts.
+
+### Fixed
+
+- **Vision IPC channel alignment** — Renamed vision pipeline channels (`vision:screen:capture` → `vision:screen:capture-screen`, etc.) to match source-of-truth handler registrations; updated all tests
+- **Local embedding pipeline wiring** — Connected `local-embedding-provider.ts` to the embedding pipeline dispatcher for on-device vector embedding without API keys
+- **libsodium ESM resolution** — Created `scripts/fix-libsodium-esm.js` postinstall patch that copies `libsodium-sumo.mjs` to where ESM relative imports expect it (fixes Vitest/ESM mode failures in vault crypto tests)
+- **Passphrase KDF tests** — Migrated from removed `sodium-native` to `libsodium-wrappers-sumo` with WASM initialization
+- **Adapter engine sandbox** — Added `require`, `module`, `exports` to VM sandbox context for connector execution
+- **File manager mock contracts** — Added missing `birthtime` property to stat mocks
+- **Tier-4 handler assertions** — Fixed argument count in `toggleHidden` handler test
+
+### Changed
+
+- **Repo cleanup** — Removed 687 tracked files:
+  - `socratic-roadmaps/` (134 files) — Development planning artifacts
+  - `tools/` (551 files) — Vendored third-party Python repos (browser-use, self-operating-computer)
+  - `docs/SOCRATIC-FORGE.md` — Development methodology doc
+  - `NEXUS_V2_ARCHITECTURE.md` — Superseded by `ARCHITECTURE.md`
+- **Issue templates** — Moved `bug_report.md`, `feature_request.md`, `config.yml` from root to `.github/ISSUE_TEMPLATE/`
+- **.gitignore** — Cleaned corrupted UTF-16 entries; added exclusions for development planning directories
+- **README.md** — Updated test count to 4,701 tests across 133 suites (100% pass rate)
+
+---
+
 ## [3.1.0] — 2026-03-09 — The Awakening Update
 
 ### Summary
