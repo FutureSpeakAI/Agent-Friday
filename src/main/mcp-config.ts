@@ -51,9 +51,10 @@ const DEFAULT_CONFIG: MCPConfigFile = {
       label: 'Firecrawl',
       command: 'npx',
       args: ['-y', 'firecrawl-mcp'],
-      // No explicit env — FIRECRAWL_API_KEY is inherited from process.env
-      // (populated by settingsManager on startup)
-      enabled: true,
+      // getSanitizedEnv() strips all API keys from subprocess env for security.
+      // We must explicitly pass FIRECRAWL_API_KEY through config.env.
+      env: { FIRECRAWL_API_KEY: process.env.FIRECRAWL_API_KEY || '' },
+      enabled: false, // Requires FIRECRAWL_API_KEY — enable via settings after adding key
     },
   ],
 };

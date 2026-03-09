@@ -251,7 +251,7 @@ function DesktopVizInner({
     composer.addPass(holoPass);
 
     // ── State ────────────────────────────────────────────────────────────────
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
     const structures: Record<string, THREE.Group> = {};
 
     let currentStructureId = EVOLUTION_PATH[evolutionIndex]?.id || 'CUBES';
@@ -808,8 +808,9 @@ function DesktopVizInner({
       animId = requestAnimationFrame(animate);
       if (document.hidden) return;
 
-      const delta = Math.min(clock.getDelta(), 0.1);
-      const elapsed = clock.getElapsedTime() * 0.5;
+      timer.update();
+      const delta = Math.min(timer.getDelta(), 0.1);
+      const elapsed = timer.getElapsed() * 0.5;
       const props = propsRef.current;
 
       // Map semantic state to mood key

@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.invoke('memory:add-immediate', fact, category),
   },
 
+  chatHistory: {
+    load: () => ipcRenderer.invoke('chat-history:load'),
+    save: (messages: Array<{ id: string; role: string; content: string; model?: string; timestamp: number }>) =>
+      ipcRenderer.invoke('chat-history:save', messages),
+    clear: () => ipcRenderer.invoke('chat-history:clear'),
+  },
+
   desktop: {
     listTools: () => ipcRenderer.invoke('desktop:list-tools'),
     callTool: (name: string, args: Record<string, unknown>) =>
@@ -1267,12 +1274,34 @@ contextBridge.exposeInMainWorld('eve', {
   // ── Files ─────────────────────────────────────────────────────────
 
   files: {
-    listDirectory: (dirPath: string) =>
-      ipcRenderer.invoke('files:list-directory', dirPath),
+    listDirectory: (dirPath: string, showHidden?: boolean) =>
+      ipcRenderer.invoke('files:list-directory', dirPath, showHidden),
     open: (filePath: string) =>
       ipcRenderer.invoke('files:open', filePath),
     showInFolder: (filePath: string) =>
       ipcRenderer.invoke('files:show-in-folder', filePath),
+    getStats: (filePath: string) =>
+      ipcRenderer.invoke('files:get-stats', filePath),
+    exists: (filePath: string) =>
+      ipcRenderer.invoke('files:exists', filePath),
+    readText: (filePath: string) =>
+      ipcRenderer.invoke('files:read-text', filePath),
+    rename: (filePath: string, newName: string) =>
+      ipcRenderer.invoke('files:rename', filePath, newName),
+    delete: (filePath: string, useTrash?: boolean) =>
+      ipcRenderer.invoke('files:delete', filePath, useTrash),
+    copy: (srcPath: string, destDir: string) =>
+      ipcRenderer.invoke('files:copy', srcPath, destDir),
+    move: (srcPath: string, destDir: string) =>
+      ipcRenderer.invoke('files:move', srcPath, destDir),
+    createFolder: (parentDir: string, folderName: string) =>
+      ipcRenderer.invoke('files:create-folder', parentDir, folderName),
+    createFile: (parentDir: string, fileName: string) =>
+      ipcRenderer.invoke('files:create-file', parentDir, fileName),
+    copyPath: (filePath: string) =>
+      ipcRenderer.invoke('files:copy-path', filePath),
+    homeDir: () =>
+      ipcRenderer.invoke('files:home-dir'),
   },
 
   // ── Weather ───────────────────────────────────────────────────────

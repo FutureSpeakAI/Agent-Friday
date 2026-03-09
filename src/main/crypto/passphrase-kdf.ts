@@ -7,37 +7,34 @@
  *     │
  *     ▼ Argon2id (opslimit=4, memlimit=256MB)
  *     │
- *     masterKey (32 bytes, SecureBuffer — zeroed after sub-key derivation)
+ *     masterKey (32 bytes — zeroed after sub-key derivation)
  *     │
  *     ├─ crypto_kdf(id=1, ctx="AF_VAULT") → vaultKey    (encrypt all vault files)
  *     ├─ crypto_kdf(id=2, ctx="AF_HMAC_") → hmacKey     (HMAC-SHA256 integrity)
  *     └─ crypto_kdf(id=3, ctx="AF_IDENT") → identityKey (wrap Ed25519/X25519 privkeys)
  *
- * Canary verification:
- *   A known plaintext is encrypted with the vaultKey on first init.
- *   On unlock, we try to decrypt it — if the GCM auth tag fails,
- *   the passphrase was wrong. No verifier hash is stored.
+ * Implementation: Uses libsodium-wrappers-sumo (WASM) for Electron compatibility.
+ * The previous sodium-native (N-API) implementation crashed in Electron because
+ * sodium_malloc's guard-paged memory can't be wrapped into N-API buffers.
  *
  * Security properties:
- *   - masterKey exists in memory for ~100ms (derive sub-keys, then destroy)
- *   - All sub-keys live in SecureBuffer (guard-paged, mlocked, NOACCESS default)
+ *   - masterKey exists in memory for ~ms (derive sub-keys, then destroy)
+ *   - All sub-keys wrapped in SecureBuffer (secure zeroing on destroy)
  *   - Argon2id with 256MB memory makes GPU/ASIC brute-force impractical
  *   - No machine binding, no OS credential store, no recovery backdoor
  */
 
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
+import sodium from 'libsodium-wrappers-sumo';
 import { SecureBuffer } from './secure-buffer';
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const sodium = require('sodium-native');
 
 // ── Constants ─────────────────────────────────────────────────────────
 
 /** Argon2id parameters — opslimit=4 iterations, memlimit=256MB */
 const ARGON2_OPSLIMIT = 4;
 const ARGON2_MEMLIMIT = 256 * 1024 * 1024; // 256 MB
-const ARGON2_ALG = sodium.crypto_pwhash_ALG_ARGON2ID13;
 
 /** KDF sub-key derivation contexts (must be exactly 8 bytes per libsodium spec) */
 const KDF_CTX_VAULT = 'AF_VAULT'; // 8 bytes: vault encryption key
@@ -50,13 +47,10 @@ const SUBKEY_ID_HMAC  = 2;
 const SUBKEY_ID_IDENT = 3;
 
 /** Master key size = crypto_kdf_KEYBYTES (32 bytes for BLAKE2b-based KDF) */
-const MASTER_KEY_BYTES: number = sodium.crypto_kdf_KEYBYTES;
+const MASTER_KEY_BYTES = 32;
 
 /** Sub-key size (32 bytes — suitable for AES-256 or HMAC-SHA256) */
 const SUBKEY_BYTES = 32;
-
-/** Salt size for Argon2id (crypto_pwhash_SALTBYTES = 16) */
-const SALT_BYTES: number = sodium.crypto_pwhash_SALTBYTES;
 
 /** Canary plaintext — a fixed string we encrypt to verify passphrase correctness */
 const CANARY_PLAINTEXT = 'sovereign-vault-canary-v2';
@@ -68,6 +62,21 @@ const META_FILE = '.vault-meta.json';
 
 /** Minimum passphrase length (word count) */
 export const MIN_PASSPHRASE_WORDS = 8;
+
+// ── Sodium initialization ─────────────────────────────────────────────
+
+let sodiumReady = false;
+
+/**
+ * Ensure libsodium WASM is initialized. Must be called before any
+ * crypto operations. Safe to call multiple times (idempotent).
+ */
+export async function ensureSodiumReady(): Promise<void> {
+  if (sodiumReady) return;
+  await sodium.ready;
+  sodiumReady = true;
+  console.log('[PassphraseKDF] libsodium WASM initialized');
+}
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -89,8 +98,8 @@ export interface VaultMeta {
  * Generate a cryptographically random salt for Argon2id.
  */
 export function generateSalt(): Buffer {
-  const salt = Buffer.alloc(SALT_BYTES);
-  sodium.randombytes_buf(salt);
+  const salt = Buffer.alloc(sodium.crypto_pwhash_SALTBYTES);
+  crypto.randomFillSync(salt);
   return salt;
 }
 
@@ -119,64 +128,55 @@ export async function writeSalt(userDataDir: string, salt: Buffer): Promise<void
  * Derive a 32-byte master key from a passphrase + salt using Argon2id.
  *
  * This is the most expensive operation (~1-4 seconds) and the root of the
- * entire key hierarchy. The returned SecureBuffer is in READONLY state.
+ * entire key hierarchy. Returns a Buffer (caller must zero it after use).
  *
- * IMPORTANT: The caller MUST destroy the master key after deriving sub-keys.
+ * IMPORTANT: The caller MUST zero the returned buffer after deriving sub-keys.
  * The helper `deriveAllKeys()` handles this automatically.
  */
-export function deriveMasterKey(passphrase: string, salt: Buffer): SecureBuffer {
-  if (salt.length !== SALT_BYTES) {
-    throw new Error(`[PassphraseKDF] Salt must be ${SALT_BYTES} bytes, got ${salt.length}`);
+export function deriveMasterKey(passphrase: string, salt: Buffer): Buffer {
+  if (salt.length !== sodium.crypto_pwhash_SALTBYTES) {
+    throw new Error(`[PassphraseKDF] Salt must be ${sodium.crypto_pwhash_SALTBYTES} bytes, got ${salt.length}`);
   }
 
-  // Allocate secure output buffer
-  const masterBuf = SecureBuffer.alloc(MASTER_KEY_BYTES);
-
-  // Unlock for write
-  masterBuf.unlock();
-
-  // Argon2id: passphrase + salt → masterKey
-  // crypto_pwhash(output, password, salt, opslimit, memlimit, alg)
-  sodium.crypto_pwhash(
-    masterBuf.inner,
-    Buffer.from(passphrase, 'utf-8'),
+  // crypto_pwhash(keyLength, password, salt, opsLimit, memLimit, alg) → Uint8Array
+  const masterKeyArr = sodium.crypto_pwhash(
+    MASTER_KEY_BYTES,
+    passphrase,
     salt,
     ARGON2_OPSLIMIT,
     ARGON2_MEMLIMIT,
-    ARGON2_ALG,
+    sodium.crypto_pwhash_ALG_ARGON2ID13,
   );
 
-  // Leave in READONLY state
-  masterBuf.readonly();
-  return masterBuf;
+  return Buffer.from(masterKeyArr);
 }
 
 /**
  * Derive a sub-key from the master key using BLAKE2b-based KDF.
  *
- * @param masterKey - The 32-byte master key (must be in READONLY or READWRITE state)
+ * @param masterKey - The 32-byte master key
  * @param subkeyId - Unique sub-key identifier (uint64)
  * @param context - 8-byte context string (e.g., "AF_VAULT")
- * @returns SecureBuffer in READONLY state
+ * @returns SecureBuffer containing the sub-key
  */
-export function deriveSubkey(masterKey: SecureBuffer, subkeyId: number, context: string): SecureBuffer {
+export function deriveSubkey(masterKey: Buffer, subkeyId: number, context: string): SecureBuffer {
   if (context.length !== sodium.crypto_kdf_CONTEXTBYTES) {
     throw new Error(`[PassphraseKDF] KDF context must be exactly ${sodium.crypto_kdf_CONTEXTBYTES} bytes`);
   }
 
-  const subkey = SecureBuffer.alloc(SUBKEY_BYTES);
-  subkey.unlock();
-
-  // crypto_kdf_derive_from_key(subkey, subkeyId, ctx, masterKey)
-  sodium.crypto_kdf_derive_from_key(
-    subkey.inner,
+  // crypto_kdf_derive_from_key(subkeyLen, subkeyId, ctx, key) → Uint8Array
+  const subkeyArr = sodium.crypto_kdf_derive_from_key(
+    SUBKEY_BYTES,
     subkeyId,
-    Buffer.from(context, 'ascii'),
-    masterKey.inner,  // masterKey must be readable
+    context,
+    masterKey,
   );
 
-  subkey.readonly();
-  return subkey;
+  // Wrap in SecureBuffer (copies data, then wipes the Uint8Array source)
+  const subkeyBuf = Buffer.from(subkeyArr);
+  const sb = SecureBuffer.from(subkeyBuf);
+  // SecureBuffer.from already wipes subkeyBuf
+  return sb;
 }
 
 /**
@@ -185,7 +185,9 @@ export function deriveSubkey(masterKey: SecureBuffer, subkeyId: number, context:
  * This is the primary entry point. The master key exists in memory for
  * only the duration of three BLAKE2b KDF calls (~microseconds).
  *
- * @returns All three derived keys in READONLY state
+ * IMPORTANT: Caller must await ensureSodiumReady() before calling this.
+ *
+ * @returns All three derived keys in SecureBuffers
  */
 export function deriveAllKeys(passphrase: string, salt: Buffer): DerivedKeys {
   const t0 = Date.now();
@@ -195,13 +197,14 @@ export function deriveAllKeys(passphrase: string, salt: Buffer): DerivedKeys {
 
   console.log(`[PassphraseKDF] Argon2id completed in ${Date.now() - t0}ms — deriving sub-keys...`);
 
-  // Master key is in READONLY state — derive all sub-keys
+  // Derive all sub-keys from master key
   const vaultKey = deriveSubkey(masterKey, SUBKEY_ID_VAULT, KDF_CTX_VAULT);
   const hmacKey = deriveSubkey(masterKey, SUBKEY_ID_HMAC, KDF_CTX_HMAC);
   const identityKey = deriveSubkey(masterKey, SUBKEY_ID_IDENT, KDF_CTX_IDENT);
 
   // Destroy master key — it is never needed again
-  masterKey.destroy();
+  crypto.randomFillSync(masterKey);
+  masterKey.fill(0);
 
   console.log(`[PassphraseKDF] All keys derived in ${Date.now() - t0}ms (master key destroyed)`);
 
@@ -214,19 +217,16 @@ export function deriveAllKeys(passphrase: string, salt: Buffer): DerivedKeys {
  * Create a canary file: encrypt known plaintext with the vault key.
  * Used to verify passphrase on subsequent unlocks.
  *
- * Format: [24-byte nonce][16-byte MAC][ciphertext]
+ * Format: [24-byte nonce][MAC + ciphertext]
  * Uses XSalsa20-Poly1305 (crypto_secretbox) — the libsodium gold standard.
  */
 export async function createCanary(vaultKey: SecureBuffer, userDataDir: string): Promise<void> {
   const plaintext = Buffer.from(CANARY_PLAINTEXT, 'utf-8');
-  const nonce = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
-  sodium.randombytes_buf(nonce);
-
-  const ciphertext = Buffer.alloc(plaintext.length + sodium.crypto_secretbox_MACBYTES);
+  const nonce = Buffer.from(sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES));
 
   // Borrow vaultKey for encryption
-  vaultKey.withAccess('readonly', (key) => {
-    sodium.crypto_secretbox_easy(ciphertext, plaintext, nonce, key);
+  const ciphertext = vaultKey.withAccess('readonly', (key) => {
+    return Buffer.from(sodium.crypto_secretbox_easy(plaintext, nonce, key));
   });
 
   // Write [nonce][ciphertext] to disk
@@ -251,23 +251,23 @@ export async function verifyCanary(vaultKey: SecureBuffer, userDataDir: string):
     return false; // No canary = not initialized
   }
 
-  const nonceLen: number = sodium.crypto_secretbox_NONCEBYTES;
+  const nonceLen = sodium.crypto_secretbox_NONCEBYTES;
   if (canaryData.length < nonceLen + sodium.crypto_secretbox_MACBYTES) {
     return false; // Corrupted
   }
 
   const nonce = canaryData.subarray(0, nonceLen);
   const ciphertext = canaryData.subarray(nonceLen);
-  const plaintext = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
 
   // Borrow vaultKey for decryption
-  const ok = vaultKey.withAccess('readonly', (key) => {
-    return sodium.crypto_secretbox_open_easy(plaintext, ciphertext, nonce, key);
-  });
-
-  if (!ok) return false; // Auth tag failed → wrong passphrase
-
-  return plaintext.toString('utf-8') === CANARY_PLAINTEXT;
+  try {
+    const plaintext = vaultKey.withAccess('readonly', (key) => {
+      return Buffer.from(sodium.crypto_secretbox_open_easy(ciphertext, nonce, key));
+    });
+    return plaintext.toString('utf-8') === CANARY_PLAINTEXT;
+  } catch {
+    return false; // Auth tag failed → wrong passphrase
+  }
 }
 
 // ── Vault Metadata ────────────────────────────────────────────────────
@@ -352,13 +352,10 @@ export function validatePassphrase(passphrase: string): string | null {
  * Returns: [24-byte nonce][MAC + ciphertext]
  */
 export function secretboxEncrypt(plaintext: Buffer, key: SecureBuffer): Buffer {
-  const nonce = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
-  sodium.randombytes_buf(nonce);
+  const nonce = Buffer.from(sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES));
 
-  const ciphertext = Buffer.alloc(plaintext.length + sodium.crypto_secretbox_MACBYTES);
-
-  key.withAccess('readonly', (k) => {
-    sodium.crypto_secretbox_easy(ciphertext, plaintext, nonce, k);
+  const ciphertext = key.withAccess('readonly', (k) => {
+    return Buffer.from(sodium.crypto_secretbox_easy(plaintext, nonce, k));
   });
 
   return Buffer.concat([nonce, ciphertext]);
@@ -369,18 +366,20 @@ export function secretboxEncrypt(plaintext: Buffer, key: SecureBuffer): Buffer {
  * Returns null if decryption fails (wrong key or tampered data).
  */
 export function secretboxDecrypt(data: Buffer, key: SecureBuffer): Buffer | null {
-  const nonceLen: number = sodium.crypto_secretbox_NONCEBYTES;
+  const nonceLen = sodium.crypto_secretbox_NONCEBYTES;
   if (data.length < nonceLen + sodium.crypto_secretbox_MACBYTES) {
     return null;
   }
 
   const nonce = data.subarray(0, nonceLen);
   const ciphertext = data.subarray(nonceLen);
-  const plaintext = Buffer.alloc(ciphertext.length - sodium.crypto_secretbox_MACBYTES);
 
-  const ok = key.withAccess('readonly', (k) => {
-    return sodium.crypto_secretbox_open_easy(plaintext, ciphertext, nonce, k);
-  });
-
-  return ok ? plaintext : null;
+  try {
+    const plaintext = key.withAccess('readonly', (k) => {
+      return Buffer.from(sodium.crypto_secretbox_open_easy(ciphertext, nonce, k));
+    });
+    return plaintext;
+  } catch {
+    return null; // Auth tag failed
+  }
 }

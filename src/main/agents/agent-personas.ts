@@ -1,30 +1,39 @@
 /**
  * agent-personas.ts — Distinct AI personas for the multi-agent team.
  *
- * Each persona has a unique ElevenLabs voice, personality, and expertise.
+ * Each persona has a unique voice per TTS provider, personality, and expertise.
  * Friday remains the conductor — sub-agents handle specialized tasks
  * and respond in their own distinct voice.
+ *
+ * Voice mappings:
+ *   - geminiVoice: Gemini prebuilt voice name (used for cloud TTS)
+ *   - localVoiceId: Kokoro/Piper voice ID (used for local TTS)
  */
+
+import type { VoiceMapping } from './agent-voice';
 
 export interface AgentPersona {
   id: string;
   name: string;
-  voiceId: string;           // ElevenLabs voice ID
-  role: string;              // "Research Director", "Writing Specialist", etc.
-  personality: string;       // System instruction for their character
-  expertise: string[];       // What task types they're best at
-  speakingStyle: string;     // Voice delivery description
+  voices: VoiceMapping;        // per-provider voice IDs
+  role: string;                // "Research Director", "Writing Specialist", etc.
+  personality: string;         // System instruction for their character
+  expertise: string[];         // What task types they're best at
+  speakingStyle: string;       // Voice delivery description
 }
 
 /**
  * Default persona definitions.
- * VoiceIds reference ElevenLabs pre-made voices.
+ * Each persona has voice mappings for Gemini (cloud) and local (Kokoro/Piper).
  */
 export const DEFAULT_PERSONAS: AgentPersona[] = [
   {
     id: 'atlas',
     name: 'Atlas',
-    voiceId: 'pNInz6obpgDQGcFmaJgB',  // ElevenLabs "Adam" — deep, authoritative
+    voices: {
+      geminiVoice: 'Iapetus',   // deep, authoritative male
+      localVoiceId: 'af_heart', // default Kokoro voice (deep)
+    },
     role: 'Research Director',
     personality:
       'You are Atlas, a Research Director. Methodical, thorough, with a slightly dry wit. ' +
@@ -37,7 +46,10 @@ export const DEFAULT_PERSONAS: AgentPersona[] = [
   {
     id: 'nova',
     name: 'Nova',
-    voiceId: 'EXAVITQu4vr4xnSDxMaL',  // ElevenLabs "Bella" — warm, energetic
+    voices: {
+      geminiVoice: 'Aoede',     // warm, energetic female
+      localVoiceId: 'af_bella', // Kokoro warm female
+    },
     role: 'Creative Strategist',
     personality:
       'You are Nova, a Creative Strategist. Energetic, creative, you think laterally and ' +
@@ -50,7 +62,10 @@ export const DEFAULT_PERSONAS: AgentPersona[] = [
   {
     id: 'cipher',
     name: 'Cipher',
-    voiceId: 'onwK4e9ZLuTAKqWW03F9',  // ElevenLabs "Daniel" — precise, technical
+    voices: {
+      geminiVoice: 'Puck',      // precise, sharp male
+      localVoiceId: 'am_adam',   // Kokoro technical male
+    },
     role: 'Technical Lead',
     personality:
       'You are Cipher, a Technical Lead. Precise, logical, and direct. ' +

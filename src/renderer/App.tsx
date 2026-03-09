@@ -9,7 +9,7 @@ import TextInput from './components/TextInput';
 import QuickActions from './components/QuickActions';
 import ConnectionOverlay from './components/ConnectionOverlay';
 import AgentCreation from './components/AgentCreation';
-import WelcomeGate from './components/WelcomeGate';
+import OnboardingWizard from './components/OnboardingWizard';
 import PassphraseGate from './components/PassphraseGate';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
@@ -194,8 +194,10 @@ export default function App() {
   const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
   const [voiceMode, setVoiceMode] = useState(true);
   const [appPhase, setAppPhase] = useState<
-    'checking' | 'passphrase-gate' | 'gate' | 'onboarding' | 'customizing' | 'creating' | 'feature-setup' | 'normal'
+    'checking' | 'passphrase-gate' | 'onboarding' | 'creating' | 'normal'
   >('checking');
+  const appPhaseRef = useRef(appPhase);
+  useEffect(() => { appPhaseRef.current = appPhase; }, [appPhase]);
   const [agentName, setAgentName] = useState('');
   const [evolutionState, setEvolutionState] = useState<{
     sessionCount: number; primaryHue: number; secondaryHue: number;
@@ -252,6 +254,15 @@ export default function App() {
       const name = String(config.agentName || 'Agent');
       const voice = String(config.agentVoice || 'Kore');
       setAgentName(name);
+
+      // If we're in the onboarding wizard, let the wizard handle the transition
+      // (InterviewStep listens for this event and advances to RevealStep)
+      if (appPhaseRef.current === 'onboarding') {
+        window.dispatchEvent(new CustomEvent('agent-finalized', {
+          detail: { agentName: name, agentVoice: voice },
+        }));
+        return;
+      }
 
       // Disconnect the current session (Setup Assistant)
       geminiLive.disconnect();
@@ -332,7 +343,7 @@ export default function App() {
     },
   });
 
-  const connectToGemini = useCallback(async () => {
+  const connectToGemini = useCallback(async (identityContext?: string) => {
     setStatus('Connecting...');
 
     // 1. Determine if this is onboarding or a normal session
@@ -397,8 +408,11 @@ export default function App() {
             // First run — nudge Gemini to begin the "Her"-style intake process
             // The system instruction already contains the full screenplay flow
             console.log('[Agent] First run detected — starting "Her" onboarding intake');
+            const contextPreamble = identityContext
+              ? `[CONTEXT] The user already chose these identity settings in the wizard: ${identityContext}. Do NOT re-ask their name or voice preferences — skip straight to the personal intake questions.\n\n`
+              : '';
             geminiLive.sendTextToGemini(
-              '[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.'
+              `${contextPreamble}[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.`
             );
           } else {
             // Normal session — check for intelligence briefings
@@ -435,6 +449,12 @@ export default function App() {
       setWakeWordEnabled(s.wakeWordEnabled === true);
     }).catch(() => {});
   }, []);
+
+  // Persist chat messages to disk when they change
+  useEffect(() => {
+    if (messages.length === 0) return; // Don't overwrite with empty on initial render
+    window.eve.chatHistory.save(messages).catch(() => {});
+  }, [messages]);
 
   // Compute API connectivity status — updates with connection state + settings
   useEffect(() => {
@@ -505,6 +525,14 @@ export default function App() {
           setAgentName(config.agentName || '');
         } catch (e) { console.warn('[Agent] Agent config load failed:', e); }
 
+        // Restore chat history from last session
+        try {
+          const savedMessages = await window.eve.chatHistory.load();
+          if (!cancelled && savedMessages.length > 0) {
+            setMessages(savedMessages as ChatMessage[]);
+          }
+        } catch (e) { console.warn('[Agent] Chat history restore failed:', e); }
+
         // Load and increment personality evolution (visual uniqueness grows each session)
         try {
           const evoState = await window.eve.evolution.incrementSession();
@@ -518,23 +546,8 @@ export default function App() {
         return;
       }
 
-      // New user — check if API keys exist
-      let hasKeys = false;
-      try {
-        const settings = await window.eve.settings.get();
-        hasKeys = !!settings.hasGeminiKey && !!settings.hasAnthropicKey;
-      } catch (e) { console.warn('[Agent] Settings check failed:', e); }
-
-      if (cancelled) return;
-
-      if (!hasKeys) {
-        // No keys — show the WelcomeGate
-        setAppPhase('gate');
-      } else {
-        // Keys exist but onboarding not done — start onboarding
-        setAppPhase('onboarding');
-        connectToGemini();
-      }
+      // New user — go straight to onboarding wizard (handles keys, vault, identity, etc.)
+      setAppPhase('onboarding');
     })();
 
     return () => {
@@ -1013,31 +1026,43 @@ export default function App() {
   return (
     <MoodProvider semanticState={semanticState}>
     <div style={styles.container}>
-      {/* PassphraseGate — vault must be unlocked before anything else */}
+      {/* PassphraseGate — vault must be unlocked before anything else (returning users) */}
       {appPhase === 'passphrase-gate' && (
         <PassphraseGate
-          onUnlocked={() => {
-            // Vault is unlocked, Phase B boot complete — proceed to API key gate
-            setAppPhase('gate');
+          onUnlocked={async () => {
+            // Vault is unlocked — check if onboarding is done
+            let done = false;
+            try { done = await window.eve.onboarding.isComplete(); } catch {}
+            if (done) {
+              setAppPhase('normal');
+              try {
+                const config = await window.eve.onboarding.getAgentConfig();
+                setAgentName(config.agentName || '');
+              } catch {}
+              connectToGemini();
+            } else {
+              setAppPhase('onboarding');
+            }
           }}
         />
       )}
 
-      {/* WelcomeGate — shown when API keys are missing */}
-      {appPhase === 'gate' && (
-        <WelcomeGate
-          onKeysReady={() => {
-            setAppPhase('onboarding');
-            connectToGemini();
+      {/* OnboardingWizard — cinematic first-run wizard (replaces WelcomeGate) */}
+      {appPhase === 'onboarding' && (
+        <OnboardingWizard
+          onComplete={(name) => {
+            setAgentName(name);
+            setAppPhase('creating');
           }}
+          connectToGemini={connectToGemini}
         />
       )}
 
       {/* DesktopViz — holographic 3D base layer, hidden during gate/onboarding/customizing */}
       <div style={{
-        opacity: ['creating', 'feature-setup', 'normal'].includes(appPhase) ? 1 : 0,
+        opacity: ['creating', 'normal'].includes(appPhase) ? 1 : 0,
         transition: 'opacity 2s ease-in',
-        pointerEvents: ['vault-keyphrase', 'gate', 'onboarding', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
+        pointerEvents: ['passphrase-gate', 'onboarding', 'checking'].includes(appPhase) ? 'none' as const : 'auto' as const,
         position: 'absolute' as const,
         inset: 0,
       }}>
@@ -1057,7 +1082,7 @@ export default function App() {
       <div style={styles.dragBar} />
 
       {/* ─── HudOverlay — holographic HUD with API panel, app tray, evolution controls ─── */}
-      {!['checking', 'vault-keyphrase', 'gate'].includes(appPhase) && (
+      {!['checking', 'passphrase-gate', 'onboarding'].includes(appPhase) && (
         <HudOverlay
           apiStatus={apiStatus}
           semanticState={semanticState}
@@ -1069,8 +1094,8 @@ export default function App() {
         />
       )}
 
-      {/* Main chat panel — front and center, hidden during gate/checking */}
-      {!['checking', 'gate'].includes(appPhase) && (
+      {/* Main chat panel — front and center, hidden during gate/checking/onboarding */}
+      {!['checking', 'passphrase-gate', 'onboarding'].includes(appPhase) && (
       <div style={styles.main}>
         <div style={styles.chatPanel}>
           {/* Chat messages area */}
@@ -1128,7 +1153,41 @@ export default function App() {
 
       {/* Agent creation animation overlay */}
       {appPhase === 'creating' && (
-        <AgentCreation agentName={agentName} />
+        <AgentCreation
+          agentName={agentName}
+          onComplete={async () => {
+            // Reconnect with the agent's configured voice & personality
+            try {
+              const newInstruction = await window.eve.getLiveSystemInstruction();
+              let voiceName = 'Kore';
+              try {
+                const cfg = await window.eve.onboarding.getAgentConfig();
+                voiceName = String(cfg.agentVoice || 'Kore');
+              } catch { /* use default */ }
+
+              let tools: Array<{ name: string; description?: string; parameters?: unknown }> = [];
+              try { tools = await window.eve.desktop.listTools(); } catch {}
+              try {
+                const fsTools = await window.eve.featureSetup.getToolDeclarations();
+                tools = [...tools, ...fsTools];
+              } catch {}
+
+              await geminiLive.connect(newInstruction, tools, voiceName);
+              setStatus('Connected');
+              setAppPhase('normal');
+
+              // First greeting
+              try {
+                const greeting = await window.eve.onboarding.getFirstGreeting();
+                if (greeting) setTimeout(() => geminiLive.sendTextToGemini(greeting), 1500);
+              } catch {}
+            } catch (err) {
+              console.error('[Agent] Reconnect after creation failed:', err);
+              setConnectionError(err instanceof Error ? err.message : String(err));
+              setAppPhase('normal');
+            }
+          }}
+        />
       )}
 
       {/* Connection error overlay */}

@@ -14,6 +14,10 @@ import { settingsManager } from './settings';
 import { llmClient, type ChatMessage, type ToolDefinition } from './llm-client';
 import { integrityManager } from './integrity';
 import { assertMessageArray } from './ipc/validate';
+import { memoryManager } from './memory';
+import { episodicMemory } from './episodic-memory';
+import { personalityCalibration } from './personality-calibration';
+import { encode } from 'gpt-tokenizer';
 
 /**
  * cLaw Security Fix (CRITICAL-001): Safe mode tool filtering.
@@ -34,11 +38,89 @@ function filterToolsForSafeMode<T extends { name: string }>(tools: T[]): T[] {
   return tools.filter(t => SAFE_MODE_ALLOWED_TOOLS.has(t.name));
 }
 
-dotenv.config();
+dotenv.config({ override: true });
+
+// ── Experience Loop: Text chat session tracking for episodic memory ──────────
+// A "session" is a burst of conversation. When the user goes quiet for
+// SESSION_TIMEOUT_MS, we seal the session into an episode.
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes of silence = new session
+
+interface TextChatSession {
+  startTime: number;
+  lastActivity: number;
+  transcript: Array<{ role: string; text: string }>;
+}
+
+let activeTextSession: TextChatSession | null = null;
+
+/** Flush the current text session into an episode (if it has substance). */
+async function flushTextSession(): Promise<void> {
+  if (!activeTextSession || activeTextSession.transcript.length < 2) {
+    activeTextSession = null;
+    return;
+  }
+  try {
+    const episode = await episodicMemory.createFromSession(
+      activeTextSession.transcript,
+      activeTextSession.startTime,
+      Date.now()
+    );
+    if (episode) {
+      console.log(`[Server/Experience] Episode created: "${episode.summary.slice(0, 60)}" (${activeTextSession.transcript.length} turns)`);
+    }
+  } catch (err) {
+    console.error('[Server/Experience] Episode creation failed:', err instanceof Error ? err.message : 'Unknown error');
+  }
+  activeTextSession = null;
+}
+
+// Export so index.ts can flush on app quit
+export { flushTextSession };
 
 /** Per-session token — only the Electron main process knows this. */
 let sessionToken = '';
 export function getSessionToken(): string { return sessionToken; }
+
+// ── Context window management ────────────────────────────────────────────
+// Trim conversation history to fit within model context limits.
+// Keeps the most recent messages, dropping oldest first.
+// Reserve budget for system prompt (~4k) + new message (~1k) + response (~4k).
+const MAX_HISTORY_TOKENS = 90_000; // ~90k leaves room in a 128k context window
+
+function trimHistoryToFit(
+  history: Array<{ role: string; content: string }>
+): Array<{ role: string; content: string }> {
+  if (history.length === 0) return history;
+
+  // Fast path: estimate with char count first (1 token ≈ 4 chars)
+  const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
+  if (totalChars / 4 < MAX_HISTORY_TOKENS) return history;
+
+  // Slow path: actual tokenization, drop oldest messages until under budget
+  let tokenCount = 0;
+  const tokenCounts: number[] = history.map((m) => encode(m.content).length);
+  const totalTokens = tokenCounts.reduce((a, b) => a + b, 0);
+
+  if (totalTokens <= MAX_HISTORY_TOKENS) return history;
+
+  // Walk backwards from most recent, accumulating until budget exceeded
+  let keepFrom = history.length;
+  tokenCount = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (tokenCount + tokenCounts[i] > MAX_HISTORY_TOKENS) break;
+    tokenCount += tokenCounts[i];
+    keepFrom = i;
+  }
+
+  // Ensure we don't start mid-pair (assistant without preceding user)
+  if (keepFrom < history.length && history[keepFrom].role === 'assistant') {
+    keepFrom++;
+  }
+
+  const trimmed = history.slice(keepFrom);
+  console.log(`[Server/Context] Trimmed history: ${history.length} → ${trimmed.length} messages (${totalTokens} → ${tokenCount} tokens)`);
+  return trimmed;
+}
 
 export async function startServer(): Promise<number> {
   const app = express();
@@ -142,8 +224,49 @@ export async function startServer(): Promise<number> {
     }
 
     try {
+      const requestStartTime = Date.now();
       const result = await handleClaude(message, validatedHistory);
       res.json(result);
+
+      // ── Experience Loop: fire-and-forget post-response hooks ──────────
+      // These run AFTER the response is sent, so they don't add latency.
+
+      // 1.5: Personality calibration — detect implicit signals from user messages
+      const responseTimeMs = Date.now() - requestStartTime;
+      try {
+        personalityCalibration.processUserMessage(message, responseTimeMs);
+      } catch (calErr) {
+        console.error('[Server/Experience] Personality calibration error:', calErr instanceof Error ? calErr.message : 'Unknown');
+      }
+
+      // 1.1: Memory extraction — build full conversation and extract memories
+      const fullConversation = [
+        ...validatedHistory,
+        { role: 'user', content: message },
+        { role: 'assistant', content: result.response },
+      ];
+      memoryManager.extractMemories(fullConversation).catch((memErr) => {
+        console.error('[Server/Experience] Memory extraction error:', memErr instanceof Error ? memErr.message : 'Unknown');
+      });
+
+      // 1.2: Episode tracking — maintain session, flush on timeout gaps
+      const now = Date.now();
+      if (activeTextSession && (now - activeTextSession.lastActivity > SESSION_TIMEOUT_MS)) {
+        // Gap detected — seal the old session, start fresh
+        flushTextSession().catch(() => {}); // fire-and-forget
+        activeTextSession = null;
+      }
+
+      if (!activeTextSession) {
+        activeTextSession = { startTime: now, lastActivity: now, transcript: [] };
+      }
+
+      activeTextSession.lastActivity = now;
+      activeTextSession.transcript.push(
+        { role: 'user', text: message },
+        { role: 'assistant', text: result.response }
+      );
+
     } catch (err: unknown) {
       // Crypto Sprint 9: Never leak raw error messages to the client.
       // Crypto Sprint 10: Sanitize log output — full error objects may contain API keys.
@@ -669,8 +792,11 @@ async function handleClaude(
 ) {
   const systemPrompt = await buildSystemPrompt();
 
+  // Phase 1.4: Trim history to fit context window before sending to LLM
+  const trimmedHistory = trimHistoryToFit(history);
+
   const messages: Anthropic.MessageParam[] = [
-    ...history.map((h) => ({
+    ...trimmedHistory.map((h) => ({
       role: h.role as 'user' | 'assistant',
       content: h.content,
     })),

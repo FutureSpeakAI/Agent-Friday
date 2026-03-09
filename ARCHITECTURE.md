@@ -1,7 +1,7 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-03-08
+> **Last updated**: 2026-03-09
 > **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
 
 ---
@@ -347,7 +347,7 @@ graph TD
         BUILTIN[builtin-agents.ts<br/>Agent Definitions]
         PERSONAS[agent-personas.ts<br/>Agent Personalities]
         TEAMS[agent-teams.ts<br/>Team Coordination]
-        VOICE_AG[agent-voice.ts<br/>ElevenLabs TTS]
+        VOICE_AG[agent-voice.ts<br/>Multi-Backend TTS]
         ORCH[orchestrator.ts<br/>Task Decomposition]
         CONTAINER[container-engine.ts<br/>Sandboxed Execution]
         DELEGATION[delegation-engine.ts<br/>Trust-Gated Delegation]
@@ -492,11 +492,8 @@ graph TD
         MOOD_CTX[MoodContext.tsx<br/>Mood State Provider]
     end
 
-    subgraph "Phase: Gate"
-        WELCOME[WelcomeGate.tsx<br/>API Key Entry]
-    end
-
-    subgraph "Phase: Onboarding/Creating"
+    subgraph "Phase: Onboarding"
+        ONBOARD_WIZ[OnboardingWizard.tsx<br/>7-Step Cinematic Wizard]
         AGENT_CREATE[AgentCreation.tsx<br/>Cinematic Reveal]
     end
 
@@ -583,7 +580,7 @@ stateDiagram-v2
 
 | Z-Index | Component | Visibility |
 |---------|-----------|------------|
-| 200 | WelcomeGate | Gate phase only |
+| 200 | OnboardingWizard | Onboarding phase only |
 | 120 | QuickActions | Toggle (Ctrl+K) |
 | 110 | Dashboard | Toggle (Ctrl+Shift+D) |
 | 105 | AgentDashboard | Toggle |
@@ -1106,9 +1103,8 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User
-    participant Gate as WelcomeGate
+    participant Wizard as OnboardingWizard
     participant App as App.tsx
-    participant Setup as Setup Voice<br/>(Charon)
     participant Gemini as Gemini WS
     participant Claude as Claude Sonnet
     participant Integrity as Integrity System
@@ -1119,86 +1115,55 @@ sequenceDiagram
     Note over User, Agent: === PHASE 0: INTEGRITY CHECK ===
     App ->> Integrity: Verify core law signatures
     Integrity -->> App: HMAC verified ✓
-
-    Note over User, Agent: === PHASE 1: API KEY GATE (Tier-Aware) ===
-
-    User ->> Gate: Opens app for first time
-    Gate ->> Gate: Detect hardware tier in parallel with settings load
-    alt Standard+ hardware (6GB+ VRAM)
-        Gate ->> User: All keys optional, "Run Locally" button shown
-        alt User enters cloud keys
-            User ->> Gate: Enters Gemini/Anthropic keys
-            Gate ->> App: onKeysReady()
-        else User clicks "Run Locally"
-            Gate ->> Gate: Set preferredProvider='ollama'
-            Gate ->> App: onKeysReady()
-        end
-    else Light/Whisper hardware
-        Gate ->> User: "Enter Gemini API key" (required)
-        User ->> Gate: Enters keys
-        Gate ->> App: onKeysReady()
-    end
     App ->> App: setAppPhase('onboarding')
-    App ->> Gemini: Connect with Charon voice (or skip if no Gemini key)
 
-    Note over User, Agent: === PHASE 2: "HER" INTAKE ===
+    Note over User, Agent: === STEP 0: AWAKENING ===
+    Wizard ->> User: Cinematic splash — logo, particles, tagline
+    Wizard ->> Wizard: Auto-advance after 4s (or on click)
 
-    Setup ->> User: "Would you like your agent to have a male voice, a female voice, or neither?"
-    User ->> Setup: Answers
-    Setup ->> User: "How would you describe yourself in social situations?"
-    User ->> Setup: Answers
-    Setup ->> User: "How would you describe your relationship with your mother?"
-    User ->> Setup: Answers
-    Setup ->> User: "Thank you. Please wait a moment."
+    Note over User, Agent: === STEP 1: DIRECTIVES (cLaws) ===
+    Wizard ->> User: Three laws presented with scroll/fade
+    User ->> Wizard: "I Understand"
 
-    Note over User, Agent: === PHASE 3: PSYCHOLOGICAL PROFILE ===
-
-    Setup ->> Claude: save_intake_responses → psych:generate
-    alt LLM available (cloud or local)
-        Claude ->> Claude: Analyze: voice pref → gender comfort<br/>Social → extroversion, self-awareness<br/>Mother → attachment style, trust patterns
-        Claude -->> App: PsychologicalProfile saved
-    else LLM unavailable
-        App ->> App: Use DEFAULT_PROFILE (balanced warm defaults)
+    Note over User, Agent: === STEP 2: ENGINES (Hardware + API Keys) ===
+    Wizard ->> Wizard: Detect hardware tier via IPC
+    Wizard ->> User: GPU/VRAM/RAM HUD + tier scale
+    alt Standard+ hardware (6GB+ VRAM)
+        Wizard ->> User: All keys optional, "Run Locally" shown
+    else Light/Whisper hardware
+        Wizard ->> User: Gemini API key required
     end
+    User ->> Wizard: Enters keys or clicks "Run Locally"
 
-    Note over User, Agent: === PHASE 4: USER CUSTOMIZATION ===
+    Note over User, Agent: === STEP 3: SOVEREIGNTY (Vault) ===
+    Wizard ->> User: Data sovereignty explanation
+    User ->> Wizard: Sets vault passphrase
+    Wizard ->> Wizard: Initialize vault via IPC
 
-    Setup ->> App: transition_to_customization tool
-    App ->> App: setAppPhase('customizing')
-    Setup ->> User: "What would you like to name your agent?"
-    User ->> Setup: Names agent
-    Setup ->> User: Voice options, personality, backstory
-    User ->> Setup: Customizes everything
-    Setup ->> App: finalize_agent_identity
+    Note over User, Agent: === STEP 4: IDENTITY ===
+    Wizard ->> User: Agent name input + voice gender/feel pickers
+    User ->> Wizard: Names agent, selects voice preferences
 
-    Note over User, Agent: === PHASE 5: CINEMATIC REVEAL ===
+    Note over User, Agent: === STEP 5: INTERVIEW ===
+    Wizard ->> Gemini: Start voice session with onboarding prompt
+    Wizard ->> User: Animated waveform visualization
+    Gemini ->> User: Conducts personal questions (social, mother)
+    User ->> Gemini: Answers via voice
+    Gemini ->> Claude: save_intake_responses → psych:generate
+    Claude -->> App: PsychologicalProfile saved
+    Gemini ->> Wizard: finalize_agent_identity tool call
 
+    Note over User, Agent: === STEP 6: REVEAL ===
+    Wizard ->> User: Terminal boot sequence animation
+    Wizard ->> User: Agent name cinematic reveal
+    Wizard ->> App: onComplete(agentName)
+
+    Note over User, Agent: === CINEMATIC CREATION ===
     App ->> App: setAppPhase('creating')
     App ->> Creation: Begin animation
-    Creation ->> Creation: 0-2s: Pulsing orb, "Initializing..."
-    Creation ->> Creation: 2-3s: Warm golden glow fills screen
-    Creation ->> App: onNexusReveal() at 3s
-    App ->> Friday: Opacity 0 → 1 (2s transition)
-    Creation ->> Creation: 4.5-6s: Overlay fades out
-    Creation ->> App: onComplete() at 6.5s
-
-    Note over User, Agent: === PHASE 6: FIRST GREETING ===
-
-    App ->> App: setAppPhase('feature-setup')
-    App ->> Gemini: Reconnect with agent's real voice
-    Agent ->> User: Psychologically-tuned first words<br/>(calibrated to attachment style)
-
-    Note over User, Agent: === PHASE 7: FEATURE WALKTHROUGH ===
-
-    Agent ->> User: "Let me show you what I can do..."
-    loop 9 Feature Steps
-        Agent ->> User: Explain feature + guide setup
-        User ->> Agent: Complete or "skip"
-        Agent ->> App: mark_feature_setup_step
-    end
-
+    Creation ->> App: onNexusReveal() → onComplete()
     App ->> App: setAppPhase('normal')
-    Agent ->> User: "We're all set. I'm here whenever you need me."
+    Agent ->> User: Psychologically-tuned first greeting
 ```
 
 ---
@@ -1609,7 +1574,7 @@ graph TD
 | `agents/` | `agent-types.ts` | Agents | Shared agent types |
 | `agents/` | `agent-personas.ts` | Agents | Distinct agent personalities |
 | `agents/` | `agent-teams.ts` | Agents | Multi-agent coordination |
-| `agents/` | `agent-voice.ts` | Agents | ElevenLabs TTS for agents |
+| `agents/` | `agent-voice.ts` | Agents | Multi-backend TTS (Gemini → Kokoro/Piper → text-only) |
 | `agents/` | `orchestrator.ts` | Agents | Task decomposition |
 | `agents/` | `container-engine.ts` | Agents (Track XI) | Sandboxed execution with cLaw governance |
 | `agents/` | `delegation-engine.ts` | Agents (Track XI) | Trust-gated task delegation between agents |
@@ -1714,7 +1679,8 @@ graph TD
 | `components/` | `HudOverlay.tsx` | UI | Holographic HUD — agent name, structure label, status |
 | `components/` | `FridayCore.tsx` | 3D | Legacy 3D desktop (superseded by DesktopViz) |
 | `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
-| `components/` | `WelcomeGate.tsx` | UI | Tier-aware API key entry gate (~600 lines) |
+| `components/` | `OnboardingWizard.tsx` | UI | 7-step cinematic onboarding wizard |
+| `components/` | `onboarding/*.tsx` | UI | Individual onboarding step components |
 | `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
 | `components/` | `IntegrityShield.tsx` | UI | cLaw integrity status indicator |
 | `components/` | `AgentOffice/index.tsx` | Canvas | Pixel-art office renderer |
