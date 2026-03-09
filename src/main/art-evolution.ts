@@ -21,6 +21,7 @@ import { settingsManager } from './settings';
 import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
+import { privacyShield } from './privacy-shield';
 
 // ── Data Model ──────────────────────────────────────────────────────────────
 
@@ -342,6 +343,11 @@ async function callGeminiForEvolution(
 ): Promise<GeminiEvolutionResult> {
   const prompt = buildGeminiPrompt(influenceReport, currentIndex, sessionCount, traits);
 
+  // Privacy Shield: scrub personality traits and agent state before sending to Google cloud.
+  const cleanPrompt = privacyShield.isEnabled()
+    ? privacyShield.scrub(prompt).text
+    : prompt;
+
   // Crypto Sprint 3 (HIGH-001): API key moved from URL query parameter to header.
   // Query-string keys leak into server logs, proxy logs, Referer headers, and browser history.
   const response = await fetch(
@@ -353,7 +359,7 @@ async function callGeminiForEvolution(
         'x-goog-api-key': apiKey,
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ parts: [{ text: cleanPrompt }] }],
         generationConfig: {
           temperature: 0.9,
           topP: 0.95,

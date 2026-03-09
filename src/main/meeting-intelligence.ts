@@ -531,7 +531,9 @@ class MeetingIntelligence {
   }
 
   /**
-   * Generate meeting summary using Claude/OpenRouter via fetch to our local API.
+   * Generate meeting summary using the unified LLM client.
+   * Routes through llmClient → Privacy Shield automatically scrubs PII
+   * before reaching any cloud provider and rehydrates on return.
    */
   private async generateSummary(content: string): Promise<{
     text: string;
@@ -539,29 +541,7 @@ class MeetingIntelligence {
     decisions: string[];
   } | null> {
     try {
-      // Use the local Anthropic/OpenRouter API via the existing connector system
-      const { settingsManager } = await import('./settings');
-      const settings = settingsManager.get();
-
-      // Determine which API to use
-      let apiKey = '';
-      let apiUrl = '';
-      let model = '';
-
-      if (settings.openrouterApiKey) {
-        apiKey = settings.openrouterApiKey;
-        apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-        model = settings.openrouterModel || 'anthropic/claude-sonnet-4';
-      } else if (settings.anthropicApiKey) {
-        apiKey = settings.anthropicApiKey;
-        apiUrl = 'https://api.anthropic.com/v1/messages';
-        model = 'claude-sonnet-4-20250514';
-      }
-
-      if (!apiKey) {
-        console.log('[MeetingIntel] No API key available for summary generation');
-        return null;
-      }
+      const { llmClient } = await import('./llm-client');
 
       const summaryPrompt = `Summarize this meeting concisely. Extract action items and key decisions.
 
@@ -574,44 +554,13 @@ Respond in this exact JSON format:
   "decisions": ["decision 1", "decision 2"]
 }`;
 
-      if (apiUrl.includes('openrouter')) {
-        const resp = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-            'HTTP-Referer': 'https://agentfriday.ai',
-            'X-Title': 'Agent Friday',
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: 'user', content: summaryPrompt }],
-            max_tokens: 800,
-            temperature: 0.3,
-          }),
-        });
-        const data = await resp.json();
-        const text = data.choices?.[0]?.message?.content || '';
-        return this.parseSummaryResponse(text);
-      } else {
-        const resp = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 800,
-            temperature: 0.3,
-            messages: [{ role: 'user', content: summaryPrompt }],
-          }),
-        });
-        const data = await resp.json();
-        const text = data.content?.[0]?.text || '';
-        return this.parseSummaryResponse(text);
-      }
+      const text = await llmClient.text(summaryPrompt, {
+        maxTokens: 800,
+        temperature: 0.3,
+        taskHint: 'extraction',
+      });
+
+      return this.parseSummaryResponse(text);
     } catch (err) {
       // Crypto Sprint 13: Sanitize — API key is in scope; raw err could leak it.
       console.warn('[MeetingIntel] Summary API call failed:', err instanceof Error ? err.message : 'Unknown error');

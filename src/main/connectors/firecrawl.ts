@@ -14,6 +14,7 @@
 
 import { ToolDeclaration, ToolResult } from './registry';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 import * as https from 'https';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
   const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 20);
 
   const { status, data } = await apiRequest('POST', '/search', {
-    query,
+    query: privacyShield.scrub(query).text,
     limit,
     scrapeOptions: {
       formats: ['markdown'],
@@ -140,7 +141,7 @@ async function webSearch(args: Record<string, unknown>): Promise<string> {
 
   if (results.length === 0) return `No results found for: "${query}"`;
 
-  return `## Search Results for: "${query}"\n\n${results.join('\n\n---\n\n')}`;
+  return privacyShield.rehydrate(`## Search Results for: "${query}"\n\n${results.join('\n\n---\n\n')}`);
 }
 
 async function webScrape(args: Record<string, unknown>): Promise<string> {

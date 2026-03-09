@@ -1502,6 +1502,7 @@ declare global {
         initializeNew: (passphrase: string) => Promise<{ ok: boolean; error?: string }>;
         unlock: (passphrase: string) => Promise<{ ok: boolean; error?: string }>;
         onBootComplete: (callback: () => void) => () => void;
+        resetAll: () => Promise<void>;
       };
 
       multimedia: {

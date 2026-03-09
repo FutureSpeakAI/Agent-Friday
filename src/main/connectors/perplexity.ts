@@ -15,6 +15,7 @@
 
 import { ToolDeclaration, ToolResult } from './registry';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 import * as https from 'https';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -128,11 +129,12 @@ async function perplexitySearch(args: Record<string, unknown>): Promise<string> 
   if (!query) return 'ERROR: search query is required.';
 
   // Build request body
+  const scrubbedQuery = privacyShield.scrub(query).text;
   const body: Record<string, unknown> = {
     model: MODELS.search,
     messages: [
       { role: 'system', content: 'Be precise and concise. Provide factual, well-sourced answers.' },
-      { role: 'user', content: query },
+      { role: 'user', content: scrubbedQuery },
     ],
     return_citations: true,
     return_related_questions: true,
@@ -157,7 +159,7 @@ async function perplexitySearch(args: Record<string, unknown>): Promise<string> 
     return `ERROR: Perplexity search failed (${status}): ${data.error?.message || JSON.stringify(data).slice(0, 500)}`;
   }
 
-  const content = data.choices?.[0]?.message?.content || '(no content returned)';
+  const content = privacyShield.rehydrate(data.choices?.[0]?.message?.content || '(no content returned)');
   const citations = formatCitations(data.citations);
   const related = formatRelated(data.related_questions);
 
@@ -168,6 +170,7 @@ async function perplexityResearch(args: Record<string, unknown>): Promise<string
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query) return 'ERROR: research query is required.';
 
+  const scrubbedQuery = privacyShield.scrub(query).text;
   const body: Record<string, unknown> = {
     model: MODELS.research,
     messages: [
@@ -175,7 +178,7 @@ async function perplexityResearch(args: Record<string, unknown>): Promise<string
         role: 'system',
         content: 'You are a thorough research assistant. Provide comprehensive, well-structured analysis with multiple perspectives. Cite all sources.',
       },
-      { role: 'user', content: query },
+      { role: 'user', content: scrubbedQuery },
     ],
     return_citations: true,
     return_related_questions: true,
@@ -197,7 +200,7 @@ async function perplexityResearch(args: Record<string, unknown>): Promise<string
     return `ERROR: Perplexity research failed (${status}): ${data.error?.message || JSON.stringify(data).slice(0, 500)}`;
   }
 
-  const content = data.choices?.[0]?.message?.content || '(no content returned)';
+  const content = privacyShield.rehydrate(data.choices?.[0]?.message?.content || '(no content returned)');
   const citations = formatCitations(data.citations);
   const related = formatRelated(data.related_questions);
 
@@ -208,6 +211,7 @@ async function perplexityDeepResearch(args: Record<string, unknown>): Promise<st
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query) return 'ERROR: research query is required.';
 
+  const scrubbedQuery = privacyShield.scrub(query).text;
   const body: Record<string, unknown> = {
     model: MODELS.deepResearch,
     messages: [
@@ -215,7 +219,7 @@ async function perplexityDeepResearch(args: Record<string, unknown>): Promise<st
         role: 'system',
         content: 'Conduct a thorough, multi-step investigation. Cross-reference multiple sources, identify conflicts in information, and provide a synthesis with confidence levels for each claim.',
       },
-      { role: 'user', content: query },
+      { role: 'user', content: scrubbedQuery },
     ],
     return_citations: true,
   };
@@ -228,7 +232,7 @@ async function perplexityDeepResearch(args: Record<string, unknown>): Promise<st
     return `ERROR: Perplexity deep research failed (${status}): ${data.error?.message || JSON.stringify(data).slice(0, 500)}`;
   }
 
-  const content = data.choices?.[0]?.message?.content || '(no content returned)';
+  const content = privacyShield.rehydrate(data.choices?.[0]?.message?.content || '(no content returned)');
   const citations = formatCitations(data.citations);
 
   return truncate(`## Deep Research: "${query}"\n\n${content}${citations}`, MAX_RESPONSE_CHARS);
@@ -238,6 +242,7 @@ async function perplexityReason(args: Record<string, unknown>): Promise<string> 
   const query = typeof args.query === 'string' ? args.query : '';
   if (!query) return 'ERROR: reasoning query is required.';
 
+  const scrubbedQuery = privacyShield.scrub(query).text;
   const body: Record<string, unknown> = {
     model: MODELS.reasoning,
     messages: [
@@ -245,7 +250,7 @@ async function perplexityReason(args: Record<string, unknown>): Promise<string> 
         role: 'system',
         content: 'Think step by step. Search for relevant information, then reason through the problem methodically. Show your reasoning chain and cite sources for factual claims.',
       },
-      { role: 'user', content: query },
+      { role: 'user', content: scrubbedQuery },
     ],
     return_citations: true,
   };
@@ -258,7 +263,7 @@ async function perplexityReason(args: Record<string, unknown>): Promise<string> 
     return `ERROR: Perplexity reasoning failed (${status}): ${data.error?.message || JSON.stringify(data).slice(0, 500)}`;
   }
 
-  const content = data.choices?.[0]?.message?.content || '(no content returned)';
+  const content = privacyShield.rehydrate(data.choices?.[0]?.message?.content || '(no content returned)');
   const citations = formatCitations(data.citations);
 
   return truncate(`## Reasoning: "${query}"\n\n${content}${citations}`, MAX_RESPONSE_CHARS);

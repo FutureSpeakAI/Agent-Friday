@@ -205,6 +205,29 @@ export function destroyVault(): void {
   console.log('[Vault] All key material destroyed');
 }
 
+/**
+ * Erase all vault files on disk so the next launch treats it as a fresh install.
+ * Destroys in-memory key material first, then removes .vault-salt, .vault-canary,
+ * and .vault-meta.json from userData.  This is the nuclear "start fresh" path —
+ * all agent data encrypted under the old passphrase becomes unrecoverable.
+ */
+export async function resetVaultFiles(): Promise<void> {
+  destroyVault();
+
+  const userDataDir = app.getPath('userData');
+  const vaultFiles = ['.vault-salt', '.vault-canary', '.vault-meta.json'];
+
+  for (const file of vaultFiles) {
+    try {
+      await fs.unlink(path.join(userDataDir, file));
+    } catch {
+      // File may not exist — that's fine
+    }
+  }
+
+  console.log('[Vault] All vault files removed — next launch will be fresh');
+}
+
 // ── Status Queries ────────────────────────────────────────────────────
 
 /** Is the vault currently unlocked and ready for encryption? */

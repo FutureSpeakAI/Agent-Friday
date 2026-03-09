@@ -401,6 +401,9 @@ export default function App() {
 
       setStatus('Connected');
 
+      // Signal InterviewStep (if active) that the voice session is live
+      window.dispatchEvent(new Event('gemini-audio-active'));
+
       // After connection stabilizes, inject context
       setTimeout(async () => {
         try {
@@ -509,8 +512,14 @@ export default function App() {
 
       if (cancelled) return;
 
-      // If vault not initialized OR not unlocked → passphrase gate (always first)
-      if (!vaultInitialized || !vaultUnlocked) {
+      // Vault routing:
+      // - Not initialized → onboarding (fresh install or reinstall)
+      // - Initialized but locked → passphrase gate (returning user)
+      if (!vaultInitialized) {
+        setAppPhase('onboarding');
+        return;
+      }
+      if (!vaultUnlocked) {
         setAppPhase('passphrase-gate');
         return;
       }

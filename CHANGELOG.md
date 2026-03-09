@@ -4,6 +4,57 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.3.0] — 2026-03-09 — The Privacy Shield Update
+
+### Summary
+
+Frontier model providers are now identity-blind compute nodes. A new **Privacy Shield** engine scrubs all PII from outbound API requests and rehydrates placeholders in responses — covering 14 files, 44 call sites, and every cloud provider path. Also fixes three user-facing bugs: voice interview connection failures, reinstall passphrase gate, and passphrase recovery.
+
+### Added — Privacy Shield (`privacy-shield.ts`)
+
+- **PII Scrubber Engine** — Regex-based detection for emails, phone numbers, SSNs, credit cards, IP addresses, dates of birth, physical addresses, and URLs containing PII
+- **Named entity recognition** — OS username detection and registered known-name matching from user settings
+- **Deterministic placeholders** — `[EMAIL_1]`, `[PHONE_1]`, `[NAME_1]` etc., consistent within a session via session nonce
+- **Bidirectional mapping** — `scrub()` produces placeholders, `rehydrate()` restores originals client-side
+- **Request-level API** — `scrubRequest()` handles full message arrays (string content + content-block formats)
+- **Smart routing** — Cloud providers (Anthropic, OpenRouter, OpenAI, Gemini, Perplexity, ElevenLabs) get full scrub+rehydrate; local providers (Ollama, HuggingFace) pass through untouched
+
+### Added — Privacy Shield Integration (14 files, 44 call sites)
+
+- **LLM chokepoint** (`llm-client.ts`) — All `text()`, `complete()`, `stream()` calls to cloud providers auto-shielded
+- **Main chat loop** (`server.ts`) — Direct Anthropic SDK, OpenRouter, and Gemini TTS calls shielded
+- **Meeting intelligence** (`meeting-intelligence.ts`) — Refactored from direct fetch to `llmClient.text()` for automatic shield coverage
+- **Search & RAG** (`semantic-search.ts`, `firecrawl.ts`, `perplexity.ts`) — Document embeddings, web search queries, and deep research scrubbed
+- **Voice** (`agent-voice.ts`, `voice-audition.ts`, `audio-gen.ts`) — Spoken text and TTS prompts scrubbed
+- **Media generation** (`multimedia-engine.ts`, `art-evolution.ts`, `video-gen.ts`) — Image/video/music generation prompts scrubbed
+- **Agents** (`builtin-agents.ts`) — Agent prompt classification scrubbed
+- **OpenAI services** (`openai-services.ts`) — DALL-E, embeddings, o3 reasoning, and Whisper transcription scrubbed+rehydrated
+- **Provider init** (`providers/index.ts`) — Registers known names from user settings at startup
+
+### Fixed — Voice Interview Connection
+
+- **Root cause**: `gemini-audio-active` DOM event was listened for in `InterviewStep` but never dispatched
+- **Fix 1** (`App.tsx`): Dispatch `window.dispatchEvent(new Event('gemini-audio-active'))` after `geminiLive.connect()` succeeds
+- **Fix 2** (`InterviewStep.tsx`): Increased connection timeout from 10s to 30s (tool gathering on cold start takes time)
+
+### Fixed — Reinstall Passphrase Gate
+
+- **Root cause**: `App.tsx` lumped `!vaultInitialized || !vaultUnlocked` into passphrase gate; Windows uninstallers leave AppData, so vault files survive reinstall
+- **Fix 1** (`App.tsx`): Split logic — uninitialized vault routes to onboarding, initialized-but-locked routes to passphrase gate
+- **Fix 2** (`vault.ts`): Added `resetVaultFiles()` to wipe vault files from disk
+- **Fix 3** (`index.ts` + `preload.ts` + `types.d.ts`): Wired `vault:reset-all` IPC handler that wipes vault and relaunches
+- **Fix 4** (`PassphraseGate.tsx`): Added "Forgot passphrase? Start fresh" link with destructive-action confirmation dialog (skull icon, red warning, explicit "Erase & Start Fresh" button)
+
+### Stats
+
+- **Tests:** 4,701 / 4,701 (100% pass rate, 133 suites)
+- **TypeScript:** 0 errors
+- **Files changed:** 25 (+378 / -112 lines)
+- **New files:** `privacy-shield.ts`
+- **Privacy coverage:** 14 files, 44 scrub/rehydrate call sites, all cloud provider paths
+
+---
+
 ## [3.2.0] — 2026-03-09 — The Fortified Update
 
 ### Summary

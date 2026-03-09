@@ -7,6 +7,7 @@
 
 import { AgentDefinition, AgentContext } from './agent-types';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 
 const researchAgent: AgentDefinition = {
   name: 'research',
@@ -50,6 +51,11 @@ Example: ["query 1", "query 2", "query 3"]`;
       const query = queries[i];
       ctx.log(`Searching: "${query}"`);
 
+      // Privacy Shield: scrub search query before sending to Google cloud.
+      const cleanQuery = privacyShield.isEnabled()
+        ? privacyShield.scrub(query).text
+        : query;
+
       try {
         const response = await fetch(
           'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
@@ -60,7 +66,7 @@ Example: ["query 1", "query 2", "query 3"]`;
               'x-goog-api-key': apiKey,
             },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: query }] }],
+              contents: [{ parts: [{ text: cleanQuery }] }],
               tools: [{ googleSearch: {} }],
             }),
           }

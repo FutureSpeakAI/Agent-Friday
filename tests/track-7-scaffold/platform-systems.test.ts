@@ -13,6 +13,12 @@ vi.mock('crypto', () => {
       const hex = counter.toString(16).padStart(8, '0');
       return `${hex}-cccc-dddd-eeee-ffffffffffff`;
     }) },
+    randomBytes: vi.fn((size: number) => Buffer.alloc(size, 0xab)),
+    randomUUID: vi.fn(() => {
+      counter++;
+      const hex = counter.toString(16).padStart(8, '0');
+      return `${hex}-cccc-dddd-eeee-ffffffffffff`;
+    }),
   };
 });
 

@@ -1176,6 +1176,7 @@ contextBridge.exposeInMainWorld('eve', {
     isUnlocked: () => ipcRenderer.invoke('vault:is-unlocked'),
     initializeNew: (passphrase: string) => ipcRenderer.invoke('vault:initialize-new', passphrase),
     unlock: (passphrase: string) => ipcRenderer.invoke('vault:unlock', passphrase),
+    resetAll: () => ipcRenderer.invoke('vault:reset-all'),
     onBootComplete: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on('vault:boot-complete', handler);
