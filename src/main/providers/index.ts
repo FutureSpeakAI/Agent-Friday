@@ -11,6 +11,7 @@ import { OpenRouterProvider } from './openrouter-provider';
 import { HuggingFaceProvider } from './hf-provider';
 import { OllamaProvider } from './ollama-provider';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 
 /**
  * Initialize all LLM providers and register them with the LLMClient.
@@ -55,6 +56,38 @@ export function initializeProviders(): void {
   for (const name of available) {
     const status = llmClient.isProviderAvailable(name) ? '✓' : '✗';
     console.log(`[Providers]   ${status} ${name}`);
+  }
+
+  // ── Privacy Shield: Register known names for PII scrubbing ──────────
+  // Populate the shield with known identifiable names from agent config
+  // so they get scrubbed before reaching any cloud provider.
+  initializePrivacyShield();
+}
+
+/**
+ * Initialize the Privacy Shield with known names from settings.
+ * Called during provider init and whenever agent config changes.
+ */
+export function initializePrivacyShield(): void {
+  try {
+    const agentConfig = settingsManager.getAgentConfig();
+    const knownNames: string[] = [];
+
+    if (agentConfig.userName) knownNames.push(agentConfig.userName);
+    if (agentConfig.agentName) knownNames.push(agentConfig.agentName);
+
+    // Also register the OS username for path scrubbing
+    const osUser = process.env.USERNAME || process.env.USER || '';
+    if (osUser && osUser.length >= 2) knownNames.push(osUser);
+
+    privacyShield.registerKnownNames(knownNames);
+
+    console.log(
+      `[PrivacyShield] Initialized with ${knownNames.length} known names. ` +
+      `Shield enabled: ${privacyShield.isEnabled()}`
+    );
+  } catch (err) {
+    console.warn('[PrivacyShield] Failed to initialize known names:', err);
   }
 }
 

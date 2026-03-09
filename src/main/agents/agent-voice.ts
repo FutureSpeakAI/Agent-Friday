@@ -18,6 +18,7 @@
 import { settingsManager } from '../settings';
 import { ttsEngine } from '../voice/tts-engine';
 import { buildWavBuffer } from '../voice/tts-binding';
+import { privacyShield } from '../privacy-shield';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,11 +129,16 @@ class AgentVoiceService {
 
     const voice = voiceName || 'Puck';
 
+    // Privacy Shield: scrub text before sending to Google cloud TTS.
+    const ttsText = privacyShield.isEnabled()
+      ? privacyShield.scrub(text).text
+      : text;
+
     const response = await fetch(`${GEMINI_TTS_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: `Say the following aloud:\n\n${text}` }] }],
+        contents: [{ parts: [{ text: `Say the following aloud:\n\n${ttsText}` }] }],
         generation_config: {
           response_modalities: ['AUDIO'],
           speech_config: {

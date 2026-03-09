@@ -2,7 +2,7 @@
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
 > **Last updated**: 2026-03-09
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
 
 ---
 
@@ -54,6 +54,7 @@ graph TB
             GITLOAD[GitLoader]
             OFFICE[Agent Office Manager]
             OPENROUTER[OpenRouter Provider]
+            PRIVACY[Privacy Shield<br/>PII Scrub/Rehydrate]
             TRUST[Trust Graph Engine]
             CONTEXT[Context Stream Pipeline]
             SUPERPOWERS[Superpowers Ecosystem]

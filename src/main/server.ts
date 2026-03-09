@@ -12,6 +12,7 @@ import { connectorRegistry } from './connectors/registry';
 import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
 import { settingsManager } from './settings';
 import { llmClient, type ChatMessage, type ToolDefinition } from './llm-client';
+import { privacyShield } from './privacy-shield';
 import { integrityManager } from './integrity';
 import { assertMessageArray } from './ipc/validate';
 import { memoryManager } from './memory';
@@ -331,6 +332,12 @@ export async function startServer(): Promise<number> {
         return;
       }
 
+      // Privacy Shield: scrub user text before sending to Google cloud API.
+      // TTS reads aloud what the user provides — may contain names, addresses, etc.
+      const ttsText = privacyShield.isEnabled()
+        ? privacyShield.scrub(text).text
+        : text;
+
       // Use Gemini REST API directly for audio generation
       const apiRes = await fetch(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
@@ -344,7 +351,7 @@ export async function startServer(): Promise<number> {
             system_instruction: {
               parts: [{ text: 'You are a voice assistant. Read the user\'s text aloud naturally and expressively. Do not add, remove, or change any words. Just speak exactly what is provided.' }],
             },
-            contents: [{ parts: [{ text }] }],
+            contents: [{ parts: [{ text: ttsText }] }],
             generation_config: {
               response_modalities: ['AUDIO'],
               speech_config: {
@@ -495,11 +502,23 @@ export async function runClaudeToolLoop(
 
   const anthropic = new Anthropic({ apiKey });
 
+  // Privacy Shield: scrub outbound messages and system prompt for cloud provider.
+  // Creates scrubbed copies — originals remain unmodified for tool result accumulation.
+  const shieldEnabled = privacyShield.isEnabled();
+  const scrubbedSystemPrompt = shieldEnabled
+    ? privacyShield.scrub(systemPrompt).text
+    : systemPrompt;
+
+  function scrubAnthropicMessages(msgs: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+    if (!shieldEnabled) return msgs;
+    return (privacyShield.scrubRequest({ messages: msgs }) as any).messages;
+  }
+
   let response = await anthropic.messages.create({
     model: 'claude-opus-4-6',
     max_tokens: 4096,
-    system: systemPrompt,
-    messages,
+    system: scrubbedSystemPrompt,
+    messages: scrubAnthropicMessages(messages),
     tools: tools.length > 0 ? tools : undefined,
   });
 
@@ -578,15 +597,16 @@ export async function runClaudeToolLoop(
     response = await anthropic.messages.create({
       model: 'claude-opus-4-6',
       max_tokens: 4096,
-      system: systemPrompt,
-      messages,
+      system: scrubbedSystemPrompt,
+      messages: scrubAnthropicMessages(messages),
       tools: tools.length > 0 ? tools : undefined,
     });
   }
 
   const textBlock = response.content.find((b) => b.type === 'text');
+  const rawText = textBlock && 'text' in textBlock ? textBlock.text : 'No response generated.';
   return {
-    response: textBlock && 'text' in textBlock ? textBlock.text : 'No response generated.',
+    response: shieldEnabled ? privacyShield.rehydrate(rawText) : rawText,
     model: 'claude-opus-4-6',
     toolCalls: toolIterations,
   };
@@ -768,17 +788,23 @@ async function runOpenRouterToolLoop(
     content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
   }));
 
+  // Privacy Shield: scrub outbound messages and system prompt for cloud provider.
+  const shieldEnabled = privacyShield.isEnabled();
+  const scrubbed = shieldEnabled
+    ? privacyShield.scrubRequest({ messages: orMessages, systemPrompt })
+    : { messages: orMessages, systemPrompt };
+
   const result = await openRouter.chatWithTools({
     model,
-    systemPrompt,
-    messages: orMessages,
+    systemPrompt: scrubbed.systemPrompt as string,
+    messages: scrubbed.messages as OpenRouterMessage[],
     tools: orTools,
     executeTool,
     maxIterations,
   });
 
   return {
-    response: result.text,
+    response: shieldEnabled ? privacyShield.rehydrate(result.text) : result.text,
     model: result.model,
     toolCalls: result.toolCalls,
   };

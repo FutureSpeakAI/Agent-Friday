@@ -18,6 +18,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { settingsManager } from './settings';
 import { embeddingPipeline } from './embedding-pipeline';
+import { privacyShield } from './privacy-shield';
 
 export interface EmbeddingEntry {
   id: string;
@@ -272,9 +273,17 @@ class SemanticSearchEngine {
       throw new Error('No embedding source available (Ollama not running, no Gemini API key)');
     }
 
+    // Privacy Shield: scrub document text before sending to Google cloud.
+    // Uses session-scoped deterministic hashing so the same PII produces
+    // the same placeholder — embeddings remain internally consistent.
+    const shieldEnabled = privacyShield.isEnabled();
+    const cleanTexts = shieldEnabled
+      ? texts.map((t) => privacyShield.scrub(t).text)
+      : texts;
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${EMBEDDING_MODEL}:batchEmbedContents`;
 
-    const requests = texts.map((text) => ({
+    const requests = cleanTexts.map((text) => ({
       model: `models/${EMBEDDING_MODEL}`,
       content: {
         parts: [{ text: text.slice(0, 2048) }], // Truncate to model max

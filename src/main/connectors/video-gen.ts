@@ -34,6 +34,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app } from 'electron';
 import { settingsManager } from '../settings';
+import { privacyShield } from '../privacy-shield';
 
 const execFileAsync = promisify(execFile);
 
@@ -197,7 +198,7 @@ async function submitVideoGeneration(
   const personGeneration = options.personGeneration || 'dont_allow';
 
   // Build request body
-  const instance: Record<string, unknown> = { prompt };
+  const instance: Record<string, unknown> = { prompt: privacyShield.scrub(prompt).text };
 
   // If image-to-video, attach the reference image
   if (options.imageBase64 && options.imageMimeType) {

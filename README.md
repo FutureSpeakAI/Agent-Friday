@@ -42,6 +42,7 @@
 - **Local-first** — Runs entirely on your machine with Ollama, local Whisper STT, and local TTS. No cloud required. Your data stays yours.
 - **Cryptographically enforced safety** — HMAC-SHA256 signed behavioral laws with attestation protocol, consent gates, and memory watchdog. Not prompt engineering. Cryptography.
 - **Trustworthy by design** — Immutable audit logs, 5-tier trust scoring, sovereignty ceremony at first launch, and a safety pipeline that validates every action before execution
+- **Privacy Shield** — All outbound API requests are scrubbed of PII (emails, phone numbers, names, addresses, SSNs) and rehydrated on return. Frontier model providers see only sanitized, identity-blind text. Local providers pass through untouched
 - **Multi-provider intelligence** — Anthropic Claude, Google Gemini, Ollama (local), OpenRouter, and HuggingFace, with automatic hardware-adaptive model selection
 - **Sovereign AI Desktop** — A full operating system with 23 native apps, a pixel art Agent Office, and a holographic desktop environment
 - **Voice-first, provider-independent** — Gemini Live for streaming conversation, plus local Whisper STT and local TTS for fully offline voice
@@ -112,11 +113,11 @@
 |   │ openrouter-provider    │  │ adapters/telegram             │   |
 |   │ hf-provider            │  └───────────────────────────────┘   |
 |   │ llm-client (unified)   │                                       |
-|   │ hardware-profiler      │  HARDWARE LAYER                       |
-|   │ model-orchestrator     │  ┌───────────────────────────────┐   |
-|   │ tier-recommender       │  │ hardware-profiler             │   |
-|   └────────────────────────┘  │ model-orchestrator            │   |
-|                                │ tier-recommender              │   |
+|   │ privacy-shield         │  HARDWARE LAYER                       |
+|   │ hardware-profiler      │  ┌───────────────────────────────┐   |
+|   │ model-orchestrator     │  │ hardware-profiler             │   |
+|   │ tier-recommender       │  │ model-orchestrator            │   |
+|   └────────────────────────┘  │ tier-recommender              │   |
 +--------------------------------------------------------------------+
 |              IPC Bridge (47 handler modules)                        |
 |                   window.eve API                                    |

@@ -42,6 +42,8 @@ export default function PassphraseGate({ onUnlocked }: PassphraseGateProps) {
   const [warningAcknowledged, setWarningAcknowledged] = useState(false);
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -180,6 +182,20 @@ export default function PassphraseGate({ onUnlocked }: PassphraseGateProps) {
     }
   }, [passphrase, failedAttempts, cooldownRemaining, startCooldown]);
 
+  // ── Start Fresh: wipe vault and relaunch ──
+  const handleStartFresh = useCallback(async () => {
+    setResetting(true);
+    try {
+      await window.eve.vault.resetAll();
+      // App will relaunch — this code won't continue
+    } catch (err: any) {
+      console.error('[PassphraseGate] Reset failed:', err);
+      setError(err?.message || 'Reset failed');
+      setResetting(false);
+      setShowResetConfirm(false);
+    }
+  }, []);
+
   // ── Key handler for Enter ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -244,7 +260,54 @@ export default function PassphraseGate({ onUnlocked }: PassphraseGateProps) {
               Unlock
             </button>
           )}
+
+          {/* Start Fresh — for users who forgot passphrase or reinstalled */}
+          <div style={styles.resetSection}>
+            <button
+              style={styles.resetLink}
+              onClick={() => setShowResetConfirm(true)}
+              disabled={busy}
+            >
+              Forgot passphrase? Start fresh →
+            </button>
+          </div>
         </div>
+
+        {/* ── Reset confirmation overlay ── */}
+        {showResetConfirm && (
+          <div style={styles.warningOverlay}>
+            <div style={styles.warningCard}>
+              <div style={styles.warningIcon}>💀</div>
+              <h1 style={styles.warningTitle}>ERASE EVERYTHING?</h1>
+
+              <div style={styles.warningBody}>
+                <p style={styles.warningLine}>This will permanently destroy:</p>
+                <p style={styles.warningLineEmphasis}>
+                  Your agent's identity, memories, personality,
+                  all encrypted data, and every secret stored in the vault.
+                </p>
+                <p style={styles.warningLine}>The app will relaunch with a blank slate.</p>
+                <p style={styles.warningLineDesign}>There is no undo.</p>
+              </div>
+
+              {resetting ? (
+                <div style={styles.busyRow}>
+                  <div style={styles.spinner} />
+                  <p style={styles.busyText}>Erasing vault and relaunching…</p>
+                </div>
+              ) : (
+                <div style={styles.buttonRow}>
+                  <button style={styles.secondaryButton} onClick={() => setShowResetConfirm(false)}>
+                    ← Cancel
+                  </button>
+                  <button style={styles.dangerButton} onClick={handleStartFresh}>
+                    Erase &amp; Start Fresh
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -615,5 +678,21 @@ const styles: Record<string, React.CSSProperties> = {
     width: 16,
     height: 16,
     flexShrink: 0,
+  },
+  // ── Start Fresh link ──
+  resetSection: {
+    marginTop: 24,
+    paddingTop: 16,
+    borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+  },
+  resetLink: {
+    background: 'none',
+    border: 'none',
+    color: '#6b7280',
+    fontSize: 12,
+    cursor: 'pointer',
+    textDecoration: 'none',
+    transition: 'color 0.2s',
+    padding: 0,
   },
 };

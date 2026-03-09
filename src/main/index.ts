@@ -155,6 +155,7 @@ import {
   isVaultInitialized,
   getHmacKey,
   destroyVault,
+  resetVaultFiles,
 } from './vault';
 import { initializeHmac, destroyHmac } from './integrity';
 
@@ -861,6 +862,15 @@ app.whenReady().then(async () => {
       } catch (err: any) {
         return { ok: false, error: err?.message || 'Vault unlock failed' };
       }
+    });
+
+    // Nuclear "Start Fresh" — wipes all vault files so the next launch is a clean slate.
+    // Used when a user reinstalls or forgets their passphrase and wants to start over.
+    ipcMain.handle('vault:reset-all', async () => {
+      console.log('[Vault] Reset-all requested — wiping vault and relaunching');
+      await resetVaultFiles();
+      app.relaunch();
+      app.exit(0);
     });
 
     console.log('[IPC] Vault v2 handlers registered');
