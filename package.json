@@ -26,7 +26,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:claw-gate": "vitest run tests/integrity tests/gateway tests/errors tests/services tests/performance tests/security --reporter=verbose"
+    "test:claw-gate": "vitest run tests/integrity tests/gateway tests/errors tests/services tests/performance tests/security --reporter=verbose",
+    "postinstall": "node scripts/fix-libsodium-esm.js"
   },
   "build": {
     "appId": "com.futurespeak.agentfriday",
