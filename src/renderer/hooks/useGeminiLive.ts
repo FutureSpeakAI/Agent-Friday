@@ -2166,7 +2166,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
             keepaliveRef.current = null;
           }
           const reason = event.reason || `code ${event.code}`;
-          console.log('[GeminiLive] WebSocket closed:', reason);
+          console.log('[GeminiLive] WebSocket closed:', reason, '| code:', event.code, '| wsErrorFired:', wsErrorFired);
           // Track close reason in session health
           try { window.eve.sessionHealth.recordWsClose(event.code, reason); } catch { /* ignored */ }
 
@@ -2177,14 +2177,43 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           }
 
           const wasConnected = stateRef.current.isConnected;
+
+          // Build a useful error message for initial connection failures
+          let errorMsg = '';
+          if (!wasConnected) {
+            if (!navigator.onLine) {
+              errorMsg = 'Device appears offline — check your network connection';
+            } else if (event.reason) {
+              // Server provided a reason string — use it directly
+              errorMsg = `Gemini Live: ${event.reason}`;
+            } else if (event.code === 1006) {
+              // 1006 = abnormal closure (no close frame received)
+              // Most common cause: network/firewall blocking WebSocket, or API key not enabled for Live API
+              errorMsg = wsErrorFired
+                ? 'Could not connect to Gemini Live — check that your API key has the Live API enabled and your network allows WebSocket connections'
+                : 'Connection to Gemini Live was interrupted';
+            } else if (event.code === 1008) {
+              errorMsg = 'Gemini Live rejected the connection — API key may be invalid or not authorized for the Live API';
+            } else if (event.code === 1001) {
+              errorMsg = 'Gemini Live service is temporarily unavailable — try again shortly';
+            } else {
+              errorMsg = `Gemini Live connection failed (code ${event.code})`;
+            }
+          }
+
           setState((s) => ({
             ...s,
             isConnected: false,
             isConnecting: false,
             // CRITICAL: Preserve isListening during SM reconnects — mic pipeline stays alive
             isListening: smReconnectingRef.current ? s.isListening : (intentionalDisconnectRef.current ? false : s.isListening),
-            error: wasConnected ? '' : `Connection closed: ${reason}`,
+            error: wasConnected ? '' : errorMsg,
           }));
+
+          // For initial connection failures, set error and reject here (onerror defers to us)
+          if (!wasConnected && wsErrorFired) {
+            optionsRef.current.onError?.(errorMsg);
+          }
 
           // Auto-reconnect on unexpected disconnect (not user-initiated)
           // Self-managed retry loop — does NOT rely on onclose re-firing (prevents rapid-fire loop)
@@ -2277,14 +2306,13 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
           reject(new Error(`WebSocket closed: ${reason}`));
         };
 
+        // Track whether onerror fired (browser onerror provides no useful detail;
+        // the real diagnostic info comes from onclose's code + reason).
+        let wsErrorFired = false;
         ws.onerror = (event) => {
-          clearTimeout(timeout);
-          const detail = navigator.onLine ? 'API key may be invalid or Gemini service is down' : 'device appears offline';
-          const msg = `WebSocket connection failed — ${detail}`;
+          wsErrorFired = true;
           console.error('[GeminiLive] WebSocket error event:', event, '| Online:', navigator.onLine);
-          setState((s) => ({ ...s, isConnecting: false, error: msg }));
-          optionsRef.current.onError?.(msg);
-          reject(new Error(msg));
+          // Don't reject or set state here — let onclose handle it with close code diagnostics.
         };
       });
     },
