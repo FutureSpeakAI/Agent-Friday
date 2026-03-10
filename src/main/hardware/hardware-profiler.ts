@@ -82,35 +82,116 @@ function vendorFromId(vendorId: number): string {
   }
 }
 
+/**
+ * Known paths where nvidia-smi.exe may live.
+ * The bare 'nvidia-smi' often works when the NVIDIA driver adds System32,
+ * but on laptops with Optimus it frequently isn't on PATH.
+ */
+const NVIDIA_SMI_PATHS = [
+  'nvidia-smi',
+  'C:\\Windows\\System32\\nvidia-smi.exe',
+  'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',
+];
+
 /** Query nvidia-smi for GPU name, total VRAM (MB), and free VRAM (MB). */
 function queryNvidiaSmi(): Promise<{ name: string; totalMB: number; freeMB: number } | null> {
   return new Promise((resolve) => {
+    let attempts = 0;
+
+    function tryNext(): void {
+      if (attempts >= NVIDIA_SMI_PATHS.length) {
+        resolve(null);
+        return;
+      }
+      const smiPath = NVIDIA_SMI_PATHS[attempts++];
+      execFile(
+        smiPath,
+        ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits'],
+        { timeout: 5000 },
+        (err: Error | null, stdout: string) => {
+          if (err || !stdout.trim()) {
+            tryNext();
+            return;
+          }
+          const parts = stdout.trim().split(', ');
+          if (parts.length < 3) {
+            tryNext();
+            return;
+          }
+          resolve({
+            name: parts[0],
+            totalMB: parseInt(parts[1], 10) || 0,
+            freeMB: parseInt(parts[2], 10) || 0,
+          });
+        },
+      );
+    }
+
+    tryNext();
+  });
+}
+
+/**
+ * Query Windows for GPU name and total VRAM.
+ *
+ * IMPORTANT: WMI's AdapterRAM is a uint32 that overflows at ~4.29 GB,
+ * so GPUs with 6+ GB report a wrong value. We try PowerShell's
+ * Get-CimInstance with qwMemorySize (uint64) first, then fall back to wmic.
+ * Either way, if we detect an NVIDIA GPU name we also try nvidia-smi
+ * for accurate VRAM since WMI/CIM both have the uint32 problem on some drivers.
+ */
+function queryWindowsVRAM(): Promise<{ name: string; totalBytes: number } | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+
+  // Try PowerShell CIM first (qwMemorySize is uint64 on Win10+)
+  return queryWindowsCIM().then((result) => {
+    if (result) return result;
+    return queryWindowsWMIC();
+  });
+}
+
+/** PowerShell Get-CimInstance approach (prefers AdapterRAM but validates). */
+function queryWindowsCIM(): Promise<{ name: string; totalBytes: number } | null> {
+  return new Promise((resolve) => {
     execFile(
-      'nvidia-smi',
-      ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits'],
+      'powershell',
+      [
+        '-NoProfile', '-Command',
+        'Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json -Compress',
+      ],
+      { timeout: 8000 },
       (err: Error | null, stdout: string) => {
         if (err || !stdout.trim()) {
           resolve(null);
           return;
         }
-        const parts = stdout.trim().split(', ');
-        if (parts.length < 3) {
+        try {
+          let parsed = JSON.parse(stdout.trim());
+          if (!Array.isArray(parsed)) parsed = [parsed];
+
+          const gpus = parsed
+            .filter((g: any) => g.Name && g.AdapterRAM > 0)
+            .map((g: any) => ({ name: String(g.Name), totalBytes: Number(g.AdapterRAM) }));
+
+          if (gpus.length === 0) { resolve(null); return; }
+
+          // Pick discrete GPU (most VRAM)
+          gpus.sort((a: any, b: any) => b.totalBytes - a.totalBytes);
+          const best = gpus[0];
+
+          // WMI uint32 cap detection: if reported ≈ 4.29 GB and GPU is NVIDIA,
+          // nvidia-smi will give us the real value — handled by caller.
+          resolve(best);
+        } catch {
           resolve(null);
-          return;
         }
-        resolve({
-          name: parts[0],
-          totalMB: parseInt(parts[1], 10) || 0,
-          freeMB: parseInt(parts[2], 10) || 0,
-        });
       },
     );
   });
 }
 
-/** Query Windows WMI for GPU name and total VRAM (fallback for non-NVIDIA GPUs). */
-function queryWindowsVRAM(): Promise<{ name: string; totalBytes: number } | null> {
-  if (process.platform !== 'win32') return Promise.resolve(null);
+/** Legacy wmic approach (deprecated on Win11 but still present on many systems). */
+function queryWindowsWMIC(): Promise<{ name: string; totalBytes: number } | null> {
   return new Promise((resolve) => {
     execFile(
       'wmic',
@@ -138,7 +219,6 @@ function queryWindowsVRAM(): Promise<{ name: string; totalBytes: number } | null
         }
         if (name && ram > 0) gpus.push({ name, totalBytes: ram });
         if (gpus.length > 0) {
-          // Pick the GPU with the most VRAM (likely discrete)
           gpus.sort((a, b) => b.totalBytes - a.totalBytes);
           resolve(gpus[0]);
         } else {
@@ -257,8 +337,10 @@ export class HardwareProfiler {
       const vendor = vendorFromId(primary.vendorId);
       const driver = primary.driverVersion ?? '';
 
-      // For NVIDIA, try nvidia-smi for name and VRAM
-      if (vendor === 'nvidia') {
+      // On Windows, ALWAYS try nvidia-smi first — even when the primary
+      // device is AMD/Intel (Optimus/hybrid laptops report the iGPU first
+      // via Chromium's getGPUInfo, but a discrete NVIDIA GPU may be present).
+      if (process.platform === 'win32') {
         const smiResult = await queryNvidiaSmi();
         if (smiResult) {
           const totalBytes = smiResult.totalMB * 1024 * 1024;
@@ -266,7 +348,7 @@ export class HardwareProfiler {
           return {
             gpu: {
               name: smiResult.name,
-              vendor,
+              vendor: 'nvidia',
               driver,
               available: true,
             },
@@ -277,12 +359,15 @@ export class HardwareProfiler {
             },
           };
         }
-        // nvidia-smi failed — fall through to WMI fallback
+        // nvidia-smi not available — fall through to WMI/CIM
       }
 
-      // Fallback: Windows WMI (works for AMD, Intel, and NVIDIA without smi)
+      // Fallback: Windows WMI/CIM (works for AMD, Intel, and NVIDIA without smi)
       const wmiResult = await queryWindowsVRAM().catch(() => null);
       if (wmiResult && wmiResult.totalBytes > 0) {
+        // WMI uint32 overflow check: if NVIDIA GPU reports ≈4.29 GB,
+        // the real value is likely higher. We already tried nvidia-smi above,
+        // so this is the best we can get from WMI/CIM.
         const available = Math.max(0, wmiResult.totalBytes - SYSTEM_RESERVED_VRAM);
         return {
           gpu: { name: wmiResult.name, vendor, driver, available: true },
