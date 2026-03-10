@@ -42,6 +42,10 @@
   --onboarding-card: rgba(255, 255, 255, 0.03);
   --onboarding-card-hover: rgba(255, 255, 255, 0.06);
   --onboarding-border: rgba(255, 255, 255, 0.08);
+
+  /* Onboarding redesign — diamond entity */
+  --diamond-border: rgba(0, 240, 255, 0.25);
+  --diamond-glow: rgba(0, 240, 255, 0.08);
 }
 
 * {
@@ -152,6 +156,63 @@ body {
   100% { transform: translateX(350%); }
 }
 
+
+/* --- Onboarding redesign keyframes --- */
+@keyframes onb-particle-float {
+  0%, 100% { opacity: 0; transform: translateY(0) scale(0.5); }
+  20% { opacity: 0.6; }
+  80% { opacity: 0.4; }
+  50% { transform: translateY(-30px) scale(1); }
+}
+
+@keyframes onb-diamond-pulse {
+  0%, 100% { border-color: rgba(0, 240, 255, 0.15); box-shadow: 0 0 20px rgba(0, 240, 255, 0.05); }
+  50% { border-color: rgba(0, 240, 255, 0.35); box-shadow: 0 0 30px rgba(0, 240, 255, 0.12); }
+}
+
+@keyframes onb-diamond-pulse-intense {
+  0%, 100% { border-color: rgba(0, 240, 255, 0.25); box-shadow: 0 0 30px rgba(0, 240, 255, 0.1); }
+  50% { border-color: rgba(0, 240, 255, 0.5); box-shadow: 0 0 50px rgba(0, 240, 255, 0.2); }
+}
+
+@keyframes onb-grid-drift {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(40px); }
+}
+
+@keyframes onb-laser-sweep {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes onb-reveal-expand {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* NextButton laser-line pseudo-element */
+.onb-next-btn {
+  position: relative;
+  overflow: hidden;
+}
+.onb-next-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.4s ease;
+}
+.onb-next-btn:hover::after {
+  animation: onb-laser-sweep 2s ease-in-out infinite;
+}
+.onb-next-btn:disabled::after {
+  display: none;
+}
 
 /* --- Hover utility classes --- */
 .hover-glow {

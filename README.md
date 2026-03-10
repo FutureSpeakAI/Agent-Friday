@@ -136,9 +136,9 @@
 |   │  Gateway · Maps · Media · Monitor · News · Notes ·          │  |
 |   │  Recorder · Stage · Tasks · Terminal · Weather              │  |
 |   │                                                             │  |
-|   │  ONBOARDING CEREMONY (7 steps):                             │  |
-|   │  Awakening → Directives → Engines → Identity →              │  |
-|   │  Interview → Reveal → Sovereignty                           │  |
+|   │  ONBOARDING CEREMONY (8 steps):                             │  |
+|   │  Awakening → Mission → Hardware → Privacy → ApiKeys →       │  |
+|   │  Environment → Interview → Reveal                           │  |
 |   └────────────────────────────────────────────────────────────┘  |
 +--------------------------------------------------------------------+
 ```
@@ -227,7 +227,7 @@ Agent Friday does not have a "personality setting." It has a cognitive architect
 | **Friday Profile** | The agent's self-model and self-knowledge document |
 | **Mood Context** | Real-time emotional state tracking (renderer-side) |
 
-The onboarding ceremony reflects this depth. It is not a configuration wizard; it is a seven-step process that establishes a new sovereign agent instance: Awakening (initial system bootstrap), Directives (cLaw acceptance), Engines (provider selection), Identity (naming and voice), Interview (mutual discovery), Reveal (first interaction), and Sovereignty (cryptographic key generation and law signing).
+The onboarding ceremony reflects this depth. It is not a configuration wizard; it is an eight-step cinematic process that establishes a new sovereign agent instance: Awakening (initial system bootstrap), Mission (trust-first pillars), Hardware (GPU detection and local model download), Privacy (Privacy Shield explainer), ApiKeys (optional cloud credentials), Environment (vault creation and agent identity), Interview (voice-based mutual discovery), and Reveal (agent comes online).
 
 ---
 
@@ -443,15 +443,16 @@ npm run package
 
 ### Sovereignty Ceremony
 
-On first launch, Agent Friday guides you through a seven-step onboarding:
+On first launch, Agent Friday guides you through an eight-step cinematic onboarding:
 
-1. **Awakening** — Initial system bootstrap and animation
-2. **Directives** — Review and accept the cLaws (cryptographic safety laws)
-3. **Engines** — Hardware profiling and API key configuration
-4. **Identity** — Name your agent and choose voice characteristics
-5. **Interview** — A voice-based mutual discovery session
-6. **Reveal** — Your agent's first words
-7. **Sovereignty** — Cryptographic key generation and law signing
+1. **Awakening** — Cinematic splash with particle effects and system initialization
+2. **Mission** — Five trust pillars: Local-First Intelligence, Zero-Knowledge Vault, Privacy Shield, Transparent Routing, Immutable Directives
+3. **Hardware** — GPU/VRAM detection, tier recommendation, and automatic local model download with progress tracking
+4. **Privacy** — Privacy Shield explainer showing how PII is scrubbed before cloud requests and restored in responses
+5. **API Keys** — Optional cloud API key entry (Gemini, Anthropic, OpenRouter) — always skippable
+6. **Environment** — Data sovereignty vault creation (AES-256-GCM, Argon2id) and agent identity (name, voice gender, voice feel)
+7. **Interview** — Voice-based mutual discovery session with text input fallback
+8. **Reveal** — Agent comes online with cinematic boot sequence
 
 ### Configuration
 
@@ -533,7 +534,7 @@ src/
 │   │   └── safety-pipeline.ts
 │   ├── personality.ts             # Core personality system
 │   ├── tool-handler.ts            # Tool execution
-│   └── onboarding.ts              # Sovereignty ceremony
+│   └── onboarding.ts              # First-run onboarding ceremony
 │
 ├── renderer/                      # React desktop environment
 │   ├── components/

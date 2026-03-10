@@ -1,11 +1,12 @@
 /**
- * RevealStep.tsx — Step 6: Boot sequence + agent reveal.
+ * RevealStep.tsx — Step 5: Boot sequence + agent reveal.
  *
- * Terminal-style scrolling status lines followed by a cinematic
- * agent name reveal with glow effect. Calls onComplete when done.
+ * Terminal-style scrolling status lines followed by cinematic
+ * agent name reveal: "{NAME}_ONLINE". Uses NextButton for "Begin".
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import NextButton from './shared/NextButton';
 
 interface RevealStepProps {
   agentName: string;
@@ -14,21 +15,21 @@ interface RevealStepProps {
 
 const BOOT_LINES = [
   { text: '> Initializing consciousness matrix...', delay: 0 },
-  { text: '  ├─ Loading personality vectors', delay: 300 },
-  { text: '  ├─ Calibrating emotional resonance', delay: 600 },
-  { text: '  ├─ Mapping voice parameters', delay: 900 },
-  { text: '  └─ Complete', delay: 1200, color: '#22c55e' },
+  { text: '  \u251c\u2500 Loading personality vectors', delay: 300 },
+  { text: '  \u251c\u2500 Calibrating emotional resonance', delay: 600 },
+  { text: '  \u251c\u2500 Mapping voice parameters', delay: 900 },
+  { text: '  \u2514\u2500 Complete', delay: 1200, color: '#22c55e' },
   { text: '', delay: 1400 },
   { text: '> Binding memory architecture...', delay: 1600 },
-  { text: '  ├─ Sovereign vault attached', delay: 1900 },
-  { text: '  ├─ Long-term memory initialized', delay: 2200 },
-  { text: '  └─ Complete', delay: 2500, color: '#22c55e' },
+  { text: '  \u251c\u2500 Sovereign vault attached', delay: 1900 },
+  { text: '  \u251c\u2500 Long-term memory initialized', delay: 2200 },
+  { text: '  \u2514\u2500 Complete', delay: 2500, color: '#22c55e' },
   { text: '', delay: 2700 },
   { text: '> Applying cLaws directives...', delay: 2900 },
-  { text: '  ├─ Law 01: Protection — SIGNED', delay: 3200, color: '#00f0ff' },
-  { text: '  ├─ Law 02: Obedience — SIGNED', delay: 3500, color: '#8A2BE2' },
-  { text: '  ├─ Law 03: Integrity — SIGNED', delay: 3800, color: '#22c55e' },
-  { text: '  └─ Cryptographic verification passed', delay: 4100, color: '#22c55e' },
+  { text: '  \u251c\u2500 Law 01: Protection \u2014 SIGNED', delay: 3200, color: '#00f0ff' },
+  { text: '  \u251c\u2500 Law 02: Obedience \u2014 SIGNED', delay: 3500, color: '#8A2BE2' },
+  { text: '  \u251c\u2500 Law 03: Integrity \u2014 SIGNED', delay: 3800, color: '#22c55e' },
+  { text: '  \u2514\u2500 Cryptographic verification passed', delay: 4100, color: '#22c55e' },
   { text: '', delay: 4300 },
   { text: '> Awakening...', delay: 4500, color: '#00f0ff' },
 ];
@@ -43,23 +44,22 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  const displayName = `${(agentName || 'Friday').toUpperCase()}_ONLINE`;
+
   /** Fast-forward: instantly show all boot lines, name reveal, and continue button. */
   const fastForward = useCallback(() => {
     if (skipped) return;
     setSkipped(true);
 
-    // Cancel all pending timers
     timersRef.current.forEach(clearTimeout);
     timersRef.current = [];
 
-    // Instantly reveal everything
     setVisibleLines(BOOT_LINES.length);
     setShowName(true);
     setNameGlow(true);
     setShowContinue(true);
     setShowSkipHint(false);
 
-    // Scroll terminal to bottom
     requestAnimationFrame(() => {
       if (terminalRef.current) {
         terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
@@ -70,24 +70,19 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
 
-    // Reveal boot lines one by one
     BOOT_LINES.forEach((line, i) => {
       timers.push(setTimeout(() => {
         setVisibleLines(i + 1);
-        // Auto-scroll terminal
         if (terminalRef.current) {
           terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
         }
       }, line.delay));
     });
 
-    // After last boot line, show the name
     const lastDelay = BOOT_LINES[BOOT_LINES.length - 1].delay;
     timers.push(setTimeout(() => setShowName(true), lastDelay + 800));
     timers.push(setTimeout(() => setNameGlow(true), lastDelay + 1400));
     timers.push(setTimeout(() => setShowContinue(true), lastDelay + 2200));
-
-    // Show skip hint after 2 seconds
     timers.push(setTimeout(() => setShowSkipHint(true), 2000));
 
     timersRef.current = timers;
@@ -97,7 +92,6 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
   // Listen for click / keypress to fast-forward
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      // Don't intercept if continue button is already showing (let Enter work naturally)
       if (showContinue) return;
       fastForward();
     };
@@ -152,14 +146,14 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
             : 'none',
           transition: 'text-shadow 1.2s ease',
         }}>
-          {agentName || 'Friday'}
+          {displayName}
         </div>
         <div style={{
           ...styles.nameSubtext,
           opacity: nameGlow ? 1 : 0,
           transition: 'opacity 0.8s ease 0.3s',
         }}>
-          Ready for first contact
+          Systems Nominal // Awaiting Command
         </div>
       </div>
 
@@ -167,23 +161,20 @@ const RevealStep: React.FC<RevealStepProps> = ({ agentName, onComplete }) => {
       <div aria-hidden="true" style={{
         ...styles.glow,
         opacity: nameGlow ? 1 : 0,
-        transition: 'opacity 1.5s ease',
+        transform: nameGlow ? 'translateX(-50%) scale(1)' : 'translateX(-50%) scale(0)',
+        transition: 'all 1.5s cubic-bezier(0.16, 1, 0.3, 1)',
       }} />
 
       {/* Continue button */}
-      <button
-        onClick={onComplete}
-        aria-label="Begin using your agent"
-        style={{
-          ...styles.button,
-          opacity: showContinue ? 1 : 0,
-          transform: showContinue ? 'translateY(0)' : 'translateY(10px)',
-          transition: 'all 0.5s ease',
-          pointerEvents: showContinue ? 'auto' : 'none',
-        }}
-      >
-        Begin
-      </button>
+      <div style={{
+        opacity: showContinue ? 1 : 0,
+        transform: showContinue ? 'translateY(0)' : 'translateY(10px)',
+        transition: 'all 0.5s ease',
+        pointerEvents: showContinue ? 'auto' : 'none',
+        zIndex: 2,
+      }}>
+        <NextButton label="Begin" onClick={onComplete} />
+      </div>
 
       {/* Skip hint */}
       {!showContinue && (
@@ -222,7 +213,7 @@ const styles: Record<string, React.CSSProperties> = {
   terminal: {
     width: '100%',
     background: 'rgba(0, 0, 0, 0.4)',
-    border: '1px solid var(--onboarding-border)',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
     borderRadius: 12,
     overflow: 'hidden',
     maxHeight: 280,
@@ -275,17 +266,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "'Space Grotesk', sans-serif",
   },
   agentName: {
-    fontSize: 48,
+    fontSize: 40,
     fontWeight: 300,
-    letterSpacing: '0.15em',
+    letterSpacing: '0.12em',
     color: 'var(--text-primary)',
-    fontFamily: "'Space Grotesk', sans-serif",
+    fontFamily: "'JetBrains Mono', monospace",
   },
   nameSubtext: {
-    fontSize: 13,
+    fontSize: 12,
     color: 'var(--accent-cyan-30)',
-    fontFamily: "'Space Grotesk', sans-serif",
-    letterSpacing: '0.1em',
+    fontFamily: "'JetBrains Mono', monospace",
+    letterSpacing: '0.08em',
   },
   glow: {
     position: 'absolute',
@@ -298,20 +289,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'radial-gradient(circle, var(--accent-cyan-10) 0%, transparent 70%)',
     pointerEvents: 'none',
     zIndex: 1,
-  },
-  button: {
-    background: 'var(--accent-cyan-10)',
-    border: '1px solid var(--accent-cyan-20)',
-    borderRadius: 8,
-    padding: '14px 64px',
-    fontSize: 16,
-    fontWeight: 500,
-    color: 'var(--accent-cyan-90)',
-    letterSpacing: '0.1em',
-    fontFamily: "'Space Grotesk', sans-serif",
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    zIndex: 2,
   },
   skipHint: {
     fontSize: 11,

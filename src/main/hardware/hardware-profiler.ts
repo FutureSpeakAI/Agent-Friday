@@ -108,6 +108,47 @@ function queryNvidiaSmi(): Promise<{ name: string; totalMB: number; freeMB: numb
   });
 }
 
+/** Query Windows WMI for GPU name and total VRAM (fallback for non-NVIDIA GPUs). */
+function queryWindowsVRAM(): Promise<{ name: string; totalBytes: number } | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      'wmic',
+      ['path', 'win32_VideoController', 'get', 'Name,AdapterRAM', '/format:list'],
+      { timeout: 5000 },
+      (err: Error | null, stdout: string) => {
+        if (err || !stdout.trim()) {
+          resolve(null);
+          return;
+        }
+        const gpus: { name: string; totalBytes: number }[] = [];
+        let name = '';
+        let ram = 0;
+        for (const line of stdout.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('AdapterRAM=')) {
+            ram = parseInt(trimmed.slice(11), 10) || 0;
+          } else if (trimmed.startsWith('Name=')) {
+            name = trimmed.slice(5).trim();
+          } else if (trimmed === '' && (name || ram)) {
+            if (name && ram > 0) gpus.push({ name, totalBytes: ram });
+            name = '';
+            ram = 0;
+          }
+        }
+        if (name && ram > 0) gpus.push({ name, totalBytes: ram });
+        if (gpus.length > 0) {
+          // Pick the GPU with the most VRAM (likely discrete)
+          gpus.sort((a, b) => b.totalBytes - a.totalBytes);
+          resolve(gpus[0]);
+        } else {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
 // -- HardwareProfiler -------------------------------------------------------
 
 export class HardwareProfiler {
@@ -236,16 +277,27 @@ export class HardwareProfiler {
             },
           };
         }
-        // nvidia-smi failed but vendor is nvidia
+        // nvidia-smi failed — fall through to WMI fallback
+      }
+
+      // Fallback: Windows WMI (works for AMD, Intel, and NVIDIA without smi)
+      const wmiResult = await queryWindowsVRAM().catch(() => null);
+      if (wmiResult && wmiResult.totalBytes > 0) {
+        const available = Math.max(0, wmiResult.totalBytes - SYSTEM_RESERVED_VRAM);
         return {
-          gpu: { name: 'NVIDIA GPU', vendor, driver, available: true },
-          vram: { total: 0, available: 0, systemReserved: SYSTEM_RESERVED_VRAM },
+          gpu: { name: wmiResult.name, vendor, driver, available: true },
+          vram: { total: wmiResult.totalBytes, available, systemReserved: SYSTEM_RESERVED_VRAM },
         };
       }
 
-      // Non-NVIDIA GPU: available but VRAM is unreliable
+      // No VRAM detection method succeeded
       return {
-        gpu: { name: `${vendor.toUpperCase()} GPU`, vendor, driver, available: true },
+        gpu: {
+          name: vendor !== 'unknown' ? `${vendor.toUpperCase()} GPU` : 'Unknown GPU',
+          vendor,
+          driver,
+          available: vendor !== 'unknown',
+        },
         vram: { total: 0, available: 0, systemReserved: 0 },
       };
     } catch {

@@ -1,19 +1,22 @@
 /**
- * InterviewStep.tsx — Step 5: Voice interview with waveform.
+ * InterviewStep.tsx — Step 4: Voice interview with waveform + text input.
  *
  * Starts a Gemini Live voice session for the personal intake interview.
  * Displays an animated waveform visualization while the conversation runs.
+ * Text input fallback below the waveform for typing messages to Gemini.
  * Auto-advances when Gemini calls finalize_agent_identity tool, or allows
  * the user to skip with a default personality profile.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Mic, SkipForward, RefreshCw } from 'lucide-react';
+import { Mic, RefreshCw, Send } from 'lucide-react';
+import NextButton from './shared/NextButton';
 import type { IdentityChoices } from '../OnboardingWizard';
 
 interface InterviewStepProps {
   identityChoices: IdentityChoices;
   connectToGemini?: (identityContext?: string) => void;
+  sendTextToGemini?: (text: string) => void;
   onComplete: (finalName?: string) => void;
   onBack?: () => void;
 }
@@ -62,6 +65,7 @@ const DEFAULT_PROFILES: Record<string, {
 const InterviewStep: React.FC<InterviewStepProps> = ({
   identityChoices,
   connectToGemini,
+  sendTextToGemini,
   onComplete,
   onBack,
 }) => {
@@ -69,6 +73,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   const [phase, setPhase] = useState<'waiting' | 'connecting' | 'active' | 'failed' | 'done'>('waiting');
   const [statusText, setStatusText] = useState('Preparing voice interview...');
   const [waveformBars, setWaveformBars] = useState<number[]>(new Array(32).fill(0.05));
+  const [textInput, setTextInput] = useState('');
   const animFrameRef = useRef<number>(0);
   const hasConnectedRef = useRef(false);
   const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,10 +98,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
       connectToGemini(ctx);
 
-      // Fallback timeout: if no audio activity detected within CONNECTION_TIMEOUT_MS, assume failure
       connectionTimerRef.current = setTimeout(() => {
         setPhase((current) => {
-          // Only transition to failed if we're still in 'connecting' — if already 'active' or 'done', leave it
           if (current === 'connecting') {
             setStatusText('Voice connection could not be established');
             return 'failed';
@@ -128,10 +131,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   }, [attemptConnection]);
 
   // Listen for any audio activity to confirm connection is live
-  // The 'gemini-audio-active' event should be dispatched when audio begins streaming
   useEffect(() => {
     const handler = () => {
-      // Connection confirmed — clear the fallback timeout and go active
       if (connectionTimerRef.current) {
         clearTimeout(connectionTimerRef.current);
         connectionTimerRef.current = null;
@@ -186,7 +187,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     };
   }, [phase]);
 
-  // Listen for the agent finalization event dispatched by App.tsx onAgentFinalized
+  // Listen for the agent finalization event
   useEffect(() => {
     const handler = (e: Event) => {
       const { agentName } = (e as CustomEvent).detail;
@@ -208,15 +209,16 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     const name = identityChoices.agentName || 'Friday';
 
     try {
-      // Save the default agent config via the finalize endpoint
       await window.eve.onboarding.finalizeAgent({
         agentName: name,
         agentVoice: voiceName,
-        gender: gender,
-        accent: profile.accent,
-        backstory: profile.backstory,
-        personalityTraits: profile.traits,
-        identityLine: profile.identityLine,
+        agentGender: gender,
+        agentAccent: profile.accent,
+        agentBackstory: profile.backstory,
+        agentTraits: profile.traits,
+        agentIdentityLine: profile.identityLine,
+        userName: '',
+        onboardingComplete: true,
       });
     } catch (err) {
       console.warn('[InterviewStep] Failed to save agent config:', err);
@@ -225,6 +227,20 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     setTimeout(() => onComplete(name), 600);
   }, [identityChoices, onComplete]);
 
+  const handleSendText = useCallback(() => {
+    const trimmed = textInput.trim();
+    if (!trimmed || !sendTextToGemini) return;
+    sendTextToGemini(trimmed);
+    setTextInput('');
+  }, [textInput, sendTextToGemini]);
+
+  const handleTextKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendText();
+    }
+  }, [handleSendText]);
+
   return (
     <section style={{
       ...styles.container,
@@ -232,10 +248,17 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       transform: fadeIn ? 'translateY(0)' : 'translateY(16px)',
       transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
     }} aria-label="Voice calibration interview">
-      <div style={styles.header} aria-hidden="true">
-        <div style={styles.headerLine} />
-        <span style={styles.headerLabel}>VOICE CALIBRATION</span>
-        <div style={styles.headerLine} />
+      <div style={styles.headerBlock}>
+        <h2 style={styles.heading}>Voice Calibration.</h2>
+        <p style={styles.subtitle}>
+          {phase === 'active'
+            ? 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally.'
+            : phase === 'done'
+              ? 'Your agent\'s personality has been configured.'
+              : phase === 'failed'
+                ? 'The voice session could not be established. You can retry or skip to use a default personality.'
+                : 'Preparing the voice connection...'}
+        </p>
       </div>
 
       {/* Mic icon */}
@@ -257,28 +280,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
           size={36}
           color={phase === 'failed' ? 'var(--accent-red)' : phase === 'active' ? 'var(--accent-cyan)' : 'var(--accent-cyan-50)'}
         />
-      </div>
-
-      {/* Explainer */}
-      <div style={styles.explainer} aria-live="polite">
-        <p style={styles.explainerTitle}>
-          {phase === 'waiting' || phase === 'connecting'
-            ? 'Setting up your interview...'
-            : phase === 'done'
-              ? 'Configuration complete!'
-              : phase === 'failed'
-                ? 'Connection failed'
-                : `Speak with your setup assistant`}
-        </p>
-        <p style={styles.explainerBody}>
-          {phase === 'active'
-            ? 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally — there are no wrong answers.'
-            : phase === 'done'
-              ? 'Your agent\'s personality has been configured.'
-              : phase === 'failed'
-                ? 'The voice session could not be established. You can retry or skip to use a default personality profile.'
-                : 'Preparing the voice connection...'}
-        </p>
       </div>
 
       {/* Waveform visualization */}
@@ -303,26 +304,55 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         color: phase === 'failed' ? 'var(--accent-red)' : 'var(--accent-cyan-50)',
       }}>{statusText}</p>
 
+      {/* Text input fallback — visible when active */}
+      {phase === 'active' && sendTextToGemini && (
+        <div style={styles.textInputRow}>
+          <input
+            type="text"
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+            onKeyDown={handleTextKeyDown}
+            placeholder="Type a message instead..."
+            style={styles.textInput}
+            aria-label="Type a message to the interview assistant"
+          />
+          <button
+            onClick={handleSendText}
+            disabled={!textInput.trim()}
+            style={{
+              ...styles.sendButton,
+              opacity: textInput.trim() ? 1 : 0.35,
+            }}
+            aria-label="Send message"
+          >
+            <Send size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Failed state: Retry + Skip buttons */}
       {phase === 'failed' && (
         <div style={styles.failedButtons}>
-          <button onClick={handleRetry} style={styles.retryButton} aria-label="Retry voice connection">
-            <RefreshCw size={14} aria-hidden="true" />
-            <span>Retry</span>
-          </button>
-          <button onClick={handleSkip} style={styles.skipButton} aria-label="Skip interview and use default personality">
-            <SkipForward size={14} aria-hidden="true" />
-            <span>Skip Interview</span>
-          </button>
+          <NextButton
+            label="Retry"
+            onClick={handleRetry}
+            icon={<RefreshCw size={14} />}
+          />
+          <NextButton
+            label="Skip Interview"
+            onClick={handleSkip}
+            variant="skip"
+          />
         </div>
       )}
 
       {/* Skip button (shown in non-failed, non-done states) */}
       {phase !== 'done' && phase !== 'failed' && (
-        <button onClick={handleSkip} style={styles.skipButton} aria-label="Skip interview and use default personality">
-          <SkipForward size={14} aria-hidden="true" />
-          <span>Skip Interview</span>
-        </button>
+        <NextButton
+          label="Skip Interview"
+          onClick={handleSkip}
+          variant="skip"
+        />
       )}
 
       <p style={styles.hint}>
@@ -332,13 +362,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
             ? 'Skipping will apply a default personality based on your identity choices.'
             : 'You can skip this step to use a default personality profile.'}
       </p>
-
-      {/* Back button */}
-      {onBack && phase !== 'done' && (
-        <button onClick={onBack} style={styles.backButton} aria-label="Go back to previous step">
-          &#8592; Back
-        </button>
-      )}
     </section>
   );
 };
@@ -353,24 +376,25 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     padding: '0 24px',
   },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 16,
-    width: '100%',
+  headerBlock: {
+    textAlign: 'center',
+    maxWidth: 420,
   },
-  headerLine: {
-    flex: 1,
-    height: 1,
-    background: 'linear-gradient(90deg, transparent, var(--accent-cyan-20), transparent)',
-  },
-  headerLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    letterSpacing: '0.25em',
-    color: 'var(--accent-cyan-70)',
+  heading: {
+    fontSize: 28,
+    fontWeight: 300,
+    color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
-    whiteSpace: 'nowrap',
+    letterSpacing: '0.05em',
+    margin: '0 0 12px 0',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: 'var(--text-30)',
+    textAlign: 'center',
+    lineHeight: 1.6,
+    margin: 0,
+    fontFamily: "'Inter', sans-serif",
   },
   iconWrap: {
     width: 72,
@@ -381,24 +405,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  explainer: {
-    textAlign: 'center',
-    maxWidth: 380,
-  },
-  explainerTitle: {
-    fontSize: 16,
-    fontWeight: 500,
-    color: 'var(--text-primary)',
-    margin: '0 0 8px 0',
-    fontFamily: "'Space Grotesk', sans-serif",
-  },
-  explainerBody: {
-    fontSize: 13,
-    color: 'var(--text-40)',
-    lineHeight: 1.6,
-    margin: 0,
-    fontFamily: "'Inter', sans-serif",
   },
   waveformContainer: {
     display: 'flex',
@@ -422,38 +428,42 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.05em',
     margin: 0,
   },
-  skipButton: {
+  textInputRow: {
+    display: 'flex',
+    gap: 8,
+    width: '100%',
+    maxWidth: 400,
+  },
+  textInput: {
+    flex: 1,
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(255, 255, 255, 0.06)',
+    borderRadius: 8,
+    padding: '10px 14px',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    outline: 'none',
+    fontFamily: "'Inter', sans-serif",
+    transition: 'border-color 0.2s',
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    background: 'var(--accent-cyan-10)',
+    border: '1px solid var(--accent-cyan-20)',
+    color: 'var(--accent-cyan)',
+    cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
-    padding: '10px 28px',
-    background: 'var(--onboarding-card)',
-    border: '1px solid var(--onboarding-border)',
-    borderRadius: 8,
-    color: 'var(--text-50)',
-    fontSize: 13,
-    fontFamily: "'Space Grotesk', sans-serif",
-    cursor: 'pointer',
+    justifyContent: 'center',
     transition: 'all 0.2s ease',
+    flexShrink: 0,
   },
   failedButtons: {
     display: 'flex',
     gap: 12,
     alignItems: 'center',
-  },
-  retryButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '10px 28px',
-    background: 'var(--accent-cyan-10)',
-    border: '1px solid var(--accent-cyan-20)',
-    borderRadius: 8,
-    color: 'var(--accent-cyan-90)',
-    fontSize: 13,
-    fontFamily: "'Space Grotesk', sans-serif",
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
   },
   hint: {
     fontSize: 10,
@@ -462,19 +472,6 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     fontFamily: "'Inter', sans-serif",
     maxWidth: 360,
-  },
-  backButton: {
-    background: 'none',
-    border: 'none',
-    color: 'var(--text-40)',
-    fontSize: 13,
-    fontFamily: "'Space Grotesk', sans-serif",
-    cursor: 'pointer',
-    padding: '4px 8px',
-    transition: 'color 0.2s ease',
-    position: 'absolute' as const,
-    bottom: 48,
-    left: 48,
   },
 };
 
