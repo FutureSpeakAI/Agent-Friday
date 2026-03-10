@@ -62,6 +62,8 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
         const profile = await window.eve.hardware.detect().catch(() => null);
         if (cancelled) return;
 
+        let detectedTier: string = 'whisper';
+
         if (profile) {
           const p = profile as any;
           setHwProfile({
@@ -71,6 +73,7 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
           });
           try {
             const t = await window.eve.hardware.getTier(p);
+            detectedTier = t as string;
             if (!cancelled) setTier(t as TierName);
           } catch {
             if (!cancelled) setTier('whisper');
@@ -79,9 +82,9 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
           setTier('whisper');
         }
 
-        // Get model list for the tier
+        // Get model list for the detected tier
         try {
-          const models = await window.eve.hardware.getModelList();
+          const models = await window.eve.hardware.getModelList(detectedTier);
           if (!cancelled) setModelList(models as string[]);
         } catch { /* no models */ }
 

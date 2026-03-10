@@ -83,7 +83,7 @@ function setupNvidiaMocks(): void {
     ],
   });
   mocks.execFile.mockImplementation(
-    (_cmd: string, _args: string[], cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+    (_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
       cb(null, 'NVIDIA GeForce RTX 4070, 12288, 10500\n', '');
     },
   );
@@ -93,7 +93,7 @@ function setupNvidiaMocks(): void {
 function setupNoGPUMocks(): void {
   mocks.getGPUInfo.mockResolvedValue({ gpuDevice: [] });
   mocks.execFile.mockImplementation(
-    (_cmd: string, _args: string[], cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+    (_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
       cb(new Error('nvidia-smi not found'), '', '');
     },
   );
@@ -111,7 +111,7 @@ function setupIntelMocks(): void {
     ],
   });
   mocks.execFile.mockImplementation(
-    (_cmd: string, _args: string[], cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+    (_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
       cb(new Error('nvidia-smi not found'), '', '');
     },
   );
@@ -120,9 +120,17 @@ function setupIntelMocks(): void {
 // -- Test Suite --------------------------------------------------------------
 
 describe('HardwareProfiler', () => {
+  const originalPlatform = process.platform;
+
   beforeEach(() => {
     HardwareProfiler.resetInstance();
     vi.clearAllMocks();
+    // Mock platform to 'win32' so nvidia-smi and WMI code paths are exercised
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
   // VC-1: detect() populates a complete HardwareProfile
