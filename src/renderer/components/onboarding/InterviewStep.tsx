@@ -94,23 +94,25 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     setPhase('connecting');
     setStatusText('Connecting to voice session...');
 
-    try {
-      const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
-      connectToGemini(ctx);
-
-      connectionTimerRef.current = setTimeout(() => {
-        setPhase((current) => {
-          if (current === 'connecting') {
-            setStatusText('Voice connection could not be established');
-            return 'failed';
-          }
-          return current;
-        });
-      }, CONNECTION_TIMEOUT_MS);
-    } catch {
+    const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
+    connectToGemini(ctx).catch(() => {
+      if (connectionTimerRef.current) {
+        clearTimeout(connectionTimerRef.current);
+        connectionTimerRef.current = null;
+      }
       setPhase('failed');
       setStatusText('Voice connection could not be established');
-    }
+    });
+
+    connectionTimerRef.current = setTimeout(() => {
+      setPhase((current) => {
+        if (current === 'connecting') {
+          setStatusText('Voice connection could not be established');
+          return 'failed';
+        }
+        return current;
+      });
+    }, CONNECTION_TIMEOUT_MS);
   }, [connectToGemini, identityChoices]);
 
   // Start the voice connection after a brief delay

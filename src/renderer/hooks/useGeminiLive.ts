@@ -838,10 +838,10 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       if (voiceName) voiceNameRef.current = voiceName;
       const apiKey = await window.eve.getGeminiApiKey();
       if (!apiKey) {
-        const msg = 'No Gemini API key configured — add GEMINI_API_KEY to .env';
+        const msg = 'No Gemini API key configured — add one in Settings → API Keys';
         setState((s) => ({ ...s, error: msg }));
         optionsRef.current.onError?.(msg);
-        return;
+        throw new Error(msg);
       }
 
       // Close old socket with intentional flag to suppress stale onclose reconnect

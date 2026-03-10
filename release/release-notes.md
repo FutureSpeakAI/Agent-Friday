@@ -1,15 +1,22 @@
-## Agent Friday v3.5.1 — Hotfix: Optimus GPU Detection & WebSocket Diagnostics
+## Agent Friday v3.5.2 — Hotfix: Voice Interview Connection & SmartScreen Trust
 
 ### Bug Fixes
 
-- **NVIDIA Optimus laptop detection** — Hardware profiler now always tries nvidia-smi on Windows, even when Chromium reports an AMD/Intel iGPU as primary. Fixes RTX laptops incorrectly defaulting to whisper tier.
-- **Model downloads stuck at 0/0** — HardwareStep now passes the detected tier to getModelList(), fixing the empty model list during onboarding.
-- **WebSocket error diagnostics** — Replaced misleading "API key may be invalid" error with close-code-based diagnostics: network/API key issues (1006), auth rejection (1008), and service unavailable (1001).
-- **Test reliability** — Fixed execFile mock signature (3-arg → 4-arg) and added process.platform mock so GPU detection tests pass on all platforms.
+- **Voice interview silent failure** — Fixed critical bug where InterviewStep showed "Interview in progress" with no actual WebSocket connection when the Gemini API key was missing. `useGeminiLive.connect()` now properly throws on missing key instead of silently resolving.
+- **Instant connection failure feedback** — InterviewStep now catches async connection errors immediately instead of waiting 30 seconds for a timeout. Users see the retry/skip UI within seconds of a failure.
+- **SmartScreen trust for installer** — The NSIS installer now bundles the code-signing certificate and installs it to Windows TrustedPublisher and Root stores during setup, preventing SmartScreen prompts for the app and future updates. Certificate is cleanly removed on uninstall.
+- **Misleading error message** — Changed "add GEMINI_API_KEY to .env" to "add one in Settings → API Keys" for the desktop app context.
+
+### Previous Fixes (v3.5.1)
+
+- NVIDIA Optimus laptop detection — RTX laptops no longer default to whisper tier
+- Model downloads stuck at 0/0 — HardwareStep passes detected tier to getModelList()
+- WebSocket close-code-based diagnostics for connection errors
+- Test reliability fixes for cross-platform GPU detection tests
 
 ### Installation
 
-Download `Agent Friday Setup 3.5.1.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.5.2.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 
