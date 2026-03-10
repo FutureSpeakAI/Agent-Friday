@@ -265,11 +265,14 @@ Agent Friday supports multiple voice pathways, from cloud streaming to fully loc
 
 | Pathway | Technology | Use Case |
 |---------|-----------|----------|
+| **Local Voice Loop** | Whisper STT → Ollama → Kokoro/Piper TTS | Fully offline real-time conversation — zero cloud keys required |
 | **Cloud Streaming** | Gemini Live WebSocket, 24kHz PCM, bidirectional | Real-time conversation with lowest latency |
 | **Local STT** | Whisper bindings | Offline speech-to-text, sovereignty-preserving |
-| **Local TTS** | Native TTS engine | Offline text-to-speech |
+| **Local TTS** | Kokoro/Piper TTS engine | Offline text-to-speech with multiple voices |
 | **Agent Voices** | ElevenLabs TTS (Turbo v2.5) | Distinct voices for sub-agents |
 | **Call Integration** | VB-Cable virtual audio routing | Join Google Meet, Zoom, Teams as a voice participant |
+
+The `LocalConversation` orchestrator (`src/main/local-conversation.ts`) manages the full local voice loop: microphone capture → VAD → Whisper transcription → Ollama completion with tool calling → TTS synthesis → gapless audio playback. Barge-in is supported — speaking while the AI is talking interrupts synthesis immediately. The onboarding interview, post-onboarding chat, and all system events work fully offline when no cloud API keys are configured.
 
 Audio capture uses AudioWorklet (with ScriptProcessorNode fallback). Playback uses precise Web Audio scheduling (`source.start(exactTime)`) for gapless chunk delivery. Voice profile management enables per-agent voice customization.
 
@@ -451,7 +454,7 @@ On first launch, Agent Friday guides you through an eight-step cinematic onboard
 4. **Privacy** — Privacy Shield explainer showing how PII is scrubbed before cloud requests and restored in responses
 5. **API Keys** — Optional cloud API key entry (Gemini, Anthropic, OpenRouter) — always skippable
 6. **Environment** — Data sovereignty vault creation (AES-256-GCM, Argon2id) and agent identity (name, voice gender, voice feel)
-7. **Interview** — Voice-based mutual discovery session with text input fallback
+7. **Interview** — Voice-based mutual discovery session (fully local via Whisper + Ollama + TTS, or cloud via Gemini Live) with text input fallback
 8. **Reveal** — Agent comes online with cinematic boot sequence
 
 ### Configuration
@@ -461,7 +464,7 @@ Agent Friday works with multiple AI providers. API keys are stored locally and e
 | Key | Provider | Required |
 |-----|----------|----------|
 | `ANTHROPIC_API_KEY` | Anthropic (Claude) | Recommended |
-| `GEMINI_API_KEY` | Google (Gemini Live voice) | For voice features |
+| `GEMINI_API_KEY` | Google (Gemini Live voice) | Optional — local voice works without it |
 | `OPENROUTER_API_KEY` | OpenRouter (100+ models) | Optional |
 | `HUGGINGFACE_API_KEY` | HuggingFace | Optional |
 | `ELEVENLABS_API_KEY` | ElevenLabs (agent voices) | Optional |

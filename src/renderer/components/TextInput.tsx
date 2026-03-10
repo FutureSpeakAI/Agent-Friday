@@ -3,12 +3,14 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 interface TextInputProps {
   onSend: (text: string) => void;
   isConnected?: boolean;
+  /** True when the local voice conversation loop (Ollama) is active */
+  isLocalActive?: boolean;
 }
 
 const MAX_ROWS = 5;
 const LINE_HEIGHT = 20; // px per line
 
-export default function TextInput({ onSend, isConnected }: TextInputProps) {
+export default function TextInput({ onSend, isConnected, isLocalActive }: TextInputProps) {
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +79,25 @@ export default function TextInput({ onSend, isConnected }: TextInputProps) {
             : 'rgba(255,255,255,0.02)',
         }}
       >
+        {/* Connection status dot */}
+        <span
+          style={{
+            ...styles.statusDot,
+            background: isLocalActive
+              ? '#00f0ff'
+              : isConnected
+                ? '#22c55e'
+                : '#555568',
+            boxShadow: isLocalActive
+              ? '0 0 6px rgba(0, 240, 255, 0.4)'
+              : isConnected
+                ? '0 0 6px rgba(34, 197, 94, 0.4)'
+                : 'none',
+          }}
+          title={
+            isLocalActive ? 'Local AI (Ollama)' : isConnected ? 'Cloud AI (Gemini)' : 'Disconnected'
+          }
+        />
         <span style={{ ...styles.prompt, color: focused ? '#00f0ff' : '#333348' }}>›</span>
         <textarea
           ref={textareaRef}
@@ -111,6 +132,18 @@ export default function TextInput({ onSend, isConnected }: TextInputProps) {
           <span style={styles.hintKey}>Shift+Enter</span> newline
           <span style={styles.hintSep}>·</span>
           <span style={styles.hintKey}>Esc</span> unfocus
+          {(isLocalActive || isConnected) && (
+            <>
+              <span style={styles.hintSep}>·</span>
+              <span style={{
+                fontSize: 9,
+                color: isLocalActive ? 'rgba(0, 240, 255, 0.5)' : 'rgba(34, 197, 94, 0.5)',
+                fontWeight: 500,
+              }}>
+                {isLocalActive ? 'local' : 'cloud'}
+              </span>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -134,6 +167,14 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 14px',
     backdropFilter: 'blur(8px)',
     transition: 'border-color 0.2s, background 0.2s',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    flexShrink: 0,
+    marginTop: 7, // vertically center with first line
+    transition: 'background 0.3s, box-shadow 0.3s',
   },
   prompt: {
     fontSize: 18,
