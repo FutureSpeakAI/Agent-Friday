@@ -46,6 +46,12 @@
         "to": "icon.png"
       }
     ],
+    "extraFiles": [
+      {
+        "from": "build/agent-friday-dev.cer",
+        "to": "agent-friday-dev.cer"
+      }
+    ],
     "publish": {
       "provider": "github",
       "owner": "FutureSpeakAI",
@@ -74,7 +80,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Agent Friday",
-      "uninstallDisplayName": "Agent Friday — FutureSpeak.AI"
+      "uninstallDisplayName": "Agent Friday — FutureSpeak.AI",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "icon": "build/icon.png",
