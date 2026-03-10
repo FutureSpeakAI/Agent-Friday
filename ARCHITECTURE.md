@@ -494,7 +494,7 @@ graph TD
     end
 
     subgraph "Phase: Onboarding"
-        ONBOARD_WIZ[OnboardingWizard.tsx<br/>7-Step Cinematic Wizard]
+        ONBOARD_WIZ[OnboardingWizard.tsx<br/>6-Step Cinematic Wizard]
         AGENT_CREATE[AgentCreation.tsx<br/>Cinematic Reveal]
     end
 
@@ -1119,44 +1119,38 @@ sequenceDiagram
     App ->> App: setAppPhase('onboarding')
 
     Note over User, Agent: === STEP 0: AWAKENING ===
-    Wizard ->> User: Cinematic splash — logo, particles, tagline
-    Wizard ->> Wizard: Auto-advance after 4s (or on click)
+    Wizard ->> User: Cinematic splash — "FRIDAY." with particles
+    Wizard ->> Wizard: Auto-advance after 4.5s (or on click)
 
     Note over User, Agent: === STEP 1: DIRECTIVES (cLaws) ===
-    Wizard ->> User: Three laws presented with scroll/fade
+    Wizard ->> User: Three axiom cards with colored borders
     User ->> Wizard: "I Understand"
 
     Note over User, Agent: === STEP 2: ENGINES (Hardware + API Keys) ===
     Wizard ->> Wizard: Detect hardware tier via IPC
-    Wizard ->> User: GPU/VRAM/RAM HUD + tier scale
-    alt Standard+ hardware (6GB+ VRAM)
-        Wizard ->> User: All keys optional, "Run Locally" shown
-    else Light/Whisper hardware
-        Wizard ->> User: Gemini API key required
-    end
-    User ->> Wizard: Enters keys or clicks "Run Locally"
+    Wizard ->> User: GPU/VRAM/RAM HUD + segmented tier scale
+    Wizard ->> User: 3 API key inputs (Gemini, Anthropic, OpenRouter)
+    User ->> Wizard: Enters keys or skips
 
-    Note over User, Agent: === STEP 3: SOVEREIGNTY (Vault) ===
-    Wizard ->> User: Data sovereignty explanation
-    User ->> Wizard: Sets vault passphrase
+    Note over User, Agent: === STEP 3: ENVIRONMENT (Vault + Identity) ===
+    Wizard ->> User: Data sovereignty vault + agent identity
+    User ->> Wizard: Sets vault passphrase (AES-256-GCM, Argon2id)
     Wizard ->> Wizard: Initialize vault via IPC
+    User ->> Wizard: Names agent, selects voice gender/feel
+    Note right of Wizard: Vault auto-skipped if already initialized
 
-    Note over User, Agent: === STEP 4: IDENTITY ===
-    Wizard ->> User: Agent name input + voice gender/feel pickers
-    User ->> Wizard: Names agent, selects voice preferences
-
-    Note over User, Agent: === STEP 5: INTERVIEW ===
+    Note over User, Agent: === STEP 4: INTERVIEW ===
     Wizard ->> Gemini: Start voice session with onboarding prompt
-    Wizard ->> User: Animated waveform visualization
+    Wizard ->> User: Animated waveform + text input fallback
     Gemini ->> User: Conducts personal questions (social, mother)
-    User ->> Gemini: Answers via voice
+    User ->> Gemini: Answers via voice or text
     Gemini ->> Claude: save_intake_responses → psych:generate
     Claude -->> App: PsychologicalProfile saved
     Gemini ->> Wizard: finalize_agent_identity tool call
 
-    Note over User, Agent: === STEP 6: REVEAL ===
+    Note over User, Agent: === STEP 5: REVEAL ===
     Wizard ->> User: Terminal boot sequence animation
-    Wizard ->> User: Agent name cinematic reveal
+    Wizard ->> User: "{NAME}_ONLINE" cinematic reveal
     Wizard ->> App: onComplete(agentName)
 
     Note over User, Agent: === CINEMATIC CREATION ===
@@ -1680,7 +1674,7 @@ graph TD
 | `components/` | `HudOverlay.tsx` | UI | Holographic HUD — agent name, structure label, status |
 | `components/` | `FridayCore.tsx` | 3D | Legacy 3D desktop (superseded by DesktopViz) |
 | `components/` | `VoiceOrb.tsx` | UI | Central interaction orb |
-| `components/` | `OnboardingWizard.tsx` | UI | 7-step cinematic onboarding wizard |
+| `components/` | `OnboardingWizard.tsx` | UI | 6-step cinematic onboarding wizard |
 | `components/` | `onboarding/*.tsx` | UI | Individual onboarding step components |
 | `components/` | `AgentCreation.tsx` | UI | Cinematic agent reveal |
 | `components/` | `IntegrityShield.tsx` | UI | cLaw integrity status indicator |

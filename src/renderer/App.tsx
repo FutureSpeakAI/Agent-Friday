@@ -1064,6 +1064,7 @@ export default function App() {
             setAppPhase('creating');
           }}
           connectToGemini={connectToGemini}
+          sendTextToGemini={geminiLive.sendTextToGemini}
         />
       )}
 

@@ -4,6 +4,85 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.5.0] — 2026-03-09 — Trust-First Onboarding
+
+### Summary
+
+Complete narrative redesign of the onboarding ceremony. The 6-step wizard is now an 8-step trust-first experience that tells the story of "the most trustworthy AI system in the world" — explaining local-first AI priority, Privacy Shield filtering, optional cloud credentials, and auto-downloading local models during hardware detection. DirectivesStep and EnginesStep are replaced by four new purpose-built steps.
+
+### Changed — Onboarding Flow (6 → 8 steps)
+
+- **Step restructure** — Awakening → Mission → Hardware → Privacy → ApiKeys → Environment → Interview → Reveal
+- **DirectivesStep → MissionStep** — Asimov axiom cards replaced by five trust pillars: Local-First Intelligence, Zero-Knowledge Vault, Privacy Shield, Transparent Routing, Immutable Directives
+- **EnginesStep → HardwareStep + ApiKeysStep** — Hardware detection and model downloading split from API key entry; models auto-download with real-time progress bars; API keys presented as optional
+- **EnvironmentStep** — Agent name defaults to "Friday" with simple hint text; suggestion chips removed
+- **OnboardingWizard** — Updated STEPS array, added `detectedTier` state passed from HardwareStep to ApiKeysStep, updated progress bar for 8-step flow
+
+### Added — New Onboarding Steps
+
+- **MissionStep** (`onboarding/MissionStep.tsx`) — "Your AI. Your Terms." header with five staggered trust-pillar cards using lucide-react icons (Cpu, Lock, Shield, Eye, Fingerprint)
+- **HardwareStep** (`onboarding/HardwareStep.tsx`) — Three-phase step: hardware detection → tier recommendation with model list → auto-download with per-model progress bars; uses existing SetupWizard IPC (`window.eve.setup.*` and `window.eve.hardware.*`)
+- **PrivacyStep** (`onboarding/PrivacyStep.tsx`) — Privacy Shield explainer with visual flow diagram (Your Message → Scrub PII → Cloud AI → Restore → Response) and PII category badge chips
+- **ApiKeysStep** (`onboarding/ApiKeysStep.tsx`) — Optional cloud API key entry for Gemini, Anthropic, and OpenRouter; tier-aware messaging; always skippable
+
+### Removed
+
+- **DirectivesStep.tsx** — Replaced by MissionStep
+- **EnginesStep.tsx** — Replaced by HardwareStep + ApiKeysStep
+
+### Stats
+
+- **Tests:** 4,701 / 4,701 (100% pass rate, 133 suites)
+- **TypeScript:** 0 errors
+- **Files changed:** 8 (+4 new steps, 2 edited, 2 deleted)
+
+---
+
+## [3.4.0] — 2026-03-09 — The Cyberpunk Onboarding Update
+
+### Summary
+
+Complete visual and UX overhaul of the onboarding ceremony. The 7-step wizard is now a 6-step cinematic experience with a cyberpunk HUD aesthetic — cursor-following glow, holographic diamond entity, cyber grid backgrounds, floating-label inputs, and laser-line buttons. Sovereignty and Identity steps are merged into a single **Environment** step. API key onboarding reduced from 7 to 3. Text input fallback added to voice interview.
+
+### Changed — Onboarding Flow (7 → 6 steps)
+
+- **Step consolidation** — Sovereignty (vault) and Identity (name/voice) merged into a single **EnvironmentStep** with both sections visible simultaneously
+- **API key reduction** — Onboarding now shows only 3 keys (Gemini, Anthropic, OpenRouter); remaining providers configurable in Settings
+- **AwakeningStep** — New "FRIDAY." typography with cyan accent dot, reduced to 20 particles, 4.5s auto-advance
+- **DirectivesStep** — "System Foundation." header with full-width axiom cards using colored top borders
+- **EnginesStep** — "Compute Architecture." header with segmented tier scale bar replacing 5-dot indicator; CyberInput floating-label fields
+- **EnvironmentStep** — "Data Sovereignty." header; vault passphrase with strength meter + zero-knowledge badges (AES-256-GCM, Argon2id KDF, HMAC-SHA256); identity wallet with name suggestion chips, voice gender radio group, voice feel grid; auto-skips vault section if already initialized
+- **InterviewStep** — Added full-width text input fallback for users without microphone access; `sendTextToGemini` prop threaded from App.tsx
+- **RevealStep** — "{NAME}_ONLINE" display format with "Systems Nominal // Awaiting Command" subtext
+
+### Added — Shared Onboarding Components
+
+- **NextButton** (`onboarding/shared/NextButton.tsx`) — Reusable button with laser-line `::after` hover animation; variants: primary, secondary, skip
+- **CyberInput** (`onboarding/shared/CyberInput.tsx`) — Input with floating label that animates up on focus/value; monospace option for passphrases
+- **HolographicDiamond** (`onboarding/shared/HolographicDiamond.tsx`) — Rotating 45° square with pulsing border; `intense` prop for awakening/reveal glow
+- **CyberGrid** (`onboarding/shared/CyberGrid.tsx`) — SVG pattern background with subtle drift animation
+- **CursorGlow** (`onboarding/shared/CursorGlow.tsx`) — Mouse-following 300px radial gradient using `useRef` + `requestAnimationFrame` (zero re-renders)
+
+### Added — CSS Foundation
+
+- New CSS variables: `--diamond-border`, `--diamond-glow`
+- New keyframes: `onb-diamond-rotate`, `onb-diamond-pulse`, `onb-grid-drift`, `onb-laser-sweep`, `onb-reveal-expand`
+- New `.onb-next-btn` base class for laser-line button animations
+
+### Removed
+
+- **SovereigntyStep.tsx** — Vault setup merged into EnvironmentStep
+- **IdentityStep.tsx** — Agent identity merged into EnvironmentStep
+
+### Stats
+
+- **Tests:** 4,701 / 4,701 (100% pass rate, 133 suites)
+- **TypeScript:** 0 errors
+- **Files changed:** 13 (+5 new shared components, 6 step rewrites, 2 deleted)
+- **New shared components:** 5 (NextButton, CyberInput, HolographicDiamond, CyberGrid, CursorGlow)
+
+---
+
 ## [3.3.0] — 2026-03-09 — The Privacy Shield Update
 
 ### Summary
