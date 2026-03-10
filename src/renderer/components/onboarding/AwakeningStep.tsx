@@ -1,7 +1,8 @@
 /**
  * AwakeningStep.tsx — Step 0: Cinematic splash screen.
  *
- * Animated logo, particle dots, tagline. Auto-advances after 4s or on click.
+ * "FRIDAY." with cyan accent dot, particle ambiance, tagline.
+ * Auto-advances after 4.5s or on click/keypress.
  */
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
@@ -25,7 +26,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
       setTimeout(() => setPhase('title'), 800),
       setTimeout(() => setPhase('tagline'), 1800),
       setTimeout(() => setPhase('ready'), 2800),
-      setTimeout(() => advance(), 4200),
+      setTimeout(() => advance(), 4500),
     ];
     return () => timers.forEach(clearTimeout);
   }, [advance]);
@@ -46,7 +47,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
     <section style={styles.container} onClick={handleClick} aria-label="Agent Friday — Welcome" role="region">
       {/* Particle dots */}
       <div style={styles.particles} aria-hidden="true">
-        {Array.from({ length: 40 }).map((_, i) => (
+        {Array.from({ length: 20 }).map((_, i) => (
           <div
             key={i}
             style={{
@@ -62,22 +63,6 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
         ))}
       </div>
 
-      {/* Central glow */}
-      <div style={styles.glow} aria-hidden="true" />
-
-      {/* Logo symbol */}
-      <div
-        aria-hidden="true"
-        style={{
-          ...styles.logo,
-          opacity: phase !== 'logo' ? 1 : 0,
-          transform: phase !== 'logo' ? 'scale(1)' : 'scale(0.8)',
-          transition: 'all 1s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        ◈
-      </div>
-
       {/* Title */}
       <h1
         style={{
@@ -86,11 +71,11 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
           transform:
             phase === 'title' || phase === 'tagline' || phase === 'ready'
               ? 'translateY(0)'
-              : 'translateY(12px)',
-          transition: 'all 0.8s cubic-bezier(0.16, 1, 0.3, 1)',
+              : 'translateY(16px)',
+          transition: 'all 1s cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
-        AGENT FRIDAY
+        FRIDAY<span style={styles.titleDot}>.</span>
       </h1>
 
       {/* Tagline */}
@@ -102,7 +87,7 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
           transition: 'opacity 1s ease',
         }}
       >
-        Your sovereign AI companion
+        FutureSpeak Intelligence Systems
       </p>
 
       {/* Skip hint */}
@@ -115,20 +100,6 @@ const AwakeningStep: React.FC<AwakeningStepProps> = ({ onComplete }) => {
       >
         Press any key or click to continue
       </div>
-
-      {/* Keyframes */}
-      <style>{`
-        @keyframes onb-particle-float {
-          0%, 100% { opacity: 0; transform: translateY(0) scale(0.5); }
-          20% { opacity: 0.6; }
-          80% { opacity: 0.4; }
-          50% { transform: translateY(-30px) scale(1); }
-        }
-        @keyframes onb-glow-pulse {
-          0%, 100% { opacity: 0.15; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.25; transform: translate(-50%, -50%) scale(1.1); }
-        }
-      `}</style>
     </section>
   );
 };
@@ -158,37 +129,25 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent-cyan-30)',
     animation: 'onb-particle-float 5s ease-in-out infinite',
   },
-  glow: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    width: 500,
-    height: 500,
-    borderRadius: '50%',
-    background: 'radial-gradient(circle, var(--accent-cyan-10) 0%, transparent 70%)',
-    animation: 'onb-glow-pulse 4s ease-in-out infinite',
-    pointerEvents: 'none',
-  },
-  logo: {
-    fontSize: 64,
-    color: 'var(--accent-cyan)',
-    textShadow: '0 0 40px var(--accent-cyan-30), 0 0 80px var(--accent-cyan-10)',
-    zIndex: 2,
-  },
   title: {
-    fontSize: 32,
-    fontWeight: 300,
-    letterSpacing: '0.3em',
+    fontSize: 56,
+    fontWeight: 200,
+    letterSpacing: '0.2em',
     color: 'var(--text-primary)',
     fontFamily: "'Space Grotesk', sans-serif",
     zIndex: 2,
+    margin: 0,
+  },
+  titleDot: {
+    color: 'var(--accent-cyan)',
   },
   tagline: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 400,
-    letterSpacing: '0.15em',
-    color: 'var(--accent-cyan-50)',
+    letterSpacing: '0.2em',
+    color: 'var(--text-30)',
     fontFamily: "'Space Grotesk', sans-serif",
+    textTransform: 'uppercase',
     zIndex: 2,
   },
   skipHint: {

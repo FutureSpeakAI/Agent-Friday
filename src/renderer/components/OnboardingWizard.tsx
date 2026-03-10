@@ -1,29 +1,33 @@
 /**
  * OnboardingWizard.tsx — Cinematic first-run wizard.
  *
- * Replaces WelcomeGate + voice-only onboarding with a structured 7-step
- * wizard: Awakening → Directives → Engines → Sovereignty → Identity →
- * Interview → Reveal.
- *
- * Each step is a separate component in ./onboarding/. The wizard manages
- * step transitions, progress display, and shared state.
+ * 8-step wizard: Awakening → Mission → Hardware → Privacy → ApiKeys →
+ * Environment → Interview → Reveal. Includes global ambient elements
+ * (CyberGrid, CursorGlow, HolographicDiamond) behind all step content.
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import AwakeningStep from './onboarding/AwakeningStep';
-import DirectivesStep from './onboarding/DirectivesStep';
-import EnginesStep from './onboarding/EnginesStep';
-import SovereigntyStep from './onboarding/SovereigntyStep';
-import IdentityStep from './onboarding/IdentityStep';
+import MissionStep from './onboarding/MissionStep';
+import HardwareStep from './onboarding/HardwareStep';
+import PrivacyStep from './onboarding/PrivacyStep';
+import ApiKeysStep from './onboarding/ApiKeysStep';
+import EnvironmentStep from './onboarding/EnvironmentStep';
 import InterviewStep from './onboarding/InterviewStep';
 import RevealStep from './onboarding/RevealStep';
+import CyberGrid from './onboarding/shared/CyberGrid';
+import CursorGlow from './onboarding/shared/CursorGlow';
+import HolographicDiamond from './onboarding/shared/HolographicDiamond';
+
+type TierName = 'whisper' | 'light' | 'standard' | 'full' | 'sovereign';
 
 const STEPS = [
   { key: 'awakening', label: 'AWAKENING' },
-  { key: 'directives', label: 'DIRECTIVES' },
-  { key: 'engines', label: 'ENGINES' },
-  { key: 'sovereignty', label: 'SOVEREIGNTY' },
-  { key: 'identity', label: 'IDENTITY' },
+  { key: 'mission', label: 'MISSION' },
+  { key: 'hardware', label: 'HARDWARE' },
+  { key: 'privacy', label: 'PRIVACY' },
+  { key: 'apikeys', label: 'API KEYS' },
+  { key: 'environment', label: 'ENVIRONMENT' },
   { key: 'interview', label: 'INTERVIEW' },
   { key: 'reveal', label: 'REVEAL' },
 ] as const;
@@ -39,10 +43,12 @@ export interface IdentityChoices {
 interface OnboardingWizardProps {
   onComplete: (agentName: string) => void;
   connectToGemini?: (identityContext?: string) => void;
+  sendTextToGemini?: (text: string) => void;
 }
 
-const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connectToGemini }) => {
+const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connectToGemini, sendTextToGemini }) => {
   const [currentStep, setCurrentStep] = useState<StepKey>('awakening');
+  const [detectedTier, setDetectedTier] = useState<TierName | null>(null);
   const [identityChoices, setIdentityChoices] = useState<IdentityChoices>({
     agentName: 'Friday',
     gender: 'male',
@@ -77,9 +83,16 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
 
   // Don't show progress bar on awakening (splash) or reveal (boot sequence)
   const showProgress = currentStep !== 'awakening' && currentStep !== 'reveal';
+  // Intense diamond glow on awakening + reveal
+  const diamondIntense = currentStep === 'awakening' || currentStep === 'reveal';
 
   return (
     <div style={styles.overlay} role="dialog" aria-label="Onboarding wizard" aria-modal="true">
+      {/* Global ambient elements */}
+      <CyberGrid />
+      <CursorGlow />
+      <HolographicDiamond intense={diamondIntense} />
+
       {/* Progress indicator */}
       {showProgress && (
         <nav style={styles.progressBar} aria-label="Onboarding progress">
@@ -129,13 +142,22 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
         }}
       >
         {currentStep === 'awakening' && <AwakeningStep onComplete={next} />}
-        {currentStep === 'directives' && <DirectivesStep onComplete={next} onBack={prev} />}
-        {currentStep === 'engines' && (
-          <EnginesStep onComplete={() => next()} onBack={prev} />
+        {currentStep === 'mission' && <MissionStep onComplete={next} onBack={prev} />}
+        {currentStep === 'hardware' && (
+          <HardwareStep
+            onComplete={(tier) => {
+              setDetectedTier(tier);
+              next();
+            }}
+            onBack={prev}
+          />
         )}
-        {currentStep === 'sovereignty' && <SovereigntyStep onComplete={next} onBack={prev} />}
-        {currentStep === 'identity' && (
-          <IdentityStep
+        {currentStep === 'privacy' && <PrivacyStep onComplete={next} onBack={prev} />}
+        {currentStep === 'apikeys' && (
+          <ApiKeysStep detectedTier={detectedTier} onComplete={next} onBack={prev} />
+        )}
+        {currentStep === 'environment' && (
+          <EnvironmentStep
             choices={identityChoices}
             onChange={setIdentityChoices}
             onComplete={next}
@@ -146,6 +168,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
           <InterviewStep
             identityChoices={identityChoices}
             connectToGemini={connectToGemini}
+            sendTextToGemini={sendTextToGemini}
             onComplete={(finalName) => {
               if (finalName) {
                 setIdentityChoices((p) => ({ ...p, agentName: finalName }));
