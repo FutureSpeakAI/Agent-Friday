@@ -215,6 +215,11 @@ export default function App() {
   const retriesRef = useRef(0);
   const maxRetries = 3;
 
+  // ── Local voice conversation state (fallback when no Gemini key) ──────
+  const localConversationActiveRef = useRef(false);
+  const [localConversationActive, setLocalConversationActive] = useState(false);
+  const localConversationCleanupsRef = useRef<Array<() => void>>([]);
+
   const geminiLive = useGeminiLive({
     onTextResponse: (text) => {
       setMessages((prev) => {
@@ -392,7 +397,137 @@ export default function App() {
       } catch { /* config load failed */ }
     }
 
-    // 6. Connect!
+    // 5b. Check if Gemini API key is available
+    let hasGeminiKey = false;
+    try {
+      const key = await window.eve.getGeminiApiKey();
+      hasGeminiKey = !!(key && typeof key === 'string' && key.trim().length > 0);
+    } catch { /* no key */ }
+
+    // ── 6a. LOCAL VOICE PATH — no Gemini key, use Whisper + Ollama + TTS ──
+    // Works for BOTH onboarding (Interview step) and post-onboarding (normal use)
+    if (!hasGeminiKey) {
+      console.log(`[Agent] No Gemini key — starting local voice conversation (Whisper + Ollama + TTS) [onboarding=${!onboardingComplete}]`);
+
+      // Clean up any previous local conversation listeners
+      for (const cleanup of localConversationCleanupsRef.current) cleanup();
+      localConversationCleanupsRef.current = [];
+
+      // Set up event listeners before starting
+      const cleanups: Array<() => void> = [];
+
+      cleanups.push(
+        window.eve.localConversation.onStarted(() => {
+          console.log('[Agent] Local voice conversation started');
+          setStatus('Connected (Local)');
+          setConnectionError('');
+          retriesRef.current = 0;
+          setRetryCount(0);
+          localConversationActiveRef.current = true;
+          setLocalConversationActive(true);
+          // Signal InterviewStep that voice session is live (same event as Gemini path)
+          window.dispatchEvent(new Event('gemini-audio-active'));
+        }),
+      );
+
+      cleanups.push(
+        window.eve.localConversation.onTranscript((text: string) => {
+          // Display user transcript in chat (mirrors Gemini path)
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'user' as const,
+              content: text,
+              timestamp: Date.now(),
+            },
+          ]);
+        }),
+      );
+
+      cleanups.push(
+        window.eve.localConversation.onResponse((text: string) => {
+          // Display AI response in chat (mirrors Gemini path)
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: text,
+              model: 'ollama-local',
+              timestamp: Date.now(),
+            },
+          ]);
+        }),
+      );
+
+      cleanups.push(
+        window.eve.localConversation.onAgentFinalized((config: Record<string, unknown>) => {
+          console.log('[Agent] Local conversation — agent finalized:', config);
+          const name = String(config.agentName || 'Agent');
+          const voice = String(config.agentVoice || 'Kore');
+          setAgentName(name);
+
+          if (appPhaseRef.current === 'onboarding') {
+            // During onboarding: dispatch event for InterviewStep → auto-advance to Reveal
+            window.dispatchEvent(new CustomEvent('agent-finalized', {
+              detail: { agentName: name, agentVoice: voice },
+            }));
+          } else {
+            // Post-onboarding re-agenting: stop current session, show creation animation, reconnect
+            localConversationActiveRef.current = false;
+            setLocalConversationActive(false);
+            window.eve.localConversation.stop().catch(() => {});
+            setAppPhase('creating');
+            // AgentCreation onComplete (below) handles the reconnect
+          }
+        }),
+      );
+
+      cleanups.push(
+        window.eve.localConversation.onError((error: string) => {
+          console.error('[Agent] Local conversation error:', error);
+          setConnectionError(error);
+          setStatus(`Local voice error: ${error}`);
+        }),
+      );
+
+      localConversationCleanupsRef.current = cleanups;
+
+      // Build initial prompt based on whether we're in onboarding or normal session
+      let initialPrompt: string | undefined;
+      if (!onboardingComplete) {
+        // Onboarding: kick off the "Her"-style intake conversation
+        const contextPreamble = identityContext
+          ? `[CONTEXT] The user already chose these identity settings in the wizard: ${identityContext}. Do NOT re-ask their name or voice preferences — skip straight to the personal intake questions.\n\n`
+          : '';
+        initialPrompt = `${contextPreamble}[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.`;
+      } else {
+        // Post-onboarding: inject intelligence briefings if available
+        try {
+          const briefing = await window.eve.intelligence.getBriefing();
+          if (briefing) {
+            console.log('[Agent] Injecting intelligence briefings into local conversation');
+            initialPrompt = briefing;
+          }
+        } catch (err) {
+          console.warn('[Agent] Briefing check failed:', err);
+        }
+      }
+
+      try {
+        await window.eve.localConversation.start(instruction, tools, initialPrompt);
+        // 'started' event handler above will set status + dispatch gemini-audio-active
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Agent] Local voice start failed:', msg);
+        setConnectionError(msg);
+        setStatus(`Failed: ${msg}`);
+      }
+      return;
+    }
+
+    // ── 6b. GEMINI CLOUD PATH — existing WebSocket connection ─────────────
     try {
       await geminiLive.connect(instruction, tools, voiceName);
       retriesRef.current = 0;
@@ -445,6 +580,33 @@ export default function App() {
       }
     }
   }, [geminiLive]);
+
+  // ── Wrapped sendTextToGemini: routes to local conversation when active ──
+  const sendText = useCallback(
+    (text: string) => {
+      if (localConversationActiveRef.current) {
+        window.eve.localConversation.sendText(text).catch((err: unknown) => {
+          console.error('[Agent] Local conversation sendText failed:', err);
+        });
+      } else if (geminiLive.sendTextToGemini) {
+        geminiLive.sendTextToGemini(text);
+      }
+    },
+    [geminiLive.sendTextToGemini],
+  );
+
+  // ── Clean up local conversation on unmount / phase change ──────────────
+  useEffect(() => {
+    return () => {
+      if (localConversationActiveRef.current) {
+        localConversationActiveRef.current = false;
+        setLocalConversationActive(false);
+        window.eve.localConversation.stop().catch(() => {});
+        for (const cleanup of localConversationCleanupsRef.current) cleanup();
+        localConversationCleanupsRef.current = [];
+      }
+    };
+  }, []);
 
   // Load wake word setting
   useEffect(() => {
@@ -566,21 +728,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Listen for scheduler task-fired events → inject into Gemini so Friday speaks them
+  // Listen for scheduler task-fired events → inject into AI so Friday speaks them
   useEffect(() => {
     const cleanup = window.eve.scheduler.onTaskFired((task) => {
       console.log('[Agent] Task fired:', task.description);
       playNotificationBell();
 
-      if (task.action === 'remind' && geminiLive.sendTextToGemini) {
-        geminiLive.sendTextToGemini(
+      if (task.action === 'remind') {
+        sendText(
           `[SYSTEM REMINDER — speak this naturally to the user] Reminder: ${task.payload}`
         );
       } else if (task.action === 'launch_app') {
         window.eve.desktop
           .callTool('launch_app', { app_name: task.payload })
           .then(() => {
-            geminiLive.sendTextToGemini?.(
+            sendText(
               `[SYSTEM] I just launched ${task.payload} as scheduled. Let the user know briefly.`
             );
           })
@@ -589,7 +751,7 @@ export default function App() {
         window.eve.desktop
           .callTool('run_command', { command: task.payload })
           .then((result) => {
-            geminiLive.sendTextToGemini?.(
+            sendText(
               `[SYSTEM] Scheduled command executed: ${task.description}. Result: ${result.result || result.error || 'Done'}`
             );
           })
@@ -598,66 +760,60 @@ export default function App() {
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
-  // Listen for predictive suggestions → inject into Gemini so Friday speaks them naturally
+  // Listen for predictive suggestions → inject into AI so Friday speaks them naturally
   useEffect(() => {
     const cleanup = window.eve.predictor.onSuggestion((suggestion) => {
       console.log(`[Friday] Prediction: ${suggestion.type} (${suggestion.confidence})`);
       playNotificationBell();
 
-      if (geminiLive.sendTextToGemini) {
-        geminiLive.sendTextToGemini(
-          `[SYSTEM SUGGESTION — speak this naturally in character, keep it brief and charming] ${suggestion.message}`
-        );
-      }
+      sendText(
+        `[SYSTEM SUGGESTION — speak this naturally in character, keep it brief and charming] ${suggestion.message}`
+      );
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
-  // Listen for captured notifications → inject into Gemini so Friday announces them naturally
+  // Listen for captured notifications → inject into AI so Friday announces them naturally
   useEffect(() => {
     const cleanup = window.eve.notifications.onCaptured((notif) => {
       console.log(`[Friday] Notification captured: ${notif.app} — ${notif.title}`);
 
-      if (geminiLive.sendTextToGemini) {
-        geminiLive.sendTextToGemini(
-          `[SYSTEM NOTIFICATION from ${notif.app}] Title: ${notif.title}${notif.body ? `. Body: ${notif.body}` : ''}. Mention this naturally and briefly — don't read it out verbatim.`
-        );
-      }
+      sendText(
+        `[SYSTEM NOTIFICATION from ${notif.app}] Title: ${notif.title}${notif.body ? `. Body: ${notif.body}` : ''}. Mention this naturally and briefly — don't read it out verbatim.`
+      );
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
-  // Listen for clipboard changes → inject into Gemini for contextual awareness
+  // Listen for clipboard changes → inject into AI for contextual awareness
   useEffect(() => {
     const cleanup = window.eve.clipboard.onChanged((entry) => {
-      if (!geminiLive.sendTextToGemini) return;
-
       // Only inject interesting clipboard content (not empty/trivial)
       if (entry.type === 'empty') return;
 
-      geminiLive.sendTextToGemini(
+      sendText(
         `[SYSTEM CLIPBOARD — ${entry.type.toUpperCase()}] User just copied: "${entry.preview}". You don't need to mention this unless it's relevant to the conversation or they ask about it.`
       );
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
   // Listen for agent task completions → proactively notify Friday + mirror into ActionFeed
   useEffect(() => {
     const cleanup = window.eve.agents.onUpdate((task) => {
-      // Notify Gemini on completion / failure
-      if (task.status === 'completed' && task.result && geminiLive.sendTextToGemini) {
+      // Notify AI on completion / failure
+      if (task.status === 'completed' && task.result) {
         const preview = task.result.length > 300 ? task.result.slice(0, 300) + '...' : task.result;
-        geminiLive.sendTextToGemini(
+        sendText(
           `[SYSTEM — AGENT COMPLETE] Background task "${task.description}" (${task.agentType}) just finished. Result preview: ${preview}. Mention this proactively if relevant.`
         );
-      } else if (task.status === 'failed' && task.error && geminiLive.sendTextToGemini) {
-        geminiLive.sendTextToGemini(
+      } else if (task.status === 'failed' && task.error) {
+        sendText(
           `[SYSTEM — AGENT FAILED] Background task "${task.description}" failed: ${task.error}. Let the user know briefly.`
         );
       }
@@ -705,7 +861,7 @@ export default function App() {
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
   // Listen for sub-agent voice delivery (ElevenLabs TTS) → play MP3 audio
   useEffect(() => {
@@ -769,32 +925,30 @@ export default function App() {
     return cleanup;
   }, []);
 
-  // Listen for meeting briefings → inject into Gemini for proactive context
+  // Listen for meeting briefings → inject into AI for proactive context
   useEffect(() => {
     const cleanup = window.eve.meetingPrep.onBriefing((briefing) => {
       console.log(`[Friday] Meeting briefing: "${briefing.eventTitle}" in ${briefing.minutesUntil}m`);
 
-      if (geminiLive.sendTextToGemini) {
-        const attendeeInfo = briefing.attendeeContext
-          .map((a) => {
-            const parts = [a.name];
-            if (a.memories.length > 0) parts.push(`(${a.memories.join('; ')})`);
-            return parts.join(' ');
-          })
-          .join(', ');
+      const attendeeInfo = briefing.attendeeContext
+        .map((a) => {
+          const parts = [a.name];
+          if (a.memories.length > 0) parts.push(`(${a.memories.join('; ')})`);
+          return parts.join(' ');
+        })
+        .join(', ');
 
-        geminiLive.sendTextToGemini(
-          `[MEETING BRIEFING] "${briefing.eventTitle}" starts in ${briefing.minutesUntil} minutes.` +
-          (attendeeInfo ? ` Attendees: ${attendeeInfo}.` : '') +
-          (briefing.relevantProjects.length > 0 ? ` Related projects: ${briefing.relevantProjects.join(', ')}.` : '') +
-          (briefing.suggestedTopics.length > 0 ? ` Topics: ${briefing.suggestedTopics.slice(0, 3).join(', ')}.` : '') +
-          ` Mention this naturally — give the user a heads-up about the meeting and any useful context about the attendees.`
-        );
-      }
+      sendText(
+        `[MEETING BRIEFING] "${briefing.eventTitle}" starts in ${briefing.minutesUntil} minutes.` +
+        (attendeeInfo ? ` Attendees: ${attendeeInfo}.` : '') +
+        (briefing.relevantProjects.length > 0 ? ` Related projects: ${briefing.relevantProjects.join(', ')}.` : '') +
+        (briefing.suggestedTopics.length > 0 ? ` Topics: ${briefing.suggestedTopics.slice(0, 3).join(', ')}.` : '') +
+        ` Mention this naturally — give the user a heads-up about the meeting and any useful context about the attendees.`
+      );
     });
 
     return cleanup;
-  }, [geminiLive.sendTextToGemini]);
+  }, [sendText]);
 
   // Record user interactions for idle detection
   useEffect(() => {
@@ -870,7 +1024,7 @@ export default function App() {
     }
   }, [geminiLive.isListening, geminiLive.isSpeaking, geminiLive.isConnected, geminiLive.error]);
 
-  // Handle text message send
+  // Handle text message send — routes to local conversation OR Gemini
   const handleTextSend = useCallback(
     async (text: string) => {
       // Add user message to chat history immediately (optimistic)
@@ -884,13 +1038,22 @@ export default function App() {
         },
       ]);
 
-      // Auto-connect if not already connected
+      // Route through local conversation if active
+      if (localConversationActiveRef.current) {
+        sendText(text);
+        window.eve.predictor.recordInteraction().catch(() => {});
+        return;
+      }
+
+      // Auto-connect if not already connected (may start local or Gemini path)
       if (!geminiLive.isConnected && !geminiLive.isConnecting) {
         await connectToGemini();
       }
 
-      // Send to Gemini (connectToGemini is async; send after connection)
-      if (geminiLive.isConnected) {
+      // After connect, check again — connectToGemini may have activated local path
+      if (localConversationActiveRef.current) {
+        sendText(text);
+      } else if (geminiLive.isConnected) {
         geminiLive.sendTextToGemini(text);
       }
 
@@ -900,7 +1063,7 @@ export default function App() {
       // Record interaction for predictor
       window.eve.predictor.recordInteraction().catch(() => {});
     },
-    [geminiLive.isConnected, geminiLive.isConnecting, geminiLive.sendTextToGemini, geminiLive.resetIdleActivity, connectToGemini]
+    [geminiLive.isConnected, geminiLive.isConnecting, geminiLive.sendTextToGemini, geminiLive.resetIdleActivity, connectToGemini, sendText]
   );
 
   // Keyboard: Space to mute/unmute, Tab to toggle text input
@@ -1062,9 +1225,18 @@ export default function App() {
           onComplete={(name) => {
             setAgentName(name);
             setAppPhase('creating');
+
+            // Stop local voice conversation if it was the active path
+            if (localConversationActiveRef.current) {
+              localConversationActiveRef.current = false;
+              setLocalConversationActive(false);
+              window.eve.localConversation.stop().catch(() => {});
+              for (const cleanup of localConversationCleanupsRef.current) cleanup();
+              localConversationCleanupsRef.current = [];
+            }
           }}
           connectToGemini={connectToGemini}
-          sendTextToGemini={geminiLive.sendTextToGemini}
+          sendTextToGemini={sendText}
         />
       )}
 
@@ -1132,6 +1304,7 @@ export default function App() {
             <TextInput
               onSend={handleTextSend}
               isConnected={geminiLive.isConnected}
+              isLocalActive={localConversationActive}
             />
             {/* Voice mode toggle */}
             <button
@@ -1182,15 +1355,45 @@ export default function App() {
                 tools = [...tools, ...fsTools];
               } catch {}
 
-              await geminiLive.connect(newInstruction, tools, voiceName);
-              setStatus('Connected');
-              setAppPhase('normal');
-
-              // First greeting
+              // Check if we have a Gemini key — route accordingly
+              let hasGeminiKey = false;
               try {
-                const greeting = await window.eve.onboarding.getFirstGreeting();
-                if (greeting) setTimeout(() => geminiLive.sendTextToGemini(greeting), 1500);
-              } catch {}
+                const key = await window.eve.getGeminiApiKey();
+                hasGeminiKey = !!(key && typeof key === 'string' && key.trim().length > 0);
+              } catch { /* no key */ }
+
+              if (!hasGeminiKey) {
+                // LOCAL PATH — reconnect via local conversation
+                console.log('[Agent] Post-creation: reconnecting via local conversation');
+
+                // Stop any existing local conversation first
+                if (localConversationActiveRef.current) {
+                  localConversationActiveRef.current = false;
+                  setLocalConversationActive(false);
+                  await window.eve.localConversation.stop().catch(() => {});
+                }
+
+                setAppPhase('normal');
+                // connectToGemini handles local path when no Gemini key
+                await connectToGemini();
+
+                // Send first greeting via local path after a brief delay
+                try {
+                  const greeting = await window.eve.onboarding.getFirstGreeting();
+                  if (greeting) setTimeout(() => sendText(greeting), 1500);
+                } catch {}
+              } else {
+                // GEMINI PATH — existing cloud reconnect
+                await geminiLive.connect(newInstruction, tools, voiceName);
+                setStatus('Connected');
+                setAppPhase('normal');
+
+                // First greeting
+                try {
+                  const greeting = await window.eve.onboarding.getFirstGreeting();
+                  if (greeting) setTimeout(() => geminiLive.sendTextToGemini(greeting), 1500);
+                } catch {}
+              }
             } catch (err) {
               console.error('[Agent] Reconnect after creation failed:', err);
               setConnectionError(err instanceof Error ? err.message : String(err));
@@ -1211,6 +1414,7 @@ export default function App() {
           setConnectionError('');
           appManager.openApp('settings');
         }}
+        isLocalMode={localConversationActive}
       />
 
       {/* Desktop tool confirmation toast */}

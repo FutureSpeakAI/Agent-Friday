@@ -4,6 +4,52 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.6.0] — 2026-03-10 — Local Voice OS
+
+### Summary
+
+Agent Friday now works as a fully local, voice-first AI operating system with zero cloud API keys required. The new `LocalConversation` orchestrator chains Whisper STT → Ollama LLM → Kokoro/Piper TTS for real-time voice conversations entirely on-device. Every post-onboarding blocker that prevented local-only users from using the app has been resolved — the app automatically falls back to the local voice path when no Gemini API key is configured.
+
+### Added — Local Voice Conversation Loop
+
+- **LocalConversation orchestrator** (`src/main/local-conversation.ts`) — Main-process EventEmitter that manages the full voice conversation lifecycle: microphone capture → VAD → Whisper transcription → Ollama completion (with tool calling) → TTS speech synthesis → audio playback
+- **Three-tier tool routing** — Conversation tools route through onboarding tools, feature setup tools, and desktop/MCP tools depending on conversation phase
+- **IPC bridge** (`src/main/ipc/local-conversation-handlers.ts`) — Full preload API at `window.eve.localConversation.*` with start/stop/sendText + 5 event listeners (started, transcript, response, agent-finalized, error)
+- **Barge-in support** — When the user starts speaking while TTS is active, speech synthesis stops immediately and the new input is processed
+
+### Fixed — Post-Onboarding Local-Only Blockers
+
+- **Post-onboarding conversation path** — App.tsx now continues local conversation after onboarding completes; previously local voice was gated to the onboarding interview only
+- **Silent message loss** — `handleTextSend` now routes to local conversation when Gemini is unavailable instead of silently dropping messages
+- **System event routing** — Scheduler, predictor, and system events route through the local conversation instead of being hardcoded to `geminiLive.sendTextToGemini`
+- **AgentCreation local fallback** — `onComplete` callback works without a Gemini API key
+- **ConnectionOverlay `isLocalMode`** — Shows correct connection status text for local-only users instead of suggesting they need a Gemini API key
+- **TextInput connection indicator** — Visual status dot showing current connection state (local active, cloud connected, or disconnected)
+
+---
+
+## [3.5.2] — 2026-03-10 — Hotfix: Voice Interview Connection & SmartScreen Trust
+
+### Fixed
+
+- **Voice interview silent failure** — `useGeminiLive.connect()` now properly throws on missing Gemini API key instead of silently resolving, which left InterviewStep showing "Interview in progress" with no actual WebSocket connection
+- **Instant connection failure feedback** — InterviewStep catches async connection errors immediately instead of waiting 30 seconds for a timeout; users see the retry/skip UI within seconds
+- **SmartScreen trust for installer** — NSIS installer now bundles the code-signing certificate and installs it to Windows TrustedPublisher and Root stores during setup, preventing SmartScreen prompts for the app and future updates; certificate is cleanly removed on uninstall
+- **Misleading error message** — Changed "add GEMINI_API_KEY to .env" to "add one in Settings → API Keys" for the desktop app context
+
+---
+
+## [3.5.1] — 2026-03-09 — Hotfix: GPU Detection & Model Downloads
+
+### Fixed
+
+- **NVIDIA Optimus laptop detection** — RTX laptops no longer incorrectly default to whisper tier
+- **Model downloads stuck at 0/0** — HardwareStep passes detected tier to `getModelList()`
+- **WebSocket close-code diagnostics** — Connection errors now include close code for debugging
+- **Cross-platform GPU detection tests** — Test reliability fixes for GPU detection across platforms
+
+---
+
 ## [3.5.0] — 2026-03-09 — Trust-First Onboarding
 
 ### Summary

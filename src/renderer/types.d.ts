@@ -1525,6 +1525,17 @@ declare global {
         timestamp: number;
       }) => void) => () => void;
 
+      localConversation: {
+        start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<void>;
+        sendText: (text: string) => Promise<void>;
+        stop: () => Promise<void>;
+        onStarted: (cb: () => void) => () => void;
+        onTranscript: (cb: (text: string) => void) => () => void;
+        onResponse: (cb: (text: string) => void) => () => void;
+        onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => () => void;
+        onError: (cb: (error: string) => void) => () => void;
+      };
+
       window: {
         minimize: () => Promise<void>;
         maximize: () => Promise<void>;
