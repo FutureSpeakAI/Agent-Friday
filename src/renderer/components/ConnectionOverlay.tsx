@@ -7,12 +7,25 @@ interface ConnectionOverlayProps {
   maxRetries: number;
   onRetry: () => void;
   onOpenSettings: () => void;
+  /** When true, error messages reference local infrastructure (Ollama/Whisper) instead of Gemini */
+  isLocalMode?: boolean;
 }
 
-type ErrorCategory = 'no_api_key' | 'network' | 'timeout' | 'auth' | 'generic';
+type ErrorCategory = 'no_api_key' | 'ollama' | 'whisper' | 'network' | 'timeout' | 'auth' | 'generic';
 
-function categorizeError(error: string): ErrorCategory {
+function categorizeError(error: string, isLocal: boolean): ErrorCategory {
   const lower = error.toLowerCase();
+
+  // Local-specific categories
+  if (isLocal) {
+    if (lower.includes('ollama') || lower.includes('11434') || lower.includes('connection refused')) {
+      return 'ollama';
+    }
+    if (lower.includes('whisper') || (lower.includes('model') && lower.includes('not found'))) {
+      return 'whisper';
+    }
+  }
+
   if (lower.includes('no gemini api key') || lower.includes('api key') || lower.includes('api_key')) {
     return 'no_api_key';
   }
@@ -31,8 +44,18 @@ function categorizeError(error: string): ErrorCategory {
 const ERROR_INFO: Record<ErrorCategory, { title: string; explanation: string; showSettings: boolean }> = {
   no_api_key: {
     title: 'No API Key',
-    explanation: 'Friday needs a Gemini API key to connect. Open Settings to add one.',
+    explanation: 'Friday needs a Gemini API key to connect. Open Settings to add one, or use local mode with Ollama.',
     showSettings: true,
+  },
+  ollama: {
+    title: 'Ollama Not Running',
+    explanation: 'Friday uses Ollama for local AI. Make sure Ollama is running (ollama serve) and has a model pulled (ollama pull llama3.2).',
+    showSettings: false,
+  },
+  whisper: {
+    title: 'Whisper Model Missing',
+    explanation: 'The local speech-to-text model needs to be downloaded. This happens automatically on first launch \u2014 try again.',
+    showSettings: false,
   },
   auth: {
     title: 'Authentication Failed',
@@ -41,12 +64,12 @@ const ERROR_INFO: Record<ErrorCategory, { title: string; explanation: string; sh
   },
   timeout: {
     title: 'Connection Timed Out',
-    explanation: 'Gemini Live didn\'t respond in time. This is usually temporary \u2014 try again.',
+    explanation: 'The connection didn\'t respond in time. This is usually temporary \u2014 try again.',
     showSettings: false,
   },
   network: {
     title: 'Network Error',
-    explanation: 'Couldn\'t reach Gemini servers. Check your internet connection.',
+    explanation: 'Couldn\'t reach the server. Check your connection.',
     showSettings: false,
   },
   generic: {
@@ -63,8 +86,9 @@ export default function ConnectionOverlay({
   maxRetries,
   onRetry,
   onOpenSettings,
+  isLocalMode = false,
 }: ConnectionOverlayProps) {
-  const category = useMemo(() => categorizeError(error), [error]);
+  const category = useMemo(() => categorizeError(error, isLocalMode), [error, isLocalMode]);
   const info = ERROR_INFO[category];
 
   // Don't show if there's no error and we're not connecting
@@ -106,7 +130,7 @@ export default function ConnectionOverlay({
         <h3 style={styles.title}>{info.title}</h3>
         <p style={styles.explanation}>{info.explanation}</p>
 
-        {/* Raw error detail — collapsed */}
+        {/* Raw error detail \u2014 collapsed */}
         <details style={styles.details}>
           <summary style={styles.detailsSummary}>Technical details</summary>
           <code style={styles.errorCode}>{error}</code>

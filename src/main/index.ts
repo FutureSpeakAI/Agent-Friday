@@ -212,6 +212,7 @@ import {
   registerVoicePipelineHandlers,
   registerVisionPipelineHandlers,
   registerChatHistoryHandlers,
+  registerLocalConversationHandlers,
   type ContextPushCleanup,
 } from './ipc';
 
@@ -819,6 +820,7 @@ app.whenReady().then(async () => {
   registerVoicePipelineHandlers({ getMainWindow });
   registerVisionPipelineHandlers({ getMainWindow });
   registerChatHistoryHandlers();
+  registerLocalConversationHandlers({ getMainWindow });
   console.log('[IPC] Sprint 3-6 module handlers registered');
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────

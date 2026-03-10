@@ -1647,6 +1647,42 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  // ── Local Voice Conversation (zero-cloud interview fallback) ────
+
+  localConversation: {
+    start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) =>
+      ipcRenderer.invoke('local-conversation:start', systemPrompt, tools, initialPrompt),
+    sendText: (text: string) =>
+      ipcRenderer.invoke('local-conversation:send', text),
+    stop: () => ipcRenderer.invoke('local-conversation:stop'),
+
+    onStarted: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on('local-conversation:event:started', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:started', handler); };
+    },
+    onTranscript: (cb: (text: string) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, text: string) => cb(text);
+      ipcRenderer.on('local-conversation:event:transcript', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:transcript', handler); };
+    },
+    onResponse: (cb: (text: string) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, text: string) => cb(text);
+      ipcRenderer.on('local-conversation:event:response', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:response', handler); };
+    },
+    onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, config: Record<string, unknown>) => cb(config);
+      ipcRenderer.on('local-conversation:event:agent-finalized', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:agent-finalized', handler); };
+    },
+    onError: (cb: (error: string) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, error: string) => cb(error);
+      ipcRenderer.on('local-conversation:event:error', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:error', handler); };
+    },
+  },
+
   // ── Sprint 7: Vision Pipeline ───────────────────────────────────
 
   vision: {
