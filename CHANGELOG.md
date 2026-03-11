@@ -4,6 +4,21 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.6.2] — 2026-03-11 — Onboarding Tool Scoping
+
+### Summary
+
+Fixes Gemini Live connection failures during onboarding caused by sending 200-400+ tool declarations in the WebSocket setup message. The onboarding interview now sends only the 4 tools it actually needs, dramatically reducing the payload size and preventing Google from rejecting oversized messages.
+
+### Fixed — Connection Reliability
+
+- **Onboarding tool scoping** — Voice interview connects with only 4 onboarding tools instead of the full 200-400+ toolkit, eliminating WebSocket setup payload bloat that caused connection failures on some accounts
+- **Close code 1009 handling** — "Message Too Big" WebSocket rejections now produce a clear error message instead of a generic disconnect
+- **Reconnect preserves onboarding mode** — Auto-reconnect and SessionManager reconnect paths now carry the onboarding flag, preventing tool re-bloat during active interviews
+- **Variable scoping fix** — Dynamic tool declarations are properly scoped to prevent runtime errors in onboarding mode
+
+---
+
 ## [3.6.1] — 2026-03-11 — Cloud-Only UX & Key Validation
 
 ### Summary

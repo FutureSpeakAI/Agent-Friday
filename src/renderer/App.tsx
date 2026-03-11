@@ -359,21 +359,22 @@ export default function App() {
       // Assume not complete if check fails
     }
 
-    // 2. Gather desktop tools
+    // 2. Gather tools — during onboarding, only load interview tools (not desktop/browser/etc.)
+    //    to keep the Gemini Live setup payload small and avoid policy-violation rejections
     let tools: Array<{ name: string; description?: string; parameters?: unknown }> = [];
-    try {
-      tools = await window.eve.desktop.listTools();
-    } catch {
-      // Desktop tools unavailable — that's fine
-    }
-
-    // 3. If onboarding, inject ALL onboarding tool declarations (intake + customization)
     if (!onboardingComplete) {
+      // Onboarding: only the 4 interview tools (acknowledge, intake, transition, finalize)
       try {
-        const onboardingTools = await window.eve.onboarding.getToolDeclarations();
-        tools = [...tools, ...onboardingTools];
+        tools = await window.eve.onboarding.getToolDeclarations();
       } catch (err) {
         console.warn('[Agent] Failed to get onboarding tool declarations:', err);
+      }
+    } else {
+      // Post-onboarding: full desktop toolkit
+      try {
+        tools = await window.eve.desktop.listTools();
+      } catch {
+        // Desktop tools unavailable — that's fine
       }
     }
 
@@ -529,7 +530,7 @@ export default function App() {
 
     // ── 6b. GEMINI CLOUD PATH — existing WebSocket connection ─────────────
     try {
-      await geminiLive.connect(instruction, tools, voiceName);
+      await geminiLive.connect(instruction, tools, voiceName, { onboarding: !onboardingComplete });
       retriesRef.current = 0;
       setRetryCount(0);
       setConnectionError('');

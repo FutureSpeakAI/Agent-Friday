@@ -1,18 +1,17 @@
-## Agent Friday v3.6.1 — Cloud-Only UX & Key Validation
+## Agent Friday v3.6.2 — Onboarding Tool Scoping
 
-Improves the experience for users on lightweight hardware (Surface Pro, integrated graphics) who rely entirely on cloud APIs.
+Fixes Gemini Live connection failures during onboarding caused by sending 200-400+ tool declarations in the WebSocket setup message.
 
 ### Bug Fixes
 
-- **Whisper tier "Cloud Mode" card** — Devices with 0 available VRAM (e.g. Surface Pro with Intel iGPU) now see a clear "Cloud Mode" explanation instead of an empty model list during onboarding
-- **API key pre-validation** — Gemini, Anthropic, and OpenRouter keys are validated before saving, both in Settings and during onboarding; invalid keys show immediate error messages
-- **Voice interview staged progress** — Connection status cycles through progress stages instead of showing a static message for up to 30 seconds
-- **Faster auth failure detection** — Connection timeout reduced from 30s to 15s; auth failures produce specific error messages
-- **Better failure hints** — Failed voice interview suggests checking the API key in Settings
+- **Onboarding tool scoping** — Voice interview connects with only 4 onboarding tools instead of the full 200-400+ toolkit, eliminating payload bloat that caused connection failures
+- **Close code 1009 handling** — "Message Too Big" WebSocket rejections now produce a clear error message
+- **Reconnect preserves onboarding mode** — Auto-reconnect paths carry the onboarding flag to prevent tool re-bloat during interviews
+- **Variable scoping fix** — Dynamic tool declarations properly scoped to prevent runtime errors in onboarding mode
 
 ### Installation
 
-Download `Agent Friday Setup 3.6.1.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.6.2.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 
