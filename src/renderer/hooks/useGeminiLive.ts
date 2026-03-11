@@ -777,6 +777,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const isAutoReconnectingRef = useRef(false);
   const setupCompleteRef = useRef(false);
   const reconnectStabilizingRef = useRef(false);
+  const onboardingModeRef = useRef(false);
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const webcamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -832,8 +833,11 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     async (
       systemInstruction: string,
       externalTools?: Array<{ name: string; description?: string; parameters?: unknown; inputSchema?: unknown }>,
-      voiceName?: string
+      voiceName?: string,
+      options?: { onboarding?: boolean }
     ): Promise<void> => {
+      const onboardingMode = options?.onboarding ?? false;
+      onboardingModeRef.current = onboardingMode;
       // Store voice name for reconnects
       if (voiceName) voiceNameRef.current = voiceName;
       const apiKey = await window.eve.getGeminiApiKey();
@@ -859,112 +863,123 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       intentionalDisconnectRef.current = false;
       setState((s) => ({ ...s, isConnecting: true, error: '' }));
 
-      // Fetch browser tool declarations from main process (Gemini-compatible format)
+      // ── Dynamic tool loading (skipped during onboarding to keep payload small) ──
       let browserToolDecls: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
-      try {
-        browserToolDecls = await window.eve.browser.listTools();
-      } catch (err) {
-        console.warn('[GeminiLive] Failed to load browser tools:', err);
-      }
-
-      // Fetch SOC (Self-Operating Computer) + Browser-Use tool declarations
       let socToolDecls: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
-      try {
-        socToolDecls = await window.eve.soc.listTools();
-        if (socToolDecls.length > 0) {
-          console.log(`[GeminiLive] Loaded ${socToolDecls.length} SOC/browser-use tools`);
-        }
-      } catch (err) {
-        console.warn('[GeminiLive] SOC tools unavailable:', err);
-      }
-
-      // Fetch GitLoader tool declarations
       let gitToolDecls: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
-      try {
-        gitToolDecls = await window.eve.gitLoader.listTools();
-        if (gitToolDecls.length > 0) {
-          console.log(`[GeminiLive] Loaded ${gitToolDecls.length} GitLoader tools`);
-        }
-      } catch (err) {
-        console.warn('[GeminiLive] GitLoader tools unavailable:', err);
-      }
-
-      // Build tool declarations: core + browser + connector + MCP tools
-      // Load connector tools dynamically (only installed software)
       let connectorToolDecls: Array<{ name: string; description: string; parameters: unknown }> = [];
-      try {
-        const connectorTools = await window.eve.connectors.listTools();
-        connectorToolDecls = connectorTools.map((t) => ({
-          name: t.name,
-          description: (t.description || '').slice(0, 512),
-          parameters: sanitizeSchema(t.parameters || { type: 'object', properties: {} }),
-        }));
-        if (connectorToolDecls.length > 0) {
-          console.log(`[GeminiLive] Loaded ${connectorToolDecls.length} connector tools`);
-        }
-      } catch (err) {
-        console.warn('[GeminiLive] Connector tools unavailable:', err);
-      }
-
-      // Load MCP tools (Desktop Commander, user-added MCP servers, etc.)
       let mcpToolDecls: Array<{ name: string; description: string; parameters: unknown }> = [];
       const mcpToolNamesSet = new Set<string>();
-      try {
-        const mcpTools = await window.eve.mcp.listTools();
-        mcpToolDecls = mcpTools
-          .filter((t: any) => {
-            // Skip MCP tools that conflict with connector tools (connectors take priority)
-            const connectorNames = new Set(connectorToolDecls.map((c) => c.name));
-            return !connectorNames.has(t.name);
-          })
-          .map((t: any) => {
-            mcpToolNamesSet.add(t.name);
-            return {
-              name: t.name,
-              description: (t.description || '').slice(0, 512),
-              parameters: sanitizeSchema(t.inputSchema || t.parameters || { type: 'object', properties: {} }),
-            };
-          });
-        if (mcpToolDecls.length > 0) {
-          console.log(`[GeminiLive] Loaded ${mcpToolDecls.length} MCP tools`);
+
+      if (!onboardingMode) {
+        // Fetch browser tool declarations from main process (Gemini-compatible format)
+        try {
+          browserToolDecls = await window.eve.browser.listTools();
+        } catch (err) {
+          console.warn('[GeminiLive] Failed to load browser tools:', err);
         }
-      } catch (err) {
-        console.warn('[GeminiLive] MCP tools unavailable:', err);
+
+        // Fetch SOC (Self-Operating Computer) + Browser-Use tool declarations
+        try {
+          socToolDecls = await window.eve.soc.listTools();
+          if (socToolDecls.length > 0) {
+            console.log(`[GeminiLive] Loaded ${socToolDecls.length} SOC/browser-use tools`);
+          }
+        } catch (err) {
+          console.warn('[GeminiLive] SOC tools unavailable:', err);
+        }
+
+        // Fetch GitLoader tool declarations
+        try {
+          gitToolDecls = await window.eve.gitLoader.listTools();
+          if (gitToolDecls.length > 0) {
+            console.log(`[GeminiLive] Loaded ${gitToolDecls.length} GitLoader tools`);
+          }
+        } catch (err) {
+          console.warn('[GeminiLive] GitLoader tools unavailable:', err);
+        }
+
+        // Load connector tools dynamically (only installed software)
+        try {
+          const connectorTools = await window.eve.connectors.listTools();
+          connectorToolDecls = connectorTools.map((t) => ({
+            name: t.name,
+            description: (t.description || '').slice(0, 512),
+            parameters: sanitizeSchema(t.parameters || { type: 'object', properties: {} }),
+          }));
+          if (connectorToolDecls.length > 0) {
+            console.log(`[GeminiLive] Loaded ${connectorToolDecls.length} connector tools`);
+          }
+        } catch (err) {
+          console.warn('[GeminiLive] Connector tools unavailable:', err);
+        }
+
+        // Load MCP tools (Desktop Commander, user-added MCP servers, etc.)
+        try {
+          const mcpTools = await window.eve.mcp.listTools();
+          mcpToolDecls = mcpTools
+            .filter((t: any) => {
+              // Skip MCP tools that conflict with connector tools (connectors take priority)
+              const connectorNames = new Set(connectorToolDecls.map((c) => c.name));
+              return !connectorNames.has(t.name);
+            })
+            .map((t: any) => {
+              mcpToolNamesSet.add(t.name);
+              return {
+                name: t.name,
+                description: (t.description || '').slice(0, 512),
+                parameters: sanitizeSchema(t.inputSchema || t.parameters || { type: 'object', properties: {} }),
+              };
+            });
+          if (mcpToolDecls.length > 0) {
+            console.log(`[GeminiLive] Loaded ${mcpToolDecls.length} MCP tools`);
+          }
+        } catch (err) {
+          console.warn('[GeminiLive] MCP tools unavailable:', err);
+        }
       }
+
       // Store MCP tool names in a ref so the execution handler can check them
       mcpToolNamesRef.current = mcpToolNamesSet;
 
-      const functionDeclarations = [
-        ASK_CLAUDE_TOOL,
-        SAVE_MEMORY_TOOL,
-        SETUP_INTELLIGENCE_TOOL,
-        SEARCH_EPISODES_TOOL,
-        ...AGENT_TOOLS,
-        ...DOCUMENT_TOOLS,
-        ...PROJECT_TOOLS,
-        ...SELF_IMPROVE_TOOLS,
-        ...WEBCAM_TOOLS,
-        ...HOUSEHOLD_TOOLS,
-        ...TRUST_GRAPH_TOOLS,
-        ...MULTIMEDIA_TOOLS,
-        ...CALL_TOOLS,
-        ...MEETING_INTEL_TOOLS,
-        ...SCHEDULER_TOOLS,
-        ...CALENDAR_TOOLS,
-        COMMUNICATIONS_TOOL,
-        ...browserToolDecls,
-        ...socToolDecls,
-        ...gitToolDecls,
-        ...connectorToolDecls,
-        ...mcpToolDecls,
-        ...(externalTools || toolsRef.current).map((t) => ({
-          name: t.name,
-          description: (t.description || '').slice(0, 512),
-          parameters: sanitizeSchema(t.parameters || t.inputSchema),
-        })),
-      ];
+      // Map external tools to Gemini-compatible format
+      const mappedExternalTools = (externalTools || toolsRef.current).map((t) => ({
+        name: t.name,
+        description: (t.description || '').slice(0, 512),
+        parameters: sanitizeSchema(t.parameters || t.inputSchema),
+      }));
 
-      console.log(`[GeminiLive] Connecting with ${functionDeclarations.length} tools...`);
+      // During onboarding, send ONLY the interview tools (4 tools from App.tsx)
+      // to keep the setup payload small. The full toolkit ships post-onboarding.
+      const functionDeclarations = onboardingMode
+        ? [...mappedExternalTools]
+        : [
+            ASK_CLAUDE_TOOL,
+            SAVE_MEMORY_TOOL,
+            SETUP_INTELLIGENCE_TOOL,
+            SEARCH_EPISODES_TOOL,
+            ...AGENT_TOOLS,
+            ...DOCUMENT_TOOLS,
+            ...PROJECT_TOOLS,
+            ...SELF_IMPROVE_TOOLS,
+            ...WEBCAM_TOOLS,
+            ...HOUSEHOLD_TOOLS,
+            ...TRUST_GRAPH_TOOLS,
+            ...MULTIMEDIA_TOOLS,
+            ...CALL_TOOLS,
+            ...MEETING_INTEL_TOOLS,
+            ...SCHEDULER_TOOLS,
+            ...CALENDAR_TOOLS,
+            COMMUNICATIONS_TOOL,
+            ...browserToolDecls,
+            ...socToolDecls,
+            ...gitToolDecls,
+            ...connectorToolDecls,
+            ...mcpToolDecls,
+            ...mappedExternalTools,
+          ];
+
+      console.log(`[GeminiLive] Connecting with ${functionDeclarations.length} tools${onboardingMode ? ' (onboarding mode)' : ''}...`);
 
       return new Promise<void>((resolve, reject) => {
         // Guard: prevent mic from streaming to this WS until Gemini confirms setup
@@ -2194,6 +2209,8 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 : 'Connection to Gemini Live was interrupted';
             } else if (event.code === 1008) {
               errorMsg = 'Gemini Live rejected the connection — API key may be invalid or not authorized for the Live API';
+            } else if (event.code === 1009) {
+              errorMsg = 'Gemini Live rejected the setup — message payload too large (too many tools or system instruction too long)';
             } else if (event.code === 1001) {
               errorMsg = 'Gemini Live service is temporarily unavailable — try again shortly';
             } else {
@@ -2275,7 +2292,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
                 const fullInstruction = conversationSummary
                   ? `${instruction}\n\n${conversationSummary}${voiceAnchor}`
                   : `${instruction}${voiceAnchor}`;
-                await connect(fullInstruction, toolsRef.current, voiceNameRef.current);
+                await connect(fullInstruction, toolsRef.current, voiceNameRef.current, { onboarding: onboardingModeRef.current });
                 // Success!
                 wsReconnectAttemptsRef.current = 0;
                 isAutoReconnectingRef.current = false;
@@ -2637,7 +2654,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       reconnect: async (instruction: string) => {
         // Reset the flag so future unexpected disconnects can still auto-reconnect
         intentionalDisconnectRef.current = false;
-        await connect(instruction, undefined, voiceNameRef.current);
+        await connect(instruction, undefined, voiceNameRef.current, { onboarding: onboardingModeRef.current });
         // Unblock auto-reconnect ONLY after connect succeeds
         smReconnectingRef.current = false;
 
