@@ -24,8 +24,18 @@ interface InterviewStepProps {
 /** Timeout (ms) before connection is considered failed.
  * connectToGemini gathers tool declarations from multiple sources (desktop,
  * onboarding, browser, connectors, MCP) before opening the WebSocket, so
- * the total time from call to audio can exceed 10s on cold start. */
-const CONNECTION_TIMEOUT_MS = 30_000;
+ * the total time from call to audio can exceed 10s on cold start.
+ * Reduced from 30s to 15s — if auth fails, WebSocket close arrives in <5s. */
+const CONNECTION_TIMEOUT_MS = 15_000;
+
+/** Staged status messages shown during connection to provide progress feedback. */
+const CONNECTION_STAGES: { delay: number; text: string }[] = [
+  { delay: 0, text: 'Connecting to voice session...' },
+  { delay: 2500, text: 'Authenticating with Gemini...' },
+  { delay: 5000, text: 'Loading agent tools...' },
+  { delay: 8000, text: 'Opening audio channel...' },
+  { delay: 12000, text: 'Still waiting — this is taking longer than usual...' },
+];
 
 const VOICE_MAP: Record<string, Record<string, string>> = {
   warm:   { male: 'Enceladus', female: 'Aoede',    neutral: 'Achird' },
@@ -77,10 +87,17 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   const animFrameRef = useRef<number>(0);
   const hasConnectedRef = useRef(false);
   const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stageTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setFadeIn(true), 100);
     return () => clearTimeout(t);
+  }, []);
+
+  // Clear any staged progress timers
+  const clearStageTimers = useCallback(() => {
+    stageTimersRef.current.forEach(clearTimeout);
+    stageTimersRef.current = [];
   }, []);
 
   // Attempt to connect to Gemini voice session
@@ -92,28 +109,50 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     }
 
     setPhase('connecting');
-    setStatusText('Connecting to voice session...');
+    clearStageTimers();
+
+    // Schedule staged status messages for progress feedback
+    for (const stage of CONNECTION_STAGES) {
+      const timer = setTimeout(() => {
+        setPhase((current) => {
+          if (current === 'connecting') setStatusText(stage.text);
+          return current;
+        });
+      }, stage.delay);
+      stageTimersRef.current.push(timer);
+    }
 
     const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
-    connectToGemini(ctx).catch(() => {
+    connectToGemini(ctx).catch((err: any) => {
       if (connectionTimerRef.current) {
         clearTimeout(connectionTimerRef.current);
         connectionTimerRef.current = null;
       }
+      clearStageTimers();
       setPhase('failed');
-      setStatusText('Voice connection could not be established');
+
+      // Provide specific failure messages based on error
+      const msg = String(err?.message || '').toLowerCase();
+      if (msg.includes('api key') || msg.includes('401') || msg.includes('1008')) {
+        setStatusText('Authentication failed — check your Gemini API key in Settings');
+      } else if (msg.includes('network') || msg.includes('failed to fetch')) {
+        setStatusText('Network error — check your internet connection');
+      } else {
+        setStatusText('Voice connection could not be established');
+      }
     });
 
     connectionTimerRef.current = setTimeout(() => {
+      clearStageTimers();
       setPhase((current) => {
         if (current === 'connecting') {
-          setStatusText('Voice connection could not be established');
+          setStatusText('Connection timed out — check your API key and network');
           return 'failed';
         }
         return current;
       });
     }, CONNECTION_TIMEOUT_MS);
-  }, [connectToGemini, identityChoices]);
+  }, [connectToGemini, identityChoices, clearStageTimers]);
 
   // Start the voice connection after a brief delay
   useEffect(() => {
@@ -129,8 +168,9 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       if (connectionTimerRef.current) {
         clearTimeout(connectionTimerRef.current);
       }
+      clearStageTimers();
     };
-  }, [attemptConnection]);
+  }, [attemptConnection, clearStageTimers]);
 
   // Listen for any audio activity to confirm connection is live
   useEffect(() => {
@@ -139,6 +179,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         clearTimeout(connectionTimerRef.current);
         connectionTimerRef.current = null;
       }
+      clearStageTimers();
       setPhase((current) => {
         if (current === 'connecting') {
           setStatusText('Interview in progress — speak naturally');
@@ -149,7 +190,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     };
     window.addEventListener('gemini-audio-active', handler);
     return () => window.removeEventListener('gemini-audio-active', handler);
-  }, []);
+  }, [clearStageTimers]);
 
   // Retry handler for the failed state
   const handleRetry = useCallback(() => {
@@ -158,9 +199,10 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       clearTimeout(connectionTimerRef.current);
       connectionTimerRef.current = null;
     }
+    clearStageTimers();
     hasConnectedRef.current = true;
     attemptConnection();
-  }, [attemptConnection]);
+  }, [attemptConnection, clearStageTimers]);
 
   // Animate waveform bars
   useEffect(() => {
@@ -361,7 +403,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         {phase === 'active'
           ? 'The assistant will configure your agent automatically when the interview is complete.'
           : phase === 'failed'
-            ? 'Skipping will apply a default personality based on your identity choices.'
+            ? 'Check your Gemini API key in Settings, or skip to use a default personality.'
             : 'You can skip this step to use a default personality profile.'}
       </p>
     </section>
