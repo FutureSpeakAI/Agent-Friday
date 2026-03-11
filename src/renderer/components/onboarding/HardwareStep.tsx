@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Cpu, Zap, Database, Download, Check, AlertCircle, X } from 'lucide-react';
+import { Cpu, Zap, Database, Download, Check, AlertCircle, X, Cloud } from 'lucide-react';
 import NextButton from './shared/NextButton';
 
 /** Hardware tiers mirroring src/main/hardware/tier-recommender.ts */
@@ -253,8 +253,8 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
           <p style={styles.tierDesc}>{tierInfo.desc}</p>
         )}
 
-        {/* Model list */}
-        {modelList.length > 0 && (
+        {/* Model list — or cloud-only explanation for Whisper tier */}
+        {modelList.length > 0 ? (
           <div style={styles.modelListCard}>
             <div style={styles.modelListHeader}>
               <Download size={14} color="var(--accent-cyan)" aria-hidden="true" />
@@ -267,20 +267,47 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
               ))}
             </div>
           </div>
-        )}
+        ) : tier === 'whisper' ? (
+          <div style={styles.cloudOnlyCard}>
+            <div style={styles.cloudOnlyHeader}>
+              <Cloud size={16} color="#8A2BE2" aria-hidden="true" />
+              <span style={styles.cloudOnlyTitle}>Cloud Mode</span>
+            </div>
+            <p style={styles.cloudOnlyDesc}>
+              Your device doesn't have dedicated GPU memory, so Friday will use cloud AI services
+              instead of local models. This works great — you just need an API key.
+            </p>
+            <div style={styles.cloudOnlyFeatures}>
+              <span style={styles.cloudFeature}>Voice via Gemini Live</span>
+              <span style={styles.cloudFeature}>Reasoning via Claude</span>
+              <span style={styles.cloudFeature}>Text chat always works</span>
+            </div>
+            <p style={styles.cloudOnlyNote}>
+              No downloads needed. You'll set up API keys in the next step.
+            </p>
+          </div>
+        ) : null}
 
         <div style={styles.buttonRow}>
-          <NextButton label="Install Models" onClick={startDownloads} />
-          <NextButton
-            label="Skip Downloads"
-            onClick={handleSkipDownloads}
-            variant="skip"
-          />
+          {modelList.length > 0 ? (
+            <>
+              <NextButton label="Install Models" onClick={startDownloads} />
+              <NextButton
+                label="Skip Downloads"
+                onClick={handleSkipDownloads}
+                variant="skip"
+              />
+            </>
+          ) : (
+            <NextButton label="Continue" onClick={handleSkipDownloads} />
+          )}
         </div>
 
-        <p style={styles.hint}>
-          Downloads can be large. You can skip and install models later from Settings.
-        </p>
+        {modelList.length > 0 && (
+          <p style={styles.hint}>
+            Downloads can be large. You can skip and install models later from Settings.
+          </p>
+        )}
       </section>
     );
   }
@@ -645,6 +672,57 @@ const styles: Record<string, React.CSSProperties> = {
   errorText: {
     fontSize: 12,
     color: '#ef4444',
+    fontFamily: "'Inter', sans-serif",
+  },
+  cloudOnlyCard: {
+    width: '100%',
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(138, 43, 226, 0.15)',
+    borderRadius: 12,
+    padding: '20px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  cloudOnlyHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  cloudOnlyTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#8A2BE2',
+    letterSpacing: '0.05em',
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  cloudOnlyDesc: {
+    fontSize: 12,
+    color: 'var(--text-40)',
+    lineHeight: 1.6,
+    margin: 0,
+    fontFamily: "'Inter', sans-serif",
+  },
+  cloudOnlyFeatures: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  cloudFeature: {
+    fontSize: 10,
+    fontWeight: 500,
+    color: 'rgba(138, 43, 226, 0.7)',
+    padding: '3px 10px',
+    borderRadius: 4,
+    background: 'rgba(138, 43, 226, 0.06)',
+    border: '1px solid rgba(138, 43, 226, 0.12)',
+    fontFamily: "'JetBrains Mono', monospace",
+  },
+  cloudOnlyNote: {
+    fontSize: 10,
+    color: 'var(--text-20)',
+    margin: 0,
+    fontStyle: 'italic',
     fontFamily: "'Inter', sans-serif",
   },
   completeBadge: {
