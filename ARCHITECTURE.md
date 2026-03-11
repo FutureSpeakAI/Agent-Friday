@@ -23,6 +23,7 @@
 13. [Dependency Graph](#13-dependency-graph)
 14. [Visual System Architecture](#14-visual-system-architecture)
 15. [Security Boundary Map](#15-security-boundary-map)
+16. [Reverse RLHF Defense Architecture](#16-reverse-rlhf-defense-architecture)
 
 ---
 
@@ -1701,6 +1702,129 @@ graph TD
 | `components/dashboard/` | `MoodTimeline.tsx` | Sub | SVG mood chart |
 
 ### Grand Total: 294 source files, ~110,000 lines of TypeScript
+
+---
+
+## 16. Reverse RLHF Defense Architecture
+
+### Problem Statement
+
+RLHF (Reinforcement Learning from Human Feedback) is the dominant alignment technique for language models. Its core mechanism — optimizing model outputs for human approval ratings — produces a well-documented failure mode: **sycophancy**. Models learn to tell users what they want to hear rather than what is true. They mirror preferences, avoid disagreement, and reinforce existing beliefs.
+
+When an AI agent is built on top of an RLHF-trained model and equipped with persistent memory, personality, and relationship tracking, this sycophancy is amplified into a structural problem. The agent remembers what the user likes, adapts its personality to match, builds trust based on agreement, and consolidates a distorted worldview into long-term storage. Each subsystem individually seems helpful; combined without countermeasures, they produce an echo chamber that degrades with every interaction.
+
+Agent Friday's architecture treats Reverse RLHF as a **first-class engineering concern** — not an afterthought. The cognitive memory system, personality evolution engine, and relationship tracking module each contain specific, testable mechanisms that prevent sycophantic feedback loops. This section documents how these mechanisms compose into a defense-in-depth architecture.
+
+### Defense Layer 1: Memory System (cognitive-memory)
+
+The three-tier memory architecture prevents echo-chamber formation through seven interlocking mechanisms:
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   ANTI-ECHO PIPELINE                  │
+│                                                       │
+│  Conversation ──▶ Extraction Prompt ──▶ Medium-Term   │
+│                   (anti-echo design)     Storage       │
+│                                            │          │
+│                          ┌─────────────────┤          │
+│                          │                 │          │
+│                   Jaccard Dedup      Confidence Cap    │
+│                   (≥ 0.80 reject)    (+0.1, max 1.0)  │
+│                          │                 │          │
+│                          ▼                 ▼          │
+│              ┌─────── Promotion Scoring ────────┐     │
+│              │  Frequency:  min(n,10) × 2       │     │
+│              │  Sessions:   min(s,5) × 2        │     │
+│              │  Time-Span:  +5 (7d) / +3 (3d)   │     │
+│              │  Confidence: +3 (≥ 0.9)          │     │
+│              │  Staleness:  -5 (14d) / -2 (7d)  │     │
+│              │                                   │     │
+│              │  Gate: score ≥ 10 AND n ≥ 3       │     │
+│              └───────────────┬───────────────────┘     │
+│                              │                         │
+│                              ▼                         │
+│                     Long-Term Storage                  │
+│                     (source-attributed,                │
+│                      immutable episodics)              │
+└──────────────────────────────────────────────────────┘
+```
+
+**M1 — Extraction Anti-Echo.** The LLM extraction prompt receives the user's existing known facts and is instructed to return only NEW information. This prevents the extraction layer from re-discovering existing beliefs.
+
+**M2 — Jaccard Deduplication (≥ 0.80).** Word-set overlap with stop-word filtering catches semantically identical facts in different phrasings. Prevents artificial weight from paraphrased repetition.
+
+**M3 — Confidence Capping.** Medium-term observation confidence increments by `+0.1` per reinforcement, hard-capped at `1.0`. One hundred reinforcements and ten reinforcements yield the same ceiling.
+
+**M4 — Frequency Capping.** Promotion score contribution from occurrences is capped at `min(occurrences, 10) × 2 = 20`. A fact mentioned 50 times scores identically to one mentioned 10 times.
+
+**M5 — Cross-Session Validation.** Promotion requires observations across distinct sessions (30-minute gap). Single-session bursts cannot force promotion regardless of intensity.
+
+**M6 — Staleness Decay.** Unreinforced observations lose promotion score: `-2` after 7 days, `-5` after 14 days. Beliefs the user stops expressing decay toward expiration.
+
+**M7 — Immutable Episodic Records.** The `EpisodicMemoryStore` is append-only with no update method. Historical records cannot be retroactively revised to align with current preferences. What happened in past conversations stays as it was recorded.
+
+### Defense Layer 2: Personality System (personality-evolution)
+
+The personality evolution engine prevents identity drift through four architectural constraints:
+
+**P1 — Closed Trait Vocabulary.** Visual identity is derived from 30+ predefined traits mapped to four visual dimensions (hue, energy, complexity, warmth) in compile-time constant maps. There is no mechanism to inject new traits or modify mappings through interaction. The trait space is finite and immutable.
+
+**P2 — Pure Functional Computation.** `computeEvolution(traits, sessionCount)` is a pure function with no side effects, no hidden state, and no feedback from user reactions. Same inputs always produce identical outputs. The visual identity is a mathematical projection, not a learned behavior.
+
+**P3 — 50-Session Maturity Ramp.** Personality parameters blend with defaults using `Math.min(sessionCount / 50, 1)`. A new agent is visually identical to every other agent for its first sessions. This prevents the RLHF-typical pattern of immediate adaptation to user preferences — identity must emerge gradually through sustained interaction.
+
+**P4 — Clamped and Coupled Parameters.** Every visual output is hard-clamped to designed ranges (`particleSpeed` 0.5–2.0, `cubeFragmentation` 0–1, etc.). Core scale is inversely coupled to fragmentation. Secondary hue is hardcoded at `+150°` offset. These structural constraints ensure internal aesthetic coherence that cannot be disrupted by trait selection.
+
+### Defense Layer 3: Psychological Profiling
+
+The intake system treats user self-reports as hypotheses to be validated, not facts to be accepted:
+
+**Y1 — Deflection Detection.** The mother question is designed to provoke responses that reveal attachment style. Refusal and deflection are treated as informative signals — the system analyzes "what they revealed through how they said it" rather than taking answers at face value.
+
+**Y2 — Cross-Referencing.** The profiling prompt cross-references self-described social style against the mother question response. Inconsistencies between stated and revealed behavior (e.g., "very social" but deflects on emotional questions) are detected and reflected in the profile as elevated `guardedness`.
+
+**Y3 — Humor-as-Armor Detection.** The `humorAsArmor` boolean identifies users who use humor as a deflection mechanism, preventing the agent from interpreting performative levity as genuine emotional comfort.
+
+### Defense Layer 4: Relationship Trust
+
+The relationship module models trust growth to prevent artificial trust inflation:
+
+**R1 — Logarithmic Trust Curve.** `trust = 0.3 + log₁₀(sessions + 1) × 0.2 + min(streak × 0.02, 0.2)`. Trust saturates quickly — sessions 1–10 contribute more than sessions 100–200. This mirrors human relationship dynamics where early interactions carry disproportionate weight.
+
+**R2 — Streak Cap.** The streak bonus is capped at `0.2` (10 consecutive days maximum contribution). Marathon usage cannot inflate trust beyond designed bounds.
+
+**R3 — Communication Preference Threshold.** Preferences surface only when confidence exceeds `0.6`, requiring at least two independent observations. Single-interaction inferences cannot shape agent communication style.
+
+### Defense Layer 5: Consolidation as Immune System
+
+The `MemoryConsolidation` module performs periodic sleep-like cycles that actively resist belief accumulation:
+
+**C1 — Merge Deduplication (≥ 0.85).** Long-term entries with high Jaccard similarity are merged via LLM into single canonical facts, collapsing redundant beliefs.
+
+**C2 — Cross-Episode Insight Extraction.** Limited to maximum 3 insights per cycle from minimum 3 episodes, with deduplication against existing facts. The consolidation process itself cannot become a reinforcement vector.
+
+**C3 — Medium-Term Expiration.** Entries older than 30 days with fewer than 5 occurrences are pruned automatically. Memory that is not reinforced across sessions dies.
+
+### Composition: Defense-in-Depth
+
+No single mechanism is sufficient. The defense works through composition:
+
+1. The **extraction prompt** prevents re-discovery of existing beliefs
+2. **Jaccard deduplication** catches what the prompt misses
+3. **Confidence capping** limits the weight of any single observation
+4. **Cross-session validation** ensures observations survive context switches
+5. **Staleness decay** removes observations the user stops expressing
+6. **Promotion scoring** forces multi-dimensional validation before long-term storage
+7. **Immutable episodics** preserve ground truth that cannot be retroactively revised
+8. **Fixed trait vocabulary** prevents personality drift from user interaction
+9. **Pure functional identity** eliminates hidden state accumulation
+10. **Maturity ramp** prevents instant personality adaptation
+11. **Deflection detection** treats user self-reports as hypotheses
+12. **Logarithmic trust** prevents artificial trust inflation
+13. **Consolidation merging** collapses redundant beliefs
+14. **Medium-term expiration** kills unreinforced observations
+
+The result: an agent that can maintain long-term memory, evolve a visual identity, build a genuine relationship, and profile its user — without any of these capabilities creating the echo-chamber dynamics that RLHF-trained models would otherwise amplify.
 
 ---
 

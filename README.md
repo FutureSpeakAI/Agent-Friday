@@ -3,8 +3,8 @@
 </p>
 
 <h1 align="center">Agent Friday</h1>
-<p align="center"><strong>The World's First Asimov Agent</strong></p>
-<p align="center">A sovereign AI desktop operating system with cryptographically enforced safety laws, voice-first interaction, a full native app ecosystem, and multi-agent orchestration. Agent Friday doesn't just assist you; it runs as a complete desktop environment governed by formally implemented safety constraints that can't be overridden, bypassed, or sweet-talked away.</p>
+<p align="center"><strong>The World's Most Trustworthy AI Assistant</strong></p>
+<p align="center">A sovereign AI desktop assistant with cryptographically enforced safety laws, voice-first interaction, a full native app ecosystem, and multi-agent orchestration. Agent Friday doesn't just assist you; it runs as a complete desktop environment governed by formally implemented safety constraints that can't be overridden, bypassed, or sweet-talked away.</p>
 <p align="center">Built by <a href="https://futurespeak.ai"><strong>FutureSpeak.AI</strong></a></p>
 
 <p align="center">
