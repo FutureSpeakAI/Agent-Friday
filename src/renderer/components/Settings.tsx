@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { validateApiKey } from '../hooks/useApiKeyValidation';
 
 type Tab = 'general' | 'memory' | 'tasks' | 'localai';
 
@@ -123,6 +124,7 @@ function ApiKeyField({
   onChange,
   onSave,
   description,
+  validating,
 }: {
   label: string;
   hasKey: boolean;
@@ -131,6 +133,7 @@ function ApiKeyField({
   onChange: (v: string) => void;
   onSave: () => void;
   description?: string;
+  validating?: boolean;
 }) {
   return (
     <div style={styles.fieldGroup}>
@@ -146,12 +149,13 @@ function ApiKeyField({
           onChange={(e) => onChange(e.target.value)}
           placeholder={hasKey ? 'Enter new key to replace' : `Paste your ${label}`}
           style={styles.keyInput}
+          disabled={validating}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && value.trim()) onSave();
+            if (e.key === 'Enter' && value.trim() && !validating) onSave();
           }}
         />
-        <button onClick={onSave} style={styles.saveBtn} disabled={!value.trim()}>
-          Save
+        <button onClick={onSave} style={styles.saveBtn} disabled={!value.trim() || validating}>
+          {validating ? 'Validating...' : 'Save'}
         </button>
       </div>
       {description && <div style={styles.toggleHint}>{description}</div>}
@@ -246,6 +250,8 @@ export default function Settings({ visible, onClose }: SettingsProps) {
     setTimeout(() => setSaveMsg(''), 3000);
   };
 
+  const [validatingKey, setValidatingKey] = useState<string | null>(null);
+
   const saveApiKey = async (
     key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl' | 'openrouter',
     value: string,
@@ -253,6 +259,17 @@ export default function Settings({ visible, onClose }: SettingsProps) {
     successMsg: string,
   ) => {
     if (!value.trim()) return;
+
+    // Pre-validate keys that have validators (gemini, anthropic, openrouter)
+    setValidatingKey(key);
+    const result = await validateApiKey(key, value.trim());
+    setValidatingKey(null);
+
+    if (!result.valid) {
+      flash(`Invalid key: ${result.error}`);
+      return;
+    }
+
     await window.eve.settings.setApiKey(key, value.trim());
     setter('');
     flash(successMsg);
@@ -387,6 +404,7 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                 onChange={setGeminiKey}
                 onSave={() => saveApiKey('gemini', geminiKey, setGeminiKey, 'Gemini key saved — restart to apply')}
                 description="Powers real-time voice conversation via Gemini Live"
+                validating={validatingKey === 'gemini'}
               />
 
               <ApiKeyField
@@ -399,6 +417,7 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                   saveApiKey('anthropic', anthropicKey, setAnthropicKey, 'Anthropic key saved — restart to apply')
                 }
                 description="Claude handles deep research, code analysis, and psychological profiling"
+                validating={validatingKey === 'anthropic'}
               />
 
               <Divider />
@@ -475,6 +494,7 @@ export default function Settings({ visible, onClose }: SettingsProps) {
                   saveApiKey('openrouter', openrouterKey, setOpenrouterKey, 'OpenRouter key saved')
                 }
                 description="Access 200+ AI models including Claude, GPT-4, Llama, Mistral, and more"
+                validating={validatingKey === 'openrouter'}
               />
 
               {settings.hasOpenrouterKey && (

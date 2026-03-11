@@ -9,6 +9,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Check } from 'lucide-react';
 import CyberInput from './shared/CyberInput';
 import NextButton from './shared/NextButton';
+import { validateApiKey } from '../../hooks/useApiKeyValidation';
 
 type TierName = 'whisper' | 'light' | 'standard' | 'full' | 'sovereign';
 
@@ -102,6 +103,19 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
     setSaving(true);
     setError('');
     try {
+      // Validate all entered keys before saving any
+      for (const config of KEY_CONFIGS) {
+        const value = (keys[config.id] || '').trim();
+        if (value) {
+          const result = await validateApiKey(config.id, value);
+          if (!result.valid) {
+            setError(`${config.label}: ${result.error}`);
+            setSaving(false);
+            return;
+          }
+        }
+      }
+
       let anyCloudKey = false;
       for (const config of KEY_CONFIGS) {
         const value = (keys[config.id] || '').trim();
@@ -197,7 +211,7 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
 
       <div style={styles.buttonRow}>
         <NextButton
-          label={saving ? 'Saving...' : 'Continue'}
+          label={saving ? 'Validating & Saving...' : 'Continue'}
           onClick={handleSave}
           disabled={saving}
           loading={saving}

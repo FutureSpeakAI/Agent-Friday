@@ -9,9 +9,9 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Push successful" -ForegroundColor Green
 
 Write-Host ""
-Write-Host "=== Creating v3.6.0 tag ===" -ForegroundColor Cyan
-git tag v3.6.0
-git push origin v3.6.0
+Write-Host "=== Creating v3.6.1 tag ===" -ForegroundColor Cyan
+git tag v3.6.1
+git push origin v3.6.1
 Write-Host "Tag pushed" -ForegroundColor Green
 
 Write-Host ""

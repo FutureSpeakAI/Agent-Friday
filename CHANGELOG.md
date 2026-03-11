@@ -4,6 +4,22 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.6.1] — 2026-03-11 — Cloud-Only UX & Key Validation
+
+### Summary
+
+Improves the experience for users on lightweight hardware (Surface Pro, integrated graphics) who rely entirely on cloud APIs. API keys are now pre-validated before saving, and the voice interview provides staged progress feedback instead of hanging silently on auth failures.
+
+### Fixed — Cloud-Only Device Experience
+
+- **Whisper tier "Cloud Mode" card** — Devices with 0 available VRAM (e.g. Surface Pro with Intel iGPU) now see a clear "Cloud Mode" explanation instead of an empty model list during onboarding, with feature chips showing what works via cloud APIs
+- **API key pre-validation** — Gemini, Anthropic, and OpenRouter keys are validated via lightweight REST calls before saving, both in Settings and during onboarding; invalid keys show immediate, specific error messages instead of causing cryptic WebSocket failures later
+- **Voice interview staged progress** — Connection status cycles through "Connecting...", "Authenticating...", "Loading agent tools...", "Opening audio channel..." instead of showing a static "Connecting to voice session..." for up to 30 seconds
+- **Faster auth failure detection** — Connection timeout reduced from 30s to 15s; auth failures from WebSocket close codes now produce specific error messages ("Authentication failed — check your Gemini API key in Settings")
+- **Better failure hints** — Failed voice interview now suggests checking the API key in Settings instead of only offering to skip
+
+---
+
 ## [3.6.0] — 2026-03-10 — Local Voice OS
 
 ### Summary
