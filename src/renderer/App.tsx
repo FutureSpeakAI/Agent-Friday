@@ -427,9 +427,9 @@ export default function App() {
 
       cleanups.push(
         window.eve.localConversation.onStarted(() => {
-          console.log('[Agent] Local voice conversation started');
+          console.log('[Agent] Local conversation started');
           setStatus('Connected (Local)');
-          setConnectionError('');
+          setConnectionError(''); // Clear any Whisper/TTS warnings — session is alive
           retriesRef.current = 0;
           setRetryCount(0);
           localConversationActiveRef.current = true;
@@ -496,8 +496,16 @@ export default function App() {
       cleanups.push(
         window.eve.localConversation.onError((error: string) => {
           console.error('[Agent] Local conversation error:', error);
-          setConnectionError(error);
-          setStatus(`Local voice error: ${error}`);
+          // Non-fatal voice errors (Whisper/TTS missing) shouldn't block text mode.
+          // If localConversation is still active, this is a degradation warning, not a fatal error.
+          if (localConversationActiveRef.current) {
+            // Session is alive — show as a status warning, not a blocking error
+            setStatus(`Local voice error: ${error}`);
+          } else {
+            // Session failed to start entirely — show as connection error
+            setConnectionError(error);
+            setStatus(`Local voice error: ${error}`);
+          }
         }),
       );
 

@@ -15,7 +15,7 @@ import type { IdentityChoices } from '../OnboardingWizard';
 
 interface InterviewStepProps {
   identityChoices: IdentityChoices;
-  connectToGemini?: (identityContext?: string) => void;
+  connectToGemini?: (identityContext?: string) => Promise<void> | void;
   sendTextToGemini?: (text: string) => void;
   onComplete: (finalName?: string) => void;
   onBack?: () => void;

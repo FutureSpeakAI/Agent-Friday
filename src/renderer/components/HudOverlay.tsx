@@ -126,12 +126,48 @@ export default function HudOverlay({
           <span className="hud-main-title">AGENT FRIDAY</span>
           <span>{statusText} · {moodLabel}</span>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div className="hud-laws">
-            <span className={`status-dot ${lawsStatus.color}`} />
-            <span>{lawsStatus.text}</span>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+          <div>
+            <div className="hud-laws">
+              <span className={`status-dot ${lawsStatus.color}`} />
+              <span>{lawsStatus.text}</span>
+            </div>
+            {clockStr && <div style={{ marginTop: 4, letterSpacing: '3px' }}>{clockStr}</div>}
           </div>
-          {clockStr && <div style={{ marginTop: 4, letterSpacing: '3px' }}>{clockStr}</div>}
+          {/* Settings gear — always visible for discoverability */}
+          <button
+            onClick={() => onOpenApp('settings')}
+            title="Settings"
+            aria-label="Open settings"
+            style={{
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(255, 255, 255, 0.06)',
+              borderRadius: 8,
+              width: 32,
+              height: 32,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: 'rgba(255, 255, 255, 0.35)',
+              fontSize: 16,
+              transition: 'all 0.2s ease',
+              flexShrink: 0,
+              marginTop: 2,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#00f0ff';
+              e.currentTarget.style.borderColor = 'rgba(0, 240, 255, 0.3)';
+              e.currentTarget.style.background = 'rgba(0, 240, 255, 0.06)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'rgba(255, 255, 255, 0.35)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.06)';
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+            }}
+          >
+            {'⚙'}
+          </button>
         </div>
       </div>
 
