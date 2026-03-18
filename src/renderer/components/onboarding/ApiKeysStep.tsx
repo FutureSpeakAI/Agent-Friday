@@ -5,8 +5,8 @@
  * Local models handle most tasks; cloud keys add frontier capabilities.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { Check } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Check, AlertCircle } from 'lucide-react';
 import CyberInput from './shared/CyberInput';
 import NextButton from './shared/NextButton';
 import { validateApiKey } from '../../hooks/useApiKeyValidation';
@@ -68,6 +68,9 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fadeIn, setFadeIn] = useState(false);
+  const [keyStatus, setKeyStatus] = useState<Record<string, 'idle' | 'checking' | 'valid' | 'invalid'>>({});
+  const [keyErrors, setKeyErrors] = useState<Record<string, string>>({});
+  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const isLocalCapable = detectedTier !== null && LOCAL_CAPABLE_TIERS.includes(detectedTier);
 
@@ -97,6 +100,28 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
 
   const updateKey = useCallback((id: string, value: string) => {
     setKeys((prev) => ({ ...prev, [id]: value }));
+
+    // Clear previous debounce
+    if (debounceTimers.current[id]) clearTimeout(debounceTimers.current[id]);
+
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length < 8) {
+      setKeyStatus((prev) => ({ ...prev, [id]: 'idle' }));
+      setKeyErrors((prev) => ({ ...prev, [id]: '' }));
+      return;
+    }
+
+    // Debounced validation — wait 800ms after typing stops
+    setKeyStatus((prev) => ({ ...prev, [id]: 'checking' }));
+    debounceTimers.current[id] = setTimeout(async () => {
+      try {
+        const result = await validateApiKey(id, trimmed);
+        setKeyStatus((prev) => ({ ...prev, [id]: result.valid ? 'valid' : 'invalid' }));
+        setKeyErrors((prev) => ({ ...prev, [id]: result.error || '' }));
+      } catch {
+        setKeyStatus((prev) => ({ ...prev, [id]: 'idle' }));
+      }
+    }, 800);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -181,11 +206,28 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
           <div key={config.id} style={styles.keyField}>
             <div style={styles.keyLabelRow}>
               <span style={styles.keyLabel}>{config.label}</span>
-              {existingKeys[config.id] && (
-                <span style={styles.keyConfigured}>
-                  <Check size={10} aria-hidden="true" /> Saved
-                </span>
-              )}
+              <span style={styles.keyStatusRow}>
+                {keyStatus[config.id] === 'checking' && (
+                  <span style={styles.keyStatusDot} title="Validating...">
+                    <span style={{ ...styles.statusDot, background: '#eab308', boxShadow: '0 0 6px #eab30840' }} />
+                  </span>
+                )}
+                {keyStatus[config.id] === 'valid' && (
+                  <span style={styles.keyStatusDot} title="Key valid">
+                    <Check size={10} color="#22c55e" />
+                  </span>
+                )}
+                {keyStatus[config.id] === 'invalid' && (
+                  <span style={styles.keyStatusDot} title={keyErrors[config.id] || 'Invalid key'}>
+                    <AlertCircle size={10} color="#ef4444" />
+                  </span>
+                )}
+                {existingKeys[config.id] && !keys[config.id]?.trim() && (
+                  <span style={styles.keyConfigured}>
+                    <Check size={10} aria-hidden="true" /> Saved
+                  </span>
+                )}
+              </span>
             </div>
             <CyberInput
               id={`key-${config.id}`}
@@ -194,8 +236,11 @@ const ApiKeysStep: React.FC<ApiKeysStepProps> = ({ detectedTier, onComplete, onB
               onChange={(v) => updateKey(config.id, v)}
               type="password"
               monospace
-              success={!!(keys[config.id] || '').trim() || existingKeys[config.id]}
+              success={keyStatus[config.id] === 'valid' || (!keys[config.id]?.trim() && existingKeys[config.id])}
             />
+            {keyStatus[config.id] === 'invalid' && keyErrors[config.id] && (
+              <span style={styles.keyErrorHint}>{keyErrors[config.id]}</span>
+            )}
             <span style={styles.keyDesc}>
               {isLocalCapable ? config.localDescription : config.description}
             </span>
@@ -293,12 +338,34 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.05em',
     fontFamily: "'Space Grotesk', sans-serif",
   },
+  keyStatusRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  keyStatusDot: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    animation: 'pulse 1.2s ease-in-out infinite',
+  },
   keyConfigured: {
     fontSize: 10,
     color: 'var(--accent-cyan-50)',
     display: 'flex',
     alignItems: 'center',
     gap: 4,
+  },
+  keyErrorHint: {
+    fontSize: 10,
+    color: '#ef4444',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: -2,
   },
   keyDesc: {
     fontSize: 10,
