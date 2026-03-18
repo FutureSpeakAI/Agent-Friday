@@ -52,6 +52,8 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
   const [fadeIn, setFadeIn] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
   const [checkingOllama, setCheckingOllama] = useState(false);
+  const [whisperStatus, setWhisperStatus] = useState<'unchecked' | 'downloading' | 'ready' | 'failed'>('unchecked');
+  const [whisperProgress, setWhisperProgress] = useState(0);
   const cleanupRef = useRef<Array<() => void>>([]);
 
   // Detect hardware on mount
@@ -158,6 +160,43 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
       cleanupRef.current.forEach((fn) => fn());
     };
   }, []);
+
+  // Auto-download Whisper tiny model when Ollama is confirmed running
+  const ensureWhisperModel = useCallback(async () => {
+    try {
+      const downloaded = await window.eve.voice.whisper.isModelDownloaded('tiny');
+      if (downloaded) {
+        setWhisperStatus('ready');
+        return;
+      }
+
+      setWhisperStatus('downloading');
+
+      // Subscribe to download progress
+      const unsub = window.eve.voice.whisper.onDownloadProgress(
+        (progress: { downloaded: number; total: number }) => {
+          if (progress.total > 0) {
+            setWhisperProgress(Math.round((progress.downloaded / progress.total) * 100));
+          }
+        }
+      );
+      cleanupRef.current.push(unsub);
+
+      await window.eve.voice.whisper.downloadModel('tiny');
+      setWhisperStatus('ready');
+    } catch (err: any) {
+      console.warn('[HardwareStep] Whisper download failed (non-fatal):', err?.message);
+      setWhisperStatus('failed');
+      // Non-fatal — local conversation works in text-only mode without Whisper
+    }
+  }, []);
+
+  // Trigger Whisper download when Ollama is confirmed running
+  useEffect(() => {
+    if (ollamaRunning === true && whisperStatus === 'unchecked') {
+      ensureWhisperModel();
+    }
+  }, [ollamaRunning, whisperStatus, ensureWhisperModel]);
 
   // Re-check Ollama connectivity
   const recheckOllama = useCallback(async () => {
@@ -273,7 +312,38 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
                 Ollama is running
               </span>
             </div>
-            <NextButton label="Continue" onClick={() => setPhase('recommending')} />
+
+            {/* Whisper model download status */}
+            {whisperStatus === 'downloading' && (
+              <div style={styles.ollamaStatusCard}>
+                <Download size={14} color="var(--accent-cyan)" />
+                <span style={styles.ollamaStatusText}>
+                  Downloading voice model... {whisperProgress > 0 ? `${whisperProgress}%` : ''}
+                </span>
+              </div>
+            )}
+            {whisperStatus === 'ready' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
+                <Check size={14} color="#22c55e" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
+                  Voice model ready
+                </span>
+              </div>
+            )}
+            {whisperStatus === 'failed' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(239, 68, 68, 0.1)' }}>
+                <AlertCircle size={14} color="#ef4444" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(239, 68, 68, 0.7)', fontSize: 11 }}>
+                  Voice model download failed — text input will still work
+                </span>
+              </div>
+            )}
+
+            <NextButton
+              label="Continue"
+              onClick={() => setPhase('recommending')}
+              disabled={whisperStatus === 'downloading'}
+            />
           </>
         ) : (
           <>

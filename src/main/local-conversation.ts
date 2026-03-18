@@ -7,9 +7,13 @@
  *     → LLMClient / Ollama (tool-calling chat)
  *       → SpeechSynthesisManager (TTS → audio chunks to renderer)
  *
- * Used when no Gemini API key is configured. Supports two modes:
- *   1. Onboarding — "Her"-style intake interview with 4 onboarding tools
- *   2. General — post-onboarding conversation with desktop/feature/MCP tools
+ * Used when no Gemini API key is configured. Supports three modes:
+ *   1. Full voice — Whisper STT + Ollama + TTS (mic + speaker)
+ *   2. Text + TTS — Ollama + TTS only (no mic, text input + spoken replies)
+ *   3. Text-only — Ollama only (no mic, no speaker, text in/out)
+ *
+ * Whisper and TTS are optional — if models are missing, the conversation
+ * degrades gracefully to text-only mode rather than failing entirely.
  *
  * Emits the same events the renderer expects
  * (started, transcript, response, agent-finalized, error).
@@ -54,15 +58,24 @@ export class LocalConversation extends EventEmitter {
   private transcriptCleanup: (() => void) | null = null;
   private errorCleanup: (() => void) | null = null;
 
+  /** Whether Whisper STT is available (mic → text) */
+  private voiceAvailable = false;
+  /** Whether local TTS is available (text → speaker) */
+  private ttsAvailable = false;
+
   /**
-   * Start a local voice conversation.
+   * Start a local conversation.
    *
-   * 1. Load Whisper model + TTS engine (if not already loaded)
-   * 2. Verify Ollama is reachable
-   * 3. Store system prompt + tools, init message history
-   * 4. Start TranscriptionPipeline (mic → VAD → Whisper → transcript events)
-   * 5. If initialPrompt provided, send it as first user turn to kick off interview
-   * 6. Emit 'started' so renderer dispatches gemini-audio-active
+   * Voice components (Whisper STT, TTS) are optional — if unavailable,
+   * the conversation degrades gracefully to text-only mode rather than
+   * failing entirely. Only Ollama is required.
+   *
+   * 1. Verify Ollama is reachable (required — abort if not)
+   * 2. Try loading Whisper model (optional — degrade to text input)
+   * 3. Try loading TTS engine (optional — degrade to text output)
+   * 4. Start TranscriptionPipeline if Whisper loaded
+   * 5. Emit 'started' so renderer dispatches gemini-audio-active
+   * 6. If initialPrompt provided, send it as first user turn
    */
   async start(
     systemPrompt: string,
@@ -74,37 +87,12 @@ export class LocalConversation extends EventEmitter {
       return;
     }
 
-    console.log('[LocalConversation] Starting local voice conversation loop...');
+    console.log('[LocalConversation] Starting local conversation loop...');
 
-    // ── Step 1: Initialize voice engines ──────────────────────────────
-    try {
-      if (!whisperProvider.isReady()) {
-        console.log('[LocalConversation] Loading Whisper model...');
-        await whisperProvider.loadModel();
-      }
-    } catch (err) {
-      const msg = `Whisper model not available: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[LocalConversation] ${msg}`);
-      this.emit('error', msg);
-      return;
-    }
-
-    try {
-      if (!ttsEngine.isReady()) {
-        console.log('[LocalConversation] Loading TTS engine...');
-        await ttsEngine.loadEngine();
-      }
-    } catch (err) {
-      const msg = `TTS engine not available: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[LocalConversation] ${msg}`);
-      this.emit('error', msg);
-      return;
-    }
-
-    // ── Step 2: Verify Ollama is reachable ────────────────────────────
+    // ── Step 1: Verify Ollama is reachable (the only hard requirement) ─
     const ollamaProvider = llmClient.getProvider('ollama');
     if (!ollamaProvider || !ollamaProvider.isAvailable()) {
-      const msg = 'Ollama is not running. Start Ollama to use local voice conversation.';
+      const msg = 'Ollama is not running. Start Ollama to use local conversation.';
       console.error(`[LocalConversation] ${msg}`);
       this.emit('error', msg);
       return;
@@ -120,42 +108,75 @@ export class LocalConversation extends EventEmitter {
       return;
     }
 
-    // ── Step 3: Initialize conversation state ─────────────────────────
+    // ── Step 2: Try loading Whisper (optional — text-only fallback) ───
+    this.voiceAvailable = false;
+    try {
+      if (!whisperProvider.isReady()) {
+        console.log('[LocalConversation] Loading Whisper model...');
+        await whisperProvider.loadModel();
+      }
+      this.voiceAvailable = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[LocalConversation] Whisper not available — text input only: ${msg}`);
+      this.emit('error', `Local voice error: Whisper model not available: ${msg}. Download the ggml-tiny.bin model first.`);
+      // Continue — text input still works via sendText()
+    }
+
+    // ── Step 3: Try loading TTS (optional — silent text fallback) ─────
+    this.ttsAvailable = false;
+    try {
+      if (!ttsEngine.isReady()) {
+        console.log('[LocalConversation] Loading TTS engine...');
+        await ttsEngine.loadEngine();
+      }
+      this.ttsAvailable = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[LocalConversation] TTS not available — text output only: ${msg}`);
+      // Continue — responses are still displayed as text in the UI
+    }
+
+    // ── Step 4: Initialize conversation state ─────────────────────────
     this.systemPrompt = systemPrompt;
     this.tools = tools;
     this.messages = [];
     this.active = true;
     this.processing = false;
 
-    // ── Step 4: Start transcription pipeline (mic → Whisper) ──────────
-    this.transcriptCleanup = transcriptionPipeline.on('transcript', (payload) => {
-      const event = payload as TranscriptEvent;
-      if (event.text && event.text.trim().length > 0) {
-        void this.onUserSpeech(event.text.trim());
+    // ── Step 5: Start transcription pipeline only if Whisper is ready ──
+    if (this.voiceAvailable) {
+      this.transcriptCleanup = transcriptionPipeline.on('transcript', (payload) => {
+        const event = payload as TranscriptEvent;
+        if (event.text && event.text.trim().length > 0) {
+          void this.onUserSpeech(event.text.trim());
+        }
+      });
+
+      this.errorCleanup = transcriptionPipeline.on('error', (payload) => {
+        const err = payload instanceof Error ? payload : new Error(String(payload));
+        console.error(`[LocalConversation] Pipeline error: ${err.message}`);
+        this.emit('error', `Voice pipeline error: ${err.message}`);
+      });
+
+      try {
+        await transcriptionPipeline.start();
+      } catch (err) {
+        const msg = `Failed to start voice pipeline: ${err instanceof Error ? err.message : String(err)}`;
+        console.warn(`[LocalConversation] ${msg} — continuing in text-only mode`);
+        this.voiceAvailable = false;
+        // Don't abort — text mode still works
       }
-    });
-
-    this.errorCleanup = transcriptionPipeline.on('error', (payload) => {
-      const err = payload instanceof Error ? payload : new Error(String(payload));
-      console.error(`[LocalConversation] Pipeline error: ${err.message}`);
-      this.emit('error', `Voice pipeline error: ${err.message}`);
-    });
-
-    try {
-      await transcriptionPipeline.start();
-    } catch (err) {
-      const msg = `Failed to start voice pipeline: ${err instanceof Error ? err.message : String(err)}`;
-      console.error(`[LocalConversation] ${msg}`);
-      this.cleanup();
-      this.emit('error', msg);
-      return;
     }
 
-    // ── Step 5: Emit started event ────────────────────────────────────
-    console.log('[LocalConversation] Voice loop active — Whisper + Ollama + TTS ready');
+    // ── Step 6: Emit started event ────────────────────────────────────
+    const mode = this.voiceAvailable
+      ? (this.ttsAvailable ? 'Whisper + Ollama + TTS' : 'Whisper + Ollama (no TTS)')
+      : (this.ttsAvailable ? 'Ollama + TTS (text input only)' : 'Ollama only (text mode)');
+    console.log(`[LocalConversation] Active — ${mode}`);
     this.emit('started');
 
-    // ── Step 6: Send initial prompt to kick off the interview ─────────
+    // ── Step 7: Send initial prompt to kick off the interview ─────────
     if (initialPrompt) {
       void this.processUserInput(initialPrompt);
     }
@@ -196,7 +217,7 @@ export class LocalConversation extends EventEmitter {
    */
   private async onUserSpeech(text: string): Promise<void> {
     // Barge-in: interrupt TTS if it's currently speaking
-    if (speechSynthesis.isSpeaking()) {
+    if (this.ttsAvailable && speechSynthesis.isSpeaking()) {
       console.log('[LocalConversation] Barge-in detected — stopping TTS');
       speechSynthesis.stop();
     }
@@ -542,8 +563,10 @@ export class LocalConversation extends EventEmitter {
   /**
    * Speak a response via the SpeechSynthesisManager.
    * The manager handles sentence chunking and sends audio to renderer via IPC.
+   * Skipped silently if TTS is not available (text-only mode).
    */
   private async speakResponse(text: string): Promise<void> {
+    if (!this.ttsAvailable) return; // text-only mode — skip TTS
     try {
       await speechSynthesis.speak(text);
     } catch (err) {
@@ -571,11 +594,18 @@ export class LocalConversation extends EventEmitter {
       this.errorCleanup = null;
     }
 
-    // Stop the transcription pipeline (mic + Whisper)
-    transcriptionPipeline.stop();
+    // Stop the transcription pipeline (mic + Whisper) — only if voice was active
+    if (this.voiceAvailable) {
+      transcriptionPipeline.stop();
+    }
 
-    // Stop any in-progress TTS
-    speechSynthesis.stop();
+    // Stop any in-progress TTS — only if TTS was active
+    if (this.ttsAvailable) {
+      speechSynthesis.stop();
+    }
+
+    this.voiceAvailable = false;
+    this.ttsAvailable = false;
 
     // Clear message history
     this.messages = [];

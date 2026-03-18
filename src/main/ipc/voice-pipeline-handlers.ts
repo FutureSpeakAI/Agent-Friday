@@ -63,6 +63,29 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
     return whisper.getAvailableModels();
   });
 
+  ipcMain.handle('voice:whisper:is-model-downloaded', async (_event, size?: unknown) => {
+    if (size !== undefined && size !== null) {
+      assertString(size as unknown, 'voice:whisper:is-model-downloaded size', 50);
+    }
+    return whisper.isModelDownloaded((size as any) || 'tiny');
+  });
+
+  ipcMain.handle('voice:whisper:download-model', async (event, size?: unknown) => {
+    if (size !== undefined && size !== null) {
+      assertString(size as unknown, 'voice:whisper:download-model size', 50);
+    }
+    const win = deps?.getMainWindow?.();
+    return whisper.downloadModel(
+      (size as any) || 'tiny',
+      (downloaded: number, total: number) => {
+        // Forward progress to renderer
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('voice:whisper:download-progress', { downloaded, total });
+        }
+      },
+    );
+  });
+
   // ── Audio Capture (microphone) ────────────────────────────────────
 
   ipcMain.handle('voice:capture:start', async () => {

@@ -11,10 +11,12 @@
  * Sprint 4 J.1: "The Ear" -- WhisperProvider
  */
 
-import { access } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { readdir, stat } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { whisperBinding } from './whisper-binding';
 import type { WhisperModelHandle } from './whisper-binding';
 
@@ -207,6 +209,83 @@ export class WhisperProvider {
       return models;
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Download a Whisper model from Hugging Face.
+   * Creates the model directory if needed and streams the file to disk.
+   * Returns the local file path on success.
+   */
+  async downloadModel(
+    size: WhisperModelSize = 'tiny',
+    onProgress?: (downloaded: number, total: number) => void,
+  ): Promise<string> {
+    const modelPath = this.getModelPath(size);
+    const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL_FILE_PREFIX}${size}${MODEL_FILE_SUFFIX}`;
+
+    // Ensure model directory exists
+    await mkdir(this.modelDir, { recursive: true });
+
+    // Check if already downloaded
+    try {
+      await access(modelPath);
+      console.log(`[WhisperProvider] Model already exists: ${modelPath}`);
+      return modelPath;
+    } catch {
+      // Not downloaded yet — proceed
+    }
+
+    console.log(`[WhisperProvider] Downloading ${size} model from ${url}...`);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status} ${response.statusText}`);
+    }
+    if (!response.body) {
+      throw new Error('Download failed: no response body');
+    }
+
+    const total = Number(response.headers.get('content-length') || 0);
+    let downloaded = 0;
+
+    const fileStream = createWriteStream(modelPath);
+    const reader = response.body.getReader();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        fileStream.write(Buffer.from(value));
+        downloaded += value.byteLength;
+        onProgress?.(downloaded, total);
+      }
+      fileStream.end();
+      // Wait for file stream to finish writing
+      await new Promise<void>((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+    } catch (err) {
+      fileStream.end();
+      // Clean up partial download
+      try { const { unlink } = await import('node:fs/promises'); await unlink(modelPath); } catch {}
+      throw err;
+    }
+
+    console.log(`[WhisperProvider] Download complete: ${modelPath} (${Math.round(downloaded / 1024 / 1024)}MB)`);
+    return modelPath;
+  }
+
+  /**
+   * Check if a model file exists on disk (without loading it).
+   */
+  async isModelDownloaded(size: WhisperModelSize = 'tiny'): Promise<boolean> {
+    try {
+      await access(this.getModelPath(size));
+      return true;
+    } catch {
+      return false;
     }
   }
 
