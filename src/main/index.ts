@@ -431,7 +431,7 @@ app.whenReady().then(async () => {
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: blob: https:",
             "media-src 'self' blob: data: mediastream:",
-            "connect-src 'self' wss://generativelanguage.googleapis.com https://generativelanguage.googleapis.com blob:",
+            "connect-src 'self' wss://generativelanguage.googleapis.com https://generativelanguage.googleapis.com https://api.anthropic.com https://openrouter.ai blob:",
             "worker-src 'self' blob:",
             "child-src 'self' blob:",
             "object-src 'none'",
