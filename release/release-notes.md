@@ -1,17 +1,14 @@
-## Agent Friday v3.6.2 — Onboarding Tool Scoping
+## Agent Friday v3.6.3 — Onboarding Hardware Step Fix
 
-Fixes Gemini Live connection failures during onboarding caused by sending 200-400+ tool declarations in the WebSocket setup message.
+Fixes a crash on first launch where the onboarding hardware detection screen threw a React error instead of displaying model recommendations.
 
 ### Bug Fixes
 
-- **Onboarding tool scoping** — Voice interview connects with only 4 onboarding tools instead of the full 200-400+ toolkit, eliminating payload bloat that caused connection failures
-- **Close code 1009 handling** — "Message Too Big" WebSocket rejections now produce a clear error message
-- **Reconnect preserves onboarding mode** — Auto-reconnect paths carry the onboarding flag to prevent tool re-bloat during interviews
-- **Variable scoping fix** — Dynamic tool declarations properly scoped to prevent runtime errors in onboarding mode
+- **Hardware step crash** — The onboarding "Your Hardware, Your AI" screen crashed with React error #31 (Objects are not valid as a React child) because the hardware profiler returned full model-requirement objects (`{name, diskBytes, vramBytes, ...}`) but the UI expected plain strings. Model names are now correctly extracted before rendering.
 
 ### Installation
 
-Download `Agent Friday Setup 3.6.2.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.6.3.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 

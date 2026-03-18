@@ -85,7 +85,7 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
         // Get model list for the detected tier
         try {
           const models = await window.eve.hardware.getModelList(detectedTier);
-          if (!cancelled) setModelList(models as string[]);
+          if (!cancelled) setModelList((models as any[]).map((m) => typeof m === 'string' ? m : m.name));
         } catch { /* no models */ }
 
         if (!cancelled) {
