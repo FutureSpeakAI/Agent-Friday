@@ -1554,6 +1554,13 @@ contextBridge.exposeInMainWorld('eve', {
       isReady: () => ipcRenderer.invoke('voice:whisper:is-ready'),
       transcribe: (audio: number[]) => ipcRenderer.invoke('voice:whisper:transcribe', audio),
       getAvailableModels: () => ipcRenderer.invoke('voice:whisper:get-available-models'),
+      isModelDownloaded: (size?: string) => ipcRenderer.invoke('voice:whisper:is-model-downloaded', size),
+      downloadModel: (size?: string) => ipcRenderer.invoke('voice:whisper:download-model', size),
+      onDownloadProgress: (cb: (progress: { downloaded: number; total: number }) => void) => {
+        const handler = (_event: any, progress: { downloaded: number; total: number }) => cb(progress);
+        ipcRenderer.on('voice:whisper:download-progress', handler);
+        return () => ipcRenderer.removeListener('voice:whisper:download-progress', handler);
+      },
     },
     capture: {
       start: () => ipcRenderer.invoke('voice:capture:start'),

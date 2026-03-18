@@ -42,7 +42,7 @@ export interface IdentityChoices {
 
 interface OnboardingWizardProps {
   onComplete: (agentName: string) => void;
-  connectToGemini?: (identityContext?: string) => void;
+  connectToGemini?: (identityContext?: string) => Promise<void> | void;
   sendTextToGemini?: (text: string) => void;
 }
 
