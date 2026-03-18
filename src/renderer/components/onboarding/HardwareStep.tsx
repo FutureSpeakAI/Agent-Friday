@@ -116,15 +116,16 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
       await window.eve.setup.confirmTier(tier);
 
       // Subscribe to progress events
-      const unsub1 = window.eve.setup.onDownloadProgress((_event: any, progressData: any) => {
+      // Note: preload bridge strips the IPC event — callbacks receive data only
+      const unsub1 = window.eve.setup.onDownloadProgress((progressData: any) => {
         if (Array.isArray(progressData)) {
           setDownloads(progressData);
         }
       });
-      const unsub2 = window.eve.setup.onComplete((_event: any) => {
+      const unsub2 = window.eve.setup.onComplete(() => {
         setPhase('complete');
       });
-      const unsub3 = window.eve.setup.onError((_event: any, errorData: any) => {
+      const unsub3 = window.eve.setup.onError((errorData: any) => {
         setError(errorData?.error || 'Download failed');
       });
 
