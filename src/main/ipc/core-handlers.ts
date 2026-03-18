@@ -76,6 +76,73 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     },
   );
 
+  // Validate API keys from the main process (avoids renderer CORS blocks).
+  ipcMain.handle(
+    'settings:validate-api-key',
+    async (_event, keyType: unknown, value: unknown) => {
+      assertString(keyType, 'settings:validate-api-key keyType', 50);
+      assertString(value, 'settings:validate-api-key value', 500);
+      const type = keyType as string;
+      const key = (value as string).trim();
+      if (!key) return { valid: false, error: 'Key is empty' };
+
+      try {
+        if (type === 'gemini') {
+          if (!key.startsWith('AIza')) return { valid: false, error: 'Gemini keys start with "AIza"' };
+          const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
+            { method: 'GET', signal: AbortSignal.timeout(8000) },
+          );
+          if (resp.ok) return { valid: true };
+          if (resp.status === 400 || resp.status === 403 || resp.status === 401)
+            return { valid: false, error: 'API key is invalid or has been revoked' };
+          return { valid: false, error: `Unexpected response (${resp.status})` };
+        }
+
+        if (type === 'anthropic') {
+          if (!key.startsWith('sk-ant-')) return { valid: false, error: 'Anthropic keys start with "sk-ant-"' };
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': key,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 1,
+              messages: [{ role: 'user', content: 'hi' }],
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (resp.ok || resp.status === 400 || resp.status === 429) return { valid: true };
+          if (resp.status === 401) return { valid: false, error: 'API key is invalid or has been revoked' };
+          if (resp.status === 403) return { valid: false, error: 'API key lacks required permissions' };
+          return { valid: false, error: `Unexpected response (${resp.status})` };
+        }
+
+        if (type === 'openrouter') {
+          const resp = await fetch('https://openrouter.ai/api/v1/auth/key', {
+            headers: { Authorization: `Bearer ${key}` },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (resp.ok) return { valid: true };
+          if (resp.status === 401 || resp.status === 403)
+            return { valid: false, error: 'API key is invalid' };
+          return { valid: false, error: `Unexpected response (${resp.status})` };
+        }
+
+        // No validator for this key type — accept it
+        return { valid: true };
+      } catch (err: any) {
+        if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+          return { valid: false, error: 'Validation timed out — check your network' };
+        }
+        return { valid: false, error: 'Could not reach API servers — check your connection' };
+      }
+    },
+  );
+
   // ── MCP ─────────────────────────────────────────────────────────────
   ipcMain.handle('mcp:list-tools', async () => mcpClient.listTools());
 

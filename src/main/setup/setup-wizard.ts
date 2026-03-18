@@ -205,6 +205,11 @@ export class SetupWizard {
     const models = getModelList(this.state.confirmedTier);
     this.updateStep('downloading');
 
+    // Only Ollama-managed categories can be pulled via /api/pull.
+    // CPU-only models (TTS/STT binaries) and diffusion models are
+    // installed separately and should not be sent to Ollama.
+    const OLLAMA_CATEGORIES = new Set(['llm', 'embedding', 'vision']);
+
     // Initialize download progress for all models
     this.state.downloads = models.map((m) => ({
       modelName: m.name,
@@ -219,6 +224,15 @@ export class SetupWizard {
 
     for (let i = 0; i < models.length; i++) {
       const model = models[i];
+
+      // Skip non-Ollama models (CPU-only binaries, diffusion, etc.)
+      if (model.cpuOnly || !OLLAMA_CATEGORIES.has(model.category ?? '')) {
+        this.state.downloads[i].status = 'complete';
+        this.state.downloads[i].percentComplete = 100;
+        this.emitDownloadProgress();
+        continue;
+      }
+
       this.state.downloads[i].status = 'downloading';
       this.emitDownloadProgress();
 
@@ -239,10 +253,12 @@ export class SetupWizard {
         this.state.downloads[i].status = 'complete';
         this.state.downloads[i].percentComplete = 100;
         this.emitDownloadProgress();
-      } catch {
-        // Mark failed, continue with next model
+      } catch (err) {
+        // Mark failed and surface error, continue with next model
         this.state.downloads[i].status = 'failed';
         this.emitDownloadProgress();
+        const message = err instanceof Error ? err.message : `Failed to pull ${model.name}`;
+        this.emit('setup-error', { error: message, step: this.state.step });
       }
     }
 
