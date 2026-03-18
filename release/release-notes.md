@@ -1,16 +1,14 @@
-## Agent Friday v3.6.5 — Onboarding & Settings Stability
+## Agent Friday v3.6.6 — Model Download Progress Fix
 
-Fixes three critical issues: API key validation failing due to CORS, model downloads sending non-Ollama models to Ollama, and Settings panel crashing from a hooks violation.
+Fixes the root cause of "0 models installed" during onboarding: download progress was never reaching the UI.
 
 ### Bug Fixes
 
-- **API key validation (CORS)** — Anthropic and OpenRouter key validation always failed because the renderer's `fetch()` was blocked by CORS (not just CSP). Validation now runs in the main process via IPC where there are no CORS restrictions.
-- **Model downloads sending non-Ollama models** — CPU-only models (Piper TTS, Whisper STT, Kokoro) and diffusion models were sent to `ollama pull`, which silently failed for all of them. The setup wizard now skips non-Ollama models and only pulls LLM, embedding, and vision models through Ollama.
-- **Settings crash (React error #310)** — Opening Settings triggered a hooks violation because `useState` was called after a conditional early return. Moved the hook above the return to comply with React's rules of hooks.
+- **Download progress never updating (the real bug)** — The preload bridge strips the IPC event before calling renderer callbacks (`callback(data)` not `callback(event, data)`), but HardwareStep.tsx expected two arguments `(_event, progressData)`. The actual download data was landing in the `_event` parameter while `progressData` was always `undefined`, so `Array.isArray(undefined)` was always false and `setDownloads()` was never called. Fixed all three callbacks (onDownloadProgress, onComplete, onError) to match the preload's single-argument signature.
 
 ### Installation
 
-Download `Agent Friday Setup 3.6.5.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.6.6.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 
