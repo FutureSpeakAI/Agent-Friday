@@ -398,17 +398,25 @@ export default function App() {
       } catch { /* config load failed */ }
     }
 
-    // 5b. Check if Gemini API key is available
+    // 5b. Check available voice backends
     let hasGeminiKey = false;
     try {
       const key = await window.eve.getGeminiApiKey();
       hasGeminiKey = !!(key && typeof key === 'string' && key.trim().length > 0);
     } catch { /* no key */ }
 
-    // ── 6a. LOCAL VOICE PATH — no Gemini key, use Whisper + Ollama + TTS ──
+    let ollamaHealthy = false;
+    try {
+      const health = await window.eve.ollama.getHealth() as any;
+      ollamaHealthy = !!health?.running;
+    } catch { /* Ollama not reachable */ }
+
+    // ── 6a. LOCAL-FIRST VOICE PATH — try Ollama + Whisper + TTS first ──
+    // Falls back to Gemini Live if local voice isn't available.
     // Works for BOTH onboarding (Interview step) and post-onboarding (normal use)
-    if (!hasGeminiKey) {
-      console.log(`[Agent] No Gemini key — starting local voice conversation (Whisper + Ollama + TTS) [onboarding=${!onboardingComplete}]`);
+    const useLocalVoice = ollamaHealthy; // Local-first: always prefer local when Ollama is running
+    if (useLocalVoice) {
+      console.log(`[Agent] Local-first: starting local voice conversation (Whisper + Ollama + TTS) [onboarding=${!onboardingComplete}]`);
 
       // Clean up any previous local conversation listeners
       for (const cleanup of localConversationCleanupsRef.current) cleanup();
@@ -519,16 +527,30 @@ export default function App() {
       try {
         await window.eve.localConversation.start(instruction, tools, initialPrompt);
         // 'started' event handler above will set status + dispatch gemini-audio-active
+        return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error('[Agent] Local voice start failed:', msg);
-        setConnectionError(msg);
-        setStatus(`Failed: ${msg}`);
+        console.warn('[Agent] Local voice failed, falling back to Gemini:', msg);
+        // Clean up failed local conversation listeners
+        for (const cleanup of localConversationCleanupsRef.current) cleanup();
+        localConversationCleanupsRef.current = [];
+        // Fall through to Gemini path below
+        if (!hasGeminiKey) {
+          // No fallback available — report the error
+          setConnectionError(`Local voice unavailable: ${msg}. Add a Gemini API key for cloud voice.`);
+          setStatus('No voice backend available');
+          return;
+        }
+        setStatus('Local voice unavailable — connecting via Gemini...');
       }
-      return;
     }
 
-    // ── 6b. GEMINI CLOUD PATH — existing WebSocket connection ─────────────
+    // ── 6b. GEMINI CLOUD FALLBACK — WebSocket connection ─────────────
+    if (!hasGeminiKey) {
+      setConnectionError('No voice backend available. Install Ollama for local voice or add a Gemini API key.');
+      setStatus('No voice backend');
+      return;
+    }
     try {
       await geminiLive.connect(instruction, tools, voiceName, { onboarding: !onboardingComplete });
       retriesRef.current = 0;
