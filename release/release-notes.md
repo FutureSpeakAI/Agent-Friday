@@ -1,14 +1,16 @@
-## Agent Friday v3.6.3 — Onboarding Hardware Step Fix
+## Agent Friday v3.6.4 — API Key Validation & Model Download Fixes
 
-Fixes a crash on first launch where the onboarding hardware detection screen threw a React error instead of displaying model recommendations.
+Fixes two critical onboarding issues: API key validation failing for Anthropic/OpenRouter, and local model downloads silently stalling.
 
 ### Bug Fixes
 
-- **Hardware step crash** — The onboarding "Your Hardware, Your AI" screen crashed with React error #31 (Objects are not valid as a React child) because the hardware profiler returned full model-requirement objects (`{name, diskBytes, vramBytes, ...}`) but the UI expected plain strings. Model names are now correctly extracted before rendering.
+- **API key validation blocked by CSP** — Anthropic and OpenRouter key validation failed with "Could not reach servers" because `connect-src` didn't include `api.anthropic.com` or `openrouter.ai`. CSP now permits both endpoints.
+- **Model downloads never signal completion** — `startModelDownload()` finished downloading and loading models but never emitted the `setup-complete` event, leaving the UI stuck on the downloading phase indefinitely. The wizard now calls `completeSetup()` after loading.
+- **Download progress stuck at 0%** — Early Ollama progress events with `total: 0` were dropped by a falsy check (`progress.total &&`), so the UI showed no progress until the server reported a non-zero total. Fixed to `progress.total !== undefined`.
 
 ### Installation
 
-Download `Agent Friday Setup 3.6.3.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.6.4.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 
