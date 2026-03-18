@@ -1,23 +1,19 @@
-## Agent Friday v3.7.1 — Local-First Voice & API Key Health Indicators
+## Agent Friday v3.7.2 — Conversational Agent Identity
 
-Makes voice truly local-first and adds live validation indicators during API key setup.
+Moves agent personality configuration from a form into the voice interview itself.
 
-### New Features
+### Changes
 
-- **Local-first voice architecture** — Voice now always attempts local conversation (Ollama + Whisper + TTS) first. If local voice fails, gracefully falls back to Gemini Live when a key is available. If neither works, shows a clear error instead of hanging.
-- **Live API key validation indicators** — Each key field in the onboarding API Keys step now shows a real-time status indicator: yellow dot while checking, green checkmark when valid, red alert when invalid. Validation is debounced (800ms) and runs via main-process IPC.
-
-### Bug Fixes
-
-- **Voice interview hanging** — The interview step could hang indefinitely when the voice connection failed silently. Now the local-first path either succeeds or cleanly falls through to Gemini, with clear error messages at each stage.
+- **Agent identity discovered through conversation** — Removed the Environment step (form-based name/gender/voice selection). The voice interview now naturally asks the user what they'd like to name their agent, their preferred voice gender, and voice character. This creates a genuine "Her"-style moment: the interviewer uses a stock voice, then after the conversation, the agent's actual voice appears for the first time with the personality the user described.
+- **Streamlined onboarding** — 7 steps instead of 8: Awakening, Mission, Hardware, Privacy, API Keys, Interview, Reveal.
 
 ### Installation
 
-Download `Agent Friday Setup 3.7.1.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.7.2.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 
-- **Ollama** (free, no account) — Download from [ollama.com](https://ollama.com/download) for local AI. Agent Friday guides you through this during setup.
+- **Ollama** (free, no account) — Download from [ollama.com](https://ollama.com/download) for local AI
 - Windows 10 or later (macOS and Linux builds coming soon)
 - With Ollama installed and 8GB+ VRAM, Agent Friday runs fully local with zero cloud API keys
 - Optionally add API keys from Anthropic, Google, or OpenRouter for frontier cloud capabilities

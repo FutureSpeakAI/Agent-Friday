@@ -507,10 +507,9 @@ export default function App() {
       let initialPrompt: string | undefined;
       if (!onboardingComplete) {
         // Onboarding: kick off the "Her"-style intake conversation
-        const contextPreamble = identityContext
-          ? `[CONTEXT] The user already chose these identity settings in the wizard: ${identityContext}. Do NOT re-ask their name or voice preferences — skip straight to the personal intake questions.\n\n`
-          : '';
-        initialPrompt = `${contextPreamble}[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.`;
+        // No pre-selected identity — the interview discovers everything through conversation
+        const contextPreamble = '';
+        initialPrompt = `[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question. As part of the conversation, discover what they'd like to name their AI agent, their preferred voice gender (male/female/neutral), and voice character (warm/sharp/deep/soft/bright).`;
       } else {
         // Post-onboarding: inject intelligence briefings if available
         try {
@@ -569,11 +568,9 @@ export default function App() {
             // First run — nudge Gemini to begin the "Her"-style intake process
             // The system instruction already contains the full screenplay flow
             console.log('[Agent] First run detected — starting "Her" onboarding intake');
-            const contextPreamble = identityContext
-              ? `[CONTEXT] The user already chose these identity settings in the wizard: ${identityContext}. Do NOT re-ask their name or voice preferences — skip straight to the personal intake questions.\n\n`
-              : '';
+            // No pre-selected identity — the interview discovers name, gender, voice through conversation
             geminiLive.sendTextToGemini(
-              `${contextPreamble}[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question.`
+              `[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question. As part of the conversation, discover what they'd like to name their AI agent, their preferred voice gender (male/female/neutral), and voice character (warm/sharp/deep/soft/bright).`
             );
           } else {
             // Normal session — check for intelligence briefings
