@@ -224,7 +224,7 @@ export class SetupWizard {
 
       try {
         for await (const progress of lifecycle.pullModel(model.name)) {
-          if (progress.total && progress.completed !== undefined) {
+          if (progress.total !== undefined && progress.completed !== undefined) {
             this.state.downloads[i].bytesDownloaded = progress.completed;
             this.state.downloads[i].bytesTotal = progress.total;
             this.state.downloads[i].percentComplete =
@@ -254,6 +254,9 @@ export class SetupWizard {
     } catch {
       // Loading may fail if Ollama is not running; non-fatal
     }
+
+    // Signal completion so the renderer can transition the UI
+    this.completeSetup();
   }
 
   /** Return the current per-model download progress. */
