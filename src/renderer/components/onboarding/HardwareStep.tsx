@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Cpu, Zap, Database, Download, Check, AlertCircle, X, Cloud } from 'lucide-react';
+import { Cpu, Zap, Database, Download, Check, AlertCircle, X, Cloud, ExternalLink, RefreshCw } from 'lucide-react';
 import NextButton from './shared/NextButton';
 
 /** Hardware tiers mirroring src/main/hardware/tier-recommender.ts */
@@ -21,7 +21,7 @@ const TIER_META: Record<TierName, { label: string; color: string; segments: numb
   sovereign: { label: 'Sovereign', color: '#00f0ff', segments: 5, desc: 'Maximum local power — fully autonomous' },
 };
 
-type Phase = 'detecting' | 'recommending' | 'downloading' | 'complete';
+type Phase = 'detecting' | 'checking-ollama' | 'recommending' | 'downloading' | 'complete';
 
 interface HardwareProfile {
   gpuName?: string;
@@ -50,6 +50,8 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
   const [downloads, setDownloads] = useState<DownloadProgress[]>([]);
   const [error, setError] = useState('');
   const [fadeIn, setFadeIn] = useState(false);
+  const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
+  const [checkingOllama, setCheckingOllama] = useState(false);
   const cleanupRef = useRef<Array<() => void>>([]);
 
   // Detect hardware on mount
@@ -89,8 +91,20 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
         } catch { /* no models */ }
 
         if (!cancelled) {
-          setTimeout(() => {
-            if (!cancelled) setPhase('recommending');
+          setTimeout(async () => {
+            if (cancelled) return;
+            // Check if Ollama is needed and running before showing model recommendations
+            if (detectedTier !== 'whisper') {
+              setPhase('checking-ollama');
+              try {
+                const health = await window.eve.ollama.getHealth() as any;
+                if (!cancelled) setOllamaRunning(!!health?.running);
+              } catch {
+                if (!cancelled) setOllamaRunning(false);
+              }
+            } else {
+              setPhase('recommending');
+            }
           }, 2000);
         }
       } catch {
@@ -143,6 +157,18 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
     return () => {
       cleanupRef.current.forEach((fn) => fn());
     };
+  }, []);
+
+  // Re-check Ollama connectivity
+  const recheckOllama = useCallback(async () => {
+    setCheckingOllama(true);
+    try {
+      const health = await window.eve.ollama.getHealth() as any;
+      setOllamaRunning(!!health?.running);
+    } catch {
+      setOllamaRunning(false);
+    }
+    setCheckingOllama(false);
   }, []);
 
   const handleSkipDownloads = useCallback(async () => {
@@ -217,6 +243,97 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
               ))}
             </div>
           </div>
+        )}
+      </section>
+    );
+  }
+
+  // ── Phase: Checking Ollama ──
+  if (phase === 'checking-ollama') {
+    return (
+      <section style={styles.container} aria-label="Ollama dependency check">
+        <div style={styles.headerBlock}>
+          <h2 style={styles.heading}>Local AI Engine.</h2>
+          <p style={styles.subtitle}>
+            Agent Friday uses Ollama to run AI models directly on your machine.
+            Ollama is free, open-source, and requires no account.
+          </p>
+        </div>
+
+        {ollamaRunning === null ? (
+          <div style={styles.ollamaStatusCard}>
+            <RefreshCw size={16} color="var(--accent-cyan)" style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={styles.ollamaStatusText}>Checking for Ollama...</span>
+          </div>
+        ) : ollamaRunning ? (
+          <>
+            <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.2)' }}>
+              <Check size={16} color="#22c55e" />
+              <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.9)' }}>
+                Ollama is running
+              </span>
+            </div>
+            <NextButton label="Continue" onClick={() => setPhase('recommending')} />
+          </>
+        ) : (
+          <>
+            <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(239, 68, 68, 0.2)' }}>
+              <AlertCircle size={16} color="#ef4444" />
+              <span style={{ ...styles.ollamaStatusText, color: 'rgba(239, 68, 68, 0.9)' }}>
+                Ollama not detected
+              </span>
+            </div>
+
+            <div style={styles.ollamaInstructionsCard}>
+              <p style={styles.ollamaInstructionsTitle}>Quick Setup (2 minutes)</p>
+              <div style={styles.ollamaStep}>
+                <span style={styles.ollamaStepNum}>1</span>
+                <span style={styles.ollamaStepText}>
+                  Download Ollama from{' '}
+                  <span
+                    style={styles.ollamaLink}
+                    onClick={() => window.eve?.shell?.openPath?.('https://ollama.com/download')}
+                    role="link"
+                    tabIndex={0}
+                  >
+                    ollama.com/download <ExternalLink size={10} style={{ verticalAlign: 'middle' }} />
+                  </span>
+                </span>
+              </div>
+              <div style={styles.ollamaStep}>
+                <span style={styles.ollamaStepNum}>2</span>
+                <span style={styles.ollamaStepText}>Run the installer (no account needed)</span>
+              </div>
+              <div style={styles.ollamaStep}>
+                <span style={styles.ollamaStepNum}>3</span>
+                <span style={styles.ollamaStepText}>
+                  Ollama starts automatically — click "Check Again" below
+                </span>
+              </div>
+            </div>
+
+            <div style={styles.buttonRow}>
+              <NextButton
+                label={checkingOllama ? 'Checking...' : 'Check Again'}
+                onClick={recheckOllama}
+                disabled={checkingOllama}
+                loading={checkingOllama}
+              />
+              <NextButton
+                label="Skip — Use Cloud Only"
+                onClick={() => {
+                  setTier('whisper');
+                  setModelList([]);
+                  setPhase('recommending');
+                }}
+                variant="skip"
+              />
+            </div>
+
+            <p style={styles.hint}>
+              Without Ollama, Agent Friday works in cloud-only mode using API keys.
+            </p>
+          </>
         )}
       </section>
     );
@@ -725,6 +842,73 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     fontStyle: 'italic',
     fontFamily: "'Inter', sans-serif",
+  },
+  ollamaStatusCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '14px 20px',
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
+    borderRadius: 10,
+    width: '100%',
+    justifyContent: 'center',
+  },
+  ollamaStatusText: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: 'var(--text-60)',
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  ollamaInstructionsCard: {
+    width: '100%',
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
+    borderRadius: 12,
+    padding: '20px 24px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 14,
+  },
+  ollamaInstructionsTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: 'var(--text-60)',
+    letterSpacing: '0.05em',
+    fontFamily: "'Space Grotesk', sans-serif",
+    margin: 0,
+  },
+  ollamaStep: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  ollamaStepNum: {
+    width: 20,
+    height: 20,
+    borderRadius: '50%',
+    background: 'rgba(0, 240, 255, 0.08)',
+    border: '1px solid rgba(0, 240, 255, 0.2)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--accent-cyan)',
+    fontFamily: "'JetBrains Mono', monospace",
+    flexShrink: 0,
+  },
+  ollamaStepText: {
+    fontSize: 12,
+    color: 'var(--text-40)',
+    lineHeight: 1.6,
+    fontFamily: "'Inter', sans-serif",
+  },
+  ollamaLink: {
+    color: 'var(--accent-cyan)',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
   },
   completeBadge: {
     display: 'flex',
