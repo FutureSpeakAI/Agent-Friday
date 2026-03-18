@@ -1,9 +1,11 @@
 /**
  * OnboardingWizard.tsx — Cinematic first-run wizard.
  *
- * 8-step wizard: Awakening → Mission → Hardware → Privacy → ApiKeys →
- * Environment → Interview → Reveal. Includes global ambient elements
- * (CyberGrid, CursorGlow, HolographicDiamond) behind all step content.
+ * 7-step wizard: Awakening → Mission → Hardware → Privacy → ApiKeys →
+ * Interview → Reveal. Agent personality (name, gender, voice) is
+ * discovered through the voice interview rather than a form — creating
+ * a genuine "Her"-style moment when the agent's voice appears for the
+ * first time with the personality the user described in conversation.
  */
 
 import React, { useState, useCallback } from 'react';
@@ -12,7 +14,6 @@ import MissionStep from './onboarding/MissionStep';
 import HardwareStep from './onboarding/HardwareStep';
 import PrivacyStep from './onboarding/PrivacyStep';
 import ApiKeysStep from './onboarding/ApiKeysStep';
-import EnvironmentStep from './onboarding/EnvironmentStep';
 import InterviewStep from './onboarding/InterviewStep';
 import RevealStep from './onboarding/RevealStep';
 import CyberGrid from './onboarding/shared/CyberGrid';
@@ -27,7 +28,6 @@ const STEPS = [
   { key: 'hardware', label: 'HARDWARE' },
   { key: 'privacy', label: 'PRIVACY' },
   { key: 'apikeys', label: 'API KEYS' },
-  { key: 'environment', label: 'ENVIRONMENT' },
   { key: 'interview', label: 'INTERVIEW' },
   { key: 'reveal', label: 'REVEAL' },
 ] as const;
@@ -155,14 +155,6 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
         {currentStep === 'privacy' && <PrivacyStep onComplete={next} onBack={prev} />}
         {currentStep === 'apikeys' && (
           <ApiKeysStep detectedTier={detectedTier} onComplete={next} onBack={prev} />
-        )}
-        {currentStep === 'environment' && (
-          <EnvironmentStep
-            choices={identityChoices}
-            onChange={setIdentityChoices}
-            onComplete={next}
-            onBack={prev}
-          />
         )}
         {currentStep === 'interview' && (
           <InterviewStep

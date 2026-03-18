@@ -122,8 +122,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       stageTimersRef.current.push(timer);
     }
 
-    const ctx = `Name: ${identityChoices.agentName}, Gender: ${identityChoices.gender}, Voice feel: ${identityChoices.voiceFeel}`;
-    connectToGemini(ctx).catch((err: any) => {
+    // No pre-selected identity — let the interview discover name, gender, voice naturally
+    connectToGemini().catch((err: any) => {
       if (connectionTimerRef.current) {
         clearTimeout(connectionTimerRef.current);
         connectionTimerRef.current = null;
