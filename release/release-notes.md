@@ -1,16 +1,16 @@
-## Agent Friday v3.6.4 — API Key Validation & Model Download Fixes
+## Agent Friday v3.6.5 — Onboarding & Settings Stability
 
-Fixes two critical onboarding issues: API key validation failing for Anthropic/OpenRouter, and local model downloads silently stalling.
+Fixes three critical issues: API key validation failing due to CORS, model downloads sending non-Ollama models to Ollama, and Settings panel crashing from a hooks violation.
 
 ### Bug Fixes
 
-- **API key validation blocked by CSP** — Anthropic and OpenRouter key validation failed with "Could not reach servers" because `connect-src` didn't include `api.anthropic.com` or `openrouter.ai`. CSP now permits both endpoints.
-- **Model downloads never signal completion** — `startModelDownload()` finished downloading and loading models but never emitted the `setup-complete` event, leaving the UI stuck on the downloading phase indefinitely. The wizard now calls `completeSetup()` after loading.
-- **Download progress stuck at 0%** — Early Ollama progress events with `total: 0` were dropped by a falsy check (`progress.total &&`), so the UI showed no progress until the server reported a non-zero total. Fixed to `progress.total !== undefined`.
+- **API key validation (CORS)** — Anthropic and OpenRouter key validation always failed because the renderer's `fetch()` was blocked by CORS (not just CSP). Validation now runs in the main process via IPC where there are no CORS restrictions.
+- **Model downloads sending non-Ollama models** — CPU-only models (Piper TTS, Whisper STT, Kokoro) and diffusion models were sent to `ollama pull`, which silently failed for all of them. The setup wizard now skips non-Ollama models and only pulls LLM, embedding, and vision models through Ollama.
+- **Settings crash (React error #310)** — Opening Settings triggered a hooks violation because `useState` was called after a conditional early return. Moved the hook above the return to comply with React's rules of hooks.
 
 ### Installation
 
-Download `Agent Friday Setup 3.6.4.exe` below and run the installer. Requires Windows 10+ (64-bit).
+Download `Agent Friday Setup 3.6.5.exe` below and run the installer. Requires Windows 10+ (64-bit).
 
 ### Requirements
 

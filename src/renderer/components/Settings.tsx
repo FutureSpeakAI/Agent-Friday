@@ -243,14 +243,14 @@ export default function Settings({ visible, onClose }: SettingsProps) {
     onConfirm: () => void;
   } | null>(null);
 
+  const [validatingKey, setValidatingKey] = useState<string | null>(null);
+
   if (!visible) return null;
 
   const flash = (msg: string) => {
     setSaveMsg(msg);
     setTimeout(() => setSaveMsg(''), 3000);
   };
-
-  const [validatingKey, setValidatingKey] = useState<string | null>(null);
 
   const saveApiKey = async (
     key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl' | 'openrouter',

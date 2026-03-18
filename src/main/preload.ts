@@ -160,6 +160,8 @@ contextBridge.exposeInMainWorld('eve', {
     setAutoScreenCapture: (enabled: boolean) => ipcRenderer.invoke('settings:set-auto-screen-capture', enabled),
     setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string) =>
       ipcRenderer.invoke('settings:set-api-key', key, value),
+    validateApiKey: (keyType: string, value: string) =>
+      ipcRenderer.invoke('settings:validate-api-key', keyType, value),
     setObsidianVaultPath: (vaultPath: string) =>
       ipcRenderer.invoke('settings:set-obsidian-vault-path', vaultPath),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
