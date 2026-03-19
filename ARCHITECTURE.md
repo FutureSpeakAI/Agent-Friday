@@ -1,7 +1,7 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-03-09
+> **Last updated**: 2026-03-18
 > **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
 
 ---
