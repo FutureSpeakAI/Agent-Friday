@@ -90,9 +90,11 @@ export class LocalConversation extends EventEmitter {
     console.log('[LocalConversation] Starting local conversation loop...');
 
     // ── Step 1: Verify Ollama is reachable (the only hard requirement) ─
+    // Skip cached isAvailable() — do a fresh HTTP health check to avoid
+    // race conditions where the cache hasn't been populated yet.
     const ollamaProvider = llmClient.getProvider('ollama');
-    if (!ollamaProvider || !ollamaProvider.isAvailable()) {
-      const msg = 'Ollama is not running. Start Ollama to use local conversation.';
+    if (!ollamaProvider) {
+      const msg = 'Ollama provider not registered. Ensure Ollama is configured.';
       console.error(`[LocalConversation] ${msg}`);
       this.emit('error', msg);
       return;
@@ -100,9 +102,9 @@ export class LocalConversation extends EventEmitter {
 
     try {
       const healthy = await ollamaProvider.checkHealth?.();
-      if (!healthy) throw new Error('Health check returned false');
+      if (!healthy) throw new Error('Ollama is not responding');
     } catch (err) {
-      const msg = `Ollama health check failed: ${err instanceof Error ? err.message : String(err)}`;
+      const msg = `Ollama is not running: ${err instanceof Error ? err.message : String(err)}. Start Ollama to use local conversation.`;
       console.error(`[LocalConversation] ${msg}`);
       this.emit('error', msg);
       return;
@@ -315,6 +317,9 @@ export class LocalConversation extends EventEmitter {
       // 6. Emit AI response for UI display
       if (responseText) {
         this.emit('ai-response', responseText);
+      } else {
+        console.warn('[LocalConversation] Ollama returned empty response');
+        this.emit('ai-response', '(No response from model — try rephrasing or check that your Ollama model is loaded)');
       }
 
       // 7. Speak the response via TTS

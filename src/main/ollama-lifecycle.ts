@@ -106,8 +106,15 @@ export class OllamaLifecycle {
   private listeners: Map<OllamaLifecycleEvent, LifecycleCallback[]> = new Map();
   private previouslyRunning = false;
   private previousLoadedNames: Set<string> = new Set();
+  /** Resolves after the first health poll completes (prevents race conditions) */
+  private firstPollResolve: (() => void) | null = null;
+  private firstPollReady: Promise<void>;
 
-  private constructor() {}
+  private constructor() {
+    this.firstPollReady = new Promise<void>((resolve) => {
+      this.firstPollResolve = resolve;
+    });
+  }
 
   static getInstance(): OllamaLifecycle {
     if (!OllamaLifecycle.instance) {
@@ -126,6 +133,11 @@ export class OllamaLifecycle {
   async start(): Promise<void> {
     if (this.pollingInterval) return;
     await this.poll();
+    // Signal that first poll is done — unblocks getHealthAsync() callers
+    if (this.firstPollResolve) {
+      this.firstPollResolve();
+      this.firstPollResolve = null;
+    }
     this.pollingInterval = setInterval(() => {
       void this.poll();
     }, POLL_INTERVAL_MS);
@@ -142,6 +154,10 @@ export class OllamaLifecycle {
     this.previouslyRunning = false;
     this.previousLoadedNames = new Set();
     this.listeners.clear();
+    // Reset first-poll gate so restart works correctly
+    this.firstPollReady = new Promise<void>((resolve) => {
+      this.firstPollResolve = resolve;
+    });
   }
 
   getHealth(): HealthStatus {
@@ -154,6 +170,12 @@ export class OllamaLifecycle {
       vramUsed,
       vramTotal: 0,
     };
+  }
+
+  /** Wait for the first poll to complete, then return health status. */
+  async getHealthAsync(): Promise<HealthStatus> {
+    await this.firstPollReady;
+    return this.getHealth();
   }
 
   getAvailableModels(): OllamaModelInfo[] {

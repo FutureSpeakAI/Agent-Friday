@@ -25,8 +25,8 @@ export function registerOllamaHandlers(deps: OllamaHandlerDeps): void {
     ollama.stop();
   });
 
-  ipcMain.handle('ollama:get-health', () => {
-    return ollama.getHealth();
+  ipcMain.handle('ollama:get-health', async () => {
+    return ollama.getHealthAsync();
   });
 
   ipcMain.handle('ollama:get-available-models', () => {

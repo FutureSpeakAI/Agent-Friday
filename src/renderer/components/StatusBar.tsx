@@ -3,9 +3,9 @@ import IntegrityShield from './IntegrityShield';
 
 interface ApiStatus {
   gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
-  claude: 'ready' | 'no-key';
-  elevenlabs: 'ready' | 'no-key';
-  openrouter: 'ready' | 'no-key';
+  claude: 'connected' | 'ready' | 'offline' | 'no-key';
+  elevenlabs: 'connected' | 'ready' | 'offline' | 'no-key';
+  openrouter: 'connected' | 'ready' | 'offline' | 'no-key';
   browser: 'ready' | 'unavailable';
 }
 
