@@ -136,9 +136,9 @@
 |   │  Gateway · Maps · Media · Monitor · News · Notes ·          │  |
 |   │  Recorder · Stage · Tasks · Terminal · Weather              │  |
 |   │                                                             │  |
-|   │  ONBOARDING CEREMONY (8 steps):                             │  |
+|   │  ONBOARDING CEREMONY (7 steps):                             │  |
 |   │  Awakening → Mission → Hardware → Privacy → ApiKeys →       │  |
-|   │  Environment → Interview → Reveal                           │  |
+|   │  Interview → Reveal                                         │  |
 |   └────────────────────────────────────────────────────────────┘  |
 +--------------------------------------------------------------------+
 ```
@@ -227,7 +227,7 @@ Agent Friday does not have a "personality setting." It has a cognitive architect
 | **Friday Profile** | The agent's self-model and self-knowledge document |
 | **Mood Context** | Real-time emotional state tracking (renderer-side) |
 
-The onboarding ceremony reflects this depth. It is not a configuration wizard; it is an eight-step cinematic process that establishes a new sovereign agent instance: Awakening (initial system bootstrap), Mission (trust-first pillars), Hardware (GPU detection and local model download), Privacy (Privacy Shield explainer), ApiKeys (optional cloud credentials), Environment (vault creation and agent identity), Interview (voice-based mutual discovery), and Reveal (agent comes online).
+The onboarding ceremony reflects this depth. It is not a configuration wizard; it is a seven-step cinematic process that establishes a new sovereign agent instance: Awakening (initial system bootstrap), Mission (trust-first pillars), Hardware (GPU detection, local model download, and Whisper voice model auto-download), Privacy (Privacy Shield explainer), ApiKeys (optional cloud credentials), Interview (voice-based mutual discovery where agent name, gender, and personality emerge through conversation — with text-only fallback when voice models are unavailable), and Reveal (agent comes online).
 
 ---
 
@@ -272,7 +272,7 @@ Agent Friday supports multiple voice pathways, from cloud streaming to fully loc
 | **Agent Voices** | ElevenLabs TTS (Turbo v2.5) | Distinct voices for sub-agents |
 | **Call Integration** | VB-Cable virtual audio routing | Join Google Meet, Zoom, Teams as a voice participant |
 
-The `LocalConversation` orchestrator (`src/main/local-conversation.ts`) manages the full local voice loop: microphone capture → VAD → Whisper transcription → Ollama completion with tool calling → TTS synthesis → gapless audio playback. Barge-in is supported — speaking while the AI is talking interrupts synthesis immediately. The onboarding interview, post-onboarding chat, and all system events work fully offline when no cloud API keys are configured.
+The `LocalConversation` orchestrator (`src/main/local-conversation.ts`) manages the local conversation loop with graceful degradation: full voice (Whisper STT → Ollama → TTS), text + speech (Ollama → TTS when Whisper is unavailable), or text-only (Ollama only when both voice models are missing). Only Ollama is required — Whisper and TTS are optional. Barge-in is supported in voice mode. The onboarding interview, post-onboarding chat, and all system events work fully offline when no cloud API keys are configured.
 
 Audio capture uses AudioWorklet (with ScriptProcessorNode fallback). Playback uses precise Web Audio scheduling (`source.start(exactTime)`) for gapless chunk delivery. Voice profile management enables per-agent voice customization.
 
@@ -446,16 +446,15 @@ npm run package
 
 ### Sovereignty Ceremony
 
-On first launch, Agent Friday guides you through an eight-step cinematic onboarding:
+On first launch, Agent Friday guides you through a seven-step cinematic onboarding:
 
 1. **Awakening** — Cinematic splash with particle effects and system initialization
 2. **Mission** — Five trust pillars: Local-First Intelligence, Zero-Knowledge Vault, Privacy Shield, Transparent Routing, Immutable Directives
-3. **Hardware** — GPU/VRAM detection, tier recommendation, and automatic local model download with progress tracking
+3. **Hardware** — GPU/VRAM detection, tier recommendation, automatic local model download, and Whisper voice model auto-download (~75MB)
 4. **Privacy** — Privacy Shield explainer showing how PII is scrubbed before cloud requests and restored in responses
 5. **API Keys** — Optional cloud API key entry (Gemini, Anthropic, OpenRouter) — always skippable
-6. **Environment** — Data sovereignty vault creation (AES-256-GCM, Argon2id) and agent identity (name, voice gender, voice feel)
-7. **Interview** — Voice-based mutual discovery session (fully local via Whisper + Ollama + TTS, or cloud via Gemini Live) with text input fallback
-8. **Reveal** — Agent comes online with cinematic boot sequence
+6. **Interview** — Voice-based mutual discovery session where agent name, gender, and personality emerge through conversation. Works fully local (Whisper + Ollama + TTS), via cloud (Gemini Live), or in text-only mode when voice models are unavailable
+7. **Reveal** — Agent comes online with cinematic boot sequence
 
 ### Configuration
 

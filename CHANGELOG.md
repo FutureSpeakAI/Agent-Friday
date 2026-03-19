@@ -4,6 +4,122 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.7.3] — 2026-03-18 — Graceful Voice Degradation
+
+### Summary
+
+Fixes the voice interview failing to initialize during onboarding when the Whisper STT model is missing. LocalConversation now degrades gracefully from full voice to text-only mode rather than aborting entirely — Whisper and TTS are optional, Ollama is the only hard requirement. Also adds Whisper auto-download during onboarding and a visible settings gear button to the HUD.
+
+### Fixed — Voice Initialization
+
+- **Graceful degradation** — LocalConversation supports three modes: full voice (Whisper + Ollama + TTS), text + TTS (Ollama + TTS), and text-only (Ollama only). Missing Whisper or TTS models no longer abort the session
+- **Text message routing** — Messages route correctly through Ollama even when the voice pipeline is unavailable; previously text was silently dropped when no voice backend connected
+- **Non-fatal error handling** — Whisper/TTS warnings during local conversation startup don't block the connection error overlay; the session starts and clears the error
+- **Prop type fix** — `connectToGemini` return type corrected from `void` to `Promise<void> | void` in InterviewStep and OnboardingWizard
+
+### Added — Onboarding & UX
+
+- **Whisper auto-download** — HardwareStep automatically downloads the Whisper tiny model (~75MB from HuggingFace) when Ollama is detected running, with progress indicator
+- **WhisperProvider.downloadModel()** — Streaming download from HuggingFace with progress callbacks and partial download cleanup on failure
+- **Download IPC** — New `voice:whisper:download-model` and `voice:whisper:is-model-downloaded` IPC handlers with preload bridge
+- **Settings gear button** — Visible gear icon in the HUD header next to the clock/laws status, replacing the undiscoverable telemetry-bar-click pattern
+
+---
+
+## [3.7.2] — 2026-03-18 — Voice Interview Identity Discovery
+
+### Summary
+
+Moves agent identity configuration (name, voice gender, voice feel) out of the EnvironmentStep form and into the voice interview conversation itself, creating a genuine "Her"-style moment where the agent's personality emerges through dialogue rather than dropdown menus. The onboarding wizard is reduced from 8 steps to 7.
+
+### Changed — Onboarding Flow
+
+- **Interview-driven identity** — Agent name, gender, and voice character are discovered naturally through the voice interview instead of being pre-selected in a form step
+- **EnvironmentStep removed** — Vault creation now happens automatically; the separate Environment configuration step is no longer needed
+- **7-step wizard** — Onboarding reduced to: Awakening, Mission, Hardware, Privacy, ApiKeys, Interview, Reveal
+- **Default personality profiles** — Skip Interview applies a curated default personality (male/female/neutral variants with voice, backstory, traits, and identity line)
+
+---
+
+## [3.7.1] — 2026-03-18 — Local-First Voice with Gemini Fallback
+
+### Summary
+
+Implements the local-first voice architecture: when Ollama is running, the app always tries the local voice path (Whisper + Ollama + TTS) first and only falls back to Gemini Live if local voice fails. API key health indicators show connection status for all providers in the HUD.
+
+### Added — Local-First Architecture
+
+- **Local-first routing** — `connectToGemini()` checks Ollama health first; if healthy, starts LocalConversation before attempting Gemini WebSocket
+- **API status indicators** — HUD left sidebar shows real-time connection status (green/yellow/red) for Gemini, Claude, Router, Voice, and Browser
+- **Automatic fallback** — If local voice fails (Whisper missing, TTS unavailable), transparently falls back to Gemini Live if an API key is configured
+
+---
+
+## [3.7.0] — 2026-03-18 — Ollama Dependency Check
+
+### Summary
+
+Adds an Ollama health check to the onboarding flow so users know whether local AI is available before proceeding. Shows clear instructions for downloading Ollama if not detected, with a "Check Again" button and "Skip — Use Cloud Only" fallback.
+
+### Added — Onboarding
+
+- **Ollama detection step** — HardwareStep checks for a running Ollama instance after hardware detection
+- **Install instructions** — Step-by-step guide with link to ollama.com/download when Ollama is not detected
+- **Cloud-only skip** — Users without Ollama can skip to cloud-only mode without confusion
+
+---
+
+## [3.6.6] — 2026-03-18 — Download Progress Fix
+
+### Summary
+
+Fixes the model download progress callback signature mismatch that caused download tracking to fail silently during onboarding.
+
+### Fixed
+
+- **Download progress callback** — SetupWizard download progress events now emit with the correct signature, restoring per-model progress bars during HardwareStep downloads
+
+---
+
+## [3.6.5] — 2026-03-18 — Settings & Key Validation Fixes
+
+### Summary
+
+Fixes CORS-related API key validation failures, non-Ollama model pull errors, and a crash in the Settings panel.
+
+### Fixed
+
+- **CORS key validation** — API key validation requests no longer fail due to CORS restrictions by using the main process for HTTP calls
+- **Non-Ollama model pulls** — Model download logic correctly handles non-Ollama providers
+- **Settings panel crash** — Resolved a rendering error in the Settings component that prevented it from opening
+
+---
+
+## [3.6.4] — 2026-03-18 — API Key Validation & Download Stall
+
+### Summary
+
+Fixes API key validation being blocked by Content Security Policy and model downloads stalling during the onboarding HardwareStep.
+
+### Fixed
+
+- **CSP key validation** — API key validation now routes through the main process to avoid CSP fetch restrictions in the renderer
+- **Download stall** — Model download progress tracking properly signals completion, preventing the UI from appearing stuck
+
+---
+
+## [3.6.3] — 2026-03-18 — Hardware Step Crash Fix
+
+### Summary
+
+Fixes a crash in the onboarding HardwareStep that occurred on first launch when hardware detection returned unexpected data shapes.
+
+### Fixed
+
+- **HardwareStep crash** — Null-safe handling of hardware profile data prevents crashes when GPU detection returns incomplete results
+
+---
+
 ## [3.6.2] — 2026-03-11 — Onboarding Tool Scoping
 
 ### Summary
