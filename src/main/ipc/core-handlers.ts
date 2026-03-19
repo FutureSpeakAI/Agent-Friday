@@ -143,6 +143,68 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     },
   );
 
+  // ── API Health Checks ─────────────────────────────────────────────
+  // Lightweight endpoint pings for all configured API keys.
+  // Returns actual reachability status, not just key existence.
+  ipcMain.handle('settings:check-api-health', async () => {
+    const geminiKey = settingsManager.getGeminiApiKey();
+    const anthropicKey = settingsManager.getAnthropicApiKey();
+    const openrouterKey = settingsManager.getOpenrouterApiKey();
+    const elevenlabsKey = settingsManager.getElevenLabsApiKey();
+
+    const results: Record<string, 'connected' | 'offline' | 'no-key'> = {
+      gemini: 'no-key',
+      claude: 'no-key',
+      openrouter: 'no-key',
+      elevenlabs: 'no-key',
+    };
+
+    const checks: Array<Promise<void>> = [];
+
+    if (geminiKey) {
+      checks.push(
+        fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(geminiKey)}`, {
+          method: 'GET', signal: AbortSignal.timeout(6000),
+        }).then((r) => { results.gemini = r.ok ? 'connected' : 'offline'; })
+          .catch(() => { results.gemini = 'offline'; })
+      );
+    }
+
+    if (anthropicKey) {
+      checks.push(
+        fetch('https://api.anthropic.com/v1/models', {
+          method: 'GET',
+          headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
+          signal: AbortSignal.timeout(6000),
+        }).then((r) => { results.claude = (r.ok || r.status === 429) ? 'connected' : 'offline'; })
+          .catch(() => { results.claude = 'offline'; })
+      );
+    }
+
+    if (openrouterKey) {
+      checks.push(
+        fetch('https://openrouter.ai/api/v1/auth/key', {
+          headers: { Authorization: `Bearer ${openrouterKey}` },
+          signal: AbortSignal.timeout(6000),
+        }).then((r) => { results.openrouter = r.ok ? 'connected' : 'offline'; })
+          .catch(() => { results.openrouter = 'offline'; })
+      );
+    }
+
+    if (elevenlabsKey) {
+      checks.push(
+        fetch('https://api.elevenlabs.io/v1/user', {
+          headers: { 'xi-api-key': elevenlabsKey },
+          signal: AbortSignal.timeout(6000),
+        }).then((r) => { results.elevenlabs = r.ok ? 'connected' : 'offline'; })
+          .catch(() => { results.elevenlabs = 'offline'; })
+      );
+    }
+
+    await Promise.all(checks);
+    return results;
+  });
+
   // ── MCP ─────────────────────────────────────────────────────────────
   ipcMain.handle('mcp:list-tools', async () => mcpClient.listTools());
 

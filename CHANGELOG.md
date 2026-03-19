@@ -4,6 +4,34 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.7.4] — 2026-03-19 — Runtime Wiring Fixes
+
+### Summary
+
+Fixes four interconnected runtime issues that prevented voice, text chat, and status beacons from working after onboarding. The Ollama health check had a race condition where the renderer queried status before the first HTTP poll completed (always returning "not running"). The Gemini Live path never called `startListening()` after WebSocket setup, so mic access was never requested. Text messages were silently dropped when neither backend was active. API health beacons hardcoded "ready" based on key existence without actually pinging the services.
+
+### Fixed — Ollama Detection
+
+- **Health check race condition** — `OllamaLifecycle` now exposes `getHealthAsync()` which waits for the first HTTP poll to complete before returning status. The IPC handler uses this, preventing the renderer from seeing stale `{running: false}` state on startup
+- **LocalConversation Ollama gate** — Removed the cached `isAvailable()` pre-check that returned false before health cache was populated. Now goes directly to a fresh `checkHealth()` HTTP call
+
+### Fixed — Voice Interview
+
+- **Microphone initialization** — After Gemini Live WebSocket setup completes, `startListening()` is now called to request mic permission and begin audio capture. Previously the WebSocket connected successfully but `navigator.mediaDevices.getUserMedia()` was never invoked
+
+### Fixed — Text Chat
+
+- **Silent message drop** — When neither local conversation nor Gemini WebSocket is active, `handleTextSend` now shows an error message in chat instead of silently discarding the user's input
+- **Empty Ollama responses** — When Ollama returns an empty response, a diagnostic message is now emitted so the user isn't left waiting for a reply that will never come
+
+### Fixed — API Health Beacons
+
+- **Real endpoint pings** — New `settings:check-api-health` IPC handler performs lightweight HTTP pings to Gemini, Anthropic, OpenRouter, and ElevenLabs APIs using stored keys. Beacons now show actual reachability (`connected` / `offline` / `no-key`) instead of hardcoded "ready" for any stored key
+- **Periodic refresh** — API health is re-checked every 60 seconds so beacons stay current during the session
+- **StatusBar + HudOverlay types** — Updated `ApiStatus` interface to support `'connected' | 'offline'` states for Claude, OpenRouter, and ElevenLabs
+
+---
+
 ## [3.7.3] — 2026-03-18 — Graceful Voice Degradation
 
 ### Summary
