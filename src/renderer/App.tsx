@@ -564,6 +564,16 @@ export default function App() {
       setRetryCount(0);
       setConnectionError('');
 
+      // Start microphone capture — this is what actually requests mic permission
+      // and begins streaming audio to Gemini. Without this, the WebSocket connects
+      // but no audio flows and the user never sees a mic permission prompt.
+      try {
+        await geminiLive.startListening();
+      } catch (micErr) {
+        console.warn('[Agent] Mic access failed after Gemini connect:', micErr);
+        // Continue — text mode still works
+      }
+
       setStatus('Connected');
 
       // Signal InterviewStep (if active) that the voice session is live
@@ -649,25 +659,50 @@ export default function App() {
     window.eve.chatHistory.save(messages).catch(() => {});
   }, [messages]);
 
-  // Compute API connectivity status — updates with connection state + settings
+  // Compute API connectivity status — real health checks, not just key existence
   useEffect(() => {
     const geminiState = geminiLive.isConnected ? 'connected' as const
       : geminiLive.isConnecting ? 'connecting' as const
       : 'offline' as const;
 
-    // Poll settings for key existence
-    window.eve.settings.get().then((s) => {
+    // Run actual API health checks (lightweight endpoint pings)
+    window.eve.settings.checkApiHealth().then((health: Record<string, string>) => {
       setApiStatus({
-        gemini: s.hasGeminiKey ? geminiState : 'no-key',
-        claude: s.hasAnthropicKey ? 'ready' : 'no-key',
-        openrouter: s.hasOpenrouterKey ? 'ready' : 'no-key',
-        elevenlabs: s.hasElevenLabsKey ? 'ready' : 'no-key',
-        browser: 'ready', // Browser is always available if Chrome is installed
+        gemini: geminiLive.isConnected ? 'connected' : (health.gemini as any) || 'no-key',
+        claude: (health.claude as any) || 'no-key',
+        openrouter: (health.openrouter as any) || 'no-key',
+        elevenlabs: (health.elevenlabs as any) || 'no-key',
+        browser: 'ready',
       });
     }).catch(() => {
-      setApiStatus((prev) => ({ ...prev, gemini: geminiState }));
+      // Fall back to key existence check if health check IPC fails
+      window.eve.settings.get().then((s) => {
+        setApiStatus({
+          gemini: s.hasGeminiKey ? geminiState : 'no-key',
+          claude: s.hasAnthropicKey ? 'ready' as const : 'no-key',
+          openrouter: s.hasOpenrouterKey ? 'ready' as const : 'no-key',
+          elevenlabs: s.hasElevenLabsKey ? 'ready' as const : 'no-key',
+          browser: 'ready',
+        });
+      }).catch(() => {});
     });
   }, [geminiLive.isConnected, geminiLive.isConnecting]);
+
+  // Periodic API health refresh (every 60s) so beacons stay current
+  useEffect(() => {
+    const timer = setInterval(() => {
+      window.eve.settings.checkApiHealth().then((health: Record<string, string>) => {
+        setApiStatus((prev) => ({
+          ...prev,
+          gemini: prev.gemini === 'connected' ? 'connected' : (health.gemini as any) || prev.gemini,
+          claude: (health.claude as any) || prev.claude,
+          openrouter: (health.openrouter as any) || prev.openrouter,
+          elevenlabs: (health.elevenlabs as any) || prev.elevenlabs,
+        }));
+      }).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Wake word detection — auto-connect when "Hey Friday" is detected while idle
   useWakeWord({
@@ -1083,6 +1118,17 @@ export default function App() {
         sendText(text);
       } else if (geminiLive.isConnected) {
         geminiLive.sendTextToGemini(text);
+      } else {
+        // No backend available — show error in chat so user isn't left hanging
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: 'I couldn\'t connect to any backend. Please check that Ollama is running or that you have a valid API key configured in Settings.',
+            timestamp: Date.now(),
+          },
+        ]);
       }
 
       // Reset idle behavior — user is active
