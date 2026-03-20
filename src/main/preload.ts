@@ -1655,6 +1655,16 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.on('voice:event:interrupted', handler);
       return () => { ipcRenderer.removeListener('voice:event:interrupted', handler); };
     },
+    /** Receive TTS audio chunks from local conversation for speaker playback */
+    onPlayChunk: (callback: (audio: Float32Array) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, audio: unknown) => {
+        // IPC serializes Float32Array as plain object — reconstruct it
+        const pcm = audio instanceof Float32Array ? audio : new Float32Array(Object.values(audio as Record<string, number>));
+        callback(pcm);
+      };
+      ipcRenderer.on('voice:play-chunk', handler);
+      return () => { ipcRenderer.removeListener('voice:play-chunk', handler); };
+    },
   },
 
   // ── Local Voice Conversation (zero-cloud interview fallback) ────

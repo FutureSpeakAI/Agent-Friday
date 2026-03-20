@@ -1028,7 +1028,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
               // Echo cancellation on the mic (getUserMedia) handles self-interruption prevention
               realtime_input_config: {
                 automatic_activity_detection: {
-                  start_of_speech_sensitivity: 'START_SENSITIVITY_MEDIUM',
+                  start_of_speech_sensitivity: 'START_SENSITIVITY_HIGH',
                   end_of_speech_sensitivity: 'END_SENSITIVITY_LOW',
                   prefix_padding_ms: 150,
                   silence_duration_ms: 500,

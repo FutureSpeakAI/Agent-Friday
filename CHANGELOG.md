@@ -4,6 +4,26 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.7.5] — 2026-03-19 — Voice Pipeline & VAD Fix
+
+### Summary
+
+Fixes three issues preventing voice from working end-to-end. The Gemini WebSocket setup was rejected because `START_SENSITIVITY_MEDIUM` is not a valid VAD enum (only `LOW` and `HIGH` exist). Local TTS audio was generated but never reached the speakers — the `voice:play-chunk` IPC event had no renderer listener. Post-creation reconnects also missed the `startListening()` call.
+
+### Fixed — Gemini Voice
+
+- **Invalid VAD config** — Changed `start_of_speech_sensitivity` from `START_SENSITIVITY_MEDIUM` (invalid) to `START_SENSITIVITY_HIGH`. This was the error visible in the status bar: "Invalid value at setup.realtime_input_config..."
+
+### Fixed — Local TTS Audio
+
+- **Orphaned audio chunks** — `speech-synthesis.ts` sent `voice:play-chunk` via IPC but no renderer code listened. Added preload bridge (`onPlayChunk`), renderer handler in `App.tsx`, and an `AudioPlaybackEngine` instance that enqueues local TTS audio to the system speakers
+
+### Fixed — Mic Initialization
+
+- **AgentCreation reconnect** — Both post-onboarding reconnect paths now call `startListening()` after `geminiLive.connect()`, ensuring mic access is requested
+
+---
+
 ## [3.7.4] — 2026-03-19 — Runtime Wiring Fixes
 
 ### Summary
