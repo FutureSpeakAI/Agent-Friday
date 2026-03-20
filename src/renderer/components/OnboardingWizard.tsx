@@ -1,9 +1,10 @@
 /**
  * OnboardingWizard.tsx — Cinematic first-run wizard.
  *
- * 7-step wizard: Awakening → Mission → Hardware → Privacy → ApiKeys →
- * Interview → Reveal. Agent personality (name, gender, voice) is
- * discovered through the voice interview rather than a form — creating
+ * 8-step wizard: Awakening → Mission → Hardware → Privacy → Sovereignty →
+ * ApiKeys → Interview → Reveal. The Sovereignty step initializes the
+ * encrypted vault and collects agent identity (name, gender, voice feel).
+ * Agent personality is further refined during the voice interview — creating
  * a genuine "Her"-style moment when the agent's voice appears for the
  * first time with the personality the user described in conversation.
  */
@@ -13,6 +14,7 @@ import AwakeningStep from './onboarding/AwakeningStep';
 import MissionStep from './onboarding/MissionStep';
 import HardwareStep from './onboarding/HardwareStep';
 import PrivacyStep from './onboarding/PrivacyStep';
+import EnvironmentStep from './onboarding/EnvironmentStep';
 import ApiKeysStep from './onboarding/ApiKeysStep';
 import InterviewStep from './onboarding/InterviewStep';
 import RevealStep from './onboarding/RevealStep';
@@ -27,6 +29,7 @@ const STEPS = [
   { key: 'mission', label: 'MISSION' },
   { key: 'hardware', label: 'HARDWARE' },
   { key: 'privacy', label: 'PRIVACY' },
+  { key: 'environment', label: 'SOVEREIGNTY' },
   { key: 'apikeys', label: 'API KEYS' },
   { key: 'interview', label: 'INTERVIEW' },
   { key: 'reveal', label: 'REVEAL' },
@@ -153,6 +156,14 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
           />
         )}
         {currentStep === 'privacy' && <PrivacyStep onComplete={next} onBack={prev} />}
+        {currentStep === 'environment' && (
+          <EnvironmentStep
+            choices={identityChoices}
+            onChange={setIdentityChoices}
+            onComplete={next}
+            onBack={prev}
+          />
+        )}
         {currentStep === 'apikeys' && (
           <ApiKeysStep detectedTier={detectedTier} onComplete={next} onBack={prev} />
         )}

@@ -212,7 +212,7 @@ export default function HudOverlay({
           <div style={{ opacity: 0.5, marginTop: 4 }}>PHASE {evolutionIndex + 1} / {EVOLUTION_PATH.length}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div>Agent Friday · v3.1.1</div>
+          <div>Agent Friday · v{__APP_VERSION__}</div>
           <a
             className="discord-link"
             href="#"

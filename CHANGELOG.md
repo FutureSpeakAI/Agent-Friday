@@ -4,6 +4,29 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.7.6] — 2026-03-19 — Onboarding Completeness
+
+### Summary
+
+Wires the Sovereignty step (vault passphrase + agent identity) into the onboarding wizard, adds automatic validation and download of the default chat model (llama3.2) during hardware detection, and fixes the hardcoded version string in the HUD footer to read dynamically from package.json.
+
+### Added — Sovereignty Step
+
+- **EnvironmentStep wired into wizard** — The 8th onboarding step ("SOVEREIGNTY") is now active between Privacy and API Keys. Users initialize their encrypted vault with a passphrase and configure agent identity (name, gender, voice feel) before proceeding. Vault initialization uses AES-256-GCM + Argon2id KDF. Auto-skips vault section if already initialized
+- **Progress bar updated** — Progress indicator now shows all 6 intermediate steps (Mission → Hardware → Privacy → Sovereignty → API Keys → Interview)
+
+### Added — Default Model Validation
+
+- **Auto-pull llama3.2** — After confirming Ollama is running, HardwareStep now checks if the default chat model (`llama3.2`) is available. If missing, it auto-pulls with a progress indicator. Non-fatal: if pull fails, users can install later from Settings
+- **Continue button gating** — Continue is disabled while Whisper or default model downloads are in progress
+
+### Fixed — Version String
+
+- **Dynamic version** — HUD footer now reads version from `package.json` via Vite's `define` mechanism (`__APP_VERSION__`), replacing the hardcoded "v3.1.1" that was 6 major versions behind
+- **Type declaration** — Added `__APP_VERSION__` global type to `vite-env.d.ts`
+
+---
+
 ## [3.7.5] — 2026-03-19 — Voice Pipeline & VAD Fix
 
 ### Summary
