@@ -54,6 +54,8 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
   const [checkingOllama, setCheckingOllama] = useState(false);
   const [whisperStatus, setWhisperStatus] = useState<'unchecked' | 'downloading' | 'ready' | 'failed'>('unchecked');
   const [whisperProgress, setWhisperProgress] = useState(0);
+  const [defaultModelStatus, setDefaultModelStatus] = useState<'unchecked' | 'checking' | 'pulling' | 'ready' | 'failed'>('unchecked');
+  const [defaultModelProgress, setDefaultModelProgress] = useState(0);
   const cleanupRef = useRef<Array<() => void>>([]);
 
   // Detect hardware on mount
@@ -191,12 +193,52 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
     }
   }, []);
 
-  // Trigger Whisper download when Ollama is confirmed running
+  // Ensure the default chat model (llama3.2) is pulled in Ollama
+  const ensureDefaultModel = useCallback(async () => {
+    const DEFAULT_MODEL = 'llama3.2';
+    setDefaultModelStatus('checking');
+    try {
+      const available = await (window.eve.ollama as any).isModelAvailable(DEFAULT_MODEL);
+      if (available) {
+        setDefaultModelStatus('ready');
+        return;
+      }
+
+      // Model not available — auto-pull it
+      setDefaultModelStatus('pulling');
+
+      // Subscribe to pull progress events
+      const unsub = (window.eve.ollama as any).onPullProgress?.(
+        (progress: { modelName: string; total?: number; completed?: number }) => {
+          if (progress.modelName === DEFAULT_MODEL && progress.total && progress.total > 0) {
+            setDefaultModelProgress(Math.round(((progress.completed || 0) / progress.total) * 100));
+          }
+        }
+      );
+      if (unsub) cleanupRef.current.push(unsub);
+
+      const result = await (window.eve.ollama as any).pullModel(DEFAULT_MODEL);
+      if (result?.success) {
+        setDefaultModelStatus('ready');
+      } else {
+        console.warn('[HardwareStep] Default model pull failed:', result?.error);
+        setDefaultModelStatus('failed');
+      }
+    } catch (err: any) {
+      console.warn('[HardwareStep] Default model check failed (non-fatal):', err?.message);
+      setDefaultModelStatus('failed');
+    }
+  }, []);
+
+  // Trigger Whisper download and default model check when Ollama is confirmed running
   useEffect(() => {
     if (ollamaRunning === true && whisperStatus === 'unchecked') {
       ensureWhisperModel();
     }
-  }, [ollamaRunning, whisperStatus, ensureWhisperModel]);
+    if (ollamaRunning === true && defaultModelStatus === 'unchecked') {
+      ensureDefaultModel();
+    }
+  }, [ollamaRunning, whisperStatus, ensureWhisperModel, defaultModelStatus, ensureDefaultModel]);
 
   // Re-check Ollama connectivity
   const recheckOllama = useCallback(async () => {
@@ -339,10 +381,44 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
               </div>
             )}
 
+            {/* Default chat model (llama3.2) status */}
+            {defaultModelStatus === 'checking' && (
+              <div style={styles.ollamaStatusCard}>
+                <RefreshCw size={14} color="var(--accent-cyan)" style={{ animation: 'spin 1s linear infinite' }} />
+                <span style={styles.ollamaStatusText}>
+                  Checking chat model...
+                </span>
+              </div>
+            )}
+            {defaultModelStatus === 'pulling' && (
+              <div style={styles.ollamaStatusCard}>
+                <Download size={14} color="#8A2BE2" />
+                <span style={styles.ollamaStatusText}>
+                  Downloading chat model (llama3.2)... {defaultModelProgress > 0 ? `${defaultModelProgress}%` : ''}
+                </span>
+              </div>
+            )}
+            {defaultModelStatus === 'ready' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
+                <Check size={14} color="#22c55e" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
+                  Chat model ready
+                </span>
+              </div>
+            )}
+            {defaultModelStatus === 'failed' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(239, 68, 68, 0.1)' }}>
+                <AlertCircle size={14} color="#ef4444" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(239, 68, 68, 0.7)', fontSize: 11 }}>
+                  Chat model download failed — you can install it later from Settings
+                </span>
+              </div>
+            )}
+
             <NextButton
               label="Continue"
               onClick={() => setPhase('recommending')}
-              disabled={whisperStatus === 'downloading'}
+              disabled={whisperStatus === 'downloading' || defaultModelStatus === 'pulling' || defaultModelStatus === 'checking'}
             />
           </>
         ) : (

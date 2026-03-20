@@ -1,12 +1,18 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { readFileSync } from 'fs';
+
+const packageJson = JSON.parse(readFileSync('./package.json', 'utf8'));
 
 export default defineConfig({
   plugins: [react()],
   root: 'src/renderer',
   base: './',
   publicDir: 'public',
+  define: {
+    __APP_VERSION__: JSON.stringify(packageJson.version),
+  },
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
