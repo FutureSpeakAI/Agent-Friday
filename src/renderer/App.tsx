@@ -16,6 +16,7 @@ import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
 import { MoodProvider, useMood } from './contexts/MoodContext';
 import { useGeminiLive } from './hooks/useGeminiLive';
+import { AudioPlaybackEngine } from './audio/AudioPlaybackEngine';
 import { useWakeWord } from './hooks/useWakeWord';
 import { useDesktopEvolution } from './hooks/useDesktopEvolution';
 import { useAppManager } from './hooks/useAppManager';
@@ -219,6 +220,7 @@ export default function App() {
   const localConversationActiveRef = useRef(false);
   const [localConversationActive, setLocalConversationActive] = useState(false);
   const localConversationCleanupsRef = useRef<Array<() => void>>([]);
+  const localPlaybackRef = useRef<AudioPlaybackEngine | null>(null);
 
   const geminiLive = useGeminiLive({
     onTextResponse: (text) => {
@@ -308,6 +310,8 @@ export default function App() {
 
         try {
           await geminiLive.connect(newInstruction, tools, voice);
+          // Start mic capture after connect
+          try { await geminiLive.startListening(); } catch (e) { console.warn('[Agent] Mic start failed:', e); }
           setStatus('Connected');
 
           // Always go to normal phase — feature setup happens opportunistically
@@ -508,6 +512,20 @@ export default function App() {
           }
         }),
       );
+
+      // Wire local TTS audio to speakers via AudioPlaybackEngine
+      if (!localPlaybackRef.current) {
+        localPlaybackRef.current = new AudioPlaybackEngine();
+      }
+      cleanups.push(
+        window.eve.voice.onPlayChunk((audio: Float32Array) => {
+          localPlaybackRef.current?.enqueue(audio);
+        }),
+      );
+      // Clean up playback engine when local conversation ends
+      cleanups.push(() => {
+        localPlaybackRef.current?.flush();
+      });
 
       localConversationCleanupsRef.current = cleanups;
 
@@ -1459,6 +1477,8 @@ export default function App() {
               } else {
                 // GEMINI PATH — existing cloud reconnect
                 await geminiLive.connect(newInstruction, tools, voiceName);
+                // Start mic capture after connect
+                try { await geminiLive.startListening(); } catch (e) { console.warn('[Agent] Mic start failed:', e); }
                 setStatus('Connected');
                 setAppPhase('normal');
 
