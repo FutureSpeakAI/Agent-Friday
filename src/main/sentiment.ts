@@ -5,6 +5,7 @@
  * Feeds into personality.ts for adaptive response behaviour.
  */
 
+import { EventEmitter } from 'node:events';
 import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
@@ -116,7 +117,7 @@ const MOOD_PATTERNS: MoodPattern[] = [
 const MAX_LOG_SIZE = 500;
 const LOG_FILE = 'mood-log.json';
 
-class SentimentEngine {
+class SentimentEngine extends EventEmitter {
   private state: SentimentState = {
     currentMood: 'neutral',
     confidence: 0,
@@ -124,6 +125,10 @@ class SentimentEngine {
     moodStreak: 0,
     lastAnalysed: 0,
   };
+
+  constructor() {
+    super();
+  }
 
   private moodLog: MoodLogEntry[] = [];
   private logPath = '';
@@ -149,6 +154,9 @@ class SentimentEngine {
    */
   analyse(text: string): Mood {
     if (!text || text.trim().length < 2) return this.state.currentMood;
+
+    const previousMood = this.state.currentMood;
+    const previousEnergy = this.state.energyLevel;
 
     let bestMood: Mood = 'neutral';
     let bestScore = 0;
@@ -214,6 +222,11 @@ class SentimentEngine {
       this.moodLog = this.moodLog.slice(-MAX_LOG_SIZE);
     }
     this.saveMoodLog();
+
+    // Push mood change to renderer — only when mood actually changed or energy shifted significantly
+    if (bestMood !== previousMood || Math.abs(this.state.energyLevel - previousEnergy) > 0.05) {
+      this.emit('mood-change', this.getState());
+    }
 
     return bestMood;
   }

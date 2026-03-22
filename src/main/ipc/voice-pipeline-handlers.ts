@@ -227,51 +227,39 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
   });
 
   // ── Event forwarding to renderer ──────────────────────────────────
+  // Clean up any previously registered forwarding listeners to prevent
+  // listener accumulation on dev hot-reload or window recreate.
+  // Each .on() returns a cleanup function.
+
+  for (const cleanup of voiceEventCleanups) cleanup();
+  voiceEventCleanups.length = 0;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fwd = (emitter: any, eventName: string, channel: string) => {
+    voiceEventCleanups.push(
+      emitter.on(eventName, (...args: unknown[]) => {
+        deps.getMainWindow()?.webContents.send(channel, ...args);
+      })
+    );
+  };
 
   // Audio capture events
-  capture.on('voice-start', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:voice-start', data);
-  });
-
-  capture.on('voice-end', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:voice-end', data);
-  });
-
-  capture.on('audio-chunk', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:audio-chunk', data);
-  });
-
-  capture.on('error', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:capture-error', data);
-  });
+  fwd(capture, 'voice-start', 'voice:event:voice-start');
+  fwd(capture, 'voice-end', 'voice:event:voice-end');
+  fwd(capture, 'audio-chunk', 'voice:event:audio-chunk');
+  fwd(capture, 'error', 'voice:event:capture-error');
 
   // Transcription pipeline events
-  pipeline.on('transcript', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:transcript', data);
-  });
-
-  pipeline.on('partial', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:partial', data);
-  });
-
-  pipeline.on('error', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:pipeline-error', data);
-  });
+  fwd(pipeline, 'transcript', 'voice:event:transcript');
+  fwd(pipeline, 'partial', 'voice:event:partial');
+  fwd(pipeline, 'error', 'voice:event:pipeline-error');
 
   // Speech synthesis events
-  synthesis.on('utterance-start', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:utterance-start', data);
-  });
-
-  synthesis.on('utterance-end', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:utterance-end', data);
-  });
-
-  synthesis.on('queue-empty', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:queue-empty', data);
-  });
-
-  synthesis.on('interrupted', (data) => {
-    deps.getMainWindow()?.webContents.send('voice:event:interrupted', data);
-  });
+  fwd(synthesis, 'utterance-start', 'voice:event:utterance-start');
+  fwd(synthesis, 'utterance-end', 'voice:event:utterance-end');
+  fwd(synthesis, 'queue-empty', 'voice:event:queue-empty');
+  fwd(synthesis, 'interrupted', 'voice:event:interrupted');
 }
+
+/** Stored cleanup functions from .on() — emptied and re-populated on each registration. */
+const voiceEventCleanups: Array<() => void> = [];

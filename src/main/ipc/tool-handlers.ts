@@ -106,6 +106,18 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   ipcMain.handle('sentiment:get-state', () => sentimentEngine.getState());
   ipcMain.handle('sentiment:get-mood-log', () => sentimentEngine.getMoodLog());
 
+  // Push mood changes to renderer — eliminates 5s polling from MoodContext
+  const sendToRenderer = (channel: string, ...args: unknown[]) => {
+    const win = deps.getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, ...args);
+    }
+  };
+
+  sentimentEngine.on('mood-change', (state) => {
+    sendToRenderer('sentiment:mood-change', state);
+  });
+
   // ── Predictor ───────────────────────────────────────────────────────
   ipcMain.handle('predictor:record-interaction', () => predictor.recordInteraction());
 

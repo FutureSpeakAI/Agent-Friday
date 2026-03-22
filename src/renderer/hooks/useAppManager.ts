@@ -32,6 +32,7 @@ export function useAppManager(): AppManager {
       next.add(id);
       return next;
     });
+    window.eve.telemetry.appLaunched(id);
   }, []);
 
   const closeApp = useCallback((id: string) => {

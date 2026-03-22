@@ -1,9 +1,9 @@
 /**
  * MoodContext.tsx — Mood-responsive visual parameter system.
  *
- * Polls the sentiment engine every 5 seconds and derives visual parameters
- * (palette, intensity, warmth, turbulence) that drive the UI's mood-responsive
- * color shifts and animation modulations.
+ * Subscribes to push-based mood change events from the main process and derives
+ * visual parameters (palette, intensity, warmth, turbulence) that drive the UI's
+ * mood-responsive color shifts and animation modulations.
  *
  * Components consume via useMood() hook — no prop drilling needed.
  */
@@ -238,31 +238,33 @@ export function MoodProvider({ semanticState, children }: MoodProviderProps) {
     turbulence: MOOD_CONFIGS.neutral.turbulence,
   });
 
-  // ── Poll sentiment engine every 5 seconds ──
+  // ── Subscribe to mood changes from main process (push-based) ──
   useEffect(() => {
-    let alive = true;
+    // Initial fetch to populate state immediately
+    window.eve.sentiment.getState().then((state) => {
+      const mood = (state.currentMood || 'neutral') as Mood;
+      setRawMood(mood);
+      setRawConfidence(state.confidence ?? 0);
+      setRawEnergy(state.energyLevel ?? 0.5);
+      setRawStreak(state.moodStreak ?? 0);
+      targetRef.current = MOOD_CONFIGS[mood] || MOOD_CONFIGS.neutral;
+      startLerp();
+    }).catch(() => {
+      // Sentiment not available — stay neutral
+    });
 
-    const poll = async () => {
-      try {
-        const state = await window.eve.sentiment.getState();
-        if (!alive) return;
-        const mood = (state.currentMood || 'neutral') as Mood;
-        setRawMood(mood);
-        setRawConfidence(state.confidence ?? 0);
-        setRawEnergy(state.energyLevel ?? 0.5);
-        setRawStreak(state.moodStreak ?? 0);
+    // Subscribe to push updates — no more polling
+    const cleanup = window.eve.sentiment.onMoodChange((state) => {
+      const mood = (state.currentMood || 'neutral') as Mood;
+      setRawMood(mood);
+      setRawConfidence(state.confidence ?? 0);
+      setRawEnergy(state.energyLevel ?? 0.5);
+      setRawStreak(state.moodStreak ?? 0);
+      targetRef.current = MOOD_CONFIGS[mood] || MOOD_CONFIGS.neutral;
+      startLerp();
+    });
 
-        // Update target and kick off lerp
-        targetRef.current = MOOD_CONFIGS[mood] || MOOD_CONFIGS.neutral;
-        startLerp();
-      } catch {
-        // Sentiment not available — stay neutral
-      }
-    };
-
-    poll(); // Initial fetch
-    const id = setInterval(poll, 5000);
-    return () => { alive = false; clearInterval(id); };
+    return cleanup;
   }, []);
 
   // ── Smooth interpolation loop — runs RAF only while lerping towards target ──

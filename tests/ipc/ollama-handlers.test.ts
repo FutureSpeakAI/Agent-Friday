@@ -19,11 +19,12 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn(),
   getHealth: vi.fn().mockReturnValue({ status: 'healthy' }),
+  getHealthAsync: vi.fn().mockResolvedValue({ status: 'healthy' }),
   getAvailableModels: vi.fn().mockReturnValue([]),
   getLoadedModels: vi.fn().mockReturnValue([]),
   isModelAvailable: vi.fn().mockReturnValue(false),
   pullModel: vi.fn(),
-  on: vi.fn(),
+  on: vi.fn().mockReturnValue(() => {}),
 }));
 
 vi.mock('../../src/main/ollama-lifecycle', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../src/main/ollama-lifecycle', () => ({
       start: mocks.start,
       stop: mocks.stop,
       getHealth: mocks.getHealth,
+      getHealthAsync: mocks.getHealthAsync,
       getAvailableModels: mocks.getAvailableModels,
       getLoadedModels: mocks.getLoadedModels,
       isModelAvailable: mocks.isModelAvailable,
@@ -92,8 +94,8 @@ describe('Ollama Handlers — Sprint 7 IPC', () => {
       expect(mocks.stop).toHaveBeenCalled();
     });
 
-    it('getHealth returns status', () => {
-      const result = invoke('ollama:get-health');
+    it('getHealth returns status', async () => {
+      const result = await invoke('ollama:get-health');
       expect(result).toEqual({ status: 'healthy' });
     });
   });

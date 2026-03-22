@@ -82,6 +82,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { telemetryEngine } from '../telemetry';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -590,6 +591,7 @@ export class VoiceStateMachine extends EventEmitter {
 
     // 6. Emit state-change event
     this.emit('state-change', { from: previousState, to, reason });
+    telemetryEngine.record('voice-transition', `${previousState}->${to}`, reason);
 
     // 7. Run enter hooks for new state
     this.runEnterHooks(to);

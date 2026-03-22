@@ -24,6 +24,41 @@ type CreateStep = 'enter' | 'confirm' | 'warning' | 'initializing';
 
 const MIN_WORDS = 8;
 
+/**
+ * Evaluate passphrase entropy beyond simple word count.
+ * Returns null if acceptable, or an error string if too weak.
+ */
+function checkPassphraseEntropy(passphrase: string): string | null {
+  const words = passphrase.trim().split(/\s+/).filter(Boolean);
+  const uniqueWords = new Set(words.map((w) => w.toLowerCase()));
+
+  // At least 60% of words must be unique (catches "a a a a b b b b")
+  if (uniqueWords.size < Math.ceil(words.length * 0.6)) {
+    return `Too many repeated words (${uniqueWords.size} unique out of ${words.length}). Use more varied words.`;
+  }
+
+  // Total character count — very short words provide little entropy
+  const totalChars = words.join('').length;
+  if (totalChars < 24) {
+    return `Passphrase is too short overall (${totalChars} characters). Use longer or more words.`;
+  }
+
+  // Check for sequential repetition ("the the the")
+  let maxConsecutive = 1;
+  for (let i = 1; i < words.length; i++) {
+    if (words[i].toLowerCase() === words[i - 1].toLowerCase()) {
+      maxConsecutive++;
+      if (maxConsecutive >= 3) {
+        return 'Passphrase contains 3+ identical consecutive words. Please vary your words.';
+      }
+    } else {
+      maxConsecutive = 1;
+    }
+  }
+
+  return null; // Acceptable
+}
+
 /** Progressive delay after failed passphrase attempts (seconds). */
 function getCooldownSeconds(attempts: number): number {
   if (attempts >= 10) return 60;
@@ -104,8 +139,13 @@ export default function PassphraseGate({ onUnlocked }: PassphraseGateProps) {
       setError(`Passphrase must be at least ${MIN_WORDS} words (currently ${wordCount})`);
       return;
     }
+    const entropyError = checkPassphraseEntropy(passphrase);
+    if (entropyError) {
+      setError(entropyError);
+      return;
+    }
     setCreateStep('confirm');
-  }, [isValidLength, wordCount]);
+  }, [isValidLength, wordCount, passphrase]);
 
   // ── First-time: confirm passphrase matches ──
   const handleConfirmNext = useCallback(() => {
