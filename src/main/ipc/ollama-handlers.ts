@@ -68,24 +68,21 @@ export function registerOllamaHandlers(deps: OllamaHandlerDeps): void {
   });
 
   // ── Event forwarding to renderer ──────────────────────────────────
+  // Clean up any previously registered forwarding listeners to prevent
+  // listener accumulation on dev hot-reload or window recreate.
+  // ollama.on() returns a cleanup function — store and call them.
 
-  ollama.on('healthy', () => {
-    deps.getMainWindow()?.webContents.send('ollama:event:healthy');
-  });
+  for (const cleanup of ollamaEventCleanups) cleanup();
+  ollamaEventCleanups.length = 0;
 
-  ollama.on('unhealthy', () => {
-    deps.getMainWindow()?.webContents.send('ollama:event:unhealthy');
-  });
-
-  ollama.on('health-change', (data) => {
-    deps.getMainWindow()?.webContents.send('ollama:event:health-change', data);
-  });
-
-  ollama.on('model-loaded', (data) => {
-    deps.getMainWindow()?.webContents.send('ollama:event:model-loaded', data);
-  });
-
-  ollama.on('model-unloaded', (data) => {
-    deps.getMainWindow()?.webContents.send('ollama:event:model-unloaded', data);
-  });
+  ollamaEventCleanups.push(
+    ollama.on('healthy', () => { deps.getMainWindow()?.webContents.send('ollama:event:healthy'); }),
+    ollama.on('unhealthy', () => { deps.getMainWindow()?.webContents.send('ollama:event:unhealthy'); }),
+    ollama.on('health-change', (data) => { deps.getMainWindow()?.webContents.send('ollama:event:health-change', data); }),
+    ollama.on('model-loaded', (data) => { deps.getMainWindow()?.webContents.send('ollama:event:model-loaded', data); }),
+    ollama.on('model-unloaded', (data) => { deps.getMainWindow()?.webContents.send('ollama:event:model-unloaded', data); }),
+  );
 }
+
+/** Stored cleanup functions from ollama.on() — emptied and re-populated on each registration. */
+const ollamaEventCleanups: Array<() => void> = [];

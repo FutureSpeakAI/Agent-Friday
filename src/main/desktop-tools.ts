@@ -248,29 +248,54 @@ function convertKeysToSendKeysSyntax(keys: string): string {
 
 // --- PowerShell runner ---
 
+/** Concurrency limiter for PowerShell processes to prevent resource exhaustion. */
+const PS_MAX_CONCURRENT = 5;
+let psActiveCount = 0;
+const psQueue: Array<{ run: () => void }> = [];
+
+function drainPsQueue(): void {
+  while (psQueue.length > 0 && psActiveCount < PS_MAX_CONCURRENT) {
+    const next = psQueue.shift()!;
+    psActiveCount++;
+    next.run();
+  }
+}
+
 /**
  * Run a PowerShell script via a temporary .ps1 file to avoid quote-escaping issues.
+ * Enforces a concurrency cap of PS_MAX_CONCURRENT simultaneous processes.
  */
 function runPS(script: string, timeoutMs = 15000): Promise<string> {
-  const tmpFile = path.join(tmpdir(), `eve-ps-${Date.now()}.ps1`);
-  writeFileSync(tmpFile, script, 'utf-8');
-
   return new Promise((resolve, reject) => {
-    // Crypto Sprint 13: Use execFile to avoid shell interpolation of temp path.
-    const child = execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile],
-      { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
-      (err, stdout, stderr) => {
-        try { unlinkSync(tmpFile); } catch { /* cleanup */ }
-        if (err) {
-          reject(new Error(stderr?.trim() || err.message));
-        } else {
-          resolve(stdout.trim());
+    const execute = () => {
+      const tmpFile = path.join(tmpdir(), `eve-ps-${Date.now()}.ps1`);
+      writeFileSync(tmpFile, script, 'utf-8');
+
+      // Crypto Sprint 13: Use execFile to avoid shell interpolation of temp path.
+      const child = execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', tmpFile],
+        { timeout: timeoutMs, maxBuffer: 1024 * 1024, env: getSanitizedEnv() as NodeJS.ProcessEnv },
+        (err, stdout, stderr) => {
+          try { unlinkSync(tmpFile); } catch { /* cleanup */ }
+          psActiveCount--;
+          drainPsQueue();
+          if (err) {
+            reject(new Error(stderr?.trim() || err.message));
+          } else {
+            resolve(stdout.trim());
+          }
         }
-      }
-    );
-    child.stdin?.end();
+      );
+      child.stdin?.end();
+    };
+
+    if (psActiveCount < PS_MAX_CONCURRENT) {
+      psActiveCount++;
+      execute();
+    } else {
+      psQueue.push({ run: execute });
+    }
   });
 }
 

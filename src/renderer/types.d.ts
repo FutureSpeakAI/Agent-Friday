@@ -588,6 +588,12 @@ declare global {
             trigger?: string;
           }>
         >;
+        onMoodChange: (callback: (state: {
+          currentMood: string;
+          confidence: number;
+          energyLevel: number;
+          moodStreak: number;
+        }) => void) => () => void;
       };
 
       confirmation: {
@@ -1931,6 +1937,22 @@ declare global {
         maximize: () => Promise<void>;
         close: () => Promise<void>;
       };
+
+      telemetry: {
+        getAggregates: (category?: string) => Promise<Record<string, { count: number; firstSeen: number; lastSeen: number }>>;
+        getRecentEvents: (count?: number, category?: string) => Promise<Array<{
+          category: string;
+          action: string;
+          label?: string;
+          value?: number;
+          timestamp: number;
+        }>>;
+        clear: () => Promise<void>;
+        appLaunched: (appId: string) => Promise<void>;
+        recordError: (errorName: string, errorMessage?: string) => Promise<void>;
+      };
+
+      onApiHealthChange: (callback: (status: Record<string, string>) => void) => () => void;
     };
     SpeechRecognition: typeof SpeechRecognition;
     webkitSpeechRecognition: typeof SpeechRecognition;

@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatMessage } from '../App';
+import type { ChatMessage } from '../store';
 
 interface ChatHistoryProps {
   messages: ChatMessage[];

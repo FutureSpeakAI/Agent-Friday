@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useMood } from '../contexts/MoodContext';
-import { EVOLUTION_PATH } from './DesktopViz';
+import { EVOLUTION_PATH } from './desktop-viz/evolution-path';
 import AppLaunchpad from './AppLaunchpad';
 import type { SemanticState } from './FridayCore';
 import '../styles/desktop-viz.css';

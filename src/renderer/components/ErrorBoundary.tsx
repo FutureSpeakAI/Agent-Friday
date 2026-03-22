@@ -25,11 +25,16 @@ export default class ErrorBoundary extends Component<Props, State> {
     this.setState({ errorInfo });
     console.error('[ErrorBoundary] Caught render error:', error, errorInfo);
 
-    // Report to session health if available
+    // Report to session health + telemetry if available
     try {
       window.eve?.sessionHealth?.recordError?.('react-error-boundary', error.message);
     } catch {
       // Ignore if IPC isn't available
+    }
+    try {
+      window.eve?.telemetry?.recordError?.(error.name || 'UnknownError', error.message);
+    } catch {
+      // Ignore if telemetry isn't available
     }
   }
 

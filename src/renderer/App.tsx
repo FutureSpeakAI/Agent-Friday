@@ -1,8 +1,6 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo, Suspense } from 'react';
-import FridayCore, { SemanticState } from './components/FridayCore';
-import DesktopViz from './components/DesktopViz';
+import React, { useCallback, useRef, useEffect, useMemo, Suspense } from 'react';
+import { SemanticState } from './components/FridayCore';
 import HudOverlay from './components/HudOverlay';
-import VoiceOrb from './components/VoiceOrb';
 import ChatHistory from './components/ChatHistory';
 import StatusBar from './components/StatusBar';
 import TextInput from './components/TextInput';
@@ -14,7 +12,8 @@ import PassphraseGate from './components/PassphraseGate';
 import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
-import { MoodProvider, useMood } from './contexts/MoodContext';
+import { MoodProvider } from './contexts/MoodContext';
+import { MoodDesktopViz, MoodVoiceOrb } from './components/MoodWrappers';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { AudioPlaybackEngine } from './audio/AudioPlaybackEngine';
 import { useWakeWord } from './hooks/useWakeWord';
@@ -22,153 +21,19 @@ import { useVoiceState } from './hooks/useVoiceState';
 import { useDesktopEvolution } from './hooks/useDesktopEvolution';
 import { useAppManager } from './hooks/useAppManager';
 import { APP_REGISTRY } from './registry/app-registry';
-import {
-  playConnectedChime,
-  playListeningPing,
-  playNotificationBell,
-  playDisconnectTone,
-} from './audio/sound-effects';
+import { playConnectedChime, playListeningPing, playDisconnectTone } from './audio/sound-effects';
+import { useAppStore } from './store';
+import type { ChatMessage } from './store';
+import { useIPCListeners } from './hooks/useIPCListeners';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useAudioLevels } from './hooks/useAudioLevels';
+
+// Re-export ChatMessage for backward compatibility
+export type { ChatMessage } from './store';
 
 // ── Office window detection ──────────────────────────────────────────────
 // If loaded with ?office=true, render the pixel-art Agent Office instead
 const isOfficeWindow = new URLSearchParams(window.location.search).get('office') === 'true';
-
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  model?: string;
-  timestamp: number;
-}
-
-interface ConfirmationRequest {
-  id: string;
-  toolName: string;
-  description: string;
-}
-
-interface CodeProposal {
-  id: string;
-  filePath: string;
-  description: string;
-  diff: string;
-}
-
-// ── Mood-aware wrapper components (must be children of MoodProvider) ──────────
-
-/** Blend two hex colors at ratio t (0=a, 1=b) */
-function blendHex(a: string, b: string, t: number): string {
-  const ha = a.replace('#', ''), hb = b.replace('#', '');
-  const r = Math.round(parseInt(ha.substring(0, 2), 16) * (1 - t) + parseInt(hb.substring(0, 2), 16) * t);
-  const g = Math.round(parseInt(ha.substring(2, 4), 16) * (1 - t) + parseInt(hb.substring(2, 4), 16) * t);
-  const bl = Math.round(parseInt(ha.substring(4, 6), 16) * (1 - t) + parseInt(hb.substring(4, 6), 16) * t);
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${bl.toString(16).padStart(2, '0')}`;
-}
-
-const SEMANTIC_COLORS: Record<SemanticState, string> = {
-  LISTENING: '#00f0ff',
-  REASONING: '#8A2BE2',
-  SUB_AGENTS: '#D4A574',
-  EXECUTING: '#22c55e',
-};
-
-const SEMANTIC_COLORS_ALPHA: Record<SemanticState, string> = {
-  LISTENING: 'rgba(0, 240, 255, 0.5)',
-  REASONING: 'rgba(138, 43, 226, 0.5)',
-  SUB_AGENTS: 'rgba(212, 165, 116, 0.5)',
-  EXECUTING: 'rgba(34, 197, 94, 0.5)',
-};
-
-function MoodFridayCore({ getLevels, semanticState, isSpeaking, evolutionState }: {
-  getLevels: () => { mic: number; output: number };
-  semanticState: SemanticState;
-  isSpeaking: boolean;
-  evolutionState?: { sessionCount: number; primaryHue: number; secondaryHue: number; particleSpeed: number; cubeFragmentation: number; coreScale: number; dustDensity: number; glowIntensity: number } | null;
-}) {
-  const mood = useMood();
-  return (
-    <FridayCore
-      getLevels={getLevels}
-      semanticState={semanticState}
-      isSpeaking={isSpeaking}
-      moodPalette={mood.palette}
-      moodIntensity={mood.intensity}
-      moodTurbulence={mood.turbulence}
-      evolutionState={evolutionState}
-    />
-  );
-}
-
-function MoodDesktopViz({ getLevels, semanticState, isSpeaking, isListening, evolutionIndex, transitionBlend }: {
-  getLevels: () => { mic: number; output: number };
-  semanticState: SemanticState;
-  isSpeaking: boolean;
-  isListening: boolean;
-  evolutionIndex: number;
-  transitionBlend: number;
-}) {
-  const mood = useMood();
-  return (
-    <DesktopViz
-      getLevels={getLevels}
-      semanticState={semanticState}
-      isSpeaking={isSpeaking}
-      isListening={isListening}
-      moodPalette={mood.palette}
-      moodIntensity={mood.intensity}
-      moodTurbulence={mood.turbulence}
-      evolutionIndex={evolutionIndex}
-      transitionBlend={transitionBlend}
-    />
-  );
-}
-
-function MoodVoiceOrb({ isListening, isProcessing, isStreaming, onClick, interimTranscript, getLevels }: {
-  isListening: boolean;
-  isProcessing: boolean;
-  isStreaming?: boolean;
-  onClick: () => void;
-  interimTranscript: string;
-  getLevels?: () => { mic: number; output: number };
-}) {
-  const mood = useMood();
-  return (
-    <VoiceOrb
-      isListening={isListening}
-      isProcessing={isProcessing}
-      isStreaming={isStreaming}
-      onClick={onClick}
-      interimTranscript={interimTranscript}
-      getLevels={getLevels}
-      moodPalette={mood.palette}
-      moodIntensity={mood.intensity}
-    />
-  );
-}
-
-function MoodBrandSub({ semanticState }: { semanticState: SemanticState }) {
-  const mood = useMood();
-  const base = SEMANTIC_COLORS[semanticState];
-  const color = mood.confidence > 0.3 ? blendHex(base, mood.palette.text, 0.35) : base;
-  return (
-    <div style={{ ...styles.brandSub, color }}>
-      SYS.CORE // {semanticState.replace('_', '-')}
-    </div>
-  );
-}
-
-function MoodStatusLabel({ semanticState, statusText }: { semanticState: SemanticState; statusText: string }) {
-  const mood = useMood();
-  const base = SEMANTIC_COLORS[semanticState];
-  const color = mood.confidence > 0.3
-    ? blendHex(base, mood.palette.text, 0.25) + '80'
-    : SEMANTIC_COLORS_ALPHA[semanticState];
-  return (
-    <div style={{ ...styles.statusLabel, color }}>
-      {statusText}
-    </div>
-  );
-}
 
 // ── Office window shortcut ───────────────────────────────────────────────
 // When loaded as the office window, skip the entire main app
@@ -184,35 +49,44 @@ export default function App() {
   // NOTE: Do NOT early-return before hooks — React requires hooks to be called
   // unconditionally in the same order every render. The isOfficeWindow check is
   // handled at the bottom of the component in the return statement.
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [status, setStatus] = useState('Initializing...');
-  const [showQuickActions, setShowQuickActions] = useState(false);
+
+  // ── Zustand store ──────────────────────────────────────────────────────
+  const messages = useAppStore((s) => s.messages);
+  const setMessages = useAppStore((s) => s.setMessages);
+  const status = useAppStore((s) => s.status);
+  const setStatus = useAppStore((s) => s.setStatus);
+  const showQuickActions = useAppStore((s) => s.showQuickActions);
+  const setShowQuickActions = useAppStore((s) => s.setShowQuickActions);
+  const connectionError = useAppStore((s) => s.connectionError);
+  const setConnectionError = useAppStore((s) => s.setConnectionError);
+  const retryCount = useAppStore((s) => s.retryCount);
+  const setRetryCount = useAppStore((s) => s.setRetryCount);
+  const pendingConfirmation = useAppStore((s) => s.pendingConfirmation);
+  const setPendingConfirmation = useAppStore((s) => s.setPendingConfirmation);
+  const codeProposal = useAppStore((s) => s.codeProposal);
+  const setCodeProposal = useAppStore((s) => s.setCodeProposal);
+  const activeActions = useAppStore((s) => s.activeActions);
+  const setActiveActions = useAppStore((s) => s.setActiveActions);
+  const wakeWordEnabled = useAppStore((s) => s.wakeWordEnabled);
+  const setWakeWordEnabled = useAppStore((s) => s.setWakeWordEnabled);
+  const voiceMode = useAppStore((s) => s.voiceMode);
+  const setVoiceMode = useAppStore((s) => s.setVoiceMode);
+  const appPhase = useAppStore((s) => s.appPhase);
+  const setAppPhase = useAppStore((s) => s.setAppPhase);
+  const agentName = useAppStore((s) => s.agentName);
+  const setAgentName = useAppStore((s) => s.setAgentName);
+  const evolutionState = useAppStore((s) => s.evolutionState);
+  const setEvolutionState = useAppStore((s) => s.setEvolutionState);
+  const apiStatus = useAppStore((s) => s.apiStatus);
+  const setApiStatus = useAppStore((s) => s.setApiStatus);
+  const clockStr = useAppStore((s) => s.clockStr);
+  const setClockStr = useAppStore((s) => s.setClockStr);
+  const localConversationActive = useAppStore((s) => s.localConversationActive);
+  const setLocalConversationActive = useAppStore((s) => s.setLocalConversationActive);
+
   const appManager = useAppManager();
-  const [connectionError, setConnectionError] = useState('');
-  const [retryCount, setRetryCount] = useState(0);
-  const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationRequest | null>(null);
-  const [codeProposal, setCodeProposal] = useState<CodeProposal | null>(null);
-  const [activeActions, setActiveActions] = useState<ActionItem[]>([]);
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(true);
-  const [voiceMode, setVoiceMode] = useState(true);
-  const [appPhase, setAppPhase] = useState<
-    'checking' | 'passphrase-gate' | 'onboarding' | 'creating' | 'normal'
-  >('checking');
   const appPhaseRef = useRef(appPhase);
   useEffect(() => { appPhaseRef.current = appPhase; }, [appPhase]);
-  const [agentName, setAgentName] = useState('');
-  const [evolutionState, setEvolutionState] = useState<{
-    sessionCount: number; primaryHue: number; secondaryHue: number;
-    particleSpeed: number; cubeFragmentation: number; coreScale: number;
-    dustDensity: number; glowIntensity: number;
-  } | null>(null);
-  const [apiStatus, setApiStatus] = useState<{
-    gemini: 'connected' | 'connecting' | 'offline' | 'no-key';
-    claude: 'ready' | 'no-key';
-    elevenlabs: 'ready' | 'no-key';
-    openrouter: 'ready' | 'no-key';
-    browser: 'ready' | 'unavailable';
-  }>({ gemini: 'offline', claude: 'no-key', elevenlabs: 'no-key', openrouter: 'no-key', browser: 'unavailable' });
   const desktopEvolution = useDesktopEvolution();
   const retriesRef = useRef(0);
   const maxRetries = 3;
@@ -225,7 +99,6 @@ export default function App() {
 
   // ── Local voice conversation state (fallback when no Gemini key) ──────
   const localConversationActiveRef = useRef(false);
-  const [localConversationActive, setLocalConversationActive] = useState(false);
   const localConversationCleanupsRef = useRef<Array<() => void>>([]);
   const localPlaybackRef = useRef<AudioPlaybackEngine | null>(null);
 
@@ -797,23 +670,6 @@ export default function App() {
     });
   }, [geminiLive.isConnected, geminiLive.isConnecting]);
 
-  // Periodic API health refresh (every 60s) so beacons stay current
-  useEffect(() => {
-    const timer = setInterval(() => {
-      window.eve.settings.checkApiHealth().then((raw) => {
-        const health = raw as Record<string, string>;
-        setApiStatus((prev) => ({
-          ...prev,
-          gemini: prev.gemini === 'connected' ? 'connected' : (health.gemini as any) || prev.gemini,
-          claude: (health.claude as any) || prev.claude,
-          openrouter: (health.openrouter as any) || prev.openrouter,
-          elevenlabs: (health.elevenlabs as any) || prev.elevenlabs,
-        }));
-      }).catch(() => {});
-    }, 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Wake word detection — auto-connect when "Hey Friday" is detected while idle
   useWakeWord({
     enabled: wakeWordEnabled,
@@ -901,227 +757,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps — init-only, runs once on mount
   }, []);
 
-  // Listen for scheduler task-fired events → inject into AI so Friday speaks them
-  useEffect(() => {
-    const cleanup = window.eve.scheduler.onTaskFired((task) => {
-      console.log('[Agent] Task fired:', task.description);
-      playNotificationBell();
-
-      if (task.action === 'remind') {
-        sendText(
-          `[SYSTEM REMINDER — speak this naturally to the user] Reminder: ${task.payload}`
-        );
-      } else if (task.action === 'launch_app') {
-        window.eve.desktop
-          .callTool('launch_app', { app_name: task.payload })
-          .then(() => {
-            sendText(
-              `[SYSTEM] I just launched ${task.payload} as scheduled. Let the user know briefly.`
-            );
-          })
-          .catch((err) => console.warn('[Friday] Scheduled launch failed:', err));
-      } else if (task.action === 'run_command') {
-        window.eve.desktop
-          .callTool('run_command', { command: task.payload })
-          .then((result) => {
-            sendText(
-              `[SYSTEM] Scheduled command executed: ${task.description}. Result: ${result.result || result.error || 'Done'}`
-            );
-          })
-          .catch((err) => console.warn('[Friday] Scheduled command failed:', err));
-      }
-    });
-
-    return cleanup;
-  }, [sendText]);
-
-  // Listen for predictive suggestions → inject into AI so Friday speaks them naturally
-  useEffect(() => {
-    const cleanup = window.eve.predictor.onSuggestion((suggestion) => {
-      console.log(`[Friday] Prediction: ${suggestion.type} (${suggestion.confidence})`);
-      playNotificationBell();
-
-      sendText(
-        `[SYSTEM SUGGESTION — speak this naturally in character, keep it brief and charming] ${suggestion.message}`
-      );
-    });
-
-    return cleanup;
-  }, [sendText]);
-
-  // Listen for captured notifications → inject into AI so Friday announces them naturally
-  useEffect(() => {
-    const cleanup = window.eve.notifications.onCaptured((notif) => {
-      console.log(`[Friday] Notification captured: ${notif.app} — ${notif.title}`);
-
-      sendText(
-        `[SYSTEM NOTIFICATION from ${notif.app}] Title: ${notif.title}${notif.body ? `. Body: ${notif.body}` : ''}. Mention this naturally and briefly — don't read it out verbatim.`
-      );
-    });
-
-    return cleanup;
-  }, [sendText]);
-
-  // Listen for clipboard changes → inject into AI for contextual awareness
-  useEffect(() => {
-    const cleanup = window.eve.clipboard.onChanged((entry) => {
-      // Only inject interesting clipboard content (not empty/trivial)
-      if (entry.type === 'empty') return;
-
-      sendText(
-        `[SYSTEM CLIPBOARD — ${entry.type.toUpperCase()}] User just copied: "${entry.preview}". You don't need to mention this unless it's relevant to the conversation or they ask about it.`
-      );
-    });
-
-    return cleanup;
-  }, [sendText]);
-
-  // Listen for agent task completions → proactively notify Friday + mirror into ActionFeed
-  useEffect(() => {
-    const cleanup = window.eve.agents.onUpdate((task) => {
-      // Notify AI on completion / failure
-      if (task.status === 'completed' && task.result) {
-        const preview = task.result.length > 300 ? task.result.slice(0, 300) + '...' : task.result;
-        sendText(
-          `[SYSTEM — AGENT COMPLETE] Background task "${task.description}" (${task.agentType}) just finished. Result preview: ${preview}. Mention this proactively if relevant.`
-        );
-      } else if (task.status === 'failed' && task.error) {
-        sendText(
-          `[SYSTEM — AGENT FAILED] Background task "${task.description}" failed: ${task.error}. Let the user know briefly.`
-        );
-      }
-
-      // Mirror running agents into ActionFeed for visual representation
-      if (task.status === 'running') {
-        setActiveActions((prev) => {
-          const existing = prev.find((a) => a.id === task.id);
-          if (existing) {
-            return prev.map((a) =>
-              a.id === task.id
-                ? { ...a, progress: task.progress, windowTitle: task.windowTitle }
-                : a
-            );
-          }
-          return [
-            ...prev,
-            {
-              id: task.id,
-              name: task.agentType,
-              status: 'running' as const,
-              startTime: task.startedAt || Date.now(),
-              isAgent: true,
-              description: task.description,
-              progress: task.progress,
-              windowTitle: task.windowTitle,
-            },
-          ];
-        });
-      }
-
-      // Mark completed/failed/cancelled agents → fade out after 5s
-      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
-        setActiveActions((prev) =>
-          prev.map((a) =>
-            a.id === task.id
-              ? ({ ...a, status: task.status === 'completed' ? 'success' : 'error' } as ActionItem)
-              : a
-          )
-        );
-        setTimeout(() => {
-          setActiveActions((prev) => prev.filter((a) => a.id !== task.id));
-        }, 5000);
-      }
-    });
-
-    return cleanup;
-  }, [sendText]);
-
-  // Listen for sub-agent voice delivery (ElevenLabs TTS) → play MP3 audio
-  useEffect(() => {
-    const cleanup = window.eve.agents.onSpeak((data) => {
-      console.log(`[Agent] ${data.personaName} (${data.personaRole}) speaking — ~${Math.round(data.durationEstimate)}s`);
-
-      // Decode base64 MP3 and play via Web Audio API
-      try {
-        const binaryString = atob(data.audioBase64);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        const blob = new Blob([bytes.buffer], { type: data.contentType });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-
-        // Show in action feed while speaking
-        const speakId = `speak-${data.taskId}`;
-        setActiveActions((prev) => [
-          ...prev,
-          {
-            id: speakId,
-            name: `${data.personaName} speaking`,
-            status: 'running' as const,
-            startTime: Date.now(),
-            isAgent: true,
-            description: data.spokenText.slice(0, 100) + (data.spokenText.length > 100 ? '...' : ''),
-          },
-        ]);
-
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          setActiveActions((prev) =>
-            prev.map((a) =>
-              a.id === speakId ? ({ ...a, status: 'success' } as ActionItem) : a
-            )
-          );
-          setTimeout(() => {
-            setActiveActions((prev) => prev.filter((a) => a.id !== speakId));
-          }, 3000);
-        };
-
-        audio.onerror = () => {
-          URL.revokeObjectURL(url);
-          console.warn(`[Agent] Failed to play ${data.personaName}'s audio`);
-          setActiveActions((prev) => prev.filter((a) => a.id !== speakId));
-        };
-
-        audio.play().catch((err) => {
-          console.warn(`[Agent] Audio play failed for ${data.personaName}:`, err);
-          URL.revokeObjectURL(url);
-          setActiveActions((prev) => prev.filter((a) => a.id !== speakId));
-        });
-      } catch (err) {
-        console.warn('[Agent] Failed to decode agent voice audio:', err);
-      }
-    });
-
-    return cleanup;
-  }, []);
-
-  // Listen for meeting briefings → inject into AI for proactive context
-  useEffect(() => {
-    const cleanup = window.eve.meetingPrep.onBriefing((briefing) => {
-      console.log(`[Friday] Meeting briefing: "${briefing.eventTitle}" in ${briefing.minutesUntil}m`);
-
-      const attendeeInfo = briefing.attendeeContext
-        .map((a) => {
-          const parts = [a.name];
-          if (a.memories.length > 0) parts.push(`(${a.memories.join('; ')})`);
-          return parts.join(' ');
-        })
-        .join(', ');
-
-      sendText(
-        `[MEETING BRIEFING] "${briefing.eventTitle}" starts in ${briefing.minutesUntil} minutes.` +
-        (attendeeInfo ? ` Attendees: ${attendeeInfo}.` : '') +
-        (briefing.relevantProjects.length > 0 ? ` Related projects: ${briefing.relevantProjects.join(', ')}.` : '') +
-        (briefing.suggestedTopics.length > 0 ? ` Topics: ${briefing.suggestedTopics.slice(0, 3).join(', ')}.` : '') +
-        ` Mention this naturally — give the user a heads-up about the meeting and any useful context about the attendees.`
-      );
-    });
-
-    return cleanup;
-  }, [sendText]);
+  // ── IPC event listeners (extracted to hook) ──────────────────────────
+  useIPCListeners(sendText);
 
   // Record user interactions for idle detection
   useEffect(() => {
@@ -1135,33 +772,17 @@ export default function App() {
     return () => clearInterval(timer);
   }, [geminiLive.isListening]);
 
-  // Listen for desktop tool confirmation requests
-  useEffect(() => {
-    const cleanup = window.eve.confirmation.onRequest((req) => {
-      setPendingConfirmation(req);
-    });
-    return cleanup;
-  }, []);
-
   const handleConfirmation = useCallback((approved: boolean) => {
     if (!pendingConfirmation) return;
     window.eve.confirmation.respond(pendingConfirmation.id, approved);
     setPendingConfirmation(null);
-  }, [pendingConfirmation]);
-
-  // Listen for self-improvement code proposals
-  useEffect(() => {
-    const cleanup = window.eve.selfImprove.onProposal((proposal) => {
-      setCodeProposal(proposal);
-    });
-    return cleanup;
-  }, []);
+  }, [pendingConfirmation, setPendingConfirmation]);
 
   const handleCodeProposal = useCallback((approved: boolean) => {
     if (!codeProposal) return;
     window.eve.selfImprove.respondToProposal(codeProposal.id, approved);
     setCodeProposal(null);
-  }, [codeProposal]);
+  }, [codeProposal, setCodeProposal]);
 
   // Audio cues on state transitions
   const prevConnectedRef = useRef(false);
@@ -1262,83 +883,11 @@ export default function App() {
     [geminiLive.isConnected, geminiLive.isConnecting, geminiLive.sendTextToGemini, geminiLive.resetIdleActivity, connectToGemini, sendText]
   );
 
-  // Keyboard: Space to mute/unmute, Tab to toggle text input
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+K toggles quick actions palette
-      if (e.ctrlKey && e.code === 'KeyK') {
-        e.preventDefault();
-        setShowQuickActions((s) => !s);
-        return;
-      }
+  // ── Keyboard shortcuts (extracted to hook) ──────────────────────────
+  useKeyboardShortcuts(appManager, geminiLive);
 
-      // Ctrl+Shift+D toggles command center dashboard
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
-        e.preventDefault();
-        appManager.toggleApp('dashboard');
-        return;
-      }
-
-      // Ctrl+Shift+M toggles memory explorer
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyM') {
-        e.preventDefault();
-        appManager.toggleApp('memory');
-        return;
-      }
-
-      // Ctrl+Shift+A toggles agent dashboard
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyA') {
-        e.preventDefault();
-        appManager.toggleApp('agents');
-        return;
-      }
-
-      // Ctrl+Shift+P toggles superpowers panel
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
-        e.preventDefault();
-        appManager.toggleApp('superpowers');
-        return;
-      }
-
-      // Ctrl+Shift+C toggles calendar
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
-        e.preventDefault();
-        appManager.toggleApp('calendar');
-        return;
-      }
-
-      // Tab handled by TextInput component directly (always visible now)
-
-      // Space toggles mic — only in voice mode, only from body (not while typing)
-      if (voiceMode && e.code === 'Space' && e.target === document.body) {
-        e.preventDefault();
-        geminiLive.resetIdleActivity();
-        if (geminiLive.isListening) {
-          geminiLive.stopListening();
-        } else if (geminiLive.isConnected) {
-          geminiLive.startListening();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [voiceMode, geminiLive.isListening, geminiLive.isConnected, geminiLive.startListening, geminiLive.stopListening, geminiLive.resetIdleActivity]);
-
-  // B2: RAF loop for audio levels — avoids re-renders, reads directly from AnalyserNodes
-  const audioLevelsRef = useRef({ mic: 0, output: 0 });
-  useEffect(() => {
-    let rafId: number;
-    const tick = () => {
-      audioLevelsRef.current.mic = geminiLive.getMicLevel();
-      audioLevelsRef.current.output = geminiLive.getOutputLevel();
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [geminiLive.getMicLevel, geminiLive.getOutputLevel]);
-
-  const getLevels = useCallback(() => audioLevelsRef.current, []);
+  // ── Audio levels RAF loop (extracted to hook) ──────────────────────────
+  const getLevels = useAudioLevels(geminiLive.getMicLevel, geminiLive.getOutputLevel);
 
   // ─── Semantic state for 3D scene ────────────────────────────────────────────
   const semanticState: SemanticState = useMemo(() => {
@@ -1351,10 +900,6 @@ export default function App() {
   }, [activeActions, geminiLive.isSpeaking, geminiLive.isConnecting]);
 
   // ─── Live clock for HUD overlay ────────────────────────────────────────────
-  const [clockStr, setClockStr] = useState(() => {
-    const d = new Date();
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  });
   useEffect(() => {
     const tick = () => {
       const d = new Date();
@@ -1363,7 +908,7 @@ export default function App() {
     tick();
     const id = setInterval(tick, 10_000); // update every 10s is fine for HH:MM
     return () => clearInterval(id);
-  }, []);
+  }, [setClockStr]);
 
   const handleRetry = useCallback(() => {
     retriesRef.current = 0;

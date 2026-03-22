@@ -96,6 +96,8 @@ import { taskScheduler } from './scheduler';
 import { predictor } from './predictor';
 import { ambientEngine } from './ambient';
 import { sentimentEngine } from './sentiment';
+import { telemetryEngine } from './telemetry';
+import { apiHealthMonitor } from './api-health-monitor';
 import { notificationEngine } from './notifications';
 import { intelligenceEngine } from './intelligence';
 import { ensureProfileOnDisk } from './friday-profile';
@@ -216,6 +218,7 @@ import {
   registerVoiceStateHandlers,
   registerVoiceFallbackHandlers,
   registerConnectionStageHandlers,
+  registerTelemetryHandlers,
   type ContextPushCleanup,
 } from './ipc';
 
@@ -430,6 +433,11 @@ app.whenReady().then(async () => {
           [
             "default-src 'self'",
             "script-src 'self'",
+            // NOTE: 'unsafe-inline' is required for style-src because Vite's HMR injects
+            // <style> tags in dev mode, and some third-party libs (Three.js, Google Fonts)
+            // may inject inline styles. Removing it would require a nonce-based approach
+            // with custom Vite plugin integration. Risk is low — style injection cannot
+            // execute scripts, and connect-src limits data exfiltration via CSS url().
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: blob: https:",
@@ -457,6 +465,8 @@ app.whenReady().then(async () => {
 
   if (mainWindow) {
     sessionHealth.setMainWindow(mainWindow);
+    apiHealthMonitor.setWindowGetter(() => mainWindow);
+    apiHealthMonitor.start();
   }
 
   // ── Auto-Updater (GitHub Releases) ────────────────────────────────
@@ -535,6 +545,10 @@ app.whenReady().then(async () => {
 
     sentimentEngine.initialize().catch((err) => {
       console.warn('[Friday] Sentiment init failed:', err instanceof Error ? err.message : 'Unknown error');
+    });
+
+    telemetryEngine.initialize().catch((err) => {
+      console.warn('[Friday] Telemetry init failed:', err instanceof Error ? err.message : 'Unknown error');
     });
 
     episodicMemory.initialize().catch((err) => {
@@ -776,6 +790,7 @@ app.whenReady().then(async () => {
   registerCoreHandlers({ getMainWindow, serverPort });
   registerMemoryHandlers();
   registerToolHandlers({ getMainWindow });
+  registerTelemetryHandlers();
   registerAgentHandlers();
   registerOnboardingHandlers();
   registerIntegrationHandlers();
@@ -1100,6 +1115,8 @@ app.on('window-all-closed', async () => {
   agentNetwork.stop().catch(() => {});
   containerEngine.shutdown().catch(() => {});
   OllamaLifecycle.getInstance().stop();
+  apiHealthMonitor.stop();
+  await telemetryEngine.shutdown();
   globalShortcut.unregisterAll();
   await mcpClient.disconnect();
 
