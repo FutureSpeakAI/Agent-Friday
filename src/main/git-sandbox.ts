@@ -263,7 +263,7 @@ function reportDone(exitCode) {
       wallTimeMs: Date.now() - startTime,
       memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024)
     }) + '\\n');
-  } catch (e) {}
+  } catch (e) { console.warn('[GitSandbox] Failed to generate sandbox report:', e); }
 }
 
 // ─── Normalize path for comparison ───────────────────────────────
