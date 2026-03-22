@@ -21,7 +21,7 @@ export async function validateApiKey(
   value: string,
 ): Promise<ValidationResult> {
   try {
-    return await window.eve.settings.validateApiKey(keyType, value);
+    return await window.eve.settings.validateApiKey(keyType, value) as ValidationResult;
   } catch {
     // IPC unavailable — accept the key and let runtime validate
     return { valid: true };

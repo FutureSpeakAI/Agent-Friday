@@ -61,6 +61,8 @@ export class AudioCapture {
   private silenceStart = 0;
   private speechBuffer: Float32Array[] = [];
   private speechBufferDuration = 0;
+  private lookbackBuffer: Float32Array[] = [];
+  private readonly LOOKBACK_CHUNKS = 2;
   private listeners = new Map<AudioCaptureEvent, Set<EventCallback>>();
 
   private constructor(config?: Partial<AudioCaptureConfig>) {
@@ -107,6 +109,7 @@ export class AudioCapture {
     this.silenceStart = 0;
     this.speechBuffer = [];
     this.speechBufferDuration = 0;
+    this.lookbackBuffer = [];
     this.currentLevel = 0;
   }
 
@@ -121,13 +124,14 @@ export class AudioCapture {
     }
 
     // Clean up IPC listeners
-    ipcMain.removeAllListeners('voice:audio-chunk');
-    ipcMain.removeAllListeners('voice:capture-error');
+    ipcMain.removeListener('voice:audio-chunk', this.handleAudioChunk);
+    ipcMain.removeListener('voice:capture-error', this.handleCaptureError);
 
     this.capturing = false;
     this.inSpeech = false;
     this.speechBuffer = [];
     this.speechBufferDuration = 0;
+    this.lookbackBuffer = [];
     this.currentLevel = 0;
   }
 
@@ -178,10 +182,11 @@ export class AudioCapture {
 
     if (isSpeech) {
       if (!this.inSpeech) {
-        // Speech just started
+        // Speech just started — prepend lookback buffer to capture onset
         this.inSpeech = true;
-        this.speechBuffer = [];
-        this.speechBufferDuration = 0;
+        this.speechBuffer = [...this.lookbackBuffer];
+        this.speechBufferDuration = this.speechBuffer.length * chunkDurationMs;
+        this.lookbackBuffer = [];
         this.emit('voice-start');
       }
       this.silenceStart = 0;
@@ -196,6 +201,12 @@ export class AudioCapture {
         // Enough silence -- end the utterance
         this.finishUtterance();
         return;
+      }
+    } else if (!this.inSpeech) {
+      // Not in speech — maintain rolling lookback buffer for onset capture
+      this.lookbackBuffer.push(chunk);
+      if (this.lookbackBuffer.length > this.LOOKBACK_CHUNKS) {
+        this.lookbackBuffer.shift();
       }
     }
 
@@ -219,8 +230,8 @@ export class AudioCapture {
     this.speechBufferDuration = 0;
 
     // Clean up IPC listeners
-    ipcMain.removeAllListeners('voice:audio-chunk');
-    ipcMain.removeAllListeners('voice:capture-error');
+    ipcMain.removeListener('voice:audio-chunk', this.handleAudioChunk);
+    ipcMain.removeListener('voice:capture-error', this.handleCaptureError);
   };
 
   private finishUtterance(): void {

@@ -55,6 +55,7 @@ export class LocalConversation extends EventEmitter {
   private tools: ToolDefinition[] = [];
   private active = false;
   private processing = false;
+  private pendingInputs: string[] = [];
   private transcriptCleanup: (() => void) | null = null;
   private errorCleanup: (() => void) | null = null;
 
@@ -96,8 +97,7 @@ export class LocalConversation extends EventEmitter {
     if (!ollamaProvider) {
       const msg = 'Ollama provider not registered. Ensure Ollama is configured.';
       console.error(`[LocalConversation] ${msg}`);
-      this.emit('error', msg);
-      return;
+      throw new Error(msg);
     }
 
     try {
@@ -106,8 +106,7 @@ export class LocalConversation extends EventEmitter {
     } catch (err) {
       const msg = `Ollama is not running: ${err instanceof Error ? err.message : String(err)}. Start Ollama to use local conversation.`;
       console.error(`[LocalConversation] ${msg}`);
-      this.emit('error', msg);
-      return;
+      throw new Error(msg);
     }
 
     // ── Step 2: Try loading Whisper (optional — text-only fallback) ───
@@ -236,12 +235,11 @@ export class LocalConversation extends EventEmitter {
   private async processUserInput(text: string): Promise<void> {
     if (!this.active) return;
 
-    // Prevent concurrent processing — wait for previous turn to finish
+    // Queue input if currently processing — never drop user speech
     if (this.processing) {
-      console.log('[LocalConversation] Already processing — queuing input');
-      // Simple debounce: wait and retry once
-      await new Promise((r) => setTimeout(r, 500));
-      if (this.processing || !this.active) return;
+      console.log('[LocalConversation] Queuing input while processing:', text.slice(0, 50));
+      this.pendingInputs.push(text);
+      return;
     }
 
     this.processing = true;
@@ -253,7 +251,7 @@ export class LocalConversation extends EventEmitter {
       // 2. Append user message to history
       this.messages.push({ role: 'user', content: text });
 
-      // 3. Send to Ollama with tool calling
+      // 3. Send to Ollama with tool calling (90s timeout prevents indefinite hangs)
       let response = await llmClient.complete(
         {
           messages: this.messages,
@@ -261,6 +259,7 @@ export class LocalConversation extends EventEmitter {
           tools: this.tools,
           maxTokens: 2048,
           temperature: 0.7,
+          signal: AbortSignal.timeout(90_000),
         },
         'ollama',
       );
@@ -305,6 +304,7 @@ export class LocalConversation extends EventEmitter {
             tools: this.tools,
             maxTokens: 2048,
             temperature: 0.7,
+            signal: AbortSignal.timeout(90_000),
           },
           'ollama',
         );
@@ -332,6 +332,12 @@ export class LocalConversation extends EventEmitter {
       this.emit('error', msg);
     } finally {
       this.processing = false;
+      // Drain any queued inputs that arrived during processing
+      if (this.pendingInputs.length > 0 && this.active) {
+        const next = this.pendingInputs.shift()!;
+        console.log('[LocalConversation] Processing queued input:', next.slice(0, 50));
+        void this.processUserInput(next);
+      }
     }
   }
 
@@ -588,6 +594,7 @@ export class LocalConversation extends EventEmitter {
   private cleanup(): void {
     this.active = false;
     this.processing = false;
+    this.pendingInputs = [];
 
     // Unsubscribe from pipeline events
     if (this.transcriptCleanup) {
