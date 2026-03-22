@@ -186,7 +186,8 @@ class BrowserManager {
 
   async newTab(url?: string): Promise<string> {
     if (!this.browser) await this.launch();
-    const page = await this.browser!.newPage();
+    if (!this.browser) throw new Error('Browser failed to launch');
+    const page = await this.browser.newPage();
     this.page = page;
     if (url) {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });

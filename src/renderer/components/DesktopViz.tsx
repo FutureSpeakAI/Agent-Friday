@@ -1205,7 +1205,7 @@ function DesktopVizInner({
         container.removeChild(renderer.domElement);
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — stable scene init callback
 
   useEffect(() => {
     initScene();

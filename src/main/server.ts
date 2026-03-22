@@ -117,6 +117,7 @@ function trimHistoryToFit(
   if (keepFrom < history.length && history[keepFrom].role === 'assistant') {
     keepFrom++;
   }
+  if (keepFrom >= history.length) return [];
 
   const trimmed = history.slice(keepFrom);
   console.log(`[Server/Context] Trimmed history: ${history.length} → ${trimmed.length} messages (${totalTokens} → ${tokenCount} tokens)`);
