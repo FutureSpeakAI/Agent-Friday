@@ -97,6 +97,10 @@ export class AudioCapture {
       return;
     }
 
+    // Remove any stale listeners before registering (prevents accumulation on repeated start/stop)
+    ipcMain.removeListener('voice:audio-chunk', this.handleAudioChunk);
+    ipcMain.removeListener('voice:capture-error', this.handleCaptureError);
+
     // Register IPC listeners for audio data and errors from renderer
     ipcMain.on('voice:audio-chunk', this.handleAudioChunk);
     ipcMain.on('voice:capture-error', this.handleCaptureError);

@@ -88,6 +88,10 @@ export class LocalConversation extends EventEmitter {
       return;
     }
 
+    // Set active immediately to prevent concurrent start() calls from racing
+    // through the async initialization below. Reset to false on error.
+    this.active = true;
+
     console.log('[LocalConversation] Starting local conversation loop...');
 
     // ── Step 1: Verify Ollama is reachable (the only hard requirement) ─
@@ -95,6 +99,7 @@ export class LocalConversation extends EventEmitter {
     // race conditions where the cache hasn't been populated yet.
     const ollamaProvider = llmClient.getProvider('ollama');
     if (!ollamaProvider) {
+      this.active = false;
       const msg = 'Ollama provider not registered. Ensure Ollama is configured.';
       console.error(`[LocalConversation] ${msg}`);
       throw new Error(msg);
@@ -104,6 +109,7 @@ export class LocalConversation extends EventEmitter {
       const healthy = await ollamaProvider.checkHealth?.();
       if (!healthy) throw new Error('Ollama is not responding');
     } catch (err) {
+      this.active = false;
       const msg = `Ollama is not running: ${err instanceof Error ? err.message : String(err)}. Start Ollama to use local conversation.`;
       console.error(`[LocalConversation] ${msg}`);
       throw new Error(msg);
@@ -142,11 +148,15 @@ export class LocalConversation extends EventEmitter {
     this.systemPrompt = systemPrompt;
     this.tools = tools;
     this.messages = [];
-    this.active = true;
+    // this.active already set to true at the top of start()
     this.processing = false;
 
     // ── Step 5: Start transcription pipeline only if Whisper is ready ──
     if (this.voiceAvailable) {
+      // Clean up any stale listeners from a previous start (prevents listener accumulation)
+      if (this.transcriptCleanup) { this.transcriptCleanup(); this.transcriptCleanup = null; }
+      if (this.errorCleanup) { this.errorCleanup(); this.errorCleanup = null; }
+
       this.transcriptCleanup = transcriptionPipeline.on('transcript', (payload) => {
         const event = payload as TranscriptEvent;
         if (event.text && event.text.trim().length > 0) {
@@ -282,10 +292,22 @@ export class LocalConversation extends EventEmitter {
           tool_calls: response.toolCalls,
         });
 
-        // Execute each tool call
+        // Execute each tool call with per-tool error handling + timeout
         for (const tc of response.toolCalls) {
           console.log(`[LocalConversation] Executing tool: ${tc.name}`);
-          const result = await this.executeToolCall(tc);
+          let result: string;
+          try {
+            result = await Promise.race([
+              this.executeToolCall(tc),
+              new Promise<string>((_, reject) =>
+                setTimeout(() => reject(new Error(`Tool "${tc.name}" timed out after 15s`)), 15_000)
+              ),
+            ]);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[LocalConversation] Tool "${tc.name}" failed: ${msg}`);
+            result = `Tool "${tc.name}" error: ${msg}`;
+          }
 
           // Append tool result to messages
           this.messages.push({
@@ -336,7 +358,11 @@ export class LocalConversation extends EventEmitter {
       if (this.pendingInputs.length > 0 && this.active) {
         const next = this.pendingInputs.shift()!;
         console.log('[LocalConversation] Processing queued input:', next.slice(0, 50));
-        void this.processUserInput(next).catch(err => console.error('[LocalConversation] processUserInput error:', err));
+        void this.processUserInput(next).catch(err => {
+          const msg = `Queued input failed: ${err instanceof Error ? err.message : String(err)}`;
+          console.error(`[LocalConversation] ${msg}`);
+          this.emit('error', msg);
+        });
       }
     }
   }

@@ -239,6 +239,11 @@ contextBridge.exposeInMainWorld('eve', {
     analyse: (text: string) => ipcRenderer.invoke('sentiment:analyse', text),
     getState: () => ipcRenderer.invoke('sentiment:get-state'),
     getMoodLog: () => ipcRenderer.invoke('sentiment:get-mood-log'),
+    onMoodChange: (callback: (state: { currentMood: string; confidence: number; energyLevel: number; moodStreak: number }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, state: { currentMood: string; confidence: number; energyLevel: number; moodStreak: number }) => callback(state);
+      ipcRenderer.on('sentiment:mood-change', handler);
+      return () => { ipcRenderer.removeListener('sentiment:mood-change', handler); };
+    },
   },
 
   confirmation: {
@@ -1813,5 +1818,21 @@ contextBridge.exposeInMainWorld('eve', {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
+  },
+
+  telemetry: {
+    getAggregates: (category?: string) => ipcRenderer.invoke('telemetry:get-aggregates', category),
+    getRecentEvents: (count?: number, category?: string) =>
+      ipcRenderer.invoke('telemetry:get-recent-events', count, category),
+    clear: () => ipcRenderer.invoke('telemetry:clear'),
+    appLaunched: (appId: string) => ipcRenderer.invoke('telemetry:app-launched', appId),
+    recordError: (errorName: string, errorMessage?: string) =>
+      ipcRenderer.invoke('telemetry:record-error', errorName, errorMessage),
+  },
+
+  onApiHealthChange: (callback: (status: Record<string, string>) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: Record<string, string>) => callback(status);
+    ipcRenderer.on('api-health:update', handler);
+    return () => { ipcRenderer.removeListener('api-health:update', handler); };
   },
 });

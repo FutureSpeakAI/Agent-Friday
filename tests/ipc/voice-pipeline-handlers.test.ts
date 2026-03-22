@@ -23,18 +23,20 @@ const mocks = vi.hoisted(() => ({
   isReady: vi.fn().mockReturnValue(false),
   transcribe: vi.fn().mockResolvedValue({ text: 'hello' }),
   getAvailableModels: vi.fn().mockResolvedValue([]),
+  isModelDownloaded: vi.fn().mockResolvedValue(false),
+  downloadModel: vi.fn().mockResolvedValue(undefined),
   // AudioCapture
   startCapture: vi.fn().mockResolvedValue(undefined),
   stopCapture: vi.fn(),
   isCapturing: vi.fn().mockReturnValue(false),
   getAudioLevel: vi.fn().mockReturnValue(0),
-  captureOn: vi.fn(),
+  captureOn: vi.fn().mockReturnValue(() => {}),
   // TranscriptionPipeline
   pipelineStart: vi.fn().mockResolvedValue(undefined),
   pipelineStop: vi.fn(),
   isListening: vi.fn().mockReturnValue(false),
   getStats: vi.fn().mockReturnValue({}),
-  pipelineOn: vi.fn(),
+  pipelineOn: vi.fn().mockReturnValue(() => {}),
   // TTSEngine
   loadEngine: vi.fn().mockResolvedValue(undefined),
   unloadEngine: vi.fn(),
@@ -57,7 +59,7 @@ const mocks = vi.hoisted(() => ({
   resume: vi.fn(),
   isSpeaking: vi.fn().mockReturnValue(false),
   getQueueLength: vi.fn().mockReturnValue(0),
-  synthesisOn: vi.fn(),
+  synthesisOn: vi.fn().mockReturnValue(() => {}),
 }));
 
 vi.mock('../../src/main/voice/whisper-provider', () => ({
@@ -68,6 +70,8 @@ vi.mock('../../src/main/voice/whisper-provider', () => ({
       isReady: mocks.isReady,
       transcribe: mocks.transcribe,
       getAvailableModels: mocks.getAvailableModels,
+      isModelDownloaded: mocks.isModelDownloaded,
+      downloadModel: mocks.downloadModel,
     }),
   },
 }));
@@ -172,6 +176,7 @@ describe('Voice Pipeline Handlers — Sprint 7 IPC', () => {
         // Whisper
         'voice:whisper:load-model', 'voice:whisper:unload-model', 'voice:whisper:is-ready',
         'voice:whisper:transcribe', 'voice:whisper:get-available-models',
+        'voice:whisper:is-model-downloaded', 'voice:whisper:download-model',
         // Capture
         'voice:capture:start', 'voice:capture:stop', 'voice:capture:is-capturing',
         'voice:capture:get-audio-level',
@@ -194,8 +199,8 @@ describe('Voice Pipeline Handlers — Sprint 7 IPC', () => {
       }
     });
 
-    it('registers exactly 32 handlers', () => {
-      expect(handlers.size).toBe(32);
+    it('registers exactly 34 handlers', () => {
+      expect(handlers.size).toBe(34);
     });
   });
 

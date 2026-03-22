@@ -76,6 +76,7 @@ import { transcriptionPipeline } from './transcription-pipeline';
 import { speechSynthesis } from './speech-synthesis';
 import { whisperProvider } from './whisper-provider';
 import { ttsEngine } from './tts-engine';
+import { telemetryEngine } from '../telemetry';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -357,6 +358,7 @@ export class VoiceFallbackManager extends EventEmitter {
 
       const started = await this.attemptStartPath(config.path);
       if (started) {
+        telemetryEngine.record('voice-path', 'started', config.path);
         return config.path;
       }
       // If attemptStartPath failed, it already added to attemptedPaths
@@ -418,6 +420,7 @@ export class VoiceFallbackManager extends EventEmitter {
         to: config.path,
         reason: error.message,
       });
+      telemetryEngine.record('voice-fallback', 'triggered', `${failedPath}->${config.path}`);
 
       const started = await this.attemptStartPath(config.path);
       if (started) {
@@ -427,6 +430,7 @@ export class VoiceFallbackManager extends EventEmitter {
 
     // All voice paths exhausted — fall to text
     console.warn('[VoiceFallbackManager] All voice paths exhausted — text fallback');
+    telemetryEngine.record('voice-fallback', 'exhausted');
     this.currentPath = 'text';
     this.stateMachine.transition('TEXT_FALLBACK', 'All voice paths exhausted');
     this.emit('all-paths-exhausted', { errors: this.pathErrors });

@@ -17,6 +17,7 @@
 
 import { ipcMain, type BrowserWindow } from 'electron';
 import { LocalConversation } from '../local-conversation';
+import { assertString } from './validate';
 import type { ToolDefinition } from '../llm-client';
 import type { AgentConfig } from '../settings';
 
@@ -69,29 +70,36 @@ export function registerLocalConversationHandlers(
       toolDefs: unknown[],
       initialPrompt?: string,
     ) => {
-      // Convert onboarding tool format to LLM ToolDefinition format
-      const tools: ToolDefinition[] = (toolDefs || []).map((t: unknown) => {
-        const td = t as { name: string; description?: string; parameters?: Record<string, unknown> };
-        return {
-          type: 'function' as const,
-          name: td.name,
-          description: td.description,
-          function: {
+      try {
+        // Convert onboarding tool format to LLM ToolDefinition format
+        const tools: ToolDefinition[] = (toolDefs || []).map((t: unknown) => {
+          const td = t as { name: string; description?: string; parameters?: Record<string, unknown> };
+          return {
+            type: 'function' as const,
             name: td.name,
             description: td.description,
-            parameters: td.parameters,
-          },
-        };
-      });
+            function: {
+              name: td.name,
+              description: td.description,
+              parameters: td.parameters,
+            },
+          };
+        });
 
-      await conversation.start(systemPrompt, tools, initialPrompt);
-      return { ok: true };
+        await conversation.start(systemPrompt, tools, initialPrompt);
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[LocalConversation IPC] start failed:', msg);
+        return { ok: false, error: msg };
+      }
     },
   );
 
   ipcMain.handle(
     'local-conversation:send',
     async (_event, text: string) => {
+      assertString(text, 'local-conversation:send text', 10_000);
       await conversation.sendText(text);
     },
   );
