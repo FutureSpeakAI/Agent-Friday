@@ -15,23 +15,28 @@ import type { IdentityChoices } from '../OnboardingWizard';
 
 interface InterviewStepProps {
   identityChoices: IdentityChoices;
-  connectToGemini?: (identityContext?: string) => Promise<void> | void;
+  connectToGemini?: (identityContext?: string) => Promise<void>;
   sendTextToGemini?: (text: string) => void;
   onComplete: (finalName?: string) => void;
   onBack?: () => void;
 }
 
-/** Timeout (ms) before connection is considered failed.
- * connectToGemini gathers tool declarations from multiple sources (desktop,
- * onboarding, browser, connectors, MCP) before opening the WebSocket, so
- * the total time from call to audio can exceed 10s on cold start.
- * Reduced from 30s to 15s — if auth fails, WebSocket close arrives in <5s. */
-const CONNECTION_TIMEOUT_MS = 15_000;
+/**
+ * Blanket timeout (ms) — only used as fallback when ConnectionStageMonitor
+ * is not available. The monitor provides per-stage timeouts that total ~55s
+ * across all six stages, with specific failure messages at each point.
+ * This legacy timeout is kept for graceful degradation.
+ */
+const LEGACY_CONNECTION_TIMEOUT_MS = 15_000;
 
-/** Staged status messages shown during connection to provide progress feedback. */
-const CONNECTION_STAGES: { delay: number; text: string }[] = [
+/**
+ * Legacy staged status messages — used only when ConnectionStageMonitor
+ * IPC is not available. The monitor provides real progress messages via
+ * 'stage-enter' events with per-stage userMessage strings.
+ */
+const LEGACY_CONNECTION_STAGES: { delay: number; text: string }[] = [
   { delay: 0, text: 'Connecting to voice session...' },
-  { delay: 2500, text: 'Authenticating with Gemini...' },
+  { delay: 2500, text: 'Authenticating...' },
   { delay: 5000, text: 'Loading agent tools...' },
   { delay: 8000, text: 'Opening audio channel...' },
   { delay: 12000, text: 'Still waiting — this is taking longer than usual...' },
@@ -84,10 +89,14 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   const [statusText, setStatusText] = useState('Preparing voice interview...');
   const [waveformBars, setWaveformBars] = useState<number[]>(new Array(32).fill(0.05));
   const [textInput, setTextInput] = useState('');
+  const [failureDetail, setFailureDetail] = useState<string | null>(null);
+  const [failureAction, setFailureAction] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
   const hasConnectedRef = useRef(false);
   const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stageTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const stageCleanupRef = useRef<Array<() => void>>([]);
+  const hasStageMonitorRef = useRef(false);
 
   useEffect(() => {
     const t = setTimeout(() => setFadeIn(true), 100);
@@ -100,6 +109,12 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     stageTimersRef.current = [];
   }, []);
 
+  // Clean up ConnectionStageMonitor listeners
+  const clearStageMonitorListeners = useCallback(() => {
+    for (const cleanup of stageCleanupRef.current) cleanup();
+    stageCleanupRef.current = [];
+  }, []);
+
   // Attempt to connect to Gemini voice session
   const attemptConnection = useCallback(() => {
     if (!connectToGemini) {
@@ -109,17 +124,80 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     }
 
     setPhase('connecting');
+    setFailureDetail(null);
+    setFailureAction(null);
     clearStageTimers();
+    clearStageMonitorListeners();
 
-    // Schedule staged status messages for progress feedback
-    for (const stage of CONNECTION_STAGES) {
-      const timer = setTimeout(() => {
-        setPhase((current) => {
-          if (current === 'connecting') setStatusText(stage.text);
-          return current;
-        });
-      }, stage.delay);
-      stageTimersRef.current.push(timer);
+    // ── Track 6: Subscribe to ConnectionStageMonitor for real progress ──
+    // If the IPC bridge is available, use real stage events instead of
+    // the legacy timed messages. Falls back to legacy if unavailable.
+    let usingStageMonitor = false;
+    try {
+      if (window.eve.connectionStage) {
+        usingStageMonitor = true;
+        hasStageMonitorRef.current = true;
+
+        const cleanups: Array<() => void> = [];
+
+        cleanups.push(
+          window.eve.connectionStage.onStageEnter((payload) => {
+            setPhase((current) => {
+              if (current === 'connecting') {
+                setStatusText(payload.userMessage);
+              }
+              return current;
+            });
+          }),
+        );
+
+        cleanups.push(
+          window.eve.connectionStage.onStageTimeout((payload) => {
+            setPhase((current) => {
+              if (current === 'connecting') {
+                setStatusText(payload.failureMessage);
+                setFailureDetail(payload.failureMessage);
+                setFailureAction(payload.failureAction || null);
+                return 'failed';
+              }
+              return current;
+            });
+            // Clear the legacy blanket timeout since the monitor handles timeouts
+            if (connectionTimerRef.current) {
+              clearTimeout(connectionTimerRef.current);
+              connectionTimerRef.current = null;
+            }
+          }),
+        );
+
+        cleanups.push(
+          window.eve.connectionStage.onAllComplete(() => {
+            // All six stages passed — connection is fully established
+            if (connectionTimerRef.current) {
+              clearTimeout(connectionTimerRef.current);
+              connectionTimerRef.current = null;
+            }
+          }),
+        );
+
+        stageCleanupRef.current = cleanups;
+      }
+    } catch {
+      // IPC not available — will use legacy staged messages
+      usingStageMonitor = false;
+    }
+
+    // Legacy fallback: schedule timed status messages if monitor unavailable
+    if (!usingStageMonitor) {
+      for (const stage of LEGACY_CONNECTION_STAGES) {
+        const timer = setTimeout(() => {
+          setPhase((current) => {
+            if (current === 'connecting') setStatusText(stage.text);
+            return current;
+          });
+        }, stage.delay);
+        stageTimersRef.current.push(timer);
+      }
     }
 
     // No pre-selected identity — let the interview discover name, gender, voice naturally
@@ -129,30 +207,44 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         connectionTimerRef.current = null;
       }
       clearStageTimers();
+      clearStageMonitorListeners();
       setPhase('failed');
 
       // Provide specific failure messages based on error
       const msg = String(err?.message || '').toLowerCase();
       if (msg.includes('api key') || msg.includes('401') || msg.includes('1008')) {
         setStatusText('Authentication failed — check your Gemini API key in Settings');
+        setFailureDetail('The API key may be invalid or expired.');
+        setFailureAction('Open Settings to update your Gemini API key.');
       } else if (msg.includes('network') || msg.includes('failed to fetch')) {
         setStatusText('Network error — check your internet connection');
+        setFailureDetail('Could not reach the voice backend.');
+        setFailureAction('Check your internet connection and try again.');
+      } else if (msg.includes('no voice backend')) {
+        setStatusText('No voice backend available');
+        setFailureDetail('Neither Ollama (local) nor Gemini (cloud) is accessible.');
+        setFailureAction('Install Ollama for local voice or add a Gemini API key in Settings.');
       } else {
         setStatusText('Voice connection could not be established');
+        setFailureDetail(String(err?.message || 'Unknown error'));
       }
     });
 
+    // Legacy blanket timeout — only fires if the stage monitor hasn't
+    // already handled per-stage timeouts. Kept as a safety net.
     connectionTimerRef.current = setTimeout(() => {
       clearStageTimers();
+      clearStageMonitorListeners();
       setPhase((current) => {
         if (current === 'connecting') {
           setStatusText('Connection timed out — check your API key and network');
+          setFailureDetail('The connection attempt exceeded the maximum wait time.');
           return 'failed';
         }
         return current;
       });
-    }, CONNECTION_TIMEOUT_MS);
-  }, [connectToGemini, identityChoices, clearStageTimers]);
+    }, LEGACY_CONNECTION_TIMEOUT_MS);
+  }, [connectToGemini, identityChoices, clearStageTimers, clearStageMonitorListeners]);
 
   // Start the voice connection after a brief delay
   useEffect(() => {
@@ -169,8 +261,9 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         clearTimeout(connectionTimerRef.current);
       }
       clearStageTimers();
+      clearStageMonitorListeners();
     };
-  }, [attemptConnection, clearStageTimers]);
+  }, [attemptConnection, clearStageTimers, clearStageMonitorListeners]);
 
   // Listen for any audio activity to confirm connection is live
   useEffect(() => {
@@ -200,9 +293,12 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       connectionTimerRef.current = null;
     }
     clearStageTimers();
+    clearStageMonitorListeners();
+    setFailureDetail(null);
+    setFailureAction(null);
     hasConnectedRef.current = true;
     attemptConnection();
-  }, [attemptConnection, clearStageTimers]);
+  }, [attemptConnection, clearStageTimers, clearStageMonitorListeners]);
 
   // Animate waveform bars
   useEffect(() => {
@@ -374,20 +470,32 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         </div>
       )}
 
-      {/* Failed state: Retry + Skip buttons */}
+      {/* Failed state: error detail + recovery + Retry/Skip buttons */}
       {phase === 'failed' && (
-        <div style={styles.failedButtons}>
-          <NextButton
-            label="Retry"
-            onClick={handleRetry}
-            icon={<RefreshCw size={14} />}
-          />
-          <NextButton
-            label="Skip Interview"
-            onClick={handleSkip}
-            variant="skip"
-          />
-        </div>
+        <>
+          {(failureDetail || failureAction) && (
+            <div style={styles.failureDetailBlock}>
+              {failureDetail && (
+                <p style={styles.failureDetailText}>{failureDetail}</p>
+              )}
+              {failureAction && (
+                <p style={styles.failureActionText}>{failureAction}</p>
+              )}
+            </div>
+          )}
+          <div style={styles.failedButtons}>
+            <NextButton
+              label="Retry"
+              onClick={handleRetry}
+              icon={<RefreshCw size={14} />}
+            />
+            <NextButton
+              label="Skip Interview"
+              onClick={handleSkip}
+              variant="skip"
+            />
+          </div>
+        </>
       )}
 
       {/* Skip button (shown in non-failed, non-done states) */}
@@ -503,6 +611,30 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     transition: 'all 0.2s ease',
     flexShrink: 0,
+  },
+  failureDetailBlock: {
+    maxWidth: 400,
+    width: '100%',
+    padding: '10px 14px',
+    background: 'rgba(239, 68, 68, 0.06)',
+    border: '1px solid rgba(239, 68, 68, 0.15)',
+    borderRadius: 8,
+    textAlign: 'center' as const,
+  },
+  failureDetailText: {
+    fontSize: 12,
+    color: 'rgba(239, 68, 68, 0.8)',
+    margin: '0 0 4px 0',
+    lineHeight: 1.5,
+    fontFamily: "'Inter', sans-serif",
+  },
+  failureActionText: {
+    fontSize: 11,
+    color: 'var(--text-30)',
+    margin: 0,
+    lineHeight: 1.5,
+    fontFamily: "'Inter', sans-serif",
+    fontStyle: 'italic' as const,
   },
   failedButtons: {
     display: 'flex',

@@ -1739,6 +1739,76 @@ contextBridge.exposeInMainWorld('eve', {
     },
   },
 
+  // ── Phase 1.2: Voice State Machine (read-only from renderer) ────
+
+  voiceState: {
+    getState: () => ipcRenderer.invoke('voice-state:get-state'),
+    getTransitionLog: () => ipcRenderer.invoke('voice-state:get-transition-log'),
+    getHealth: () => ipcRenderer.invoke('voice-state:get-health'),
+    onStateChange: (callback: (event: { from: string; to: string; reason: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, event: { from: string; to: string; reason: string }) => callback(event);
+      ipcRenderer.on('voice-state:event:state-change', handler);
+      return () => { ipcRenderer.removeListener('voice-state:event:state-change', handler); };
+    },
+  },
+
+  // ── Phase 6.1: Voice Fallback Manager (renderer can probe & start paths) ────
+
+  voiceFallback: {
+    probeAvailability: () => ipcRenderer.invoke('voice-fallback:probe-availability'),
+    startBestPath: (systemPrompt: string, tools: unknown[]) =>
+      ipcRenderer.invoke('voice-fallback:start-best-path', systemPrompt, tools),
+    getCurrentPath: () => ipcRenderer.invoke('voice-fallback:get-current-path'),
+    switchTo: (path: string, reason: string) =>
+      ipcRenderer.invoke('voice-fallback:switch-to', path, reason),
+    onSwitchStart: (callback: (payload: { from: string | null; to: string; reason: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { from: string | null; to: string; reason: string }) => callback(payload);
+      ipcRenderer.on('voice-fallback:event:switch-start', handler);
+      return () => { ipcRenderer.removeListener('voice-fallback:event:switch-start', handler); };
+    },
+    onSwitchComplete: (callback: (payload: { path: string; hadContext: boolean }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { path: string; hadContext: boolean }) => callback(payload);
+      ipcRenderer.on('voice-fallback:event:switch-complete', handler);
+      return () => { ipcRenderer.removeListener('voice-fallback:event:switch-complete', handler); };
+    },
+    onAllPathsExhausted: (callback: (payload: { errors: Array<{ path: string; error: string }> }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { errors: Array<{ path: string; error: string }> }) => callback(payload);
+      ipcRenderer.on('voice-fallback:event:all-paths-exhausted', handler);
+      return () => { ipcRenderer.removeListener('voice-fallback:event:all-paths-exhausted', handler); };
+    },
+    onSwitchFailed: (callback: (payload: { path: string; error: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { path: string; error: string }) => callback(payload);
+      ipcRenderer.on('voice-fallback:event:switch-failed', handler);
+      return () => { ipcRenderer.removeListener('voice-fallback:event:switch-failed', handler); };
+    },
+  },
+
+  // ── Phase 6.1: Connection Stage Monitor (granular progress events) ────
+
+  connectionStage: {
+    getCurrentStage: () => ipcRenderer.invoke('connection-stage:get-current'),
+    onStageEnter: (callback: (payload: { stage: string; userMessage: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { stage: string; userMessage: string }) => callback(payload);
+      ipcRenderer.on('connection-stage:event:stage-enter', handler);
+      return () => { ipcRenderer.removeListener('connection-stage:event:stage-enter', handler); };
+    },
+    onStageComplete: (callback: (payload: { stage: string; durationMs: number }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { stage: string; durationMs: number }) => callback(payload);
+      ipcRenderer.on('connection-stage:event:stage-complete', handler);
+      return () => { ipcRenderer.removeListener('connection-stage:event:stage-complete', handler); };
+    },
+    onStageTimeout: (callback: (payload: { stage: string; failureMessage: string; failureAction?: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { stage: string; failureMessage: string; failureAction?: string }) => callback(payload);
+      ipcRenderer.on('connection-stage:event:stage-timeout', handler);
+      return () => { ipcRenderer.removeListener('connection-stage:event:stage-timeout', handler); };
+    },
+    onAllComplete: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('connection-stage:event:all-complete', handler);
+      return () => { ipcRenderer.removeListener('connection-stage:event:all-complete', handler); };
+    },
+  },
+
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

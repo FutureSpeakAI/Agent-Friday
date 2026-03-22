@@ -85,6 +85,7 @@ export function registerLocalConversationHandlers(
       });
 
       await conversation.start(systemPrompt, tools, initialPrompt);
+      return { ok: true };
     },
   );
 

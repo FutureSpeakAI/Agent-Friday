@@ -64,6 +64,96 @@ declare global {
     readonly message: string;
   }
 
+  // ── Phase 1.2: Voice State Machine Types ──────────────────────────────
+  type VoiceState =
+    | 'IDLE'
+    | 'REQUESTING_MIC'
+    | 'MIC_DENIED'
+    | 'MIC_GRANTED'
+    | 'CONNECTING_CLOUD'
+    | 'CLOUD_ACTIVE'
+    | 'CLOUD_DEGRADED'
+    | 'CONNECTING_LOCAL'
+    | 'LOCAL_ACTIVE'
+    | 'LOCAL_DEGRADED'
+    | 'TEXT_FALLBACK'
+    | 'ERROR'
+    | 'DISCONNECTING';
+
+  interface VoiceStateChangeEvent {
+    from: VoiceState;
+    to: VoiceState;
+    reason: string;
+  }
+
+  interface VoiceTransitionLogEntry {
+    from: VoiceState;
+    to: VoiceState;
+    at: number;
+    reason: string;
+  }
+
+  interface VoiceHealthMetrics {
+    uptimeMs: number;
+    consecutiveHealthy: number;
+    consecutiveUnhealthy: number;
+  }
+
+  // ── Phase 6.1: Voice Fallback Manager Types ───────────────────────────
+  type VoicePath = 'cloud' | 'local' | 'text';
+
+  interface PathConfig {
+    path: VoicePath;
+    available: boolean;
+    reason?: string;
+    priority: number;
+  }
+
+  // ── Phase 6.1: Connection Stage Monitor Types ─────────────────────────
+  type ConnectionStage =
+    | 'mic-permission'
+    | 'backend-probe'
+    | 'model-validation'
+    | 'connection-open'
+    | 'setup-confirmation'
+    | 'first-audio-frame';
+
+  // ── Phase 5.1: Voice Error Classifier Types ───────────────────────────
+  type VoiceErrorCategory =
+    | 'api-key-invalid'
+    | 'api-key-missing'
+    | 'network-unreachable'
+    | 'network-timeout'
+    | 'mic-denied'
+    | 'mic-unavailable'
+    | 'model-not-downloaded'
+    | 'ollama-unreachable'
+    | 'whisper-load-failed'
+    | 'tts-load-failed'
+    | 'audio-context-dead'
+    | 'gemini-rate-limit'
+    | 'gemini-server-error'
+    | 'unknown';
+
+  type RecoveryButtonAction =
+    | 'open-settings'
+    | 'retry'
+    | 'open-system-prefs'
+    | 'pull-model'
+    | 'switch-to-text';
+
+  interface ClassifiedError {
+    category: VoiceErrorCategory;
+    userMessage: string;
+    recoveryAction: string;
+    recoveryButton?: {
+      label: string;
+      action: RecoveryButtonAction;
+    };
+    technicalDetail: string;
+    isTransient: boolean;
+  }
+
   interface Window {
     eve: {
       getApiPort: () => Promise<number>;
@@ -579,6 +669,8 @@ declare global {
         setApiKey: (key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface', value: string) => Promise<void>;
         setObsidianVaultPath: (vaultPath: string) => Promise<void>;
         set: (key: string, value: unknown) => Promise<void>;
+        validateApiKey: (keyType: string, value: string) => Promise<unknown>;
+        checkApiHealth: () => Promise<unknown>;
       };
 
       hardware: {
@@ -586,6 +678,111 @@ declare global {
         getTier: (profile: Record<string, unknown>) => Promise<string>;
         getModelList: (tier: string) => Promise<string[]>;
         recommend: (profile: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      };
+
+      setup: {
+        isFirstRun: () => Promise<boolean>;
+        getState: () => Promise<Record<string, unknown>>;
+        start: () => Promise<void>;
+        skip: () => Promise<void>;
+        confirmTier: (tier: string) => Promise<void>;
+        startDownload: () => Promise<void>;
+        getDownloadProgress: () => Promise<Record<string, unknown>>;
+        complete: () => Promise<void>;
+        reset: () => Promise<void>;
+        onStateChanged: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onDownloadProgress: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onComplete: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onError: (callback: (data: Record<string, unknown>) => void) => () => void;
+      };
+
+      ollama: {
+        start: () => Promise<void>;
+        stop: () => Promise<void>;
+        getHealth: () => Promise<Record<string, unknown>>;
+        getAvailableModels: () => Promise<unknown>;
+        getLoadedModels: () => Promise<unknown>;
+        isModelAvailable: (name: string) => Promise<boolean>;
+        pullModel: (name: string) => Promise<unknown>;
+        onHealthy: (callback: () => void) => () => void;
+        onUnhealthy: (callback: () => void) => () => void;
+        onHealthChange: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onModelLoaded: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onModelUnloaded: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onPullProgress: (callback: (data: Record<string, unknown>) => void) => () => void;
+      };
+
+      voice: {
+        whisper: {
+          loadModel: (size?: string) => Promise<void>;
+          unloadModel: () => Promise<void>;
+          isReady: () => Promise<boolean>;
+          transcribe: (audio: number[]) => Promise<unknown>;
+          getAvailableModels: () => Promise<string[]>;
+          isModelDownloaded: (size?: string) => Promise<boolean>;
+          downloadModel: (size?: string) => Promise<void>;
+          onDownloadProgress: (cb: (progress: { downloaded: number; total: number }) => void) => () => void;
+        };
+        capture: {
+          start: () => Promise<void>;
+          stop: () => Promise<void>;
+          isCapturing: () => Promise<boolean>;
+          getAudioLevel: () => Promise<number>;
+        };
+        pipeline: {
+          start: () => Promise<void>;
+          stop: () => Promise<void>;
+          isListening: () => Promise<boolean>;
+          getStats: () => Promise<Record<string, unknown>>;
+        };
+        tts: {
+          loadEngine: (backend?: string) => Promise<void>;
+          unloadEngine: () => Promise<void>;
+          isReady: () => Promise<boolean>;
+          synthesize: (text: string, opts?: Record<string, unknown>) => Promise<unknown>;
+          getAvailableVoices: () => Promise<unknown>;
+          getInfo: () => Promise<unknown>;
+        };
+        profiles: {
+          getActive: () => Promise<unknown>;
+          setActive: (id: string) => Promise<void>;
+          list: () => Promise<unknown>;
+          create: (opts: Record<string, unknown>) => Promise<unknown>;
+          delete: (id: string) => Promise<void>;
+          preview: (profileId: string) => Promise<unknown>;
+        };
+        speech: {
+          speak: (text: string, opts?: Record<string, unknown>) => Promise<void>;
+          speakImmediate: (text: string) => Promise<void>;
+          stop: () => Promise<void>;
+          pause: () => Promise<void>;
+          resume: () => Promise<void>;
+          isSpeaking: () => Promise<boolean>;
+          getQueueLength: () => Promise<number>;
+        };
+        onVoiceStart: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onVoiceEnd: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onAudioChunk: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onCaptureError: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onTranscript: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onPartial: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onPipelineError: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onUtteranceStart: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onUtteranceEnd: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onQueueEmpty: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onInterrupted: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onPlayChunk: (callback: (audio: Float32Array) => void) => () => void;
+      };
+
+      localConversation: {
+        start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<void>;
+        sendText: (text: string) => Promise<void>;
+        stop: () => Promise<void>;
+        onStarted: (cb: () => void) => () => void;
+        onTranscript: (cb: (text: string) => void) => () => void;
+        onResponse: (cb: (text: string) => void) => () => void;
+        onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => () => void;
+        onError: (cb: (error: string) => void) => () => void;
       };
 
       clipboard: {
@@ -1525,15 +1722,30 @@ declare global {
         timestamp: number;
       }) => void) => () => void;
 
-      localConversation: {
-        start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<void>;
-        sendText: (text: string) => Promise<void>;
-        stop: () => Promise<void>;
-        onStarted: (cb: () => void) => () => void;
-        onTranscript: (cb: (text: string) => void) => () => void;
-        onResponse: (cb: (text: string) => void) => () => void;
-        onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => () => void;
-        onError: (cb: (error: string) => void) => () => void;
+      voiceState: {
+        getState: () => Promise<VoiceState>;
+        getTransitionLog: () => Promise<VoiceTransitionLogEntry[]>;
+        getHealth: () => Promise<VoiceHealthMetrics>;
+        onStateChange: (callback: (event: VoiceStateChangeEvent) => void) => () => void;
+      };
+
+      voiceFallback: {
+        probeAvailability: () => Promise<PathConfig[]>;
+        startBestPath: (systemPrompt: string, tools: unknown[]) => Promise<VoicePath>;
+        getCurrentPath: () => Promise<VoicePath | null>;
+        switchTo: (path: VoicePath, reason: string) => Promise<boolean>;
+        onSwitchStart: (callback: (payload: { from: VoicePath | null; to: VoicePath; reason: string }) => void) => () => void;
+        onSwitchComplete: (callback: (payload: { path: VoicePath; hadContext: boolean }) => void) => () => void;
+        onAllPathsExhausted: (callback: (payload: { errors: Array<{ path: VoicePath; error: string }> }) => void) => () => void;
+        onSwitchFailed: (callback: (payload: { path: VoicePath; error: string }) => void) => () => void;
+      };
+
+      connectionStage: {
+        getCurrentStage: () => Promise<ConnectionStage | null>;
+        onStageEnter: (callback: (payload: { stage: ConnectionStage; userMessage: string }) => void) => () => void;
+        onStageComplete: (callback: (payload: { stage: ConnectionStage; durationMs: number }) => void) => () => void;
+        onStageTimeout: (callback: (payload: { stage: ConnectionStage; failureMessage: string; failureAction?: string }) => void) => () => void;
+        onAllComplete: (callback: () => void) => () => void;
       };
 
       window: {
