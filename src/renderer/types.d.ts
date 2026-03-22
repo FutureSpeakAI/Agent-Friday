@@ -675,9 +675,25 @@ declare global {
 
       hardware: {
         detect: () => Promise<Record<string, unknown>>;
+        getProfile: () => Promise<Record<string, unknown>>;
+        refresh: () => Promise<Record<string, unknown>>;
+        getEffectiveVRAM: () => Promise<number>;
         getTier: (profile: Record<string, unknown>) => Promise<string>;
         getModelList: (tier: string) => Promise<string[]>;
+        estimateVRAM: (models: string[]) => Promise<number>;
         recommend: (profile: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        loadTierModels: (tier: string) => Promise<any>;
+        getLoadedModels: () => Promise<any>;
+        getVRAMUsage: () => Promise<any>;
+        loadModel: (name: string) => Promise<any>;
+        unloadModel: (name: string) => Promise<any>;
+        evictLeastRecent: () => Promise<any>;
+        getOrchestratorState: () => Promise<any>;
+        markModelUsed: (name: string) => Promise<void>;
+        onDetected: (callback: (profile: Record<string, unknown>) => void) => () => void;
+        onModelLoaded: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onModelUnloaded: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onVRAMWarning: (callback: (data: Record<string, unknown>) => void) => () => void;
       };
 
       setup: {
@@ -1348,6 +1364,7 @@ declare global {
         contextString: () => Promise<any>;
         promptContext: () => Promise<any>;
         status: () => Promise<any>;
+        onStreamUpdate: (callback: (payload: { activeStream: any; recentEntities: any[]; streamHistory: any[] }) => void) => () => void;
       };
 
       toolRouter: {
@@ -1713,6 +1730,167 @@ declare global {
         listMedia: (type?: string) => Promise<any>;
         getSpeakerPresets: () => Promise<any>;
         getMediaDir: () => Promise<string>;
+      };
+
+      toolExecution: {
+        execute: (toolCall: { id: string; type: string; name: string; input: unknown }) => Promise<any>;
+        confirmResponse: (decisionId: string, approved: boolean) => Promise<any>;
+        listTools: () => Promise<any>;
+      };
+
+      briefingDelivery: {
+        list: () => Promise<any>;
+        dismiss: (id: string) => Promise<any>;
+        onNew: (callback: (briefing: { id: string; topic: string; content: string; priority: string; timestamp: number }) => void) => () => void;
+      };
+
+      container: {
+        execute: (payload: {
+          code: string;
+          language: string;
+          trigger?: string;
+          description?: string;
+          packages?: string[];
+          sourcePath?: string;
+          limits?: Record<string, number>;
+          network?: string;
+          env?: Record<string, string>;
+        }) => Promise<any>;
+        cancel: (taskId: string) => Promise<any>;
+        status: () => Promise<any>;
+        list: () => Promise<any>;
+        get: (taskId: string) => Promise<any>;
+        available: () => Promise<boolean>;
+        activeCount: () => Promise<number>;
+      };
+
+      delegation: {
+        registerRoot: (taskId: string, agentType: string, description: string, trustTier?: string) => Promise<any>;
+        spawnSubAgent: (payload: Record<string, unknown>) => Promise<any>;
+        reportCompletion: (taskId: string, result: string | null, error: string | null) => Promise<any>;
+        collectResults: (parentTaskId: string) => Promise<any>;
+        haltTree: (taskId: string) => Promise<any>;
+        haltAll: () => Promise<any>;
+        getTree: (rootId: string) => Promise<any>;
+        getNode: (taskId: string) => Promise<any>;
+        getActiveTrees: () => Promise<any>;
+        getAllTrees: () => Promise<any>;
+        getAncestry: (taskId: string) => Promise<any>;
+        getStats: () => Promise<any>;
+        getConfig: () => Promise<any>;
+        updateConfig: (updates: Record<string, unknown>) => Promise<any>;
+        cleanup: (maxAgeMs?: number) => Promise<any>;
+        onUpdate: (callback: (update: Record<string, unknown>) => void) => () => void;
+      };
+
+      notes: {
+        list: () => Promise<any>;
+        get: (id: string) => Promise<any>;
+        create: (input: { title: string; content: string }) => Promise<any>;
+        update: (id: string, patch: { title?: string; content?: string }) => Promise<any>;
+        delete: (id: string) => Promise<any>;
+        search: (query: string) => Promise<any>;
+      };
+
+      files: {
+        listDirectory: (dirPath: string, showHidden?: boolean) => Promise<any>;
+        open: (filePath: string) => Promise<any>;
+        showInFolder: (filePath: string) => Promise<any>;
+        getStats: (filePath: string) => Promise<any>;
+        exists: (filePath: string) => Promise<boolean>;
+        readText: (filePath: string) => Promise<string>;
+        rename: (filePath: string, newName: string) => Promise<any>;
+        delete: (filePath: string, useTrash?: boolean) => Promise<any>;
+        copy: (srcPath: string, destDir: string) => Promise<any>;
+        move: (srcPath: string, destDir: string) => Promise<any>;
+        createFolder: (parentDir: string, folderName: string) => Promise<any>;
+        createFile: (parentDir: string, fileName: string) => Promise<any>;
+        copyPath: (filePath: string) => Promise<void>;
+        homeDir: () => Promise<string>;
+      };
+
+      weather: {
+        getCurrent: () => Promise<any>;
+        getForecast: () => Promise<any>;
+        setLocation: (lat: number, lon: number, city: string, region?: string) => Promise<any>;
+      };
+
+      system: {
+        getStats: () => Promise<any>;
+        getProcesses: (limit?: number) => Promise<any>;
+      };
+
+      fileSearch: {
+        search: (query: Record<string, unknown>) => Promise<any>;
+        recentFiles: (limit?: number, extensions?: string[]) => Promise<any>;
+        findDuplicates: (dirPath: string, mode?: 'name' | 'size') => Promise<any>;
+      };
+
+      fileWatcher: {
+        addWatch: (dirPath: string) => Promise<any>;
+        removeWatch: (dirPath: string) => Promise<any>;
+        getWatched: () => Promise<any>;
+        getEvents: (limit?: number) => Promise<any>;
+        getContext: () => Promise<any>;
+        onFileModified: (callback: (data: { path: string; action: string; size: number; timestamp: number }) => void) => () => void;
+      };
+
+      osEvents: {
+        getPowerState: () => Promise<any>;
+        getRecentEvents: (limit?: number) => Promise<any>;
+        getDisplays: () => Promise<any>;
+        getFileAssociation: (ext: string) => Promise<any>;
+        getFileAssociations: (extensions: string[]) => Promise<any>;
+        openWithDefault: (filePath: string) => Promise<any>;
+        getStartupPrograms: () => Promise<any>;
+        getContext: () => Promise<any>;
+        onOsEvent: (callback: (event: Record<string, unknown>) => void) => () => void;
+      };
+
+      appContext: {
+        get: (appId: string) => Promise<any>;
+        onUpdate: (callback: (ctx: { activeStream: any; entities: any[]; briefingSummary: string | null }) => void) => () => void;
+      };
+
+      profile: {
+        create: (opts: Record<string, unknown>) => Promise<any>;
+        get: (id: string) => Promise<any>;
+        getActive: () => Promise<any>;
+        setActive: (id: string) => Promise<any>;
+        update: (id: string, data: Record<string, unknown>) => Promise<any>;
+        delete: (id: string) => Promise<any>;
+        export: (id: string) => Promise<any>;
+        import: (json: string) => Promise<any>;
+        list: () => Promise<any>;
+        onChanged: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onCreated: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onDeleted: (callback: (data: Record<string, unknown>) => void) => () => void;
+      };
+
+      vision: {
+        loadModel: (opts?: Record<string, unknown>) => Promise<any>;
+        unloadModel: () => Promise<any>;
+        describe: (imageBase64: string, opts?: Record<string, unknown>) => Promise<any>;
+        answer: (imageBase64: string, question: string) => Promise<any>;
+        isReady: () => Promise<boolean>;
+        getModelInfo: () => Promise<any>;
+        screen: {
+          captureScreen: () => Promise<any>;
+          captureWindow: (windowId: string) => Promise<any>;
+          captureRegion: (region: Record<string, unknown>) => Promise<any>;
+          getContext: () => Promise<any>;
+          startAutoCapture: (intervalMs?: number) => Promise<any>;
+          stopAutoCapture: () => Promise<any>;
+        };
+        understand: {
+          processImage: (imageBase64: string, opts?: Record<string, unknown>) => Promise<any>;
+          processClipboard: () => Promise<any>;
+          handleDrop: (imageBase64: string) => Promise<any>;
+          handleFileSelect: (filePath: string) => Promise<any>;
+          getLastResult: () => Promise<any>;
+        };
+        onContextUpdate: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onImageResult: (callback: (data: Record<string, unknown>) => void) => () => void;
       };
 
       onFileModified: (callback: (data: {

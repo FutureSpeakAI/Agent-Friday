@@ -543,8 +543,11 @@ describe('Container Engine Type Contract', () => {
       'ContainerEngineConfig',
     ];
 
-    // If the module compiles, all types are present
-    expect(true).toBe(true);
+    // Verify the singleton is the only runtime export and is an object with expected methods
+    expect(typeof module.containerEngine).toBe('object');
+    expect(typeof module.containerEngine.initialize).toBe('function');
+    expect(typeof module.containerEngine.executeInContainer).toBe('function');
+    expect(typeof module.containerEngine.shutdown).toBe('function');
   });
 
   it('singleton has all required methods', () => {

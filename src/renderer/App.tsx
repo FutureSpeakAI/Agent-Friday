@@ -898,7 +898,7 @@ export default function App() {
       cancelled = true;
       geminiLive.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps — init-only, runs once on mount
   }, []);
 
   // Listen for scheduler task-fired events → inject into AI so Friday speaks them

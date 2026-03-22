@@ -336,7 +336,7 @@ export class LocalConversation extends EventEmitter {
       if (this.pendingInputs.length > 0 && this.active) {
         const next = this.pendingInputs.shift()!;
         console.log('[LocalConversation] Processing queued input:', next.slice(0, 50));
-        void this.processUserInput(next);
+        void this.processUserInput(next).catch(err => console.error('[LocalConversation] processUserInput error:', err));
       }
     }
   }
@@ -423,12 +423,7 @@ export class LocalConversation extends EventEmitter {
           await settingsManager.setSetting('featureSetupComplete', true);
 
           // Write friday-profile.md to disk
-          ensureProfileOnDisk().catch((err) => {
-            console.warn(
-              '[LocalConversation] Profile rewrite failed:',
-              err instanceof Error ? err.message : 'Unknown error',
-            );
-          });
+          await ensureProfileOnDisk();
 
           console.log('[LocalConversation] Agent identity saved — emitting agent-finalized');
         } catch (err) {

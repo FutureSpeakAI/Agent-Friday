@@ -937,7 +937,7 @@ function LocalAITab({
     if (settings.localModelEnabled) {
       handleDiscover();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps — discover once on mount
   }, []);
 
   const handleDiscover = async () => {

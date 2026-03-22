@@ -179,12 +179,13 @@ export default function FridayRecorder({ visible, onClose }: Props) {
       streamRef.current = stream;
 
       // Listen for user stopping screen share via browser UI
+      const onTrackEnded = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      };
       stream.getVideoTracks().forEach((track) => {
-        track.addEventListener('ended', () => {
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-          }
-        });
+        track.addEventListener('ended', onTrackEnded);
       });
 
       const mimeType = mode === 'audio'
@@ -217,8 +218,9 @@ export default function FridayRecorder({ visible, onClose }: Props) {
         setRecordState('idle');
         cleanupAnalyser();
 
-        // Stop all tracks
+        // Stop all tracks and remove event listeners
         if (streamRef.current) {
+          streamRef.current.getVideoTracks().forEach((t) => t.removeEventListener('ended', onTrackEnded));
           streamRef.current.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
         }
