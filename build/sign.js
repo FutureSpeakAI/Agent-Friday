@@ -18,26 +18,31 @@ exports.default = async function sign(configuration) {
 
   console.log(`  \u2022 signing  ${basename}`);
 
-  // Write a temp .ps1 script so $ vars are preserved
-  const tempPs1 = path.join(os.tmpdir(), `sign-${Date.now()}.ps1`);
-
-  const script = `
-$cert = Get-ChildItem -Path "Cert:\\CurrentUser\\My\\${thumbprint}"
+  // Build the PowerShell script — exit 1 on ANY non-Valid result so JS can retry
+  const buildScript = (fp) => `
+$cert = Get-ChildItem -Path "Cert:\\CurrentUser\\My\\${thumbprint}" -ErrorAction SilentlyContinue
 if (-not $cert) {
   Write-Error "Certificate not found: ${thumbprint}"
   exit 1
 }
 try {
-  $result = Set-AuthenticodeSignature -FilePath "${filePath.replace(/\\/g, '\\\\')}" -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
+  $result = Set-AuthenticodeSignature -FilePath "${fp.replace(/\\/g, '\\\\')}" -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
   if ($result.Status -ne "Valid") {
-    Write-Warning "Signature status: $($result.Status) - $($result.StatusMessage)"
+    Write-Host "Signature status: $($result.Status) - $($result.StatusMessage)"
+    exit 1
   } else {
     Write-Host "Signed OK: ${basename}"
+    exit 0
   }
 } catch {
   try {
-    $result = Set-AuthenticodeSignature -FilePath "${filePath.replace(/\\/g, '\\\\')}" -Certificate $cert -HashAlgorithm SHA256
+    $result = Set-AuthenticodeSignature -FilePath "${fp.replace(/\\/g, '\\\\')}" -Certificate $cert -HashAlgorithm SHA256
+    if ($result.Status -ne "Valid") {
+      Write-Host "Signature status (no ts): $($result.Status) - $($result.StatusMessage)"
+      exit 1
+    }
     Write-Host "Signed OK (no timestamp): ${basename}"
+    exit 0
   } catch {
     Write-Error "Signing failed: $_"
     exit 1
@@ -45,15 +50,27 @@ try {
 }
 `;
 
-  try {
-    fs.writeFileSync(tempPs1, script, 'utf8');
-    execSync(`powershell -ExecutionPolicy Bypass -File "${tempPs1}"`, {
-      stdio: 'inherit',
-      timeout: 60000,
-    });
-  } catch (err) {
-    console.warn(`  \u26a0 signing failed for ${basename}: ${err.message}`);
-  } finally {
-    try { fs.unlinkSync(tempPs1); } catch {}
+  const tempPs1 = path.join(os.tmpdir(), `sign-${Date.now()}.ps1`);
+  const maxRetries = 5;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      fs.writeFileSync(tempPs1, buildScript(filePath), 'utf8');
+      execSync(`powershell -ExecutionPolicy Bypass -File "${tempPs1}"`, {
+        stdio: 'inherit',
+        timeout: 60000,
+      });
+      break; // exit 0 → signing succeeded
+    } catch (err) {
+      if (attempt < maxRetries) {
+        const delaySec = attempt * 2;
+        console.log(`  \u23f3 signing ${basename} failed (attempt ${attempt}/${maxRetries}), retrying in ${delaySec}s...`);
+        execSync(`powershell -Command "Start-Sleep -Seconds ${delaySec}"`, { stdio: 'ignore' });
+      } else {
+        console.warn(`  \u26a0 signing failed for ${basename} after ${maxRetries} attempts: ${err.message}`);
+      }
+    } finally {
+      try { fs.unlinkSync(tempPs1); } catch {}
+    }
   }
 };

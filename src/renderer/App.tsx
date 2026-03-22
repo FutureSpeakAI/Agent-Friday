@@ -18,6 +18,7 @@ import { MoodProvider, useMood } from './contexts/MoodContext';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { AudioPlaybackEngine } from './audio/AudioPlaybackEngine';
 import { useWakeWord } from './hooks/useWakeWord';
+import { useVoiceState } from './hooks/useVoiceState';
 import { useDesktopEvolution } from './hooks/useDesktopEvolution';
 import { useAppManager } from './hooks/useAppManager';
 import { APP_REGISTRY } from './registry/app-registry';
@@ -216,6 +217,12 @@ export default function App() {
   const retriesRef = useRef(0);
   const maxRetries = 3;
 
+  // ── Voice State Machine integration (Track 6) ───────────────────────
+  // Provides canonical voice pipeline state from the main-process state machine.
+  // Components can consume voiceState.isActive / isConnecting / isDegraded
+  // instead of tracking scattered booleans.
+  const voiceState = useVoiceState();
+
   // ── Local voice conversation state (fallback when no Gemini key) ──────
   const localConversationActiveRef = useRef(false);
   const [localConversationActive, setLocalConversationActive] = useState(false);
@@ -354,6 +361,7 @@ export default function App() {
 
   const connectToGemini = useCallback(async (identityContext?: string) => {
     setStatus('Connecting...');
+    setConnectionError('');
 
     // 1. Determine if this is onboarding or a normal session
     let onboardingComplete = false;
@@ -391,6 +399,68 @@ export default function App() {
         ? 'You are a personal AI assistant. Keep responses concise for voice.'
         : 'You are a Setup Assistant helping configure a new AI agent. Be warm and friendly.';
     }
+
+    // ── Track 6: Try VoiceFallbackManager first (new pipeline) ────────
+    // The fallback manager handles path selection (cloud vs local vs text),
+    // pre-flight checks, and cascading fallback automatically.
+    // If the IPC bridge isn't available yet (new handlers not registered),
+    // we fall through to the legacy code path below.
+    try {
+      if (window.eve.voiceFallback) {
+        console.log('[Agent] Track 6: Using VoiceFallbackManager for path selection');
+        const chosenPath = await window.eve.voiceFallback.startBestPath(instruction, tools);
+        console.log(`[Agent] Track 6: VoiceFallbackManager chose path: ${chosenPath}`);
+
+        if (chosenPath === 'text') {
+          setStatus('Text mode (no voice backend available)');
+          setConnectionError('No voice backend available. Install Ollama for local voice or add a Gemini API key.');
+          return;
+        }
+
+        // The state machine & fallback manager handle the rest.
+        // Status updates come from the voiceState hook + the useEffect bridge below.
+        setStatus(chosenPath === 'cloud' ? 'Connected (Cloud)' : 'Connected (Local)');
+        retriesRef.current = 0;
+        setRetryCount(0);
+
+        // Signal InterviewStep that voice session is live
+        window.dispatchEvent(new Event('gemini-audio-active'));
+
+        // Post-connection: inject onboarding prompt or intelligence briefing
+        setTimeout(async () => {
+          try {
+            if (!onboardingComplete) {
+              const prompt = `[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question. As part of the conversation, discover what they'd like to name their AI agent, their preferred voice gender (male/female/neutral), and voice character (warm/sharp/deep/soft/bright).`;
+              if (chosenPath === 'local') {
+                await window.eve.localConversation.sendText(prompt).catch(() => {});
+              } else {
+                geminiLive.sendTextToGemini(prompt);
+              }
+            } else {
+              const briefing = await window.eve.intelligence.getBriefing();
+              if (briefing) {
+                if (chosenPath === 'local') {
+                  await window.eve.localConversation.sendText(briefing).catch(() => {});
+                } else {
+                  geminiLive.sendTextToGemini(briefing);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[Agent] Post-connect prompt injection failed:', err);
+          }
+        }, 2000);
+
+        return; // Success — skip legacy path
+      }
+    } catch (fallbackErr) {
+      // VoiceFallbackManager not available or failed — fall through to legacy path
+      console.warn('[Agent] Track 6: VoiceFallbackManager unavailable, using legacy path:', fallbackErr);
+    }
+
+    // ── Legacy path (pre-Track 6 behavior) ────────────────────────────
+    // This code path is kept for graceful degradation when the new voice
+    // components haven't been initialized yet.
 
     // 5. Determine voice — Charon (calm male) for onboarding, configured voice for normal
     let voiceName = 'Charon'; // Calm male setup voice for onboarding ("Her" style)
@@ -505,6 +575,18 @@ export default function App() {
           if (localConversationActiveRef.current) {
             // Session is alive — show as a status warning, not a blocking error
             setStatus(`Local voice error: ${error}`);
+            // LLM errors must appear in chat so the user knows what happened
+            if (error.startsWith('LLM error:')) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: 'assistant' as const,
+                  content: `⚠ ${error}`,
+                  timestamp: Date.now(),
+                },
+              ]);
+            }
           } else {
             // Session failed to start entirely — show as connection error
             setConnectionError(error);
@@ -551,7 +633,15 @@ export default function App() {
 
       try {
         await window.eve.localConversation.start(instruction, tools, initialPrompt);
-        // 'started' event handler above will set status + dispatch gemini-audio-active
+        // Set ref immediately — don't wait for async 'started' IPC event
+        // (the event may arrive after this function returns, causing a race)
+        localConversationActiveRef.current = true;
+        setLocalConversationActive(true);
+        setStatus('Connected (Local)');
+        setConnectionError('');
+        retriesRef.current = 0;
+        setRetryCount(0);
+        window.dispatchEvent(new Event('gemini-audio-active'));
         return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -684,7 +774,8 @@ export default function App() {
       : 'offline' as const;
 
     // Run actual API health checks (lightweight endpoint pings)
-    window.eve.settings.checkApiHealth().then((health: Record<string, string>) => {
+    window.eve.settings.checkApiHealth().then((raw) => {
+      const health = raw as Record<string, string>;
       setApiStatus({
         gemini: geminiLive.isConnected ? 'connected' : (health.gemini as any) || 'no-key',
         claude: (health.claude as any) || 'no-key',
@@ -709,7 +800,8 @@ export default function App() {
   // Periodic API health refresh (every 60s) so beacons stay current
   useEffect(() => {
     const timer = setInterval(() => {
-      window.eve.settings.checkApiHealth().then((health: Record<string, string>) => {
+      window.eve.settings.checkApiHealth().then((raw) => {
+        const health = raw as Record<string, string>;
         setApiStatus((prev) => ({
           ...prev,
           gemini: prev.gemini === 'connected' ? 'connected' : (health.gemini as any) || prev.gemini,
@@ -1092,18 +1184,30 @@ export default function App() {
     prevListeningRef.current = geminiLive.isListening;
   }, [geminiLive.isListening]);
 
-  // Status updates
+  // Status updates — merge Gemini Live state with Voice State Machine
   useEffect(() => {
-    if (geminiLive.isSpeaking) {
+    // Voice State Machine takes priority when it reports active/degraded/error states
+    if (voiceState.isActive && !geminiLive.isConnected && !localConversationActive) {
+      // State machine says active but legacy state disagrees — trust the machine
+      setStatus('Connected');
+    } else if (voiceState.isDegraded) {
+      setStatus('Voice connection degraded');
+    } else if (voiceState.state === 'TEXT_FALLBACK') {
+      setStatus('Text mode — voice unavailable');
+    } else if (voiceState.state === 'ERROR') {
+      setConnectionError('Voice pipeline error');
+    } else if (geminiLive.isSpeaking) {
       setStatus('Speaking...');
     } else if (geminiLive.isListening) {
       setStatus('Listening...');
     } else if (geminiLive.isConnected) {
       setStatus('Connected');
+    } else if (localConversationActive) {
+      setStatus('Connected (Local)');
     } else if (geminiLive.error) {
       setStatus(geminiLive.error);
     }
-  }, [geminiLive.isListening, geminiLive.isSpeaking, geminiLive.isConnected, geminiLive.error]);
+  }, [geminiLive.isListening, geminiLive.isSpeaking, geminiLive.isConnected, geminiLive.error, voiceState.state, voiceState.isActive, voiceState.isDegraded, localConversationActive]);
 
   // Handle text message send — routes to local conversation OR Gemini
   const handleTextSend = useCallback(

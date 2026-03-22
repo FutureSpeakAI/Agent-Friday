@@ -230,7 +230,7 @@ export class TTSEngine {
   private formatVoiceName(id: string): string {
     return id
       .replace(/[-_]/g, ' ')
-      .replace(/w/g, (c) => c.toUpperCase());
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   }
 
   private detectLanguage(id: string): string {
