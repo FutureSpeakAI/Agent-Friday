@@ -1,0 +1,51 @@
+flowchart LR
+    subgraph Renderer["Renderer Process"]
+        Mic["Microphone<br/>getUserMedia()"]
+        AW["AudioWorklet<br/>pcm-capture-processor"]
+        NG["Noise Gate<br/>RMS &lt; 0.015 dropped"]
+        B64["Base64 Encode<br/>Int16 PCM 16kHz"]
+        SC["Screen Capture<br/>JPEG frames"]
+        APE["AudioPlaybackEngine<br/>24kHz Web Audio<br/>backpressure 75%/90%"]
+        SM["SessionManager<br/>rolling buffer<br/>reconnect at 5.5min"]
+        TE["Tool Executor<br/>tool-executor.ts"]
+        EM["Episodic Memory<br/>&gt;= 4 turns, &gt;= 60s"]
+    end
+
+    subgraph Cloud["Gemini Cloud"]
+        WS["WebSocket<br/>BidiGenerateContent"]
+        Gemini["Gemini 2.5 Flash<br/>native-audio-preview"]
+    end
+
+    subgraph Tools["Tool Targets"]
+        DT["Desktop Tools<br/>window.eve.desktop"]
+        MCP["MCP Servers<br/>window.eve.mcp"]
+        BT["Browser Tools<br/>window.eve.browser"]
+        Claude["Claude API<br/>ask_claude"]
+    end
+
+    Mic --> AW
+    AW --> NG
+    NG --> B64
+    B64 -->|"realtime_input<br/>audio/pcm;rate=16000"| WS
+    SC -->|"realtime_input<br/>image/jpeg"| WS
+
+    WS --> Gemini
+    Gemini -->|"audioData"| APE
+    Gemini -->|"text transcript"| SM
+    Gemini -->|"toolCall"| TE
+
+    TE --> DT
+    TE --> MCP
+    TE --> BT
+    TE --> Claude
+
+    DT -->|"result"| WS
+    MCP -->|"result"| WS
+    BT -->|"result"| WS
+    Claude -->|"result"| WS
+
+    SM -->|"on disconnect"| EM
+
+    style Renderer fill:#1a1a2e,stroke:#e94560,color:#eee
+    style Cloud fill:#0f3460,stroke:#e94560,color:#eee
+    style Tools fill:#16213e,stroke:#e94560,color:#eee
