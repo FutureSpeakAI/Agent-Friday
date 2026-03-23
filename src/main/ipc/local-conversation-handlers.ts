@@ -60,6 +60,10 @@ export function registerLocalConversationHandlers(
     sendToRenderer('local-conversation:event:error', error);
   });
 
+  conversation.on('barge-in', () => {
+    sendToRenderer('local-conversation:event:barge-in');
+  });
+
   // ── IPC handlers ──────────────────────────────────────────────────
 
   ipcMain.handle(

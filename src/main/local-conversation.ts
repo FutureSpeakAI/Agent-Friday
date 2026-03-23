@@ -27,6 +27,7 @@
 import { EventEmitter } from 'node:events';
 import { llmClient, type ChatMessage, type ToolDefinition, type ToolCall } from './llm-client';
 import { transcriptionPipeline, type TranscriptEvent } from './voice/transcription-pipeline';
+import { audioCapture } from './voice/audio-capture';
 import { whisperProvider } from './voice/whisper-provider';
 import { ttsEngine } from './voice/tts-engine';
 import { speechSynthesis } from './voice/speech-synthesis';
@@ -58,6 +59,7 @@ export class LocalConversation extends EventEmitter {
   private pendingInputs: string[] = [];
   private transcriptCleanup: (() => void) | null = null;
   private errorCleanup: (() => void) | null = null;
+  private bargeInCleanup: (() => void) | null = null;
 
   /** Whether Whisper STT is available (mic → text) */
   private voiceAvailable = false;
@@ -168,6 +170,17 @@ export class LocalConversation extends EventEmitter {
         const err = payload instanceof Error ? payload : new Error(String(payload));
         console.error(`[LocalConversation] Pipeline error: ${err.message}`);
         this.emit('error', `Voice pipeline error: ${err.message}`);
+      });
+
+      // Instant barge-in: stop TTS the moment VAD detects voice activity,
+      // don't wait for the full Whisper transcript to complete.
+      if (this.bargeInCleanup) { this.bargeInCleanup(); this.bargeInCleanup = null; }
+      this.bargeInCleanup = audioCapture.on('voice-start', () => {
+        if (this.ttsAvailable && speechSynthesis.isSpeaking()) {
+          console.log('[LocalConversation] VAD voice-start — interrupting TTS immediately');
+          speechSynthesis.stop();
+          this.emit('barge-in');
+        }
       });
 
       try {
@@ -625,6 +638,10 @@ export class LocalConversation extends EventEmitter {
     if (this.errorCleanup) {
       this.errorCleanup();
       this.errorCleanup = null;
+    }
+    if (this.bargeInCleanup) {
+      this.bargeInCleanup();
+      this.bargeInCleanup = null;
     }
 
     // Stop the transcription pipeline (mic + Whisper) — only if voice was active

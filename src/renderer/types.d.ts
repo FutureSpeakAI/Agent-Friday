@@ -823,6 +823,7 @@ declare global {
         onResponse: (cb: (text: string) => void) => () => void;
         onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => () => void;
         onError: (cb: (error: string) => void) => () => void;
+        onBargeIn: (cb: () => void) => () => void;
       };
 
       clipboard: {

@@ -249,19 +249,38 @@ async function findFreePort(): Promise<number> {
   });
 }
 
+/** Supported Python version range for PyTorch + chatterbox-tts */
+const MIN_PYTHON_MINOR = 10;
+const MAX_PYTHON_MINOR = 12;
+
 /**
- * Find a system Python >=3.10.
- * Returns the command string (e.g. "python" or "python3").
+ * Find a system Python >=3.10 and <=3.12 (the range supported by PyTorch).
+ * On Windows, tries the `py` launcher with explicit version flags first,
+ * then falls back to bare `python`/`python3` commands.
+ * Returns the command string (e.g. "py -3.12" or "python3").
  */
 async function findPython(): Promise<string | null> {
-  const candidates = IS_WIN
-    ? ['python', 'python3']
-    : ['python3', 'python'];
+  // On Windows, try the py launcher with specific compatible versions first
+  // (highest to lowest so we prefer the newest compatible version)
+  const candidates: Array<{ cmd: string; args: string[] }> = [];
 
-  for (const cmd of candidates) {
+  if (IS_WIN) {
+    for (let minor = MAX_PYTHON_MINOR; minor >= MIN_PYTHON_MINOR; minor--) {
+      candidates.push({ cmd: 'py', args: [`-3.${minor}`, '--version'] });
+    }
+  }
+
+  // Also try bare python/python3 commands
+  const bareCmds = IS_WIN ? ['python', 'python3'] : ['python3', 'python'];
+  for (const c of bareCmds) {
+    candidates.push({ cmd: c, args: ['--version'] });
+  }
+
+  for (const { cmd, args } of candidates) {
     try {
+      const versionArgs = args;
       const version = await new Promise<string>((resolve, reject) => {
-        execFile(cmd, ['--version'], { windowsHide: true }, (err, stdout, stderr) => {
+        execFile(cmd, versionArgs, { windowsHide: true }, (err, stdout, stderr) => {
           if (err) reject(err);
           else resolve((stdout || stderr).trim());
         });
@@ -270,9 +289,13 @@ async function findPython(): Promise<string | null> {
       if (match) {
         const major = parseInt(match[1]);
         const minor = parseInt(match[2]);
-        if (major >= 3 && minor >= 10) {
-          console.log(`[Chatterbox] Found Python: ${version} (${cmd})`);
-          return cmd;
+        if (major === 3 && minor >= MIN_PYTHON_MINOR && minor <= MAX_PYTHON_MINOR) {
+          // For py launcher, the actual command to use is "py -3.XX"
+          const fullCmd = cmd === 'py' ? `py -3.${minor}` : cmd;
+          console.log(`[Chatterbox] Found compatible Python: ${version} (${fullCmd})`);
+          return fullCmd;
+        } else {
+          console.log(`[Chatterbox] Skipping ${cmd}: ${version} (need 3.${MIN_PYTHON_MINOR}-3.${MAX_PYTHON_MINOR})`);
         }
       }
     } catch {
@@ -282,10 +305,16 @@ async function findPython(): Promise<string | null> {
   return null;
 }
 
-/** Run a shell command and return stdout. */
+/** Run a shell command and return stdout. Handles multi-word cmds like "py -3.12". */
 function runCommand(cmd: string, args: string[], cwd?: string): Promise<string> {
+  // Split multi-word commands (e.g. "py -3.12") into command + prefix args
+  const parts = cmd.split(/\s+/);
+  const actualCmd = parts[0];
+  const prefixArgs = parts.slice(1);
+  const allArgs = [...prefixArgs, ...args];
+
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
+    const child = spawn(actualCmd, allArgs, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -359,7 +388,7 @@ export async function isSetupComplete(): Promise<boolean> {
 }
 
 /**
- * Check if a system Python >=3.10 is available.
+ * Check if a compatible Python (3.10-3.12) is available.
  */
 export async function isPythonAvailable(): Promise<boolean> {
   return (await findPython()) !== null;
@@ -397,20 +426,44 @@ export async function setup(
   };
 
   // Step 1: Find Python
-  emit({ stage: 'checking-python', message: 'Checking for Python 3.10+...', percent: 0 });
+  emit({ stage: 'checking-python', message: 'Checking for Python 3.10-3.12...', percent: 0 });
   const pythonCmd = await findPython();
   if (!pythonCmd) {
-    emit({ stage: 'error', message: 'Python 3.10+ not found. Install Python from python.org.', percent: 0 });
-    throw new Error('Python 3.10+ not found. Install Python from https://python.org');
+    const msg = `Python 3.${MIN_PYTHON_MINOR}-3.${MAX_PYTHON_MINOR} not found. Your system Python may be too new for PyTorch. Install Python 3.12 from python.org.`;
+    emit({ stage: 'error', message: msg, percent: 0 });
+    throw new Error(msg);
   }
 
-  // Step 2: Create venv
+  // Step 2: Create venv (delete stale venv if Python version changed)
   emit({ stage: 'creating-venv', message: 'Creating Python virtual environment...', percent: 10 });
   await mkdir(CHATTERBOX_DIR, { recursive: true });
+
+  // Always recreate the venv if it exists but was made with a wrong Python
+  if (await fileExists(PYTHON_BIN)) {
+    try {
+      const venvVersion = await runCommand(PYTHON_BIN, ['--version']);
+      const match = venvVersion.trim().match(/Python (\d+)\.(\d+)/);
+      if (match) {
+        const minor = parseInt(match[2]);
+        if (minor < MIN_PYTHON_MINOR || minor > MAX_PYTHON_MINOR) {
+          console.log(`[Chatterbox] Existing venv has Python 3.${minor}, recreating with compatible version...`);
+          const { rm } = await import('node:fs/promises');
+          await rm(VENV_DIR, { recursive: true, force: true });
+        }
+      }
+    } catch {
+      // Can't check version — recreate to be safe
+      const { rm } = await import('node:fs/promises');
+      await rm(VENV_DIR, { recursive: true, force: true });
+    }
+  }
 
   if (!(await fileExists(PYTHON_BIN))) {
     await runCommand(pythonCmd, ['-m', 'venv', VENV_DIR]);
   }
+
+  // Ensure pip and setuptools are up to date
+  await runCommand(PIP_BIN, ['install', '--upgrade', 'pip', 'setuptools', 'wheel']);
 
   // Step 3: Install PyTorch with CUDA
   emit({ stage: 'installing-pytorch', message: 'Installing PyTorch (this may take a few minutes)...', percent: 20 });
@@ -419,13 +472,13 @@ export async function setup(
   if (hasCuda) {
     await runCommand(PIP_BIN, [
       'install', '--upgrade',
-      'torch==2.6.0', 'torchaudio==2.6.0',
-      '--index-url', 'https://download.pytorch.org/whl/cu124',
+      'torch', 'torchaudio',
+      '--index-url', 'https://download.pytorch.org/whl/cu126',
     ]);
   } else {
     await runCommand(PIP_BIN, [
       'install', '--upgrade',
-      'torch==2.6.0', 'torchaudio==2.6.0',
+      'torch', 'torchaudio',
       '--index-url', 'https://download.pytorch.org/whl/cpu',
     ]);
   }
