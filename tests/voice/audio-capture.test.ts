@@ -60,8 +60,8 @@ vi.mock('electron', () => ({
 
 // -- Import after mocks -----------------------------------------------------
 
-import { AudioCapture, audioCapture } from '../../../src/main/voice/audio-capture';
-import type { AudioCaptureConfig } from '../../../src/main/voice/audio-capture';
+import { AudioCapture, audioCapture } from '../../src/main/voice/audio-capture';
+import type { AudioCaptureConfig } from '../../src/main/voice/audio-capture';
 
 // -- Helpers ----------------------------------------------------------------
 

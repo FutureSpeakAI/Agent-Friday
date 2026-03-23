@@ -44,7 +44,7 @@ vi.mock('electron', () => ({
   desktopCapturer: { getSources: vi.fn() },
 }));
 
-vi.mock('../../../src/main/vision/vision-provider', () => ({
+vi.mock('../../src/main/vision/vision-provider', () => ({
   VisionProvider: {
     getInstance: () => ({
       describe: mocks.visionDescribe,
@@ -64,8 +64,8 @@ vi.mock('node:fs/promises', () => ({
   stat: (...args: unknown[]) => mocks.fsStat(...args),
 }));
 
-import { ImageUnderstanding, imageUnderstanding } from '../../../src/main/vision/image-understanding';
-import type { ImageResult } from '../../../src/main/vision/image-understanding';
+import { ImageUnderstanding, imageUnderstanding } from '../../src/main/vision/image-understanding';
+import type { ImageResult } from '../../src/main/vision/image-understanding';
 
 // -- Helper: create mock NativeImage ----------------------------------------
 

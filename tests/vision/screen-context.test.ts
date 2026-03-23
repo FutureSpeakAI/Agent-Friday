@@ -40,14 +40,14 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: vi.fn(), showSaveDialog: vi.fn() },
 }));
 
-vi.mock('../../../src/main/vision/vision-provider', () => ({
+vi.mock('../../src/main/vision/vision-provider', () => ({
   visionProvider: {
     describe: mocks.visionDescribe,
     isReady: mocks.visionIsReady,
   },
 }));
 
-import { ScreenContext, screenContext } from '../../../src/main/vision/screen-context';
+import { ScreenContext, screenContext } from '../../src/main/vision/screen-context';
 
 // -- Helper: create mock NativeImage ----------------------------------------
 

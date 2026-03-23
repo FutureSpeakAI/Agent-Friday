@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   fsStat: vi.fn(),
 }));
 
-vi.mock('../../../src/main/voice/whisper-binding', () => ({
+vi.mock('../../src/main/voice/whisper-binding', () => ({
   default: mocks.whisperBinding,
   whisperBinding: mocks.whisperBinding,
 }));
@@ -34,19 +34,24 @@ vi.mock('node:fs/promises', () => ({
   access: (...args: unknown[]) => mocks.fsAccess(...args),
   readdir: (...args: unknown[]) => mocks.fsReaddir(...args),
   stat: (...args: unknown[]) => mocks.fsStat(...args),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('node:os', () => ({
   homedir: () => '/mock/home',
+  platform: () => 'linux',
+  arch: () => 'x64',
+  tmpdir: () => '/tmp',
 }));
 
-import { WhisperProvider, whisperProvider } from '../../../src/main/voice/whisper-provider';
+import { WhisperProvider, whisperProvider } from '../../src/main/voice/whisper-provider';
 import type {
   WhisperModelSize,
   TranscriptionResult,
   TranscriptionSegment,
   WhisperModelInfo,
-} from '../../../src/main/voice/whisper-provider';
+} from '../../src/main/voice/whisper-provider';
 
 // -- Helper: create audio buffers ---------------------------------------------
 

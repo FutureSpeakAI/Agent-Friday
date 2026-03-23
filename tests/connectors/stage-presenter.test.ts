@@ -13,8 +13,8 @@ import {
   detect,
   _resetStore,
   _getOutputCount,
-} from '../../../src/main/connectors/stage-presenter';
-import type { StageOutput, StageDomain, OutputRenderer, DomainStats } from '../../../src/main/connectors/stage-presenter';
+} from '../../src/main/connectors/stage-presenter';
+import type { StageOutput, StageDomain, OutputRenderer, DomainStats } from '../../src/main/connectors/stage-presenter';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

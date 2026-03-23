@@ -33,11 +33,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../src/main/voice/audio-capture', () => ({ audioCapture: mocks.audioCapture }));
-vi.mock('../../../src/main/voice/whisper-provider', () => ({ whisperProvider: mocks.whisperProvider }));
+vi.mock('../../src/main/voice/audio-capture', () => ({ audioCapture: mocks.audioCapture }));
+vi.mock('../../src/main/voice/whisper-provider', () => ({ whisperProvider: mocks.whisperProvider }));
 
-import { TranscriptionPipeline } from '../../../src/main/voice/transcription-pipeline';
-import type { TranscriptEvent, TranscriptionStats } from '../../../src/main/voice/transcription-pipeline';
+import { TranscriptionPipeline } from '../../src/main/voice/transcription-pipeline';
+import type { TranscriptEvent, TranscriptionStats } from '../../src/main/voice/transcription-pipeline';
 
 function emitAC(event: string, payload?: unknown): void {
   const cbs = mocks.acListeners.get(event);

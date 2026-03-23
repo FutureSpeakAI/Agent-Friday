@@ -236,7 +236,30 @@ export default function FridayCode({ visible, onClose }: Props) {
         }
         return;
       }
-      setRunError('Container runtime not available. Only JavaScript can run in fallback mode.');
+      // Fallback: direct execution via subprocess for python/bash/node
+      const directExec = (window as any).eve?.code?.executeDirect;
+      const directLanguages = ['python', 'bash', 'node'];
+      const mappedLanguage = runLanguage === 'javascript' ? 'node' : runLanguage;
+      if (directExec && directLanguages.includes(mappedLanguage)) {
+        setIsRunning(true);
+        setOutput('');
+        setRunError('');
+        try {
+          const result = await directExec(code, mappedLanguage);
+          const combined = [result.stdout, result.stderr].filter(Boolean).join('\n');
+          setOutput(combined || '(no output)');
+          if (result.exitCode !== 0) {
+            setRunError(`Process exited with code ${result.exitCode}`);
+          }
+        } catch (err: any) {
+          setRunError(`Direct execution failed: ${err.message || 'Unknown error'}`);
+          setOutput('');
+        } finally {
+          setIsRunning(false);
+        }
+        return;
+      }
+      setRunError('Container runtime not available. Only JavaScript, Python, Bash, and Node can run in fallback mode.');
       return;
     }
 

@@ -27,11 +27,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../src/main/settings', () => ({
+vi.mock('../../src/main/settings', () => ({
   settingsManager: mocks.settingsManager,
 }));
 
-vi.mock('../../../src/main/voice/tts-engine', () => ({
+vi.mock('../../src/main/voice/tts-engine', () => ({
   ttsEngine: mocks.ttsEngine,
   TTSEngine: { getInstance: () => mocks.ttsEngine },
 }));
@@ -39,8 +39,8 @@ vi.mock('../../../src/main/voice/tts-engine', () => ({
 import {
   VoiceProfileManager,
   voiceProfileManager,
-} from '../../../src/main/voice/voice-profile-manager';
-import type { VoiceProfile } from '../../../src/main/voice/voice-profile-manager';
+} from '../../src/main/voice/voice-profile-manager';
+import type { VoiceProfile } from '../../src/main/voice/voice-profile-manager';
 // -- Helpers ------------------------------------------------------------------
 
 function createMockPCM(samples = 12000): Float32Array {

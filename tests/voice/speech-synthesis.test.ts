@@ -30,11 +30,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../src/main/voice/tts-engine', () => ({
+vi.mock('../../src/main/voice/tts-engine', () => ({
   ttsEngine: mocks.ttsEngine,
 }));
 
-vi.mock('../../../src/main/voice/voice-profile-manager', () => ({
+vi.mock('../../src/main/voice/voice-profile-manager', () => ({
   voiceProfileManager: mocks.voiceProfileManager,
 }));
 
@@ -48,7 +48,7 @@ vi.mock('electron', () => ({
 
 import {
   SpeechSynthesisManager,
-} from '../../../src/main/voice/speech-synthesis';
+} from '../../src/main/voice/speech-synthesis';
 
 // -- Helpers ------------------------------------------------------------------
 

@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { HardwareProfile } from '../../../src/main/hardware/hardware-profiler';
-import type { TierRecommendation, ModelRequirement, TierName } from '../../../src/main/hardware/tier-recommender';
+import type { HardwareProfile } from '../../src/main/hardware/hardware-profiler';
+import type { TierRecommendation, ModelRequirement, TierName } from '../../src/main/hardware/tier-recommender';
 
 // -- Hoisted mocks (required for vi.mock factories) -------------------------
 
@@ -57,7 +57,7 @@ vi.mock('node:fs', () => ({
   mkdirSync: mocks.mkdirSync,
 }));
 
-vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
+vi.mock('../../src/main/hardware/hardware-profiler', () => ({
   HardwareProfiler: {
     getInstance: () => ({
       detect: mocks.detect,
@@ -66,12 +66,12 @@ vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
   },
 }));
 
-vi.mock('../../../src/main/hardware/tier-recommender', () => ({
+vi.mock('../../src/main/hardware/tier-recommender', () => ({
   recommend: mocks.recommend,
   getModelList: mocks.getModelList,
 }));
 
-vi.mock('../../../src/main/ollama-lifecycle', () => ({
+vi.mock('../../src/main/ollama-lifecycle', () => ({
   OllamaLifecycle: {
     getInstance: () => ({
       pullModel: mocks.pullModel,
@@ -79,7 +79,7 @@ vi.mock('../../../src/main/ollama-lifecycle', () => ({
   },
 }));
 
-vi.mock('../../../src/main/hardware/model-orchestrator', () => ({
+vi.mock('../../src/main/hardware/model-orchestrator', () => ({
   ModelOrchestrator: {
     getInstance: () => ({
       loadTierModels: mocks.loadTierModels,
@@ -89,7 +89,7 @@ vi.mock('../../../src/main/hardware/model-orchestrator', () => ({
 
 // -- Import after mocks -----------------------------------------------------
 
-import { SetupWizard } from '../../../src/main/setup/setup-wizard';
+import { SetupWizard } from '../../src/main/setup/setup-wizard';
 
 // -- Test Data ---------------------------------------------------------------
 
@@ -105,8 +105,8 @@ const fakeProfile: HardwareProfile = {
 };
 
 const fakeModels: ModelRequirement[] = [
-  { name: 'nomic-embed-text', vramBytes: 0.5 * GB, diskBytes: 0.3 * GB, purpose: 'embeddings', required: true },
-  { name: 'llama3.1:8b-instruct-q4_K_M', vramBytes: 5.5 * GB, diskBytes: 4.7 * GB, purpose: 'chat', required: true },
+  { name: 'nomic-embed-text', vramBytes: 0.5 * GB, diskBytes: 0.3 * GB, purpose: 'embeddings', required: true, category: 'embedding' },
+  { name: 'llama3.1:8b-instruct-q4_K_M', vramBytes: 5.5 * GB, diskBytes: 4.7 * GB, purpose: 'chat', required: true, category: 'llm' },
 ];
 
 const fakeRecommendation: TierRecommendation = {

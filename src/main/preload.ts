@@ -1203,6 +1203,8 @@ contextBridge.exposeInMainWorld('eve', {
     listMedia: (type?: string) => ipcRenderer.invoke('multimedia:list-media', type),
     getSpeakerPresets: () => ipcRenderer.invoke('multimedia:get-speaker-presets'),
     getMediaDir: () => ipcRenderer.invoke('multimedia:get-media-dir'),
+    saveCapture: (dataURL: string, filename?: string) =>
+      ipcRenderer.invoke('multimedia:save-capture', dataURL, filename),
   },
 
   container: {
@@ -1223,6 +1225,11 @@ contextBridge.exposeInMainWorld('eve', {
     get: (taskId: string) => ipcRenderer.invoke('container:get', taskId),
     available: () => ipcRenderer.invoke('container:available'),
     activeCount: () => ipcRenderer.invoke('container:active-count'),
+  },
+
+  code: {
+    executeDirect: (code: string, language: string) =>
+      ipcRenderer.invoke('code:execute-direct', { code, language }),
   },
 
   delegation: {
@@ -1604,6 +1611,16 @@ contextBridge.exposeInMainWorld('eve', {
       resume: () => ipcRenderer.invoke('voice:speech:resume'),
       isSpeaking: () => ipcRenderer.invoke('voice:speech:is-speaking'),
       getQueueLength: () => ipcRenderer.invoke('voice:speech:get-queue-length'),
+    },
+    binaries: {
+      ensureWhisper: () => ipcRenderer.invoke('voice:ensure-whisper-binary'),
+      ensureTTS: () => ipcRenderer.invoke('voice:ensure-tts-binary'),
+      ensureTTSModel: () => ipcRenderer.invoke('voice:ensure-tts-model'),
+      onDownloadProgress: (cb: (progress: { binary: string; downloaded: number; total: number }) => void) => {
+        const handler = (_event: any, progress: { binary: string; downloaded: number; total: number }) => cb(progress);
+        ipcRenderer.on('voice:binary-download-progress', handler);
+        return () => ipcRenderer.removeListener('voice:binary-download-progress', handler);
+      },
     },
     onVoiceStart: (callback: (data: Record<string, unknown>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);

@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
 
 // Mock settings module — no API key by default
 let mockGeminiKey = '';
-vi.mock('../../../src/main/settings', () => ({
+vi.mock('../../src/main/settings', () => ({
   settingsManager: {
     getGeminiApiKey: () => mockGeminiKey,
   },
@@ -93,7 +93,7 @@ vi.mock('node:https', () => ({
 }));
 
 // Import after mocks
-import { TOOLS, execute, detect } from '../../../src/main/connectors/video-gen';
+import { TOOLS, execute, detect } from '../../src/main/connectors/video-gen';
 
 // ---------------------------------------------------------------------------
 // Test Utilities

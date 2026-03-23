@@ -226,6 +226,41 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
     return synthesis.getQueueLength();
   });
 
+  // ── Binary Management ─────────────────────────────────────────────
+
+  ipcMain.handle('voice:ensure-whisper-binary', async () => {
+    const { ensureWhisperBinary } = await import('../voice/binary-downloader');
+    return ensureWhisperBinary((downloaded, total) => {
+      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+        binary: 'whisper',
+        downloaded,
+        total,
+      });
+    });
+  });
+
+  ipcMain.handle('voice:ensure-tts-binary', async () => {
+    const { ensureTTSBinary } = await import('../voice/binary-downloader');
+    return ensureTTSBinary((downloaded, total) => {
+      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+        binary: 'tts',
+        downloaded,
+        total,
+      });
+    });
+  });
+
+  ipcMain.handle('voice:ensure-tts-model', async () => {
+    const { ensureTTSModel } = await import('../voice/binary-downloader');
+    return ensureTTSModel((downloaded, total) => {
+      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+        binary: 'tts-model',
+        downloaded,
+        total,
+      });
+    });
+  });
+
   // ── Event forwarding to renderer ──────────────────────────────────
   // Clean up any previously registered forwarding listeners to prevent
   // listener accumulation on dev hot-reload or window recreate.
