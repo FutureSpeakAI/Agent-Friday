@@ -247,15 +247,7 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
         return;
       }
 
-      // Check Python availability
-      const hasPython = await window.eve.voice.chatterbox.isPythonAvailable();
-      if (!hasPython) {
-        setChatterboxStatus('no-python');
-        setChatterboxMessage('Python 3.10+ not found — voice will use lightweight fallback.');
-        return;
-      }
-
-      // Install Chatterbox (PyTorch + chatterbox-tts)
+      // Install Chatterbox (auto-downloads Python if needed, then PyTorch + chatterbox-tts)
       setChatterboxStatus('installing');
       setChatterboxMessage('Installing Chatterbox Turbo voice engine...');
 

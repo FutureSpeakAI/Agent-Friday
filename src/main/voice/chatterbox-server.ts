@@ -17,8 +17,11 @@
  */
 
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { mkdir, writeFile, access } from 'node:fs/promises';
-import { homedir, platform } from 'node:os';
+import { mkdir, writeFile, access, rm, rename } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { homedir, platform, arch } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import http from 'node:http';
@@ -28,6 +31,7 @@ import { EventEmitter } from 'node:events';
 
 const CHATTERBOX_DIR = join(homedir(), '.nexus-os', 'services', 'chatterbox');
 const VENV_DIR = join(CHATTERBOX_DIR, 'venv');
+const BUNDLED_PYTHON_DIR = join(CHATTERBOX_DIR, 'python');
 const SERVER_SCRIPT = join(CHATTERBOX_DIR, 'server.py');
 const IS_WIN = platform() === 'win32';
 const PYTHON_BIN = IS_WIN
@@ -36,6 +40,9 @@ const PYTHON_BIN = IS_WIN
 const PIP_BIN = IS_WIN
   ? join(VENV_DIR, 'Scripts', 'pip.exe')
   : join(VENV_DIR, 'bin', 'pip');
+const BUNDLED_PYTHON_BIN = IS_WIN
+  ? join(BUNDLED_PYTHON_DIR, 'python', 'python.exe')
+  : join(BUNDLED_PYTHON_DIR, 'python', 'bin', 'python3');
 
 /** Max time to wait for the server to become healthy after spawn */
 const STARTUP_TIMEOUT_MS = 120_000; // Model download can take a while on first run
@@ -43,6 +50,29 @@ const STARTUP_TIMEOUT_MS = 120_000; // Model download can take a while on first 
 const SYNTHESIS_TIMEOUT_MS = 30_000;
 /** Health check interval while server is running */
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
+
+/**
+ * python-build-standalone: self-contained Python 3.12 (~46MB download).
+ * Used when no compatible system Python is available.
+ */
+const PYTHON_STANDALONE_VERSION = '3.12.13';
+const PYTHON_STANDALONE_TAG = '20260320';
+
+function getPythonStandaloneUrl(): string {
+  const tag = PYTHON_STANDALONE_TAG;
+  const ver = `${PYTHON_STANDALONE_VERSION}+${tag}`;
+  const base = `https://github.com/astral-sh/python-build-standalone/releases/download/${tag}`;
+
+  if (IS_WIN) {
+    return `${base}/cpython-${ver}-x86_64-pc-windows-msvc-install_only.tar.gz`;
+  }
+  if (platform() === 'darwin') {
+    const macArch = arch() === 'arm64' ? 'aarch64' : 'x86_64';
+    return `${base}/cpython-${ver}-${macArch}-apple-darwin-install_only.tar.gz`;
+  }
+  // Linux
+  return `${base}/cpython-${ver}-x86_64-unknown-linux-gnu-install_only.tar.gz`;
+}
 
 // -- Python Server Script -----------------------------------------------------
 
@@ -254,14 +284,33 @@ const MIN_PYTHON_MINOR = 10;
 const MAX_PYTHON_MINOR = 12;
 
 /**
- * Find a system Python >=3.10 and <=3.12 (the range supported by PyTorch).
- * On Windows, tries the `py` launcher with explicit version flags first,
- * then falls back to bare `python`/`python3` commands.
- * Returns the command string (e.g. "py -3.12" or "python3").
+ * Find a compatible Python (3.10-3.12).
+ *
+ * Priority:
+ *   1. Bundled python-build-standalone (always compatible)
+ *   2. System `py` launcher with specific version flags (Windows)
+ *   3. System `python`/`python3` commands
+ *
+ * Returns the absolute path or command string.
  */
 async function findPython(): Promise<string | null> {
-  // On Windows, try the py launcher with specific compatible versions first
-  // (highest to lowest so we prefer the newest compatible version)
+  // 1. Check for our bundled Python first (always the right version)
+  if (await fileExists(BUNDLED_PYTHON_BIN)) {
+    try {
+      const version = await new Promise<string>((resolve, reject) => {
+        execFile(BUNDLED_PYTHON_BIN, ['--version'], { windowsHide: true }, (err, stdout, stderr) => {
+          if (err) reject(err);
+          else resolve((stdout || stderr).trim());
+        });
+      });
+      console.log(`[Chatterbox] Using bundled Python: ${version}`);
+      return BUNDLED_PYTHON_BIN;
+    } catch {
+      // Bundled Python exists but doesn't work — fall through
+    }
+  }
+
+  // 2. Try system Python installations
   const candidates: Array<{ cmd: string; args: string[] }> = [];
 
   if (IS_WIN) {
@@ -270,7 +319,6 @@ async function findPython(): Promise<string | null> {
     }
   }
 
-  // Also try bare python/python3 commands
   const bareCmds = IS_WIN ? ['python', 'python3'] : ['python3', 'python'];
   for (const c of bareCmds) {
     candidates.push({ cmd: c, args: ['--version'] });
@@ -278,9 +326,8 @@ async function findPython(): Promise<string | null> {
 
   for (const { cmd, args } of candidates) {
     try {
-      const versionArgs = args;
       const version = await new Promise<string>((resolve, reject) => {
-        execFile(cmd, versionArgs, { windowsHide: true }, (err, stdout, stderr) => {
+        execFile(cmd, args, { windowsHide: true }, (err, stdout, stderr) => {
           if (err) reject(err);
           else resolve((stdout || stderr).trim());
         });
@@ -290,9 +337,8 @@ async function findPython(): Promise<string | null> {
         const major = parseInt(match[1]);
         const minor = parseInt(match[2]);
         if (major === 3 && minor >= MIN_PYTHON_MINOR && minor <= MAX_PYTHON_MINOR) {
-          // For py launcher, the actual command to use is "py -3.XX"
           const fullCmd = cmd === 'py' ? `py -3.${minor}` : cmd;
-          console.log(`[Chatterbox] Found compatible Python: ${version} (${fullCmd})`);
+          console.log(`[Chatterbox] Found compatible system Python: ${version} (${fullCmd})`);
           return fullCmd;
         } else {
           console.log(`[Chatterbox] Skipping ${cmd}: ${version} (need 3.${MIN_PYTHON_MINOR}-3.${MAX_PYTHON_MINOR})`);
@@ -303,6 +349,75 @@ async function findPython(): Promise<string | null> {
     }
   }
   return null;
+}
+
+/**
+ * Download and extract python-build-standalone into BUNDLED_PYTHON_DIR.
+ * ~46MB download, extracts to ~150MB on disk.
+ */
+async function downloadBundledPython(
+  onProgress?: (downloaded: number, total: number) => void,
+): Promise<void> {
+  const url = getPythonStandaloneUrl();
+  const archivePath = join(CHATTERBOX_DIR, 'python-standalone.tar.gz');
+
+  console.log(`[Chatterbox] Downloading Python ${PYTHON_STANDALONE_VERSION} from python-build-standalone...`);
+  await mkdir(CHATTERBOX_DIR, { recursive: true });
+
+  // Download with progress
+  const tempPath = archivePath + '.download';
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    if (!response.ok) {
+      throw new Error(`Download failed: HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const contentLength = parseInt(response.headers.get('content-length') ?? '0', 10);
+    if (!response.body) throw new Error('No response body');
+
+    const fileStream = createWriteStream(tempPath);
+    let downloaded = 0;
+    const reader = response.body.getReader();
+    const nodeStream = new Readable({
+      async read() {
+        try {
+          const { done, value } = await reader.read();
+          if (done) { this.push(null); return; }
+          downloaded += value.byteLength;
+          onProgress?.(downloaded, contentLength);
+          this.push(Buffer.from(value));
+        } catch (err) { this.destroy(err as Error); }
+      },
+    });
+
+    await pipeline(nodeStream, fileStream);
+    await rename(tempPath, archivePath);
+  } catch (err) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw err;
+  }
+
+  // Extract .tar.gz — creates python/ subdirectory
+  console.log('[Chatterbox] Extracting Python runtime...');
+  await rm(BUNDLED_PYTHON_DIR, { recursive: true, force: true });
+  await mkdir(BUNDLED_PYTHON_DIR, { recursive: true });
+
+  if (IS_WIN) {
+    // Use PowerShell + tar (built into Windows 10+)
+    await runCommand('tar', ['-xzf', archivePath, '-C', BUNDLED_PYTHON_DIR]);
+  } else {
+    await runCommand('tar', ['-xzf', archivePath, '-C', BUNDLED_PYTHON_DIR]);
+  }
+
+  // Clean up archive
+  await rm(archivePath, { force: true }).catch(() => {});
+
+  // Verify extraction
+  if (!(await fileExists(BUNDLED_PYTHON_BIN))) {
+    throw new Error(`Python extraction failed: ${BUNDLED_PYTHON_BIN} not found`);
+  }
+
+  console.log(`[Chatterbox] Python ${PYTHON_STANDALONE_VERSION} installed to ${BUNDLED_PYTHON_DIR}`);
 }
 
 /** Run a shell command and return stdout. Handles multi-word cmds like "py -3.12". */
@@ -388,24 +503,21 @@ export async function isSetupComplete(): Promise<boolean> {
 }
 
 /**
- * Check if a compatible Python (3.10-3.12) is available.
+ * Check if a compatible Python is available (or can be auto-downloaded).
+ * Always returns true since we can download python-build-standalone.
  */
 export async function isPythonAvailable(): Promise<boolean> {
-  return (await findPython()) !== null;
+  // We can always download a bundled Python, so this is always true
+  return true;
 }
 
 /**
  * Check if the system has a CUDA-capable GPU.
  */
 export async function hasCudaGpu(): Promise<boolean> {
-  const python = await findPython();
-  if (!python) return false;
   try {
-    const result = await runCommand(python, [
-      '-c',
-      'import subprocess; r=subprocess.run(["nvidia-smi"],capture_output=True); print("yes" if r.returncode==0 else "no")',
-    ]);
-    return result.trim() === 'yes';
+    await runCommand('nvidia-smi', []);
+    return true;
   } catch {
     return false;
   }
@@ -425,13 +537,26 @@ export async function setup(
     chatterboxEvents.emit('setup-progress', p);
   };
 
-  // Step 1: Find Python
-  emit({ stage: 'checking-python', message: 'Checking for Python 3.10-3.12...', percent: 0 });
-  const pythonCmd = await findPython();
+  // Step 1: Find or download Python
+  emit({ stage: 'checking-python', message: 'Checking for compatible Python...', percent: 0 });
+  let pythonCmd = await findPython();
+
   if (!pythonCmd) {
-    const msg = `Python 3.${MIN_PYTHON_MINOR}-3.${MAX_PYTHON_MINOR} not found. Your system Python may be too new for PyTorch. Install Python 3.12 from python.org.`;
-    emit({ stage: 'error', message: msg, percent: 0 });
-    throw new Error(msg);
+    // No compatible Python found — auto-download python-build-standalone
+    emit({ stage: 'checking-python', message: `Downloading Python ${PYTHON_STANDALONE_VERSION} (this is a one-time ~46MB download)...`, percent: 2 });
+    console.log('[Chatterbox] No compatible Python 3.10-3.12 found — downloading standalone runtime');
+
+    await downloadBundledPython((downloaded, total) => {
+      const pct = total > 0 ? Math.round((downloaded / total) * 8) + 2 : 5; // 2-10%
+      emit({ stage: 'checking-python', message: `Downloading Python ${PYTHON_STANDALONE_VERSION}...`, percent: pct });
+    });
+
+    pythonCmd = await findPython();
+    if (!pythonCmd) {
+      const msg = 'Failed to set up Python runtime. Please report this issue.';
+      emit({ stage: 'error', message: msg, percent: 0 });
+      throw new Error(msg);
+    }
   }
 
   // Step 2: Create venv (delete stale venv if Python version changed)
