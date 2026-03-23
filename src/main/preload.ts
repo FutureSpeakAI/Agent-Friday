@@ -1803,6 +1803,8 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.on('voice-fallback:event:switch-failed', handler);
       return () => { ipcRenderer.removeListener('voice-fallback:event:switch-failed', handler); };
     },
+    setPathPriority: (path: string, priority: number) =>
+      ipcRenderer.invoke('voice-fallback:set-path-priority', path, priority),
   },
 
   // ── Phase 6.1: Connection Stage Monitor (granular progress events) ────

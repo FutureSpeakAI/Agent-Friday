@@ -1934,6 +1934,7 @@ declare global {
         onSwitchComplete: (callback: (payload: { path: VoicePath; hadContext: boolean }) => void) => () => void;
         onAllPathsExhausted: (callback: (payload: { errors: Array<{ path: VoicePath; error: string }> }) => void) => () => void;
         onSwitchFailed: (callback: (payload: { path: VoicePath; error: string }) => void) => () => void;
+        setPathPriority: (path: VoicePath, priority: number) => Promise<void>;
       };
 
       connectionStage: {
