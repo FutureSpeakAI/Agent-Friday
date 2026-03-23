@@ -279,10 +279,17 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
   });
 
   ipcMain.handle('voice:chatterbox:setup', async () => {
-    const { setup } = await import('../voice/chatterbox-server');
-    return setup((progress) => {
-      deps.getMainWindow()?.webContents.send('voice:chatterbox:setup-progress', progress);
-    });
+    try {
+      const { setup } = await import('../voice/chatterbox-server');
+      return await setup((progress) => {
+        deps.getMainWindow()?.webContents.send('voice:chatterbox:setup-progress', progress);
+      });
+    } catch (err) {
+      // Re-throw with the actual message so the renderer sees it
+      // (Electron IPC strips error details by default)
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(msg);
+    }
   });
 
   ipcMain.handle('voice:chatterbox:is-running', async () => {

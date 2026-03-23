@@ -1759,6 +1759,11 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.on('local-conversation:event:error', handler);
       return () => { ipcRenderer.removeListener('local-conversation:event:error', handler); };
     },
+    onBargeIn: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on('local-conversation:event:barge-in', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:barge-in', handler); };
+    },
   },
 
   // ── Sprint 7: Vision Pipeline ───────────────────────────────────

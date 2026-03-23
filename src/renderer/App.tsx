@@ -442,6 +442,14 @@ export default function App() {
         }),
       );
 
+      // Instant barge-in: flush renderer audio when VAD detects user speaking
+      cleanups.push(
+        window.eve.localConversation.onBargeIn(() => {
+          console.log('[Agent] Barge-in — flushing audio playback');
+          localPlaybackRef.current?.flush();
+        }),
+      );
+
       // Wire local TTS audio to speakers via AudioPlaybackEngine
       if (!localPlaybackRef.current) {
         localPlaybackRef.current = new AudioPlaybackEngine();
@@ -480,16 +488,33 @@ export default function App() {
 
       try {
         await window.eve.localConversation.start(instruction, tools, initialPrompt);
-        // Set ref immediately — don't wait for async 'started' IPC event
-        // (the event may arrive after this function returns, causing a race)
-        localConversationActiveRef.current = true;
-        setLocalConversationActive(true);
-        setStatus('Connected (Local)');
-        setConnectionError('');
-        retriesRef.current = 0;
-        setRetryCount(0);
-        window.dispatchEvent(new Event('gemini-audio-active'));
-        return;
+
+        // Check if TTS actually loaded — if not, the user will hear nothing.
+        // Fall back to Gemini Live for full voice if available.
+        let ttsReady = false;
+        try { ttsReady = await window.eve.voice.tts.isReady(); } catch { /* not available */ }
+
+        if (!ttsReady && hasGeminiKey) {
+          console.warn('[Agent] Local TTS unavailable — falling back to Gemini Live for voice');
+          // Stop the silent local conversation and use Gemini instead
+          try { await window.eve.localConversation.stop(); } catch { /* best effort */ }
+          localConversationActiveRef.current = false;
+          setLocalConversationActive(false);
+          for (const cleanup of localConversationCleanupsRef.current) cleanup();
+          localConversationCleanupsRef.current = [];
+          setStatus('Local TTS unavailable — connecting via Gemini...');
+          // Fall through to Gemini path below
+        } else {
+          // Local conversation is running (with or without TTS)
+          localConversationActiveRef.current = true;
+          setLocalConversationActive(true);
+          setStatus(ttsReady ? 'Connected (Local)' : 'Connected (Local — text only, no TTS)');
+          setConnectionError('');
+          retriesRef.current = 0;
+          setRetryCount(0);
+          window.dispatchEvent(new Event('gemini-audio-active'));
+          return;
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('[Agent] Local voice failed, falling back to Gemini:', msg);
