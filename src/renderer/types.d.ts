@@ -815,7 +815,7 @@ declare global {
       };
 
       localConversation: {
-        start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<void>;
+        start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<{ ok: boolean; error?: string }>;
         sendText: (text: string) => Promise<void>;
         stop: () => Promise<void>;
         onStarted: (cb: () => void) => () => void;

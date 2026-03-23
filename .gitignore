@@ -6,6 +6,7 @@ dist/
 
 # Packaged installers
 release/
+releases/
 
 # Environment variables (NEVER commit real API keys)
 .env
