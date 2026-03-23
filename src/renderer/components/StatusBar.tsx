@@ -92,7 +92,7 @@ export default function StatusBar({ status, isWebcamActive, isInCall, apiStatus 
         <StatusDot label="GEM" state={api.gemini} />
         <StatusDot label="CLU" state={api.claude} />
         <StatusDot label="ORT" state={api.openrouter} />
-        <StatusDot label="TTS" state={api.elevenlabs} />
+        <StatusDot label="E11" state={api.elevenlabs} />
         <StatusDot label="BRW" state={api.browser} />
       </div>
     </div>

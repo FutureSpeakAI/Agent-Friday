@@ -214,7 +214,9 @@ export class LocalConversation extends EventEmitter {
       console.warn('[LocalConversation] Not active — ignoring sendText()');
       return;
     }
-    await this.processUserInput(text);
+    // skipTranscriptEmit: the renderer already added the user message to chat
+    // before calling sendText — don't emit user-transcript again (avoids duplicates)
+    await this.processUserInput(text, { skipTranscriptEmit: true });
   }
 
   /**
@@ -255,7 +257,7 @@ export class LocalConversation extends EventEmitter {
    * Serialized: if a previous turn is still processing, this queues behind it.
    * (The TranscriptionPipeline already serializes transcripts via its queue.)
    */
-  private async processUserInput(text: string): Promise<void> {
+  private async processUserInput(text: string, options?: { skipTranscriptEmit?: boolean }): Promise<void> {
     if (!this.active) return;
 
     // Queue input if currently processing — never drop user speech
@@ -268,8 +270,10 @@ export class LocalConversation extends EventEmitter {
     this.processing = true;
 
     try {
-      // 1. Emit user transcript for UI display
-      this.emit('user-transcript', text);
+      // 1. Emit user transcript for UI display (skip for typed text — renderer already has it)
+      if (!options?.skipTranscriptEmit) {
+        this.emit('user-transcript', text);
+      }
 
       // 2. Append user message to history
       this.messages.push({ role: 'user', content: text });
