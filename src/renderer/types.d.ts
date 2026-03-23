@@ -788,6 +788,14 @@ declare global {
           ensureTTSModel: () => Promise<string>;
           onDownloadProgress: (cb: (progress: { binary: string; downloaded: number; total: number }) => void) => () => void;
         };
+        chatterbox: {
+          isSetupComplete: () => Promise<boolean>;
+          isPythonAvailable: () => Promise<boolean>;
+          hasCudaGpu: () => Promise<boolean>;
+          setup: () => Promise<void>;
+          isRunning: () => Promise<boolean>;
+          onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => () => void;
+        };
         onVoiceStart: (callback: (data: Record<string, unknown>) => void) => () => void;
         onVoiceEnd: (callback: (data: Record<string, unknown>) => void) => () => void;
         onAudioChunk: (callback: (data: Record<string, unknown>) => void) => () => void;
@@ -799,6 +807,10 @@ declare global {
         onUtteranceEnd: (callback: (data: Record<string, unknown>) => void) => () => void;
         onQueueEmpty: (callback: (data: Record<string, unknown>) => void) => () => void;
         onInterrupted: (callback: (data: Record<string, unknown>) => void) => () => void;
+        onStartCapture: (callback: () => void) => () => void;
+        onStopCapture: (callback: () => void) => () => void;
+        sendAudioChunk: (chunk: Float32Array) => void;
+        sendCaptureError: (message: string) => void;
         onPlayChunk: (callback: (audio: Float32Array) => void) => () => void;
       };
 

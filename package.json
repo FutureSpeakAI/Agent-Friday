@@ -1,6 +1,6 @@
 {
   "name": "agent-friday",
-  "version": "3.9.1",
+  "version": "3.10.0",
   "description": "Agent Friday — the first fully local, fully encrypted AI operating system",
   "author": "FutureSpeak.AI",
   "license": "MIT",
@@ -108,6 +108,7 @@
     "express": "^4.21.2",
     "googleapis": "^171.4.0",
     "gpt-tokenizer": "^3.4.0",
+    "kokoro-js": "^1.2.1",
     "libsodium-wrappers-sumo": "^0.7.16",
     "openai": "^6.25.0",
     "pdfjs-dist": "^5.4.624",

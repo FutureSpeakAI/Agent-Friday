@@ -261,6 +261,35 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
     });
   });
 
+  // ── Chatterbox Turbo TTS (managed Python sidecar) ─────────────────
+
+  ipcMain.handle('voice:chatterbox:is-setup-complete', async () => {
+    const { isSetupComplete } = await import('../voice/chatterbox-server');
+    return isSetupComplete();
+  });
+
+  ipcMain.handle('voice:chatterbox:is-python-available', async () => {
+    const { isPythonAvailable } = await import('../voice/chatterbox-server');
+    return isPythonAvailable();
+  });
+
+  ipcMain.handle('voice:chatterbox:has-cuda-gpu', async () => {
+    const { hasCudaGpu } = await import('../voice/chatterbox-server');
+    return hasCudaGpu();
+  });
+
+  ipcMain.handle('voice:chatterbox:setup', async () => {
+    const { setup } = await import('../voice/chatterbox-server');
+    return setup((progress) => {
+      deps.getMainWindow()?.webContents.send('voice:chatterbox:setup-progress', progress);
+    });
+  });
+
+  ipcMain.handle('voice:chatterbox:is-running', async () => {
+    const { isRunning } = await import('../voice/chatterbox-server');
+    return isRunning();
+  });
+
   // ── Event forwarding to renderer ──────────────────────────────────
   // Clean up any previously registered forwarding listeners to prevent
   // listener accumulation on dev hot-reload or window recreate.
