@@ -1,0 +1,49 @@
+flowchart LR
+    subgraph Renderer["Renderer Process"]
+        Mic["getUserMedia()<br/>16kHz mono"]
+        IPC_Out["IPC: audio-capture:chunk<br/>Float32Array"]
+        APE["AudioPlaybackEngine<br/>24kHz Web Audio<br/>gapless scheduling"]
+    end
+
+    subgraph Main["Main Process"]
+        AC["AudioCapture<br/>VAD threshold 0.01<br/>2-chunk lookback<br/>300ms silence"]
+        TP["TranscriptionPipeline<br/>voice-start/end events<br/>audio buffering"]
+        WP["WhisperProvider<br/>whisper.cpp binding<br/>ggml model"]
+        LC["LocalConversation<br/>orchestrator<br/>pendingInputs queue"]
+        LLM["LLMClient<br/>Ollama provider<br/>90s timeout"]
+        TL["Tool Loop<br/>max 5 iterations<br/>15s per tool"]
+        TTS["TTSEngine<br/>Kokoro / Piper<br/>24kHz output"]
+        SSM["SpeechSynthesisManager<br/>sentence splitting<br/>utterance queue (max 5)"]
+    end
+
+    subgraph Tools["Tool Targets"]
+        DT["Desktop Tools"]
+        MCPt["MCP Servers"]
+        OB["Onboarding Tools"]
+    end
+
+    Mic --> IPC_Out
+    IPC_Out -->|"IPC audio chunks"| AC
+    AC -->|"voice-start<br/>voice-end"| TP
+    AC -->|"audio-chunk"| TP
+    TP -->|"speech buffer<br/>Float32Array"| WP
+    WP -->|"transcript text"| LC
+
+    LC -->|"barge-in: stop TTS"| SSM
+    LC -->|"user message +<br/>conversation history"| LLM
+    LLM -->|"tool_calls?"| TL
+    TL --> DT
+    TL --> MCPt
+    TL --> OB
+    DT -->|"result"| LLM
+    MCPt -->|"result"| LLM
+    OB -->|"result"| LLM
+    LLM -->|"final response"| LC
+
+    LC -->|"response text"| TTS
+    TTS -->|"Float32 audio<br/>24kHz"| SSM
+    SSM -->|"IPC audio chunks"| APE
+
+    style Renderer fill:#1a1a2e,stroke:#e94560,color:#eee
+    style Main fill:#0f3460,stroke:#e94560,color:#eee
+    style Tools fill:#16213e,stroke:#e94560,color:#eee
