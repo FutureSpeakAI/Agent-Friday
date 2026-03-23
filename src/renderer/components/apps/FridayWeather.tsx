@@ -68,29 +68,32 @@ export default function FridayWeather({ visible, onClose }: WeatherProps) {
   const fetchWeather = useCallback(async () => {
     setLoading(true);
     let usedMock = false;
+    const api = (window as any).eve?.weather;
 
-    try {
-      const cur = await (window as any).eve?.weather?.getCurrent();
-      if (cur && cur.temp !== undefined) {
-        setCurrent(cur);
-      } else {
-        setCurrent(MOCK_CURRENT);
-        usedMock = true;
-      }
-    } catch {
+    if (!api) {
+      setCurrent(MOCK_CURRENT);
+      setForecast(MOCK_FORECAST);
+      setUsingMock(true);
+      setLoading(false);
+      return;
+    }
+
+    // Fetch both in parallel — the backend auto-detects location on first call
+    const [curResult, fcResult] = await Promise.allSettled([
+      api.getCurrent(),
+      api.getForecast(),
+    ]);
+
+    if (curResult.status === 'fulfilled' && curResult.value?.temp !== undefined) {
+      setCurrent(curResult.value);
+    } else {
       setCurrent(MOCK_CURRENT);
       usedMock = true;
     }
 
-    try {
-      const fc = await (window as any).eve?.weather?.getForecast();
-      if (Array.isArray(fc) && fc.length > 0) {
-        setForecast(fc);
-      } else {
-        setForecast(MOCK_FORECAST);
-        usedMock = true;
-      }
-    } catch {
+    if (fcResult.status === 'fulfilled' && Array.isArray(fcResult.value) && fcResult.value.length > 0) {
+      setForecast(fcResult.value);
+    } else {
       setForecast(MOCK_FORECAST);
       usedMock = true;
     }
@@ -117,7 +120,7 @@ export default function FridayWeather({ visible, onClose }: WeatherProps) {
             <div style={s.mockNotice}>
               <span>⚙️</span>
               <span>
-                Showing sample data. Set your location in Settings to get live weather.
+                Showing sample data. Weather auto-detects your location — try refreshing, or set it manually in Settings.
               </span>
             </div>
           )}

@@ -20,14 +20,14 @@ vi.mock('electron', () => ({
 }));
 
 // Mock settings module (required by git-loader.ts for getSanitizedEnv)
-vi.mock('../../../src/main/settings', () => ({
+vi.mock('../../src/main/settings', () => ({
   getSanitizedEnv: () => ({ ...process.env }),
 }));
 
 // Mock the git-loader module to prevent actual git clones during tests.
 // This ensures tests are fast, offline-capable, and deterministic.
 // Note: vi.mock factory is hoisted, so we inline the mock object.
-vi.mock('../../../src/main/git-loader', () => ({
+vi.mock('../../src/main/git-loader', () => ({
   gitLoader: {
     load: async () => { throw new Error('Mock: git-loader disabled in tests'); },
     unload: async () => undefined,
@@ -46,7 +46,7 @@ import {
   detect,
   CODING_KIT_REPO,
   CODING_KIT_LOAD_OPTIONS,
-} from '../../../src/main/connectors/coding-kit';
+} from '../../src/main/connectors/coding-kit';
 
 // ---------------------------------------------------------------------------
 // Test Utilities

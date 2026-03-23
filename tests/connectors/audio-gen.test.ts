@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/test-audio-gen' },
 }));
 
-vi.mock('../../../src/main/settings', () => ({
+vi.mock('../../src/main/settings', () => ({
   settingsManager: {
     getGeminiApiKey: () => mockGeminiKey,
     getElevenLabsApiKey: () => mockElevenLabsKey,
@@ -96,7 +96,7 @@ vi.mock('node:https', () => ({
 }));
 
 // Mock multimedia-engine to prevent actual podcast generation
-vi.mock('../../../src/main/multimedia-engine', () => ({
+vi.mock('../../src/main/multimedia-engine', () => ({
   multimediaEngine: {
     generatePodcast: async () => ({
       audioPath: '/tmp/test-audio-gen/multimedia/podcasts/test-podcast.wav',
@@ -117,7 +117,7 @@ vi.mock('../../../src/main/multimedia-engine', () => ({
 // Import the module under test
 // ---------------------------------------------------------------------------
 
-import { TOOLS, execute, detect } from '../../../src/main/connectors/audio-gen';
+import { TOOLS, execute, detect } from '../../src/main/connectors/audio-gen';
 
 // ---------------------------------------------------------------------------
 // Test Utilities

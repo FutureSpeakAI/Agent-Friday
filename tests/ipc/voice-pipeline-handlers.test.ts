@@ -193,14 +193,16 @@ describe('Voice Pipeline Handlers — Sprint 7 IPC', () => {
         'voice:speech:speak', 'voice:speech:speak-immediate', 'voice:speech:stop',
         'voice:speech:pause', 'voice:speech:resume', 'voice:speech:is-speaking',
         'voice:speech:get-queue-length',
+        // Binary downloads
+        'voice:ensure-whisper-binary', 'voice:ensure-tts-binary', 'voice:ensure-tts-model',
       ];
       for (const ch of expected) {
         expect(handlers.has(ch), `Missing handler: ${ch}`).toBe(true);
       }
     });
 
-    it('registers exactly 34 handlers', () => {
-      expect(handlers.size).toBe(34);
+    it('registers exactly 37 handlers', () => {
+      expect(handlers.size).toBe(37);
     });
   });
 

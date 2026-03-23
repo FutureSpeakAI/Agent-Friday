@@ -31,13 +31,13 @@ const mocks = vi.hoisted(() => ({
 
 // -- Module mocks -----------------------------------------------------------
 
-vi.mock('../../../src/main/hardware/tier-recommender', () => ({
+vi.mock('../../src/main/hardware/tier-recommender', () => ({
   getModelList: mocks.getModelList,
   estimateVRAMUsage: mocks.estimateVRAMUsage,
   canFitModel: mocks.canFitModel,
 }));
 
-vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
+vi.mock('../../src/main/hardware/hardware-profiler', () => ({
   HardwareProfiler: {
     getInstance: mocks.getInstance,
   },
@@ -45,8 +45,8 @@ vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
 
 // -- Import after mocks -----------------------------------------------------
 
-import { ModelOrchestrator } from '../../../src/main/hardware/model-orchestrator';
-import type { OrchestratorState, LoadedModel } from '../../../src/main/hardware/model-orchestrator';
+import { ModelOrchestrator } from '../../src/main/hardware/model-orchestrator';
+import type { OrchestratorState, LoadedModel } from '../../src/main/hardware/model-orchestrator';
 
 // -- Helpers ----------------------------------------------------------------
 

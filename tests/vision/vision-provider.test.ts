@@ -28,11 +28,11 @@ vi.mock('node:fs/promises', () => ({
 import {
   VisionProvider,
   visionProvider,
-} from '../../../src/main/vision/vision-provider';
+} from '../../src/main/vision/vision-provider';
 import type {
   ImageInput,
   VisionModelInfo,
-} from '../../../src/main/vision/vision-provider';
+} from '../../src/main/vision/vision-provider';
 
 // -- Helper: create mock fetch responses ------------------------------------
 
