@@ -67,7 +67,7 @@ vi.mock('node:child_process', () => ({
 
 // -- Import after mocks -----------------------------------------------------
 
-import { HardwareProfiler } from '../../../src/main/hardware/hardware-profiler';
+import { HardwareProfiler } from '../../src/main/hardware/hardware-profiler';
 
 // -- Helpers ----------------------------------------------------------------
 

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { HardwareProfile } from '../../../src/main/hardware/hardware-profiler';
+import type { HardwareProfile } from '../../src/main/hardware/hardware-profiler';
 import {
   recommend,
   getTier,
@@ -29,7 +29,7 @@ import {
   type ModelCategory,
   type TierRecommendation,
   type UpgradePath,
-} from '../../../src/main/hardware/tier-recommender';
+} from '../../src/main/hardware/tier-recommender';
 
 // -- Helpers ----------------------------------------------------------------
 

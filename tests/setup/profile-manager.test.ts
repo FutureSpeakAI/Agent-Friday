@@ -38,8 +38,8 @@ vi.mock('node:crypto', () => ({
 
 // -- Import under test -------------------------------------------------------
 
-import { ProfileManager } from '../../../src/main/setup/profile-manager';
-import type { UserProfile } from '../../../src/main/setup/profile-manager';
+import { ProfileManager } from '../../src/main/setup/profile-manager';
+import type { UserProfile } from '../../src/main/setup/profile-manager';
 
 // -- Test Suite ---------------------------------------------------------------
 

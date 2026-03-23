@@ -5,7 +5,9 @@
  * plus permission management and media listing to the renderer.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 import { multimediaEngine } from '../multimedia-engine';
 import { assertObject, assertString } from './validate';
 
@@ -106,6 +108,41 @@ export function registerMultimediaHandlers(): void {
   // ── Media directory path ────────────────────────────────────────
   ipcMain.handle('multimedia:get-media-dir', () => {
     return multimediaEngine.getMediaDir();
+  });
+
+  // ── Camera capture save ──────────────────────────────────────────
+  ipcMain.handle('multimedia:save-capture', async (_event, dataURL: unknown, filename?: unknown) => {
+    try {
+      assertString(dataURL, 'multimedia:save-capture dataURL', 50_000_000);
+      if (typeof dataURL !== 'string' || !dataURL.startsWith('data:image/')) {
+        throw new Error('Invalid data URL: must start with data:image/');
+      }
+
+      let name: string;
+      if (filename !== undefined && filename !== null) {
+        assertString(filename, 'multimedia:save-capture filename', 255);
+        name = filename as string;
+      } else {
+        name = `capture-${Date.now()}.png`;
+      }
+
+      const picturesDir = path.join(app.getPath('pictures'), 'Agent Friday');
+      await fs.mkdir(picturesDir, { recursive: true });
+
+      // Strip the data URL prefix (e.g. "data:image/png;base64,")
+      const base64Data = (dataURL as string).replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      const filePath = path.join(picturesDir, name);
+      await fs.writeFile(filePath, buffer);
+
+      console.log('[Multimedia] Saved capture:', filePath);
+      return filePath;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Multimedia] Save capture failed:', msg);
+      throw new Error(msg);
+    }
   });
 
   console.log('[IPC] Multimedia handlers registered');

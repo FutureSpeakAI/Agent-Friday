@@ -198,6 +198,7 @@ import {
   registerAgentTrustHandlers,
   registerMultimediaHandlers,
   registerContainerEngineHandlers,
+  registerCodeExecutionHandlers,
   registerDelegationEngineHandlers,
   registerOsPrimitivesHandlers,
   registerNotesHandlers,
@@ -820,6 +821,7 @@ app.whenReady().then(async () => {
   registerAgentTrustHandlers();
   registerMultimediaHandlers();
   registerContainerEngineHandlers();
+  registerCodeExecutionHandlers();
   registerDelegationEngineHandlers(mainWindow ?? undefined);
   registerOsPrimitivesHandlers();
   registerNotesHandlers();

@@ -15,12 +15,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { HardwareProfile } from '../../../src/main/hardware/hardware-profiler';
+import type { HardwareProfile } from '../../src/main/hardware/hardware-profiler';
 import type {
   TierRecommendation,
   ModelRequirement,
   TierName,
-} from '../../../src/main/hardware/tier-recommender';
+} from '../../src/main/hardware/tier-recommender';
 
 // -- Hoisted mocks (required for vi.mock factories) -------------------------
 
@@ -97,7 +97,7 @@ vi.mock('node:crypto', () => ({
   randomUUID: mocks.randomUUID,
 }));
 
-vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
+vi.mock('../../src/main/hardware/hardware-profiler', () => ({
   HardwareProfiler: {
     getInstance: () => ({
       detect: mocks.detect,
@@ -107,13 +107,13 @@ vi.mock('../../../src/main/hardware/hardware-profiler', () => ({
   },
 }));
 
-vi.mock('../../../src/main/hardware/tier-recommender', () => ({
+vi.mock('../../src/main/hardware/tier-recommender', () => ({
   recommend: mocks.recommend,
   getModelList: mocks.getModelList,
   getTier: mocks.getTier,
 }));
 
-vi.mock('../../../src/main/ollama-lifecycle', () => ({
+vi.mock('../../src/main/ollama-lifecycle', () => ({
   OllamaLifecycle: {
     getInstance: () => ({
       pullModel: mocks.pullModel,
@@ -121,7 +121,7 @@ vi.mock('../../../src/main/ollama-lifecycle', () => ({
   },
 }));
 
-vi.mock('../../../src/main/hardware/model-orchestrator', () => ({
+vi.mock('../../src/main/hardware/model-orchestrator', () => ({
   ModelOrchestrator: {
     getInstance: () => ({
       loadTierModels: mocks.loadTierModels,
@@ -134,8 +134,8 @@ vi.mock('../../../src/main/hardware/model-orchestrator', () => ({
 
 // -- Import after mocks -----------------------------------------------------
 
-import { SetupWizard } from '../../../src/main/setup/setup-wizard';
-import { ProfileManager } from '../../../src/main/setup/profile-manager';
+import { SetupWizard } from '../../src/main/setup/setup-wizard';
+import { ProfileManager } from '../../src/main/setup/profile-manager';
 
 // -- Constants & Test Data --------------------------------------------------
 
@@ -160,13 +160,13 @@ const noGpuProfile: HardwareProfile = {
 };
 
 const standardModels: ModelRequirement[] = [
-  { name: 'nomic-embed-text', vramBytes: 0.5 * GB, diskBytes: 0.3 * GB, purpose: 'embeddings', required: true },
-  { name: 'llama3.1:8b-instruct-q4_K_M', vramBytes: 5.5 * GB, diskBytes: 4.7 * GB, purpose: 'chat', required: true },
+  { name: 'nomic-embed-text', vramBytes: 0.5 * GB, diskBytes: 0.3 * GB, purpose: 'embeddings', required: true, category: 'embedding' },
+  { name: 'llama3.1:8b-instruct-q4_K_M', vramBytes: 5.5 * GB, diskBytes: 4.7 * GB, purpose: 'chat', required: true, category: 'llm' },
 ];
 
 const fullModels: ModelRequirement[] = [
   ...standardModels,
-  { name: 'moondream:latest', vramBytes: 1.2 * GB, diskBytes: 0.8 * GB, purpose: 'vision', required: true },
+  { name: 'moondream:latest', vramBytes: 1.2 * GB, diskBytes: 0.8 * GB, purpose: 'vision', required: true, category: 'vision' },
 ];
 
 const standardRecommendation: TierRecommendation = {

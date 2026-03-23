@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   fsReaddir: vi.fn(),
 }));
 
-vi.mock('../../../src/main/voice/tts-binding', () => ({
+vi.mock('../../src/main/voice/tts-binding', () => ({
   default: mocks.ttsBinding,
   ttsBinding: mocks.ttsBinding,
 }));
@@ -30,15 +30,17 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('node:os', () => ({
   homedir: () => '/mock/home',
+  platform: () => 'linux',
+  arch: () => 'x64',
 }));
 
-import { TTSEngine, ttsEngine } from '../../../src/main/voice/tts-engine';
+import { TTSEngine, ttsEngine } from '../../src/main/voice/tts-engine';
 import type {
   TTSBackend,
   SynthesisOptions,
   VoiceInfo,
   TTSEngineInfo,
-} from '../../../src/main/voice/tts-engine';
+} from '../../src/main/voice/tts-engine';
 
 const TTS_SAMPLE_RATE = 24_000;
 

@@ -25,7 +25,7 @@ import {
   type ModelArchitecture,
   type QualityTier,
   type ModelProfile,
-} from '../../../src/main/connectors/comfyui';
+} from '../../src/main/connectors/comfyui';
 
 // ---------------------------------------------------------------------------
 // Test Utilities

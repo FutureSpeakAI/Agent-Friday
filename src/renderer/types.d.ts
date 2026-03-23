@@ -782,6 +782,12 @@ declare global {
           isSpeaking: () => Promise<boolean>;
           getQueueLength: () => Promise<number>;
         };
+        binaries: {
+          ensureWhisper: () => Promise<string>;
+          ensureTTS: () => Promise<string>;
+          ensureTTSModel: () => Promise<string>;
+          onDownloadProgress: (cb: (progress: { binary: string; downloaded: number; total: number }) => void) => () => void;
+        };
         onVoiceStart: (callback: (data: Record<string, unknown>) => void) => () => void;
         onVoiceEnd: (callback: (data: Record<string, unknown>) => void) => () => void;
         onAudioChunk: (callback: (data: Record<string, unknown>) => void) => () => void;
@@ -1736,6 +1742,7 @@ declare global {
         listMedia: (type?: string) => Promise<any>;
         getSpeakerPresets: () => Promise<any>;
         getMediaDir: () => Promise<string>;
+        saveCapture: (dataURL: string, filename?: string) => Promise<string>;
       };
 
       toolExecution: {
@@ -1768,6 +1775,11 @@ declare global {
         get: (taskId: string) => Promise<any>;
         available: () => Promise<boolean>;
         activeCount: () => Promise<number>;
+      };
+
+      code: {
+        executeDirect: (code: string, language: string) =>
+          Promise<{ stdout: string; stderr: string; exitCode: number }>;
       };
 
       delegation: {

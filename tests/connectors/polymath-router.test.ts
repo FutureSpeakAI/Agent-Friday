@@ -17,9 +17,9 @@ import {
   classifyIntent,
   suggestWorkflow,
   WORKFLOW_TEMPLATES,
-} from '../../../src/main/connectors/polymath-router';
+} from '../../src/main/connectors/polymath-router';
 
-import type { CreativeDomain } from '../../../src/main/connectors/polymath-router';
+import type { CreativeDomain } from '../../src/main/connectors/polymath-router';
 
 // ---------------------------------------------------------------------------
 // Test Utilities
