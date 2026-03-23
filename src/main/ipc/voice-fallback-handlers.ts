@@ -84,4 +84,11 @@ export function registerVoiceFallbackHandlers(
       return manager.switchTo(path, reason);
     },
   );
+
+  ipcMain.handle(
+    'voice-fallback:set-path-priority',
+    (_event, path: string, priority: number) => {
+      manager.setPathPriority(path as VoicePath, priority);
+    },
+  );
 }

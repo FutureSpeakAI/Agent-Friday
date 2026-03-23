@@ -45,11 +45,11 @@ export interface IdentityChoices {
 
 interface OnboardingWizardProps {
   onComplete: (agentName: string) => void;
-  connectToGemini?: (identityContext?: string) => Promise<void>;
-  sendTextToGemini?: (text: string) => void;
+  connectVoice?: (identityContext?: string) => Promise<void>;
+  sendText?: (text: string) => void;
 }
 
-const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connectToGemini, sendTextToGemini }) => {
+const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connectVoice, sendText }) => {
   const [currentStep, setCurrentStep] = useState<StepKey>('awakening');
   const [detectedTier, setDetectedTier] = useState<TierName | null>(null);
   const [identityChoices, setIdentityChoices] = useState<IdentityChoices>({
@@ -170,8 +170,8 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
         {currentStep === 'interview' && (
           <InterviewStep
             identityChoices={identityChoices}
-            connectToGemini={connectToGemini}
-            sendTextToGemini={sendTextToGemini}
+            connectVoice={connectVoice}
+            sendText={sendText}
             onComplete={(finalName) => {
               if (finalName) {
                 setIdentityChoices((p) => ({ ...p, agentName: finalName }));

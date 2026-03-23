@@ -120,6 +120,9 @@ export default function App() {
           },
         ];
       });
+      if (appPhaseRef.current === 'onboarding') {
+        window.dispatchEvent(new CustomEvent('interview-ai-response', { detail: { text, streaming: true } }));
+      }
     },
     onClaudeUsed: (question, answer) => {
       setMessages((prev) => [
@@ -280,6 +283,10 @@ export default function App() {
     // we fall through to the legacy code path below.
     try {
       if (window.eve.voiceFallback) {
+        // During onboarding, prefer local voice for privacy + offline reliability
+        if (!onboardingComplete) {
+          await window.eve.voiceFallback.setPathPriority('local', 0).catch(() => {});
+        }
         console.log('[Agent] Track 6: Using VoiceFallbackManager for path selection');
         const chosenPath = await window.eve.voiceFallback.startBestPath(instruction, tools);
         console.log(`[Agent] Track 6: VoiceFallbackManager chose path: ${chosenPath}`);
@@ -287,6 +294,9 @@ export default function App() {
         if (chosenPath === 'text') {
           setStatus('Text mode (no voice backend available)');
           setConnectionError('No voice backend available. Install Ollama for local voice or add a Gemini API key.');
+          window.dispatchEvent(new CustomEvent('interview-connection-failed', {
+            detail: { message: 'No voice backend available. Install Ollama for local voice or add a Gemini API key.' },
+          }));
           return;
         }
 
@@ -398,6 +408,10 @@ export default function App() {
               timestamp: Date.now(),
             },
           ]);
+          if (appPhaseRef.current === 'onboarding') {
+            window.dispatchEvent(new CustomEvent('interview-user-transcript', { detail: { text } }));
+            window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'thinking' } }));
+          }
         }),
       );
 
@@ -414,6 +428,15 @@ export default function App() {
               timestamp: Date.now(),
             },
           ]);
+          if (appPhaseRef.current === 'onboarding') {
+            window.dispatchEvent(new CustomEvent('interview-ai-response', { detail: { text } }));
+            window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'speaking' } }));
+            setTimeout(() => {
+              if (appPhaseRef.current === 'onboarding') {
+                window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'listening' } }));
+              }
+            }, 2000);
+          }
         }),
       );
 
@@ -600,9 +623,13 @@ export default function App() {
     }
   }, [geminiLive]);
 
-  // ── Wrapped sendTextToGemini: routes to local conversation when active ──
+  // ── Wrapped sendText: routes to local conversation when active ──
   const sendText = useCallback(
     (text: string) => {
+      if (appPhaseRef.current === 'onboarding') {
+        window.dispatchEvent(new CustomEvent('interview-user-transcript', { detail: { text } }));
+        window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'thinking' } }));
+      }
       if (localConversationActiveRef.current) {
         window.eve.localConversation.sendText(text).catch((err: unknown) => {
           console.error('[Agent] Local conversation sendText failed:', err);
@@ -967,6 +994,10 @@ export default function App() {
             setAgentName(name);
             setAppPhase('creating');
 
+            // Restore default voice path priorities after onboarding
+            window.eve.voiceFallback?.setPathPriority?.('local', 2).catch(() => {});
+            window.eve.voiceFallback?.setPathPriority?.('cloud', 1).catch(() => {});
+
             // Stop local voice conversation if it was the active path
             if (localConversationActiveRef.current) {
               localConversationActiveRef.current = false;
@@ -976,8 +1007,8 @@ export default function App() {
               localConversationCleanupsRef.current = [];
             }
           }}
-          connectToGemini={connectToGemini}
-          sendTextToGemini={sendText}
+          connectVoice={connectToGemini}
+          sendText={sendText}
         />
       )}
 

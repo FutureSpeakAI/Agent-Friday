@@ -1,10 +1,10 @@
 /**
- * InterviewStep.tsx — Step 4: Voice interview with waveform + text input.
+ * InterviewStep.tsx — Step 4: Voice interview with waveform + transcript + text input.
  *
- * Starts a Gemini Live voice session for the personal intake interview.
- * Displays an animated waveform visualization while the conversation runs.
- * Text input fallback below the waveform for typing messages to Gemini.
- * Auto-advances when Gemini calls finalize_agent_identity tool, or allows
+ * Starts a voice session (local-first or Gemini Live) for the personal intake interview.
+ * Displays an animated waveform visualization, a live transcript panel with processing
+ * state indicators, and a text input fallback for typing messages.
+ * Auto-advances when the backend calls finalize_agent_identity tool, or allows
  * the user to skip with a default personality profile.
  */
 
@@ -15,31 +15,36 @@ import type { IdentityChoices } from '../OnboardingWizard';
 
 interface InterviewStepProps {
   identityChoices: IdentityChoices;
-  connectToGemini?: (identityContext?: string) => Promise<void>;
-  sendTextToGemini?: (text: string) => void;
+  connectVoice?: (identityContext?: string) => Promise<void>;
+  sendText?: (text: string) => void;
   onComplete: (finalName?: string) => void;
   onBack?: () => void;
 }
 
-/**
- * Blanket timeout (ms) — only used as fallback when ConnectionStageMonitor
- * is not available. The monitor provides per-stage timeouts that total ~55s
- * across all six stages, with specific failure messages at each point.
- * This legacy timeout is kept for graceful degradation.
- */
-const LEGACY_CONNECTION_TIMEOUT_MS = 15_000;
+interface TranscriptMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+}
 
 /**
- * Legacy staged status messages — used only when ConnectionStageMonitor
- * IPC is not available. The monitor provides real progress messages via
- * 'stage-enter' events with per-stage userMessage strings.
+ * Blanket timeout (ms) — only used as fallback when ConnectionStageMonitor
+ * is not available. Increased to 45s to accommodate local-first first-run
+ * scenarios where model loading + first inference can take 25s+.
+ */
+const LEGACY_CONNECTION_TIMEOUT_MS = 45_000;
+
+/**
+ * Legacy staged status messages — backend-agnostic. Used only when
+ * ConnectionStageMonitor IPC is not available.
  */
 const LEGACY_CONNECTION_STAGES: { delay: number; text: string }[] = [
   { delay: 0, text: 'Connecting to voice session...' },
-  { delay: 2500, text: 'Authenticating...' },
-  { delay: 5000, text: 'Loading agent tools...' },
-  { delay: 8000, text: 'Opening audio channel...' },
-  { delay: 12000, text: 'Still waiting — this is taking longer than usual...' },
+  { delay: 2500, text: 'Loading voice models...' },
+  { delay: 5000, text: 'Initializing speech pipeline...' },
+  { delay: 10000, text: 'Preparing language model...' },
+  { delay: 20000, text: 'First load can take a moment — almost ready...' },
+  { delay: 35000, text: 'Still waiting — this is taking longer than usual...' },
 ];
 
 const VOICE_MAP: Record<string, Record<string, string>> = {
@@ -77,10 +82,16 @@ const DEFAULT_PROFILES: Record<string, {
   },
 };
 
+const PROCESSING_STATUS: Record<string, string> = {
+  listening: 'Listening — speak naturally...',
+  thinking: 'Processing your response...',
+  speaking: 'Speaking...',
+};
+
 const InterviewStep: React.FC<InterviewStepProps> = ({
   identityChoices,
-  connectToGemini,
-  sendTextToGemini,
+  connectVoice,
+  sendText: sendTextProp,
   onComplete,
   onBack,
 }) => {
@@ -91,17 +102,25 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   const [textInput, setTextInput] = useState('');
   const [failureDetail, setFailureDetail] = useState<string | null>(null);
   const [failureAction, setFailureAction] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
+  const [processingState, setProcessingState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const animFrameRef = useRef<number>(0);
   const hasConnectedRef = useRef(false);
   const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stageTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const stageCleanupRef = useRef<Array<() => void>>([]);
   const hasStageMonitorRef = useRef(false);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setFadeIn(true), 100);
     return () => clearTimeout(t);
   }, []);
+
+  // Auto-scroll transcript to bottom
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcript, processingState]);
 
   // Clear any staged progress timers
   const clearStageTimers = useCallback(() => {
@@ -115,9 +134,68 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     stageCleanupRef.current = [];
   }, []);
 
-  // Attempt to connect to Gemini voice session
+  // ── Interview event listeners ─────────────────────────────────────────
+  useEffect(() => {
+    const onUserTranscript = (e: Event) => {
+      const { text } = (e as CustomEvent).detail;
+      setTranscript((prev) => {
+        // Deduplicate: if the last user message matches, skip
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'user' && last.text === text) return prev;
+        return [...prev, { id: crypto.randomUUID(), role: 'user', text }];
+      });
+      setProcessingState('thinking');
+    };
+
+    const onAiResponse = (e: Event) => {
+      const { text, streaming } = (e as CustomEvent).detail;
+      setTranscript((prev) => {
+        if (streaming) {
+          // Gemini streaming: append to last assistant message
+          const last = prev[prev.length - 1];
+          if (last && last.role === 'assistant') {
+            return [...prev.slice(0, -1), { ...last, text: last.text + text }];
+          }
+        }
+        return [...prev, { id: crypto.randomUUID(), role: 'assistant', text }];
+      });
+    };
+
+    const onProcessingState = (e: Event) => {
+      const { state } = (e as CustomEvent).detail;
+      setProcessingState(state);
+    };
+
+    const onConnectionFailed = (e: Event) => {
+      const { message } = (e as CustomEvent).detail;
+      // Immediately fail — no need to wait for the timeout
+      if (connectionTimerRef.current) {
+        clearTimeout(connectionTimerRef.current);
+        connectionTimerRef.current = null;
+      }
+      clearStageTimers();
+      clearStageMonitorListeners();
+      setPhase('failed');
+      setStatusText('No voice backend available');
+      setFailureDetail(message);
+      setFailureAction('Install Ollama for local voice or add a Gemini API key in Settings.');
+    };
+
+    window.addEventListener('interview-user-transcript', onUserTranscript);
+    window.addEventListener('interview-ai-response', onAiResponse);
+    window.addEventListener('interview-processing-state', onProcessingState);
+    window.addEventListener('interview-connection-failed', onConnectionFailed);
+    return () => {
+      window.removeEventListener('interview-user-transcript', onUserTranscript);
+      window.removeEventListener('interview-ai-response', onAiResponse);
+      window.removeEventListener('interview-processing-state', onProcessingState);
+      window.removeEventListener('interview-connection-failed', onConnectionFailed);
+    };
+  }, [clearStageTimers, clearStageMonitorListeners]);
+
+  // Attempt to connect to voice session
   const attemptConnection = useCallback(() => {
-    if (!connectToGemini) {
+    if (!connectVoice) {
       setPhase('failed');
       setStatusText('Voice session unavailable');
       return;
@@ -130,8 +208,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     clearStageMonitorListeners();
 
     // ── Track 6: Subscribe to ConnectionStageMonitor for real progress ──
-    // If the IPC bridge is available, use real stage events instead of
-    // the legacy timed messages. Falls back to legacy if unavailable.
     let usingStageMonitor = false;
     try {
       if (window.eve.connectionStage) {
@@ -162,7 +238,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
               }
               return current;
             });
-            // Clear the legacy blanket timeout since the monitor handles timeouts
             if (connectionTimerRef.current) {
               clearTimeout(connectionTimerRef.current);
               connectionTimerRef.current = null;
@@ -172,7 +247,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
 
         cleanups.push(
           window.eve.connectionStage.onAllComplete(() => {
-            // All six stages passed — connection is fully established
             if (connectionTimerRef.current) {
               clearTimeout(connectionTimerRef.current);
               connectionTimerRef.current = null;
@@ -183,7 +257,6 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         stageCleanupRef.current = cleanups;
       }
     } catch {
-      // IPC not available — will use legacy staged messages
       usingStageMonitor = false;
     }
 
@@ -200,8 +273,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       }
     }
 
-    // No pre-selected identity — let the interview discover name, gender, voice naturally
-    connectToGemini().catch((err: any) => {
+    connectVoice().catch((err: any) => {
       if (connectionTimerRef.current) {
         clearTimeout(connectionTimerRef.current);
         connectionTimerRef.current = null;
@@ -210,12 +282,11 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       clearStageMonitorListeners();
       setPhase('failed');
 
-      // Provide specific failure messages based on error
       const msg = String(err?.message || '').toLowerCase();
       if (msg.includes('api key') || msg.includes('401') || msg.includes('1008')) {
-        setStatusText('Authentication failed — check your Gemini API key in Settings');
+        setStatusText('Authentication failed — check your API key in Settings');
         setFailureDetail('The API key may be invalid or expired.');
-        setFailureAction('Open Settings to update your Gemini API key.');
+        setFailureAction('Open Settings to update your API key.');
       } else if (msg.includes('network') || msg.includes('failed to fetch')) {
         setStatusText('Network error — check your internet connection');
         setFailureDetail('Could not reach the voice backend.');
@@ -230,21 +301,20 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       }
     });
 
-    // Legacy blanket timeout — only fires if the stage monitor hasn't
-    // already handled per-stage timeouts. Kept as a safety net.
+    // Legacy blanket timeout
     connectionTimerRef.current = setTimeout(() => {
       clearStageTimers();
       clearStageMonitorListeners();
       setPhase((current) => {
         if (current === 'connecting') {
-          setStatusText('Connection timed out — check your API key and network');
+          setStatusText('Connection timed out — check your voice settings');
           setFailureDetail('The connection attempt exceeded the maximum wait time.');
           return 'failed';
         }
         return current;
       });
     }, LEGACY_CONNECTION_TIMEOUT_MS);
-  }, [connectToGemini, identityChoices, clearStageTimers, clearStageMonitorListeners]);
+  }, [connectVoice, identityChoices, clearStageTimers, clearStageMonitorListeners]);
 
   // Start the voice connection after a brief delay
   useEffect(() => {
@@ -276,6 +346,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       setPhase((current) => {
         if (current === 'connecting') {
           setStatusText('Interview in progress — speak naturally');
+          setProcessingState('listening');
           return 'active';
         }
         return current;
@@ -296,6 +367,8 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     clearStageMonitorListeners();
     setFailureDetail(null);
     setFailureAction(null);
+    setTranscript([]);
+    setProcessingState('idle');
     hasConnectedRef.current = true;
     attemptConnection();
   }, [attemptConnection, clearStageTimers, clearStageMonitorListeners]);
@@ -369,10 +442,17 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
 
   const handleSendText = useCallback(() => {
     const trimmed = textInput.trim();
-    if (!trimmed || !sendTextToGemini) return;
-    sendTextToGemini(trimmed);
+    if (!trimmed || !sendTextProp) return;
+    // Add to transcript immediately (dedup against bridge event by checking last msg)
+    setTranscript((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'user' && last.text === trimmed) return prev;
+      return [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }];
+    });
+    setProcessingState('thinking');
+    sendTextProp(trimmed);
     setTextInput('');
-  }, [textInput, sendTextToGemini]);
+  }, [textInput, sendTextProp]);
 
   const handleTextKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -380,6 +460,11 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       handleSendText();
     }
   }, [handleSendText]);
+
+  // Dynamic status text when active
+  const activeStatusText = phase === 'active' && processingState !== 'idle'
+    ? PROCESSING_STATUS[processingState] || statusText
+    : statusText;
 
   return (
     <section style={{
@@ -438,14 +523,54 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         ))}
       </div>
 
+      {/* Transcript panel — visible when active and has messages */}
+      {phase === 'active' && transcript.length > 0 && (
+        <div style={styles.transcriptPanel} aria-label="Interview transcript" role="log">
+          {transcript.map((msg) => (
+            <div
+              key={msg.id}
+              style={{
+                ...styles.transcriptMessage,
+                alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                background: msg.role === 'user'
+                  ? 'rgba(0, 240, 255, 0.08)'
+                  : 'var(--onboarding-card)',
+                borderColor: msg.role === 'user'
+                  ? 'rgba(0, 240, 255, 0.15)'
+                  : 'rgba(255, 255, 255, 0.06)',
+              }}
+            >
+              <span style={{
+                ...styles.transcriptRole,
+                color: msg.role === 'user' ? 'var(--accent-cyan-70)' : 'var(--text-30)',
+              }}>
+                {msg.role === 'user' ? 'You' : 'Assistant'}
+              </span>
+              <span style={styles.transcriptText}>{msg.text}</span>
+            </div>
+          ))}
+          {processingState === 'thinking' && (
+            <div style={{ ...styles.transcriptMessage, alignSelf: 'flex-start', background: 'var(--onboarding-card)', borderColor: 'rgba(255, 255, 255, 0.06)' }}>
+              <span style={{ ...styles.transcriptRole, color: 'var(--text-30)' }}>Assistant</span>
+              <span style={styles.thinkingDots}>
+                <span style={styles.dot} />
+                <span style={{ ...styles.dot, animationDelay: '0.2s' }} />
+                <span style={{ ...styles.dot, animationDelay: '0.4s' }} />
+              </span>
+            </div>
+          )}
+          <div ref={transcriptEndRef} />
+        </div>
+      )}
+
       {/* Status */}
       <p role="status" aria-live="polite" style={{
         ...styles.statusText,
         color: phase === 'failed' ? 'var(--accent-red)' : 'var(--accent-cyan-50)',
-      }}>{statusText}</p>
+      }}>{activeStatusText}</p>
 
       {/* Text input fallback — visible when active */}
-      {phase === 'active' && sendTextToGemini && (
+      {phase === 'active' && sendTextProp && (
         <div style={styles.textInputRow}>
           <input
             type="text"
@@ -511,9 +636,17 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         {phase === 'active'
           ? 'The assistant will configure your agent automatically when the interview is complete.'
           : phase === 'failed'
-            ? 'Check your Gemini API key in Settings, or skip to use a default personality.'
+            ? 'Check your voice settings, or skip to use a default personality.'
             : 'You can skip this step to use a default personality profile.'}
       </p>
+
+      {/* Inline keyframes for thinking dots animation */}
+      <style>{`
+        @keyframes interviewDotPulse {
+          0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
     </section>
   );
 };
@@ -572,6 +705,51 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 2,
     background: 'var(--accent-cyan-30)',
     transition: 'height 0.08s ease',
+  },
+  transcriptPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: 240,
+    overflowY: 'auto',
+    padding: '8px 4px',
+    scrollBehavior: 'smooth',
+  },
+  transcriptMessage: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    maxWidth: '85%',
+    padding: '8px 12px',
+    borderRadius: 10,
+    border: '1px solid',
+  },
+  transcriptRole: {
+    fontSize: 9,
+    fontWeight: 600,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase' as const,
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  transcriptText: {
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    lineHeight: 1.5,
+    fontFamily: "'Inter', sans-serif",
+  },
+  thinkingDots: {
+    display: 'flex',
+    gap: 4,
+    padding: '4px 0',
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: 'var(--accent-cyan-50)',
+    animation: 'interviewDotPulse 1.4s ease-in-out infinite',
   },
   statusText: {
     fontSize: 12,
