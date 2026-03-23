@@ -27,6 +27,7 @@ import type { ChatMessage } from './store';
 import { useIPCListeners } from './hooks/useIPCListeners';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useAudioLevels } from './hooks/useAudioLevels';
+import { useLocalMicCapture } from './hooks/useLocalMicCapture';
 
 // Re-export ChatMessage for backward compatibility
 export type { ChatMessage } from './store';
@@ -827,38 +828,68 @@ export default function App() {
         },
       ]);
 
-      // Route through local conversation if active
-      if (localConversationActiveRef.current) {
-        sendText(text);
-        window.eve.predictor.recordInteraction().catch(() => {});
-        return;
-      }
+      try {
+        // Route through local conversation if active
+        if (localConversationActiveRef.current) {
+          sendText(text);
+          window.eve.predictor.recordInteraction().catch(() => {});
+          return;
+        }
 
-      // Auto-connect if not already connected (may start local or Gemini path)
-      if (!geminiLive.isConnected && !geminiLive.isConnecting) {
-        await connectToGemini();
-      }
+        // Auto-connect if not already connected.
+        // Wait for in-progress connection too — don't fall through to the error
+        // branch while the initial connectToGemini() from mount is still running.
+        if (!geminiLive.isConnected && !localConversationActiveRef.current) {
+          if (geminiLive.isConnecting) {
+            // Connection already in progress — wait for it to settle (up to 30s)
+            await new Promise<void>((resolve) => {
+              const interval = setInterval(() => {
+                if (geminiLive.isConnected || localConversationActiveRef.current || !geminiLive.isConnecting) {
+                  clearInterval(interval);
+                  resolve();
+                }
+              }, 200);
+              setTimeout(() => { clearInterval(interval); resolve(); }, 30_000);
+            });
+          } else {
+            await connectToGemini();
+          }
+        }
 
-      // After connect, check again — connectToGemini may have activated local path
-      if (localConversationActiveRef.current) {
-        sendText(text);
-      } else if (geminiLive.isConnected) {
-        geminiLive.sendTextToGemini(text);
-      } else {
-        // No backend available — show error in chat so user isn't left hanging
+        // After connect, check again — connectToGemini may have activated local path
+        if (localConversationActiveRef.current) {
+          sendText(text);
+        } else if (geminiLive.isConnected) {
+          geminiLive.sendTextToGemini(text);
+        } else {
+          // No backend available — show error in chat so user isn't left hanging
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: 'I couldn\'t connect to any backend. Please check that Ollama is running or that you have a valid API key configured in Settings.',
+              timestamp: Date.now(),
+            },
+          ]);
+        }
+
+        // Reset idle behavior — user is active
+        geminiLive.resetIdleActivity();
+      } catch (err) {
+        // Catch-all: ensure the user always sees feedback
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Agent] handleTextSend error:', msg);
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: 'assistant' as const,
-            content: 'I couldn\'t connect to any backend. Please check that Ollama is running or that you have a valid API key configured in Settings.',
+            content: `Something went wrong: ${msg}. Check that Ollama is running or try again.`,
             timestamp: Date.now(),
           },
         ]);
       }
-
-      // Reset idle behavior — user is active
-      geminiLive.resetIdleActivity();
 
       // Record interaction for predictor
       window.eve.predictor.recordInteraction().catch(() => {});
@@ -868,6 +899,11 @@ export default function App() {
 
   // ── Keyboard shortcuts (extracted to hook) ──────────────────────────
   useKeyboardShortcuts(appManager, geminiLive);
+
+  // ── Local mic capture for Whisper STT pipeline ────────────────────────
+  // Bridges renderer getUserMedia → main process AudioCapture via IPC.
+  // Activates when main process sends voice:start-capture (during local conversation).
+  useLocalMicCapture();
 
   // ── Audio levels RAF loop (extracted to hook) ──────────────────────────
   const getLevels = useAudioLevels(geminiLive.getMicLevel, geminiLive.getOutputLevel);

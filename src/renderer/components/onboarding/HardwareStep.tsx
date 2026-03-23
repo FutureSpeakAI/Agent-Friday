@@ -56,6 +56,9 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
   const [whisperProgress, setWhisperProgress] = useState(0);
   const [defaultModelStatus, setDefaultModelStatus] = useState<'unchecked' | 'checking' | 'pulling' | 'ready' | 'failed'>('unchecked');
   const [defaultModelProgress, setDefaultModelProgress] = useState(0);
+  const [chatterboxStatus, setChatterboxStatus] = useState<'unchecked' | 'checking' | 'no-python' | 'installing' | 'ready' | 'failed'>('unchecked');
+  const [chatterboxMessage, setChatterboxMessage] = useState('');
+  const [chatterboxPercent, setChatterboxPercent] = useState(0);
   const cleanupRef = useRef<Array<() => void>>([]);
 
   // Detect hardware on mount
@@ -230,7 +233,52 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
     }
   }, []);
 
-  // Trigger Whisper download and default model check when Ollama is confirmed running
+  // Install Chatterbox Turbo TTS (highest quality local voice)
+  const ensureChatterboxTTS = useCallback(async () => {
+    setChatterboxStatus('checking');
+    setChatterboxMessage('Checking for existing voice engine...');
+
+    try {
+      // Already set up?
+      const alreadySetup = await window.eve.voice.chatterbox.isSetupComplete();
+      if (alreadySetup) {
+        setChatterboxStatus('ready');
+        setChatterboxMessage('Chatterbox Turbo voice engine ready.');
+        return;
+      }
+
+      // Check Python availability
+      const hasPython = await window.eve.voice.chatterbox.isPythonAvailable();
+      if (!hasPython) {
+        setChatterboxStatus('no-python');
+        setChatterboxMessage('Python 3.10+ not found — voice will use lightweight fallback.');
+        return;
+      }
+
+      // Install Chatterbox (PyTorch + chatterbox-tts)
+      setChatterboxStatus('installing');
+      setChatterboxMessage('Installing Chatterbox Turbo voice engine...');
+
+      const unsub = window.eve.voice.chatterbox.onSetupProgress((progress) => {
+        setChatterboxMessage(progress.message);
+        setChatterboxPercent(progress.percent);
+        if (progress.stage === 'error') {
+          setChatterboxStatus('failed');
+        }
+      });
+      cleanupRef.current.push(unsub);
+
+      await window.eve.voice.chatterbox.setup();
+      setChatterboxStatus('ready');
+      setChatterboxMessage('Chatterbox Turbo voice engine installed.');
+    } catch (err: any) {
+      console.warn('[HardwareStep] Chatterbox setup failed (non-fatal):', err?.message);
+      setChatterboxStatus('failed');
+      setChatterboxMessage(`Voice engine install failed: ${err?.message || 'unknown error'}. Will use lightweight fallback.`);
+    }
+  }, []);
+
+  // Trigger Whisper download, default model check, and Chatterbox setup when Ollama is confirmed running
   useEffect(() => {
     if (ollamaRunning === true && whisperStatus === 'unchecked') {
       ensureWhisperModel();
@@ -238,7 +286,10 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
     if (ollamaRunning === true && defaultModelStatus === 'unchecked') {
       ensureDefaultModel();
     }
-  }, [ollamaRunning, whisperStatus, ensureWhisperModel, defaultModelStatus, ensureDefaultModel]);
+    if (ollamaRunning === true && chatterboxStatus === 'unchecked') {
+      ensureChatterboxTTS();
+    }
+  }, [ollamaRunning, whisperStatus, ensureWhisperModel, defaultModelStatus, ensureDefaultModel, chatterboxStatus, ensureChatterboxTTS]);
 
   // Re-check Ollama connectivity
   const recheckOllama = useCallback(async () => {
@@ -381,6 +432,46 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
               </div>
             )}
 
+            {/* Chatterbox Turbo TTS status */}
+            {chatterboxStatus === 'checking' && (
+              <div style={styles.ollamaStatusCard}>
+                <Download size={14} color="var(--accent-cyan)" />
+                <span style={styles.ollamaStatusText}>Checking voice engine...</span>
+              </div>
+            )}
+            {chatterboxStatus === 'installing' && (
+              <div style={styles.ollamaStatusCard}>
+                <Download size={14} color="var(--accent-cyan)" />
+                <span style={styles.ollamaStatusText}>
+                  {chatterboxMessage} {chatterboxPercent > 0 ? `${chatterboxPercent}%` : ''}
+                </span>
+              </div>
+            )}
+            {chatterboxStatus === 'ready' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
+                <Check size={14} color="#22c55e" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
+                  Chatterbox Turbo voice engine ready
+                </span>
+              </div>
+            )}
+            {chatterboxStatus === 'no-python' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(234, 179, 8, 0.1)' }}>
+                <AlertCircle size={14} color="#eab308" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(234, 179, 8, 0.7)', fontSize: 11 }}>
+                  Python not found — using lightweight voice engine (install Python 3.10+ for best quality)
+                </span>
+              </div>
+            )}
+            {chatterboxStatus === 'failed' && (
+              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(234, 179, 8, 0.1)' }}>
+                <AlertCircle size={14} color="#eab308" />
+                <span style={{ ...styles.ollamaStatusText, color: 'rgba(234, 179, 8, 0.7)', fontSize: 11 }}>
+                  {chatterboxMessage || 'Voice engine install failed — using lightweight fallback'}
+                </span>
+              </div>
+            )}
+
             {/* Default chat model (llama3.2) status */}
             {defaultModelStatus === 'checking' && (
               <div style={styles.ollamaStatusCard}>
@@ -418,7 +509,7 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
             <NextButton
               label="Continue"
               onClick={() => setPhase('recommending')}
-              disabled={whisperStatus === 'downloading' || defaultModelStatus === 'pulling' || defaultModelStatus === 'checking'}
+              disabled={whisperStatus === 'downloading' || defaultModelStatus === 'pulling' || defaultModelStatus === 'checking' || chatterboxStatus === 'installing'}
             />
           </>
         ) : (

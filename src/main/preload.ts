@@ -1622,6 +1622,18 @@ contextBridge.exposeInMainWorld('eve', {
         return () => ipcRenderer.removeListener('voice:binary-download-progress', handler);
       },
     },
+    chatterbox: {
+      isSetupComplete: () => ipcRenderer.invoke('voice:chatterbox:is-setup-complete') as Promise<boolean>,
+      isPythonAvailable: () => ipcRenderer.invoke('voice:chatterbox:is-python-available') as Promise<boolean>,
+      hasCudaGpu: () => ipcRenderer.invoke('voice:chatterbox:has-cuda-gpu') as Promise<boolean>,
+      setup: () => ipcRenderer.invoke('voice:chatterbox:setup') as Promise<void>,
+      isRunning: () => ipcRenderer.invoke('voice:chatterbox:is-running') as Promise<boolean>,
+      onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => {
+        const handler = (_event: any, progress: { stage: string; message: string; percent: number }) => cb(progress);
+        ipcRenderer.on('voice:chatterbox:setup-progress', handler);
+        return () => ipcRenderer.removeListener('voice:chatterbox:setup-progress', handler);
+      },
+    },
     onVoiceStart: (callback: (data: Record<string, unknown>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
       ipcRenderer.on('voice:event:voice-start', handler);
@@ -1676,6 +1688,30 @@ contextBridge.exposeInMainWorld('eve', {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
       ipcRenderer.on('voice:event:interrupted', handler);
       return () => { ipcRenderer.removeListener('voice:event:interrupted', handler); };
+    },
+    /**
+     * Renderer-side mic capture bridge for local voice pipeline.
+     * Main process AudioCapture sends voice:start-capture / voice:stop-capture
+     * via webContents.send(); this handler opens getUserMedia and streams
+     * Float32Array audio chunks back to main via ipcRenderer.send().
+     */
+    onStartCapture: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('voice:start-capture', handler);
+      return () => { ipcRenderer.removeListener('voice:start-capture', handler); };
+    },
+    onStopCapture: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('voice:stop-capture', handler);
+      return () => { ipcRenderer.removeListener('voice:stop-capture', handler); };
+    },
+    /** Send a raw PCM audio chunk to main process AudioCapture */
+    sendAudioChunk: (chunk: Float32Array) => {
+      ipcRenderer.send('voice:audio-chunk', chunk);
+    },
+    /** Report a capture error to main process AudioCapture */
+    sendCaptureError: (message: string) => {
+      ipcRenderer.send('voice:capture-error', message);
     },
     /** Receive TTS audio chunks from local conversation for speaker playback */
     onPlayChunk: (callback: (audio: Float32Array) => void) => {
