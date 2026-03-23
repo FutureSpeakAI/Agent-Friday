@@ -489,14 +489,14 @@ export default function App() {
       try {
         await window.eve.localConversation.start(instruction, tools, initialPrompt);
 
-        // Check if TTS actually loaded — if not, the user will hear nothing.
-        // Fall back to Gemini Live for full voice if available.
+        // Check if TTS actually loaded — if not during onboarding, fall back to
+        // Gemini for full voice. During normal use, text-only local is fine.
         let ttsReady = false;
         try { ttsReady = await window.eve.voice.tts.isReady(); } catch { /* not available */ }
 
-        if (!ttsReady && hasGeminiKey) {
-          console.warn('[Agent] Local TTS unavailable — falling back to Gemini Live for voice');
-          // Stop the silent local conversation and use Gemini instead
+        if (!ttsReady && !onboardingComplete && hasGeminiKey) {
+          // Onboarding needs voice — fall back to Gemini Live
+          console.warn('[Agent] Local TTS unavailable during onboarding — falling back to Gemini Live');
           try { await window.eve.localConversation.stop(); } catch { /* best effort */ }
           localConversationActiveRef.current = false;
           setLocalConversationActive(false);
@@ -505,10 +505,10 @@ export default function App() {
           setStatus('Local TTS unavailable — connecting via Gemini...');
           // Fall through to Gemini path below
         } else {
-          // Local conversation is running (with or without TTS)
+          // Local conversation is running — always keep it alive for text mode
           localConversationActiveRef.current = true;
           setLocalConversationActive(true);
-          setStatus(ttsReady ? 'Connected (Local)' : 'Connected (Local — text only, no TTS)');
+          setStatus(ttsReady ? 'Connected (Local)' : 'Connected (Local — text mode)');
           setConnectionError('');
           retriesRef.current = 0;
           setRetryCount(0);
