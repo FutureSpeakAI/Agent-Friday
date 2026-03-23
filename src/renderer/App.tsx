@@ -276,69 +276,19 @@ export default function App() {
         : 'You are a Setup Assistant helping configure a new AI agent. Be warm and friendly.';
     }
 
-    // ── Track 6: Try VoiceFallbackManager first (new pipeline) ────────
-    // The fallback manager handles path selection (cloud vs local vs text),
-    // pre-flight checks, and cascading fallback automatically.
-    // If the IPC bridge isn't available yet (new handlers not registered),
-    // we fall through to the legacy code path below.
+    // ── Track 6: Set path priorities via VoiceFallbackManager ──────────
+    // The fallback manager tracks priorities for future use (e.g. mid-session
+    // failover). Actual connection + renderer-side listener setup is handled
+    // by the legacy code below, which properly wires onTranscript, onResponse,
+    // AudioPlaybackEngine, localConversationActiveRef, and geminiLive.connect().
     try {
       if (window.eve.voiceFallback) {
-        // During onboarding, prefer local voice for privacy + offline reliability
         if (!onboardingComplete) {
           await window.eve.voiceFallback.setPathPriority('local', 0).catch(() => {});
         }
-        console.log('[Agent] Track 6: Using VoiceFallbackManager for path selection');
-        const chosenPath = await window.eve.voiceFallback.startBestPath(instruction, tools);
-        console.log(`[Agent] Track 6: VoiceFallbackManager chose path: ${chosenPath}`);
-
-        if (chosenPath === 'text') {
-          setStatus('Text mode (no voice backend available)');
-          setConnectionError('No voice backend available. Install Ollama for local voice or add a Gemini API key.');
-          window.dispatchEvent(new CustomEvent('interview-connection-failed', {
-            detail: { message: 'No voice backend available. Install Ollama for local voice or add a Gemini API key.' },
-          }));
-          return;
-        }
-
-        // The state machine & fallback manager handle the rest.
-        // Status updates come from the voiceState hook + the useEffect bridge below.
-        setStatus(chosenPath === 'cloud' ? 'Connected (Cloud)' : 'Connected (Local)');
-        retriesRef.current = 0;
-        setRetryCount(0);
-
-        // Signal InterviewStep that voice session is live
-        window.dispatchEvent(new Event('gemini-audio-active'));
-
-        // Post-connection: inject onboarding prompt or intelligence briefing
-        setTimeout(async () => {
-          try {
-            if (!onboardingComplete) {
-              const prompt = `[SYSTEM — BEGIN ONBOARDING] The user has just arrived for their first session. Begin the intake process now. Follow your system instructions exactly — welcome them briefly, then ask the first question. As part of the conversation, discover what they'd like to name their AI agent, their preferred voice gender (male/female/neutral), and voice character (warm/sharp/deep/soft/bright).`;
-              if (chosenPath === 'local') {
-                await window.eve.localConversation.sendText(prompt).catch(() => {});
-              } else {
-                geminiLive.sendTextToGemini(prompt);
-              }
-            } else {
-              const briefing = await window.eve.intelligence.getBriefing();
-              if (briefing) {
-                if (chosenPath === 'local') {
-                  await window.eve.localConversation.sendText(briefing).catch(() => {});
-                } else {
-                  geminiLive.sendTextToGemini(briefing);
-                }
-              }
-            }
-          } catch (err) {
-            console.warn('[Agent] Post-connect prompt injection failed:', err);
-          }
-        }, 2000);
-
-        return; // Success — skip legacy path
       }
-    } catch (fallbackErr) {
-      // VoiceFallbackManager not available or failed — fall through to legacy path
-      console.warn('[Agent] Track 6: VoiceFallbackManager unavailable, using legacy path:', fallbackErr);
+    } catch {
+      // VoiceFallbackManager not available — no-op
     }
 
     // ── Legacy path (pre-Track 6 behavior) ────────────────────────────
@@ -550,6 +500,9 @@ export default function App() {
           // No fallback available — report the error
           setConnectionError(`Local voice unavailable: ${msg}. Add a Gemini API key for cloud voice.`);
           setStatus('No voice backend available');
+          window.dispatchEvent(new CustomEvent('interview-connection-failed', {
+            detail: { message: `Local voice unavailable: ${msg}. Add a Gemini API key for cloud voice.` },
+          }));
           return;
         }
         setStatus('Local voice unavailable — connecting via Gemini...');
@@ -560,6 +513,9 @@ export default function App() {
     if (!hasGeminiKey) {
       setConnectionError('No voice backend available. Install Ollama for local voice or add a Gemini API key.');
       setStatus('No voice backend');
+      window.dispatchEvent(new CustomEvent('interview-connection-failed', {
+        detail: { message: 'No voice backend available. Install Ollama for local voice or add a Gemini API key.' },
+      }));
       return;
     }
     try {
