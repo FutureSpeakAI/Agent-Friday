@@ -487,7 +487,16 @@ export default function App() {
       }
 
       try {
-        await window.eve.localConversation.start(instruction, tools, initialPrompt);
+        const startResult = await window.eve.localConversation.start(instruction, tools, initialPrompt);
+
+        // CRITICAL: The IPC handler returns { ok: false, error } on failure instead
+        // of throwing. If we don't check this, the renderer thinks the conversation
+        // started successfully while the main process never activated it.
+        if (!startResult?.ok) {
+          const msg = startResult?.error || 'Unknown error starting local conversation';
+          console.error('[Agent] Local conversation start returned error:', msg);
+          throw new Error(msg);
+        }
 
         // Check if TTS actually loaded — if not during onboarding, fall back to
         // Gemini for full voice. During normal use, text-only local is fine.
