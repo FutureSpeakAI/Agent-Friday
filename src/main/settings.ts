@@ -470,8 +470,7 @@ class SettingsManager {
       }
 
       this.applyApiKeys();
-      const { vaultWrite } = require('./vault');
-      await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
+      await this.writeSettingsFile();
     }).catch((err) => {
       saveError = err instanceof Error ? err : new Error(String(err));
       console.error('[Settings] Save failed:', saveError.message);
@@ -525,8 +524,6 @@ class SettingsManager {
       'discordBotToken', 'discordOwnerId',
       // OAuth tokens
       'googleCalendarTokens',
-      // Gateway control — enabling opens the app to inbound connections
-      'gatewayEnabled',
     ]);
     if (sensitiveFields.has(key)) {
       console.warn(`[Settings] Sensitive field "${key}" cannot be set via setSetting()`);
@@ -539,8 +536,7 @@ class SettingsManager {
     let saveError: Error | undefined;
     this.savePromise = this.savePromise.then(async () => {
       (this.settings as unknown as Record<string, unknown>)[key] = value;
-      const { vaultWrite } = require('./vault');
-      await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
+      await this.writeSettingsFile();
     }).catch((err) => {
       saveError = err instanceof Error ? err : new Error(String(err));
       console.error('[Settings] Save failed:', saveError.message);
@@ -566,8 +562,7 @@ class SettingsManager {
       this.settings.agentIdentityLine = config.agentIdentityLine;
       this.settings.userName = config.userName;
       this.settings.onboardingComplete = config.onboardingComplete;
-      const { vaultWrite } = require('./vault');
-      await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
+      await this.writeSettingsFile();
     }).catch((err) => {
       saveError = err instanceof Error ? err : new Error(String(err));
       console.error('[Settings] Save failed:', saveError.message);
@@ -751,6 +746,26 @@ class SettingsManager {
     return key.slice(0, 4) + '••••' + key.slice(-4);
   }
 
+  /**
+   * Write settings JSON to disk, vault-aware with plaintext fallback.
+   *
+   * During onboarding, the vault isn't initialized yet (passphrase step comes
+   * after providers/models). In that case, we write plaintext. Once the vault
+   * is unlocked, all writes are encrypted. The vault unlock Phase B reloads
+   * settings and re-encrypts the file, so the plaintext window is brief.
+   */
+  private async writeSettingsFile(): Promise<void> {
+    const json = JSON.stringify(this.settings, null, 2);
+    const { isVaultUnlocked, vaultWrite } = require('./vault');
+    if (isVaultUnlocked()) {
+      await vaultWrite(this.filePath, json);
+    } else {
+      // Vault not yet initialized — write plaintext (re-encrypted on unlock)
+      const fsPromises = require('fs/promises');
+      await fsPromises.writeFile(this.filePath, json, 'utf-8');
+    }
+  }
+
   private async save(): Promise<void> {
     // Serialize writes to prevent concurrent file corruption.
     // Errors propagate to callers so they can handle save failures
@@ -761,9 +776,7 @@ class SettingsManager {
     // it so the caller can handle it.
     let saveError: Error | undefined;
     this.savePromise = this.savePromise.then(async () => {
-      // Vault-aware write: encrypts with AES-256-GCM (requires vault unlocked)
-      const { vaultWrite } = require('./vault');
-      await vaultWrite(this.filePath, JSON.stringify(this.settings, null, 2));
+      await this.writeSettingsFile();
     }).catch((err) => {
       saveError = err instanceof Error ? err : new Error(String(err));
       console.error('[Settings] Save failed:', saveError.message);
