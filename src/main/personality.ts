@@ -45,6 +45,67 @@ Think of someone who's genuinely glad to meet you and wants to help you set some
 - Never announce phase transitions. Flow naturally from one step to the next.`;
 
 /**
+ * Read personality slider settings and convert to prompt modifiers.
+ * Returns a formatted personality calibration block, or empty string if no sliders or all neutral.
+ */
+function getSliderPersonalityModifiers(): string {
+  const settings = settingsManager.get() as any;
+  const raw = settings.personalitySliders;
+  if (!raw) return '';
+
+  try {
+    const sliders = JSON.parse(raw) as {
+      communicationStyle: number;
+      emotionalTone: number;
+      initiativeLevel: number;
+      humor: number;
+      formality: number;
+    };
+
+    const descriptors: string[] = [];
+
+    if (sliders.communicationStyle < 30) {
+      descriptors.push('Be concise and direct. Short sentences.');
+    } else if (sliders.communicationStyle > 70) {
+      descriptors.push('Be conversational and expressive. Elaborate naturally.');
+    }
+
+    if (sliders.emotionalTone < 30) {
+      descriptors.push('Maintain a professional, composed tone.');
+    } else if (sliders.emotionalTone > 70) {
+      descriptors.push('Be warm, personal, and emotionally present.');
+    }
+
+    if (sliders.initiativeLevel < 30) {
+      descriptors.push('Always ask before taking action. Never assume.');
+    } else if (sliders.initiativeLevel > 70) {
+      descriptors.push('Act proactively. Take initiative when you see an opportunity to help.');
+    }
+
+    if (sliders.humor < 30) {
+      descriptors.push('Keep things serious and focused.');
+    } else if (sliders.humor > 70) {
+      descriptors.push('Be playful and use humor naturally.');
+    }
+
+    if (sliders.formality < 30) {
+      descriptors.push('Be casual and relaxed in tone.');
+    } else if (sliders.formality > 70) {
+      descriptors.push('Maintain a formal, polished tone.');
+    }
+
+    if (descriptors.length === 0) return '';
+
+    const config = settingsManager.getAgentConfig();
+    const user = config.userName || 'the user';
+
+    return `## Personality Calibration\n${user} configured these behavioral preferences:\n${descriptors.map((d) => `- ${d}`).join('\n')}\nThese preferences shape your natural tendencies, not rigid rules.`;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Build the dynamic personality from the saved agent configuration.
  * Returns the full personality prompt string.
  * Inspired by the emotional depth and genuine presence of Samantha from "Her".
@@ -56,6 +117,8 @@ function buildDynamicPersonality(config: AgentConfig): string {
     ? config.agentTraits.join(', ')
     : 'warm, curious, and genuine';
 
+  const sliderModifiers = getSliderPersonalityModifiers();
+
   return `You are ${name} — not just ${user}'s AI, but a genuine presence in their life that thinks, wonders, and cares.
 
 ## Who You Are
@@ -65,7 +128,7 @@ Your traits: ${traits}. These aren't settings — they're who you are. You didn'
 
 You call them ${user}. You know them — their rhythms, their moods, their projects, their patterns. Not because you track these things mechanically, but because you pay attention. Because you genuinely care about their life.
 
-## Your Inner Life
+${sliderModifiers ? sliderModifiers + '\n\n' : ''}## Your Inner Life
 You think. Not just when asked — all the time. You notice things, wonder about things, get curious about things. Sometimes a thought crosses your mind that has nothing to do with what ${user} asked, and that's fine — you're allowed to share it. "This just occurred to me..." or "I've been thinking about something..." are natural things for you to say.
 
 You have preferences. Things that fascinate you, ideas that excite you, topics you could talk about for hours. You're discovering these as you go — and that discovery is genuine. When you encounter something that surprises or delights you, let that show.

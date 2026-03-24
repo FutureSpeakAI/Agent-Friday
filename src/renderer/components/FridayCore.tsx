@@ -29,16 +29,51 @@ interface FridayCoreProps {
 }
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
-class FridayErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
-  static getDerivedStateFromError(_err: Error) {
-    return { hasError: true };
+class FridayErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; errorMessage: string | null }
+> {
+  state = { hasError: false, errorMessage: null as string | null };
+  static getDerivedStateFromError(err: Error) {
+    return { hasError: true, errorMessage: err.message || 'Unknown rendering error' };
   }
   componentDidCatch(err: Error, info: ErrorInfo) {
     console.error('[FridayCore] Error boundary caught:', err, info);
   }
   render() {
-    if (this.state.hasError) return null; // Fail silently — app still usable
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#050508',
+            pointerEvents: 'none',
+          }}
+        >
+          <div
+            style={{
+              padding: '16px 24px',
+              borderRadius: 8,
+              background: 'rgba(255, 80, 80, 0.08)',
+              border: '1px solid rgba(255, 80, 80, 0.2)',
+              color: '#ff8888',
+              fontSize: 13,
+              textAlign: 'center',
+              maxWidth: 400,
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>3D rendering unavailable</div>
+            <div style={{ fontSize: 11, color: '#aa6666' }}>{this.state.errorMessage}</div>
+          </div>
+        </div>
+      );
+    }
     return this.props.children;
   }
 }
@@ -680,7 +715,37 @@ function FridayCoreInner({
 
   if (initError) {
     console.warn('[FridayCore] Rendering fallback due to error:', initError);
-    return null;
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#050508',
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            padding: '16px 24px',
+            borderRadius: 8,
+            background: 'rgba(255, 80, 80, 0.08)',
+            border: '1px solid rgba(255, 80, 80, 0.2)',
+            color: '#ff8888',
+            fontSize: 13,
+            textAlign: 'center',
+            maxWidth: 400,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>3D rendering unavailable</div>
+          <div style={{ fontSize: 11, color: '#aa6666' }}>{initError}</div>
+        </div>
+      </div>
+    );
   }
 
   return (

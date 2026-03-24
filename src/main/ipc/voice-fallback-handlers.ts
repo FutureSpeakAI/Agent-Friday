@@ -91,4 +91,14 @@ export function registerVoiceFallbackHandlers(
       manager.setPathPriority(path as VoicePath, priority);
     },
   );
+
+  // Notify the fallback manager that a voice path was activated externally
+  // (e.g. by App.tsx's legacy connection logic). This keeps the manager's
+  // currentPath in sync without requiring full migration to the manager API.
+  ipcMain.handle(
+    'voice-fallback:notify-path-active',
+    (_event, path: string) => {
+      manager.notifyPathActive(path as VoicePath);
+    },
+  );
 }

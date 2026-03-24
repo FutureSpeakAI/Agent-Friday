@@ -52,13 +52,6 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
   const [fadeIn, setFadeIn] = useState(false);
   const [ollamaRunning, setOllamaRunning] = useState<boolean | null>(null);
   const [checkingOllama, setCheckingOllama] = useState(false);
-  const [whisperStatus, setWhisperStatus] = useState<'unchecked' | 'downloading' | 'ready' | 'failed'>('unchecked');
-  const [whisperProgress, setWhisperProgress] = useState(0);
-  const [defaultModelStatus, setDefaultModelStatus] = useState<'unchecked' | 'checking' | 'pulling' | 'ready' | 'failed'>('unchecked');
-  const [defaultModelProgress, setDefaultModelProgress] = useState(0);
-  const [chatterboxStatus, setChatterboxStatus] = useState<'unchecked' | 'checking' | 'no-python' | 'installing' | 'ready' | 'failed'>('unchecked');
-  const [chatterboxMessage, setChatterboxMessage] = useState('');
-  const [chatterboxPercent, setChatterboxPercent] = useState(0);
   const cleanupRef = useRef<Array<() => void>>([]);
 
   // Detect hardware on mount
@@ -165,123 +158,6 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
       cleanupRef.current.forEach((fn) => fn());
     };
   }, []);
-
-  // Auto-download Whisper tiny model when Ollama is confirmed running
-  const ensureWhisperModel = useCallback(async () => {
-    try {
-      const downloaded = await window.eve.voice.whisper.isModelDownloaded('tiny');
-      if (downloaded) {
-        setWhisperStatus('ready');
-        return;
-      }
-
-      setWhisperStatus('downloading');
-
-      // Subscribe to download progress
-      const unsub = window.eve.voice.whisper.onDownloadProgress(
-        (progress: { downloaded: number; total: number }) => {
-          if (progress.total > 0) {
-            setWhisperProgress(Math.round((progress.downloaded / progress.total) * 100));
-          }
-        }
-      );
-      cleanupRef.current.push(unsub);
-
-      await window.eve.voice.whisper.downloadModel('tiny');
-      setWhisperStatus('ready');
-    } catch (err: any) {
-      console.warn('[HardwareStep] Whisper download failed (non-fatal):', err?.message);
-      setWhisperStatus('failed');
-      // Non-fatal — local conversation works in text-only mode without Whisper
-    }
-  }, []);
-
-  // Ensure the default chat model (llama3.2) is pulled in Ollama
-  const ensureDefaultModel = useCallback(async () => {
-    const DEFAULT_MODEL = 'llama3.2';
-    setDefaultModelStatus('checking');
-    try {
-      const available = await (window.eve.ollama as any).isModelAvailable(DEFAULT_MODEL);
-      if (available) {
-        setDefaultModelStatus('ready');
-        return;
-      }
-
-      // Model not available — auto-pull it
-      setDefaultModelStatus('pulling');
-
-      // Subscribe to pull progress events
-      const unsub = (window.eve.ollama as any).onPullProgress?.(
-        (progress: { modelName: string; total?: number; completed?: number }) => {
-          if (progress.modelName === DEFAULT_MODEL && progress.total && progress.total > 0) {
-            setDefaultModelProgress(Math.round(((progress.completed || 0) / progress.total) * 100));
-          }
-        }
-      );
-      if (unsub) cleanupRef.current.push(unsub);
-
-      const result = await (window.eve.ollama as any).pullModel(DEFAULT_MODEL);
-      if (result?.success) {
-        setDefaultModelStatus('ready');
-      } else {
-        console.warn('[HardwareStep] Default model pull failed:', result?.error);
-        setDefaultModelStatus('failed');
-      }
-    } catch (err: any) {
-      console.warn('[HardwareStep] Default model check failed (non-fatal):', err?.message);
-      setDefaultModelStatus('failed');
-    }
-  }, []);
-
-  // Install Chatterbox Turbo TTS (highest quality local voice)
-  const ensureChatterboxTTS = useCallback(async () => {
-    setChatterboxStatus('checking');
-    setChatterboxMessage('Checking for existing voice engine...');
-
-    try {
-      // Already set up?
-      const alreadySetup = await window.eve.voice.chatterbox.isSetupComplete();
-      if (alreadySetup) {
-        setChatterboxStatus('ready');
-        setChatterboxMessage('Chatterbox Turbo voice engine ready.');
-        return;
-      }
-
-      // Install Chatterbox (auto-downloads Python if needed, then PyTorch + chatterbox-tts)
-      setChatterboxStatus('installing');
-      setChatterboxMessage('Installing Chatterbox Turbo voice engine...');
-
-      const unsub = window.eve.voice.chatterbox.onSetupProgress((progress) => {
-        setChatterboxMessage(progress.message);
-        setChatterboxPercent(progress.percent);
-        if (progress.stage === 'error') {
-          setChatterboxStatus('failed');
-        }
-      });
-      cleanupRef.current.push(unsub);
-
-      await window.eve.voice.chatterbox.setup();
-      setChatterboxStatus('ready');
-      setChatterboxMessage('Chatterbox Turbo voice engine installed.');
-    } catch (err: any) {
-      console.warn('[HardwareStep] Chatterbox setup failed (non-fatal):', err?.message);
-      setChatterboxStatus('failed');
-      setChatterboxMessage(`Voice engine install failed: ${err?.message || 'unknown error'}. Will use lightweight fallback.`);
-    }
-  }, []);
-
-  // Trigger Whisper download, default model check, and Chatterbox setup when Ollama is confirmed running
-  useEffect(() => {
-    if (ollamaRunning === true && whisperStatus === 'unchecked') {
-      ensureWhisperModel();
-    }
-    if (ollamaRunning === true && defaultModelStatus === 'unchecked') {
-      ensureDefaultModel();
-    }
-    if (ollamaRunning === true && chatterboxStatus === 'unchecked') {
-      ensureChatterboxTTS();
-    }
-  }, [ollamaRunning, whisperStatus, ensureWhisperModel, defaultModelStatus, ensureDefaultModel, chatterboxStatus, ensureChatterboxTTS]);
 
   // Re-check Ollama connectivity
   const recheckOllama = useCallback(async () => {
@@ -398,110 +274,9 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
               </span>
             </div>
 
-            {/* Whisper model download status */}
-            {whisperStatus === 'downloading' && (
-              <div style={styles.ollamaStatusCard}>
-                <Download size={14} color="var(--accent-cyan)" />
-                <span style={styles.ollamaStatusText}>
-                  Downloading voice model... {whisperProgress > 0 ? `${whisperProgress}%` : ''}
-                </span>
-              </div>
-            )}
-            {whisperStatus === 'ready' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
-                <Check size={14} color="#22c55e" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
-                  Voice model ready
-                </span>
-              </div>
-            )}
-            {whisperStatus === 'failed' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(239, 68, 68, 0.1)' }}>
-                <AlertCircle size={14} color="#ef4444" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(239, 68, 68, 0.7)', fontSize: 11 }}>
-                  Voice model download failed — text input will still work
-                </span>
-              </div>
-            )}
-
-            {/* Chatterbox Turbo TTS status */}
-            {chatterboxStatus === 'checking' && (
-              <div style={styles.ollamaStatusCard}>
-                <Download size={14} color="var(--accent-cyan)" />
-                <span style={styles.ollamaStatusText}>Checking voice engine...</span>
-              </div>
-            )}
-            {chatterboxStatus === 'installing' && (
-              <div style={styles.ollamaStatusCard}>
-                <Download size={14} color="var(--accent-cyan)" />
-                <span style={styles.ollamaStatusText}>
-                  {chatterboxMessage} {chatterboxPercent > 0 ? `${chatterboxPercent}%` : ''}
-                </span>
-              </div>
-            )}
-            {chatterboxStatus === 'ready' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
-                <Check size={14} color="#22c55e" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
-                  Chatterbox Turbo voice engine ready
-                </span>
-              </div>
-            )}
-            {chatterboxStatus === 'no-python' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(234, 179, 8, 0.1)' }}>
-                <AlertCircle size={14} color="#eab308" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(234, 179, 8, 0.7)', fontSize: 11 }}>
-                  Python not found — using lightweight voice engine (install Python 3.10+ for best quality)
-                </span>
-              </div>
-            )}
-            {chatterboxStatus === 'failed' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(234, 179, 8, 0.1)' }}>
-                <AlertCircle size={14} color="#eab308" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(234, 179, 8, 0.7)', fontSize: 11 }}>
-                  {chatterboxMessage || 'Voice engine install failed — using lightweight fallback'}
-                </span>
-              </div>
-            )}
-
-            {/* Default chat model (llama3.2) status */}
-            {defaultModelStatus === 'checking' && (
-              <div style={styles.ollamaStatusCard}>
-                <RefreshCw size={14} color="var(--accent-cyan)" style={{ animation: 'spin 1s linear infinite' }} />
-                <span style={styles.ollamaStatusText}>
-                  Checking chat model...
-                </span>
-              </div>
-            )}
-            {defaultModelStatus === 'pulling' && (
-              <div style={styles.ollamaStatusCard}>
-                <Download size={14} color="#8A2BE2" />
-                <span style={styles.ollamaStatusText}>
-                  Downloading chat model (llama3.2)... {defaultModelProgress > 0 ? `${defaultModelProgress}%` : ''}
-                </span>
-              </div>
-            )}
-            {defaultModelStatus === 'ready' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(34, 197, 94, 0.1)' }}>
-                <Check size={14} color="#22c55e" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(34, 197, 94, 0.7)', fontSize: 12 }}>
-                  Chat model ready
-                </span>
-              </div>
-            )}
-            {defaultModelStatus === 'failed' && (
-              <div style={{ ...styles.ollamaStatusCard, borderColor: 'rgba(239, 68, 68, 0.1)' }}>
-                <AlertCircle size={14} color="#ef4444" />
-                <span style={{ ...styles.ollamaStatusText, color: 'rgba(239, 68, 68, 0.7)', fontSize: 11 }}>
-                  Chat model download failed — you can install it later from Settings
-                </span>
-              </div>
-            )}
-
             <NextButton
               label="Continue"
               onClick={() => setPhase('recommending')}
-              disabled={whisperStatus === 'downloading' || defaultModelStatus === 'pulling' || defaultModelStatus === 'checking' || chatterboxStatus === 'installing'}
             />
           </>
         ) : (
@@ -599,6 +374,41 @@ const HardwareStep: React.FC<HardwareStepProps> = ({ onComplete, onBack }) => {
         {tierInfo && (
           <p style={styles.tierDesc}>{tierInfo.desc}</p>
         )}
+
+        {/* Tier override */}
+        <div style={styles.tierOverrideCard}>
+          <span style={styles.tierOverrideLabel}>Override Tier</span>
+          <div style={styles.tierOverrideRow} role="radiogroup" aria-label="Override hardware tier">
+            {(['whisper', 'light', 'standard', 'full', 'sovereign'] as TierName[]).map((t) => {
+              const meta = TIER_META[t];
+              const isSelected = tier === t;
+              return (
+                <label key={t} style={{
+                  ...styles.tierRadio,
+                  borderColor: isSelected ? `${meta.color}66` : 'rgba(255,255,255,0.06)',
+                  background: isSelected ? `${meta.color}12` : 'transparent',
+                }}>
+                  <input
+                    type="radio"
+                    name="tier-override"
+                    checked={isSelected}
+                    onChange={async () => {
+                      setTier(t);
+                      try {
+                        const models = await window.eve.hardware.getModelList(t);
+                        setModelList((models as any[]).map((m) => typeof m === 'string' ? m : m.name));
+                      } catch { setModelList([]); }
+                    }}
+                    style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
+                  />
+                  <span style={{ ...styles.tierRadioDot, background: isSelected ? meta.color : 'rgba(255,255,255,0.1)', boxShadow: isSelected ? `0 0 6px ${meta.color}40` : 'none' }} />
+                  <span style={{ ...styles.tierRadioText, color: isSelected ? meta.color : 'var(--text-40)' }}>{meta.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <span style={styles.tierOverrideHint}>Choose a lower tier to reduce download size, or higher to unlock more models.</span>
+        </div>
 
         {/* Model list — or cloud-only explanation for Whisper tier */}
         {modelList.length > 0 ? (
@@ -1138,6 +948,62 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     textDecoration: 'underline',
     textUnderlineOffset: '2px',
+  },
+  tierOverrideCard: {
+    width: '100%',
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
+    borderRadius: 10,
+    padding: '14px 20px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 10,
+  },
+  tierOverrideLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.1em',
+    color: 'var(--text-40)',
+    fontFamily: "'Space Grotesk', sans-serif",
+    textTransform: 'uppercase' as const,
+  },
+  tierOverrideRow: {
+    display: 'flex',
+    gap: 8,
+    flexWrap: 'wrap' as const,
+  },
+  tierRadio: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: '1px solid rgba(255,255,255,0.06)',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    flex: '1 1 auto',
+    justifyContent: 'center' as const,
+    minWidth: 80,
+  },
+  tierRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    flexShrink: 0,
+    transition: 'all 0.2s ease',
+  },
+  tierRadioText: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: '0.05em',
+    fontFamily: "'Space Grotesk', sans-serif",
+    transition: 'color 0.2s ease',
+  },
+  tierOverrideHint: {
+    fontSize: 10,
+    color: 'var(--text-20)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.4,
   },
   completeBadge: {
     display: 'flex',

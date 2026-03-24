@@ -1,0 +1,111 @@
+flowchart LR
+    subgraph External["External Channels"]
+        TG["Telegram Bot API"]
+        DC["Discord (planned)"]
+        SL["Slack (planned)"]
+    end
+
+    subgraph Adapters["Channel Adapters"]
+        TA["TelegramAdapter\nadapters/telegram.ts"]
+    end
+
+    subgraph GatewayPipeline["Gateway Manager Pipeline"]
+        direction TB
+        TR["Trust Resolution\ntrust-engine.ts:171"]
+        RL["Rate Limit Check\ntrust-engine.ts:251"]
+        AI["Audit Inbound\naudit-log.ts:53"]
+        TC{{"Trust Tier Check"}}
+        PF["Pairing Flow\ntrust-engine.ts:284"]
+        BP["Build Prompt\npersona-adapter.ts:53"]
+        FT["Filter Tools\ntrust-engine.ts:207"]
+        WM["Wrap Message\npersona-adapter.ts:80"]
+        CL["Claude Tool Loop\nserver.ts"]
+        SR["Send Response"]
+        AO["Audit Outbound\naudit-log.ts:74"]
+        ME["Memory Extract\nmemory.ts"]
+        UI["Unified Inbox\nunified-inbox.ts"]
+    end
+
+    subgraph TrustTiers["Trust Policies"]
+        T1["local\n25 iter, all tools"]
+        T2["owner-dm\n15 iter, most tools"]
+        T3["approved-dm\n8 iter, safe tools"]
+        T4["group\n5 iter, web only"]
+        T5["public\n0 iter, no tools"]
+    end
+
+    subgraph Integrity["Integrity System"]
+        HM["HMAC Engine\nintegrity/hmac.ts"]
+        CW["Core Laws\nintegrity/core-laws.ts"]
+        MW["Memory Watchdog\nintegrity/memory-watchdog.ts"]
+        IM[("Integrity Manifest\nintegrity-manifest.json")]
+        SM{{"Safe Mode?"}}
+    end
+
+    subgraph P2P["Cross-Agent Governance"]
+        CA["cLaw Attestation\nclaw-attestation.ts"]
+        ED["Ed25519 Signing"]
+    end
+
+    subgraph Storage["Persistence"]
+        ID[("identities.json\n(vault-encrypted)")]
+        AL[("audit-YYYY-MM.jsonl")]
+        SS["SessionStore\n(in-memory, 4h TTL)"]
+    end
+
+    subgraph ConsentUI["Consent Gate"]
+        CG["requireConsent()\nconsent-gate.ts"]
+        RW["Renderer Window\ndesktop:confirm-request"]
+    end
+
+    TG -->|"getUpdates\nlong-poll"| TA
+    DC -.->|"planned"| Adapters
+    SL -.->|"planned"| Adapters
+
+    TA -->|"onMessage()"| TR
+    TR --> RL
+    RL -->|"blocked"| DROP["Silent Drop"]
+    RL -->|"allowed"| AI
+    AI --> TC
+
+    TC -->|"public"| PF
+    TC -->|"owner-dm/approved-dm/group"| BP
+
+    PF -->|"pairing code"| TA
+
+    BP --> FT
+    FT --> WM
+    WM --> CL
+    CL --> SR
+    SR --> TA
+    SR --> AO
+    AO --> ME
+    ME --> UI
+
+    TR -.->|"resolves"| TrustTiers
+    FT -.->|"applies"| TrustTiers
+
+    CL -.->|"proactive msg"| CG
+    CG -.->|"confirm"| RW
+    CG -.->|"safe mode check"| SM
+
+    HM --> CW
+    HM --> IM
+    MW --> IM
+    SM -->|"yes"| CG
+
+    CA --> ED
+    CA -.->|"verify peer"| CW
+
+    TR -.->|"load/save"| ID
+    AI -.->|"append"| AL
+    AO -.->|"append"| AL
+    WM -.->|"history"| SS
+
+    style DROP fill:#ff4444,color:#fff
+    style PF fill:#ffcc00,color:#000
+    style SM fill:#ffcc00,color:#000
+    style TC fill:#ffcc00,color:#000
+    style ID fill:#4488cc,color:#fff,shape:cylinder
+    style AL fill:#4488cc,color:#fff,shape:cylinder
+    style IM fill:#4488cc,color:#fff,shape:cylinder

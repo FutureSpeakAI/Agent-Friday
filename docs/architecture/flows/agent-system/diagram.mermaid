@@ -1,0 +1,71 @@
+flowchart LR
+    subgraph Renderer["Renderer Process"]
+        AD["AgentDashboard.tsx<br/>spawn / monitor UI"]
+        COT["Chain-of-Thought<br/>real-time streaming"]
+        VP["Voice Playback<br/>persona speech"]
+        OF["AgentOffice.tsx<br/>pixel-art viz"]
+    end
+
+    subgraph IPC["IPC Bridge (preload.ts)"]
+        AH["agent-handlers.ts<br/>spawn / list / cancel"]
+        AE["agents:update<br/>agents:thought<br/>agents:speak"]
+    end
+
+    subgraph Main["Main Process"]
+        AR["AgentRunner<br/>agent-runner.ts<br/>max concurrency: 5"]
+        Q["Task Queue<br/>FIFO"]
+        BA["BuiltinAgents<br/>research, code-review<br/>writing, analysis"]
+        AP["AgentPersonas<br/>Atlas, Nova, Cipher"]
+        AT["AgentTeams<br/>shared task lists<br/>context channels"]
+        AM["AwarenessMesh<br/>cross-agent<br/>coordination"]
+        AV["AgentVoice<br/>persona TTS"]
+        SP["SymbiontProtocol<br/>performance tracking<br/>self-healing"]
+        CM["CapabilityMap<br/>agent routing"]
+        OM["OfficeManager<br/>viz events"]
+    end
+
+    subgraph LLM["LLM Layer"]
+        LLMC["LLMClient<br/>llm-client.ts"]
+        ANT["Anthropic"]
+        OR["OpenRouter"]
+        OLL["Ollama"]
+    end
+
+    AD -->|"agents:spawn"| AH
+    AH --> AR
+
+    AR --> Q
+    Q -->|"dequeue when<br/>slot available"| BA
+
+    BA -->|"ctx.callClaude()"| LLMC
+    LLMC --> ANT
+    LLMC --> OR
+    LLMC --> OLL
+
+    AR --> AP
+    AR --> AT
+    AR --> AM
+    AR --> SP
+    AR --> CM
+    AR --> OM
+
+    BA -->|"ctx.think()"| AR
+    BA -->|"ctx.setProgress()"| AR
+    BA -->|"return result"| AR
+
+    AR -->|"on complete<br/>+ voice enabled"| AV
+    AV -->|"persona speech"| AE
+
+    AR -->|"agents:update"| AE
+    AR -->|"agents:thought"| AE
+    AE --> AD
+    AE --> COT
+    AE --> VP
+    OM -->|"viz events"| OF
+
+    SP -.->|"disable<br/>underperformer"| CM
+
+    style Renderer fill:#1a1a2e,stroke:#00f0ff,color:#eee
+    style IPC fill:#16213e,stroke:#00f0ff,color:#eee
+    style Main fill:#0f3460,stroke:#ffaa00,color:#eee
+    style LLM fill:#1a1a2e,stroke:#a855f7,color:#eee

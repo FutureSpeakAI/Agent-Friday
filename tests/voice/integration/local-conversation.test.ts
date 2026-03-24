@@ -9,9 +9,42 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // ── Mocks (hoisted before imports) ─────────────────────────────────────────
 
+/**
+ * Helper: convert a { content, toolCalls } response into an async generator
+ * that mimics the llmClient.stream() behavior (text chunks + final done chunk).
+ */
+function mockStreamFromResponse(response: { content: string | null; toolCalls: any[] }) {
+  return async function* () {
+    const text = response.content || '';
+    if (text) {
+      // Emit text as a single chunk (tests don't need per-token granularity)
+      yield { text, done: false };
+    }
+    // Emit tool calls if any
+    if (response.toolCalls?.length) {
+      for (const tc of response.toolCalls) {
+        yield { toolCall: tc, done: false };
+      }
+    }
+    // Final chunk with assembled fullResponse
+    yield {
+      done: true,
+      fullResponse: {
+        content: text,
+        toolCalls: response.toolCalls || [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+        model: 'test-model',
+        provider: 'ollama',
+        stopReason: response.toolCalls?.length ? 'tool_use' : 'end_turn',
+        latencyMs: 10,
+      },
+    };
+  };
+}
+
 const mocks = vi.hoisted(() => ({
-  // LLM
-  llmComplete: vi.fn().mockResolvedValue({ content: 'AI response', toolCalls: [] }),
+  // LLM — stream() is the primary API used by LocalConversation
+  llmStream: vi.fn(),
   getProvider: vi.fn(),
 
   // Whisper
@@ -51,7 +84,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../src/main/llm-client', () => ({
   llmClient: {
-    complete: mocks.llmComplete,
+    stream: mocks.llmStream,
     getProvider: mocks.getProvider,
   },
 }));
@@ -155,7 +188,7 @@ describe('LocalConversation', () => {
     mocks.whisperLoadModel.mockRejectedValue(new Error('No Whisper model'));
     mocks.ttsIsReady.mockReturnValue(false);
     mocks.ttsLoadEngine.mockRejectedValue(new Error('No TTS model'));
-    mocks.llmComplete.mockResolvedValue({ content: 'Hello from AI', toolCalls: [] });
+    mocks.llmStream.mockImplementation(mockStreamFromResponse({ content: 'Hello from AI', toolCalls: [] }));
   });
 
   afterEach(() => {
@@ -234,9 +267,9 @@ describe('LocalConversation', () => {
       await conv.start('System prompt', [], 'Hello!');
       // Wait for async processUserInput to complete
       await vi.waitFor(() => {
-        expect(mocks.llmComplete).toHaveBeenCalled();
+        expect(mocks.llmStream).toHaveBeenCalled();
       });
-      const call = mocks.llmComplete.mock.calls[0][0];
+      const call = mocks.llmStream.mock.calls[0][0];
       expect(call.messages).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ role: 'user', content: 'Hello!' }),
@@ -246,7 +279,7 @@ describe('LocalConversation', () => {
   });
 
   describe('sendText()', () => {
-    it('sends text to Ollama and emits events', async () => {
+    it('sends text to Ollama and emits ai-response (but not user-transcript)', async () => {
       await conv.start('System prompt', []);
       const transcriptHandler = vi.fn();
       const responseHandler = vi.fn();
@@ -255,18 +288,21 @@ describe('LocalConversation', () => {
 
       await conv.sendText('What is the weather?');
 
-      expect(transcriptHandler).toHaveBeenCalledWith('What is the weather?');
+      // sendText passes skipTranscriptEmit: true — renderer already added the user message
+      expect(transcriptHandler).not.toHaveBeenCalled();
       expect(responseHandler).toHaveBeenCalledWith('Hello from AI');
     });
 
     it('ignores sendText when not active', async () => {
       await conv.sendText('Ignored text');
-      expect(mocks.llmComplete).not.toHaveBeenCalled();
+      expect(mocks.llmStream).not.toHaveBeenCalled();
     });
 
     it('emits error on LLM failure', async () => {
       await conv.start('System prompt', []);
-      mocks.llmComplete.mockRejectedValueOnce(new Error('Ollama crashed'));
+      mocks.llmStream.mockImplementationOnce(async function* () {
+        throw new Error('Ollama crashed');
+      });
       const errorHandler = vi.fn();
       conv.on('error', errorHandler);
       await conv.sendText('Trigger error');
@@ -275,7 +311,7 @@ describe('LocalConversation', () => {
 
     it('emits fallback message on empty LLM response', async () => {
       await conv.start('System prompt', []);
-      mocks.llmComplete.mockResolvedValueOnce({ content: '', toolCalls: [] });
+      mocks.llmStream.mockImplementationOnce(mockStreamFromResponse({ content: '', toolCalls: [] }));
       const responseHandler = vi.fn();
       conv.on('ai-response', responseHandler);
       await conv.sendText('Empty response trigger');
@@ -289,64 +325,71 @@ describe('LocalConversation', () => {
     it('queues input that arrives during processing', async () => {
       await conv.start('System prompt', []);
 
-      // Make the first call slow
-      let resolveFirst!: (val: any) => void;
-      const slowPromise = new Promise((resolve) => { resolveFirst = resolve; });
-      mocks.llmComplete
-        .mockReturnValueOnce(slowPromise)
-        .mockResolvedValue({ content: 'Second response', toolCalls: [] });
+      // Make the first call slow using an async generator that waits on a promise
+      let resolveFirst!: () => void;
+      const gate = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      mocks.llmStream
+        .mockImplementationOnce(async function* () {
+          await gate;
+          yield { text: 'First response', done: false };
+          yield { done: true, fullResponse: { content: 'First response', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, model: 'test', provider: 'ollama', stopReason: 'end_turn', latencyMs: 10 } };
+        })
+        .mockImplementation(mockStreamFromResponse({ content: 'Second response', toolCalls: [] }));
 
       const responseHandler = vi.fn();
       conv.on('ai-response', responseHandler);
 
-      // Start first input (will block on slow promise)
+      // Start first input (will block on gate)
       const firstPromise = conv.sendText('First input');
 
       // Send second input while first is processing — should be queued
       await conv.sendText('Second input');
 
       // Resolve first call
-      resolveFirst({ content: 'First response', toolCalls: [] });
+      resolveFirst();
       await firstPromise;
 
-      // Wait for queued processing to complete
+      // Wait for both responses (not just llmStream calls — stream consumption is async)
       await vi.waitFor(() => {
-        expect(mocks.llmComplete).toHaveBeenCalledTimes(2);
+        expect(responseHandler).toHaveBeenCalledTimes(2);
       });
-
-      // Both inputs should have been processed (not dropped)
-      expect(responseHandler).toHaveBeenCalledTimes(2);
     });
 
     it('queue is drained sequentially, not dropped', async () => {
       await conv.start('System prompt', []);
 
-      let resolveFirst!: (val: any) => void;
-      const slowPromise = new Promise((resolve) => { resolveFirst = resolve; });
-      mocks.llmComplete
-        .mockReturnValueOnce(slowPromise)
-        .mockResolvedValueOnce({ content: 'R2', toolCalls: [] })
-        .mockResolvedValueOnce({ content: 'R3', toolCalls: [] });
+      let resolveFirst!: () => void;
+      const gate = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      mocks.llmStream
+        .mockImplementationOnce(async function* () {
+          await gate;
+          yield { text: 'R1', done: false };
+          yield { done: true, fullResponse: { content: 'R1', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, model: 'test', provider: 'ollama', stopReason: 'end_turn', latencyMs: 10 } };
+        })
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'R2', toolCalls: [] }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'R3', toolCalls: [] }));
 
       const transcriptHandler = vi.fn();
+      const responseHandler = vi.fn();
       conv.on('user-transcript', transcriptHandler);
+      conv.on('ai-response', responseHandler);
 
       const p1 = conv.sendText('A');
       await conv.sendText('B');
       await conv.sendText('C');
 
-      resolveFirst({ content: 'R1', toolCalls: [] });
+      resolveFirst();
       await p1;
 
+      // Wait for all three responses to complete (stream consumption is async)
       await vi.waitFor(() => {
-        expect(mocks.llmComplete).toHaveBeenCalledTimes(3);
+        expect(responseHandler).toHaveBeenCalledTimes(3);
       });
 
-      // All three transcripts should have been emitted
-      expect(transcriptHandler).toHaveBeenCalledTimes(3);
-      expect(transcriptHandler).toHaveBeenNthCalledWith(1, 'A');
-      expect(transcriptHandler).toHaveBeenNthCalledWith(2, 'B');
-      expect(transcriptHandler).toHaveBeenNthCalledWith(3, 'C');
+      // sendText passes skipTranscriptEmit — only queued-then-drained inputs emit transcripts
+      expect(transcriptHandler).toHaveBeenCalledTimes(2);
+      expect(transcriptHandler).toHaveBeenNthCalledWith(1, 'B');
+      expect(transcriptHandler).toHaveBeenNthCalledWith(2, 'C');
     });
   });
 
@@ -356,29 +399,29 @@ describe('LocalConversation', () => {
         { name: 'acknowledge_introduction', description: 'Ack', parameters: {} },
       ]);
 
-      // First completion returns a tool call
-      mocks.llmComplete
-        .mockResolvedValueOnce({
+      // First stream returns a tool call
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
           content: '',
           toolCalls: [{
             id: 'tc-1',
             name: 'acknowledge_introduction',
             input: { user_response: 'OK' },
           }],
-        })
-        // Second completion (after tool result) returns final response
-        .mockResolvedValueOnce({
+        }))
+        // Second stream (after tool result) returns final response
+        .mockImplementationOnce(mockStreamFromResponse({
           content: 'Great, let us continue!',
           toolCalls: [],
-        });
+        }));
 
       const responseHandler = vi.fn();
       conv.on('ai-response', responseHandler);
 
       await conv.sendText('I understand');
 
-      // Should have called llmComplete twice (initial + after tool result)
-      expect(mocks.llmComplete).toHaveBeenCalledTimes(2);
+      // Should have called stream twice (initial + after tool result)
+      expect(mocks.llmStream).toHaveBeenCalledTimes(2);
       expect(responseHandler).toHaveBeenCalledWith('Great, let us continue!');
     });
 
@@ -386,19 +429,19 @@ describe('LocalConversation', () => {
       await conv.start('System prompt', []);
 
       // Always return a tool call — should be capped at 5 iterations
-      mocks.llmComplete.mockResolvedValue({
-        content: null,
+      mocks.llmStream.mockImplementation(mockStreamFromResponse({
+        content: '',
         toolCalls: [{
           id: 'tc-loop',
           name: 'unknown_tool',
           input: {},
         }],
-      });
+      }));
 
       await conv.sendText('Infinite loop trigger');
 
       // Should cap at MAX_TOOL_ITERATIONS (5) + 1 initial = 6 total calls
-      expect(mocks.llmComplete).toHaveBeenCalledTimes(6);
+      expect(mocks.llmStream).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -461,14 +504,19 @@ describe('LocalConversation', () => {
       await conv.start('System prompt', []);
 
       // Set up slow processing
-      let resolveFirst!: (val: any) => void;
-      mocks.llmComplete.mockReturnValueOnce(new Promise((r) => { resolveFirst = r; }));
+      let resolveFirst!: () => void;
+      const gate = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      mocks.llmStream.mockImplementationOnce(async function* () {
+        await gate;
+        yield { text: 'Done', done: false };
+        yield { done: true, fullResponse: { content: 'Done', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, model: 'test', provider: 'ollama', stopReason: 'end_turn', latencyMs: 10 } };
+      });
 
       const p = conv.sendText('Processing');
       await conv.sendText('Queued');
 
       conv.stop();
-      resolveFirst({ content: 'Done', toolCalls: [] });
+      resolveFirst();
       await p;
 
       // After stop, no further processing should happen
@@ -490,22 +538,22 @@ describe('LocalConversation', () => {
     it('acknowledge_introduction returns ack string', async () => {
       await conv.start('System prompt', []);
 
-      mocks.llmComplete
-        .mockResolvedValueOnce({
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
           content: '',
           toolCalls: [{
             id: 'tc-ack',
             name: 'acknowledge_introduction',
             input: { user_response: 'Got it' },
           }],
-        })
-        .mockResolvedValueOnce({ content: 'Continuing', toolCalls: [] });
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'Continuing', toolCalls: [] }));
 
       await conv.sendText('I understand');
-      expect(mocks.llmComplete).toHaveBeenCalledTimes(2);
+      expect(mocks.llmStream).toHaveBeenCalledTimes(2);
 
       // Check that the tool result was added to messages
-      const secondCall = mocks.llmComplete.mock.calls[1][0];
+      const secondCall = mocks.llmStream.mock.calls[1][0];
       const toolMessage = secondCall.messages.find(
         (m: any) => m.role === 'tool' && m.name === 'acknowledge_introduction',
       );
@@ -518,8 +566,8 @@ describe('LocalConversation', () => {
       const handler = vi.fn();
       conv.on('agent-finalized', handler);
 
-      mocks.llmComplete
-        .mockResolvedValueOnce({
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
           content: '',
           toolCalls: [{
             id: 'tc-fin',
@@ -531,8 +579,8 @@ describe('LocalConversation', () => {
               user_name: 'Alex',
             },
           }],
-        })
-        .mockResolvedValueOnce({ content: 'All done!', toolCalls: [] });
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'All done!', toolCalls: [] }));
 
       await conv.sendText('Finalize please');
 

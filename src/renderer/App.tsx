@@ -102,6 +102,9 @@ export default function App() {
   const localConversationActiveRef = useRef(false);
   const localConversationCleanupsRef = useRef<Array<() => void>>([]);
   const localPlaybackRef = useRef<AudioPlaybackEngine | null>(null);
+  const connectingRef = useRef(false);
+  const queuedTextRef = useRef<string | null>(null);
+  const personaplexActiveRef = useRef(false);
 
   const geminiLive = useGeminiLive({
     onTextResponse: (text) => {
@@ -237,6 +240,10 @@ export default function App() {
   });
 
   const connectToGemini = useCallback(async (identityContext?: string) => {
+    // Guard against concurrent connection attempts
+    if (connectingRef.current || localConversationActiveRef.current) return;
+    connectingRef.current = true;
+    try {
     setStatus('Connecting...');
     setConnectionError('');
 
@@ -313,11 +320,160 @@ export default function App() {
       hasGeminiKey = !!(key && typeof key === 'string' && key.trim().length > 0);
     } catch { /* no key */ }
 
+    // Check PersonaPlex availability (full-duplex local voice — highest priority)
+    let personaplexAvailable = false;
+    try {
+      personaplexAvailable = await window.eve.personaplex.isServerRunning();
+    } catch {
+      // PersonaPlex not available
+    }
+
     let ollamaHealthy = false;
     try {
       const health = await window.eve.ollama.getHealth() as any;
       ollamaHealthy = !!health?.running;
     } catch { /* Ollama not reachable */ }
+
+    // ── 5c. PERSONAPLEX FULL-DUPLEX PATH — highest priority local voice ──
+    // PersonaPlex is a speech-to-speech model (full-duplex) that runs locally.
+    // It's superior to the Whisper+Ollama+TTS chain, so we try it first.
+    if (personaplexAvailable) {
+      console.log('[App] PersonaPlex server available — connecting full-duplex voice');
+      try {
+        const wssUrl = await window.eve.personaplex.getWssUrl();
+        if (wssUrl) {
+          await window.eve.personaplex.connect({ wssUrl });
+
+          // Set up PersonaPlex event listeners
+          const cleanups: Array<() => void> = [];
+
+          cleanups.push(
+            window.eve.personaplex.onTranscript((text: string) => {
+              // AI response text from PersonaPlex
+              const store = useAppStore.getState();
+              store.addMessage({
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: text,
+                model: 'personaplex-7b',
+                timestamp: Date.now(),
+              });
+            })
+          );
+
+          cleanups.push(
+            window.eve.personaplex.onAudioData((base64Data: string) => {
+              // Decode base64 Ogg Opus and play through AudioPlaybackEngine
+              // PersonaPlex sends audio as base64-encoded Ogg Opus pages
+              try {
+                const binaryStr = atob(base64Data);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                  bytes[i] = binaryStr.charCodeAt(i);
+                }
+                // Use Web Audio decodeAudioData for Ogg Opus
+                const audioCtx = new AudioContext({ sampleRate: 24000 });
+                audioCtx.decodeAudioData(bytes.buffer).then((audioBuffer) => {
+                  const pcm = audioBuffer.getChannelData(0);
+                  if (localPlaybackRef.current) {
+                    localPlaybackRef.current.enqueue(pcm);
+                  }
+                  audioCtx.close();
+                }).catch(() => {
+                  audioCtx.close();
+                });
+              } catch {
+                // Skip malformed audio
+              }
+            })
+          );
+
+          cleanups.push(
+            window.eve.personaplex.onDisconnected((_code: number, reason: string) => {
+              console.warn('[App] PersonaPlex disconnected:', reason);
+              personaplexActiveRef.current = false;
+              localConversationActiveRef.current = false;
+              setLocalConversationActive(false);
+              // Clean up and potentially fall back
+              for (const cleanup of cleanups) cleanup();
+            })
+          );
+
+          cleanups.push(
+            window.eve.personaplex.onError((message: string) => {
+              console.error('[App] PersonaPlex error:', message);
+            })
+          );
+
+          // Initialize playback engine for PersonaPlex audio output
+          if (!localPlaybackRef.current) {
+            localPlaybackRef.current = new AudioPlaybackEngine();
+          }
+
+          // Wire mic audio to PersonaPlex — capture 16kHz mono PCM and forward
+          // via IPC to the main process WebSocket relay
+          try {
+            const micStream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                sampleRate: 16000,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+            });
+            const micCtx = new AudioContext({ sampleRate: 16000 });
+            const micSource = micCtx.createMediaStreamSource(micStream);
+            const micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
+            micProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
+              const input = e.inputBuffer.getChannelData(0);
+              // Convert Float32Array to plain number[] for IPC serialization
+              window.eve.personaplex.sendAudio(Array.from(input));
+            };
+            micSource.connect(micProcessor);
+            micProcessor.connect(micCtx.destination); // Required for onaudioprocess to fire
+            console.log('[App] PersonaPlex mic capture started (16kHz mono)');
+
+            // Clean up mic capture when PersonaPlex disconnects
+            cleanups.push(() => {
+              micProcessor.onaudioprocess = null;
+              micProcessor.disconnect();
+              micSource.disconnect();
+              micCtx.close().catch(() => {});
+              micStream.getTracks().forEach((t) => t.stop());
+              console.log('[App] PersonaPlex mic capture stopped');
+            });
+          } catch (micErr) {
+            console.warn('[App] PersonaPlex mic capture failed — voice input unavailable:', micErr);
+            // Continue without mic — text mode still works
+          }
+
+          // Store cleanups for later teardown
+          localConversationCleanupsRef.current = cleanups;
+          localConversationActiveRef.current = true;
+          personaplexActiveRef.current = true;
+          setLocalConversationActive(true);
+          setStatus('Connected (PersonaPlex)');
+          setConnectionError('');
+          retriesRef.current = 0;
+          setRetryCount(0);
+          window.dispatchEvent(new Event('gemini-audio-active'));
+
+          // Notify voice fallback manager
+          try {
+            await window.eve.voiceFallback?.notifyPathActive?.('personaplex');
+          } catch {
+            // Best-effort
+          }
+
+          connectingRef.current = false;
+          return; // PersonaPlex connected successfully — don't try other paths
+        }
+      } catch (err) {
+        console.warn('[App] PersonaPlex connection failed, trying other paths:', err);
+        // Fall through to Ollama/Gemini
+      }
+    }
 
     // ── 6a. LOCAL-FIRST VOICE PATH — try Ollama + Whisper + TTS first ──
     // Falls back to Gemini Live if local voice isn't available.
@@ -349,7 +505,7 @@ export default function App() {
 
       cleanups.push(
         window.eve.localConversation.onTranscript((text: string) => {
-          // Display user transcript in chat (mirrors Gemini path)
+          // Display user transcript in chat + insert pending placeholder
           setMessages((prev) => [
             ...prev,
             {
@@ -357,6 +513,14 @@ export default function App() {
               role: 'user' as const,
               content: text,
               timestamp: Date.now(),
+            },
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: '',
+              model: 'ollama-local',
+              timestamp: Date.now(),
+              pending: true,
             },
           ]);
           if (appPhaseRef.current === 'onboarding') {
@@ -366,19 +530,57 @@ export default function App() {
         }),
       );
 
+      // Streaming chunks — accumulate into the last assistant message
+      cleanups.push(
+        window.eve.localConversation.onResponseChunk((text: string) => {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'assistant' && (last.model === 'ollama-local' || last.pending)) {
+              // Append chunk to existing assistant message, clear pending flag
+              return [...prev.slice(0, -1), { ...last, content: last.content + text, pending: false }];
+            }
+            // No pending message yet — create one (shouldn't normally happen)
+            return [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant' as const,
+                content: text,
+                model: 'ollama-local',
+                timestamp: Date.now(),
+              },
+            ];
+          });
+          if (appPhaseRef.current === 'onboarding') {
+            window.dispatchEvent(new CustomEvent('interview-ai-response', { detail: { text, streaming: true } }));
+          }
+        }),
+      );
+
+      // Final response — ensure content is complete, handle onboarding events
       cleanups.push(
         window.eve.localConversation.onResponse((text: string) => {
-          // Display AI response in chat (mirrors Gemini path)
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: 'assistant' as const,
-              content: text,
-              model: 'ollama-local',
-              timestamp: Date.now(),
-            },
-          ]);
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            // If chunks already built this message or a pending placeholder exists, update it
+            if (last && last.role === 'assistant' && (last.model === 'ollama-local' || last.pending)) {
+              if (last.content !== text || last.pending) {
+                return [...prev.slice(0, -1), { ...last, content: text, pending: false }];
+              }
+              return prev; // Already up to date
+            }
+            // No streaming happened and no pending placeholder — add full message
+            return [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant' as const,
+                content: text,
+                model: 'ollama-local',
+                timestamp: Date.now(),
+              },
+            ];
+          });
           if (appPhaseRef.current === 'onboarding') {
             window.dispatchEvent(new CustomEvent('interview-ai-response', { detail: { text } }));
             window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'speaking' } }));
@@ -388,6 +590,28 @@ export default function App() {
               }
             }, 2000);
           }
+        }),
+      );
+
+      // Tool execution feedback — feed into ActionFeed
+      cleanups.push(
+        window.eve.localConversation.onToolStart((info: { id: string; name: string }) => {
+          setActiveActions((prev) => [
+            ...prev,
+            { id: info.id, name: info.name, status: 'running', startTime: Date.now() },
+          ]);
+        }),
+      );
+      cleanups.push(
+        window.eve.localConversation.onToolEnd((info: { id: string; name: string; success: boolean }) => {
+          setActiveActions((prev) =>
+            prev.map((a) =>
+              a.id === info.id ? { ...a, status: info.success ? 'success' : 'error' } as ActionItem : a
+            )
+          );
+          setTimeout(() => {
+            setActiveActions((prev) => prev.filter((a) => a.id !== info.id));
+          }, 3000);
         }),
       );
 
@@ -424,15 +648,22 @@ export default function App() {
             setStatus(`Local voice error: ${error}`);
             // LLM errors must appear in chat so the user knows what happened
             if (error.startsWith('LLM error:')) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: 'assistant' as const,
-                  content: `⚠ ${error}`,
-                  timestamp: Date.now(),
-                },
-              ]);
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                // Replace pending placeholder with error message
+                if (last && last.pending) {
+                  return [...prev.slice(0, -1), { ...last, content: `⚠ ${error}`, pending: false }];
+                }
+                return [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'assistant' as const,
+                    content: `⚠ ${error}`,
+                    timestamp: Date.now(),
+                  },
+                ];
+              });
             }
           } else {
             // Session failed to start entirely — show as connection error
@@ -454,6 +685,17 @@ export default function App() {
       if (!localPlaybackRef.current) {
         localPlaybackRef.current = new AudioPlaybackEngine();
       }
+      localPlaybackRef.current.setDegradedCallback((degraded, reason) => {
+        if (degraded) {
+          console.warn('[Agent] Local audio playback degraded:', reason);
+          setStatus('Audio playback degraded — speech may be interrupted');
+        } else {
+          console.log('[Agent] Local audio playback recovered');
+          if (localConversationActiveRef.current) {
+            setStatus('Connected (Local)');
+          }
+        }
+      });
       cleanups.push(
         window.eve.voice.onPlayChunk((audio: Float32Array) => {
           localPlaybackRef.current?.enqueue(audio);
@@ -498,32 +740,22 @@ export default function App() {
           throw new Error(msg);
         }
 
-        // Check if TTS actually loaded — if not during onboarding, fall back to
-        // Gemini for full voice. During normal use, text-only local is fine.
+        // Check if TTS loaded — if not, local conversation still works for text mode.
+        // During onboarding, text-only local is valid (InterviewStep has text input).
         let ttsReady = false;
         try { ttsReady = await window.eve.voice.tts.isReady(); } catch { /* not available */ }
 
-        if (!ttsReady && !onboardingComplete && hasGeminiKey) {
-          // Onboarding needs voice — fall back to Gemini Live
-          console.warn('[Agent] Local TTS unavailable during onboarding — falling back to Gemini Live');
-          try { await window.eve.localConversation.stop(); } catch { /* best effort */ }
-          localConversationActiveRef.current = false;
-          setLocalConversationActive(false);
-          for (const cleanup of localConversationCleanupsRef.current) cleanup();
-          localConversationCleanupsRef.current = [];
-          setStatus('Local TTS unavailable — connecting via Gemini...');
-          // Fall through to Gemini path below
-        } else {
-          // Local conversation is running — always keep it alive for text mode
-          localConversationActiveRef.current = true;
-          setLocalConversationActive(true);
-          setStatus(ttsReady ? 'Connected (Local)' : 'Connected (Local — text mode)');
-          setConnectionError('');
-          retriesRef.current = 0;
-          setRetryCount(0);
-          window.dispatchEvent(new Event('gemini-audio-active'));
-          return;
-        }
+        // Local conversation is running — keep it alive for voice or text mode
+        localConversationActiveRef.current = true;
+        setLocalConversationActive(true);
+        setStatus(ttsReady ? 'Connected (Local)' : 'Connected (Local — text mode)');
+        setConnectionError('');
+        retriesRef.current = 0;
+        setRetryCount(0);
+        window.dispatchEvent(new Event('gemini-audio-active'));
+        // Notify VoiceFallbackManager that local path is active
+        window.eve.voiceFallback?.notifyPathActive?.('local').catch(() => {});
+        return;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('[Agent] Local voice failed, falling back to Gemini:', msg);
@@ -570,6 +802,8 @@ export default function App() {
       }
 
       setStatus('Connected');
+      // Notify VoiceFallbackManager that cloud path is active
+      window.eve.voiceFallback?.notifyPathActive?.('cloud').catch(() => {});
 
       // Signal InterviewStep (if active) that the voice session is live
       window.dispatchEvent(new Event('gemini-audio-active'));
@@ -612,14 +846,22 @@ export default function App() {
         setStatus(`Failed: ${msg}`);
       }
     }
+    } finally {
+      connectingRef.current = false;
+    }
   }, [geminiLive]);
 
   // ── Wrapped sendText: routes to local conversation when active ──
+  // NOTE: Interview transcript events are dispatched by the IPC event listeners
+  // (onTranscript / onResponse) — NOT here, to avoid duplicate transcript entries.
   const sendText = useCallback(
     (text: string) => {
-      if (appPhaseRef.current === 'onboarding') {
-        window.dispatchEvent(new CustomEvent('interview-user-transcript', { detail: { text } }));
-        window.dispatchEvent(new CustomEvent('interview-processing-state', { detail: { state: 'thinking' } }));
+      if (personaplexActiveRef.current) {
+        // PersonaPlex is speech-to-speech — no text input channel.
+        // The user message was already added to chat by handleTextSend.
+        // Show a hint that PersonaPlex only accepts voice input.
+        console.log('[Agent] PersonaPlex is voice-only — text input not supported');
+        return;
       }
       if (localConversationActiveRef.current) {
         window.eve.localConversation.sendText(text).catch((err: unknown) => {
@@ -632,7 +874,31 @@ export default function App() {
     [geminiLive.sendTextToGemini],
   );
 
-  // ── Clean up local conversation on unmount / phase change ──────────────
+  // ── VoiceFallbackManager mid-session failover events ───────────────────
+  useEffect(() => {
+    if (!window.eve.voiceFallback) return;
+    const cleanups: Array<() => void> = [];
+    cleanups.push(
+      window.eve.voiceFallback.onSwitchStart((payload) => {
+        setStatus(`Switching voice path: ${payload.reason}...`);
+      }),
+    );
+    cleanups.push(
+      window.eve.voiceFallback.onSwitchComplete((payload) => {
+        const label = payload.path === 'cloud' ? 'Cloud' : payload.path === 'local' ? 'Local' : 'Text';
+        setStatus(`Connected (${label})`);
+      }),
+    );
+    cleanups.push(
+      window.eve.voiceFallback.onAllPathsExhausted(() => {
+        setConnectionError('All voice paths failed. Using text mode.');
+        setStatus('Text mode — all voice paths failed');
+      }),
+    );
+    return () => { for (const c of cleanups) c(); };
+  }, []);
+
+  // ── Clean up local conversation + PersonaPlex on unmount / phase change ─
   useEffect(() => {
     return () => {
       if (localConversationActiveRef.current) {
@@ -641,6 +907,17 @@ export default function App() {
         window.eve.localConversation.stop().catch(() => {});
         for (const cleanup of localConversationCleanupsRef.current) cleanup();
         localConversationCleanupsRef.current = [];
+      }
+      // Clean up PersonaPlex if active
+      personaplexActiveRef.current = false;
+      try {
+        window.eve.personaplex.isConnected().then((connected) => {
+          if (connected) {
+            window.eve.personaplex.disconnect().catch(() => {});
+          }
+        }).catch(() => {});
+      } catch {
+        // Best-effort
       }
     };
   }, []);
@@ -655,7 +932,11 @@ export default function App() {
   // Persist chat messages to disk when they change
   useEffect(() => {
     if (messages.length === 0) return; // Don't overwrite with empty on initial render
-    window.eve.chatHistory.save(messages).catch(() => {});
+    // Filter out pending placeholder messages — if the app crashes mid-inference,
+    // we don't want permanent thinking dots on next load
+    const saveable = messages.filter((m) => !m.pending);
+    if (saveable.length === 0) return;
+    window.eve.chatHistory.save(saveable).catch(() => {});
   }, [messages]);
 
   // Compute API connectivity status — real health checks, not just key existence
@@ -792,7 +1073,7 @@ export default function App() {
 
   const handleConfirmation = useCallback((approved: boolean) => {
     if (!pendingConfirmation) return;
-    window.eve.confirmation.respond(pendingConfirmation.id, approved);
+    window.eve.confirmation.respond(pendingConfirmation.id, approved, pendingConfirmation.challenge);
     setPendingConfirmation(null);
   }, [pendingConfirmation, setPendingConfirmation]);
 
@@ -842,7 +1123,7 @@ export default function App() {
     } else if (geminiLive.isConnected) {
       setStatus('Connected');
     } else if (localConversationActive) {
-      setStatus('Connected (Local)');
+      setStatus(personaplexActiveRef.current ? 'Connected (PersonaPlex)' : 'Connected (Local)');
     } else if (geminiLive.error) {
       setStatus(geminiLive.error);
     }
@@ -863,8 +1144,35 @@ export default function App() {
       ]);
 
       try {
+        // PersonaPlex is speech-to-speech — no text input channel
+        if (personaplexActiveRef.current) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: 'PersonaPlex is a voice-only interface. Please speak your message instead of typing.',
+              model: 'personaplex-7b',
+              timestamp: Date.now(),
+            },
+          ]);
+          return;
+        }
+
         // Route through local conversation if active
         if (localConversationActiveRef.current) {
+          // Insert pending assistant placeholder for thinking indicator
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: '',
+              model: 'ollama-local',
+              timestamp: Date.now(),
+              pending: true,
+            },
+          ]);
           sendText(text);
           window.eve.predictor.recordInteraction().catch(() => {});
           return;
@@ -874,11 +1182,11 @@ export default function App() {
         // Wait for in-progress connection too — don't fall through to the error
         // branch while the initial connectToGemini() from mount is still running.
         if (!geminiLive.isConnected && !localConversationActiveRef.current) {
-          if (geminiLive.isConnecting) {
+          if (connectingRef.current || geminiLive.isConnecting) {
             // Connection already in progress — wait for it to settle (up to 30s)
             await new Promise<void>((resolve) => {
               const interval = setInterval(() => {
-                if (geminiLive.isConnected || localConversationActiveRef.current || !geminiLive.isConnecting) {
+                if (geminiLive.isConnected || localConversationActiveRef.current || (!geminiLive.isConnecting && !connectingRef.current)) {
                   clearInterval(interval);
                   resolve();
                 }
@@ -1032,6 +1340,12 @@ export default function App() {
               for (const cleanup of localConversationCleanupsRef.current) cleanup();
               localConversationCleanupsRef.current = [];
             }
+
+            // Clean up PersonaPlex if active
+            personaplexActiveRef.current = false;
+            window.eve.personaplex.isConnected().then((connected) => {
+              if (connected) window.eve.personaplex.disconnect().catch(() => {});
+            }).catch(() => {});
           }}
           connectVoice={connectToGemini}
           sendText={sendText}
@@ -1159,6 +1473,17 @@ export default function App() {
                 const key = await window.eve.getGeminiApiKey();
                 hasGeminiKey = !!(key && typeof key === 'string' && key.trim().length > 0);
               } catch { /* no key */ }
+
+              // Clean up PersonaPlex if active before reconnecting
+              personaplexActiveRef.current = false;
+              try {
+                const ppConnected = await window.eve.personaplex.isConnected();
+                if (ppConnected) {
+                  await window.eve.personaplex.disconnect();
+                }
+              } catch {
+                // Best-effort
+              }
 
               if (!hasGeminiKey) {
                 // LOCAL PATH — reconnect via local conversation

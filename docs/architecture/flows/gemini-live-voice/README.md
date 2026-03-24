@@ -20,22 +20,25 @@
 ### 1. Connection Setup
 
 1. User triggers `connect()` in the `useGeminiLive` hook.
-2. Gemini API key is fetched via `window.eve.getGeminiApiKey()`.
-3. Tool declarations are assembled from multiple sources (skipped during onboarding):
+2. A `GeminiWsProxy` (`src/renderer/hooks/gemini/ws-proxy.ts`) is created. This is a
+   WebSocket-compatible wrapper that routes all traffic through the main process via IPC.
+   **The Gemini API key never reaches the renderer process** (Security finding C2).
+3. The proxy calls `window.eve.geminiLive.connect()` which opens the actual WebSocket
+   in the main process with the API key.
+4. Tool declarations are assembled from multiple sources (skipped during onboarding):
    - External tools (passed by caller)
    - Browser tools (`window.eve.browser.listTools()`)
    - SOC/Browser-Use tools (`window.eve.soc.listTools()`)
    - GitLoader tools (`window.eve.gitLoader.listTools()`)
    - Connector tools (`window.eve.connectors.listTools()`)
    - MCP tools (`window.eve.mcp.listTools()`)
-4. A `setupComplete` guard is set to `false` -- mic audio is blocked until Gemini confirms setup.
-5. WebSocket opens with `?key=` query parameter (browser WebSocket API does not support custom auth headers).
-6. On `ws.onopen`, the setup message is sent containing:
+5. A `setupComplete` guard is set to `false` -- mic audio is blocked until Gemini confirms setup.
+6. On `ws.onopen` (received via IPC from main process), the setup message is sent containing:
    - `model`: `gemini-2.5-flash-native-audio-preview`
    - `system_instruction` with the agent's system prompt
    - `tools` with function declarations
    - `generation_config` with `response_modalities: ['AUDIO']` and selected voice name
-7. Gemini responds with `setupComplete` -- the guard is released and mic capture begins.
+8. Gemini responds with `setupComplete` -- the guard is released and mic capture begins.
 
 ### 2. Mic Capture
 
@@ -174,6 +177,7 @@ On disconnect, if the session meets the threshold:
 | File | Role |
 |------|------|
 | `src/renderer/hooks/useGeminiLive.ts` | Main hook -- state management, connect/disconnect, WebSocket message dispatch |
+| `src/renderer/hooks/gemini/ws-proxy.ts` | `GeminiWsProxy` -- WebSocket-compatible IPC wrapper; API key stays in main process |
 | `src/renderer/hooks/gemini/types.ts` | TypeScript types for `GeminiLiveState`, `GeminiRefs`, `ToolExecutionContext` |
 | `src/renderer/hooks/gemini/mic-pipeline.ts` | `startMicPipeline()` / `stopMicPipeline()` -- mic acquisition, AudioWorklet, noise gate |
 | `src/renderer/hooks/gemini/tool-executor.ts` | `executeToolCall()` -- routes Gemini tool calls to `window.eve.*` handlers |

@@ -1,23 +1,22 @@
 /**
- * EnvironmentStep.tsx — Step 3: Merged Sovereignty + Identity.
+ * PrivacyPermissionsStep.tsx — Privacy & Permissions onboarding step.
  *
- * "Data Sovereignty." — Vault passphrase setup + agent identity
- * configuration in a single screen. Auto-skips vault section if
- * already initialized. Both sections visible simultaneously.
+ * "Privacy & Permissions." — Combines sovereign vault passphrase setup,
+ * privacy toggle controls (PII filtering, telemetry, local processing),
+ * and memory depth selection into a single scrollable step.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Lock, ShieldCheck, Mic } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Lock, ShieldCheck, Shield, Database } from 'lucide-react';
 import CyberInput from './shared/CyberInput';
 import NextButton from './shared/NextButton';
-import type { IdentityChoices } from '../OnboardingWizard';
 
-interface EnvironmentStepProps {
-  choices: IdentityChoices;
-  onChange: (choices: IdentityChoices) => void;
+interface PrivacyPermissionsStepProps {
   onComplete: () => void;
   onBack?: () => void;
 }
+
+/* ── Vault strength ── */
 
 const MIN_PASSPHRASE_LENGTH = 8;
 type StrengthLevel = 'weak' | 'fair' | 'good' | 'strong';
@@ -51,43 +50,92 @@ const ZERO_KNOWLEDGE_BADGES = [
   'Zero-Knowledge',
 ];
 
-const GENDERS: { value: IdentityChoices['gender']; label: string }[] = [
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-  { value: 'neutral', label: 'Neutral' },
+/* ── Privacy toggles ── */
+
+interface PrivacyToggle {
+  key: string;
+  label: string;
+  description: string;
+  defaultValue: boolean;
+}
+
+const PRIVACY_TOGGLES: PrivacyToggle[] = [
+  { key: 'piiFiltering', label: 'PII Filtering', description: 'Automatically redact personal information from logs', defaultValue: true },
+  { key: 'telemetry', label: 'Anonymous Telemetry', description: 'Help improve Agent Friday with anonymous usage data', defaultValue: false },
+  { key: 'localProcessing', label: 'Local Processing Priority', description: 'Process sensitive data locally when possible', defaultValue: true },
 ];
 
-const VOICE_FEELS: { value: IdentityChoices['voiceFeel']; label: string; desc: string; color: string }[] = [
-  { value: 'warm', label: 'Warm', desc: 'Friendly, approachable', color: '#f59e0b' },
-  { value: 'sharp', label: 'Sharp', desc: 'Precise, articulate', color: '#8A2BE2' },
-  { value: 'deep', label: 'Deep', desc: 'Rich, resonant', color: '#3b82f6' },
-  { value: 'soft', label: 'Soft', desc: 'Calm, gentle', color: '#22c55e' },
-  { value: 'bright', label: 'Bright', desc: 'Energetic, clear', color: '#00f0ff' },
+/* ── Memory depth options ── */
+
+interface MemoryOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+const MEMORY_OPTIONS: MemoryOption[] = [
+  { value: 'minimal', label: 'Minimal', description: 'Remember only essential preferences' },
+  { value: 'standard', label: 'Standard', description: 'Remember preferences and recent context' },
+  { value: 'comprehensive', label: 'Comprehensive', description: 'Deep memory — learns your patterns over time' },
 ];
 
-const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, onComplete, onBack }) => {
+/* ── Component ── */
+
+const PrivacyPermissionsStep: React.FC<PrivacyPermissionsStepProps> = ({ onComplete, onBack }) => {
+  const [fadeIn, setFadeIn] = useState(false);
+
+  // Vault state
+  const [vaultReady, setVaultReady] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [vaultReady, setVaultReady] = useState(false);
-  const [fadeIn, setFadeIn] = useState(false);
+  const [vaultError, setVaultError] = useState('');
 
-  // Check if vault is already initialized
+  // Privacy toggles
+  const [toggles, setToggles] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    PRIVACY_TOGGLES.forEach((t) => { init[t.key] = t.defaultValue; });
+    return init;
+  });
+
+  // Memory depth
+  const [memoryDepth, setMemoryDepth] = useState('standard');
+
+  // Load current settings on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const initialized = await window.eve.vault.isInitialized();
-        if (initialized && !cancelled) {
-          setVaultReady(true);
+        if (initialized && !cancelled) setVaultReady(true);
+      } catch (err) {
+        console.warn('[PrivacyPermissionsStep] Vault status check failed:', err);
+        // Vault not initialized — user will need to create it
+      }
+
+      // Load toggle settings from full settings object
+      try {
+        const all = await window.eve.settings.get();
+        if (!cancelled) {
+          const loaded: Record<string, boolean> = {};
+          for (const t of PRIVACY_TOGGLES) {
+            const val = (all as Record<string, unknown>)[t.key];
+            loaded[t.key] = val !== undefined && val !== null ? Boolean(val) : t.defaultValue;
+          }
+          setToggles(loaded);
+
+          // Load memory depth
+          const depth = (all as Record<string, unknown>)['memoryDepth'];
+          if (depth) setMemoryDepth(String(depth));
         }
-      } catch { /* not initialized */ }
+      } catch { /* use defaults */ }
+
       setTimeout(() => { if (!cancelled) setFadeIn(true); }, 100);
     })();
     return () => { cancelled = true; };
   }, []);
 
+  // Vault strength
   const strength = calcStrength(passphrase);
   const strengthMeta = STRENGTH_META[strength];
   const mismatch = confirm.length > 0 && passphrase !== confirm;
@@ -95,25 +143,34 @@ const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, on
   const strongEnough = strength !== 'weak';
   const canInitVault = passphrase.length >= MIN_PASSPHRASE_LENGTH && strongEnough && passphrase === confirm && !saving;
 
-  const canContinue = vaultReady && choices.agentName.trim().length > 0;
-
   const handleInitVault = useCallback(async () => {
     if (!canInitVault) return;
     setSaving(true);
-    setError('');
+    setVaultError('');
     try {
       await window.eve.vault.initializeNew(passphrase);
       setVaultReady(true);
       setSaving(false);
     } catch (err: any) {
-      setError(err?.message || 'Failed to initialize vault');
+      setVaultError(err?.message || 'Failed to initialize vault');
       setSaving(false);
     }
   }, [passphrase, canInitVault]);
 
-  const updateField = <K extends keyof IdentityChoices>(key: K, value: IdentityChoices[K]) => {
-    onChange({ ...choices, [key]: value });
-  };
+  const handleToggle = useCallback(async (key: string) => {
+    const newValue = !toggles[key];
+    setToggles((prev) => ({ ...prev, [key]: newValue }));
+    try {
+      await window.eve.settings.set(key, newValue);
+    } catch { /* best-effort */ }
+  }, [toggles]);
+
+  const handleMemoryDepth = useCallback(async (value: string) => {
+    setMemoryDepth(value);
+    try {
+      await window.eve.settings.set('memoryDepth', value);
+    } catch { /* best-effort */ }
+  }, []);
 
   return (
     <section style={{
@@ -121,17 +178,18 @@ const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, on
       opacity: fadeIn ? 1 : 0,
       transform: fadeIn ? 'translateY(0)' : 'translateY(16px)',
       transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
-    }} aria-label="Data sovereignty and agent identity">
+    }} aria-label="Privacy and permissions">
       <div style={styles.headerBlock}>
-        <h2 style={styles.heading}>Data Sovereignty.</h2>
+        <h2 style={styles.heading}>Privacy &amp; Permissions.</h2>
         <p style={styles.subtitle}>
-          Your vault is encrypted on-device. No data ever leaves your machine.
+          Your data sovereignty starts here. Everything stays on your machine.
         </p>
       </div>
 
-      {/* Scrollable content */}
+      {/* Scrollable sections */}
       <div style={styles.scrollArea}>
-        {/* ─── Section 1: Vault ─── */}
+
+        {/* ─── Section 1: Sovereign Vault ─── */}
         <div style={styles.sectionCard}>
           <div style={styles.sectionHeader}>
             <div style={styles.sectionIconBox}>
@@ -165,7 +223,6 @@ const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, on
                 error={tooShort ? `Minimum ${MIN_PASSPHRASE_LENGTH} characters` : undefined}
               />
 
-              {/* Strength indicator */}
               {passphrase.length >= MIN_PASSPHRASE_LENGTH && (
                 <div style={styles.strengthContainer} role="status" aria-live="polite">
                   <div style={styles.strengthTrack}>
@@ -204,7 +261,8 @@ const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, on
             </div>
           )}
 
-          {/* Zero-knowledge badges */}
+          {vaultError && <p role="alert" style={styles.error}>{vaultError}</p>}
+
           <div style={styles.badges} aria-hidden="true">
             {ZERO_KNOWLEDGE_BADGES.map((badge) => (
               <span key={badge} style={styles.badge}>{badge}</span>
@@ -212,102 +270,111 @@ const EnvironmentStep: React.FC<EnvironmentStepProps> = ({ choices, onChange, on
           </div>
         </div>
 
-        {/* ─── Section 2: Identity ─── */}
+        {/* ─── Section 2: Privacy Controls ─── */}
         <div style={styles.sectionCard}>
           <div style={styles.sectionHeader}>
             <div style={{ ...styles.sectionIconBox, background: 'rgba(138, 43, 226, 0.08)', border: '1px solid rgba(138, 43, 226, 0.15)' }}>
-              <Mic size={18} color="#8A2BE2" />
+              <Shield size={18} color="#8A2BE2" />
             </div>
             <div>
-              <div style={styles.sectionTitle}>Identity Wallet</div>
-              <div style={styles.sectionDesc}>Name and voice configuration</div>
+              <div style={styles.sectionTitle}>Privacy Controls</div>
+              <div style={styles.sectionDesc}>Manage data handling preferences</div>
             </div>
           </div>
 
-          {/* Agent name */}
-          <div style={styles.identityField}>
-            <CyberInput
-              id="agent-name"
-              label="Agent Name"
-              value={choices.agentName}
-              onChange={(v) => updateField('agentName', v)}
-              maxLength={24}
-            />
-            <span style={styles.nameHint}>Default: Friday — or choose your own</span>
-          </div>
-
-          {/* Voice gender */}
-          <div style={styles.identityField}>
-            <label id="voice-gender-label" style={styles.fieldLabel}>Voice Gender</label>
-            <div style={styles.genderRow} role="radiogroup" aria-labelledby="voice-gender-label">
-              {GENDERS.map((g) => (
-                <button
-                  key={g.value}
-                  onClick={() => updateField('gender', g.value)}
-                  role="radio"
-                  aria-checked={choices.gender === g.value}
-                  style={{
-                    ...styles.genderButton,
-                    borderColor: choices.gender === g.value ? 'var(--accent-cyan-30)' : 'rgba(255,255,255,0.06)',
-                    background: choices.gender === g.value ? 'var(--accent-cyan-10)' : 'transparent',
-                    color: choices.gender === g.value ? 'var(--accent-cyan-90)' : 'var(--text-50)',
-                  }}
-                >
-                  {g.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Voice feel grid */}
-          <div style={styles.identityField}>
-            <label id="voice-feel-label" style={styles.fieldLabel}>Voice Feel</label>
-            <div style={styles.feelGrid} role="radiogroup" aria-labelledby="voice-feel-label">
-              {VOICE_FEELS.map((vf) => (
-                <button
-                  key={vf.value}
-                  onClick={() => updateField('voiceFeel', vf.value)}
-                  role="radio"
-                  aria-checked={choices.voiceFeel === vf.value}
-                  style={{
-                    ...styles.feelButton,
-                    borderColor: choices.voiceFeel === vf.value ? `${vf.color}66` : 'rgba(255,255,255,0.06)',
-                    background: choices.voiceFeel === vf.value ? `${vf.color}15` : 'rgba(255,255,255,0.02)',
-                  }}
-                >
-                  <div aria-hidden="true" style={{
-                    ...styles.feelDot,
-                    background: vf.color,
-                    boxShadow: choices.voiceFeel === vf.value ? `0 0 8px ${vf.color}80` : 'none',
+          {PRIVACY_TOGGLES.map((toggle) => {
+            const checked = toggles[toggle.key] ?? toggle.defaultValue;
+            return (
+              <div
+                key={toggle.key}
+                style={styles.toggleRow}
+                role="switch"
+                aria-checked={checked}
+                aria-label={toggle.label}
+                tabIndex={0}
+                onClick={() => handleToggle(toggle.key)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggle(toggle.key); } }}
+              >
+                <div style={styles.toggleText}>
+                  <span style={styles.toggleLabel}>{toggle.label}</span>
+                  <span style={styles.toggleDesc}>{toggle.description}</span>
+                </div>
+                <div style={{
+                  ...styles.switchTrack,
+                  background: checked ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.1)',
+                  borderColor: checked ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.15)',
+                }}>
+                  <div style={{
+                    ...styles.switchThumb,
+                    transform: checked ? 'translateX(12px)' : 'translateX(0)',
+                    background: checked ? '#000' : 'rgba(255, 255, 255, 0.4)',
                   }} />
-                  <div>
-                    <span style={{
-                      ...styles.feelLabel,
-                      color: choices.voiceFeel === vf.value ? 'var(--text-primary)' : 'var(--text-60)',
-                    }}>
-                      {vf.label}
-                    </span>
-                    <span style={styles.feelDesc}>{vf.desc}</span>
-                  </div>
-                </button>
-              ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ─── Section 3: Memory Depth ─── */}
+        <div style={styles.sectionCard}>
+          <div style={styles.sectionHeader}>
+            <div style={{ ...styles.sectionIconBox, background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
+              <Database size={18} color="#f59e0b" />
             </div>
+            <div>
+              <div style={styles.sectionTitle}>Memory Depth</div>
+              <div style={styles.sectionDesc}>How much your agent remembers</div>
+            </div>
+          </div>
+
+          <div style={styles.radioGroup} role="radiogroup" aria-label="Memory depth">
+            {MEMORY_OPTIONS.map((opt) => {
+              const selected = memoryDepth === opt.value;
+              return (
+                <div
+                  key={opt.value}
+                  role="radio"
+                  aria-checked={selected}
+                  tabIndex={0}
+                  onClick={() => handleMemoryDepth(opt.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleMemoryDepth(opt.value); } }}
+                  style={{
+                    ...styles.radioOption,
+                    borderColor: selected ? 'var(--accent-cyan-30)' : 'rgba(255, 255, 255, 0.06)',
+                    background: selected ? 'var(--accent-cyan-10)' : 'transparent',
+                  }}
+                >
+                  <div style={{
+                    ...styles.radioCircle,
+                    borderColor: selected ? 'var(--accent-cyan)' : 'rgba(255, 255, 255, 0.2)',
+                  }}>
+                    {selected && <div style={styles.radioDot} />}
+                  </div>
+                  <div>
+                    <div style={{
+                      ...styles.radioLabel,
+                      color: selected ? 'var(--text-primary)' : 'var(--text-60)',
+                    }}>{opt.label}</div>
+                    <div style={styles.radioDesc}>{opt.description}</div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {error && <p role="alert" style={styles.error}>{error}</p>}
-
+      {/* Continue */}
       <NextButton
         label="Continue"
         onClick={onComplete}
-        disabled={!canContinue}
+        disabled={!vaultReady}
       />
 
       <p style={styles.hint}>
         {!vaultReady
-          ? 'Initialize your vault before continuing. If you forget the passphrase, data cannot be recovered.'
-          : 'Your agent\'s name and voice can be changed later in Settings.'}
+          ? 'Initialize your vault before continuing.'
+          : 'All settings can be changed later in Preferences.'}
       </p>
     </section>
   );
@@ -345,7 +412,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   scrollArea: {
     width: '100%',
-    maxHeight: 420,
+    maxHeight: 440,
     overflowY: 'auto',
     display: 'flex',
     flexDirection: 'column',
@@ -388,6 +455,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-30)',
     fontFamily: "'Inter', sans-serif",
   },
+
+  /* Vault */
   readyBox: {
     display: 'flex',
     alignItems: 'center',
@@ -449,84 +518,103 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid rgba(255, 255, 255, 0.05)',
     fontFamily: "'JetBrains Mono', monospace",
   },
-  identityField: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: 500,
-    color: 'var(--text-50)',
-    letterSpacing: '0.05em',
-    fontFamily: "'Space Grotesk', sans-serif",
-    margin: 0,
-  },
-  nameHint: {
-    fontSize: 10,
-    color: 'var(--text-20)',
-    fontFamily: "'Inter', sans-serif",
-    marginTop: -4,
-  },
-  genderRow: {
-    display: 'flex',
-    gap: 8,
-  },
-  genderButton: {
-    flex: 1,
-    padding: '10px 8px',
-    borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.06)',
-    background: 'transparent',
-    cursor: 'pointer',
-    fontSize: 13,
-    fontWeight: 500,
-    fontFamily: "'Space Grotesk', sans-serif",
-    transition: 'all 0.2s ease',
-    textAlign: 'center',
-  },
-  feelGrid: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  feelButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '10px 14px',
-    borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.06)',
-    background: 'rgba(255,255,255,0.02)',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    minWidth: 130,
-    flex: '1 1 calc(50% - 4px)',
-  },
-  feelDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-    transition: 'box-shadow 0.2s ease',
-  },
-  feelLabel: {
-    fontSize: 13,
-    fontWeight: 500,
-    fontFamily: "'Space Grotesk', sans-serif",
-    display: 'block',
-  },
-  feelDesc: {
-    fontSize: 10,
-    color: 'var(--text-30)',
-    fontFamily: "'Inter', sans-serif",
-    display: 'block',
-  },
   error: {
     color: 'var(--accent-red)',
     fontSize: 12,
     margin: 0,
   },
+
+  /* Privacy toggle switches */
+  toggleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 0',
+    cursor: 'pointer',
+    userSelect: 'none',
+  },
+  toggleText: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    flex: 1,
+  },
+  toggleLabel: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: 'var(--text-primary)',
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  toggleDesc: {
+    fontSize: 11,
+    color: 'var(--text-30)',
+    fontFamily: "'Inter', sans-serif",
+  },
+  switchTrack: {
+    width: 28,
+    height: 16,
+    borderRadius: 8,
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 2,
+    flexShrink: 0,
+    transition: 'all 0.15s ease',
+    cursor: 'pointer',
+  },
+  switchThumb: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    transition: 'all 0.15s ease',
+  },
+
+  /* Memory depth */
+  radioGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  radioOption: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '12px 16px',
+    borderRadius: 8,
+    border: '1px solid rgba(255, 255, 255, 0.06)',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+    userSelect: 'none',
+  },
+  radioCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: '50%',
+    border: '2px solid rgba(255, 255, 255, 0.2)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    transition: 'border-color 0.15s ease',
+  },
+  radioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    background: 'var(--accent-cyan)',
+  },
+  radioLabel: {
+    fontSize: 13,
+    fontWeight: 500,
+    fontFamily: "'Space Grotesk', sans-serif",
+  },
+  radioDesc: {
+    fontSize: 11,
+    color: 'var(--text-30)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  /* Bottom */
   hint: {
     fontSize: 10,
     color: 'var(--text-20)',
@@ -537,4 +625,4 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-export default EnvironmentStep;
+export default PrivacyPermissionsStep;

@@ -1,0 +1,105 @@
+flowchart LR
+    subgraph Renderer["Renderer (React)"]
+        direction TB
+        SettingsUI["Settings UI\nwindow.eve.settings.get()"]
+        SetGeneric["settings.set(key, value)\n(generic path)"]
+        SetApiKey["settings.setApiKey(key, value)\n(dedicated path)"]
+        ValidateKey["settings.validateApiKey()\n(server-side HTTP)"]
+        HealthCheck["settings.checkApiHealth()\n(parallel pings)"]
+        DedicatedSetters["Dedicated setters\n(autoLaunch, obsidian,\ntelegram, voiceEngine, etc.)"]
+        VaultInit["vault.initializeNew(passphrase)\n(first run)"]
+        VaultUnlock["vault.unlock(passphrase)\n(returning user)"]
+        VaultReset["vault.resetAll()\n(nuclear wipe)"]
+        BootNotify["vault:boot-complete\n(Phase B done)"]
+    end
+
+    subgraph IPC["IPC Bridge (preload.ts)"]
+        direction TB
+        SettNS["window.eve.settings.*\n(preload.ts:170-191)"]
+        VaultNS["window.eve.vault.*\n(preload.ts:1204-1215)"]
+    end
+
+    subgraph Main["Main Process"]
+        direction TB
+        CoreHandlers["core-handlers.ts\n(settings:get/set,\nset-api-key, validate,\nhealth, dedicated setters)"]
+        VaultIPC["index.ts:876-929\n(vault:initialize-new,\nvault:unlock,\nvault:reset-all)"]
+        SettMgr["SettingsManager\n(setSetting, setApiKey,\nsaveAgentConfig, save)"]
+        SensitiveGuard["Sensitive Field Guard\n(13 fields blocked\nfrom generic setSetting)"]
+        WriteQueue["Serialized Write Queue\n(savePromise chain)"]
+        VaultMod["vault.ts\n(vaultWrite, vaultRead,\ninitializeNewVault,\nunlockVault)"]
+        VaultEncrypt["vaultEncrypt()\nAES-256-GCM\n[IV][authTag][ciphertext]"]
+        VaultDecrypt["vaultDecrypt()\nAES-256-GCM\n+ isLikelyPlaintext()"]
+        KDF["passphrase-kdf.ts\n(Argon2id + BLAKE2b)"]
+        SecBuf["SecureBuffer\n(NOACCESS/READONLY/READWRITE\nsecure zeroing)"]
+        Canary["createCanary / verifyCanary\n(XSalsa20-Poly1305)"]
+        PhaseB["completeBootAfterUnlock()\n(reload settings, HMAC,\nintegrity, agent network)"]
+        Integrity["integrity.ts\n(signIdentity)"]
+        GetMasked["getMasked()\n(API keys -> booleans + hints)"]
+    end
+
+    subgraph Disk["Disk (userData)"]
+        direction TB
+        SettingsJSON[("friday-settings.json\n(AES-256-GCM encrypted)")]
+        VaultSalt[(".vault-salt\n(16 bytes)")]
+        VaultCanary[(".vault-canary\n(XSalsa20-Poly1305)")]
+        VaultMeta[(".vault-meta.json\n(version, initialized)")]
+    end
+
+    %% Renderer -> IPC connections
+    SettingsUI -.-> SettNS
+    SetGeneric -.-> SettNS
+    SetApiKey -.-> SettNS
+    ValidateKey -.-> SettNS
+    HealthCheck -.-> SettNS
+    DedicatedSetters -.-> SettNS
+    VaultInit -.-> VaultNS
+    VaultUnlock -.-> VaultNS
+    VaultReset -.-> VaultNS
+
+    %% IPC -> Main connections
+    SettNS --> CoreHandlers
+    VaultNS --> VaultIPC
+
+    %% Main internal: Settings flow
+    CoreHandlers -->|"settings:get"| GetMasked
+    CoreHandlers -->|"settings:set"| SettMgr
+    CoreHandlers -->|"settings:set-api-key"| SettMgr
+    SettMgr --> SensitiveGuard
+    SensitiveGuard -->|"allowed"| WriteQueue
+    WriteQueue --> VaultMod
+
+    %% Main internal: Vault encryption
+    VaultMod -->|"vaultWrite()"| VaultEncrypt
+    VaultMod -->|"vaultRead()"| VaultDecrypt
+    VaultEncrypt --> SecBuf
+    VaultDecrypt --> SecBuf
+
+    %% Main internal: Vault lifecycle
+    VaultIPC -->|"initialize-new"| VaultMod
+    VaultIPC -->|"unlock"| VaultMod
+    VaultIPC -->|"reset-all"| VaultMod
+    VaultMod --> KDF
+    KDF --> SecBuf
+    KDF --> Canary
+    VaultIPC -->|"Phase B"| PhaseB
+    PhaseB -->|"reloadFromVault()"| SettMgr
+    PhaseB --> Integrity
+
+    %% Phase B notification
+    PhaseB -.->|"vault:boot-complete"| BootNotify
+
+    %% Main internal: Identity signing
+    SettMgr -->|"saveAgentConfig()"| Integrity
+
+    %% Main -> Disk
+    VaultMod -.-> SettingsJSON
+    KDF -.-> VaultSalt
+    Canary -.-> VaultCanary
+    KDF -.-> VaultMeta
+
+    %% Styling
+    style Disk fill:#2d2d00,stroke:#666
+    style SettingsJSON fill:#3d3d00,stroke:#888
+    style VaultSalt fill:#3d3d00,stroke:#888
+    style VaultCanary fill:#3d3d00,stroke:#888
+    style VaultMeta fill:#3d3d00,stroke:#888

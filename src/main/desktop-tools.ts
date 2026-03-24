@@ -4,13 +4,15 @@
  */
 
 import { execFile } from 'child_process';
+import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
 import { writeFileSync, unlinkSync } from 'fs';
 import { readFile as fsReadFile, writeFile as fsWriteFile, readdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { clipboard, BrowserWindow } from 'electron';
 import { getSanitizedEnv } from './settings';
-import { assertSafePath } from './ipc/validate';
+import { assertSafePath, assertConfinedPath } from './ipc/validate';
+import { homedir } from 'os';
 
 interface ToolResult {
   result?: string;
@@ -52,12 +54,12 @@ const READ_ONLY_TOOLS = new Set([
 const pendingConfirmations = new Map<string, {
   resolve: (approved: boolean) => void;
   timer: ReturnType<typeof setTimeout>;
+  challenge: string;
 }>();
-
-let confirmationId = 0;
 
 /**
  * Send a confirmation request to the renderer and wait for approval.
+ * Uses crypto-random UUIDs and HMAC challenges to prevent renderer spoofing.
  * Times out after 30s (auto-deny).
  */
 export function requestConfirmation(
@@ -67,7 +69,10 @@ export function requestConfirmation(
 ): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(false);
 
-  const id = String(++confirmationId);
+  const id = randomUUID();
+  // Create HMAC challenge binding this ID to this specific tool+args
+  const challengeData = JSON.stringify({ id, toolName, ts: Date.now() });
+  const challenge = createHmac('sha256', id).update(challengeData).digest('hex');
   const description = formatToolDescription(toolName, args);
 
   return new Promise<boolean>((resolve) => {
@@ -76,19 +81,39 @@ export function requestConfirmation(
       resolve(false); // auto-deny on timeout
     }, 30_000);
 
-    pendingConfirmations.set(id, { resolve, timer });
-    win.webContents.send('desktop:confirm-request', { id, toolName, description });
+    pendingConfirmations.set(id, { resolve, timer, challenge });
+    win.webContents.send('desktop:confirm-request', { id, toolName, description, challenge });
   });
 }
 
 /** Called from IPC when user responds to a confirmation */
-export function handleConfirmationResponse(id: string, approved: boolean): void {
+export function handleConfirmationResponse(id: string, approved: boolean, responseChallenge?: string): void {
   const pending = pendingConfirmations.get(id);
-  if (pending) {
+  if (!pending) return;
+
+  // Verify the response includes the correct challenge echo
+  if (pending.challenge && responseChallenge) {
+    const expected = Buffer.from(pending.challenge, 'hex');
+    const received = Buffer.from(responseChallenge, 'hex');
+    if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+      console.warn(`[ConfirmationGate] Invalid challenge response for ${id} — denying`);
+      clearTimeout(pending.timer);
+      pendingConfirmations.delete(id);
+      pending.resolve(false);
+      return;
+    }
+  } else if (pending.challenge && !responseChallenge) {
+    // Challenge was issued but no response challenge provided — deny
+    console.warn(`[ConfirmationGate] Missing challenge response for ${id} — denying`);
     clearTimeout(pending.timer);
     pendingConfirmations.delete(id);
-    pending.resolve(approved);
+    pending.resolve(false);
+    return;
   }
+
+  clearTimeout(pending.timer);
+  pendingConfirmations.delete(id);
+  pending.resolve(approved);
 }
 
 function formatToolDescription(toolName: string, args: Record<string, unknown>): string {
@@ -113,6 +138,8 @@ function formatToolDescription(toolName: string, args: Record<string, unknown>):
       return `Read file: ${args.file_path}`;
     case 'list_directory':
       return `List directory: ${args.dir_path}`;
+    case 'code:execute-direct':
+      return `Execute ${args.language} code: ${String(args.code || '').slice(0, 200)}`;
     default:
       return `${toolName}: ${JSON.stringify(args).slice(0, 150)}`;
   }
@@ -132,6 +159,8 @@ export function setMainWindow(win: BrowserWindow): void {
  */
 function sanitizePS(input: string): string {
   return input
+    .replace(/-[eE](?:nc(?:oded)?)?[cC](?:ommand)?/g, '_blocked_encoded_command_')  // block encoded commands
+    .replace(/\.\s*\(|::\s*\w/g, '')  // block method calls like .Invoke() and static calls like [System.IO.File]::
     .replace(/`/g, '``')        // backtick escape
     .replace(/\$/g, '`$')       // dollar sign
     .replace(/'/g, "''")        // single quote (PowerShell escape)
@@ -884,10 +913,10 @@ if ($proc) {
 
 async function readFile(filePath: string): Promise<ToolResult> {
   try {
-    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
-    assertSafePath(filePath, 'desktop-tools readFile path');
+    // Crypto Sprint 11 + Audit Fix H2: Confine file reads to user home directory.
+    const resolvedPath = assertConfinedPath(filePath, 'desktop-tools readFile path', homedir());
     const MAX_SIZE = 50 * 1024; // 50KB
-    const buffer = await fsReadFile(filePath);
+    const buffer = await fsReadFile(resolvedPath);
     if (buffer.length > MAX_SIZE) {
       const truncated = buffer.slice(0, MAX_SIZE).toString('utf-8');
       return { result: truncated + '\n... (truncated at 50KB)' };
@@ -900,9 +929,9 @@ async function readFile(filePath: string): Promise<ToolResult> {
 
 async function writeFile(filePath: string, content: string): Promise<ToolResult> {
   try {
-    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
-    assertSafePath(filePath, 'desktop-tools writeFile path');
-    await fsWriteFile(filePath, content, 'utf-8');
+    // Crypto Sprint 11 + Audit Fix H2: Confine file writes to user home directory.
+    const resolvedPath = assertConfinedPath(filePath, 'desktop-tools writeFile path', homedir());
+    await fsWriteFile(resolvedPath, content, 'utf-8');
     // Notify renderer about file modification
     if (mainWindowRef && !mainWindowRef.isDestroyed()) {
       mainWindowRef.webContents.send('file:modified', {
@@ -920,9 +949,9 @@ async function writeFile(filePath: string, content: string): Promise<ToolResult>
 
 async function listDirectory(dirPath: string): Promise<ToolResult> {
   try {
-    // Crypto Sprint 11: Validate path against traversal, UNC, and shell metacharacters.
-    assertSafePath(dirPath, 'desktop-tools listDirectory path');
-    const entries = await readdir(dirPath, { withFileTypes: true });
+    // Crypto Sprint 11 + Audit Fix H2: Confine directory listing to user home directory.
+    const resolvedPath = assertConfinedPath(dirPath, 'desktop-tools listDirectory path', homedir());
+    const entries = await readdir(resolvedPath, { withFileTypes: true });
     if (entries.length === 0) {
       return { result: '(empty directory)' };
     }

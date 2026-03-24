@@ -81,12 +81,13 @@ import { telemetryEngine } from '../telemetry';
 // ── Types ─────────────────────────────────────────────────────────────────
 
 /**
- * The three voice paths, ordered from richest to simplest:
- *   cloud: Gemini WebSocket — bidirectional audio, highest quality
- *   local: Whisper STT + Ollama LLM + Kokoro/Piper TTS — offline capable
- *   text:  No voice at all — the universal floor
+ * The four voice paths, ordered from richest to simplest:
+ *   cloud:       Gemini WebSocket — bidirectional audio, highest quality
+ *   personaplex: PersonaPlex full-duplex speech-to-speech — fastest local when GPU available
+ *   local:       Whisper STT + Ollama LLM + Kokoro/Piper TTS — offline capable
+ *   text:        No voice at all — the universal floor
  */
-export type VoicePath = 'cloud' | 'local' | 'text';
+export type VoicePath = 'cloud' | 'local' | 'personaplex' | 'text';
 
 /**
  * Availability probe result for a single path.
@@ -140,6 +141,7 @@ interface ConversationSnapshot {
  * allowing the priority to be overridden via setPathPriority().
  */
 const DEFAULT_PRIORITIES: Record<VoicePath, number> = {
+  personaplex: 0, // PersonaPlex is highest priority — fastest full-duplex local path when available
   cloud: 1,
   local: 2,
   text: 99, // Text is always last — it's the universal floor
@@ -217,6 +219,9 @@ export class VoiceFallbackManager extends EventEmitter {
 
   private constructor() {
     super();
+    this.on('error', (err) => {
+      console.error(`[VoiceFallbackManager] Unhandled error event:`, err instanceof Error ? err.message : err);
+    });
     this.stateMachine = VoiceStateMachine.getInstance();
     this.subscribeToStateMachine();
   }
@@ -302,6 +307,33 @@ export class VoiceFallbackManager extends EventEmitter {
       available: ollamaAvailable,
       reason: ollamaReason,
       priority: this.priorities.local,
+    });
+
+    // ── PersonaPlex: requires running server with CUDA GPU ──────────────
+    //
+    // BOUNDARY: We probe whether the PersonaPlex server process is running.
+    // Like the Ollama check, this does NOT guarantee it will succeed —
+    // the GPU could be out of VRAM, the model could be corrupt, etc.
+    // Availability is a necessary but not sufficient condition.
+    let personaplexAvailable = false;
+    let personaplexReason: string | undefined;
+    try {
+      // Dynamic import to avoid circular dependency — personaplex-server
+      // is a sibling module in the voice/ directory.
+      const { isRunning } = await import('./personaplex-server');
+      personaplexAvailable = await isRunning();
+      if (!personaplexAvailable) {
+        personaplexReason = 'PersonaPlex server not running';
+      }
+    } catch (err) {
+      personaplexReason = `PersonaPlex check failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+
+    configs.push({
+      path: 'personaplex',
+      available: personaplexAvailable,
+      reason: personaplexReason,
+      priority: this.priorities.personaplex,
     });
 
     // ── Text: always available ──────────────────────────────────────────
@@ -394,47 +426,56 @@ export class VoiceFallbackManager extends EventEmitter {
       return this.currentPath ?? 'text';
     }
 
-    this.attemptedPaths.add(failedPath);
-    this.pathErrors.push({ path: failedPath, error: error.message });
+    // Lock the switching flag for the entire teardown→probe→start sequence
+    // to prevent two concurrent degradation events from racing through teardown.
+    this.switching = true;
+    try {
+      this.attemptedPaths.add(failedPath);
+      this.pathErrors.push({ path: failedPath, error: error.message });
 
-    // Capture context before teardown (teardown clears the path's state)
-    this.snapshot = this.captureContext();
+      // Capture context before teardown (teardown clears the path's state)
+      this.snapshot = this.captureContext();
 
-    // Tear down the failed path
-    await this.teardownPath(failedPath);
+      // Tear down the failed path
+      await this.teardownPath(failedPath);
 
-    // Find the next available path that hasn't been attempted
-    const configs = await this.probeAvailability();
-    for (const config of configs) {
-      if (this.attemptedPaths.has(config.path)) continue;
-      if (!config.available) {
-        this.attemptedPaths.add(config.path);
-        if (config.reason) {
-          this.pathErrors.push({ path: config.path, error: config.reason });
+      // Find the next available path that hasn't been attempted
+      const configs = await this.probeAvailability();
+      for (const config of configs) {
+        if (this.attemptedPaths.has(config.path)) continue;
+        if (!config.available) {
+          this.attemptedPaths.add(config.path);
+          if (config.reason) {
+            this.pathErrors.push({ path: config.path, error: config.reason });
+          }
+          continue;
         }
-        continue;
+
+        this.emit('switch-start', {
+          from: failedPath,
+          to: config.path,
+          reason: error.message,
+        });
+        telemetryEngine.record('voice-fallback', 'triggered', `${failedPath}->${config.path}`);
+
+        // Note: attemptStartPath also sets/clears this.switching, but we hold
+        // the outer lock so no concurrent handlePathFailure can slip through.
+        const started = await this.attemptStartPath(config.path);
+        if (started) {
+          return config.path;
+        }
       }
 
-      this.emit('switch-start', {
-        from: failedPath,
-        to: config.path,
-        reason: error.message,
-      });
-      telemetryEngine.record('voice-fallback', 'triggered', `${failedPath}->${config.path}`);
-
-      const started = await this.attemptStartPath(config.path);
-      if (started) {
-        return config.path;
-      }
+      // All voice paths exhausted — fall to text
+      console.warn('[VoiceFallbackManager] All voice paths exhausted — text fallback');
+      telemetryEngine.record('voice-fallback', 'exhausted');
+      this.currentPath = 'text';
+      this.stateMachine.transition('TEXT_FALLBACK', 'All voice paths exhausted');
+      this.emit('all-paths-exhausted', { errors: this.pathErrors });
+      return 'text';
+    } finally {
+      this.switching = false;
     }
-
-    // All voice paths exhausted — fall to text
-    console.warn('[VoiceFallbackManager] All voice paths exhausted — text fallback');
-    telemetryEngine.record('voice-fallback', 'exhausted');
-    this.currentPath = 'text';
-    this.stateMachine.transition('TEXT_FALLBACK', 'All voice paths exhausted');
-    this.emit('all-paths-exhausted', { errors: this.pathErrors });
-    return 'text';
   }
 
   // ── Public API: Forced Path Switch ────────────────────────────────────
@@ -513,6 +554,17 @@ export class VoiceFallbackManager extends EventEmitter {
    */
   setPathPriority(path: VoicePath, priority: number): void {
     this.priorities[path] = priority;
+  }
+
+  /**
+   * Notify the manager that a voice path was activated externally.
+   * Keeps the internal currentPath in sync with App.tsx's legacy connection logic.
+   */
+  notifyPathActive(path: VoicePath): void {
+    this.currentPath = path;
+    this.attemptedPaths.clear();
+    this.pathErrors = [];
+    console.log(`[VoiceFallbackManager] External path activation: ${path}`);
   }
 
   // ── Public API: Query ─────────────────────────────────────────────────
@@ -655,6 +707,19 @@ export class VoiceFallbackManager extends EventEmitter {
           break;
         }
 
+        case 'personaplex': {
+          // PersonaPlex teardown: clean up the WebSocket connection and
+          // any GPU-side audio buffers. Dynamic import to avoid circular
+          // dependency — personaplex-voice-path is loaded only when needed.
+          try {
+            const { cleanupPersonaPlex } = await import('./personaplex-voice-path');
+            cleanupPersonaPlex();
+          } catch {
+            // Best-effort
+          }
+          break;
+        }
+
         case 'text': {
           // Text has no transport to tear down.
           break;
@@ -705,6 +770,9 @@ export class VoiceFallbackManager extends EventEmitter {
       switch (path) {
         case 'cloud':
           targetState = 'CONNECTING_CLOUD';
+          break;
+        case 'personaplex':
+          targetState = 'CONNECTING_PERSONAPLEX';
           break;
         case 'local':
           targetState = 'CONNECTING_LOCAL';
@@ -769,7 +837,7 @@ export class VoiceFallbackManager extends EventEmitter {
       const { from, to } = payload;
 
       // ── Degradation detected: start countdown to auto-switch ─────────
-      if (to === 'CLOUD_DEGRADED' || to === 'LOCAL_DEGRADED') {
+      if (to === 'CLOUD_DEGRADED' || to === 'PERSONAPLEX_DEGRADED' || to === 'LOCAL_DEGRADED') {
         this.startDegradedTimer(to);
         return;
       }
@@ -777,6 +845,7 @@ export class VoiceFallbackManager extends EventEmitter {
       // ── Recovery from degradation: cancel auto-switch ────────────────
       if (
         (from === 'CLOUD_DEGRADED' && to === 'CLOUD_ACTIVE') ||
+        (from === 'PERSONAPLEX_DEGRADED' && to === 'PERSONAPLEX_ACTIVE') ||
         (from === 'LOCAL_DEGRADED' && to === 'LOCAL_ACTIVE')
       ) {
         this.clearDegradedTimer();
@@ -804,9 +873,29 @@ export class VoiceFallbackManager extends EventEmitter {
         this.emit('all-paths-exhausted', { errors: this.pathErrors });
       }
 
+      // PersonaPlex timed out or failed → falling back to local or text
+      if (
+        from === 'CONNECTING_PERSONAPLEX' &&
+        (to === 'CONNECTING_LOCAL' || to === 'CONNECTING_CLOUD' || to === 'TEXT_FALLBACK')
+      ) {
+        this.attemptedPaths.add('personaplex');
+        this.pathErrors.push({ path: 'personaplex', error: payload.reason });
+        if (to === 'CONNECTING_LOCAL') {
+          this.currentPath = 'local';
+        } else if (to === 'CONNECTING_CLOUD') {
+          this.currentPath = 'cloud';
+        } else {
+          this.currentPath = 'text';
+        }
+      }
+
       // ── Path became active: update currentPath ───────────────────────
       if (to === 'CLOUD_ACTIVE') {
         this.currentPath = 'cloud';
+        this.clearDegradedTimer();
+      }
+      if (to === 'PERSONAPLEX_ACTIVE') {
+        this.currentPath = 'personaplex';
         this.clearDegradedTimer();
       }
       if (to === 'LOCAL_ACTIVE') {
@@ -857,7 +946,9 @@ export class VoiceFallbackManager extends EventEmitter {
       if (currentState !== degradedState) return;
 
       // Determine which path to switch to
-      const failedPath: VoicePath = degradedState === 'CLOUD_DEGRADED' ? 'cloud' : 'local';
+      const failedPath: VoicePath =
+        degradedState === 'CLOUD_DEGRADED' ? 'cloud' :
+        degradedState === 'PERSONAPLEX_DEGRADED' ? 'personaplex' : 'local';
       const error = new Error(
         `${failedPath} path degraded for ${DEGRADED_AUTO_SWITCH_MS}ms without recovery`,
       );

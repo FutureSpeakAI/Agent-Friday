@@ -9,7 +9,7 @@
 | **Process** | Electron main process (all components are main-process singletons) |
 | **STT Engine** | Whisper.cpp via `whisper-binding` native addon |
 | **LLM Engine** | Ollama (localhost HTTP API) |
-| **TTS Engine** | Kokoro or Piper (ONNX models via `tts-binding` native addon) |
+| **TTS Engine** | Chatterbox Turbo > kokoro-js > Kokoro > Piper (auto-detected priority) |
 | **Mic Format** | 16kHz mono Float32 PCM |
 | **TTS Output** | 24kHz mono Float32 PCM |
 | **VAD Threshold** | 0.01 RMS energy |
@@ -45,7 +45,9 @@ When `start()` is called, the following steps execute sequentially:
    and continues in text-input mode. Emits an error event so the renderer can notify the user.
 
 3. **Load TTS** (optional): Calls `ttsEngine.loadEngine()` which auto-detects the backend
-   (Kokoro preferred, Piper fallback) and loads ONNX models from `~/.nexus-os/models/tts/`.
+   in priority order: Chatterbox Turbo (managed Python sidecar, highest quality) > kokoro-js
+   (pure Node.js ONNX, Kokoro-82M Q8) > kokoro (sherpa-onnx binary) > piper (binary TTS).
+   Models loaded from `~/.nexus-os/models/tts/` (ONNX) or managed sidecar (`~/.nexus-os/services/chatterbox/`).
    If loading fails, sets `ttsAvailable = false` and continues with text output only.
 
 4. **Initialize conversation state**: Resets message history, sets system prompt and tools.
@@ -115,12 +117,14 @@ When a transcript arrives (or text is sent via `sendText()`):
 
 3. **Message assembly**: The user text is appended to the conversation `messages[]` array.
 
-4. **LLM completion**: `llmClient.complete()` is called with:
+4. **LLM streaming completion**: `llmClient.stream()` is called with:
    - Provider: `'ollama'`
    - System prompt and tools from the `start()` configuration
    - Max tokens: 2048
    - Temperature: 0.7
    - Timeout: 90 seconds (`AbortSignal.timeout(90_000)`)
+   - Each streamed chunk emits `ai-response-chunk` for responsive UI updates.
+   - The final chunk carries the assembled full text and any tool calls.
 
 5. **Tool loop**: If the response contains `toolCalls`, they are executed in a loop:
    - Max 5 iterations to prevent infinite tool loops.
@@ -143,9 +147,11 @@ If TTS is available, the response text is spoken via the `SpeechSynthesisManager
    while subsequent sentences are being synthesized).
 
 2. **TTS Engine** (`src/main/voice/tts-engine.ts`): Converts text to audio:
-   - Backend: Kokoro (preferred) or Piper (fallback)
+   - Backend priority: Chatterbox Turbo > kokoro-js > Kokoro > Piper
+   - Chatterbox Turbo: Python sidecar (`chatterbox-server.ts`), highest quality
+   - kokoro-js: Pure Node.js ONNX (Kokoro-82M Q8), no binary deps, supports `stream()` API
+   - Kokoro/Piper: Binary-based backends using `tts-binding` native addon
    - Output: Float32Array at 24kHz mono
-   - Models loaded from `~/.nexus-os/models/tts/` (ONNX format)
    - Internal queue for sequential processing
 
 3. **SpeechSynthesisManager** (`src/main/voice/speech-synthesis.ts`): Manages the utterance queue:
@@ -160,8 +166,10 @@ If TTS is available, the response text is spoken via the `SpeechSynthesisManager
 
 When the user starts speaking while the agent is responding:
 
-1. `TranscriptionPipeline` emits a new `transcript` event.
-2. `LocalConversation.onUserSpeech()` detects `speechSynthesis.isSpeaking()`.
+1. **Instant barge-in**: `AudioCapture` emits `voice-start` event, which `LocalConversation`
+   listens for directly. TTS is stopped immediately on VAD trigger, before waiting for Whisper.
+2. When the full transcript arrives, `LocalConversation.onUserSpeech()` also checks
+   `speechSynthesis.isSpeaking()` as a backup.
 3. `speechSynthesis.stop()` is called immediately:
    - Clears the utterance queue
    - Increments generation counter (stale utterances become no-ops)
@@ -187,7 +195,8 @@ When the user starts speaking while the agent is responding:
 | `src/main/voice/audio-capture.ts` | Main-process singleton: IPC coordination, energy-based VAD, speech buffering |
 | `src/main/voice/transcription-pipeline.ts` | Wires AudioCapture events to WhisperProvider; manages transcription queue |
 | `src/main/voice/whisper-provider.ts` | Whisper.cpp wrapper: model loading, audio transcription, result formatting |
-| `src/main/voice/tts-engine.ts` | Kokoro/Piper TTS: text to 24kHz Float32 audio, backend auto-detection |
+| `src/main/voice/tts-engine.ts` | TTS engine: Chatterbox/kokoro-js/Kokoro/Piper, text to 24kHz Float32 audio |
+| `src/main/voice/chatterbox-server.ts` | Chatterbox Turbo Python sidecar for highest-quality TTS |
 | `src/main/voice/speech-synthesis.ts` | Utterance queue manager: sentence splitting, IPC audio delivery, barge-in support |
 | `src/main/llm-client.ts` | LLM abstraction layer with Ollama provider for chat completions |
 | `src/main/desktop-tools.ts` | Desktop tool execution (file system, notifications, etc.) |

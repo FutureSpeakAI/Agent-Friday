@@ -6,12 +6,14 @@ export interface ChatMessage {
   content: string;
   model?: string;
   timestamp: number;
+  pending?: boolean;
 }
 
 export interface ConfirmationRequest {
   id: string;
   toolName: string;
   description: string;
+  challenge?: string;
 }
 
 export interface CodeProposal {

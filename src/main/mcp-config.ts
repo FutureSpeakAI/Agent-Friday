@@ -52,8 +52,9 @@ const DEFAULT_CONFIG: MCPConfigFile = {
       command: 'npx',
       args: ['-y', 'firecrawl-mcp'],
       // getSanitizedEnv() strips all API keys from subprocess env for security.
-      // We must explicitly pass FIRECRAWL_API_KEY through config.env.
-      env: { FIRECRAWL_API_KEY: process.env.FIRECRAWL_API_KEY || '' },
+      // FIRECRAWL_API_KEY is resolved at spawn time from settingsManager (see mcp-client.ts).
+      // This default is just a placeholder — the actual key comes from config on disk.
+      env: { FIRECRAWL_API_KEY: '' },
       enabled: false, // Requires FIRECRAWL_API_KEY — enable via settings after adding key
     },
   ],

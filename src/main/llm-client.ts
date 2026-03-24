@@ -258,13 +258,21 @@ class LLMClient {
       }
       return; // Completed successfully
     } catch (err: unknown) {
+      // Audit Fix H4: When a specific provider was explicitly requested,
+      // do NOT fall back to other providers. This prevents a local-only
+      // conversation from accidentally escalating to cloud providers
+      // (leaking private data) when the local provider times out.
+      if (providerName) {
+        throw err;
+      }
+
       const errMsg = err instanceof Error ? err.message : String(err);
       console.warn(
         `[LLMClient] Streaming from '${provider.name}' failed: ${errMsg} — trying fallbacks`
       );
     }
 
-    // Try fallback providers
+    // Try fallback providers (only reached when no explicit provider was requested)
     for (const [, fallback] of this.providers) {
       if (fallback.name === provider.name) continue;
       if (!fallback.isAvailable()) continue;

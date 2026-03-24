@@ -183,17 +183,23 @@ export class SpeechSynthesisManager {
     for (const sentence of sentences) {
       if (gen !== this.generation) return;
 
-      const audio = await ttsEngine.synthesize(sentence, {
-        voiceId: profile.voiceId,
-        speed: profile.speed,
-        pitch: profile.pitch,
-      });
+      try {
+        const audio = await ttsEngine.synthesize(sentence, {
+          voiceId: profile.voiceId,
+          speed: profile.speed,
+          pitch: profile.pitch,
+        });
 
-      if (gen !== this.generation) return;
+        if (gen !== this.generation) return;
 
-      const duration = audio.length / SAMPLE_RATE;
-      totalDuration += duration;
-      this.sendAudioToRenderer(audio);
+        const duration = audio.length / SAMPLE_RATE;
+        totalDuration += duration;
+        this.sendAudioToRenderer(audio);
+      } catch (err) {
+        console.warn(`[SpeechSynthesis] Failed to synthesize sentence, skipping: "${sentence.slice(0, 60)}"`, err);
+        // Skip this sentence and continue with the rest — partial speech is
+        // better than total silence.
+      }
     }
 
     const endEvent: UtteranceEvent = { text, profileId, duration: totalDuration };
@@ -220,7 +226,7 @@ export class SpeechSynthesisManager {
     while (this.queue.length > MAX_QUEUE_DEPTH) {
       const dropped = this.queue.shift();
       if (dropped) {
-        dropped.resolve();
+        dropped.reject(new Error('Utterance dropped during flush'));
       }
     }
   }
@@ -228,7 +234,7 @@ export class SpeechSynthesisManager {
   private clearQueue(): void {
     const items = this.queue.splice(0);
     for (const item of items) {
-      item.resolve();
+      item.reject(new Error('Utterance dropped during flush'));
     }
   }
 

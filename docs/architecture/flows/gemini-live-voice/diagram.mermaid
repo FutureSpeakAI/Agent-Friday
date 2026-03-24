@@ -5,10 +5,21 @@ flowchart LR
         NG["Noise Gate<br/>RMS &lt; 0.015 dropped"]
         B64["Base64 Encode<br/>Int16 PCM 16kHz"]
         SC["Screen Capture<br/>JPEG frames"]
+        Proxy["GeminiWsProxy<br/>ws-proxy.ts<br/>WebSocket-compatible IPC wrapper"]
         APE["AudioPlaybackEngine<br/>24kHz Web Audio<br/>backpressure 75%/90%"]
         SM["SessionManager<br/>rolling buffer<br/>reconnect at 5.5min"]
         TE["Tool Executor<br/>tool-executor.ts"]
         EM["Episodic Memory<br/>&gt;= 4 turns, &gt;= 60s"]
+    end
+
+    subgraph IPC["IPC Bridge (preload.ts)"]
+        IPCout["window.eve.geminiLive.send()"]
+        IPCin["window.eve.geminiLive.onMessage()"]
+        IPCconn["window.eve.geminiLive.connect()<br/>API key injected here"]
+    end
+
+    subgraph Main["Main Process"]
+        WSHandler["Gemini WebSocket Handler<br/>API key from settings<br/>never sent to renderer"]
     end
 
     subgraph Cloud["Gemini Cloud"]
@@ -26,26 +37,39 @@ flowchart LR
     Mic --> AW
     AW --> NG
     NG --> B64
-    B64 -->|"realtime_input<br/>audio/pcm;rate=16000"| WS
-    SC -->|"realtime_input<br/>image/jpeg"| WS
+    B64 -->|"realtime_input<br/>audio/pcm;rate=16000"| Proxy
+    SC -->|"realtime_input<br/>image/jpeg"| Proxy
+
+    Proxy -->|"send()"| IPCout
+    IPCout --> WSHandler
+    IPCconn --> WSHandler
+    WSHandler --> WS
 
     WS --> Gemini
-    Gemini -->|"audioData"| APE
-    Gemini -->|"text transcript"| SM
-    Gemini -->|"toolCall"| TE
+    Gemini --> WS
+
+    WS --> WSHandler
+    WSHandler --> IPCin
+    IPCin --> Proxy
+
+    Proxy -->|"audioData"| APE
+    Proxy -->|"text transcript"| SM
+    Proxy -->|"toolCall"| TE
 
     TE --> DT
     TE --> MCP
     TE --> BT
     TE --> Claude
 
-    DT -->|"result"| WS
-    MCP -->|"result"| WS
-    BT -->|"result"| WS
-    Claude -->|"result"| WS
+    DT -->|"result"| Proxy
+    MCP -->|"result"| Proxy
+    BT -->|"result"| Proxy
+    Claude -->|"result"| Proxy
 
     SM -->|"on disconnect"| EM
 
     style Renderer fill:#1a1a2e,stroke:#e94560,color:#eee
+    style IPC fill:#2a1a3e,stroke:#e94560,color:#eee
+    style Main fill:#0f3460,stroke:#e94560,color:#eee
     style Cloud fill:#0f3460,stroke:#e94560,color:#eee
     style Tools fill:#16213e,stroke:#e94560,color:#eee

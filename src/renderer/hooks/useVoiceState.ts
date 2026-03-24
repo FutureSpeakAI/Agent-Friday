@@ -40,7 +40,7 @@
  * ─────────────────────────────────────────────────────────────────
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 /** Voice state type — mirrors the main-process VoiceState union. */
 type VoiceState =
@@ -51,6 +51,9 @@ type VoiceState =
   | 'CONNECTING_CLOUD'
   | 'CLOUD_ACTIVE'
   | 'CLOUD_DEGRADED'
+  | 'CONNECTING_PERSONAPLEX'
+  | 'PERSONAPLEX_ACTIVE'
+  | 'PERSONAPLEX_DEGRADED'
   | 'CONNECTING_LOCAL'
   | 'LOCAL_ACTIVE'
   | 'LOCAL_DEGRADED'
@@ -92,11 +95,13 @@ export interface UseVoiceStateResult {
 
 const ACTIVE_STATES: ReadonlySet<VoiceState> = new Set([
   'CLOUD_ACTIVE',
+  'PERSONAPLEX_ACTIVE',
   'LOCAL_ACTIVE',
 ]);
 
 const DEGRADED_STATES: ReadonlySet<VoiceState> = new Set([
   'CLOUD_DEGRADED',
+  'PERSONAPLEX_DEGRADED',
   'LOCAL_DEGRADED',
 ]);
 
@@ -104,6 +109,7 @@ const CONNECTING_STATES: ReadonlySet<VoiceState> = new Set([
   'REQUESTING_MIC',
   'MIC_GRANTED',
   'CONNECTING_CLOUD',
+  'CONNECTING_PERSONAPLEX',
   'CONNECTING_LOCAL',
 ]);
 
@@ -113,21 +119,32 @@ export function useVoiceState(): UseVoiceStateResult {
   const [state, setState] = useState<VoiceState>('IDLE');
   const [health, setHealth] = useState<VoiceHealthMetrics | null>(null);
 
+  // Monotonic sequence number to prevent stale seed promises from
+  // overwriting later push events (Fix M5: renderer/main state divergence).
+  const seqRef = useRef(0);
+
   // Fetch current state on mount + subscribe to changes
   useEffect(() => {
     let cancelled = false;
 
-    // Seed with current state (in case we mount after voice is already active)
-    window.eve.voiceState.getState().then((s) => {
-      if (!cancelled) setState(s);
-    });
-
-    // Subscribe to state-change events from main process
+    // Subscribe to state-change events from main process FIRST,
+    // so we don't miss events that arrive between getState() and onStateChange().
     const cleanup = window.eve.voiceState.onStateChange(
       (event: VoiceStateChangeEvent) => {
+        // Push events always win — increment sequence to invalidate any pending seed
+        seqRef.current++;
         setState(event.to);
       },
     );
+
+    // Seed with current state (in case we mount after voice is already active)
+    const seedSeq = seqRef.current;
+    window.eve.voiceState.getState().then((s) => {
+      // Only apply the seed if no push events have arrived since we requested it
+      if (!cancelled && seqRef.current === seedSeq) {
+        setState(s);
+      }
+    });
 
     return () => {
       cancelled = true;

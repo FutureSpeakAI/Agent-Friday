@@ -1,8 +1,8 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-03-18
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (graceful degradation for local-only operation).
+> **Last updated**: 2026-03-24
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (10-step flow, graceful degradation for local-only operation), PersonaPlex voice path, Gemini WebSocket proxy (API key isolation in main process), 4-backend TTS cascade (Chatterbox Turbo > kokoro-js > Kokoro > Piper), 16-state voice state machine, living architecture flow documentation (`docs/architecture/flows/`).
 
 ---
 
@@ -107,7 +107,7 @@ graph TB
 
 | Service | Protocol | Purpose | Module |
 |---------|----------|---------|--------|
-| Gemini 2.5 Flash | WebSocket (Native Audio) | Voice conversation, tool calls, real-time reasoning | `useGeminiLive.ts` |
+| Gemini 2.5 Flash | WebSocket (Native Audio, proxied via main process — API key stays in main) | Voice conversation, tool calls, real-time reasoning | `useGeminiLive.ts` |
 | Claude Sonnet/Opus | REST (Anthropic SDK) | Deep analysis, memory consolidation, psych profiles, code review | `server.ts` |
 | OpenRouter | REST API | Access to 200+ models (Llama, Mistral, Gemma, DeepSeek, etc.) | `openrouter.ts` |
 | Obsidian | Local filesystem | Bidirectional memory mirroring | `obsidian-memory.ts` |
@@ -289,7 +289,7 @@ graph LR
 
 | Bounded Context | Owner Module(s) | Data Store | Upstream | Downstream |
 |----------------|-----------------|------------|----------|------------|
-| Voice & Conversation | `useGeminiLive.ts`, `SessionManager.ts` | In-memory | User mic, Gemini WS | Memory, Mood, UI |
+| Voice & Conversation | `useGeminiLive.ts`, `SessionManager.ts`, `local-conversation.ts` | In-memory (16-state voice state machine) | User mic, Gemini WS (proxied — API key in main), PersonaPlex (priority 0), local Whisper STT | Memory, Mood, UI |
 | Short-term Memory | `memory.ts` | In-memory (20 entries) | Conversation | Medium-term promotion |
 | Medium-term Memory | `memory.ts` | `friday-data/observations.json` (30 entries) | Short-term | Long-term promotion, Consolidation |
 | Long-term Memory | `memory.ts` | `friday-data/memories.json` (unlimited) | Consolidation, direct save | Obsidian sync, Semantic search |
@@ -395,7 +395,7 @@ graph TD
         PERSONALITY[personality.ts<br/>System Prompt Builder]
         ONBOARDING[onboarding.ts<br/>First-Run Flow]
         PSYCH[psychological-profile.ts<br/>Claude Psych Analysis]
-        FEATURE_SETUP[feature-setup.ts<br/>9-Step Guided Setup]
+        FEATURE_SETUP[feature-setup.ts<br/>10-Step Guided Setup]
         EVOLUTION[personality-evolution.ts<br/>Visual Trait Mapping]
         ART_EVOL[art-evolution.ts<br/>Weekly Gemini Art Therapy]
     end
@@ -573,7 +573,7 @@ stateDiagram-v2
     onboarding --> customizing: Intake complete → transition_to_customization
     customizing --> creating: finalize_agent_identity called
     creating --> feature_setup: Animation complete → FridayCore revealed
-    feature_setup --> normal: All 9 steps done/skipped
+    feature_setup --> normal: All 10 steps done/skipped
 
     normal --> normal: Reconnect cycles
 ```
@@ -790,6 +790,29 @@ sequenceDiagram
 | Mic → Gemini | 16,000 Hz | Int16 | Base64 | Variable |
 | Gemini → Playback | 24,000 Hz | Int16 | Base64 | Variable |
 | Playback scheduling | 24,000 Hz | Float32 | PCM | Per-chunk |
+
+### Voice Path Priority
+
+The system supports multiple voice paths, selected by a 16-state voice state machine (up from 13):
+
+| Priority | Path | Description |
+|----------|------|-------------|
+| 0 | **PersonaPlex** | Dedicated voice persona path — highest priority when available |
+| 1 | **Gemini Cloud** | WebSocket to Gemini 2.5 Flash (proxied through main process — API key never reaches renderer) |
+| 2 | **Local-first** | Whisper STT → Ollama LLM → TTS cascade |
+
+### TTS Backend Cascade (4 backends)
+
+TTS output follows a waterfall: if the preferred backend is unavailable or fails, the next is tried automatically.
+
+| Order | Backend | Type | Notes |
+|-------|---------|------|-------|
+| 1 | **Chatterbox Turbo** | Local Python service | Highest quality, GPU-accelerated |
+| 2 | **kokoro-js** | In-process JS | Node-native, no external process |
+| 3 | **Kokoro** | Local binary | Standalone Kokoro engine |
+| 4 | **Piper** | Local binary | Lightweight fallback |
+
+> For detailed operational flow diagrams, see `docs/architecture/flows/` — living documentation generated from codebase analysis.
 
 ---
 
@@ -1505,7 +1528,7 @@ graph TD
 | root | `psychological-profile.ts` | Identity | Claude psych analysis |
 | root | `personality-evolution.ts` | Identity | Trait → visual parameter mapping |
 | root | `art-evolution.ts` | Identity | Weekly Gemini-powered art therapy + structure evolution |
-| root | `feature-setup.ts` | Identity | 9-step guided setup |
+| root | `feature-setup.ts` | Identity | 10-step guided setup |
 | root | `prompt-budget.ts` | Identity | Token allocation for personality context |
 | root | `voice-audition.ts` | Identity | Voice preview sample generation |
 | root | `trust-graph.ts` | People | Multi-dimensional person trust scoring, hermeneutic re-evaluation |
@@ -1570,7 +1593,7 @@ graph TD
 | `agents/` | `agent-types.ts` | Agents | Shared agent types |
 | `agents/` | `agent-personas.ts` | Agents | Distinct agent personalities |
 | `agents/` | `agent-teams.ts` | Agents | Multi-agent coordination |
-| `agents/` | `agent-voice.ts` | Agents | Multi-backend TTS (Gemini → Kokoro/Piper → text-only) |
+| `agents/` | `agent-voice.ts` | Agents | Multi-backend TTS — 4-backend cascade (Chatterbox Turbo > kokoro-js > Kokoro > Piper), PersonaPlex priority 0 voice path |
 | `agents/` | `orchestrator.ts` | Agents | Task decomposition |
 | `agents/` | `container-engine.ts` | Agents (Track XI) | Sandboxed execution with cLaw governance |
 | `agents/` | `delegation-engine.ts` | Agents (Track XI) | Trust-gated task delegation between agents |

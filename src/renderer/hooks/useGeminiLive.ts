@@ -22,12 +22,10 @@ import {
   setupAgentResultSurfacing,
   setupAmbientContextPolling,
 } from './gemini/session-lifecycle';
+import { GeminiWsProxy } from './gemini/ws-proxy';
 
 // Re-export public types so existing imports work
 export type { GeminiLiveState } from './gemini/types';
-
-const GEMINI_WS_URL =
-  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   const [state, setState] = useState<GeminiLiveState>({
@@ -43,7 +41,7 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
   });
 
   // ── All refs bundled for passing to extracted modules ──
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | GeminiWsProxy | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -169,18 +167,15 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
       onboardingModeRef.current = onboardingMode;
       // Store voice name for reconnects
       if (voiceName) voiceNameRef.current = voiceName;
-      const apiKey = await window.eve.getGeminiApiKey();
-      if (!apiKey) {
-        const msg = 'No Gemini API key configured — add one in Settings → API Keys';
-        setState((s) => ({ ...s, error: msg }));
-        optionsRef.current.onError?.(msg);
-        throw new Error(msg);
-      }
-
       // Close old socket with intentional flag to suppress stale onclose reconnect
       if (wsRef.current) {
         intentionalDisconnectRef.current = true;
-        wsRef.current.close();
+        if (wsRef.current instanceof GeminiWsProxy) {
+          wsRef.current.close();
+          wsRef.current.destroy();
+        } else {
+          wsRef.current.close();
+        }
         wsRef.current = null;
       }
 
@@ -294,14 +289,10 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         // Guard: prevent mic from streaming to this WS until Gemini confirms setup
         setupCompleteRef.current = false;
 
-        // Crypto Sprint 3 (HIGH-001): Known limitation — the browser WebSocket API
-        // does NOT support custom headers (no Authorization / x-goog-api-key).
-        // Google's Multimodal Live API requires ?key= for WebSocket auth.
-        // Mitigations: (1) wss:// ensures TLS encryption in transit, (2) the key is
-        // a scoped Google AI Studio key (not a GCP service account), (3) the URL
-        // is not logged by this app. Moving to a main-process WebSocket proxy that
-        // can set headers would eliminate this, but is a significant refactor.
-        const ws = new WebSocket(`${GEMINI_WS_URL}?key=${apiKey}`);
+        // C2 fix: WebSocket is proxied through the main process so the API key
+        // never reaches the renderer. GeminiWsProxy implements the WebSocket
+        // interface (onopen, onmessage, onclose, onerror, send, close, readyState).
+        const ws = new GeminiWsProxy();
         wsRef.current = ws;
 
         const timeout = setTimeout(() => {
@@ -727,7 +718,12 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
     }
 
     stopListening();
-    wsRef.current?.close();
+    if (wsRef.current instanceof GeminiWsProxy) {
+      wsRef.current.close();
+      wsRef.current.destroy();
+    } else {
+      wsRef.current?.close();
+    }
     wsRef.current = null;
     playbackEngineRef.current?.flush();
     sessionManagerRef.current?.reset();
@@ -760,7 +756,12 @@ export function useGeminiLive(options: UseGeminiLiveOptions = {}) {
         smReconnectingRef.current = true;
         intentionalDisconnectRef.current = true;
         setupCompleteRef.current = false;
-        wsRef.current?.close();
+        if (wsRef.current instanceof GeminiWsProxy) {
+          wsRef.current.close();
+          wsRef.current.destroy();
+        } else {
+          wsRef.current?.close();
+        }
         wsRef.current = null;
         playbackEngineRef.current?.flush();
         setState((s) => (s.isSpeaking ? { ...s, isSpeaking: false } : s));

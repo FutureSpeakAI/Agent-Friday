@@ -1,0 +1,107 @@
+flowchart LR
+    subgraph Boot["Boot Sequence"]
+        INIT["connectorRegistry.initialize()\nindex.ts:791"]
+    end
+
+    subgraph Loading["Module Loading"]
+        direction TB
+        ML["Load 22 Modules\nrequire() dynamic import"]
+        DT["Parallel Detection\nPromise.allSettled()"]
+        RT["Build Routing Table\ntoolName -> connectorId"]
+    end
+
+    subgraph Foundation["Foundation"]
+        PS["PowerShell\npowershell.ts"]
+        TS["Terminal Sessions\nterminal-sessions.ts"]
+    end
+
+    subgraph DevOps["DevOps"]
+        VS["VS Code\nvscode.ts"]
+        GD["Git & DevOps\ngit-devops.ts"]
+        CK["Coding Kit\ncoding-kit.ts"]
+        DE["Dev Environments\ndev-environments.ts"]
+    end
+
+    subgraph Creative["Creative"]
+        AD["Adobe Suite\nadobe.ts"]
+        C3["3D & VFX\ncreative-3d.ts"]
+        MS["Media & Streaming\nmedia-streaming.ts"]
+        CU["ComfyUI\ncomfyui.ts"]
+        VG["Video Gen\nvideo-gen.ts"]
+        AG["Audio Gen\naudio-gen.ts"]
+        PR["Polymath Router\npolymath-router.ts"]
+        SP["Stage Presenter\nstage-presenter.ts"]
+        OA["OpenAI Services\nopenai-services.ts"]
+    end
+
+    subgraph Comms["Communication"]
+        CH["Comms Hub\ncomms-hub.ts"]
+        MG["Messaging Gateway\ngateway-connector.ts"]
+    end
+
+    subgraph System["System"]
+        UA["UI Automation\nui-automation.ts"]
+        SM["System Mgmt\nsystem-management.ts"]
+        WM["World Monitor\nworld-monitor.ts"]
+        FC["Firecrawl\nfirecrawl.ts"]
+        PX["Perplexity\nperplexity.ts"]
+        PI["PageIndex\npageindex.ts"]
+    end
+
+    subgraph Runtime["Runtime Execution"]
+        CT["Claude Tool Call"]
+        EX["executeTool()\nregistry.ts:372"]
+        CN["Consent Gate\nconsent-gate.ts"]
+        TR["Tool Result\n{result} or {error}"]
+    end
+
+    subgraph Extensions["Third-Party Extensions"]
+        SS["SuperpowerStore\nsuperpower-store.ts"]
+        AE["Adapter Engine\nadapter-engine.ts"]
+        SV["Security Verdict"]
+    end
+
+    subgraph Prompt["System Prompt"]
+        RC["buildToolRoutingContext()\nregistry.ts:444"]
+    end
+
+    subgraph OnboardingUI["Onboarding UI"]
+        IS["IntegrationsStep.tsx"]
+        GC["Google Calendar\ncalendar.ts"]
+        OB["Obsidian Vault\nobsidian-memory.ts"]
+        TG["Telegram Config\nsettings.ts"]
+    end
+
+    INIT --> ML
+    ML --> DT
+    DT --> RT
+
+    DT -.->|"detect()"| Foundation
+    DT -.->|"detect()"| DevOps
+    DT -.->|"detect()"| Creative
+    DT -.->|"detect()"| Comms
+    DT -.->|"detect()"| System
+
+    RT -->|"inject into prompt"| RC
+
+    CT --> EX
+    EX -->|"lookup routing table"| RT
+    EX -->|"outbound tools"| CN
+    CN -->|"approved"| TR
+    CN -->|"denied/timeout"| TR
+    EX -->|"local tools"| TR
+
+    SS --> AE
+    AE --> SV
+    SV -->|"approved"| RT
+
+    IS --> GC
+    IS --> OB
+    IS --> TG
+
+    CH -.->|"7 tools:\nslack, discord, teams,\nsmtp, http, webhook, toast"| EX
+    MG -.->|"3 tools:\ngateway_send_message,\ngateway_list_channels,\ngateway_list_contacts"| EX
+
+    style CN fill:#ffcc00,color:#000
+    style SV fill:#ffcc00,color:#000
+    style TR fill:#44aa44,color:#fff

@@ -1,6 +1,6 @@
 # Agent Friday — Architecture Overview
 
-> **agent-friday** v3.8.0 | Electron 33 + React 19 + Vite 6 + TypeScript 5.7
+> **agent-friday** v3.12.0 | Electron 33 + React 19 + Vite 6 + TypeScript 5.7
 > The first fully local, fully encrypted AI operating system.
 
 ## Process Model

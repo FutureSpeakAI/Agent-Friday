@@ -295,21 +295,19 @@ function vaultDecrypt(data: Buffer): Buffer | null {
 /**
  * Write data to disk with vault encryption.
  *
- * If the vault is locked or not initialized, falls back to plaintext write
- * (graceful degradation — the app must still function before first setup).
+ * Requires the vault to be unlocked. Throws if locked (Fix M6 — no plaintext
+ * fallback for writes). Callers must unlock the vault first or handle the error.
  *
  * @param filePath - Absolute path to write to
  * @param content - String content to encrypt and write
+ * @throws if vault is locked
  */
 export async function vaultWrite(filePath: string, content: string): Promise<void> {
   if (!vaultUnlocked || !vaultKey) {
-    // Graceful degradation: write plaintext if vault isn't ready.
-    // LOG A WARNING so plaintext writes are always visible in logs.
-    console.warn(
-      `[Vault] ⚠ PLAINTEXT WRITE — vault locked, writing unencrypted: ${path.basename(filePath)}`,
-    );
-    await fs.writeFile(filePath, content, 'utf-8');
-    return;
+    // Fix M6: Block plaintext writes when vault is locked.
+    // Writing plaintext defeats the purpose of encryption. Callers must
+    // unlock the vault first or handle the error (e.g. queue the write).
+    throw new Error('[Vault] Cannot write — vault is locked. Unlock first.');
   }
 
   const plaintext = Buffer.from(content, 'utf-8');
@@ -348,8 +346,16 @@ export async function vaultRead(filePath: string): Promise<string> {
     return decrypted.toString('utf-8');
   }
 
-  // Decryption failed — file is probably still plaintext (pre-vault era)
-  // Return as-is; it'll be encrypted on next save
+  // Decryption failed — distinguish legacy plaintext from corruption.
+  // If the file looks like it was encrypted (binary header, sufficient length for IV+tag),
+  // but decryption failed, the data is likely corrupted — throw instead of silently
+  // returning raw bytes that callers would misinterpret as plaintext (Fix L7).
+  const looksEncrypted = raw.length >= IV_LENGTH + TAG_LENGTH && !isLikelyPlaintext(raw);
+  if (looksEncrypted) {
+    throw new Error(`[Vault] File appears corrupted — decryption failed. Recovery may be needed: ${path.basename(filePath)}`);
+  }
+
+  // File is legacy plaintext (pre-vault era) — return as-is; it'll be encrypted on next save
   console.warn(`[Vault] ⚠ LEGACY PLAINTEXT — file not encrypted, will encrypt on next write: ${path.basename(filePath)}`);
   return raw.toString('utf-8');
 }
@@ -370,18 +376,16 @@ export async function vaultReadJSON<T = unknown>(filePath: string): Promise<T> {
  * Unlike vaultWrite (which takes string content), this operates directly
  * on Buffers for binary data like transferred files, images, etc.
  *
- * If the vault is locked, falls back to plaintext write with a warning.
+ * Requires the vault to be unlocked. Throws if locked (Fix M6).
  *
  * @param filePath - Absolute path to write to
  * @param data - Binary data to encrypt and write
+ * @throws if vault is locked
  */
 export async function vaultWriteBinary(filePath: string, data: Buffer): Promise<void> {
   if (!vaultUnlocked || !vaultKey) {
-    console.warn(
-      `[Vault] ⚠ PLAINTEXT WRITE — vault locked, writing unencrypted: ${path.basename(filePath)}`,
-    );
-    await fs.writeFile(filePath, data);
-    return;
+    // Fix M6: Block plaintext writes when vault is locked.
+    throw new Error('[Vault] Cannot write — vault is locked. Unlock first.');
   }
 
   const encrypted = vaultEncrypt(data);
@@ -409,6 +413,12 @@ export async function vaultReadBinary(filePath: string): Promise<Buffer> {
   const decrypted = vaultDecrypt(raw);
   if (decrypted) {
     return decrypted;
+  }
+
+  // Fix L7: distinguish legacy plaintext from corruption (same logic as vaultRead).
+  const looksEncrypted = raw.length >= IV_LENGTH + TAG_LENGTH && !isLikelyPlaintext(raw);
+  if (looksEncrypted) {
+    throw new Error(`[Vault] File appears corrupted — decryption failed. Recovery may be needed: ${path.basename(filePath)}`);
   }
 
   // Decryption failed — file is plaintext (pre-encryption era)
@@ -472,6 +482,31 @@ export function decryptPrivateKey(stored: string): string {
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────
+
+/**
+ * Heuristic: does this buffer look like it was plaintext (UTF-8 text)?
+ * Checks the first few bytes for printable ASCII / common UTF-8 patterns.
+ * Used to distinguish legacy unencrypted files from corrupted encrypted files.
+ */
+function isLikelyPlaintext(buf: Buffer): boolean {
+  if (buf.length === 0) return true;
+  // Check first byte — JSON starts with '{' or '[', XML with '<', etc.
+  const first = buf[0];
+  // Common plaintext first bytes: printable ASCII (0x20-0x7E), BOM (0xEF), newline/tab
+  if (first === 0x7B || first === 0x5B || first === 0x3C || first === 0x22) {
+    return true; // { [ < " — very likely JSON/XML/text
+  }
+  // Check if first 32 bytes (or whole buffer if shorter) are mostly printable ASCII
+  const checkLen = Math.min(buf.length, 32);
+  let printable = 0;
+  for (let i = 0; i < checkLen; i++) {
+    const b = buf[i];
+    if ((b >= 0x20 && b <= 0x7E) || b === 0x0A || b === 0x0D || b === 0x09) {
+      printable++;
+    }
+  }
+  return printable / checkLen > 0.8;
+}
 
 function setKeys(keys: DerivedKeys): void {
   // Destroy old keys if any

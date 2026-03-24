@@ -73,6 +73,9 @@ declare global {
     | 'CONNECTING_CLOUD'
     | 'CLOUD_ACTIVE'
     | 'CLOUD_DEGRADED'
+    | 'CONNECTING_PERSONAPLEX'
+    | 'PERSONAPLEX_ACTIVE'
+    | 'PERSONAPLEX_DEGRADED'
     | 'CONNECTING_LOCAL'
     | 'LOCAL_ACTIVE'
     | 'LOCAL_DEGRADED'
@@ -100,7 +103,7 @@ declare global {
   }
 
   // ── Phase 6.1: Voice Fallback Manager Types ───────────────────────────
-  type VoicePath = 'cloud' | 'local' | 'text';
+  type VoicePath = 'cloud' | 'local' | 'personaplex' | 'text';
 
   interface PathConfig {
     path: VoicePath;
@@ -371,7 +374,17 @@ declare global {
           parameters: Record<string, unknown>;
         }>>;
         getFirstGreeting: () => Promise<string>;
+        getDefaults: () => Promise<{
+          voiceMap: Record<string, Record<string, string>>;
+          defaultProfiles: Record<string, {
+            voice: string; backstory: string; traits: string[];
+            identityLine: string; accent: string;
+          }>;
+        }>;
         finalizeAgent: (config: Record<string, unknown>) => Promise<{ success: boolean }>;
+        saveCheckpoint: (checkpoint: { step: string; identityChoices?: { agentName: string; gender: string; voiceFeel: string } }) => Promise<void>;
+        getCheckpoint: () => Promise<{ step: string; identityChoices?: { agentName: string; gender: string; voiceFeel: string } } | null>;
+        clearCheckpoint: () => Promise<void>;
       };
 
       intelligence: {
@@ -598,9 +611,9 @@ declare global {
 
       confirmation: {
         onRequest: (
-          callback: (req: { id: string; toolName: string; description: string }) => void
+          callback: (req: { id: string; toolName: string; description: string; challenge?: string }) => void
         ) => () => void;
-        respond: (id: string, approved: boolean) => Promise<void>;
+        respond: (id: string, approved: boolean, responseChallenge?: string) => Promise<void>;
       };
 
       selfImprove: {
@@ -669,6 +682,11 @@ declare global {
           hasDiscordToken: boolean;
           discordOwnerId: string;
           worldMonitorPath: string;
+          voiceEngine: string;
+          hasPersonaplexHfToken: boolean;
+          personaplexHfTokenHint: string;
+          personaplexVoiceId: string;
+          personaplexCpuOffload: boolean;
         }>;
         setAutoLaunch: (enabled: boolean) => Promise<void>;
         setAutoScreenCapture: (enabled: boolean) => Promise<void>;
@@ -677,6 +695,15 @@ declare global {
         set: (key: string, value: unknown) => Promise<void>;
         validateApiKey: (keyType: string, value: string) => Promise<unknown>;
         checkApiHealth: () => Promise<unknown>;
+        getVoiceEngine: () => Promise<string>;
+        setVoiceEngine: (engine: string) => Promise<void>;
+        setTelegramConfig: (botToken: string, ownerId: string) => Promise<void>;
+        getPersonaplexHfToken: () => Promise<string>;
+        setPersonaplexHfToken: (token: string) => Promise<void>;
+        getPersonaplexVoiceId: () => Promise<string>;
+        setPersonaplexVoiceId: (id: string) => Promise<void>;
+        getPersonaplexCpuOffload: () => Promise<boolean>;
+        setPersonaplexCpuOffload: (v: boolean) => Promise<void>;
       };
 
       hardware: {
@@ -814,6 +841,28 @@ declare global {
         onPlayChunk: (callback: (audio: Float32Array) => void) => () => void;
       };
 
+      personaplex: {
+        isSetupComplete: () => Promise<boolean>;
+        hasCudaGpu: () => Promise<boolean>;
+        setup: (config?: { hfToken?: string; cpuOffload?: boolean }) => Promise<void>;
+        startServer: (config?: { cpuOffload?: boolean; hfToken?: string }) => Promise<{ port: number; wssUrl: string }>;
+        stopServer: () => Promise<void>;
+        isServerRunning: () => Promise<boolean>;
+        listVoices: () => Promise<Array<{ id: string; name: string }>>;
+        getWssUrl: () => Promise<string | null>;
+        connect: (config: { wssUrl: string; voiceId?: string; textPrompt?: string }) => Promise<void>;
+        sendAudio: (audioData: number[]) => void;
+        disconnect: () => Promise<void>;
+        isConnected: () => Promise<boolean>;
+        onConnected: (cb: () => void) => () => void;
+        onDisconnected: (cb: (code: number, reason: string) => void) => () => void;
+        onAudioData: (cb: (data: string) => void) => () => void;
+        onTranscript: (cb: (text: string) => void) => () => void;
+        onError: (cb: (message: string) => void) => () => void;
+        onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => () => void;
+        onServerLog: (cb: (line: string) => void) => () => void;
+      };
+
       localConversation: {
         start: (systemPrompt: string, tools: unknown[], initialPrompt?: string) => Promise<{ ok: boolean; error?: string }>;
         sendText: (text: string) => Promise<void>;
@@ -824,6 +873,9 @@ declare global {
         onAgentFinalized: (cb: (config: Record<string, unknown>) => void) => () => void;
         onError: (cb: (error: string) => void) => () => void;
         onBargeIn: (cb: () => void) => () => void;
+        onResponseChunk: (cb: (text: string) => void) => () => void;
+        onToolStart: (cb: (info: { id: string; name: string }) => void) => () => void;
+        onToolEnd: (cb: (info: { id: string; name: string; success: boolean }) => void) => () => void;
       };
 
       clipboard: {
@@ -1948,6 +2000,7 @@ declare global {
         onAllPathsExhausted: (callback: (payload: { errors: Array<{ path: VoicePath; error: string }> }) => void) => () => void;
         onSwitchFailed: (callback: (payload: { path: VoicePath; error: string }) => void) => () => void;
         setPathPriority: (path: VoicePath, priority: number) => Promise<void>;
+        notifyPathActive: (path: VoicePath) => Promise<void>;
       };
 
       connectionStage: {
@@ -1976,6 +2029,16 @@ declare global {
         clear: () => Promise<void>;
         appLaunched: (appId: string) => Promise<void>;
         recordError: (errorName: string, errorMessage?: string) => Promise<void>;
+      };
+
+      geminiLive: {
+        connect: () => Promise<void>;
+        send: (data: string) => void;
+        disconnect: (code?: number, reason?: string) => Promise<void>;
+        onOpen: (cb: () => void) => () => void;
+        onMessage: (cb: (data: string) => void) => () => void;
+        onClose: (cb: (code: number, reason: string) => void) => () => void;
+        onError: (cb: (message: string) => void) => () => void;
       };
 
       onApiHealthChange: (callback: (status: Record<string, string>) => void) => () => void;

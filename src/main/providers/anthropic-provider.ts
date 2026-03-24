@@ -20,6 +20,7 @@ import type {
   ContentPart,
 } from '../llm-client';
 import type { ProviderName } from '../intelligence-router';
+import { settingsManager } from '../settings';
 
 // Late-bind Anthropic SDK to avoid import-time crashes when key isn't set
 let _Anthropic: any = null;
@@ -37,7 +38,7 @@ export class AnthropicProvider implements LLMProvider {
   readonly name: ProviderName = 'anthropic';
 
   private getApiKey(): string | undefined {
-    return process.env.ANTHROPIC_API_KEY;
+    return settingsManager.getAnthropicApiKey() || undefined;
   }
 
   isAvailable(): boolean {
@@ -50,48 +51,50 @@ export class AnthropicProvider implements LLMProvider {
       throw new Error('ANTHROPIC_API_KEY not configured. Please set it in Settings.');
     }
 
-    const Anthropic = await getAnthropicSDK();
-    const anthropic = new Anthropic.default
-      ? new Anthropic.default({ apiKey })
-      : new Anthropic({ apiKey });
+    return this.withRetry(async () => {
+      const Anthropic = await getAnthropicSDK();
+      const anthropic = new Anthropic.default
+        ? new Anthropic.default({ apiKey })
+        : new Anthropic({ apiKey });
 
-    const model = request.model || DEFAULT_MODEL;
-    const startTime = Date.now();
+      const model = request.model || DEFAULT_MODEL;
+      const startTime = Date.now();
 
-    // Convert messages from unified format to Anthropic format
-    const { messages, system } = this.formatMessages(request);
+      // Convert messages from unified format to Anthropic format
+      const { messages, system } = this.formatMessages(request);
 
-    // Convert tools to Anthropic format
-    const tools = request.tools ? this.formatTools(request.tools) : undefined;
+      // Convert tools to Anthropic format
+      const tools = request.tools ? this.formatTools(request.tools) : undefined;
 
-    // Build tool_choice
-    let toolChoice: any = undefined;
-    if (request.toolChoice === 'auto') {
-      toolChoice = { type: 'auto' };
-    } else if (request.toolChoice === 'none') {
-      toolChoice = undefined; // Anthropic doesn't have explicit 'none'
-    } else if (request.toolChoice && typeof request.toolChoice === 'object') {
-      toolChoice = { type: 'tool', name: request.toolChoice.name };
-    }
+      // Build tool_choice
+      let toolChoice: any = undefined;
+      if (request.toolChoice === 'auto') {
+        toolChoice = { type: 'auto' };
+      } else if (request.toolChoice === 'none') {
+        toolChoice = undefined; // Anthropic doesn't have explicit 'none'
+      } else if (request.toolChoice && typeof request.toolChoice === 'object') {
+        toolChoice = { type: 'tool', name: request.toolChoice.name };
+      }
 
-    const createParams: any = {
-      model,
-      max_tokens: request.maxTokens || 1024,
-      messages,
-      ...(system ? { system } : {}),
-      ...(tools && tools.length > 0 ? { tools } : {}),
-      ...(toolChoice ? { tool_choice: toolChoice } : {}),
-      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-    };
+      const createParams: any = {
+        model,
+        max_tokens: request.maxTokens || 1024,
+        messages,
+        ...(system ? { system } : {}),
+        ...(tools && tools.length > 0 ? { tools } : {}),
+        ...(toolChoice ? { tool_choice: toolChoice } : {}),
+        ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      };
 
-    const response = await anthropic.messages.create(
-      createParams,
-      request.signal ? { signal: request.signal } : undefined
-    );
+      const response = await anthropic.messages.create(
+        createParams,
+        request.signal ? { signal: request.signal } : undefined
+      );
 
-    const latencyMs = Date.now() - startTime;
+      const latencyMs = Date.now() - startTime;
 
-    return this.parseResponse(response, model, latencyMs);
+      return this.parseResponse(response, model, latencyMs);
+    }, 'complete');
   }
 
   async *stream(request: LLMRequest): AsyncGenerator<LLMStreamChunk> {
@@ -188,6 +191,48 @@ export class AnthropicProvider implements LLMProvider {
         latencyMs,
       },
     };
+  }
+
+  // ── Private: Retry Logic ───────────────────────────────────────────
+
+  private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 1000;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (err: unknown) {
+        if (attempt === MAX_RETRIES || !this.isRetryable(err)) {
+          throw err;
+        }
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
+        console.warn(
+          `[AnthropicProvider] ${label} attempt ${attempt + 1} failed, retrying in ${Math.round(delay)}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    throw new Error('Unreachable');
+  }
+
+  private isRetryable(err: unknown): boolean {
+    if (err instanceof Error) {
+      if (
+        err.message.includes('ECONNREFUSED') ||
+        err.message.includes('ETIMEDOUT') ||
+        err.message.includes('ENOTFOUND') ||
+        err.message.includes('fetch failed')
+      ) {
+        return true;
+      }
+    }
+    // Check for Anthropic SDK error status codes
+    if (err && typeof err === 'object' && 'status' in err) {
+      const status = (err as any).status;
+      return status === 429 || status === 500 || status === 502 || status === 503 || status === 529;
+    }
+    return false;
   }
 
   // ── Private: Format Conversion ──────────────────────────────────────

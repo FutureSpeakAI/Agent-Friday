@@ -1,0 +1,103 @@
+flowchart LR
+    subgraph Renderer["Renderer Process"]
+        ME["MemoryExplorer.tsx<br/>browse / edit UI"]
+    end
+
+    subgraph IPC["IPC Bridge"]
+        MH["memory-handlers.ts<br/>memory:* channels"]
+        EH["memory-handlers.ts<br/>episodic:* channels"]
+        SH["memory-handlers.ts<br/>search:* channels"]
+    end
+
+    subgraph Trigger["Extraction Triggers"]
+        CHAT["POST /api/chat<br/>server.ts:244"]
+        IPC_EX["memory:extract<br/>IPC call"]
+    end
+
+    subgraph Main["Main Process — Memory Pipeline"]
+        MM["MemoryManager<br/>memory.ts"]
+        EXT["extractMemories()<br/>LLM-powered extraction"]
+        DUP["isDuplicateFact()<br/>Jaccard >= 0.80"]
+        LLMC["LLMClient<br/>llm-client.ts"]
+        MPB["MemoryPersonality<br/>Bridge"]
+
+        EM["EpisodicMemory<br/>episodic-memory.ts"]
+        RM["RelationshipMemory<br/>relationship-memory.ts"]
+        MC["MemoryConsolidation<br/>every 6 hours"]
+        MQ["MemoryQuality<br/>benchmarks"]
+
+        TG["TrustGraph<br/>person mentions"]
+        SS["SemanticSearch<br/>embedding index"]
+        FP["FridayProfile<br/>learning append"]
+        IM["IntegrityManager<br/>sign memories"]
+    end
+
+    subgraph Storage["Persistent Storage"]
+        ST[("shortTerm.json<br/>vault-encrypted")]
+        MT[("mediumTerm.json<br/>vault-encrypted<br/>+ signed")]
+        LT[("longTerm.json<br/>vault-encrypted<br/>+ signed")]
+        EP[("episodes.json")]
+        REL[("relationship.json")]
+        OBS[("Obsidian Vault<br/>Friday/*.md")]
+    end
+
+    subgraph Injection["Prompt Injection"]
+        PERS["personality.ts<br/>buildSystemPrompt"]
+        BMC["buildMemoryContext()"]
+        ECS["getContextString()<br/>episodes"]
+        RCS["getContextString()<br/>relationship"]
+    end
+
+    CHAT -.->|"fire-and-forget"| EXT
+    IPC_EX --> EXT
+    ME --> MH
+    MH --> MM
+
+    EXT -->|"extraction prompt"| LLMC
+    LLMC -->|"JSON response"| EXT
+    MPB -.->|"guidance"| EXT
+
+    EXT --> DUP
+    DUP -->|"new fact"| MM
+    DUP -->|"new pattern"| MM
+    EXT -->|"personMentions"| TG
+
+    MM -->|"long-term facts"| FP
+    MM -->|"all entries"| SS
+    MM -->|"save"| IM
+    IM --> MT
+    IM --> LT
+    MM --> ST
+    MM --> OBS
+
+    EM -->|"create from session"| LLMC
+    EM --> EP
+    EM --> OBS
+    EM --> SS
+    EM -->|"updateFromEpisode"| RM
+
+    RM -->|"LLM analysis"| LLMC
+    RM --> REL
+
+    MC -.->|"promote<br/>medium -> long"| MM
+    MC -.->|"merge duplicates"| LLMC
+
+    PERS --> BMC
+    PERS --> ECS
+    PERS --> RCS
+    BMC --> MM
+    ECS --> EM
+    RCS --> RM
+
+    style Renderer fill:#1a1a2e,stroke:#00f0ff,color:#eee
+    style IPC fill:#16213e,stroke:#00f0ff,color:#eee
+    style Trigger fill:#16213e,stroke:#ffaa00,color:#eee
+    style Main fill:#0f3460,stroke:#a855f7,color:#eee
+    style Storage fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style Injection fill:#16213e,stroke:#d4a574,color:#eee
+    style ST fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style MT fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style LT fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style EP fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style REL fill:#1a1a2e,stroke:#00ff66,color:#eee
+    style OBS fill:#1a1a2e,stroke:#00ff66,color:#eee

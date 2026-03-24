@@ -128,8 +128,21 @@ contextBridge.exposeInMainWorld('eve', {
       parameters: Record<string, unknown>;
     }>>,
     getFirstGreeting: () => ipcRenderer.invoke('onboarding:get-first-greeting') as Promise<string>,
+    getDefaults: () => ipcRenderer.invoke('onboarding:get-defaults') as Promise<{
+      voiceMap: Record<string, Record<string, string>>;
+      defaultProfiles: Record<string, {
+        voice: string; backstory: string; traits: string[];
+        identityLine: string; accent: string;
+      }>;
+    }>,
     finalizeAgent: (config: Record<string, unknown>) =>
       ipcRenderer.invoke('onboarding:finalize-agent', config) as Promise<{ success: boolean }>,
+    saveCheckpoint: (checkpoint: { step: string; identityChoices?: { agentName: string; gender: string; voiceFeel: string } }) =>
+      ipcRenderer.invoke('onboarding:save-checkpoint', checkpoint),
+    getCheckpoint: () =>
+      ipcRenderer.invoke('onboarding:get-checkpoint') as Promise<{ step: string; identityChoices?: { agentName: string; gender: string; voiceFeel: string } } | null>,
+    clearCheckpoint: () =>
+      ipcRenderer.invoke('onboarding:clear-checkpoint'),
   },
 
   intelligence: {
@@ -166,6 +179,15 @@ contextBridge.exposeInMainWorld('eve', {
     setObsidianVaultPath: (vaultPath: string) =>
       ipcRenderer.invoke('settings:set-obsidian-vault-path', vaultPath),
     set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+    getVoiceEngine: () => ipcRenderer.invoke('settings:get-voice-engine') as Promise<string>,
+    setVoiceEngine: (engine: string) => ipcRenderer.invoke('settings:set-voice-engine', engine) as Promise<void>,
+    setTelegramConfig: (botToken: string, ownerId: string) => ipcRenderer.invoke('settings:set-telegram-config', botToken, ownerId) as Promise<void>,
+    getPersonaplexHfToken: () => ipcRenderer.invoke('settings:get-personaplex-hf-token') as Promise<string>,
+    setPersonaplexHfToken: (token: string) => ipcRenderer.invoke('settings:set-personaplex-hf-token', token) as Promise<void>,
+    getPersonaplexVoiceId: () => ipcRenderer.invoke('settings:get-personaplex-voice-id') as Promise<string>,
+    setPersonaplexVoiceId: (id: string) => ipcRenderer.invoke('settings:set-personaplex-voice-id', id) as Promise<void>,
+    getPersonaplexCpuOffload: () => ipcRenderer.invoke('settings:get-personaplex-cpu-offload') as Promise<boolean>,
+    setPersonaplexCpuOffload: (v: boolean) => ipcRenderer.invoke('settings:set-personaplex-cpu-offload', v) as Promise<void>,
   },
 
   ambient: {
@@ -247,15 +269,15 @@ contextBridge.exposeInMainWorld('eve', {
   },
 
   confirmation: {
-    onRequest: (callback: (req: { id: string; toolName: string; description: string }) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, req: { id: string; toolName: string; description: string }) => callback(req);
+    onRequest: (callback: (req: { id: string; toolName: string; description: string; challenge?: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, req: { id: string; toolName: string; description: string; challenge?: string }) => callback(req);
       ipcRenderer.on('desktop:confirm-request', handler);
       return () => {
         ipcRenderer.removeListener('desktop:confirm-request', handler);
       };
     },
-    respond: (id: string, approved: boolean) =>
-      ipcRenderer.invoke('desktop:confirm-response', id, approved),
+    respond: (id: string, approved: boolean, responseChallenge?: string) =>
+      ipcRenderer.invoke('desktop:confirm-response', id, approved, responseChallenge),
   },
 
   selfImprove: {
@@ -1634,6 +1656,60 @@ contextBridge.exposeInMainWorld('eve', {
         return () => ipcRenderer.removeListener('voice:chatterbox:setup-progress', handler);
       },
     },
+    // ── PersonaPlex (full-duplex local voice model) ──────────────────
+    personaplex: {
+      isSetupComplete: () => ipcRenderer.invoke('personaplex:is-setup-complete') as Promise<boolean>,
+      hasCudaGpu: () => ipcRenderer.invoke('personaplex:has-cuda-gpu') as Promise<boolean>,
+      setup: (config?: { hfToken?: string; cpuOffload?: boolean }) =>
+        ipcRenderer.invoke('personaplex:setup', config) as Promise<void>,
+      startServer: (config?: { cpuOffload?: boolean; hfToken?: string }) =>
+        ipcRenderer.invoke('personaplex:start-server', config) as Promise<{ port: number; wssUrl: string }>,
+      stopServer: () => ipcRenderer.invoke('personaplex:stop-server') as Promise<void>,
+      isServerRunning: () => ipcRenderer.invoke('personaplex:is-server-running') as Promise<boolean>,
+      listVoices: () => ipcRenderer.invoke('personaplex:list-voices') as Promise<Array<{ id: string; name: string }>>,
+      getWssUrl: () => ipcRenderer.invoke('personaplex:get-wss-url') as Promise<string | null>,
+      connect: (config: { wssUrl: string; voiceId?: string; textPrompt?: string }) =>
+        ipcRenderer.invoke('personaplex:connect', config) as Promise<void>,
+      sendAudio: (audioData: number[]) =>
+        ipcRenderer.send('personaplex:send-audio', audioData),
+      disconnect: () => ipcRenderer.invoke('personaplex:disconnect') as Promise<void>,
+      isConnected: () => ipcRenderer.invoke('personaplex:is-connected') as Promise<boolean>,
+      onConnected: (cb: () => void) => {
+        const handler = () => cb();
+        ipcRenderer.on('personaplex:connected', handler);
+        return () => ipcRenderer.removeListener('personaplex:connected', handler);
+      },
+      onDisconnected: (cb: (code: number, reason: string) => void) => {
+        const handler = (_event: any, code: number, reason: string) => cb(code, reason);
+        ipcRenderer.on('personaplex:disconnected', handler);
+        return () => ipcRenderer.removeListener('personaplex:disconnected', handler);
+      },
+      onAudioData: (cb: (data: string) => void) => {
+        const handler = (_event: any, data: string) => cb(data);
+        ipcRenderer.on('personaplex:audio-data', handler);
+        return () => ipcRenderer.removeListener('personaplex:audio-data', handler);
+      },
+      onTranscript: (cb: (text: string) => void) => {
+        const handler = (_event: any, text: string) => cb(text);
+        ipcRenderer.on('personaplex:transcript', handler);
+        return () => ipcRenderer.removeListener('personaplex:transcript', handler);
+      },
+      onError: (cb: (message: string) => void) => {
+        const handler = (_event: any, message: string) => cb(message);
+        ipcRenderer.on('personaplex:error', handler);
+        return () => ipcRenderer.removeListener('personaplex:error', handler);
+      },
+      onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => {
+        const handler = (_event: any, progress: { stage: string; message: string; percent: number }) => cb(progress);
+        ipcRenderer.on('personaplex:setup-progress', handler);
+        return () => ipcRenderer.removeListener('personaplex:setup-progress', handler);
+      },
+      onServerLog: (cb: (line: string) => void) => {
+        const handler = (_event: any, line: string) => cb(line);
+        ipcRenderer.on('personaplex:server-log', handler);
+        return () => ipcRenderer.removeListener('personaplex:server-log', handler);
+      },
+    },
     onVoiceStart: (callback: (data: Record<string, unknown>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
       ipcRenderer.on('voice:event:voice-start', handler);
@@ -1764,6 +1840,21 @@ contextBridge.exposeInMainWorld('eve', {
       ipcRenderer.on('local-conversation:event:barge-in', handler);
       return () => { ipcRenderer.removeListener('local-conversation:event:barge-in', handler); };
     },
+    onResponseChunk: (cb: (text: string) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, text: string) => cb(text);
+      ipcRenderer.on('local-conversation:event:response-chunk', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:response-chunk', handler); };
+    },
+    onToolStart: (cb: (info: { id: string; name: string }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { id: string; name: string }) => cb(info);
+      ipcRenderer.on('local-conversation:event:tool-start', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:tool-start', handler); };
+    },
+    onToolEnd: (cb: (info: { id: string; name: string; success: boolean }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { id: string; name: string; success: boolean }) => cb(info);
+      ipcRenderer.on('local-conversation:event:tool-end', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:tool-end', handler); };
+    },
   },
 
   // ── Sprint 7: Vision Pipeline ───────────────────────────────────
@@ -1846,6 +1937,8 @@ contextBridge.exposeInMainWorld('eve', {
     },
     setPathPriority: (path: string, priority: number) =>
       ipcRenderer.invoke('voice-fallback:set-path-priority', path, priority),
+    notifyPathActive: (path: string) =>
+      ipcRenderer.invoke('voice-fallback:notify-path-active', path),
   },
 
   // ── Phase 6.1: Connection Stage Monitor (granular progress events) ────
@@ -1888,6 +1981,33 @@ contextBridge.exposeInMainWorld('eve', {
     appLaunched: (appId: string) => ipcRenderer.invoke('telemetry:app-launched', appId),
     recordError: (errorName: string, errorMessage?: string) =>
       ipcRenderer.invoke('telemetry:record-error', errorName, errorMessage),
+  },
+
+  geminiLive: {
+    connect: () => ipcRenderer.invoke('gemini-live:connect'),
+    send: (data: string) => ipcRenderer.send('gemini-live:send', data),
+    disconnect: (code?: number, reason?: string) =>
+      ipcRenderer.invoke('gemini-live:disconnect', code, reason),
+    onOpen: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on('gemini-live:open', handler);
+      return () => { ipcRenderer.removeListener('gemini-live:open', handler); };
+    },
+    onMessage: (cb: (data: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: string) => cb(data);
+      ipcRenderer.on('gemini-live:message', handler);
+      return () => { ipcRenderer.removeListener('gemini-live:message', handler); };
+    },
+    onClose: (cb: (code: number, reason: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, code: number, reason: string) => cb(code, reason);
+      ipcRenderer.on('gemini-live:close', handler);
+      return () => { ipcRenderer.removeListener('gemini-live:close', handler); };
+    },
+    onError: (cb: (message: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => cb(message);
+      ipcRenderer.on('gemini-live:error', handler);
+      return () => { ipcRenderer.removeListener('gemini-live:error', handler); };
+    },
   },
 
   onApiHealthChange: (callback: (status: Record<string, string>) => void) => {

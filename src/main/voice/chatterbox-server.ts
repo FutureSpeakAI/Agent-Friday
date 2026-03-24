@@ -55,7 +55,7 @@ const HEALTH_CHECK_INTERVAL_MS = 30_000;
  * python-build-standalone: self-contained Python 3.12 (~46MB download).
  * Used when no compatible system Python is available.
  */
-const PYTHON_STANDALONE_VERSION = '3.12.13';
+const PYTHON_STANDALONE_VERSION = '3.11.15';
 const PYTHON_STANDALONE_TAG = '20260320';
 
 function getPythonStandaloneUrl(): string {

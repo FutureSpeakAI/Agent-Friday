@@ -98,8 +98,35 @@ const markdownComponents = {
   },
 };
 
+/** Maximum number of messages to render without explicit user request. */
+const VISIBLE_LIMIT = 100;
+
 export default function ChatHistory({ messages }: ChatHistoryProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [showAll, setShowAll] = useState(false);
+
+  // Reset showAll when messages are cleared (e.g. new conversation)
+  useEffect(() => {
+    if (messages.length <= VISIBLE_LIMIT) setShowAll(false);
+  }, [messages.length]);
+
+  const visibleMessages = showAll ? messages : messages.slice(-VISIBLE_LIMIT);
+  const hiddenCount = messages.length - visibleMessages.length;
+
+  // Inject thinking-dot animation keyframes once
+  useEffect(() => {
+    if (!document.getElementById('thinking-dot-keyframes')) {
+      const style = document.createElement('style');
+      style.id = 'thinking-dot-keyframes';
+      style.textContent = `
+        @keyframes thinkingDotPulse {
+          0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1.1); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -120,7 +147,15 @@ export default function ChatHistory({ messages }: ChatHistoryProps) {
             <div style={styles.emptyHint}>Type a message to begin</div>
           </div>
         )}
-        {messages.map((msg) => {
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setShowAll(true)}
+            style={styles.showEarlierBtn}
+          >
+            Show {hiddenCount} earlier message{hiddenCount === 1 ? '' : 's'}
+          </button>
+        )}
+        {visibleMessages.map((msg) => {
           const info = getModelInfo(msg.model);
           return (
             <div key={msg.id} className="hover-lift" style={styles.messageRow}>
@@ -143,6 +178,12 @@ export default function ChatHistory({ messages }: ChatHistoryProps) {
               <div style={styles.messageContent}>
                 {msg.role === 'user' ? (
                   msg.content
+                ) : msg.pending && !msg.content ? (
+                  <span style={styles.thinkingDots}>
+                    <span style={styles.dot1} />
+                    <span style={styles.dot2} />
+                    <span style={styles.dot3} />
+                  </span>
                 ) : (
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
@@ -228,6 +269,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: '#555568',
   },
+  showEarlierBtn: {
+    display: 'block',
+    width: '100%',
+    padding: '8px 0',
+    margin: '0 0 8px 0',
+    background: 'rgba(0, 240, 255, 0.06)',
+    border: '1px solid rgba(0, 240, 255, 0.15)',
+    borderRadius: 6,
+    color: '#00f0ff',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+    transition: 'background 0.15s',
+  },
   messageRow: {
     display: 'flex',
     flexDirection: 'column',
@@ -257,6 +313,36 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: '#444458',
   },
+  thinkingDots: {
+    display: 'inline-flex',
+    gap: 4,
+    alignItems: 'center',
+    height: 20,
+  },
+  dot1: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: '#a855f7',
+    animation: 'thinkingDotPulse 1.4s ease-in-out infinite',
+    animationDelay: '0s',
+  } as React.CSSProperties,
+  dot2: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: '#a855f7',
+    animation: 'thinkingDotPulse 1.4s ease-in-out infinite',
+    animationDelay: '0.2s',
+  } as React.CSSProperties,
+  dot3: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: '#a855f7',
+    animation: 'thinkingDotPulse 1.4s ease-in-out infinite',
+    animationDelay: '0.4s',
+  } as React.CSSProperties,
 };
 
 /* --- Markdown-specific styles --- */
