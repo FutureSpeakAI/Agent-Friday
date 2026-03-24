@@ -37,6 +37,9 @@ const DEFAULT_CONFIG: AudioCaptureConfig = {
   maxBufferDuration: 30_000,
 };
 
+/** Maximum allowed size per audio chunk (1MB). Prevents memory exhaustion from oversized IPC buffers. */
+const MAX_AUDIO_CHUNK_SIZE = 1024 * 1024;
+
 // -- Helpers ------------------------------------------------------------------
 
 /** Compute RMS (root mean square) energy of an audio buffer. */
@@ -171,6 +174,14 @@ export class AudioCapture {
 
   private handleAudioChunk = (_event: unknown, chunk: Float32Array): void => {
     if (!this.capturing) return;
+
+    // Fix W8: Validate audio buffer size to prevent memory exhaustion
+    if (!chunk || !(chunk instanceof Float32Array) || chunk.byteLength > MAX_AUDIO_CHUNK_SIZE) {
+      console.warn(
+        `[AudioCapture] Oversized or invalid audio chunk rejected: ${chunk?.byteLength ?? 0} bytes`
+      );
+      return;
+    }
 
     // Compute energy level for UI metering
     const rms = computeRms(chunk);

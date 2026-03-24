@@ -67,7 +67,7 @@
  *
  * CONSTRAINT Q7: "What is the minimal set of states that serves both the user
  *   and the engineering team?"
- *   → 13 states. Fewer would collapse distinctions the user can perceive
+ *   → 16 states. Fewer would collapse distinctions the user can perceive
  *     (MIC_DENIED vs ERROR). More would represent implementation details the
  *     user never sees (WEBSOCKET_HANDSHAKE_PHASE_2). Each state maps to something
  *     the UI could display as a single status line.
@@ -91,19 +91,22 @@ import { telemetryEngine } from '../telemetry';
  * condition — something the user would notice if we surfaced it.
  */
 export type VoiceState =
-  | 'IDLE'               // No voice activity — silent, waiting
-  | 'REQUESTING_MIC'     // Waiting for getUserMedia permission dialog
-  | 'MIC_DENIED'         // User denied mic permission (recoverable — they can retry)
-  | 'MIC_GRANTED'        // Mic active, choosing voice path (cloud vs local)
-  | 'CONNECTING_CLOUD'   // WebSocket opening to Gemini
-  | 'CLOUD_ACTIVE'       // Gemini voice flowing both directions (verified)
-  | 'CLOUD_DEGRADED'     // Gemini connected but audio unhealthy (jitter, silence)
-  | 'CONNECTING_LOCAL'   // Whisper + Ollama + TTS initializing
-  | 'LOCAL_ACTIVE'       // Local voice pipeline flowing (verified)
-  | 'LOCAL_DEGRADED'     // Local pipeline partial (e.g., no TTS, Whisper only)
-  | 'TEXT_FALLBACK'      // All voice paths failed — text-only mode
-  | 'ERROR'              // Unrecoverable error (with reason attached via event)
-  | 'DISCONNECTING';     // Cleanup in progress — tearing down voice components
+  | 'IDLE'                    // No voice activity — silent, waiting
+  | 'REQUESTING_MIC'          // Waiting for getUserMedia permission dialog
+  | 'MIC_DENIED'              // User denied mic permission (recoverable — they can retry)
+  | 'MIC_GRANTED'             // Mic active, choosing voice path (cloud vs local vs personaplex)
+  | 'CONNECTING_CLOUD'        // WebSocket opening to Gemini
+  | 'CLOUD_ACTIVE'            // Gemini voice flowing both directions (verified)
+  | 'CLOUD_DEGRADED'          // Gemini connected but audio unhealthy (jitter, silence)
+  | 'CONNECTING_PERSONAPLEX'  // WebSocket opening to local PersonaPlex server
+  | 'PERSONAPLEX_ACTIVE'      // PersonaPlex full-duplex audio flowing (verified)
+  | 'PERSONAPLEX_DEGRADED'    // PersonaPlex connected but audio unhealthy
+  | 'CONNECTING_LOCAL'        // Whisper + Ollama + TTS initializing
+  | 'LOCAL_ACTIVE'            // Local voice pipeline flowing (verified)
+  | 'LOCAL_DEGRADED'          // Local pipeline partial (e.g., no TTS, Whisper only)
+  | 'TEXT_FALLBACK'           // All voice paths failed — text-only mode
+  | 'ERROR'                   // Unrecoverable error (with reason attached via event)
+  | 'DISCONNECTING';          // Cleanup in progress — tearing down voice components
 
 /**
  * Categories for errors emitted by the state machine. Each maps to a class
@@ -225,12 +228,13 @@ const STATE_TIMEOUTS: Partial<Record<VoiceState, StateTimeout>> = {
     target: 'CONNECTING_LOCAL',
     reason: 'Cloud connection timed out after 15s — trying local',
   },
-  // Cloud active — 120s without successful health check means degraded.
+  // Cloud active — 600s (10 min) without successful health check means degraded.
   // (Health monitor handles finer-grained detection; this is the backstop.)
+  // Increased from 120s to 600s to avoid interrupting normal conversations.
   CLOUD_ACTIVE: {
-    durationMs: 120_000,
+    durationMs: 600_000,
     target: 'CLOUD_DEGRADED',
-    reason: 'Cloud active for 120s without health confirmation — marking degraded',
+    reason: 'Cloud active for 600s without health confirmation — marking degraded',
   },
   // Cloud degraded — 30s to recover or give up.
   CLOUD_DEGRADED: {
@@ -244,17 +248,36 @@ const STATE_TIMEOUTS: Partial<Record<VoiceState, StateTimeout>> = {
     target: 'TEXT_FALLBACK',
     reason: 'Local voice init timed out after 45s — falling back to text',
   },
-  // Local active — same backstop as cloud.
+  // Local active — same backstop as cloud (10 min).
+  // Increased from 120s to 600s to avoid interrupting normal conversations.
   LOCAL_ACTIVE: {
-    durationMs: 120_000,
+    durationMs: 600_000,
     target: 'LOCAL_DEGRADED',
-    reason: 'Local active for 120s without health confirmation — marking degraded',
+    reason: 'Local active for 600s without health confirmation — marking degraded',
   },
   // Local degraded — 30s to recover or give up.
   LOCAL_DEGRADED: {
     durationMs: 30_000,
     target: 'TEXT_FALLBACK',
     reason: 'Local degraded for 30s without recovery — falling back to text',
+  },
+  // PersonaPlex WebSocket — 30s is generous; server may need GPU warm-up.
+  CONNECTING_PERSONAPLEX: {
+    durationMs: 30_000,
+    target: 'CONNECTING_LOCAL',
+    reason: 'PersonaPlex connection timed out after 30s — trying local',
+  },
+  // PersonaPlex active — same backstop as cloud/local (10 min).
+  PERSONAPLEX_ACTIVE: {
+    durationMs: 600_000,
+    target: 'PERSONAPLEX_DEGRADED',
+    reason: 'PersonaPlex active for 600s without health confirmation — marking degraded',
+  },
+  // PersonaPlex degraded — 30s to recover or fall back to local.
+  PERSONAPLEX_DEGRADED: {
+    durationMs: 30_000,
+    target: 'CONNECTING_LOCAL',
+    reason: 'PersonaPlex degraded for 30s — trying local fallback',
   },
   // Disconnecting — cleanup should be fast. If it hangs, force to IDLE.
   DISCONNECTING: {
@@ -269,29 +292,36 @@ const STATE_TIMEOUTS: Partial<Record<VoiceState, StateTimeout>> = {
  * If a transition is not in this table, it is illegal and will be rejected.
  *
  * VALIDATION: After defining this table, we verify:
- *   1. All 13 states are reachable (appear as a `to` target)
+ *   1. All 16 states are reachable (appear as a `to` target)
  *   2. Every non-terminal state has at least one outgoing transition
  *   3. There exists a path from any state to TEXT_FALLBACK (the universal fallback)
  *
  * REACHABILITY PROOF (by inspection):
- *   IDLE            ← from DISCONNECTING, MIC_DENIED, initial state
- *   REQUESTING_MIC  ← from IDLE
- *   MIC_DENIED      ← from REQUESTING_MIC
- *   MIC_GRANTED     ← from REQUESTING_MIC
- *   CONNECTING_CLOUD← from MIC_GRANTED, CLOUD_DEGRADED
- *   CLOUD_ACTIVE    ← from CONNECTING_CLOUD, CLOUD_DEGRADED
- *   CLOUD_DEGRADED  ← from CLOUD_ACTIVE
- *   CONNECTING_LOCAL← from MIC_GRANTED, CONNECTING_CLOUD, CLOUD_DEGRADED, LOCAL_DEGRADED
- *   LOCAL_ACTIVE    ← from CONNECTING_LOCAL, LOCAL_DEGRADED
- *   LOCAL_DEGRADED  ← from LOCAL_ACTIVE
- *   TEXT_FALLBACK   ← from MIC_DENIED, MIC_GRANTED, CONNECTING_LOCAL, LOCAL_DEGRADED,
- *                     CLOUD_DEGRADED (via CONNECTING_LOCAL timeout), ERROR
- *   ERROR           ← from any state (wildcard — see canTransition logic)
- *   DISCONNECTING   ← from any active state
+ *   IDLE                  ← from DISCONNECTING, MIC_DENIED, initial state
+ *   REQUESTING_MIC        ← from IDLE
+ *   MIC_DENIED            ← from REQUESTING_MIC
+ *   MIC_GRANTED           ← from REQUESTING_MIC
+ *   CONNECTING_CLOUD      ← from MIC_GRANTED, CLOUD_DEGRADED, CONNECTING_PERSONAPLEX
+ *   CLOUD_ACTIVE          ← from CONNECTING_CLOUD, CLOUD_DEGRADED
+ *   CLOUD_DEGRADED        ← from CLOUD_ACTIVE
+ *   CONNECTING_PERSONAPLEX← from IDLE, MIC_GRANTED, PERSONAPLEX_DEGRADED, TEXT_FALLBACK,
+ *                            CLOUD_DEGRADED, CONNECTING_CLOUD
+ *   PERSONAPLEX_ACTIVE    ← from CONNECTING_PERSONAPLEX, PERSONAPLEX_DEGRADED
+ *   PERSONAPLEX_DEGRADED  ← from PERSONAPLEX_ACTIVE
+ *   CONNECTING_LOCAL      ← from MIC_GRANTED, CONNECTING_CLOUD, CLOUD_DEGRADED,
+ *                            LOCAL_DEGRADED, CONNECTING_PERSONAPLEX, PERSONAPLEX_DEGRADED
+ *   LOCAL_ACTIVE          ← from CONNECTING_LOCAL, LOCAL_DEGRADED
+ *   LOCAL_DEGRADED        ← from LOCAL_ACTIVE
+ *   TEXT_FALLBACK         ← from MIC_DENIED, MIC_GRANTED, CONNECTING_LOCAL, LOCAL_DEGRADED,
+ *                            CONNECTING_PERSONAPLEX, PERSONAPLEX_DEGRADED,
+ *                            CLOUD_DEGRADED (via CONNECTING_LOCAL timeout), ERROR
+ *   ERROR                 ← from any state (wildcard — see canTransition logic)
+ *   DISCONNECTING         ← from any active state
  *
  * PATH TO TEXT_FALLBACK FROM ANY STATE:
  *   IDLE → REQUESTING_MIC → MIC_DENIED → TEXT_FALLBACK
  *   CLOUD_ACTIVE → CLOUD_DEGRADED → CONNECTING_LOCAL → TEXT_FALLBACK
+ *   PERSONAPLEX_ACTIVE → PERSONAPLEX_DEGRADED → CONNECTING_LOCAL → TEXT_FALLBACK
  *   LOCAL_ACTIVE → LOCAL_DEGRADED → TEXT_FALLBACK
  *   ERROR → TEXT_FALLBACK
  *   DISCONNECTING → IDLE → ... → TEXT_FALLBACK
@@ -305,6 +335,8 @@ const TRANSITION_RULES: TransitionRule[] = [
   { from: 'IDLE', to: 'CONNECTING_LOCAL' },
   // Allow direct cloud connection from idle (mic already granted externally)
   { from: 'IDLE', to: 'CONNECTING_CLOUD' },
+  // Allow direct PersonaPlex connection from idle
+  { from: 'IDLE', to: 'CONNECTING_PERSONAPLEX' },
 
   // ── From REQUESTING_MIC ──────────────────────────────────────────────
   { from: 'REQUESTING_MIC', to: 'MIC_GRANTED' },
@@ -323,6 +355,8 @@ const TRANSITION_RULES: TransitionRule[] = [
   // ── From MIC_GRANTED ─────────────────────────────────────────────────
   // Choose cloud path
   { from: 'MIC_GRANTED', to: 'CONNECTING_CLOUD' },
+  // Choose PersonaPlex path
+  { from: 'MIC_GRANTED', to: 'CONNECTING_PERSONAPLEX' },
   // Choose local path
   { from: 'MIC_GRANTED', to: 'CONNECTING_LOCAL' },
   // No viable path → text fallback
@@ -333,6 +367,8 @@ const TRANSITION_RULES: TransitionRule[] = [
   // ── From CONNECTING_CLOUD ────────────────────────────────────────────
   // Success — audio verified flowing
   { from: 'CONNECTING_CLOUD', to: 'CLOUD_ACTIVE' },
+  // Cloud failed → try PersonaPlex
+  { from: 'CONNECTING_CLOUD', to: 'CONNECTING_PERSONAPLEX' },
   // Cloud failed → try local
   { from: 'CONNECTING_CLOUD', to: 'CONNECTING_LOCAL' },
   // Cloud failed and no local → text
@@ -351,12 +387,46 @@ const TRANSITION_RULES: TransitionRule[] = [
   { from: 'CLOUD_DEGRADED', to: 'CLOUD_ACTIVE' },
   // Reconnect attempt
   { from: 'CLOUD_DEGRADED', to: 'CONNECTING_CLOUD' },
+  // Fall back to PersonaPlex
+  { from: 'CLOUD_DEGRADED', to: 'CONNECTING_PERSONAPLEX' },
   // Fall back to local
   { from: 'CLOUD_DEGRADED', to: 'CONNECTING_LOCAL' },
   // Give up entirely
   { from: 'CLOUD_DEGRADED', to: 'TEXT_FALLBACK' },
   // User stops
   { from: 'CLOUD_DEGRADED', to: 'DISCONNECTING' },
+
+  // ── From CONNECTING_PERSONAPLEX ──────────────────────────────────────
+  // Success — full-duplex audio verified flowing
+  { from: 'CONNECTING_PERSONAPLEX', to: 'PERSONAPLEX_ACTIVE' },
+  // Failed → try local
+  { from: 'CONNECTING_PERSONAPLEX', to: 'CONNECTING_LOCAL' },
+  // Failed → try cloud
+  { from: 'CONNECTING_PERSONAPLEX', to: 'CONNECTING_CLOUD' },
+  // All failed → text
+  { from: 'CONNECTING_PERSONAPLEX', to: 'TEXT_FALLBACK' },
+  // User cancelled
+  { from: 'CONNECTING_PERSONAPLEX', to: 'DISCONNECTING' },
+
+  // ── From PERSONAPLEX_ACTIVE ────────────────────────────────────────
+  // Health degraded
+  { from: 'PERSONAPLEX_ACTIVE', to: 'PERSONAPLEX_DEGRADED' },
+  // User stops session
+  { from: 'PERSONAPLEX_ACTIVE', to: 'DISCONNECTING' },
+
+  // ── From PERSONAPLEX_DEGRADED ──────────────────────────────────────
+  // Recovered — audio flowing again
+  { from: 'PERSONAPLEX_DEGRADED', to: 'PERSONAPLEX_ACTIVE' },
+  // Reconnect attempt
+  { from: 'PERSONAPLEX_DEGRADED', to: 'CONNECTING_PERSONAPLEX' },
+  // Fall back to local
+  { from: 'PERSONAPLEX_DEGRADED', to: 'CONNECTING_LOCAL' },
+  // Fall back to cloud
+  { from: 'PERSONAPLEX_DEGRADED', to: 'CONNECTING_CLOUD' },
+  // Give up → text
+  { from: 'PERSONAPLEX_DEGRADED', to: 'TEXT_FALLBACK' },
+  // User stops
+  { from: 'PERSONAPLEX_DEGRADED', to: 'DISCONNECTING' },
 
   // ── From CONNECTING_LOCAL ────────────────────────────────────────────
   // Success — local pipeline flowing
@@ -387,6 +457,7 @@ const TRANSITION_RULES: TransitionRule[] = [
   // ── From TEXT_FALLBACK ───────────────────────────────────────────────
   // User wants to retry voice
   { from: 'TEXT_FALLBACK', to: 'REQUESTING_MIC' },
+  { from: 'TEXT_FALLBACK', to: 'CONNECTING_PERSONAPLEX' },
   { from: 'TEXT_FALLBACK', to: 'CONNECTING_LOCAL' },
   { from: 'TEXT_FALLBACK', to: 'CONNECTING_CLOUD' },
   // User closes everything
@@ -428,7 +499,8 @@ function buildTransitionSet(rules: TransitionRule[]): Set<string> {
 /** States from which transitioning to ERROR is always allowed. */
 const ERROR_ALWAYS_ALLOWED_FROM: Set<VoiceState> = new Set([
   'REQUESTING_MIC', 'MIC_GRANTED', 'CONNECTING_CLOUD', 'CLOUD_ACTIVE',
-  'CLOUD_DEGRADED', 'CONNECTING_LOCAL', 'LOCAL_ACTIVE', 'LOCAL_DEGRADED',
+  'CLOUD_DEGRADED', 'CONNECTING_PERSONAPLEX', 'PERSONAPLEX_ACTIVE',
+  'PERSONAPLEX_DEGRADED', 'CONNECTING_LOCAL', 'LOCAL_ACTIVE', 'LOCAL_DEGRADED',
   'TEXT_FALLBACK', 'DISCONNECTING',
 ]);
 
@@ -458,6 +530,9 @@ export class VoiceStateMachine extends EventEmitter {
 
   private constructor() {
     super();
+    this.on('error', (err) => {
+      console.error(`[VoiceStateMachine] Unhandled error event:`, err instanceof Error ? err.message : err);
+    });
     this.legalTransitions = buildTransitionSet(TRANSITION_RULES);
     this.stateEnteredAt = Date.now();
   }
@@ -681,7 +756,9 @@ export class VoiceStateMachine extends EventEmitter {
       }
 
       const activeStates: Set<VoiceState> = new Set([
-        'CLOUD_ACTIVE', 'CLOUD_DEGRADED', 'LOCAL_ACTIVE', 'LOCAL_DEGRADED',
+        'CLOUD_ACTIVE', 'CLOUD_DEGRADED',
+        'PERSONAPLEX_ACTIVE', 'PERSONAPLEX_DEGRADED',
+        'LOCAL_ACTIVE', 'LOCAL_DEGRADED',
       ]);
 
       if (activeStates.has(this.currentState)) {

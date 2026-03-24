@@ -1,0 +1,104 @@
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> REQUESTING_MIC
+    IDLE --> CONNECTING_PERSONAPLEX
+    IDLE --> CONNECTING_CLOUD
+    IDLE --> CONNECTING_LOCAL
+    IDLE --> TEXT_FALLBACK
+
+    REQUESTING_MIC --> MIC_GRANTED
+    REQUESTING_MIC --> MIC_DENIED : denied / timeout 30s
+    REQUESTING_MIC --> TEXT_FALLBACK
+
+    MIC_DENIED --> REQUESTING_MIC : retry
+    MIC_DENIED --> TEXT_FALLBACK : timeout 60s
+    MIC_DENIED --> IDLE : cancelled
+
+    MIC_GRANTED --> CONNECTING_PERSONAPLEX : priority 0
+    MIC_GRANTED --> CONNECTING_CLOUD : priority 1
+    MIC_GRANTED --> CONNECTING_LOCAL : priority 2
+    MIC_GRANTED --> TEXT_FALLBACK : timeout 10s
+    MIC_GRANTED --> DISCONNECTING
+
+    state "PersonaPlex Path" as pplex {
+        CONNECTING_PERSONAPLEX --> PERSONAPLEX_ACTIVE : WSS connected + audio verified
+        CONNECTING_PERSONAPLEX --> CONNECTING_LOCAL : failed / timeout 30s
+        CONNECTING_PERSONAPLEX --> CONNECTING_CLOUD : failed, try cloud
+        CONNECTING_PERSONAPLEX --> TEXT_FALLBACK
+        CONNECTING_PERSONAPLEX --> DISCONNECTING
+
+        PERSONAPLEX_ACTIVE --> PERSONAPLEX_DEGRADED : audio unhealthy
+        PERSONAPLEX_ACTIVE --> DISCONNECTING : user stops / timeout 600s
+
+        PERSONAPLEX_DEGRADED --> PERSONAPLEX_ACTIVE : recovered
+        PERSONAPLEX_DEGRADED --> CONNECTING_PERSONAPLEX : retry
+        PERSONAPLEX_DEGRADED --> CONNECTING_LOCAL : auto-switch 10s
+        PERSONAPLEX_DEGRADED --> CONNECTING_CLOUD : try cloud
+        PERSONAPLEX_DEGRADED --> TEXT_FALLBACK
+        PERSONAPLEX_DEGRADED --> DISCONNECTING
+    }
+
+    state "Cloud Path (Gemini)" as cloud {
+        CONNECTING_CLOUD --> CLOUD_ACTIVE : WS open + setupComplete + audio verified
+        CONNECTING_CLOUD --> CONNECTING_PERSONAPLEX : failed, try PersonaPlex
+        CONNECTING_CLOUD --> CONNECTING_LOCAL : failed / timeout 15s
+        CONNECTING_CLOUD --> TEXT_FALLBACK
+        CONNECTING_CLOUD --> DISCONNECTING
+
+        CLOUD_ACTIVE --> CLOUD_DEGRADED : jitter / silence / health fail
+        CLOUD_ACTIVE --> DISCONNECTING : user stops / timeout 600s
+
+        CLOUD_DEGRADED --> CLOUD_ACTIVE : recovered
+        CLOUD_DEGRADED --> CONNECTING_CLOUD : retry
+        CLOUD_DEGRADED --> CONNECTING_PERSONAPLEX : try PersonaPlex
+        CLOUD_DEGRADED --> CONNECTING_LOCAL : auto-switch 10s
+        CLOUD_DEGRADED --> TEXT_FALLBACK
+        CLOUD_DEGRADED --> DISCONNECTING
+    }
+
+    state "Local Path (Whisper+Ollama+TTS)" as local {
+        CONNECTING_LOCAL --> LOCAL_ACTIVE : pipeline ready
+        CONNECTING_LOCAL --> LOCAL_DEGRADED : partial (no TTS)
+        CONNECTING_LOCAL --> TEXT_FALLBACK : timeout 45s
+        CONNECTING_LOCAL --> DISCONNECTING
+
+        LOCAL_ACTIVE --> LOCAL_DEGRADED : component failure
+        LOCAL_ACTIVE --> DISCONNECTING : user stops / timeout 600s
+
+        LOCAL_DEGRADED --> LOCAL_ACTIVE : recovered
+        LOCAL_DEGRADED --> CONNECTING_LOCAL : retry
+        LOCAL_DEGRADED --> TEXT_FALLBACK : auto-switch 10s
+        LOCAL_DEGRADED --> DISCONNECTING
+    }
+
+    TEXT_FALLBACK --> IDLE : user restarts
+    TEXT_FALLBACK --> REQUESTING_MIC : retry voice
+    TEXT_FALLBACK --> CONNECTING_PERSONAPLEX
+    TEXT_FALLBACK --> CONNECTING_LOCAL
+    TEXT_FALLBACK --> CONNECTING_CLOUD
+    TEXT_FALLBACK --> DISCONNECTING
+
+    ERROR --> IDLE
+    ERROR --> TEXT_FALLBACK
+    ERROR --> REQUESTING_MIC
+
+    DISCONNECTING --> IDLE : cleanup complete
+    DISCONNECTING --> ERROR : cleanup failed
+
+    note right of IDLE
+        Natural resting state.
+        No timeout.
+    end note
+
+    note right of TEXT_FALLBACK
+        Universal floor.
+        Always available.
+        No external deps.
+    end note
+
+    note right of ERROR
+        Any active state can
+        transition to ERROR
+        (wildcard).
+    end note

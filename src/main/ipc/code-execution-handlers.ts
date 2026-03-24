@@ -12,6 +12,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { assertString, assertObject } from './validate';
+import { requestConfirmation } from '../desktop-tools';
 
 /** Maximum output size (stdout or stderr) in characters. */
 const MAX_OUTPUT_SIZE = 100_000;
@@ -109,6 +110,19 @@ export function registerCodeExecutionHandlers(): void {
         throw new Error(
           `Unsupported language "${language}". Supported: ${Object.keys(LANGUAGE_CONFIG).join(', ')}`,
         );
+      }
+
+      // Security: require user confirmation before executing arbitrary code.
+      // code:execute-direct runs unsandboxed Python/Bash/Node — equivalent to
+      // run_command in destructive potential.
+      const { BrowserWindow } = await import('electron');
+      const win = BrowserWindow.getAllWindows()[0] ?? null;
+      const approved = await requestConfirmation(win, 'code:execute-direct', {
+        language,
+        code: code.slice(0, 300) + (code.length > 300 ? '...' : ''),
+      });
+      if (!approved) {
+        throw new Error('Code execution denied by user');
       }
 
       // Write code to a temp file

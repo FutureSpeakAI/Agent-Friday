@@ -48,6 +48,12 @@ process.on('uncaughtException', (err) => {
     'Agent Friday — Unexpected Error',
     `An unexpected error occurred:\n\n${err.message}\n\nThe app will try to continue, but you may want to restart.\nFull details saved to: ${logPath}`
   );
+
+  // H9 fix: Synchronous critical cleanup — zero key material and clear API keys.
+  // Each call is wrapped individually because the process may be in an inconsistent state.
+  try { destroyVault(); } catch { /* vault may not be initialized yet */ }
+  try { destroyHmac(); } catch { /* hmac may not be initialized yet */ }
+  try { settingsManager.clearApiKeysFromEnv(); } catch { /* best-effort */ }
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -87,6 +93,17 @@ const _tlsGuardInterval = setInterval(() => {
 }, 5_000);
 // Clean up on exit so the timer doesn't hold the process open
 process.once('exit', () => clearInterval(_tlsGuardInterval));
+
+// ── H9 fix: Ensure SIGTERM/SIGINT trigger the graceful shutdown path ─
+// On POSIX systems (and some Windows scenarios), these signals may arrive
+// without triggering Electron's window-all-closed lifecycle. Calling
+// app.quit() funnels them into the existing 20+ subsystem cleanup path.
+process.on('SIGTERM', () => {
+  try { app.quit(); } catch { /* process may already be exiting */ }
+});
+process.on('SIGINT', () => {
+  try { app.quit(); } catch { /* process may already be exiting */ }
+});
 
 // ── Domain module imports (initialization + lifecycle) ───────────────
 import { memoryManager } from './memory';
@@ -129,6 +146,7 @@ import { meetingIntelligence } from './meeting-intelligence';
 import { startContextStreamBridge, stopContextStreamBridge } from './context-stream-bridge';
 import { contextGraph } from './context-graph';
 import { liveContextBridge } from './live-context-bridge';
+import { registerGeminiLiveProxy } from './gemini-ws-proxy';
 import { commitmentTracker } from './commitment-tracker';
 import { dailyBriefingEngine } from './daily-briefing';
 import { workflowRecorder } from './workflow-recorder';
@@ -219,6 +237,7 @@ import {
   registerVoiceStateHandlers,
   registerVoiceFallbackHandlers,
   registerConnectionStageHandlers,
+  registerPersonaPlexVoicePathHandlers,
   registerTelemetryHandlers,
   type ContextPushCleanup,
 } from './ipc';
@@ -443,7 +462,9 @@ app.whenReady().then(async () => {
             "font-src 'self' https://fonts.gstatic.com",
             "img-src 'self' data: blob: https:",
             "media-src 'self' blob: data: mediastream:",
-            "connect-src 'self' wss://generativelanguage.googleapis.com https://generativelanguage.googleapis.com https://api.anthropic.com https://openrouter.ai blob:",
+            // C2 fix: Removed wss://generativelanguage.googleapis.com — Gemini WebSocket
+            // is now proxied through the main process, so the renderer never connects directly.
+            "connect-src 'self' https://generativelanguage.googleapis.com https://api.anthropic.com https://openrouter.ai blob:",
             "worker-src 'self' blob:",
             "child-src 'self' blob:",
             "object-src 'none'",
@@ -788,6 +809,7 @@ app.whenReady().then(async () => {
   // ── Register all IPC handlers ───────────────────────────────────
   const getMainWindow = () => mainWindow;
 
+  registerGeminiLiveProxy();
   registerCoreHandlers({ getMainWindow, serverPort });
   registerMemoryHandlers();
   registerToolHandlers({ getMainWindow });
@@ -846,7 +868,8 @@ app.whenReady().then(async () => {
   registerVoiceStateHandlers({ getMainWindow });
   registerVoiceFallbackHandlers({ getMainWindow });
   registerConnectionStageHandlers({ getMainWindow });
-  console.log('[IPC] Voice resilience handlers registered (state machine, fallback, stage monitor)');
+  registerPersonaPlexVoicePathHandlers();
+  console.log('[IPC] Voice resilience handlers registered (state machine, fallback, stage monitor, personaplex)');
 
   console.log('[IPC] Sprint 3-6 module handlers registered');
 
@@ -1117,6 +1140,9 @@ app.on('window-all-closed', async () => {
   agentNetwork.stop().catch(() => {});
   containerEngine.shutdown().catch(() => {});
   OllamaLifecycle.getInstance().stop();
+  // Stop PersonaPlex server + disconnect WebSocket
+  import('./voice/personaplex-voice-path').then(m => m.cleanupPersonaPlex()).catch(() => {});
+  import('./voice/personaplex-server').then(m => m.stop()).catch(() => {});
   apiHealthMonitor.stop();
   await telemetryEngine.shutdown();
   globalShortcut.unregisterAll();

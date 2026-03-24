@@ -56,6 +56,18 @@ export function registerLocalConversationHandlers(
     sendToRenderer('local-conversation:event:agent-finalized', config);
   });
 
+  conversation.on('ai-response-chunk', (text: string) => {
+    sendToRenderer('local-conversation:event:response-chunk', text);
+  });
+
+  conversation.on('tool-start', (info: { id: string; name: string }) => {
+    sendToRenderer('local-conversation:event:tool-start', info);
+  });
+
+  conversation.on('tool-end', (info: { id: string; name: string; success: boolean }) => {
+    sendToRenderer('local-conversation:event:tool-end', info);
+  });
+
   conversation.on('error', (error: string) => {
     sendToRenderer('local-conversation:event:error', error);
   });
@@ -104,7 +116,13 @@ export function registerLocalConversationHandlers(
     'local-conversation:send',
     async (_event, text: string) => {
       assertString(text, 'local-conversation:send text', 10_000);
-      await conversation.sendText(text);
+      try {
+        await conversation.sendText(text);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[LocalConversation IPC] send failed:', msg);
+        throw new Error(`Failed to send message: ${msg}`);
+      }
     },
   );
 

@@ -2,7 +2,7 @@
  * Onboarding IPC handlers — first-run flow, psych profile, feature setup, personality evolution.
  */
 import { ipcMain } from 'electron';
-import { isFirstRun, buildAllOnboardingToolDeclarations, buildFirstGreetingPrompt } from '../onboarding';
+import { isFirstRun, buildAllOnboardingToolDeclarations, buildFirstGreetingPrompt, VOICE_MAP, DEFAULT_PROFILES } from '../onboarding';
 import { generatePsychologicalProfile } from '../psychological-profile';
 import {
   initializeFeatureSetup,
@@ -28,6 +28,19 @@ export function registerOnboardingHandlers(): void {
   ipcMain.handle('onboarding:get-config', () => settingsManager.getAgentConfig());
   ipcMain.handle('onboarding:get-tool-declarations', () => buildAllOnboardingToolDeclarations());
   ipcMain.handle('onboarding:get-first-greeting', () => buildFirstGreetingPrompt());
+  ipcMain.handle('onboarding:get-defaults', () => ({ voiceMap: VOICE_MAP, defaultProfiles: DEFAULT_PROFILES }));
+
+  // ── Onboarding checkpoint (crash recovery) ──────────────────────────
+  ipcMain.handle('onboarding:save-checkpoint', async (_event, checkpoint: unknown) => {
+    assertObject(checkpoint, 'onboarding:save-checkpoint checkpoint');
+    await settingsManager.setSetting('onboardingCheckpoint', checkpoint);
+  });
+  ipcMain.handle('onboarding:get-checkpoint', () => {
+    return settingsManager.get().onboardingCheckpoint;
+  });
+  ipcMain.handle('onboarding:clear-checkpoint', async () => {
+    await settingsManager.setSetting('onboardingCheckpoint', null);
+  });
 
   // Crypto Sprint 20: Validate IPC inputs.
   ipcMain.handle(

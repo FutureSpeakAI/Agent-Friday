@@ -15,6 +15,7 @@
  * Sprint 3 G.1: "The Native Tongue" — OllamaProvider
  */
 
+import { randomUUID } from 'crypto';
 import type {
   LLMProvider,
   LLMRequest,
@@ -161,37 +162,40 @@ export class OllamaProvider implements LLMProvider {
    * Normalizes the response to the unified LLMResponse format.
    */
   async complete(request: LLMRequest): Promise<LLMResponse> {
-    const model = request.model || DEFAULT_MODEL;
-    const startTime = Date.now();
-    const endpoint = this.getEndpoint();
-    const url = `${endpoint}/api/chat`;
+    return this.withRetry(async () => {
+      const model = request.model || DEFAULT_MODEL;
+      const startTime = Date.now();
+      const endpoint = this.getEndpoint();
+      const url = `${endpoint}/api/chat`;
 
-    const body = this.buildRequestBody(request, model, false);
+      const body = this.buildRequestBody(request, model, false);
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
 
-    const fetchOptions: RequestInit = {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    };
-    if (request.signal) {
-      fetchOptions.signal = request.signal;
-    }
+      const fetchOptions: RequestInit = {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      };
+      // Use caller's signal if provided, otherwise apply a 60s timeout
+      fetchOptions.signal = request.signal || AbortSignal.timeout(60_000);
 
-    const res = await fetch(url, fetchOptions);
+      const res = await fetch(url, fetchOptions);
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`[OllamaProvider] API error (${res.status}) from ${url}: ${errText}`);
-    }
+      if (!res.ok) {
+        const errText = await res.text();
+        const err = new Error(`[OllamaProvider] API error (${res.status}) from ${url}: ${errText}`);
+        (err as any).status = res.status;
+        throw err;
+      }
 
-    const response = await res.json() as OllamaChatResponse;
-    const latencyMs = Date.now() - startTime;
+      const response = await res.json() as OllamaChatResponse;
+      const latencyMs = Date.now() - startTime;
 
-    return this.parseResponse(response, model, latencyMs);
+      return this.parseResponse(response, model, latencyMs);
+    }, 'complete');
   }
 
   /**
@@ -240,6 +244,7 @@ export class OllamaProvider implements LLMProvider {
     let promptTokens = 0;
     let completionTokens = 0;
     const toolCalls: ToolCall[] = [];
+    const yieldedToolCallIds = new Set<string>();
 
     try {
       while (true) {
@@ -257,7 +262,8 @@ export class OllamaProvider implements LLMProvider {
           let chunk: OllamaStreamChunk;
           try {
             chunk = JSON.parse(trimmed);
-          } catch {
+          } catch (parseErr) {
+            console.warn(`[OllamaProvider] Malformed NDJSON line skipped: ${trimmed.slice(0, 200)}`, parseErr);
             continue;
           }
 
@@ -272,8 +278,11 @@ export class OllamaProvider implements LLMProvider {
             if (chunk.message?.tool_calls) {
               for (const tc of chunk.message.tool_calls) {
                 const toolCall = this.convertToolCall(tc);
-                toolCalls.push(toolCall);
-                yield { toolCall, done: false };
+                if (!yieldedToolCallIds.has(toolCall.id)) {
+                  yieldedToolCallIds.add(toolCall.id);
+                  toolCalls.push(toolCall);
+                  yield { toolCall, done: false };
+                }
               }
             }
           } else if (chunk.message?.content) {
@@ -285,15 +294,37 @@ export class OllamaProvider implements LLMProvider {
           if (!chunk.done && chunk.message?.tool_calls) {
             for (const tc of chunk.message.tool_calls) {
               const toolCall = this.convertToolCall(tc);
-              toolCalls.push(toolCall);
-              yield { toolCall, done: false };
+              if (!yieldedToolCallIds.has(toolCall.id)) {
+                yieldedToolCallIds.add(toolCall.id);
+                toolCalls.push(toolCall);
+                yield { toolCall, done: false };
+              }
             }
           }
         }
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
-        // Stream was cancelled — yield what we have
+        // Audit Fix H3: Signal truncation — don't treat partial text as complete.
+        // Yield what we have, but mark stopReason as 'interrupted' so callers
+        // know the response was cut short.
+        const latencyMs = Date.now() - startTime;
+        yield {
+          done: true,
+          fullResponse: {
+            content: fullText,
+            toolCalls,
+            usage: {
+              inputTokens: promptTokens,
+              outputTokens: completionTokens,
+            },
+            model: resolvedModel,
+            provider: 'ollama',
+            stopReason: 'interrupted',
+            latencyMs,
+          },
+        };
+        return;
       } else {
         throw err;
       }
@@ -371,6 +402,48 @@ export class OllamaProvider implements LLMProvider {
     const healthy = await this.performHealthCheck();
     this.healthCache = { healthy, timestamp: Date.now() };
     return healthy;
+  }
+
+  // ── Private: Retry Logic ──────────────────────────────────────────────
+
+  private async withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 1000;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (err: unknown) {
+        if (attempt === MAX_RETRIES || !this.isRetryable(err)) {
+          throw err;
+        }
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
+        console.warn(
+          `[OllamaProvider] ${label} attempt ${attempt + 1} failed, retrying in ${Math.round(delay)}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    throw new Error('Unreachable');
+  }
+
+  private isRetryable(err: unknown): boolean {
+    if (err instanceof Error) {
+      if (
+        err.message.includes('ECONNREFUSED') ||
+        err.message.includes('ETIMEDOUT') ||
+        err.message.includes('ENOTFOUND') ||
+        err.message.includes('fetch failed')
+      ) {
+        return true;
+      }
+    }
+    // Check for HTTP status codes attached to the error
+    if (err && typeof err === 'object' && 'status' in err) {
+      const status = (err as any).status;
+      return status === 500 || status === 502 || status === 503;
+    }
+    return false;
   }
 
   // ── Private: Request Building ─────────────────────────────────────────
@@ -551,7 +624,7 @@ export class OllamaProvider implements LLMProvider {
    */
   private convertToolCall(tc: OllamaToolCall): ToolCall {
     return {
-      id: `ollama_tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: `call_${randomUUID()}`,
       type: 'tool_use',
       name: tc.function.name,
       input: tc.function.arguments,

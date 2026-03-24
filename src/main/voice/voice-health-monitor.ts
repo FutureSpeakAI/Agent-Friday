@@ -206,6 +206,9 @@ export class VoiceHealthMonitor extends EventEmitter {
 
   private constructor() {
     super();
+    this.on('error', (err) => {
+      console.error(`[VoiceHealthMonitor] Unhandled error event:`, err instanceof Error ? err.message : err);
+    });
   }
 
   // ── Singleton ─────────────────────────────────────────────────────────

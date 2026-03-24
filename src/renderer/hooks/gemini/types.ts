@@ -5,6 +5,7 @@
 import type { AudioPlaybackEngine } from '../../audio/AudioPlaybackEngine';
 import type { SessionManager } from '../../session/SessionManager';
 import type { IdleBehavior, IdleTier } from '../../session/IdleBehavior';
+import type { GeminiWsProxy } from './ws-proxy';
 
 // ── Public API types ──
 
@@ -33,7 +34,7 @@ export interface GeminiLiveState {
 // ── Tool execution context — passed to tool-executor ──
 
 export interface ToolExecutionContext {
-  wsRef: React.MutableRefObject<WebSocket | null>;
+  wsRef: React.MutableRefObject<WebSocket | GeminiWsProxy | null>;
   setupCompleteRef: React.MutableRefObject<boolean>;
   playbackEngineRef: React.MutableRefObject<AudioPlaybackEngine | null>;
   webcamStreamRef: React.MutableRefObject<MediaStream | null>;
@@ -49,7 +50,7 @@ export interface ToolExecutionContext {
 // ── Bundled refs interface — all React refs in the hook ──
 
 export interface GeminiRefs {
-  wsRef: React.MutableRefObject<WebSocket | null>;
+  wsRef: React.MutableRefObject<WebSocket | GeminiWsProxy | null>;
   audioContextRef: React.MutableRefObject<AudioContext | null>;
   streamRef: React.MutableRefObject<MediaStream | null>;
   workletNodeRef: React.MutableRefObject<AudioWorkletNode | null>;

@@ -229,53 +229,83 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
   // ── Binary Management ─────────────────────────────────────────────
 
   ipcMain.handle('voice:ensure-whisper-binary', async () => {
-    const { ensureWhisperBinary } = await import('../voice/binary-downloader');
-    return ensureWhisperBinary((downloaded, total) => {
-      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
-        binary: 'whisper',
-        downloaded,
-        total,
+    try {
+      const { ensureWhisperBinary } = await import('../voice/binary-downloader');
+      return ensureWhisperBinary((downloaded, total) => {
+        deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+          binary: 'whisper',
+          downloaded,
+          total,
+        });
       });
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Whisper binary setup failed: ${msg}`);
+    }
   });
 
   ipcMain.handle('voice:ensure-tts-binary', async () => {
-    const { ensureTTSBinary } = await import('../voice/binary-downloader');
-    return ensureTTSBinary((downloaded, total) => {
-      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
-        binary: 'tts',
-        downloaded,
-        total,
+    try {
+      const { ensureTTSBinary } = await import('../voice/binary-downloader');
+      return ensureTTSBinary((downloaded, total) => {
+        deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+          binary: 'tts',
+          downloaded,
+          total,
+        });
       });
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`TTS binary setup failed: ${msg}`);
+    }
   });
 
   ipcMain.handle('voice:ensure-tts-model', async () => {
-    const { ensureTTSModel } = await import('../voice/binary-downloader');
-    return ensureTTSModel((downloaded, total) => {
-      deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
-        binary: 'tts-model',
-        downloaded,
-        total,
+    try {
+      const { ensureTTSModel } = await import('../voice/binary-downloader');
+      return ensureTTSModel((downloaded, total) => {
+        deps.getMainWindow()?.webContents.send('voice:binary-download-progress', {
+          binary: 'tts-model',
+          downloaded,
+          total,
+        });
       });
-    });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`TTS model setup failed: ${msg}`);
+    }
   });
 
   // ── Chatterbox Turbo TTS (managed Python sidecar) ─────────────────
 
   ipcMain.handle('voice:chatterbox:is-setup-complete', async () => {
-    const { isSetupComplete } = await import('../voice/chatterbox-server');
-    return isSetupComplete();
+    try {
+      const { isSetupComplete } = await import('../voice/chatterbox-server');
+      return isSetupComplete();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Chatterbox status check failed: ${msg}`);
+    }
   });
 
   ipcMain.handle('voice:chatterbox:is-python-available', async () => {
-    const { isPythonAvailable } = await import('../voice/chatterbox-server');
-    return isPythonAvailable();
+    try {
+      const { isPythonAvailable } = await import('../voice/chatterbox-server');
+      return isPythonAvailable();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Python availability check failed: ${msg}`);
+    }
   });
 
   ipcMain.handle('voice:chatterbox:has-cuda-gpu', async () => {
-    const { hasCudaGpu } = await import('../voice/chatterbox-server');
-    return hasCudaGpu();
+    try {
+      const { hasCudaGpu } = await import('../voice/chatterbox-server');
+      return hasCudaGpu();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`CUDA GPU check failed: ${msg}`);
+    }
   });
 
   ipcMain.handle('voice:chatterbox:setup', async () => {
@@ -293,8 +323,13 @@ export function registerVoicePipelineHandlers(deps: VoicePipelineHandlerDeps): v
   });
 
   ipcMain.handle('voice:chatterbox:is-running', async () => {
-    const { isRunning } = await import('../voice/chatterbox-server');
-    return isRunning();
+    try {
+      const { isRunning } = await import('../voice/chatterbox-server');
+      return isRunning();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Chatterbox running check failed: ${msg}`);
+    }
   });
 
   // ── Event forwarding to renderer ──────────────────────────────────

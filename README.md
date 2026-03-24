@@ -39,13 +39,13 @@
 
 ## Highlights
 
-- **Local-first** — Runs entirely on your machine with Ollama, local Whisper STT, and local TTS. No cloud required. Your data stays yours.
+- **Local-first** — Runs entirely on your machine with Ollama, local Whisper STT, and 4 local TTS backends. Auto-downloads Python 3.12 when needed. No cloud required. Your data stays yours.
 - **Cryptographically enforced safety** — HMAC-SHA256 signed behavioral laws with attestation protocol, consent gates, and memory watchdog. Not prompt engineering. Cryptography.
 - **Trustworthy by design** — Immutable audit logs, 5-tier trust scoring, sovereignty ceremony at first launch, and a safety pipeline that validates every action before execution
 - **Privacy Shield** — All outbound API requests are scrubbed of PII (emails, phone numbers, names, addresses, SSNs) and rehydrated on return. Frontier model providers see only sanitized, identity-blind text. Local providers pass through untouched
 - **Multi-provider intelligence** — Anthropic Claude, Google Gemini, Ollama (local), OpenRouter, and HuggingFace, with automatic hardware-adaptive model selection
 - **Sovereign AI Desktop** — A full operating system with 23 native apps, a pixel art Agent Office, and a holographic desktop environment
-- **Voice-first, provider-independent** — Gemini Live for streaming conversation, plus local Whisper STT and local TTS for fully offline voice
+- **Voice-first, provider-independent** — Gemini Live for streaming conversation, plus local Whisper STT and 4 TTS backends (Chatterbox Turbo, kokoro-js, Kokoro, Piper) for fully offline voice
 - **Cognitive architecture** — Personality evolution, psychological profiling, relationship memory, confidence self-assessment, and memory-personality bridging
 - **Multi-agent orchestration** — Capability-aware delegation engine, awareness mesh, agent teams, and symbiont protocol for external agent integration
 - **Three-tier persistent memory** — Short-term, medium-term, and long-term with automatic consolidation, episodic recall, semantic search, and quality scoring
@@ -98,26 +98,29 @@
 |   VOICE LAYER                              VISION LAYER            |
 |   ┌────────────────────────┐  ┌───────────────────────────────┐   |
 |   │ Gemini Live (cloud)    │  │ screen-context                │   |
-|   │ Whisper STT (local)    │  │ image-understanding           │   |
-|   │ Local TTS engine       │  │ vision-provider               │   |
-|   │ ElevenLabs (agents)    │  │ screen-capture                │   |
-|   │ voice-profile-manager  │  └───────────────────────────────┘   |
-|   │ audio-capture          │                                       |
-|   │ transcription-pipeline │  GATEWAY LAYER                        |
-|   └────────────────────────┘  ┌───────────────────────────────┐   |
-|                                │ gateway-manager               │   |
-|   PROVIDER LAYER               │ trust-engine                  │   |
-|   ┌────────────────────────┐  │ audit-log                     │   |
-|   │ anthropic-provider     │  │ persona-adapter               │   |
-|   │ ollama-provider        │  │ session-store                 │   |
-|   │ openrouter-provider    │  │ adapters/telegram             │   |
-|   │ hf-provider            │  └───────────────────────────────┘   |
-|   │ llm-client (unified)   │                                       |
-|   │ privacy-shield         │  HARDWARE LAYER                       |
-|   │ hardware-profiler      │  ┌───────────────────────────────┐   |
-|   │ model-orchestrator     │  │ hardware-profiler             │   |
-|   │ tier-recommender       │  │ model-orchestrator            │   |
-|   └────────────────────────┘  │ tier-recommender              │   |
+|   │ PersonaPlex (priority) │  │ image-understanding           │   |
+|   │ Whisper STT (local)    │  │ vision-provider               │   |
+|   │ TTS: Chatterbox Turbo  │  │ screen-capture                │   |
+|   │   kokoro-js / Kokoro   │  └───────────────────────────────┘   |
+|   │   Piper (fallback)     │                                       |
+|   │ ElevenLabs (agents)    │  GATEWAY LAYER                        |
+|   │ voice-profile-manager  │  ┌───────────────────────────────┐   |
+|   │ audio-capture          │  │ gateway-manager               │   |
+|   │ transcription-pipeline │  │ trust-engine                  │   |
+|   └────────────────────────┘  │ audit-log                     │   |
+|                                │ persona-adapter               │   |
+|   PROVIDER LAYER               │ session-store                 │   |
+|   ┌────────────────────────┐  │ adapters/telegram             │   |
+|   │ anthropic-provider     │  └───────────────────────────────┘   |
+|   │ ollama-provider        │                                       |
+|   │ openrouter-provider    │  HARDWARE LAYER                       |
+|   │ hf-provider            │  ┌───────────────────────────────┐   |
+|   │ llm-client (unified)   │  │ hardware-profiler             │   |
+|   │ privacy-shield         │  │ model-orchestrator            │   |
+|   │ hardware-profiler      │  │ tier-recommender              │   |
+|   │ model-orchestrator     │  └───────────────────────────────┘   |
+|   │ tier-recommender       │                                       |
+|   └────────────────────────┘                                       |
 +--------------------------------------------------------------------+
 |              IPC Bridge (47 handler modules)                        |
 |                   window.eve API                                    |
@@ -136,12 +139,15 @@
 |   │  Gateway · Maps · Media · Monitor · News · Notes ·          │  |
 |   │  Recorder · Stage · Tasks · Terminal · Weather              │  |
 |   │                                                             │  |
-|   │  ONBOARDING CEREMONY (7 steps):                             │  |
-|   │  Awakening → Mission → Hardware → Privacy → ApiKeys →       │  |
+|   │  ONBOARDING CEREMONY (10 steps):                            │  |
+|   │  Welcome → Hardware → Models → Providers → Integrations →   │  |
+|   │  VoiceIdentity → Personality → PrivacyPermissions →         │  |
 |   │  Interview → Reveal                                         │  |
 |   └────────────────────────────────────────────────────────────┘  |
 +--------------------------------------------------------------------+
 ```
+
+For detailed operational flow documentation, see [`docs/architecture/flows/`](docs/architecture/flows/) — 11 flows covering boot, onboarding, conversation, voice fallback cascade, memory consolidation, and more, documented using Nick Tune methodology.
 
 ---
 
@@ -227,7 +233,7 @@ Agent Friday does not have a "personality setting." It has a cognitive architect
 | **Friday Profile** | The agent's self-model and self-knowledge document |
 | **Mood Context** | Real-time emotional state tracking (renderer-side) |
 
-The onboarding ceremony reflects this depth. It is not a configuration wizard; it is a seven-step cinematic process that establishes a new sovereign agent instance: Awakening (initial system bootstrap), Mission (trust-first pillars), Hardware (GPU detection, local model download, and Whisper voice model auto-download), Privacy (Privacy Shield explainer), ApiKeys (optional cloud credentials), Interview (voice-based mutual discovery where agent name, gender, and personality emerge through conversation — with text-only fallback when voice models are unavailable), and Reveal (agent comes online).
+The onboarding ceremony reflects this depth. It is not a configuration wizard; it is a ten-step cinematic process that establishes a new sovereign agent instance: Welcome (cinematic splash and system initialization), Hardware (GPU/VRAM detection and tier recommendation), Models (automatic local model download including Whisper voice models), Providers (optional cloud API key entry), Integrations (connector and service setup), VoiceIdentity (voice profile selection and TTS backend configuration), Personality (personality trait calibration), PrivacyPermissions (Privacy Shield explainer and permission grants), Interview (voice-based mutual discovery where agent name, gender, and personality emerge through conversation — with text-only fallback when voice models are unavailable), and Reveal (agent comes online with cinematic boot sequence).
 
 ---
 
@@ -265,14 +271,15 @@ Agent Friday supports multiple voice pathways, from cloud streaming to fully loc
 
 | Pathway | Technology | Use Case |
 |---------|-----------|----------|
-| **Local Voice Loop** | Whisper STT → Ollama → Kokoro/Piper TTS | Fully offline real-time conversation — zero cloud keys required |
+| **PersonaPlex** | Priority voice path (state 0) | Highest-fidelity persona-driven voice |
+| **Local Voice Loop** | Whisper STT → Ollama → TTS cascade | Fully offline real-time conversation — zero cloud keys required |
 | **Cloud Streaming** | Gemini Live WebSocket, 24kHz PCM, bidirectional | Real-time conversation with lowest latency |
 | **Local STT** | Whisper bindings | Offline speech-to-text, sovereignty-preserving |
-| **Local TTS** | Kokoro/Piper TTS engine | Offline text-to-speech with multiple voices |
+| **Local TTS** | Chatterbox Turbo → kokoro-js → Kokoro → Piper | 4-backend cascade with automatic fallback |
 | **Agent Voices** | ElevenLabs TTS (Turbo v2.5) | Distinct voices for sub-agents |
 | **Call Integration** | VB-Cable virtual audio routing | Join Google Meet, Zoom, Teams as a voice participant |
 
-The `LocalConversation` orchestrator (`src/main/local-conversation.ts`) manages the local conversation loop with graceful degradation: full voice (Whisper STT → Ollama → TTS), text + speech (Ollama → TTS when Whisper is unavailable), or text-only (Ollama only when both voice models are missing). Only Ollama is required — Whisper and TTS are optional. Barge-in is supported in voice mode. The onboarding interview, post-onboarding chat, and all system events work fully offline when no cloud API keys are configured.
+The `LocalConversation` orchestrator (`src/main/local-conversation.ts`) manages the local conversation loop through a 16-state voice fallback cascade with PersonaPlex as the priority 0 path. The TTS cascade tries Chatterbox Turbo first, then kokoro-js, Kokoro, and finally Piper, with graceful degradation at every level: full voice (Whisper STT → Ollama → TTS), text + speech (Ollama → TTS when Whisper is unavailable), or text-only (Ollama only when all voice models are missing). The app auto-downloads Python 3.12 when needed for Chatterbox — fully self-contained. Only Ollama is required — Whisper and TTS are optional. Barge-in is supported in voice mode. The onboarding interview, post-onboarding chat, and all system events work fully offline when no cloud API keys are configured.
 
 Audio capture uses AudioWorklet (with ScriptProcessorNode fallback). Playback uses precise Web Audio scheduling (`source.start(exactTime)`) for gapless chunk delivery. Voice profile management enables per-agent voice customization.
 
@@ -416,6 +423,7 @@ The briefing pipeline compiles intelligence from all active World Monitor domain
 - **Node.js** 18+ (20 LTS recommended)
 - **npm** 9+
 - **Windows 10/11** (64-bit) — macOS and Linux supported but primarily tested on Windows
+- **Python** — Not required. The app auto-downloads an embedded Python 3.12 when needed (for Chatterbox TTS)
 
 ### Setup
 
@@ -446,15 +454,18 @@ npm run package
 
 ### Sovereignty Ceremony
 
-On first launch, Agent Friday guides you through a seven-step cinematic onboarding:
+On first launch, Agent Friday guides you through a ten-step cinematic onboarding:
 
-1. **Awakening** — Cinematic splash with particle effects and system initialization
-2. **Mission** — Five trust pillars: Local-First Intelligence, Zero-Knowledge Vault, Privacy Shield, Transparent Routing, Immutable Directives
-3. **Hardware** — GPU/VRAM detection, tier recommendation, automatic local model download, and Whisper voice model auto-download (~75MB)
-4. **Privacy** — Privacy Shield explainer showing how PII is scrubbed before cloud requests and restored in responses
-5. **API Keys** — Optional cloud API key entry (Gemini, Anthropic, OpenRouter) — always skippable
-6. **Interview** — Voice-based mutual discovery session where agent name, gender, and personality emerge through conversation. Works fully local (Whisper + Ollama + TTS), via cloud (Gemini Live), or in text-only mode when voice models are unavailable
-7. **Reveal** — Agent comes online with cinematic boot sequence
+1. **Welcome** — Cinematic splash with particle effects and system initialization
+2. **Hardware** — GPU/VRAM detection and tier recommendation
+3. **Models** — Automatic local model download (Ollama models + Whisper voice models)
+4. **Providers** — Optional cloud API key entry (Gemini, Anthropic, OpenRouter) — always skippable
+5. **Integrations** — Connector and service configuration
+6. **VoiceIdentity** — Voice profile selection and TTS backend configuration (Chatterbox Turbo, kokoro-js, Kokoro, Piper)
+7. **Personality** — Personality trait calibration and expression tuning
+8. **PrivacyPermissions** — Privacy Shield explainer showing how PII is scrubbed before cloud requests, plus permission grants
+9. **Interview** — Voice-based mutual discovery session where agent name, gender, and personality emerge through conversation. Works fully local (Whisper + Ollama + TTS), via cloud (Gemini Live), or in text-only mode when voice models are unavailable
+10. **Reveal** — Agent comes online with cinematic boot sequence
 
 ### Configuration
 
@@ -581,7 +592,7 @@ src/
 | **Desktop shell** | Electron 33 |
 | **Frontend** | React 19 + Vite 6 |
 | **Voice (cloud)** | Gemini Live (native audio WebSocket) |
-| **Voice (local)** | Whisper STT + local TTS engine |
+| **Voice (local)** | Whisper STT + Chatterbox Turbo / kokoro-js / Kokoro / Piper TTS |
 | **Deep reasoning** | Claude (Anthropic SDK) |
 | **Local models** | Ollama |
 | **Multi-model access** | OpenRouter |
@@ -644,6 +655,7 @@ Agent Friday is built on the principle that an AI agent should be accountable to
 | [SECURITY.md](SECURITY.md) | Security policy and vulnerability reporting |
 | [SECURITY-AUDIT-REPORT.md](SECURITY-AUDIT-REPORT.md) | Security audit findings |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
+| [docs/architecture/flows/](docs/architecture/flows/) | Living architecture documentation — 11 operational flows documented using Nick Tune methodology |
 
 ---
 

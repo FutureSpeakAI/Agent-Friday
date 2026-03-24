@@ -12,7 +12,7 @@ flowchart LR
         LC["LocalConversation<br/>orchestrator<br/>pendingInputs queue"]
         LLM["LLMClient<br/>Ollama provider<br/>90s timeout"]
         TL["Tool Loop<br/>max 5 iterations<br/>15s per tool"]
-        TTS["TTSEngine<br/>Kokoro / Piper<br/>24kHz output"]
+        TTS["TTSEngine<br/>Chatterbox &gt; kokoro-js<br/>&gt; Kokoro &gt; Piper<br/>24kHz output"]
         SSM["SpeechSynthesisManager<br/>sentence splitting<br/>utterance queue (max 5)"]
     end
 

@@ -4,6 +4,201 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.12.0] — 2026-03-24 — Living Architecture & Data Persistence
+
+### Summary
+
+Comprehensive reverse engineering of all operational flows using Nick Tune's living architecture methodology. Fixed critical silent data loss where setSetting() rejected 7 onboarding fields because they were missing from the FridaySettings interface. Added dedicated Telegram credential setter. Added Ollama model pulling during onboarding. Removed TTS gate that blocked text-only local mode. Added 11 documented operational flows with Mermaid diagrams. Redesigned onboarding with new steps: ModelsStep, ProvidersStep, IntegrationsStep, VoiceIdentityStep, PersonalityStep, PrivacyPermissionsStep. Added PersonaPlex voice path and Gemini WebSocket proxy.
+
+### Added — Architecture & Documentation
+
+- **11 operational flow docs** — Nick Tune living architecture methodology, Mermaid diagrams, in `docs/architecture/flows/`
+
+### Added — Voice & Proxy
+
+- **PersonaPlex voice server** — New voice path via `personaplex-server.ts` and `personaplex-voice-path.ts`
+- **Gemini WebSocket proxy** — API key stays in main process (`gemini-ws-proxy.ts`, `ws-proxy.ts`)
+
+### Added — Onboarding Redesign
+
+- **New onboarding steps** — ModelsStep, ProvidersStep, IntegrationsStep, VoiceIdentityStep, PersonalityStep, PrivacyPermissionsStep
+- **Dedicated setTelegramConfig setter** — Bypasses sensitive fields blocklist for Telegram credentials
+- **Ollama model pulling** — Chat and embedding models pulled during ModelsStep onboarding
+- **7 missing FridaySettings fields** — `whisperModel`, `embeddingModel`, `personalitySliders`, `memoryDepth`, `piiFiltering`, `telemetry`, `localProcessing`
+
+### Fixed — Data Persistence
+
+- **Silent settings data loss** — `setSetting()` guard rejected keys not in FridaySettings interface, causing all onboarding configuration to be silently dropped
+- **Text-only local mode blocked** — TTS gate abandoned local path when TTS unavailable during onboarding
+- **Telegram credentials blocked** — Sensitive fields list had no dedicated setter, preventing credential storage
+- **Ollama models never pulled** — ModelsStep saved model names but never called `pullModel`
+
+### Removed — Onboarding Steps
+
+- **ApiKeysStep** — Replaced by ProvidersStep
+- **EnvironmentStep** — Functionality merged into other steps
+- **PrivacyStep** — Replaced by PrivacyPermissionsStep
+
+---
+
+## [3.11.1] — 2026-03-23 — Fix Silent IPC Failure
+
+### Summary
+
+Root cause fix for text prompting being silently broken. `local-conversation:start` returned `{ ok: false, error }` instead of throwing, but the renderer never checked — setting `localConversationActiveRef=true` on a dead conversation.
+
+### Fixed — IPC Error Handling
+
+- **App.tsx checks startResult.ok** — Throws on failure instead of silently continuing with a dead conversation
+- **types.d.ts return type** — `start()` returns `{ ok, error }` instead of `void`
+- **Duplicate user-transcript emit** — `local-conversation.ts` skips redundant user-transcript event
+- **StatusBar beacon rename** — "TTS" beacon renamed to "E11" (ElevenLabs)
+- **.gitignore update** — Added `releases/` directory
+
+---
+
+## [3.11.0] — 2026-03-23 — Self-Contained Python
+
+### Summary
+
+App is now fully self-contained. Auto-downloads Python 3.12 from python-build-standalone when no compatible system Python exists (~46MB one-time). Fixes text-mode regression from v3.10.1.
+
+### Added — Bundled Python
+
+- **Auto-download Python 3.12** — Downloads from python-build-standalone when no compatible system Python is found
+
+### Fixed — Text Mode
+
+- **Text prompt regression** — v3.10.1's TTS check killed local conversation when TTS unavailable; `isPythonAvailable()` now always returns true with bundled runtime
+- **Simplified CUDA detection** — Uses `nvidia-smi` directly instead of routing through Python
+
+---
+
+## [3.10.1] — 2026-03-22 — Instant Barge-In
+
+### Summary
+
+Voice-start event triggers instant TTS stop before Whisper transcript completes. Gemini Live fallback when local TTS fails. Python compatibility fix for Chatterbox.
+
+### Added — Barge-In
+
+- **Instant barge-in** — AudioCapture `voice-start` event triggers immediate TTS stop before Whisper transcript completes
+- **Barge-in forwarding** — Events forwarded to renderer AudioPlaybackEngine
+
+### Fixed — Voice Fallback
+
+- **Gemini Live voice fallback** — Falls back to Gemini Live when local TTS fails to load
+- **Chatterbox Python compat** — Requires Python 3.10–3.12, upgraded to cu126
+
+---
+
+## [3.10.0] — 2026-03-22 — Chatterbox Turbo TTS
+
+### Summary
+
+Adds Chatterbox Turbo as top-priority local TTS backend (350M param, GPU-accelerated Python sidecar). TTS cascade: chatterbox > kokoro-js > kokoro > piper.
+
+### Added — Chatterbox TTS
+
+- **Chatterbox Turbo backend** — 350M param GPU-accelerated Python sidecar (`chatterbox-server.ts`)
+- **useLocalMicCapture hook** — Bridges renderer mic input to main process
+- **HardwareStep auto-install** — Chatterbox installed during onboarding
+
+### Fixed — Input Handling
+
+- **Text input race condition** — Fixed race condition in `handleTextSend`
+- **Mic input bridge** — Mic input now works via new local mic capture bridge
+
+---
+
+## [3.9.1] — 2026-03-21 — Fix VoiceFallbackManager Bypass
+
+### Summary
+
+Track 6 block called `startBestPath()` and returned early, skipping renderer-side listener setup. Fix reduces Track 6 to priority-setting only.
+
+### Fixed — Voice Event Routing
+
+- **VoiceFallbackManager bypass** — Track 6 no longer calls `startBestPath()` directly, reduced to priority-setting only
+- **Renderer listener setup** — Renderer now correctly receives voice events and knows connection is active
+
+---
+
+## [3.9.0] — 2026-03-21 — Local-First Onboarding Voice Interview
+
+### Summary
+
+Voice interview with transcript UI and processing states for local-first onboarding.
+
+### Added — Voice Interview UI
+
+- **Transcript UI** — Real-time display of voice interview transcript
+- **Processing state indicators** — Visual feedback during voice interview processing
+- **Local-first voice interview** — Full voice interview support for local-first onboarding
+
+---
+
+## [3.8.0] — 2026-03-20 — Make the App Whole
+
+### Summary
+
+Binary auto-download for voice tools, direct code execution fallback, camera capture. All 5064 tests passing across 141 test files.
+
+### Added — Auto-Download & Execution
+
+- **Voice binary auto-downloader** — Downloads whisper-cpp, sherpa-onnx, and Piper models automatically
+- **Direct code execution fallback** — Python/Bash/Node subprocess execution when sandboxed execution unavailable
+- **Camera capture** — Saves to `~/Pictures/Agent Friday/`
+- **FridayWeather resilient fetch** — Parallel fetch with graceful degradation
+
+### Fixed — Test Infrastructure
+
+- **21 broken import paths** — Wrong relative import paths in test files corrected
+- **Missing mock exports** — Added `node:os` and `node:fs/promises` mock exports
+- **Model test fixtures** — Added missing `category` field in model test fixtures
+
+---
+
+## [3.7.8] — 2026-03-20 — Technical Debt Resolution
+
+### Summary
+
+Race conditions, listener leaks, error handling improvements, and test coverage expansion.
+
+### Fixed — Stability
+
+- **Race conditions in LocalConversation start()** — Eliminated startup race conditions
+- **Listener accumulation** — Fixed listener leaks in `ollama-handlers` and `voice-pipeline-handlers`
+- **WebSocket re-entry guard** — `useGeminiLive` `connect()` now guards against re-entrant calls
+
+### Added — Security & Testing
+
+- **PassphraseGate entropy validation** — Validates passphrase strength before vault initialization
+- **PowerShell concurrency limiter** — Maximum 5 concurrent PowerShell processes
+- **Renderer error telemetry** — Error events forwarded to telemetry pipeline
+- **.env.example** — API key placeholders for onboarding reference
+- **Test suites** — desktop-tools (74 tests), telemetry (31 tests), app-store (60 tests)
+
+---
+
+## [3.7.7] — 2026-03-19 — Voice Resilience Overhaul
+
+### Summary
+
+Replaces fragile dual-path voice with state-machine-governed cascade: Cloud > Local > Text.
+
+### Added — Voice State Machine
+
+- **VoiceStateMachine** — 13 states, 45 transitions, per-state timeouts
+- **VoiceFallbackManager** — Bidirectional Cloud ↔ Local ↔ Text fallback cascade
+- **ConnectionStageMonitor** — 6-stage granular timeouts for connection tracking
+- **PreFlightChecks** — Pre-connection validation of voice requirements
+- **VoiceErrorClassifier** — Categorizes voice errors for appropriate fallback decisions
+- **VoiceHealthMonitor** — Continuous health monitoring of active voice connections
+- **AudioPlaybackEngine** — Context resurrection and backpressure support
+
+---
+
 ## [3.7.6] — 2026-03-19 — Onboarding Completeness
 
 ### Summary

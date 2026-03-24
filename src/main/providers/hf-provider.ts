@@ -217,7 +217,7 @@ export class HuggingFaceProvider implements LLMProvider {
     } catch {
       // settingsManager may not be initialized yet
     }
-    return process.env.HF_TOKEN || '';
+    return settingsManager.getHuggingfaceApiKey() || '';
   }
 
   /**

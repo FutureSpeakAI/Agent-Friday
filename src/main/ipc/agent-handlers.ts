@@ -23,14 +23,30 @@ export function registerAgentHandlers(): void {
     },
   );
 
-  ipcMain.handle('agents:list', (_event, status?: string) => agentRunner.list(status as any));
-  ipcMain.handle('agents:get', (_event, taskId: string) => agentRunner.get(taskId));
-  ipcMain.handle('agents:cancel', (_event, taskId: string) => agentRunner.cancel(taskId));
+  ipcMain.handle('agents:list', (_event, status?: unknown) => {
+    if (status !== undefined && status !== null) {
+      assertString(status, 'agents:list status', 50);
+    }
+    return agentRunner.list(status as any);
+  });
+  ipcMain.handle('agents:get', (_event, taskId: unknown) => {
+    assertString(taskId, 'agents:get taskId', 256);
+    return agentRunner.get(taskId as string);
+  });
+  ipcMain.handle('agents:cancel', (_event, taskId: unknown) => {
+    assertString(taskId, 'agents:cancel taskId', 256);
+    return agentRunner.cancel(taskId as string);
+  });
   ipcMain.handle('agents:types', () => agentRunner.getAgentTypes());
 
   // ── Clipboard intelligence ──────────────────────────────────────────
-  ipcMain.handle('clipboard:get-recent', (_event, count?: number) => {
-    return clipboardIntelligence.getRecent(count);
+  ipcMain.handle('clipboard:get-recent', (_event, count?: unknown) => {
+    if (count !== undefined && count !== null) {
+      if (typeof count !== 'number' || !Number.isFinite(count) || count < 1 || count > 1000) {
+        throw new Error('clipboard:get-recent count must be a number between 1 and 1000');
+      }
+    }
+    return clipboardIntelligence.getRecent(count as number | undefined);
   });
 
   ipcMain.handle('clipboard:get-current', () => clipboardIntelligence.getCurrent());

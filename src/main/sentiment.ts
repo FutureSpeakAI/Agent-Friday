@@ -128,6 +128,9 @@ class SentimentEngine extends EventEmitter {
 
   constructor() {
     super();
+    this.on('error', (err) => {
+      console.error(`[SentimentEngine] Unhandled error event:`, err instanceof Error ? err.message : err);
+    });
   }
 
   private moodLog: MoodLogEntry[] = [];

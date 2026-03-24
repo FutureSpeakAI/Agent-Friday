@@ -1,0 +1,117 @@
+flowchart LR
+    subgraph Renderer["Renderer (React)"]
+        direction TB
+        AppMount["App.tsx mount\nonboarding.isComplete()"]
+        WizardInit["OnboardingWizard\nRestore checkpoint"]
+
+        S1["1. AwakeningStep\n(splash / 4.5s auto)"]
+        S2["2. MissionStep\n(trust pillars)"]
+        S3["3. HardwareStep\n(GPU/VRAM detect)"]
+        S4["4. ProvidersStep\n(8 API keys + routing)"]
+        S5["5. ModelsStep\n(LLM, STT, TTS, embed)"]
+        S6["6. VoiceIdentityStep\n(name, gender, feel)"]
+        S7["7. PrivacyPermissionsStep\n(vault + toggles + memory)"]
+        S8["8. IntegrationsStep\n(calendar, obsidian, gateway)"]
+        S9["9. PersonalityStep\n(interview/manual/skip)"]
+        S9b["9b. InterviewStep\n(voice/text + transcript)"]
+        S10["10. RevealStep\n(boot sequence + name)"]
+
+        AppMount --> WizardInit
+        WizardInit --> S1
+        S1 --> S2
+        S2 --> S3
+        S3 --> S4
+        S4 --> S5
+        S5 --> S6
+        S6 --> S7
+        S7 --> S8
+        S8 --> S9
+        S9 -->|interview| S9b
+        S9 -->|firstContact| S9b
+        S9 -->|skip| S10
+        S9b --> S10
+        S10 -->|"clearCheckpoint()\nonComplete(name)"| AppReady["appPhase = 'ready'"]
+    end
+
+    subgraph IPC["IPC Bridge (preload.ts)"]
+        direction TB
+        OnbNS["window.eve.onboarding.*"]
+        SettNS["window.eve.settings.*"]
+        VaultNS["window.eve.vault.*"]
+        HwNS["window.eve.hardware.*"]
+        OllamaNS["window.eve.ollama.*"]
+        SetupNS["window.eve.setup.*"]
+        CalNS["window.eve.calendar.*"]
+        GwNS["window.eve.gateway.*"]
+    end
+
+    subgraph Main["Main Process"]
+        direction TB
+        OnbHandlers["onboarding-handlers.ts\n(finalize, checkpoint, psych)"]
+        CoreHandlers["core-handlers.ts\n(settings, API keys, validation)"]
+        VaultHandlers["index.ts vault IPC\n(initialize-new, unlock)"]
+        SettMgr["SettingsManager\n(setSetting, saveAgentConfig)"]
+        VaultMod["vault.ts\n(vaultWrite, vaultRead)"]
+        KDF["passphrase-kdf.ts\n(Argon2id + BLAKE2b)"]
+        SecBuf["SecureBuffer\n(secure zeroing)"]
+        Onboarding["onboarding.ts\n(prompts, tools, profiles)"]
+        Integrity["integrity.ts\n(signIdentity)"]
+        HwProfiler["HardwareProfiler\n(GPU/VRAM/RAM detect)"]
+        SetupWizard["SetupWizard\n(model downloads)"]
+    end
+
+    subgraph Disk["Disk (userData)"]
+        direction TB
+        SettingsJSON[("friday-settings.json\n(encrypted)")]
+        VaultSalt[(".vault-salt")]
+        VaultCanary[(".vault-canary")]
+        VaultMeta[(".vault-meta.json")]
+    end
+
+    %% Renderer -> IPC connections
+    S3 -.-> HwNS
+    S3 -.-> OllamaNS
+    S3 -.-> SetupNS
+    S4 -.-> SettNS
+    S5 -.-> SettNS
+    S5 -.-> OllamaNS
+    S6 -.-> SettNS
+    S7 -.-> VaultNS
+    S7 -.-> SettNS
+    S8 -.-> SettNS
+    S8 -.-> CalNS
+    S8 -.-> GwNS
+    S9 -.-> SettNS
+    S9b -.-> OnbNS
+    S10 -.-> OnbNS
+    WizardInit -.-> OnbNS
+
+    %% IPC -> Main connections
+    OnbNS --> OnbHandlers
+    SettNS --> CoreHandlers
+    VaultNS --> VaultHandlers
+    HwNS --> HwProfiler
+    SetupNS --> SetupWizard
+
+    %% Main internal
+    OnbHandlers --> SettMgr
+    OnbHandlers --> Onboarding
+    CoreHandlers --> SettMgr
+    VaultHandlers --> VaultMod
+    VaultMod --> KDF
+    KDF --> SecBuf
+    SettMgr --> VaultMod
+    OnbHandlers --> Integrity
+
+    %% Main -> Disk
+    SettMgr -.-> SettingsJSON
+    VaultMod -.-> VaultSalt
+    VaultMod -.-> VaultCanary
+    VaultMod -.-> VaultMeta
+
+    %% Styling
+    style Disk fill:#2d2d00,stroke:#666
+    style SettingsJSON fill:#3d3d00,stroke:#888
+    style VaultSalt fill:#3d3d00,stroke:#888
+    style VaultCanary fill:#3d3d00,stroke:#888
+    style VaultMeta fill:#3d3d00,stroke:#888

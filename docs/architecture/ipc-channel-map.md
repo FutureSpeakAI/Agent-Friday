@@ -1,8 +1,8 @@
 # IPC Channel Map
 
-> Agent Friday v3.7.6 — Complete reference for `window.eve.*` bridge
+> Agent Friday v3.12.0 — Complete reference for `window.eve.*` bridge
 > Source of truth: `src/main/preload.ts` (~1855 lines)
-> Last updated: 2026-03-22
+> Last updated: 2026-03-24
 
 All methods use `ipcRenderer.invoke()` (request/response) unless noted as `send` (fire-and-forget) or `on` (event listener).
 

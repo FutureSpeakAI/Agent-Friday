@@ -19,6 +19,8 @@ interface InterviewStepProps {
   sendText?: (text: string) => void;
   onComplete: (finalName?: string) => void;
   onBack?: () => void;
+  /** When true, agent already has personality from sliders — just introduce itself briefly. */
+  firstContact?: boolean;
 }
 
 interface TranscriptMessage {
@@ -32,7 +34,14 @@ interface TranscriptMessage {
  * is not available. Increased to 45s to accommodate local-first first-run
  * scenarios where model loading + first inference can take 25s+.
  */
-const LEGACY_CONNECTION_TIMEOUT_MS = 45_000;
+const LEGACY_CONNECTION_TIMEOUT_MS = 120_000;
+
+/**
+ * Safety timeout (ms) for the entire interview. If finalize_agent_identity
+ * is never called (LLM confusion, network error, tool failure), show a
+ * "Continue with defaults" nudge so the user isn't soft-locked.
+ */
+const INTERVIEW_FINALIZATION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Legacy staged status messages — backend-agnostic. Used only when
@@ -45,9 +54,15 @@ const LEGACY_CONNECTION_STAGES: { delay: number; text: string }[] = [
   { delay: 10000, text: 'Preparing language model...' },
   { delay: 20000, text: 'First load can take a moment — almost ready...' },
   { delay: 35000, text: 'Still waiting — this is taking longer than usual...' },
+  { delay: 45000, text: 'Downloading model — this can take a few minutes on first run...' },
+  { delay: 75000, text: 'Still downloading — please wait...' },
+  { delay: 100000, text: 'Almost there...' },
 ];
 
-const VOICE_MAP: Record<string, Record<string, string>> = {
+// VOICE_MAP and DEFAULT_PROFILES are fetched from the main process via IPC
+// (canonical source: src/main/onboarding.ts) to avoid data duplication drift.
+// These inline fallbacks are only used if the IPC call fails.
+const FALLBACK_VOICE_MAP: Record<string, Record<string, string>> = {
   warm:   { male: 'Enceladus', female: 'Aoede',    neutral: 'Achird' },
   sharp:  { male: 'Puck',      female: 'Kore',     neutral: 'Zephyr' },
   deep:   { male: 'Iapetus',   female: 'Despina',  neutral: 'Orus' },
@@ -55,7 +70,7 @@ const VOICE_MAP: Record<string, Record<string, string>> = {
   bright: { male: 'Fenrir',    female: 'Leda',     neutral: 'Zephyr' },
 };
 
-const DEFAULT_PROFILES: Record<string, {
+const FALLBACK_DEFAULT_PROFILES: Record<string, {
   voice: string; backstory: string; traits: string[];
   identityLine: string; accent: string;
 }> = {
@@ -94,6 +109,7 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   sendText: sendTextProp,
   onComplete,
   onBack,
+  firstContact = false,
 }) => {
   const [fadeIn, setFadeIn] = useState(false);
   const [phase, setPhase] = useState<'waiting' | 'connecting' | 'active' | 'failed' | 'done'>('waiting');
@@ -104,7 +120,11 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   const [failureAction, setFailureAction] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
   const [processingState, setProcessingState] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [showTimeoutNudge, setShowTimeoutNudge] = useState(false);
+  const voiceMapRef = useRef(FALLBACK_VOICE_MAP);
+  const defaultProfilesRef = useRef(FALLBACK_DEFAULT_PROFILES);
   const animFrameRef = useRef<number>(0);
+  const finalizationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasConnectedRef = useRef(false);
   const connectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stageTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -115,6 +135,16 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   useEffect(() => {
     const t = setTimeout(() => setFadeIn(true), 100);
     return () => clearTimeout(t);
+  }, []);
+
+  // Fetch canonical VOICE_MAP and DEFAULT_PROFILES from main process
+  useEffect(() => {
+    window.eve.onboarding.getDefaults().then((defaults) => {
+      voiceMapRef.current = defaults.voiceMap;
+      defaultProfilesRef.current = defaults.defaultProfiles;
+    }).catch(() => {
+      // IPC unavailable — keep inline fallbacks
+    });
   }, []);
 
   // Auto-scroll transcript to bottom
@@ -404,6 +434,12 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
   useEffect(() => {
     const handler = (e: Event) => {
       const { agentName } = (e as CustomEvent).detail;
+      // Clear finalization timeout — interview completed successfully
+      if (finalizationTimerRef.current) {
+        clearTimeout(finalizationTimerRef.current);
+        finalizationTimerRef.current = null;
+      }
+      setShowTimeoutNudge(false);
       setPhase('done');
       setStatusText('Agent configured!');
       setTimeout(() => onComplete(agentName), 800);
@@ -412,13 +448,28 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
     return () => window.removeEventListener('agent-finalized', handler);
   }, [onComplete]);
 
+  // Safety timeout: if the interview runs too long without finalization,
+  // show a nudge so the user can continue with defaults
+  useEffect(() => {
+    if (phase !== 'active') return;
+    finalizationTimerRef.current = setTimeout(() => {
+      setShowTimeoutNudge(true);
+    }, INTERVIEW_FINALIZATION_TIMEOUT_MS);
+    return () => {
+      if (finalizationTimerRef.current) {
+        clearTimeout(finalizationTimerRef.current);
+        finalizationTimerRef.current = null;
+      }
+    };
+  }, [phase]);
+
   const handleSkip = useCallback(async () => {
     setPhase('done');
     setStatusText('Applying default personality...');
 
     const gender = identityChoices.gender;
-    const profile = DEFAULT_PROFILES[gender] || DEFAULT_PROFILES.male;
-    const voiceName = VOICE_MAP[identityChoices.voiceFeel]?.[gender] || profile.voice;
+    const profile = defaultProfilesRef.current[gender] || defaultProfilesRef.current.male;
+    const voiceName = voiceMapRef.current[identityChoices.voiceFeel]?.[gender] || profile.voice;
     const name = identityChoices.agentName || 'Friday';
 
     try {
@@ -434,7 +485,12 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
         onboardingComplete: true,
       });
     } catch (err) {
-      console.warn('[InterviewStep] Failed to save agent config:', err);
+      console.error('[InterviewStep] Failed to save agent config:', err);
+      setPhase('failed');
+      setStatusText('Failed to save agent configuration');
+      setFailureDetail(String(err instanceof Error ? err.message : err));
+      setFailureAction('Try again or restart the application.');
+      return; // Don't advance
     }
 
     setTimeout(() => onComplete(name), 600);
@@ -474,15 +530,19 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
       transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
     }} aria-label="Voice calibration interview">
       <div style={styles.headerBlock}>
-        <h2 style={styles.heading}>Voice Calibration.</h2>
+        <h2 style={styles.heading}>{firstContact ? 'Meet Your Agent.' : 'Voice Calibration.'}</h2>
         <p style={styles.subtitle}>
           {phase === 'active'
-            ? 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally.'
+            ? firstContact
+              ? 'Your agent has been configured with your preferences. Say hello — this is your first conversation.'
+              : 'Your setup assistant will ask a few personal questions to shape your agent\'s personality. Answer naturally.'
             : phase === 'done'
               ? 'Your agent\'s personality has been configured.'
               : phase === 'failed'
                 ? 'The voice session could not be established. You can retry or skip to use a default personality.'
-                : 'Preparing the voice connection...'}
+                : firstContact
+                  ? 'Connecting you with your agent for the first time...'
+                  : 'Preparing the voice connection...'}
         </p>
       </div>
 
@@ -621,6 +681,24 @@ const InterviewStep: React.FC<InterviewStepProps> = ({
             />
           </div>
         </>
+      )}
+
+      {/* Timeout nudge — interview running too long without finalization */}
+      {showTimeoutNudge && phase === 'active' && (
+        <div style={styles.failureDetailBlock}>
+          <p style={{ ...styles.failureDetailText, color: 'var(--accent-cyan-70)' }}>
+            The interview is taking longer than expected.
+          </p>
+          <p style={styles.failureActionText}>
+            You can continue with a default personality, or keep chatting.
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <NextButton
+              label="Continue with Defaults"
+              onClick={handleSkip}
+            />
+          </div>
+        </div>
       )}
 
       {/* Skip button (shown in non-failed, non-done states) */}

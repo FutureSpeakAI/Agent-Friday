@@ -226,6 +226,9 @@ export class ConnectionStageMonitor extends EventEmitter {
 
   private constructor() {
     super();
+    this.on('error', (err) => {
+      console.error(`[ConnectionStageMonitor] Unhandled error event:`, err instanceof Error ? err.message : err);
+    });
   }
 
   /**

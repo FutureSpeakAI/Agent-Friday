@@ -70,7 +70,6 @@ export default function FridayCalendar({ visible, onClose }: FridayCalendarProps
   const [form, setForm] = useState<CreateEventForm>(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
@@ -152,20 +151,6 @@ export default function FridayCalendar({ visible, onClose }: FridayCalendarProps
     }
   };
 
-  const handleDelete = async (eventId: string) => {
-    try {
-      setDeleting(eventId);
-      setError(null);
-      // Calendar delete not yet exposed in preload — show as not available
-      throw new Error('Event deletion is not yet available');
-      await loadData();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to delete event');
-    } finally {
-      setDeleting(null);
-    }
-  };
-
   const renderEventCard = (ev: CalendarEvent, showDate = false) => (
     <div key={ev.id} style={s.eventCard}>
       <div style={s.eventHeader}>
@@ -178,14 +163,6 @@ export default function FridayCalendar({ visible, onClose }: FridayCalendarProps
           {ev.location && <div style={s.eventMeta}>📍 {ev.location}</div>}
           {ev.description && <div style={s.eventMeta}>{ev.description}</div>}
         </div>
-        <button
-          style={s.deleteBtn}
-          onClick={() => handleDelete(ev.id)}
-          disabled={deleting === ev.id}
-          title="Delete event"
-        >
-          {deleting === ev.id ? '...' : '🗑'}
-        </button>
       </div>
     </div>
   );
@@ -407,17 +384,6 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 12,
     marginTop: 4,
     fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  deleteBtn: {
-    background: 'none',
-    border: '1px solid rgba(239, 68, 68, 0.2)',
-    borderRadius: 6,
-    color: '#ef4444',
-    cursor: 'pointer',
-    padding: '4px 8px',
-    fontSize: 14,
-    flexShrink: 0,
-    transition: 'background 0.15s',
   },
   empty: {
     color: '#4a4a62',

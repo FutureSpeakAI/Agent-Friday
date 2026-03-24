@@ -287,7 +287,7 @@ export async function startServer(): Promise<number> {
     }
 
     try {
-      const geminiKey = process.env.GEMINI_API_KEY;
+      const geminiKey = settingsManager.getGeminiApiKey();
       if (!geminiKey) {
         res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
         return;
@@ -327,7 +327,7 @@ export async function startServer(): Promise<number> {
     }
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = settingsManager.getGeminiApiKey();
       if (!apiKey) {
         res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
         return;
@@ -492,7 +492,7 @@ export async function runClaudeToolLoop(
   }
 
   // Default: direct Anthropic SDK
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = settingsManager.getAnthropicApiKey();
   if (!apiKey) {
     return {
       response: 'Anthropic API key not configured. Please set it in Settings.',

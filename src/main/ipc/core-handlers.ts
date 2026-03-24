@@ -6,7 +6,21 @@ import { settingsManager } from '../settings';
 import { buildGeminiLiveSystemInstruction } from '../personality';
 import { mcpClient } from '../mcp-client';
 import { memoryManager } from '../memory';
-import { assertToolCallArgs, assertString, assertSafePath } from './validate';
+import { assertToolCallArgs, assertString, assertSafePath, assertBoolean } from './validate';
+
+/**
+ * Denylist of MCP tool names that are blocked by security policy.
+ * These tools expose dangerous shell-like, destructive, or code-execution
+ * capabilities that a compromised renderer should never be able to invoke.
+ *
+ * Configurable: add/remove entries as new MCP servers are connected.
+ */
+const MCP_TOOL_DENYLIST = new Set([
+  'run_command', 'execute', 'shell', 'eval',  // dangerous shell-like tools
+  'delete', 'remove', 'drop',                  // destructive operations
+  'exec', 'spawn', 'system',                   // process execution
+  'rm', 'rmdir', 'unlink',                     // filesystem destruction
+]);
 
 export interface CoreHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -16,7 +30,12 @@ export interface CoreHandlerDeps {
 export function registerCoreHandlers(deps: CoreHandlerDeps): void {
   // ── Core ────────────────────────────────────────────────────────────
   ipcMain.handle('get-api-port', () => deps.serverPort);
-  ipcMain.handle('get-gemini-api-key', () => settingsManager.getGeminiApiKey());
+  // C2 fix: Return masked boolean-like value instead of raw API key.
+  // The renderer only needs to know IF a key exists, not the key itself.
+  // The actual key is used exclusively by the main-process WebSocket proxy.
+  ipcMain.handle('get-gemini-api-key', () => {
+    return settingsManager.getGeminiApiKey() ? '***configured***' : '';
+  });
   ipcMain.handle('get-live-system-instruction', async () => buildGeminiLiveSystemInstruction());
 
   // ── Settings ────────────────────────────────────────────────────────
@@ -33,12 +52,14 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     await settingsManager.setSetting(key as string, value);
   });
 
-  ipcMain.handle('settings:set-auto-launch', async (_event, enabled: boolean) => {
-    await settingsManager.setAutoLaunch(enabled);
+  ipcMain.handle('settings:set-auto-launch', async (_event, enabled: unknown) => {
+    assertBoolean(enabled, 'settings:set-auto-launch enabled');
+    await settingsManager.setAutoLaunch(enabled as boolean);
   });
 
-  ipcMain.handle('settings:set-auto-screen-capture', async (_event, enabled: boolean) => {
-    await settingsManager.setAutoScreenCapture(enabled);
+  ipcMain.handle('settings:set-auto-screen-capture', async (_event, enabled: unknown) => {
+    assertBoolean(enabled, 'settings:set-auto-screen-capture enabled');
+    await settingsManager.setAutoScreenCapture(enabled as boolean);
   });
 
   // Crypto Sprint 8 (HIGH): Validate vault path is a safe filesystem path.
@@ -69,10 +90,19 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     'settings:set-api-key',
     async (
       _event,
-      key: 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface',
-      value: string,
+      key: unknown,
+      value: unknown,
     ) => {
-      await settingsManager.setApiKey(key, value);
+      assertString(key, 'settings:set-api-key key', 50);
+      assertString(value, 'settings:set-api-key value', 500);
+      const validKeys = new Set(['gemini', 'anthropic', 'elevenlabs', 'firecrawl', 'perplexity', 'openai', 'openrouter', 'huggingface']);
+      if (!validKeys.has(key as string)) {
+        throw new Error(`settings:set-api-key invalid key type: ${key}`);
+      }
+      await settingsManager.setApiKey(
+        key as 'gemini' | 'anthropic' | 'elevenlabs' | 'firecrawl' | 'perplexity' | 'openai' | 'openrouter' | 'huggingface',
+        value as string,
+      );
     },
   );
 
@@ -205,6 +235,43 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     return results;
   });
 
+  // ── PersonaPlex Settings ────────────────────────────────────────────
+  ipcMain.handle('settings:get-voice-engine', () => settingsManager.getVoiceEngine());
+  ipcMain.handle('settings:set-voice-engine', (_e, engine: unknown) => {
+    if (typeof engine !== 'string' || !['auto', 'personaplex', 'local', 'cloud'].includes(engine)) {
+      throw new Error('Invalid voice engine');
+    }
+    return settingsManager.setVoiceEngine(engine);
+  });
+  ipcMain.handle('settings:get-personaplex-hf-token', () => settingsManager.getPersonaplexHfToken());
+  ipcMain.handle('settings:set-personaplex-hf-token', (_e, token: unknown) => {
+    if (typeof token !== 'string') throw new Error('Token must be a string');
+    return settingsManager.setPersonaplexHfToken(token);
+  });
+  ipcMain.handle('settings:get-personaplex-voice-id', () => settingsManager.getPersonaplexVoiceId());
+  ipcMain.handle('settings:set-personaplex-voice-id', (_e, id: unknown) => {
+    if (typeof id !== 'string') throw new Error('Voice ID must be a string');
+    return settingsManager.setPersonaplexVoiceId(id);
+  });
+  ipcMain.handle('settings:get-personaplex-cpu-offload', () => settingsManager.getPersonaplexCpuOffload());
+  ipcMain.handle('settings:set-personaplex-cpu-offload', (_e, v: unknown) => {
+    if (typeof v !== 'boolean') throw new Error('CPU offload must be a boolean');
+    return settingsManager.setPersonaplexCpuOffload(v);
+  });
+
+  // ── Telegram Credentials (dedicated setter to bypass sensitive fields block) ──
+  ipcMain.handle('settings:set-telegram-config', async (_e, botToken: unknown, ownerId: unknown) => {
+    assertString(botToken, 'settings:set-telegram-config botToken', 500);
+    assertString(ownerId, 'settings:set-telegram-config ownerId', 100);
+    await settingsManager.setTelegramConfig(botToken as string, ownerId as string);
+  });
+
+  // ── Settings Reset (Fix W7) ─────────────────────────────────────────
+  ipcMain.handle('settings:reset-to-defaults', async () => {
+    await settingsManager.resetToDefaults();
+    return { success: true };
+  });
+
   // ── MCP ─────────────────────────────────────────────────────────────
   ipcMain.handle('mcp:list-tools', async () => mcpClient.listTools());
 
@@ -213,6 +280,9 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
     'mcp:call-tool',
     async (_event, toolName: unknown, args: unknown) => {
       const { validatedName, validatedArgs } = assertToolCallArgs(toolName, args, 'mcp:call-tool');
+      if (MCP_TOOL_DENYLIST.has(validatedName)) {
+        throw new Error(`MCP tool "${validatedName}" is blocked by security policy`);
+      }
       return mcpClient.callTool(validatedName, validatedArgs);
     },
   );

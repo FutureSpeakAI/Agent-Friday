@@ -47,16 +47,24 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
     },
   );
 
-  ipcMain.handle('desktop:focus-window', async (_event, target: string) => {
+  ipcMain.handle('desktop:focus-window', async (_event, target: unknown) => {
+    assertString(target, 'desktop:focus-window target', 1_000);
     return callDesktopTool('focus_window', { target });
   });
 
-  ipcMain.handle('desktop:confirm-response', (_event, id: string, approved: boolean) => {
+  ipcMain.handle('desktop:confirm-response', (_event, id: unknown, approved: unknown, responseChallenge: unknown) => {
+    assertString(id, 'desktop:confirm-response id', 256);
+    if (typeof approved !== 'boolean') {
+      throw new Error('desktop:confirm-response approved must be a boolean');
+    }
+    if (responseChallenge !== undefined && typeof responseChallenge !== 'string') {
+      throw new Error('desktop:confirm-response responseChallenge must be a string');
+    }
     const { handleConfirmationResponse } = require('../desktop-tools');
-    handleConfirmationResponse(id, approved);
+    handleConfirmationResponse(id as string, approved as boolean, responseChallenge as string | undefined);
     // cLaw Security Fix: Also route to centralized consent-gate for side-effect consent requests
     const { handleConsentResponse } = require('../consent-gate');
-    handleConsentResponse(id, approved);
+    handleConsentResponse(id as string, approved as boolean);
   });
 
   // ── Browser tools ───────────────────────────────────────────────────
@@ -93,8 +101,9 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
 
   ipcMain.handle('scheduler:list-tasks', () => taskScheduler.listTasks());
 
-  ipcMain.handle('scheduler:delete-task', async (_event, id: string) => {
-    return taskScheduler.deleteTask(id);
+  ipcMain.handle('scheduler:delete-task', async (_event, id: unknown) => {
+    assertString(id, 'scheduler:delete-task id', 256);
+    return taskScheduler.deleteTask(id as string);
   });
 
   // ── Ambient context ─────────────────────────────────────────────────
@@ -102,7 +111,10 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
   ipcMain.handle('ambient:get-context-string', () => ambientEngine.getContextString());
 
   // ── Sentiment ───────────────────────────────────────────────────────
-  ipcMain.handle('sentiment:analyse', (_event, text: string) => sentimentEngine.analyse(text));
+  ipcMain.handle('sentiment:analyse', (_event, text: unknown) => {
+    assertString(text, 'sentiment:analyse text', 50_000);
+    return sentimentEngine.analyse(text as string);
+  });
   ipcMain.handle('sentiment:get-state', () => sentimentEngine.getState());
   ipcMain.handle('sentiment:get-mood-log', () => sentimentEngine.getMoodLog());
 
@@ -223,17 +235,20 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
     }
   });
 
-  ipcMain.handle('git:get-tree', (_event, repoId: string) => {
+  ipcMain.handle('git:get-tree', (_event, repoId: unknown) => {
     try {
-      return gitLoader.getTree(repoId);
+      assertString(repoId, 'git:get-tree repoId', 256);
+      return gitLoader.getTree(repoId as string);
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle('git:get-file', (_event, repoId: string, filePath: string) => {
+  ipcMain.handle('git:get-file', (_event, repoId: unknown, filePath: unknown) => {
     try {
-      const file = gitLoader.getFile(repoId, filePath);
+      assertString(repoId, 'git:get-file repoId', 256);
+      assertString(filePath, 'git:get-file filePath', 1_000);
+      const file = gitLoader.getFile(repoId as string, filePath as string);
       if (!file) return { error: `File not found: ${filePath}` };
       return file;
     } catch (err) {
@@ -241,25 +256,29 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
     }
   });
 
-  ipcMain.handle('git:search', (_event, repoId: string, query: string, options?: Record<string, unknown>) => {
+  ipcMain.handle('git:search', (_event, repoId: unknown, query: unknown, options?: Record<string, unknown>) => {
     try {
-      return gitLoader.search(repoId, query, options || {});
+      assertString(repoId, 'git:search repoId', 256);
+      assertString(query, 'git:search query', 10_000);
+      return gitLoader.search(repoId as string, query as string, options || {});
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle('git:get-readme', (_event, repoId: string) => {
+  ipcMain.handle('git:get-readme', (_event, repoId: unknown) => {
     try {
-      return gitLoader.getReadme(repoId);
+      assertString(repoId, 'git:get-readme repoId', 256);
+      return gitLoader.getReadme(repoId as string);
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle('git:get-summary', (_event, repoId: string) => {
+  ipcMain.handle('git:get-summary', (_event, repoId: unknown) => {
     try {
-      return gitLoader.getSummary(repoId);
+      assertString(repoId, 'git:get-summary repoId', 256);
+      return gitLoader.getSummary(repoId as string);
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -267,9 +286,10 @@ export function registerToolHandlers(deps: ToolHandlerDeps): void {
 
   ipcMain.handle('git:list-loaded', () => gitLoader.listLoaded());
 
-  ipcMain.handle('git:unload', async (_event, repoId: string) => {
+  ipcMain.handle('git:unload', async (_event, repoId: unknown) => {
     try {
-      return await gitLoader.unload(repoId);
+      assertString(repoId, 'git:unload repoId', 256);
+      return await gitLoader.unload(repoId as string);
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }

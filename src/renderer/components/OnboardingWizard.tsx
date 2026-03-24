@@ -1,38 +1,55 @@
 /**
- * OnboardingWizard.tsx — Cinematic first-run wizard.
+ * OnboardingWizard.tsx — Cinematic first-run wizard (10-step flow).
  *
- * 8-step wizard: Awakening → Mission → Hardware → Privacy → Sovereignty →
- * ApiKeys → Interview → Reveal. The Sovereignty step initializes the
- * encrypted vault and collects agent identity (name, gender, voice feel).
- * Agent personality is further refined during the voice interview — creating
- * a genuine "Her"-style moment when the agent's voice appears for the
- * first time with the personality the user described in conversation.
+ * Steps:
+ *   1. Awakening     — Splash / brand intro
+ *   2. Mission       — What Agent Friday does
+ *   3. Hardware      — GPU/VRAM detection, Ollama check, tier (with override)
+ *   4. Providers     — All 8 API keys + routing preference
+ *   5. Models        — Local model selection (chat, STT, TTS, embeddings)
+ *   6. VoiceIdentity — Agent name, gender, voice feel, voice engine
+ *   7. Privacy       — Vault passphrase, privacy toggles, memory depth
+ *   8. Integrations  — Calendar, Obsidian, Gateway (optional)
+ *   9. Personality   — Interview vs Manual sliders vs Skip → routes to Interview/FirstContact
+ *  10. Reveal        — Terminal boot sequence
+ *
+ * The Personality step gates the cinematic moment — interview users get a
+ * full voice calibration; manual users get a brief "first contact" intro;
+ * skip users go straight to reveal with defaults.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import AwakeningStep from './onboarding/AwakeningStep';
 import MissionStep from './onboarding/MissionStep';
 import HardwareStep from './onboarding/HardwareStep';
-import PrivacyStep from './onboarding/PrivacyStep';
-import EnvironmentStep from './onboarding/EnvironmentStep';
-import ApiKeysStep from './onboarding/ApiKeysStep';
+import ProvidersStep from './onboarding/ProvidersStep';
+import ModelsStep from './onboarding/ModelsStep';
+import VoiceIdentityStep from './onboarding/VoiceIdentityStep';
+import PrivacyPermissionsStep from './onboarding/PrivacyPermissionsStep';
+import IntegrationsStep from './onboarding/IntegrationsStep';
+import PersonalityStep from './onboarding/PersonalityStep';
 import InterviewStep from './onboarding/InterviewStep';
 import RevealStep from './onboarding/RevealStep';
 import CyberGrid from './onboarding/shared/CyberGrid';
 import CursorGlow from './onboarding/shared/CursorGlow';
 import HolographicDiamond from './onboarding/shared/HolographicDiamond';
 
+import type { PersonalityPath } from './onboarding/PersonalityStep';
+
 type TierName = 'whisper' | 'light' | 'standard' | 'full' | 'sovereign';
 
 const STEPS = [
-  { key: 'awakening', label: 'AWAKENING' },
-  { key: 'mission', label: 'MISSION' },
-  { key: 'hardware', label: 'HARDWARE' },
-  { key: 'privacy', label: 'PRIVACY' },
-  { key: 'environment', label: 'SOVEREIGNTY' },
-  { key: 'apikeys', label: 'API KEYS' },
-  { key: 'interview', label: 'INTERVIEW' },
-  { key: 'reveal', label: 'REVEAL' },
+  { key: 'awakening',     label: 'AWAKENING' },
+  { key: 'mission',       label: 'MISSION' },
+  { key: 'hardware',      label: 'HARDWARE' },
+  { key: 'providers',     label: 'PROVIDERS' },
+  { key: 'models',        label: 'MODELS' },
+  { key: 'voiceidentity', label: 'IDENTITY' },
+  { key: 'privacy',       label: 'PRIVACY' },
+  { key: 'integrations',  label: 'INTEGRATIONS' },
+  { key: 'personality',   label: 'PERSONALITY' },
+  { key: 'interview',     label: 'INTERVIEW' },
+  { key: 'reveal',        label: 'REVEAL' },
 ] as const;
 
 type StepKey = (typeof STEPS)[number]['key'];
@@ -52,21 +69,42 @@ interface OnboardingWizardProps {
 const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connectVoice, sendText }) => {
   const [currentStep, setCurrentStep] = useState<StepKey>('awakening');
   const [detectedTier, setDetectedTier] = useState<TierName | null>(null);
+  const [personalityPath, setPersonalityPath] = useState<PersonalityPath | null>(null);
   const [identityChoices, setIdentityChoices] = useState<IdentityChoices>({
     agentName: 'Friday',
     gender: 'male',
     voiceFeel: 'warm',
   });
-  /** Fade-out for step transitions */
   const [transitioning, setTransitioning] = useState(false);
+  const identityChoicesRef = useRef(identityChoices);
+  identityChoicesRef.current = identityChoices;
 
   const currentIndex = STEPS.findIndex((s) => s.key === currentStep);
+
+  // Restore checkpoint on mount (crash recovery)
+  useEffect(() => {
+    window.eve.onboarding.getCheckpoint().then((checkpoint) => {
+      if (checkpoint && checkpoint.step) {
+        const validStep = STEPS.find((s) => s.key === checkpoint.step);
+        if (validStep) {
+          setCurrentStep(validStep.key);
+          if (checkpoint.identityChoices) {
+            setIdentityChoices(checkpoint.identityChoices as IdentityChoices);
+          }
+          console.log(`[OnboardingWizard] Restored checkpoint at step: ${checkpoint.step}`);
+        }
+      }
+    }).catch(() => {
+      // No checkpoint or IPC unavailable — start from scratch
+    });
+  }, []);
 
   const goTo = useCallback((step: StepKey) => {
     setTransitioning(true);
     setTimeout(() => {
       setCurrentStep(step);
       setTransitioning(false);
+      window.eve.onboarding.saveCheckpoint({ step, identityChoices: identityChoicesRef.current }).catch(() => {});
     }, 400);
   }, []);
 
@@ -84,22 +122,24 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
     }
   }, [currentStep, goTo]);
 
-  // Don't show progress bar on awakening (splash) or reveal (boot sequence)
+  // Hide progress on splash (awakening) and finale (reveal)
   const showProgress = currentStep !== 'awakening' && currentStep !== 'reveal';
-  // Intense diamond glow on awakening + reveal
+  // Also hide on interview — it has its own UI state
+  const showProgressBar = showProgress && currentStep !== 'interview';
   const diamondIntense = currentStep === 'awakening' || currentStep === 'reveal';
+
+  // Progress dots: show all steps between awakening and reveal (exclusive)
+  const progressSteps = STEPS.slice(1, -1); // skip awakening + reveal
 
   return (
     <div style={styles.overlay} role="dialog" aria-label="Onboarding wizard" aria-modal="true">
-      {/* Global ambient elements */}
       <CyberGrid />
       <CursorGlow />
       <HolographicDiamond intense={diamondIntense} />
 
-      {/* Progress indicator */}
-      {showProgress && (
+      {showProgressBar && (
         <nav style={styles.progressBar} aria-label="Onboarding progress">
-          {STEPS.slice(1, -1).map((step, i) => {
+          {progressSteps.map((step, i) => {
             const stepIdx = i + 1; // offset by 1 since we skip awakening
             const isActive = currentIndex === stepIdx;
             const isComplete = currentIndex > stepIdx;
@@ -135,7 +175,6 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
         </nav>
       )}
 
-      {/* Step content — fades on transition */}
       <div
         aria-live="polite"
         style={{
@@ -144,8 +183,13 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
           transition: 'opacity 0.4s ease-in-out',
         }}
       >
+        {/* Step 1: Awakening */}
         {currentStep === 'awakening' && <AwakeningStep onComplete={next} />}
+
+        {/* Step 2: Mission */}
         {currentStep === 'mission' && <MissionStep onComplete={next} onBack={prev} />}
+
+        {/* Step 3: Hardware (with tier override) */}
         {currentStep === 'hardware' && (
           <HardwareStep
             onComplete={(tier) => {
@@ -155,36 +199,93 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onComplete, connect
             onBack={prev}
           />
         )}
-        {currentStep === 'privacy' && <PrivacyStep onComplete={next} onBack={prev} />}
-        {currentStep === 'environment' && (
-          <EnvironmentStep
+
+        {/* Step 4: Providers (all 8 API keys + routing) */}
+        {currentStep === 'providers' && (
+          <ProvidersStep
+            detectedTier={detectedTier}
+            onComplete={next}
+            onBack={prev}
+          />
+        )}
+
+        {/* Step 5: Models (local model selection) */}
+        {currentStep === 'models' && (
+          <ModelsStep
+            detectedTier={detectedTier}
+            onComplete={() => next()}
+            onBack={prev}
+          />
+        )}
+
+        {/* Step 6: Voice Identity (name, gender, voice feel, engine) */}
+        {currentStep === 'voiceidentity' && (
+          <VoiceIdentityStep
             choices={identityChoices}
             onChange={setIdentityChoices}
             onComplete={next}
             onBack={prev}
           />
         )}
-        {currentStep === 'apikeys' && (
-          <ApiKeysStep detectedTier={detectedTier} onComplete={next} onBack={prev} />
+
+        {/* Step 7: Privacy & Permissions (vault, toggles, memory) */}
+        {currentStep === 'privacy' && (
+          <PrivacyPermissionsStep
+            onComplete={next}
+            onBack={prev}
+          />
         )}
+
+        {/* Step 8: Integrations (calendar, obsidian, gateway) */}
+        {currentStep === 'integrations' && (
+          <IntegrationsStep
+            onComplete={next}
+            onBack={prev}
+          />
+        )}
+
+        {/* Step 9: Personality (path selector) */}
+        {currentStep === 'personality' && (
+          <PersonalityStep
+            onComplete={(path, _sliders) => {
+              setPersonalityPath(path);
+              if (path === 'interview' || path === 'firstContact') {
+                // Route to interview step (full interview or first contact)
+                goTo('interview');
+              } else {
+                // Skip — go straight to reveal with defaults
+                goTo('reveal');
+              }
+            }}
+            onBack={prev}
+          />
+        )}
+
+        {/* Step 9b: Interview / First Contact */}
         {currentStep === 'interview' && (
           <InterviewStep
             identityChoices={identityChoices}
             connectVoice={connectVoice}
             sendText={sendText}
+            firstContact={personalityPath === 'firstContact'}
             onComplete={(finalName) => {
               if (finalName) {
                 setIdentityChoices((p) => ({ ...p, agentName: finalName }));
               }
               goTo('reveal');
             }}
-            onBack={prev}
+            onBack={() => goTo('personality')}
           />
         )}
+
+        {/* Step 10: Reveal */}
         {currentStep === 'reveal' && (
           <RevealStep
             agentName={identityChoices.agentName}
-            onComplete={() => onComplete(identityChoices.agentName)}
+            onComplete={() => {
+              window.eve.onboarding.clearCheckpoint().catch(() => {});
+              onComplete(identityChoices.agentName);
+            }}
           />
         )}
       </div>
@@ -214,7 +315,7 @@ const styles: Record<string, React.CSSProperties> = {
     left: '50%',
     transform: 'translateX(-50%)',
     display: 'flex',
-    gap: 32,
+    gap: 20,
     zIndex: 10,
   },
   progressStep: {
@@ -230,9 +331,9 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.4s ease',
   },
   progressLabel: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: 500,
-    letterSpacing: '0.15em',
+    letterSpacing: '0.12em',
     fontFamily: "'Space Grotesk', sans-serif",
     transition: 'color 0.4s ease',
   },

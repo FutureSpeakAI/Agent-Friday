@@ -1,0 +1,90 @@
+flowchart LR
+    subgraph Renderer["Renderer Process"]
+        TI["TextInput.tsx<br/>Enter to send"]
+        HTS["handleTextSend<br/>App.tsx:1133"]
+        ST["sendText<br/>App.tsx:857"]
+        ZS["Zustand Store<br/>messages[]"]
+        CH["ChatHistory.tsx<br/>Markdown render"]
+        APE["AudioPlaybackEngine<br/>local TTS playback"]
+    end
+
+    subgraph IPC["IPC Bridge (preload.ts)"]
+        LC_IPC["localConversation<br/>.sendText()"]
+        CH_IPC["chatHistory<br/>.save() / .load()"]
+        LC_EVT["localConversation<br/>events"]
+    end
+
+    subgraph Main["Main Process"]
+        LCM["local-conversation.ts<br/>Ollama loop"]
+        SRV["server.ts<br/>POST /api/chat"]
+        HC["handleClaude<br/>server.ts:816"]
+        RCTL["runClaudeToolLoop<br/>server.ts:459"]
+        LLMC["LLMClient<br/>llm-client.ts"]
+        PERS["personality.ts<br/>buildSystemPrompt"]
+        PS["Privacy Shield<br/>scrub / rehydrate"]
+        MEM["memoryManager<br/>extractMemories"]
+        EP["episodicMemory<br/>session tracking"]
+        PC["personalityCalibration<br/>processUserMessage"]
+        CHS[("ChatHistoryStore<br/>chat-history.json")]
+    end
+
+    subgraph Providers["LLM Providers"]
+        ANT["Anthropic<br/>claude-opus-4-6"]
+        OR["OpenRouter<br/>200+ models"]
+        OLL["Ollama<br/>local LLM"]
+        HF["HuggingFace<br/>TGI / API"]
+    end
+
+    subgraph Tools["Tool Targets"]
+        MCP["MCP Servers"]
+        BT["Browser Tools"]
+        CT["Connector Tools<br/>PowerShell, Git, etc."]
+    end
+
+    TI -->|"onSend(text)"| HTS
+    HTS -->|"optimistic add"| ZS
+    HTS --> ST
+
+    ST -->|"local active"| LC_IPC
+    ST -.->|"gemini active"| GL["Gemini WebSocket<br/>sendTextToGemini"]
+
+    LC_IPC --> LCM
+    LCM -->|"response chunks"| LC_EVT
+    LC_EVT -->|"onResponseChunk<br/>onResponse"| ZS
+
+    SRV --> HC
+    HC --> PERS
+    HC --> RCTL
+    RCTL --> PS
+    PS --> LLMC
+
+    LLMC --> ANT
+    LLMC --> OR
+    LLMC --> OLL
+    LLMC --> HF
+
+    RCTL -->|"tool_use loop<br/>max 25 iterations"| MCP
+    RCTL --> BT
+    RCTL --> CT
+
+    MCP -->|"result"| RCTL
+    BT -->|"result"| RCTL
+    CT -->|"result"| RCTL
+
+    SRV -.->|"fire-and-forget"| MEM
+    SRV -.->|"fire-and-forget"| EP
+    SRV -.->|"fire-and-forget"| PC
+
+    ZS --> CH
+    ZS -->|"on change"| CH_IPC
+    CH_IPC --> CHS
+
+    GL -->|"onTextResponse"| ZS
+    LCM -->|"voice:play-chunk"| APE
+
+    style Renderer fill:#1a1a2e,stroke:#00f0ff,color:#eee
+    style IPC fill:#16213e,stroke:#00f0ff,color:#eee
+    style Main fill:#0f3460,stroke:#00f0ff,color:#eee
+    style Providers fill:#1a1a2e,stroke:#a855f7,color:#eee
+    style Tools fill:#16213e,stroke:#ffaa00,color:#eee
+    style CHS fill:#1a1a2e,stroke:#00ff66,color:#eee

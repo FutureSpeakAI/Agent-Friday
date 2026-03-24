@@ -104,6 +104,12 @@ export class AudioPlaybackEngine {
   private isResurrecting = false;
 
   /**
+   * Whether a flush is currently in progress. Prevents concurrent flush
+   * calls from exhausting the browser's AudioContext limit (Fix M7).
+   */
+  private isFlushing = false;
+
+  /**
    * Callback fired when the engine detects audio degradation (context dead,
    * liveness probe failed, resurrection exhausted). The caller wires this
    * to IPC to notify the voice state machine on the main process.
@@ -609,47 +615,67 @@ export class AudioPlaybackEngine {
     }
   }
 
-  /** Immediately stop all audio and clear queue (e.g. user interrupts) */
-  flush() {
-    this.queue = [];
-    this.generation++;
-    this.stopDrain();
-    this.activeSourceCount = 0;
-    this.isResuming = false;
-    this.isResurrecting = false;
-    this.resurrectAttempts = 0;
-
-    // Phase 4.2: Reset backpressure state on flush
-    const hadPressure = this.currentPressure !== 'normal';
-    this.currentPressure = 'normal';
-    this.inputPaused = false;
-    if (hadPressure) {
-      this.pressureChangeCallback?.('normal');
-      window.dispatchEvent(new CustomEvent('audio-playback:pressure', {
-        detail: { pressure: 'normal', queueDepth: 0, maxQueueSize: this.MAX_QUEUE_SIZE },
-      }));
+  /**
+   * Immediately stop all audio and clear queue (e.g. user interrupts).
+   *
+   * Fix M7: Await old context close() before creating a new one to prevent
+   * AudioContext exhaustion on rapid flush() calls. Uses an isFlushing guard
+   * to prevent concurrent flushes.
+   */
+  async flush() {
+    // Guard against concurrent flush calls (Fix M7)
+    if (this.isFlushing) {
+      console.warn('[AudioPlayback] flush() already in progress — skipping');
+      return;
     }
+    this.isFlushing = true;
 
-    // Close and recreate context to kill in-flight sources
-    const prevSinkId = this.currentSinkId;
-    this.ctx.close().catch(() => {});
-    this.ctx = new AudioContext({ sampleRate: this.SAMPLE_RATE });
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.analyser.smoothingTimeConstant = 0.8;
-    this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
-    this.analyser.connect(this.ctx.destination);
-    this.nextStartTime = 0;
+    try {
+      this.queue = [];
+      this.generation++;
+      this.stopDrain();
+      this.activeSourceCount = 0;
+      this.isResuming = false;
+      this.isResurrecting = false;
+      this.resurrectAttempts = 0;
 
-    // Pre-resume the new AudioContext so it's ready when chunks arrive
-    // (new contexts may start suspended due to Chromium autoplay policy)
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
+      // Phase 4.2: Reset backpressure state on flush
+      const hadPressure = this.currentPressure !== 'normal';
+      this.currentPressure = 'normal';
+      this.inputPaused = false;
+      if (hadPressure) {
+        this.pressureChangeCallback?.('normal');
+        window.dispatchEvent(new CustomEvent('audio-playback:pressure', {
+          detail: { pressure: 'normal', queueDepth: 0, maxQueueSize: this.MAX_QUEUE_SIZE },
+        }));
+      }
 
-    // Restore output device routing if it was set (e.g. call mode)
-    if (prevSinkId) {
-      this.setOutputDevice(prevSinkId).catch(() => {});
+      // Close and recreate context to kill in-flight sources.
+      // Fix M7: Await close() before creating a new context to prevent exhaustion.
+      const prevSinkId = this.currentSinkId;
+      if (this.ctx) {
+        try { await this.ctx.close(); } catch { /* already closed or errored */ }
+      }
+      this.ctx = new AudioContext({ sampleRate: this.SAMPLE_RATE });
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0.8;
+      this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
+      this.analyser.connect(this.ctx.destination);
+      this.nextStartTime = 0;
+
+      // Pre-resume the new AudioContext so it's ready when chunks arrive
+      // (new contexts may start suspended due to Chromium autoplay policy)
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+
+      // Restore output device routing if it was set (e.g. call mode)
+      if (prevSinkId) {
+        this.setOutputDevice(prevSinkId).catch(() => {});
+      }
+    } finally {
+      this.isFlushing = false;
     }
   }
 

@@ -264,7 +264,9 @@ export async function verifyCanary(vaultKey: SecureBuffer, userDataDir: string):
     const plaintext = vaultKey.withAccess('readonly', (key) => {
       return Buffer.from(sodium.crypto_secretbox_open_easy(ciphertext, nonce, key));
     });
-    return plaintext.toString('utf-8') === CANARY_PLAINTEXT;
+    const a = Buffer.from(plaintext.toString('utf-8'), 'utf-8');
+    const b = Buffer.from(CANARY_PLAINTEXT, 'utf-8');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch {
     return false; // Auth tag failed → wrong passphrase
   }

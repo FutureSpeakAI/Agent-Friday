@@ -1,0 +1,108 @@
+flowchart LR
+    subgraph Phase0["Phase 0: Pre-Ready"]
+        direction TB
+        EH["Global Error Handlers\nindex.ts:12"]
+        CR["Crash Reporter\nindex.ts:68"]
+        TLS["TLS Hardening\nindex.ts:81"]
+        SIG["Signal Handlers\nindex.ts:101"]
+        SIL["Single Instance Lock\nindex.ts:248"]
+    end
+
+    subgraph PhaseA["Phase A: UI Shell + Non-Secret Engines"]
+        direction TB
+        IEB["IPC Error Boundary\nindex.ts:388"]
+        SET["Settings Init\nsettings.ts"]
+        LLM["LLM Providers\nproviders/"]
+        MEM["Memory System\nmemory.ts"]
+        SRV["Express Server\nserver.ts"]
+        MCP["MCP Client\nmcp-client.ts"]
+        CSP["Content Security Policy\nindex.ts:448"]
+        WIN["Create BrowserWindow\nindex.ts:282"]
+        TRAY["System Tray\nindex.ts:498"]
+        HKEY["Global Hotkey\nCtrl+Shift+N"]
+        ENG["50+ Engine Inits\nindex.ts:549-806"]
+        IPC["50+ IPC Handlers\nindex.ts:809-873"]
+        VH["Vault IPC Handlers\nindex.ts:876"]
+    end
+
+    subgraph Renderer["Renderer Process"]
+        direction TB
+        PRE["Preload Bridge\npreload.ts"]
+        MT["React Mount\nmain.tsx"]
+        EB["ErrorBoundary"]
+        APP["App.tsx\nZustand Store"]
+        PG["PassphraseGate\nwait for passphrase"]
+    end
+
+    subgraph PhaseB["Phase B: Secret-Dependent Engines"]
+        direction TB
+        RS["Reload Settings\nfrom vault"]
+        RM["Reload Memory\nfrom vault"]
+        RT["Reload Trust Graph\nfrom vault"]
+        RC["Reload Calendar\ntokens"]
+        HK["Inject HMAC Key\nArgon2id -> KDF -> SecureBuffer"]
+        IG["Integrity System\nverify laws, manifest"]
+        AN["Agent Network\nEd25519 keypair"]
+        BC["vault:boot-complete\nnotify renderer"]
+    end
+
+    subgraph MainUI["Main UI"]
+        direction TB
+        OB["Onboarding Wizard\n(if first run)"]
+        MI["Main Interface\nChat + Voice + Apps"]
+    end
+
+    subgraph Shutdown["Shutdown"]
+        direction TB
+        FS["Flush Sessions\n+ Chat History"]
+        SE["Stop 30+ Engines"]
+        ZK["Zero Key Material\ndestroyHmac + destroyVault"]
+    end
+
+    subgraph Security["Security Layers"]
+        CTX["contextIsolation: true"]
+        SBX["sandbox: true"]
+        NIN["nodeIntegration: false"]
+        NAV["Navigation Blocking"]
+        POP["Popup Blocking"]
+    end
+
+    EH --> CR --> TLS --> SIG --> SIL
+
+    SIL -->|"app.whenReady()"| IEB
+    IEB --> SET --> LLM --> MEM --> SRV --> MCP --> CSP --> WIN
+
+    WIN -->|"loadURL"| PRE
+    PRE -->|"contextBridge"| MT
+    MT --> EB --> APP --> PG
+
+    WIN --> TRAY
+    WIN --> HKEY
+    WIN --> ENG
+    ENG --> IPC
+    IPC --> VH
+
+    WIN -.->|"enforced"| Security
+
+    PG -->|"vault:unlock\nor vault:initialize-new"| RS
+    RS --> RM --> RT --> RC --> HK --> IG --> AN --> BC
+
+    BC -->|"vault:boot-complete"| APP
+
+    APP -->|"first run"| OB
+    APP -->|"returning user"| MI
+    OB --> MI
+
+    MI -->|"app.quit()"| FS
+    FS --> SE --> ZK
+
+    SET -.->|"reads"| SETF[("friday-settings.json")]
+    MEM -.->|"reads"| MEMF[("memory files")]
+    IG -.->|"reads"| MANF[("integrity-manifest.json")]
+
+    style PG fill:#ffcc00,color:#000
+    style BC fill:#44aa44,color:#fff
+    style ZK fill:#ff4444,color:#fff
+    style SETF fill:#4488cc,color:#fff
+    style MEMF fill:#4488cc,color:#fff
+    style MANF fill:#4488cc,color:#fff

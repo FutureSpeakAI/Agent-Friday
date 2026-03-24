@@ -4,6 +4,12 @@
 
 !include "x64.nsh"
 
+; Fix: Windows 11 (build 26200+) can create the installer window behind other
+; windows due to focus-stealing prevention. Force the window to the foreground.
+!macro customInit
+  BringToFront
+!macroend
+
 ; Called after the main install completes
 !macro customInstall
   ; Install the signing certificate to Trusted Publishers store
