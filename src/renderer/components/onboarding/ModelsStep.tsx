@@ -222,7 +222,11 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
   }, [chatModel, customChatModel, isCustomChat, whisperModel, ttsEngine, embeddingModel, onComplete]);
 
   const handleSkip = useCallback(async () => {
-    await window.eve.settings.set('localModelEnabled', false);
+    try {
+      await window.eve.settings.set('localModelEnabled', false);
+    } catch {
+      // Best effort — continue even if setting fails
+    }
     onComplete({ chatModel: null, whisperModel: null, ttsEngine: null, embeddingModel: null });
   }, [onComplete]);
 

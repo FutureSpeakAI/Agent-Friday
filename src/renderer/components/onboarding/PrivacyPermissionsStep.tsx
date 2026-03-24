@@ -148,7 +148,12 @@ const PrivacyPermissionsStep: React.FC<PrivacyPermissionsStepProps> = ({ onCompl
     setSaving(true);
     setVaultError('');
     try {
-      await window.eve.vault.initializeNew(passphrase);
+      const result = await window.eve.vault.initializeNew(passphrase);
+      if (result && !result.ok) {
+        setVaultError(result.error || 'Failed to initialize vault');
+        setSaving(false);
+        return;
+      }
       setVaultReady(true);
       setSaving(false);
     } catch (err: any) {

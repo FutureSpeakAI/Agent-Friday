@@ -4,6 +4,23 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.12.1] — 2026-03-24 — Onboarding Hotfix
+
+### Summary
+
+Critical fix for vault-locked write failure that blocked onboarding at the API key step, prevented voice/text during the interview, and broke agent finalization. All settings write paths now fall back to plaintext when the vault is not yet initialized, then auto-encrypt on vault unlock.
+
+### Fixed — Onboarding
+
+- **API key save fails during onboarding** — `setApiKey()`, `setSetting()`, `saveAgentConfig()`, and `save()` all called `vaultWrite()` which throws when vault is locked. Vault init happens at step 7 (Privacy), but API keys are entered at step 4 (Providers). Added `writeSettingsFile()` helper that checks `isVaultUnlocked()` and falls back to `fs.writeFile` plaintext when locked.
+- **"Error invoking remote method 'onboarding:finalize-agent'"** — Same root cause: `saveAgentConfig()` called `vaultWrite()` directly. Now uses the `writeSettingsFile()` fallback.
+- **Voice/text not working during interview** — Consequence of the API key save failure: keys not persisted meant `connectToGemini()` found no Gemini key, and if Ollama wasn't available, no voice backend existed. With keys saving correctly, the voice cascade now resolves properly.
+- **Vault init failure silently ignored** — `PrivacyPermissionsStep` called `vault.initializeNew()` but never checked the `{ ok: false, error }` return value, marking vault as ready even on failure. Now checks `result.ok` before advancing.
+- **ModelsStep skip could hang** — `handleSkip` called `settings.set()` without try/catch; if it threw, `onComplete()` was never called and the user was stuck. Added error handling.
+- **Gateway toggle silently dropped** — `gatewayEnabled` was in the `sensitiveFields` blocklist, so `setSetting('gatewayEnabled', ...)` silently rejected. Removed from blocklist since it's a boolean preference, not a credential.
+
+---
+
 ## [3.12.0] — 2026-03-24 — Living Architecture & Data Persistence
 
 ### Summary
