@@ -25,8 +25,11 @@ import { awarenessMesh } from './awareness-mesh';
 import { capabilityMap } from './capability-map';
 import { symbiontProtocol } from './symbiont-protocol';
 
-const MAX_CONCURRENT = 5;   // Bumped from 3 for better parallelism
-const MAX_TASKS = 100;
+// --- TUNABLE: Agent Runner ---------------------------------------------------
+// These constants control agent concurrency and memory limits.
+const MAX_CONCURRENT = 5;   // Max parallel agent tasks (bumped from 3)
+const MAX_TASKS = 100;      // Max total tasks in memory before pruning
+// --- END TUNABLE ------------------------------------------------------------
 
 class AgentRunner {
   private tasks: Map<string, AgentTask> = new Map();

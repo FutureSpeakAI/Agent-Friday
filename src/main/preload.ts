@@ -1656,60 +1656,6 @@ contextBridge.exposeInMainWorld('eve', {
         return () => ipcRenderer.removeListener('voice:chatterbox:setup-progress', handler);
       },
     },
-    // ── PersonaPlex (full-duplex local voice model) ──────────────────
-    personaplex: {
-      isSetupComplete: () => ipcRenderer.invoke('personaplex:is-setup-complete') as Promise<boolean>,
-      hasCudaGpu: () => ipcRenderer.invoke('personaplex:has-cuda-gpu') as Promise<boolean>,
-      setup: (config?: { hfToken?: string; cpuOffload?: boolean }) =>
-        ipcRenderer.invoke('personaplex:setup', config) as Promise<void>,
-      startServer: (config?: { cpuOffload?: boolean; hfToken?: string }) =>
-        ipcRenderer.invoke('personaplex:start-server', config) as Promise<{ port: number; wssUrl: string }>,
-      stopServer: () => ipcRenderer.invoke('personaplex:stop-server') as Promise<void>,
-      isServerRunning: () => ipcRenderer.invoke('personaplex:is-server-running') as Promise<boolean>,
-      listVoices: () => ipcRenderer.invoke('personaplex:list-voices') as Promise<Array<{ id: string; name: string }>>,
-      getWssUrl: () => ipcRenderer.invoke('personaplex:get-wss-url') as Promise<string | null>,
-      connect: (config: { wssUrl: string; voiceId?: string; textPrompt?: string }) =>
-        ipcRenderer.invoke('personaplex:connect', config) as Promise<void>,
-      sendAudio: (audioData: number[]) =>
-        ipcRenderer.send('personaplex:send-audio', audioData),
-      disconnect: () => ipcRenderer.invoke('personaplex:disconnect') as Promise<void>,
-      isConnected: () => ipcRenderer.invoke('personaplex:is-connected') as Promise<boolean>,
-      onConnected: (cb: () => void) => {
-        const handler = () => cb();
-        ipcRenderer.on('personaplex:connected', handler);
-        return () => ipcRenderer.removeListener('personaplex:connected', handler);
-      },
-      onDisconnected: (cb: (code: number, reason: string) => void) => {
-        const handler = (_event: any, code: number, reason: string) => cb(code, reason);
-        ipcRenderer.on('personaplex:disconnected', handler);
-        return () => ipcRenderer.removeListener('personaplex:disconnected', handler);
-      },
-      onAudioData: (cb: (data: string) => void) => {
-        const handler = (_event: any, data: string) => cb(data);
-        ipcRenderer.on('personaplex:audio-data', handler);
-        return () => ipcRenderer.removeListener('personaplex:audio-data', handler);
-      },
-      onTranscript: (cb: (text: string) => void) => {
-        const handler = (_event: any, text: string) => cb(text);
-        ipcRenderer.on('personaplex:transcript', handler);
-        return () => ipcRenderer.removeListener('personaplex:transcript', handler);
-      },
-      onError: (cb: (message: string) => void) => {
-        const handler = (_event: any, message: string) => cb(message);
-        ipcRenderer.on('personaplex:error', handler);
-        return () => ipcRenderer.removeListener('personaplex:error', handler);
-      },
-      onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => {
-        const handler = (_event: any, progress: { stage: string; message: string; percent: number }) => cb(progress);
-        ipcRenderer.on('personaplex:setup-progress', handler);
-        return () => ipcRenderer.removeListener('personaplex:setup-progress', handler);
-      },
-      onServerLog: (cb: (line: string) => void) => {
-        const handler = (_event: any, line: string) => cb(line);
-        ipcRenderer.on('personaplex:server-log', handler);
-        return () => ipcRenderer.removeListener('personaplex:server-log', handler);
-      },
-    },
     onVoiceStart: (callback: (data: Record<string, unknown>) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) => callback(data);
       ipcRenderer.on('voice:event:voice-start', handler);
@@ -1798,6 +1744,61 @@ contextBridge.exposeInMainWorld('eve', {
       };
       ipcRenderer.on('voice:play-chunk', handler);
       return () => { ipcRenderer.removeListener('voice:play-chunk', handler); };
+    },
+  },
+
+  // ── PersonaPlex (full-duplex local voice model) ──────────────────
+  personaplex: {
+    isSetupComplete: () => ipcRenderer.invoke('personaplex:is-setup-complete') as Promise<boolean>,
+    hasCudaGpu: () => ipcRenderer.invoke('personaplex:has-cuda-gpu') as Promise<boolean>,
+    setup: (config?: { hfToken?: string; cpuOffload?: boolean }) =>
+      ipcRenderer.invoke('personaplex:setup', config) as Promise<void>,
+    startServer: (config?: { cpuOffload?: boolean; hfToken?: string }) =>
+      ipcRenderer.invoke('personaplex:start-server', config) as Promise<{ port: number; wssUrl: string }>,
+    stopServer: () => ipcRenderer.invoke('personaplex:stop-server') as Promise<void>,
+    isServerRunning: () => ipcRenderer.invoke('personaplex:is-server-running') as Promise<boolean>,
+    listVoices: () => ipcRenderer.invoke('personaplex:list-voices') as Promise<Array<{ id: string; name: string }>>,
+    getWssUrl: () => ipcRenderer.invoke('personaplex:get-wss-url') as Promise<string | null>,
+    connect: (config: { wssUrl: string; voiceId?: string; textPrompt?: string }) =>
+      ipcRenderer.invoke('personaplex:connect', config) as Promise<void>,
+    sendAudio: (audioData: number[]) =>
+      ipcRenderer.send('personaplex:send-audio', audioData),
+    disconnect: () => ipcRenderer.invoke('personaplex:disconnect') as Promise<void>,
+    isConnected: () => ipcRenderer.invoke('personaplex:is-connected') as Promise<boolean>,
+    onConnected: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on('personaplex:connected', handler);
+      return () => ipcRenderer.removeListener('personaplex:connected', handler);
+    },
+    onDisconnected: (cb: (code: number, reason: string) => void) => {
+      const handler = (_event: any, code: number, reason: string) => cb(code, reason);
+      ipcRenderer.on('personaplex:disconnected', handler);
+      return () => ipcRenderer.removeListener('personaplex:disconnected', handler);
+    },
+    onAudioData: (cb: (data: string) => void) => {
+      const handler = (_event: any, data: string) => cb(data);
+      ipcRenderer.on('personaplex:audio-data', handler);
+      return () => ipcRenderer.removeListener('personaplex:audio-data', handler);
+    },
+    onTranscript: (cb: (text: string) => void) => {
+      const handler = (_event: any, text: string) => cb(text);
+      ipcRenderer.on('personaplex:transcript', handler);
+      return () => ipcRenderer.removeListener('personaplex:transcript', handler);
+    },
+    onError: (cb: (message: string) => void) => {
+      const handler = (_event: any, message: string) => cb(message);
+      ipcRenderer.on('personaplex:error', handler);
+      return () => ipcRenderer.removeListener('personaplex:error', handler);
+    },
+    onSetupProgress: (cb: (progress: { stage: string; message: string; percent: number }) => void) => {
+      const handler = (_event: any, progress: { stage: string; message: string; percent: number }) => cb(progress);
+      ipcRenderer.on('personaplex:setup-progress', handler);
+      return () => ipcRenderer.removeListener('personaplex:setup-progress', handler);
+    },
+    onServerLog: (cb: (line: string) => void) => {
+      const handler = (_event: any, line: string) => cb(line);
+      ipcRenderer.on('personaplex:server-log', handler);
+      return () => ipcRenderer.removeListener('personaplex:server-log', handler);
     },
   },
 

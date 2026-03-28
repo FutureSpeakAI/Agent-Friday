@@ -1,8 +1,11 @@
 /**
- * Agent IPC handlers — background agents, clipboard intelligence, project awareness, document ingestion.
+ * Agent IPC handlers — background agents, iteration engine, clipboard intelligence,
+ * project awareness, document ingestion.
  */
 import { ipcMain } from 'electron';
 import { agentRunner } from '../agents/agent-runner';
+import { resultsLedger } from '../agents/results-ledger';
+import { loadDirective, loadDirectivesFromDir } from '../agents/directive-loader';
 import { clipboardIntelligence } from '../clipboard-intelligence';
 import { projectAwareness } from '../project-awareness';
 import { documentIngestion } from '../document-ingestion';
@@ -38,6 +41,107 @@ export function registerAgentHandlers(): void {
     return agentRunner.cancel(taskId as string);
   });
   ipcMain.handle('agents:types', () => agentRunner.getAgentTypes());
+
+  // ── Iteration engine (autoresearch) ─────────────────────────────────
+
+  /** Start an autoresearch iteration loop from a directive file. */
+  ipcMain.handle(
+    'iterate:start',
+    (_event, directivePath: unknown, overrides?: unknown) => {
+      assertString(directivePath, 'iterate:start directivePath', 1024);
+      if (overrides !== undefined && overrides !== null) {
+        assertObject(overrides, 'iterate:start overrides');
+      }
+      const input: Record<string, unknown> = {
+        directivePath: directivePath as string,
+        ...(overrides as Record<string, unknown> || {}),
+      };
+      return agentRunner.spawn('iterate', `Autoresearch: ${directivePath}`, input);
+    },
+  );
+
+  /** List available directive files from the dev/ directory. */
+  ipcMain.handle('iterate:directives', async () => {
+    const path = require('path');
+    const devDir = path.join(process.cwd(), 'dev');
+    const agentDir = path.join(process.cwd(), 'src', 'main', 'agents', 'directives');
+    const [devDirectives, agentDirectives] = await Promise.all([
+      loadDirectivesFromDir(devDir),
+      loadDirectivesFromDir(agentDir),
+    ]);
+    return [...devDirectives, ...agentDirectives].map((d) => ({
+      title: d.title,
+      source: d.source,
+      objective: d.objective,
+      metricDescription: d.metricDescription,
+      maxCycles: d.maxCycles,
+      timeBudgetSeconds: d.timeBudgetSeconds,
+    }));
+  });
+
+  /** Get the results ledger for a specific directive. */
+  ipcMain.handle('iterate:ledger', (_event, directive: unknown) => {
+    assertString(directive, 'iterate:ledger directive', 256);
+    return resultsLedger.getSummary(directive as string);
+  });
+
+  /** Get TSV export of ledger for terminal display. */
+  ipcMain.handle('iterate:ledger-tsv', (_event, directive: unknown) => {
+    assertString(directive, 'iterate:ledger-tsv directive', 256);
+    return resultsLedger.toTsv(directive as string);
+  });
+
+  /** List all directives that have ledger data. */
+  ipcMain.handle('iterate:ledger-list', () => {
+    return resultsLedger.listDirectives();
+  });
+
+  // ── Prompt evolution ──────────────────────────────────────────────
+
+  /** Evolve a system prompt for a specific persona/purpose. */
+  ipcMain.handle(
+    'evolve:start',
+    (_event, prompt: unknown, persona: unknown, opts?: unknown) => {
+      assertString(prompt, 'evolve:start prompt', 10_000);
+      assertString(persona, 'evolve:start persona', 256);
+      const input: Record<string, unknown> = {
+        prompt: prompt as string,
+        persona: persona as string,
+        ...(opts as Record<string, unknown> || {}),
+      };
+      return agentRunner.spawn('evolve-prompt', `Evolve prompt: ${persona}`, input);
+    },
+  );
+
+  // ── Model breeding ────────────────────────────────────────────────
+
+  /** Breed a specialized Ollama model for a specific task. */
+  ipcMain.handle(
+    'breed:start',
+    (_event, task: unknown, baseModel?: unknown, opts?: unknown) => {
+      assertString(task, 'breed:start task', 1024);
+      const input: Record<string, unknown> = {
+        task: task as string,
+        baseModel: typeof baseModel === 'string' ? baseModel : 'llama3.2',
+        ...(opts as Record<string, unknown> || {}),
+      };
+      return agentRunner.spawn('breed-model', `Breed model: ${task}`, input);
+    },
+  );
+
+  // ── Self-improvement ──────────────────────────────────────────────
+
+  /** Start a self-improvement cycle. */
+  ipcMain.handle(
+    'improve:start',
+    (_event, focus?: unknown, opts?: unknown) => {
+      const input: Record<string, unknown> = {
+        focus: typeof focus === 'string' ? focus : 'auto',
+        ...(opts as Record<string, unknown> || {}),
+      };
+      return agentRunner.spawn('self-improve', 'Self-improvement cycle', input);
+    },
+  );
 
   // ── Clipboard intelligence ──────────────────────────────────────────
   ipcMain.handle('clipboard:get-recent', (_event, count?: unknown) => {

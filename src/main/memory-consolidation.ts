@@ -17,16 +17,20 @@ import { appendLearning } from './friday-profile';
 import { llmClient } from './llm-client';
 import crypto from 'crypto';
 
+// --- TUNABLE: Memory Consolidation -----------------------------------------
+// These constants control how aggressively memories are promoted and merged.
+// Iteration agents may adjust these to optimize memory quality.
 const CONSOLIDATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MERGE_SIMILARITY_THRESHOLD = 0.85;
+const MERGE_SIMILARITY_THRESHOLD = 0.85;               // 0-1, higher = stricter merge
+const PROMOTION_SCORE_THRESHOLD = 10;                   // min weighted score to promote
+const PROMOTION_MIN_OCCURRENCES = 3;                    // hard floor: must observe 3+ times
+// --- END TUNABLE -----------------------------------------------------------
 
 // ── Weighted Promotion Scoring ──────────────────────────────────────
 // Inspired by Claude History MCP's learnings synthesis model.
 // Instead of a binary threshold (confidence + occurrences), we compute a
 // weighted score across multiple signals. This avoids promoting one-off
 // session bursts while surfacing observations that persist across time.
-const PROMOTION_SCORE_THRESHOLD = 10;
-const PROMOTION_MIN_OCCURRENCES = 3; // Hard floor — must be observed 3+ times
 
 /**
  * Compute a weighted promotion score for a medium-term observation.

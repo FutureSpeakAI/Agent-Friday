@@ -28,17 +28,19 @@ export interface AudioCaptureConfig {
 type AudioCaptureEvent = 'voice-start' | 'voice-end' | 'audio-chunk' | 'error';
 type EventCallback = (payload?: unknown) => void;
 
-// -- Constants ----------------------------------------------------------------
-
+// --- TUNABLE: Audio Capture --------------------------------------------------
+// These constants control voice activity detection sensitivity and buffer sizes.
+// Iteration agents may adjust these to optimize voice latency vs accuracy.
 const DEFAULT_CONFIG: AudioCaptureConfig = {
-  sampleRate: 16_000,
-  vadThreshold: 0.01,
-  silenceDuration: 300,
-  maxBufferDuration: 30_000,
+  sampleRate: 16_000,           // Hz — must match Whisper's expected rate
+  vadThreshold: 0.01,           // RMS energy threshold for voice detection
+  silenceDuration: 300,         // ms of silence before voice-end event
+  maxBufferDuration: 30_000,    // ms, max single utterance length
 };
 
-/** Maximum allowed size per audio chunk (1MB). Prevents memory exhaustion from oversized IPC buffers. */
-const MAX_AUDIO_CHUNK_SIZE = 1024 * 1024;
+/** Maximum allowed size per audio chunk. Prevents memory exhaustion from oversized IPC buffers. */
+const MAX_AUDIO_CHUNK_SIZE = 1024 * 1024; // 1 MB
+// --- END TUNABLE ------------------------------------------------------------
 
 // -- Helpers ------------------------------------------------------------------
 

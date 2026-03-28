@@ -223,10 +223,22 @@ The sender is ${settingsManager.getAgentConfig().userName || 'the user'}.`;
 // Import orchestrate agent (multi-agent task decomposition)
 import { orchestrateAgent } from './orchestrator';
 
+// Import iteration engine (autoresearch-style autonomous loops)
+import { iterationAgent } from './iteration-engine';
+
+// Import self-improvement engines (recursive autonomous optimization)
+import { promptEvolverAgent } from './prompt-evolver';
+import { modelBreederAgent } from './model-breeder';
+import { selfImproverAgent } from './self-improver';
+
 export const builtinAgents: AgentDefinition[] = [
   researchAgent,
   summarizeAgent,
   codeReviewAgent,
   draftEmailAgent,
   orchestrateAgent,
+  iterationAgent,
+  promptEvolverAgent,
+  modelBreederAgent,
+  selfImproverAgent,
 ];
