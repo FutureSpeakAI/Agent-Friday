@@ -98,6 +98,73 @@ export interface AgentTeam {
   status: 'active' | 'completed' | 'disbanded';
 }
 
+/* ── Self-Improvement Engine Types ─────────────────────────────────── */
+
+export interface PromptEvolutionConfig {
+  /** The system prompt to evolve */
+  prompt: string;
+  /** Target persona name */
+  persona: string;
+  /** Test queries for evaluation */
+  queries?: Array<{ input: string; criteria: string; reference?: string }>;
+  /** Max evolution generations */
+  maxGenerations?: number;
+}
+
+export interface ModelBreedingConfig {
+  /** Task description the model should specialize in */
+  task: string;
+  /** Base Ollama model to build from */
+  baseModel?: string;
+  /** Name prefix for bred models */
+  modelName?: string;
+  /** Max breeding generations */
+  maxGenerations?: number;
+  /** Benchmark queries */
+  benchmarks?: Array<{ input: string; criteria: string }>;
+}
+
+export interface SelfImprovementConfig {
+  /** Focus area: 'auto' | 'prompts' | 'calibration' | 'memory' | 'voice' | 'routing' | 'models' */
+  focus?: string;
+  /** Max improvement targets per cycle */
+  maxTargets?: number;
+  /** Max iteration cycles per target */
+  maxCycles?: number;
+}
+
+/* ── Iteration Engine Types (autoresearch) ─────────────────────────── */
+
+export interface IterationConfig {
+  /** Path to a program.md-style directive file */
+  directivePath?: string;
+  /** Raw markdown directive (alternative to directivePath) */
+  directive?: string;
+  /** Override: max cycles (0 = unlimited) */
+  maxCycles?: number;
+  /** Override: time budget per cycle in seconds */
+  timeBudgetSeconds?: number;
+}
+
+export interface IterationResult {
+  /** Directive title */
+  directive: string;
+  /** Total cycles executed */
+  totalCycles: number;
+  /** Cycles that improved the metric */
+  improvements: number;
+  /** Starting metric value */
+  startMetric: number;
+  /** Best metric achieved */
+  bestMetric: number;
+  /** Total wall-clock time in ms */
+  totalDurationMs: number;
+  /** Final status */
+  status: 'completed' | 'halted' | 'cancelled';
+  /** Halt reason if applicable */
+  haltReason?: string;
+}
+
 /* ── Office Visualization Types ──────────────────────────────────────── */
 
 export interface OfficeAgent {

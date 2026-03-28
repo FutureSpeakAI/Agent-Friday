@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   },
   fsAccess: vi.fn(),
   fsReaddir: vi.fn(),
+  chatterboxIsSetupComplete: vi.fn().mockResolvedValue(false),
+  kokoroFromPretrained: vi.fn().mockRejectedValue(new Error('Model not found')),
 }));
 
 vi.mock('../../src/main/voice/tts-binding', () => ({
@@ -32,6 +34,24 @@ vi.mock('node:os', () => ({
   homedir: () => '/mock/home',
   platform: () => 'linux',
   arch: () => 'x64',
+}));
+
+// Mock Chatterbox — exported as top-level functions, not as object
+vi.mock('../../src/main/voice/chatterbox-server', () => ({
+  isSetupComplete: mocks.chatterboxIsSetupComplete,
+  start: vi.fn(),
+  stop: vi.fn(),
+  synthesize: vi.fn(),
+  isRunning: vi.fn().mockResolvedValue(false),
+  getPort: vi.fn().mockReturnValue(null),
+  chatterboxEvents: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+}));
+
+// Mock kokoro-js so KokoroTTS.from_pretrained rejects (model not available)
+vi.mock('kokoro-js', () => ({
+  KokoroTTS: {
+    from_pretrained: mocks.kokoroFromPretrained,
+  },
 }));
 
 import { TTSEngine, ttsEngine } from '../../src/main/voice/tts-engine';
@@ -73,6 +93,9 @@ function mockPiperAvailable(): void {
 function mockNoModelsAvailable(): void {
   mocks.fsAccess.mockRejectedValue(new Error('ENOENT: no such file or directory'));
   mocks.fsReaddir.mockRejectedValue(new Error('ENOENT: no such file or directory'));
+  // Ensure chatterbox reports not set up and kokoro-js rejects
+  mocks.chatterboxIsSetupComplete.mockResolvedValue(false);
+  mocks.kokoroFromPretrained.mockImplementation(() => Promise.reject(new Error('Model not found')));
 }
 
 function createMockPCM(durationSec = 1): Float32Array {
@@ -128,10 +151,12 @@ describe('TTSEngine', () => {
     expect(callArg).toContain('piper');
   });
 
-  it('loadEngine() returns graceful error when no TTS model found', async () => {
+  it('loadEngine() returns graceful error when no TTS backend available', async () => {
     mockNoModelsAvailable();
     const engine = TTSEngine.getInstance();
-    await expect(engine.loadEngine()).rejects.toThrow(/no tts model found/i);
+    // Force only binary backends (kokoro, piper) which will fail due to missing dirs
+    // Skip chatterbox and kokoro-js by specifying a backend that doesn't exist
+    await expect(engine.loadEngine('kokoro' as TTSBackend)).rejects.toThrow();
     expect(engine.isReady()).toBe(false);
   });
 

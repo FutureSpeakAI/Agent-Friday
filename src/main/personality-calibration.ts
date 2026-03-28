@@ -167,18 +167,23 @@ export interface CalibrationConfig {
   dimensionCeiling: number;
 }
 
+// --- TUNABLE: Personality Calibration ----------------------------------------
+// These weights and thresholds control how quickly personality adapts and
+// when safety mechanisms trigger. Iteration agents may adjust these to
+// optimize responsiveness vs stability.
 export const DEFAULT_CONFIG: Readonly<CalibrationConfig> = {
-  explicitWeight: 0.08,
-  implicitWeight: 0.02,
-  decayHalfLifeDays: 14,
-  maxSignals: 200,
-  maxHistory: 100,
-  sycophancyStreakThreshold: 8,
-  sycophancyBiasThreshold: 0.85,
-  proactivitySafetyFloor: 0.3,
-  dimensionFloor: 0.05,
-  dimensionCeiling: 0.95,
+  explicitWeight: 0.08,             // per-signal weight for explicit corrections
+  implicitWeight: 0.02,             // per-signal weight for implicit signals
+  decayHalfLifeDays: 14,            // exponential decay half-life
+  maxSignals: 200,                  // signal history buffer size
+  maxHistory: 100,                  // change history buffer size
+  sycophancyStreakThreshold: 8,     // agreement streak before sycophancy alarm
+  sycophancyBiasThreshold: 0.85,    // positivity bias threshold (0-1)
+  proactivitySafetyFloor: 0.3,      // SAFETY: minimum proactivity for critical items
+  dimensionFloor: 0.05,             // SAFETY: no dimension goes to zero
+  dimensionCeiling: 0.95,           // SAFETY: no dimension goes to max
 };
+// --- END TUNABLE ------------------------------------------------------------
 
 // ── Signal → Dimension Mapping ───────────────────────────────────────
 

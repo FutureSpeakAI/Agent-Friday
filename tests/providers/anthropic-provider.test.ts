@@ -14,6 +14,7 @@ import type { LLMRequest, ToolDefinition } from '../../src/main/llm-client';
 
 const mocks = vi.hoisted(() => ({
   messagesCreate: vi.fn(),
+  getAnthropicApiKey: vi.fn(() => ''),
 }));
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -25,6 +26,12 @@ vi.mock('@anthropic-ai/sdk', () => {
     __esModule: true,
   };
 });
+
+vi.mock('../../src/main/settings', () => ({
+  settingsManager: {
+    getAnthropicApiKey: mocks.getAnthropicApiKey,
+  },
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -66,61 +73,41 @@ let providerModule: typeof import('../../src/main/providers/anthropic-provider')
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe('AnthropicProvider — isAvailable', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
-
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     providerModule = await import('../../src/main/providers/anthropic-provider');
   });
 
-  afterEach(() => {
-    if (originalKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = originalKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
-  });
-
-  it('returns true when ANTHROPIC_API_KEY is set', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+  it('returns true when API key is configured', () => {
+    mocks.getAnthropicApiKey.mockReturnValue('sk-test-key');
     const provider = new providerModule.AnthropicProvider();
     expect(provider.isAvailable()).toBe(true);
   });
 
-  it('returns false when ANTHROPIC_API_KEY is empty', () => {
-    process.env.ANTHROPIC_API_KEY = '';
+  it('returns false when API key is empty', () => {
+    mocks.getAnthropicApiKey.mockReturnValue('');
     const provider = new providerModule.AnthropicProvider();
     expect(provider.isAvailable()).toBe(false);
   });
 
-  it('returns false when ANTHROPIC_API_KEY is unset', () => {
-    delete process.env.ANTHROPIC_API_KEY;
+  it('returns false when API key is unset', () => {
+    mocks.getAnthropicApiKey.mockReturnValue(null);
     const provider = new providerModule.AnthropicProvider();
     expect(provider.isAvailable()).toBe(false);
   });
 });
 
 describe('AnthropicProvider — complete', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
-
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     providerModule = await import('../../src/main/providers/anthropic-provider');
-    process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-  });
-
-  afterEach(() => {
-    if (originalKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = originalKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
+    mocks.getAnthropicApiKey.mockReturnValue('sk-test-key');
   });
 
   it('throws when API key is not set', async () => {
-    delete process.env.ANTHROPIC_API_KEY;
+    mocks.getAnthropicApiKey.mockReturnValue('');
     const provider = new providerModule.AnthropicProvider();
     await expect(provider.complete(makeRequest())).rejects.toThrow('ANTHROPIC_API_KEY not configured');
   });
@@ -258,21 +245,11 @@ describe('AnthropicProvider — complete', () => {
 });
 
 describe('AnthropicProvider — formatTools', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
-
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     providerModule = await import('../../src/main/providers/anthropic-provider');
-    process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-  });
-
-  afterEach(() => {
-    if (originalKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = originalKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
+    mocks.getAnthropicApiKey.mockReturnValue('sk-test-key');
   });
 
   it('converts Anthropic-format tools (name + input_schema)', async () => {
@@ -331,21 +308,11 @@ describe('AnthropicProvider — formatTools', () => {
 });
 
 describe('AnthropicProvider — parseResponse edge cases', () => {
-  const originalKey = process.env.ANTHROPIC_API_KEY;
-
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
     providerModule = await import('../../src/main/providers/anthropic-provider');
-    process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-  });
-
-  afterEach(() => {
-    if (originalKey !== undefined) {
-      process.env.ANTHROPIC_API_KEY = originalKey;
-    } else {
-      delete process.env.ANTHROPIC_API_KEY;
-    }
+    mocks.getAnthropicApiKey.mockReturnValue('sk-test-key');
   });
 
   it('handles empty content array', async () => {

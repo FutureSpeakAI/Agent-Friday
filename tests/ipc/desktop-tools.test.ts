@@ -29,6 +29,7 @@ const hoisted = vi.hoisted(() => ({
   webContentsSend: vi.fn(),
   getSanitizedEnv: vi.fn().mockReturnValue({ PATH: '/usr/bin' }),
   assertSafePath: vi.fn(), // no-op unless test makes it throw
+  assertConfinedPath: vi.fn((...args: unknown[]) => args[0]), // returns path unchanged
 }));
 
 // ── Module mocks ───────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ vi.mock('../../src/main/settings', () => ({
 
 vi.mock('../../src/main/ipc/validate', () => ({
   assertSafePath: hoisted.assertSafePath,
+  assertConfinedPath: hoisted.assertConfinedPath,
 }));
 
 // ── Import the module under test ───────────────────────────────────────
@@ -367,9 +369,9 @@ describe('DESTRUCTIVE_TOOLS confirmation gate', () => {
         expect.objectContaining({ toolName }),
       );
 
-      // Approve it so the promise resolves
-      const sentId = hoisted.webContentsSend.mock.calls[0][1].id;
-      handleConfirmationResponse(sentId, true);
+      // Approve it so the promise resolves — echo the challenge back
+      const sentPayload = hoisted.webContentsSend.mock.calls[0][1];
+      handleConfirmationResponse(sentPayload.id, true, sentPayload.challenge);
 
       const result = await resultPromise;
       // Should have proceeded (not cancelled)
@@ -383,8 +385,8 @@ describe('DESTRUCTIVE_TOOLS confirmation gate', () => {
 
     const resultPromise = callDesktopTool('run_command', { command: 'rm -rf /' });
 
-    const sentId = hoisted.webContentsSend.mock.calls[0][1].id;
-    handleConfirmationResponse(sentId, false);
+    const sentPayload = hoisted.webContentsSend.mock.calls[0][1];
+    handleConfirmationResponse(sentPayload.id, false, sentPayload.challenge);
 
     const result = await resultPromise;
     expect(result.result).toContain('cancelled');
@@ -416,8 +418,8 @@ describe('requestConfirmation', () => {
     const win = makeFakeWindow();
     const promise = requestConfirmation(win, 'launch_app', { app_name: 'Notepad' });
 
-    const sentId = hoisted.webContentsSend.mock.calls[0][1].id;
-    handleConfirmationResponse(sentId, true);
+    const sentPayload = hoisted.webContentsSend.mock.calls[0][1];
+    handleConfirmationResponse(sentPayload.id, true, sentPayload.challenge);
 
     expect(await promise).toBe(true);
   });
@@ -426,8 +428,8 @@ describe('requestConfirmation', () => {
     const win = makeFakeWindow();
     const promise = requestConfirmation(win, 'launch_app', { app_name: 'Notepad' });
 
-    const sentId = hoisted.webContentsSend.mock.calls[0][1].id;
-    handleConfirmationResponse(sentId, false);
+    const sentPayload = hoisted.webContentsSend.mock.calls[0][1];
+    handleConfirmationResponse(sentPayload.id, false, sentPayload.challenge);
 
     expect(await promise).toBe(false);
   });
@@ -474,13 +476,13 @@ describe('callDesktopTool routing', () => {
   ) {
     const promise = callDesktopTool(name, args);
 
-    // If a confirmation was sent, approve it
+    // If a confirmation was sent, approve it — echo the challenge back
     const confirmCalls = hoisted.webContentsSend.mock.calls.filter(
       (c: unknown[]) => c[0] === 'desktop:confirm-request',
     );
     if (confirmCalls.length > 0) {
-      const sentId = confirmCalls[confirmCalls.length - 1][1].id;
-      handleConfirmationResponse(sentId, true);
+      const payload = confirmCalls[confirmCalls.length - 1][1];
+      handleConfirmationResponse(payload.id, true, payload.challenge);
     }
 
     return promise;
@@ -507,7 +509,7 @@ describe('callDesktopTool routing', () => {
   it('routes read_file and validates path', async () => {
     hoisted.readFile.mockResolvedValue(Buffer.from('hello world'));
     const result = await callAndApprove('read_file', { file_path: '/tmp/test.txt' });
-    expect(hoisted.assertSafePath).toHaveBeenCalledWith('/tmp/test.txt', expect.any(String));
+    expect(hoisted.assertConfinedPath).toHaveBeenCalledWith('/tmp/test.txt', expect.any(String), expect.any(String));
     expect(result.result).toBe('hello world');
   });
 
@@ -516,7 +518,7 @@ describe('callDesktopTool routing', () => {
       file_path: '/tmp/out.txt',
       content: 'data here',
     });
-    expect(hoisted.assertSafePath).toHaveBeenCalledWith('/tmp/out.txt', expect.any(String));
+    expect(hoisted.assertConfinedPath).toHaveBeenCalledWith('/tmp/out.txt', expect.any(String), expect.any(String));
     expect(hoisted.writeFile).toHaveBeenCalledWith('/tmp/out.txt', 'data here', 'utf-8');
     expect(result.result).toContain('/tmp/out.txt');
   });
@@ -527,7 +529,7 @@ describe('callDesktopTool routing', () => {
       { name: 'bar', isDirectory: () => true },
     ]);
     const result = await callAndApprove('list_directory', { dir_path: '/tmp' });
-    expect(hoisted.assertSafePath).toHaveBeenCalledWith('/tmp', expect.any(String));
+    expect(hoisted.assertConfinedPath).toHaveBeenCalledWith('/tmp', expect.any(String), expect.any(String));
     expect(result.result).toContain('[FILE] foo.txt');
     expect(result.result).toContain('[DIR]  bar');
   });
@@ -568,8 +570,8 @@ describe('callDesktopTool routing', () => {
     expect(result.result).toBe('My Window Title');
   });
 
-  it('read_file returns error when assertSafePath throws', async () => {
-    hoisted.assertSafePath.mockImplementation(() => {
+  it('read_file returns error when assertConfinedPath throws', async () => {
+    hoisted.assertConfinedPath.mockImplementation(() => {
       throw new Error('Path traversal detected');
     });
     const result = await callAndApprove('read_file', { file_path: '../../etc/passwd' });
@@ -579,7 +581,7 @@ describe('callDesktopTool routing', () => {
   it('read_file truncates at 50KB', async () => {
     const bigBuffer = Buffer.alloc(60 * 1024, 'A');
     hoisted.readFile.mockResolvedValue(bigBuffer);
-    hoisted.assertSafePath.mockImplementation(() => {}); // reset
+    hoisted.assertConfinedPath.mockImplementation((...args: unknown[]) => args[0]); // reset
     const result = await callAndApprove('read_file', { file_path: '/tmp/big.txt' });
     expect(result.result).toContain('truncated at 50KB');
   });
@@ -718,15 +720,13 @@ describe('convertKeysToSendKeysSyntax (tested via press_keys tool)', () => {
   async function pressAndGetScript(keys: string) {
     const promise = callDesktopTool('press_keys', { keys });
 
-    // Approve confirmation (press_keys is destructive)
+    // Approve confirmation (press_keys is destructive) — echo the challenge back
     const confirmCalls = hoisted.webContentsSend.mock.calls.filter(
       (c: unknown[]) => c[0] === 'desktop:confirm-request',
     );
     if (confirmCalls.length > 0) {
-      handleConfirmationResponse(
-        confirmCalls[confirmCalls.length - 1][1].id,
-        true,
-      );
+      const payload = confirmCalls[confirmCalls.length - 1][1];
+      handleConfirmationResponse(payload.id, true, payload.challenge);
     }
 
     await promise;
@@ -847,8 +847,8 @@ describe('error handling', () => {
     mockExecFileRejects('not found');
 
     const promise = callDesktopTool('launch_app', { app_name: 'FakeApp' });
-    const sentId = hoisted.webContentsSend.mock.calls[0][1].id;
-    handleConfirmationResponse(sentId, true);
+    const sentPayload = hoisted.webContentsSend.mock.calls[0][1];
+    handleConfirmationResponse(sentPayload.id, true, sentPayload.challenge);
 
     const result = await promise;
     expect(result.error).toContain('not found');
@@ -861,11 +861,12 @@ describe('error handling', () => {
       file_path: '/tmp/notify.txt',
       content: 'data',
     });
-    // Approve the confirmation
+    // Approve the confirmation — echo the challenge back
     const confirmCalls = hoisted.webContentsSend.mock.calls.filter(
       (c: unknown[]) => c[0] === 'desktop:confirm-request',
     );
-    handleConfirmationResponse(confirmCalls[0][1].id, true);
+    const payload = confirmCalls[0][1];
+    handleConfirmationResponse(payload.id, true, payload.challenge);
 
     await promise;
 

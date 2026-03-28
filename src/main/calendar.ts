@@ -78,6 +78,8 @@ class CalendarIntegration {
         this.oauth2Client.setCredentials(token);
 
         // Set up automatic token refresh — writes through vault
+        // Remove any previous listener to prevent accumulation on re-init
+        this.oauth2Client.removeAllListeners('tokens');
         this.oauth2Client.on('tokens', async (tokens: any) => {
           if (tokens.refresh_token) {
             try {
@@ -135,7 +137,8 @@ class CalendarIntegration {
     authWindow.loadURL(authUrl);
 
     return new Promise((resolve) => {
-      authWindow.webContents.on('will-redirect', async (_event, url) => {
+      // Use once() to prevent listener accumulation on repeated auth attempts
+      authWindow.webContents.once('will-redirect', async (_event, url) => {
         try {
           const urlObj = new URL(url);
           const code = urlObj.searchParams.get('code');
@@ -162,7 +165,7 @@ class CalendarIntegration {
         }
       });
 
-      authWindow.on('closed', () => resolve(false));
+      authWindow.once('closed', () => resolve(false));
     });
   }
 
@@ -325,6 +328,10 @@ class CalendarIntegration {
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
+    }
+    // Clean up OAuth token listener to prevent memory leak accumulation
+    if (this.oauth2Client) {
+      this.oauth2Client.removeAllListeners('tokens');
     }
   }
 }

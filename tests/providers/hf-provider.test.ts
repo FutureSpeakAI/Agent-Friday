@@ -13,11 +13,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   settingsGet: vi.fn(() => ({})),
+  getHuggingfaceApiKey: vi.fn(() => ''),
 }));
 
 vi.mock('../../src/main/settings', () => ({
   settingsManager: {
     get: mocks.settingsGet,
+    getHuggingfaceApiKey: mocks.getHuggingfaceApiKey,
   },
 }));
 
@@ -79,45 +81,45 @@ describe('HuggingFaceProvider — isAvailable', () => {
     }
   });
 
-  it('returns true when HF_TOKEN is set', () => {
-    process.env.HF_TOKEN = 'hf_test_token';
-    mocks.settingsGet.mockReturnValue({});
+  it('returns true when huggingfaceApiKey is in settings via get()', () => {
+    mocks.settingsGet.mockReturnValue({ huggingfaceApiKey: 'hf_settings_key' });
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
     const provider = new HuggingFaceProvider();
     expect(provider.isAvailable()).toBe(true);
   });
 
-  it('returns true when huggingfaceApiKey is in settings', () => {
-    delete process.env.HF_TOKEN;
-    mocks.settingsGet.mockReturnValue({ huggingfaceApiKey: 'hf_settings_key' });
+  it('returns true when huggingfaceApiKey is via getHuggingfaceApiKey()', () => {
+    mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('hf_from_getter');
     const provider = new HuggingFaceProvider();
     expect(provider.isAvailable()).toBe(true);
   });
 
   it('returns true when localModelEnabled is true (no API key)', () => {
-    delete process.env.HF_TOKEN;
     mocks.settingsGet.mockReturnValue({ localModelEnabled: true });
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
     const provider = new HuggingFaceProvider();
     expect(provider.isAvailable()).toBe(true);
   });
 
   it('returns false when no key and local not enabled', () => {
-    delete process.env.HF_TOKEN;
     mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
     const provider = new HuggingFaceProvider();
     expect(provider.isAvailable()).toBe(false);
   });
 
   it('returns true when config.apiKey is set programmatically', () => {
-    delete process.env.HF_TOKEN;
     mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
     const provider = new HuggingFaceProvider();
     provider.setConfig({ apiKey: 'hf_prog_key' });
     expect(provider.isAvailable()).toBe(true);
   });
 
   it('returns true when config.localEnabled is set programmatically', () => {
-    delete process.env.HF_TOKEN;
     mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
     const provider = new HuggingFaceProvider();
     provider.setConfig({ localEnabled: true });
     expect(provider.isAvailable()).toBe(true);
@@ -170,6 +172,7 @@ describe('HuggingFaceProvider — checkHealth', () => {
   beforeEach(() => {
     setupFetch();
     mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
   });
 
   afterEach(() => {
@@ -240,6 +243,7 @@ describe('HuggingFaceProvider — listModels', () => {
   beforeEach(() => {
     setupFetch();
     mocks.settingsGet.mockReturnValue({});
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
   });
 
   afterEach(() => {
@@ -295,21 +299,14 @@ describe('HuggingFaceProvider — listModels', () => {
 });
 
 describe('HuggingFaceProvider — complete', () => {
-  const originalToken = process.env.HF_TOKEN;
-
   beforeEach(() => {
     setupFetch();
     mocks.settingsGet.mockReturnValue({});
-    delete process.env.HF_TOKEN;
+    mocks.getHuggingfaceApiKey.mockReturnValue('');
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    if (originalToken !== undefined) {
-      process.env.HF_TOKEN = originalToken;
-    } else {
-      delete process.env.HF_TOKEN;
-    }
   });
 
   it('parses a text completion response', async () => {

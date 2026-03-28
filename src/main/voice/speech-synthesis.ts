@@ -226,7 +226,10 @@ export class SpeechSynthesisManager {
     while (this.queue.length > MAX_QUEUE_DEPTH) {
       const dropped = this.queue.shift();
       if (dropped) {
-        dropped.reject(new Error('Utterance dropped during flush'));
+        // Resolve (not reject) — dropping an utterance from a full queue is
+        // intentional, not an error. Rejecting causes unhandled promise rejections
+        // when callers don't explicitly .catch() the speak() promise.
+        dropped.resolve();
       }
     }
   }
@@ -234,7 +237,10 @@ export class SpeechSynthesisManager {
   private clearQueue(): void {
     const items = this.queue.splice(0);
     for (const item of items) {
-      item.reject(new Error('Utterance dropped during flush'));
+      // Resolve silently — queue was flushed intentionally (e.g., speakImmediate
+      // or stop). The caller has moved on; rejecting would only cause unhandled
+      // promise rejection noise.
+      item.resolve();
     }
   }
 

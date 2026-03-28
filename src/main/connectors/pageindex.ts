@@ -65,50 +65,58 @@ function getIndexPath(docName: string): string {
   return path.join(getIndexDir(), `${safeName}.pageindex.json`);
 }
 
-/** Load an existing index */
-function loadIndex(docName: string): PageIndexTree | null {
+/** Load an existing index (async — avoids blocking the event loop) */
+async function loadIndex(docName: string): Promise<PageIndexTree | null> {
   const indexPath = getIndexPath(docName);
-  if (!fs.existsSync(indexPath)) return null;
   try {
-    const data = fs.readFileSync(indexPath, 'utf-8');
+    const data = await fs.promises.readFile(indexPath, 'utf-8');
     return JSON.parse(data) as PageIndexTree;
-  } catch (err) {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     // Crypto Sprint 17: Sanitize error output.
     console.warn(`[PageIndex] Failed to load index for ${docName}:`, err instanceof Error ? err.message : 'Unknown error');
     return null;
   }
 }
 
-/** Save an index */
-function saveIndex(tree: PageIndexTree): void {
+/** Save an index (async — avoids blocking the event loop) */
+async function saveIndex(tree: PageIndexTree): Promise<void> {
   const indexPath = getIndexPath(tree.doc_name);
-  fs.writeFileSync(indexPath, JSON.stringify(tree, null, 2), 'utf-8');
+  await fs.promises.writeFile(indexPath, JSON.stringify(tree, null, 2), 'utf-8');
   console.log(`[PageIndex] Saved index: ${indexPath}`);
 }
 
-/** List all saved indexes */
-function listIndexes(): Array<{ doc_name: string; total_pages: number; created_at: string; model: string; description?: string }> {
+/** List all saved indexes (async — parallel file reads) */
+async function listIndexes(): Promise<Array<{ doc_name: string; total_pages: number; created_at: string; model: string; description?: string }>> {
   const dir = getIndexDir();
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.pageindex.json'));
-  const results: Array<{ doc_name: string; total_pages: number; created_at: string; model: string; description?: string }> = [];
-
-  for (const file of files) {
-    try {
-      const data = fs.readFileSync(path.join(dir, file), 'utf-8');
-      const tree = JSON.parse(data) as PageIndexTree;
-      results.push({
-        doc_name: tree.doc_name,
-        total_pages: tree.total_pages,
-        created_at: tree.created_at,
-        model: tree.model,
-        description: tree.doc_description,
-      });
-    } catch {
-      // Skip corrupted indexes
-    }
+  let files: string[];
+  try {
+    files = (await fs.promises.readdir(dir)).filter(f => f.endsWith('.pageindex.json'));
+  } catch {
+    return [];
   }
 
-  return results;
+  // Read all index files in parallel instead of sequential sync reads
+  const results = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const data = await fs.promises.readFile(path.join(dir, file), 'utf-8');
+        const tree = JSON.parse(data) as PageIndexTree;
+        return {
+          doc_name: tree.doc_name,
+          total_pages: tree.total_pages,
+          created_at: tree.created_at,
+          model: tree.model,
+          description: tree.doc_description,
+        };
+      } catch {
+        // Skip corrupted indexes
+        return null;
+      }
+    })
+  );
+
+  return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 /** Get the model to use, with fallback */
@@ -134,7 +142,7 @@ async function indexDocument(args: Record<string, unknown>): Promise<string> {
   }
 
   const docName = path.basename(pdfPath);
-  const existingIndex = loadIndex(docName);
+  const existingIndex = await loadIndex(docName);
 
   // Check for re-index flag
   const forceReindex = args.force === true || args.force === 'true';
@@ -166,7 +174,7 @@ async function indexDocument(args: Record<string, unknown>): Promise<string> {
     });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    saveIndex(tree);
+    await saveIndex(tree);
 
     const nodeCount = countNodes(tree.structure);
     const topLevel = tree.structure.map(n => `  - ${n.structure}. ${n.title}`).join('\n');
@@ -193,7 +201,7 @@ async function searchDocument(args: Record<string, unknown>): Promise<string> {
   if (!query) return 'ERROR: query is required.';
   if (!docName) return 'ERROR: document name is required. Use list_indexed_docs to see available documents.';
 
-  const tree = loadIndex(docName);
+  const tree = await loadIndex(docName);
   if (!tree) {
     return `ERROR: No index found for "${docName}". Index it first with index_document.`;
   }
@@ -237,7 +245,7 @@ async function askDocument(args: Record<string, unknown>): Promise<string> {
   if (!question) return 'ERROR: question is required.';
   if (!docName) return 'ERROR: document name is required. Use list_indexed_docs to see available documents.';
 
-  const tree = loadIndex(docName);
+  const tree = await loadIndex(docName);
   if (!tree) {
     return `ERROR: No index found for "${docName}". Index it first with index_document.`;
   }
@@ -262,7 +270,7 @@ async function askDocument(args: Record<string, unknown>): Promise<string> {
 }
 
 async function listIndexedDocs(): Promise<string> {
-  const indexes = listIndexes();
+  const indexes = await listIndexes();
 
   if (indexes.length === 0) {
     return '## No Indexed Documents\n\nNo documents have been indexed yet. Use `index_document` with a PDF path to get started.';
@@ -280,7 +288,7 @@ async function getDocumentTree(args: Record<string, unknown>): Promise<string> {
   const docName = typeof args.document === 'string' ? args.document : '';
   if (!docName) return 'ERROR: document name is required.';
 
-  const tree = loadIndex(docName);
+  const tree = await loadIndex(docName);
   if (!tree) {
     return `ERROR: No index found for "${docName}".`;
   }

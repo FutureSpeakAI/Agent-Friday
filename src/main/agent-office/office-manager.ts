@@ -298,6 +298,12 @@ class AgentOfficeManager {
 
     ipcMain.handle('office:is-open', () => this.isOpen());
 
+    // Guard against duplicate listeners on reinitialize (prevents memory leak)
+    if (typeof ipcMain.removeAllListeners === 'function') {
+      ipcMain.removeAllListeners('office:request-open');
+      ipcMain.removeAllListeners('office:request-close');
+    }
+
     ipcMain.on('office:request-open', () => {
       this.openWindow();
     });
