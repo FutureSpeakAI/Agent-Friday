@@ -105,7 +105,7 @@ export function animateTesseract(refs: AllStructureRefs, ctx: AnimContext) {
   const cosYW = Math.cos(refs.tesseractLines.userData.angleYW), sinYW = Math.sin(refs.tesseractLines.userData.angleYW);
   const pts3D: THREE.Vector3[] = [];
   (refs.tesseractLines.userData.pts4D as { x: number; y: number; z: number; w: number }[]).forEach((p) => {
-    let x = p.x, y = p.y, _z = p.z, w = p.w;
+    let x = p.x, y = p.y; const _z = p.z; let w = p.w;
     const nx = x * cosXW - w * sinXW; const nw = x * sinXW + w * cosXW; x = nx; w = nw;
     const ny = y * cosYW - w * sinYW; const nw2 = y * sinYW + w * cosYW; y = ny; w = nw2;
     const wf = 2 / (4 - w);

@@ -217,7 +217,6 @@ const CIRCUIT_BREAKER_THRESHOLD = 3;
  */
 function getLocalInflightCount(): number {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { llmClient } = require('./llm-client');
     const provider = llmClient.getProvider?.('local') as HuggingFaceProvider | undefined;
     return provider?.getInflightCount?.() ?? 0;

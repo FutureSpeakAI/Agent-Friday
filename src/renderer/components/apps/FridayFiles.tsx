@@ -162,12 +162,12 @@ export default function FridayFiles({ visible, onClose }: FilesProps) {
 
   useEffect(() => {
     if (visible) navigate(currentPath);
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps — refresh on visibility toggle only
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- refresh on visibility toggle only
 
   // Re-list when showHidden changes
   useEffect(() => {
     if (visible && backendAvailable) refresh();
-  }, [showHidden]); // eslint-disable-line react-hooks/exhaustive-deps — re-list when hidden-file toggle changes
+  }, [showHidden]); // eslint-disable-line react-hooks/exhaustive-deps -- re-list when hidden-file toggle changes
 
   // Close context menu on click anywhere
   useEffect(() => {

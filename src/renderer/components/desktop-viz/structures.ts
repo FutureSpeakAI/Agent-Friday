@@ -246,7 +246,7 @@ export function buildMandelbrot(ctx: BuildContext): MandelbrotResult {
   const maxIter = 40;
   for (let x = -2.1; x < 0.8; x += 0.012) {
     for (let y = -1.2; y < 1.2; y += 0.012) {
-      let cx = x, cy = y, zx = 0, zy = 0, iter = 0;
+      const cx = x, cy = y; let zx = 0, zy = 0, iter = 0;
       while (zx * zx + zy * zy < 4 && iter < maxIter) {
         const tmp = zx * zx - zy * zy + cx;
         zy = 2 * zx * zy + cy;

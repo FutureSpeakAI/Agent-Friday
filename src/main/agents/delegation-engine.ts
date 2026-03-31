@@ -891,7 +891,7 @@ class DelegationEngine {
     getTrustTier: () => TrustTier;
     canDelegate: () => boolean;
   } {
-    const engine = this;
+    const engine = this; // eslint-disable-line @typescript-eslint/no-this-alias -- closure capture for returned delegation context
     const node = this.nodes.get(taskId);
 
     return {

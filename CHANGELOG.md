@@ -4,6 +4,71 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.13.1] — 2026-03-31 — Sprint 2 Completion + Diagnostic Fixes
+
+### Summary
+
+Completes Socratic Forge Sprint 2 Track C (Vite code splitting). Fixes 42 test failures from stale test data on disk, eliminates the Vite chunk size warning, and resolves a moderate ASAR integrity vulnerability by upgrading Electron 33 → 35.
+
+### Fixed
+
+- **Test isolation** — `superpower-store.test.ts` (42 failures → 0): tests were reading stale `superpowers.json` from previous runs; now uses unique per-run temp directories with cleanup
+- **Vite chunk warning** — Set `chunkSizeWarningLimit: 600` since Three.js (525 kB) is one irreducible library, already lazy-loaded via `React.lazy()`
+- **ASAR integrity bypass** (GHSA-vmqv-hx8q-j7mg) — Upgraded `electron` 33.3.1 → 35.7.5; `npm audit` now reports 0 vulnerabilities
+- **electron-builder** — Upgraded 25.1.8 → 26.8.1 for Electron 35 compatibility
+
+### Improved — Sprint 2 Track C (Code Splitting & Lint)
+
+- **Three.js lazy-loading** — Extracted `MoodDesktopViz` from `MoodWrappers.tsx` into its own file, loaded via `React.lazy()` + `Suspense` to defer 525 kB Three.js bundle
+- **Lint cleanup** — `let` → `const` where values aren't reassigned, `interface extends Array` → `type = Array`, removed stale `@typescript-eslint/no-var-requires` suppressions, annotated intentional empty `catch` blocks
+- **ESLint comment normalization** — `—` dashes → `--` in eslint-disable comments (required by newer ESLint)
+
+---
+
+## [3.13.0] — 2026-03-28 — Autoresearch System
+
+### Summary
+
+Governed recursive self-improvement system inspired by Karpathy's autoresearch. Six new engines enable autonomous modify-execute-measure-keep/discard iteration loops, prompt evolution via judge-scored evaluation, and Ollama model breeding via Modelfile evolution. Fixed 70 test failures across IPC validation, voice pipeline, provider mocks, and TTS backends. Parallelized 40+ engine initializations into 3 batches. Converted pageindex to async I/O. Added CLAUDE.md, 11 dev directives, and 3 persona directives.
+
+### Added — Autoresearch Engines
+
+- **Iteration engine** — Autoresearch-style modify→execute→measure→keep/discard loops (`iteration-engine.ts`)
+- **Directive loader** — Parses `program.md`-style markdown into structured directives (`directive-loader.ts`)
+- **Results ledger** — TSV + JSON experiment logging, modeled on autoresearch's `results.tsv` (`results-ledger.ts`)
+- **Prompt evolver** — Iteratively improves system prompts via judge-scored evaluation (`prompt-evolver.ts`)
+- **Model breeder** — Breeds specialized Ollama models via Modelfile evolution (`model-breeder.ts`)
+- **Self-improver** — Meta-agent that diagnoses weaknesses and spawns targeted improvement loops (`self-improver.ts`)
+
+### Added — Dev Directives & Personas
+
+- **11 dev directives** — `autoresearch.md`, `fix-tests.md`, `fix-type-errors.md`, `optimize-bundle.md`, `optimize-context.md`, `optimize-prompts.md`, `optimize-voice.md`, `regression-hunt.md`, `tune-calibration.md`, `tune-delegation.md`, `tune-memory.md`
+- **3 persona directives** — Atlas, Cipher, Nova agent personas in `src/main/agents/directives/`
+- **CLAUDE.md** — Project development guide for AI-assisted development
+
+### Added — Performance
+
+- **Parallel engine initialization** — 40+ engines parallelized into 3 `Promise.all()` batches in `index.ts`
+- **Async pageindex** — `pageindex.ts` converted from sync to async file I/O with parallel reads
+- **TUNABLE zone markers** — Added to `memory-consolidation.ts`, `personality-calibration.ts`, `audio-capture.ts`, `agent-runner.ts`
+
+### Fixed — Tests (70 failures → 0)
+
+- **HMAC challenge echo** — Desktop-tools confirmation gate tests now echo the challenge correctly
+- **assertConfinedPath migration** — File operation test assertions updated for new validation API
+- **Voice pipeline handler count** — Stale hardcoded count updated (37 → 42)
+- **PersonaPlex namespace nesting** — Moved from inside `voice` to top-level in `preload.ts`
+- **Provider mock API** — `settingsManager` mocks fixed in anthropic-provider and hf-provider tests
+- **TTS engine test mocks** — Added missing chatterbox/kokoro-js backend mocks
+- **Speech synthesis rejections** — Dropped utterances now resolve instead of rejecting to avoid unhandled promise rejections
+
+### Fixed — Memory Leaks
+
+- **Calendar OAuth listener accumulation** — Added `removeAllListeners('tokens')` guard
+- **Office IPC duplication** — Fixed duplicate handler registration in `office-manager.ts`
+
+---
+
 ## [3.12.1] — 2026-03-24 — Onboarding Hotfix
 
 ### Summary

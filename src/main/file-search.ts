@@ -193,12 +193,12 @@ class FileSearchEngine {
 
     // Name/content matching
     if (opts.mode === 'content') {
-      conditions.push(`CONTAINS(*, '\"${query}\"')`);
+      conditions.push(`CONTAINS(*, '"${query}"')`);
     } else if (opts.mode === 'filename') {
       conditions.push(`System.FileName LIKE '%${query}%'`);
     } else {
       // "everything" mode — match name or content
-      conditions.push(`(System.FileName LIKE '%${query}%' OR CONTAINS(*, '\"${query}\"'))`);
+      conditions.push(`(System.FileName LIKE '%${query}%' OR CONTAINS(*, '"${query}"'))`);
     }
 
     // Extension filter

@@ -269,7 +269,7 @@ export class WhisperProvider {
     } catch (err) {
       fileStream.end();
       // Clean up partial download
-      try { const { unlink } = await import('node:fs/promises'); await unlink(modelPath); } catch {}
+      try { const { unlink } = await import('node:fs/promises'); await unlink(modelPath); } catch { /* best-effort cleanup */ }
       throw err;
     }
 

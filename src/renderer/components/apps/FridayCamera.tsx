@@ -114,7 +114,7 @@ export default function FridayCamera({ visible, onClose }: Props) {
         streamRef.current = null;
       }
     };
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps — only re-run on visibility change
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- only re-run on visibility change
 
   // Switch camera device
   const handleDeviceChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {

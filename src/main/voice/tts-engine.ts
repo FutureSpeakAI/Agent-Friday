@@ -142,7 +142,6 @@ export class TTSEngine {
       // ── kokoro-js: pure Node.js ONNX TTS — no binary deps ─────────
       if (b === 'kokoro-js') {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
           const { KokoroTTS } = require('kokoro-js') as { KokoroTTS: { from_pretrained: (model: string, opts?: Record<string, unknown>) => Promise<unknown> } };
           console.log('[TTSEngine] Loading kokoro-js (Node.js ONNX TTS)...');
           const tts = await KokoroTTS.from_pretrained(
