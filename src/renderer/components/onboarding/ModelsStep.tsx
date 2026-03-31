@@ -5,10 +5,14 @@
  * to download/use across four categories: Chat LLM, Whisper STT, TTS engine,
  * and Embeddings. Calculates estimated disk + VRAM usage from selections and
  * checks Ollama connectivity on mount.
+ *
+ * After selection, orchestrates sequential downloads of all required binaries
+ * and models with per-item progress UI (whisper binary, whisper model, ollama
+ * models, TTS binaries, chatterbox setup).
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Cpu, Download, Check, AlertCircle, ExternalLink } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Cpu, Download, Check, AlertCircle, ExternalLink, X } from 'lucide-react';
 import NextButton from './shared/NextButton';
 import CyberInput from './shared/CyberInput';
 
@@ -27,6 +31,20 @@ interface ModelsStepProps {
   detectedTier: TierName | null;
   onComplete: (selections: ModelSelections) => void;
   onBack?: () => void;
+}
+
+type Phase = 'selecting' | 'downloading' | 'complete';
+
+interface DownloadItem {
+  name: string;
+  type: 'whisper-binary' | 'whisper-model' | 'ollama-pull' | 'tts-binary' | 'tts-model' | 'chatterbox';
+  status: 'pending' | 'downloading' | 'complete' | 'failed';
+  percent: number;
+  error?: string;
+  /** For ollama-pull: the model name to filter progress events */
+  modelName?: string;
+  /** For whisper-model: the size to download */
+  whisperSize?: string;
 }
 
 // ── Size metadata ──
@@ -91,6 +109,76 @@ function getDefaults(tier: TierName | null): ModelSelections {
   return { chatModel: 'llama3.1:8b', whisperModel: 'tiny', ttsEngine: 'chatterbox', embeddingModel: 'nomic-embed-text' };
 }
 
+// ── Manifest builder ──
+
+function buildManifest(selections: ModelSelections): DownloadItem[] {
+  const tasks: DownloadItem[] = [];
+
+  // Whisper binary + model
+  if (selections.whisperModel) {
+    tasks.push({
+      name: 'Whisper STT Binary',
+      type: 'whisper-binary',
+      status: 'pending',
+      percent: 0,
+    });
+    tasks.push({
+      name: `Whisper Model (${selections.whisperModel})`,
+      type: 'whisper-model',
+      status: 'pending',
+      percent: 0,
+      whisperSize: selections.whisperModel,
+    });
+  }
+
+  // Chat model via Ollama
+  if (selections.chatModel) {
+    tasks.push({
+      name: `Chat Model (${selections.chatModel})`,
+      type: 'ollama-pull',
+      status: 'pending',
+      percent: 0,
+      modelName: selections.chatModel,
+    });
+  }
+
+  // Embedding model via Ollama
+  if (selections.embeddingModel) {
+    tasks.push({
+      name: `Embedding Model (${selections.embeddingModel})`,
+      type: 'ollama-pull',
+      status: 'pending',
+      percent: 0,
+      modelName: selections.embeddingModel,
+    });
+  }
+
+  // TTS
+  if (selections.ttsEngine === 'kokoro') {
+    tasks.push({
+      name: 'TTS Binary (Kokoro)',
+      type: 'tts-binary',
+      status: 'pending',
+      percent: 0,
+    });
+    tasks.push({
+      name: 'TTS Voice Model',
+      type: 'tts-model',
+      status: 'pending',
+      percent: 0,
+    });
+  } else if (selections.ttsEngine === 'chatterbox') {
+    tasks.push({
+      name: 'Chatterbox TTS',
+      type: 'chatterbox',
+      status: 'pending',
+      percent: 0,
+    });
+  }
+
+  return tasks;
+}
+
 // ── Component ──
 
 const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBack }) => {
@@ -105,7 +193,13 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
 
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
   const [fadeIn, setFadeIn] = useState(false);
-  const [saving, setSaving] = useState(false);
+
+  // Download phase state
+  const [phase, setPhase] = useState<Phase>('selecting');
+  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [downloadError, setDownloadError] = useState('');
+  const cleanupRef = useRef<Array<() => void>>([]);
+  const skipRef = useRef(false);
 
   // Fade in on mount + check Ollama health
   useEffect(() => {
@@ -122,6 +216,13 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
     })();
 
     return () => { cancelled = true; };
+  }, []);
+
+  // Cleanup event listeners on unmount
+  useEffect(() => {
+    return () => {
+      cleanupRef.current.forEach((fn) => fn());
+    };
   }, []);
 
   // Calculate totals
@@ -160,8 +261,167 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
     return { disk, vram };
   }, [chatModel, customChatModel, isCustomChat, whisperModel, ttsEngine, embeddingModel]);
 
+  // ── Sequential download executor ──
+
+  const executeManifest = useCallback(async (tasks: DownloadItem[], selections: ModelSelections) => {
+    setDownloads([...tasks]);
+    setDownloadError('');
+
+    for (let i = 0; i < tasks.length; i++) {
+      if (skipRef.current) break;
+
+      // Mark current as downloading
+      tasks[i].status = 'downloading';
+      setDownloads([...tasks]);
+
+      try {
+        await executeTask(tasks[i], (percent) => {
+          tasks[i].percent = percent;
+          setDownloads([...tasks]);
+        });
+
+        tasks[i].status = 'complete';
+        tasks[i].percent = 100;
+      } catch (err: any) {
+        tasks[i].status = 'failed';
+        tasks[i].error = err?.message || 'Download failed';
+        setDownloadError(err?.message || 'Download failed');
+      }
+
+      setDownloads([...tasks]);
+    }
+
+    // All done — check results
+    const anySucceeded = tasks.some((t) => t.status === 'complete');
+    const allFailed = tasks.every((t) => t.status === 'failed');
+
+    if (!allFailed && !skipRef.current) {
+      setPhase('complete');
+    }
+    // If all failed, stay on downloading phase — user sees "Continue Anyway"
+  }, []);
+
+  const executeTask = useCallback(async (task: DownloadItem, onProgress: (p: number) => void): Promise<void> => {
+    // Cleanup any previous listeners for this task
+    const taskCleanups: Array<() => void> = [];
+
+    try {
+      switch (task.type) {
+        case 'whisper-binary': {
+          const unsub = window.eve.voice.binaries.onDownloadProgress((data) => {
+            if (data.binary === 'whisper' && data.total > 0) {
+              onProgress(Math.round((data.downloaded / data.total) * 100));
+            }
+          });
+          taskCleanups.push(unsub);
+          cleanupRef.current.push(unsub);
+          await window.eve.voice.binaries.ensureWhisper();
+          break;
+        }
+
+        case 'whisper-model': {
+          const unsub = window.eve.voice.whisper.onDownloadProgress((data) => {
+            if (data.total > 0) {
+              onProgress(Math.round((data.downloaded / data.total) * 100));
+            }
+          });
+          taskCleanups.push(unsub);
+          cleanupRef.current.push(unsub);
+          await window.eve.voice.whisper.downloadModel(task.whisperSize);
+          break;
+        }
+
+        case 'ollama-pull': {
+          const targetModel = task.modelName!;
+          // First check if already available
+          try {
+            const available = await window.eve.ollama.isModelAvailable(targetModel);
+            if (available) {
+              onProgress(100);
+              return;
+            }
+          } catch { /* proceed with pull */ }
+
+          await new Promise<void>((resolve, reject) => {
+            const unsub = window.eve.ollama.onPullProgress((data: any) => {
+              if (data.modelName !== targetModel) return;
+
+              if (data.status === 'success') {
+                onProgress(100);
+                resolve();
+                return;
+              }
+              if (data.status === 'error') {
+                reject(new Error(data.error || `Failed to pull ${targetModel}`));
+                return;
+              }
+              if (data.completed && data.total && data.total > 0) {
+                onProgress(Math.round((data.completed / data.total) * 100));
+              }
+            });
+            taskCleanups.push(unsub);
+            cleanupRef.current.push(unsub);
+
+            window.eve.ollama.pullModel(targetModel).then(() => {
+              // pullModel resolves when complete — if onPullProgress hasn't
+              // already resolved us, do it now
+              onProgress(100);
+              resolve();
+            }).catch(reject);
+          });
+          break;
+        }
+
+        case 'tts-binary': {
+          const unsub = window.eve.voice.binaries.onDownloadProgress((data) => {
+            if (data.binary === 'tts' && data.total > 0) {
+              onProgress(Math.round((data.downloaded / data.total) * 100));
+            }
+          });
+          taskCleanups.push(unsub);
+          cleanupRef.current.push(unsub);
+          await window.eve.voice.binaries.ensureTTS();
+          break;
+        }
+
+        case 'tts-model': {
+          const unsub = window.eve.voice.binaries.onDownloadProgress((data) => {
+            if (data.binary === 'tts-model' && data.total > 0) {
+              onProgress(Math.round((data.downloaded / data.total) * 100));
+            }
+          });
+          taskCleanups.push(unsub);
+          cleanupRef.current.push(unsub);
+          await window.eve.voice.binaries.ensureTTSModel();
+          break;
+        }
+
+        case 'chatterbox': {
+          const unsub = window.eve.voice.chatterbox.onSetupProgress((data) => {
+            onProgress(data.percent);
+          });
+          taskCleanups.push(unsub);
+          cleanupRef.current.push(unsub);
+          await window.eve.voice.chatterbox.setup();
+          break;
+        }
+      }
+    } finally {
+      // Unsubscribe task-specific listeners
+      taskCleanups.forEach((fn) => fn());
+    }
+  }, []);
+
+  // ── Save settings and start downloads ──
+
   const handleDownloadAndContinue = useCallback(async () => {
-    setSaving(true);
+    const selections: ModelSelections = {
+      chatModel: isCustomChat ? (customChatModel.trim() || null) : chatModel,
+      whisperModel,
+      ttsEngine,
+      embeddingModel,
+    };
+
     try {
       // Save voice engine preference
       if (ttsEngine && ttsEngine !== 'cloud') {
@@ -170,56 +430,41 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
         await window.eve.settings.set('voiceEngine', 'elevenlabs');
       }
 
-      const selections: ModelSelections = {
-        chatModel: isCustomChat ? (customChatModel.trim() || null) : chatModel,
-        whisperModel,
-        ttsEngine,
-        embeddingModel,
-      };
-
       // Save model selections to settings
       if (selections.chatModel) {
         await window.eve.settings.set('localModelId', selections.chatModel);
         await window.eve.settings.set('localModelEnabled', true);
-        // Ensure the chat model is available in Ollama (pull if missing)
-        try {
-          const available = await window.eve.ollama.isModelAvailable(selections.chatModel);
-          if (!available) {
-            await window.eve.ollama.pullModel(selections.chatModel);
-          }
-        } catch {
-          // Pull failed — user can still download later via settings
-        }
       }
-      // Save whisper model preference
       if (selections.whisperModel) {
         await window.eve.settings.set('whisperModel', selections.whisperModel);
       }
-      // Save embedding model preference and pull if missing
       if (selections.embeddingModel) {
         await window.eve.settings.set('embeddingModel', selections.embeddingModel);
-        try {
-          const available = await window.eve.ollama.isModelAvailable(selections.embeddingModel);
-          if (!available) {
-            await window.eve.ollama.pullModel(selections.embeddingModel);
-          }
-        } catch {
-          // Pull failed — embeddings will degrade gracefully
-        }
       }
-
-      onComplete(selections);
     } catch {
       // Best effort — continue anyway
-      const selections: ModelSelections = {
-        chatModel: isCustomChat ? (customChatModel.trim() || null) : chatModel,
-        whisperModel,
-        ttsEngine,
-        embeddingModel,
-      };
-      onComplete(selections);
     }
-  }, [chatModel, customChatModel, isCustomChat, whisperModel, ttsEngine, embeddingModel, onComplete]);
+
+    // Build download manifest
+    const manifest = buildManifest(selections);
+
+    if (manifest.length === 0) {
+      // Nothing to download — skip straight to completion
+      onComplete(selections);
+      return;
+    }
+
+    // Switch to download phase
+    skipRef.current = false;
+    setPhase('downloading');
+    // Store selections for use in completion
+    selectionsRef.current = selections;
+    executeManifest(manifest, selections);
+  }, [chatModel, customChatModel, isCustomChat, whisperModel, ttsEngine, embeddingModel, onComplete, executeManifest]);
+
+  const selectionsRef = useRef<ModelSelections>({
+    chatModel: null, whisperModel: null, ttsEngine: null, embeddingModel: null,
+  });
 
   const handleSkip = useCallback(async () => {
     try {
@@ -230,8 +475,137 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
     onComplete({ chatModel: null, whisperModel: null, ttsEngine: null, embeddingModel: null });
   }, [onComplete]);
 
+  const handleSkipRemaining = useCallback(() => {
+    skipRef.current = true;
+    // Clean up listeners
+    cleanupRef.current.forEach((fn) => fn());
+    cleanupRef.current = [];
+    onComplete(selectionsRef.current);
+  }, [onComplete]);
+
+  const handleContinueAnyway = useCallback(() => {
+    onComplete(selectionsRef.current);
+  }, [onComplete]);
+
+  const handleComplete = useCallback(() => {
+    onComplete(selectionsRef.current);
+  }, [onComplete]);
+
   const tierInfo = detectedTier ? TIER_META[detectedTier] : null;
 
+  // ── Phase: Downloading ──
+  if (phase === 'downloading') {
+    const totalItems = downloads.length;
+    const completedItems = downloads.filter((d) => d.status === 'complete').length;
+    const failedItems = downloads.filter((d) => d.status === 'failed').length;
+    const finishedItems = completedItems + failedItems;
+    const overallPercent = totalItems > 0
+      ? Math.round(downloads.reduce((sum, d) => sum + d.percent, 0) / totalItems)
+      : 0;
+    const allFinished = finishedItems === totalItems;
+
+    return (
+      <section
+        style={{
+          ...styles.container,
+          opacity: 1,
+          transition: 'all 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+        aria-label="Model downloads"
+      >
+        <div style={styles.headerBlock}>
+          <h2 style={styles.heading}>Installing Voice & Models.</h2>
+          <p style={styles.subtitle}>
+            Downloading selected models and voice components to your machine.
+          </p>
+        </div>
+
+        {/* Overall progress */}
+        <div style={styles.overallProgress}>
+          <div style={styles.overallBar}>
+            <div style={{
+              ...styles.overallFill,
+              width: `${overallPercent}%`,
+            }} />
+          </div>
+          <span style={styles.overallText}>
+            {completedItems}/{totalItems} items &mdash; {overallPercent}%
+          </span>
+        </div>
+
+        {/* Per-item progress */}
+        <div style={styles.downloadList}>
+          {downloads.map((dl, idx) => (
+            <div key={idx} style={styles.downloadRow}>
+              <div style={styles.downloadIcon}>
+                {dl.status === 'complete' && <Check size={12} color="#22c55e" />}
+                {dl.status === 'failed' && <X size={12} color="#ef4444" />}
+                {dl.status === 'downloading' && <Download size={12} color="#00f0ff" />}
+                {dl.status === 'pending' && <span style={styles.pendingDot} />}
+              </div>
+              <span style={styles.downloadName}>{dl.name}</span>
+              <div style={styles.downloadBarWrap}>
+                <div style={{
+                  ...styles.downloadBar,
+                  width: `${dl.percent}%`,
+                  background: dl.status === 'failed' ? '#ef4444' : 'var(--accent-cyan)',
+                }} />
+              </div>
+              <span style={styles.downloadPercent}>
+                {dl.status === 'failed' ? 'Failed' : `${dl.percent}%`}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {downloadError && (
+          <div style={styles.errorRow} role="alert">
+            <AlertCircle size={14} color="#ef4444" />
+            <span style={styles.errorText}>{downloadError}</span>
+          </div>
+        )}
+
+        {allFinished && failedItems > 0 && (
+          <div style={styles.buttonRow}>
+            <NextButton label="Continue Anyway" onClick={handleContinueAnyway} />
+          </div>
+        )}
+
+        <NextButton
+          label="Skip Remaining"
+          onClick={handleSkipRemaining}
+          variant="skip"
+        />
+      </section>
+    );
+  }
+
+  // ── Phase: Complete ──
+  if (phase === 'complete') {
+    const completedCount = downloads.filter((d) => d.status === 'complete').length;
+
+    return (
+      <section style={styles.container} aria-label="Models installed">
+        <div style={styles.headerBlock}>
+          <h2 style={styles.heading}>Models & Voice Ready.</h2>
+          <p style={styles.subtitle}>
+            Your selected models and voice components are installed and ready.
+          </p>
+        </div>
+
+        <div style={styles.completeBadge}>
+          <Check size={20} color="#22c55e" />
+          <span style={styles.completeText}>
+            {completedCount} item{completedCount !== 1 ? 's' : ''} installed
+          </span>
+        </div>
+
+        <NextButton label="Continue" onClick={handleComplete} />
+      </section>
+    );
+  }
+
+  // ── Phase: Selecting (default) ──
   return (
     <section
       style={{
@@ -580,10 +954,8 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
       {/* Action buttons */}
       <div style={styles.buttonRow}>
         <NextButton
-          label={saving ? 'Saving...' : 'Download & Continue'}
+          label="Download & Continue"
           onClick={handleDownloadAndContinue}
-          disabled={saving}
-          loading={saving}
           icon={<Download size={14} />}
         />
         <NextButton
@@ -786,6 +1158,124 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: 12,
     alignItems: 'center',
+  },
+
+  // ── Download phase styles (matching HardwareStep) ──
+  overallProgress: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    alignItems: 'center',
+  },
+  overallBar: {
+    width: '100%',
+    height: 6,
+    borderRadius: 3,
+    background: 'rgba(255, 255, 255, 0.06)',
+    overflow: 'hidden',
+  },
+  overallFill: {
+    height: '100%',
+    borderRadius: 3,
+    background: 'var(--accent-cyan)',
+    transition: 'width 0.3s ease',
+    boxShadow: '0 0 8px var(--accent-cyan-30)',
+  },
+  overallText: {
+    fontSize: 12,
+    color: 'var(--text-50)',
+    fontFamily: "'JetBrains Mono', monospace",
+  },
+  downloadList: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    maxHeight: 280,
+    overflowY: 'auto',
+  },
+  downloadRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '8px 12px',
+    background: 'var(--onboarding-card)',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
+    borderRadius: 8,
+  },
+  downloadIcon: {
+    width: 16,
+    height: 16,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  downloadName: {
+    fontSize: 11,
+    color: 'var(--text-60)',
+    fontFamily: "'JetBrains Mono', monospace",
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  downloadBarWrap: {
+    width: 80,
+    height: 4,
+    borderRadius: 2,
+    background: 'rgba(255, 255, 255, 0.06)',
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  downloadBar: {
+    height: '100%',
+    borderRadius: 2,
+    transition: 'width 0.3s ease',
+  },
+  downloadPercent: {
+    fontSize: 10,
+    color: 'var(--text-40)',
+    fontFamily: "'JetBrains Mono', monospace",
+    width: 40,
+    textAlign: 'right',
+    flexShrink: 0,
+  },
+  pendingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: 'rgba(255, 255, 255, 0.15)',
+  },
+  errorRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '8px 16px',
+    background: 'rgba(239, 68, 68, 0.06)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    borderRadius: 8,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#ef4444',
+    fontFamily: "'Inter', sans-serif",
+  },
+  completeBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '16px 28px',
+    background: 'rgba(34, 197, 94, 0.06)',
+    border: '1px solid rgba(34, 197, 94, 0.2)',
+    borderRadius: 10,
+  },
+  completeText: {
+    fontSize: 14,
+    color: 'rgba(34, 197, 94, 0.9)',
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontWeight: 500,
   },
 };
 
