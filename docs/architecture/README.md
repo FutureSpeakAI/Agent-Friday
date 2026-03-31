@@ -1,6 +1,6 @@
 # Agent Friday — Architecture Overview
 
-> **agent-friday** v3.12.0 | Electron 33 + React 19 + Vite 6 + TypeScript 5.7
+> **agent-friday** v3.13.0 | Electron 33 + React 19 + Vite 6 + TypeScript 5.7
 > The first fully local, fully encrypted AI operating system.
 
 ## Process Model
@@ -100,6 +100,17 @@ Multi-agent orchestration with trust-scored delegation.
 ContainerEngine for sandboxed code execution (Docker or direct subprocess).
 AgentNetwork for P2P agent discovery and cross-agent task delegation.
 
+### 6a. Autoresearch & Self-Improvement (`src/main/agents/`, `dev/`)
+Six-engine autonomous improvement loop (v3.13.0):
+- **IterationEngine** — orchestrates research/improve cycles from dev directives
+- **DirectiveLoader** — parses `dev/*.md` markdown directives into engine instructions
+- **ResultsLedger** — tracks run history, scores, and regressions
+- **PromptEvolver** — mutates and tests prompt variants for quality improvement
+- **ModelBreeder** — optimizes model selection across providers
+- **SelfImprover** — adjusts `// --- TUNABLE ---` zone constants in source files
+
+Engines initialize in parallel (3 batches) during startup via `index.ts`.
+
 ### 7. Personality & Self-Knowledge (`src/main/personality*.ts`, `src/main/friday-profile.ts`)
 Personality evolution via calibration signals.
 MemoryPersonalityBridge synchronizes memory engagement with personality drift.
@@ -135,7 +146,7 @@ Services initialize in dependency tiers (see `src/main/index.ts`):
 | 7 | CloudGate, IntelligenceRouter, LLMClient | After providers init |
 | 8 | MemoryManager, ContextGraph, SemanticSearch | After LLM available |
 | 9 | Personality, FridayProfile | After memory |
-| 10+ | Agents, Delegation, Connectors, Gateway | After core services |
+| 10+ | Agents, Delegation, Autoresearch (3-batch parallel), Connectors, Gateway | After core services |
 
 **Circular dependency resolution:** `memory.ts` ↔ `integrity.ts` ↔ `trust-graph.ts` use `_lazyLoad()` pattern.
 

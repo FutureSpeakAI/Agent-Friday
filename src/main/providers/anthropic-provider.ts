@@ -53,6 +53,7 @@ export class AnthropicProvider implements LLMProvider {
 
     return this.withRetry(async () => {
       const Anthropic = await getAnthropicSDK();
+      // eslint-disable-next-line no-constant-condition -- CJS/ESM interop: default may or may not exist
       const anthropic = new Anthropic.default
         ? new Anthropic.default({ apiKey })
         : new Anthropic({ apiKey });
@@ -104,6 +105,7 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const Anthropic = await getAnthropicSDK();
+    // eslint-disable-next-line no-constant-condition -- CJS/ESM interop: default may or may not exist
     const anthropic = new Anthropic.default
       ? new Anthropic.default({ apiKey })
       : new Anthropic({ apiKey });

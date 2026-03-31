@@ -16,6 +16,7 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600, // Three.js (525 kB) is one irreducible library, already lazy-loaded
     rollupOptions: {
       output: {
         manualChunks: {

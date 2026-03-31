@@ -1,6 +1,6 @@
 # External Dependencies Reference
 
-> Agent Friday v3.12.0 — Last updated 2026-03-24
+> Agent Friday v3.13.0 — Last updated 2026-03-31
 
 ---
 

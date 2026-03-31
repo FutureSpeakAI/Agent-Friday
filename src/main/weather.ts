@@ -61,7 +61,7 @@ const WMO_CONDITIONS: Record<number, string> = {
 
 /* ── State ────────────────────────────────────────────────────────────── */
 
-let cache: WeatherCache = {
+const cache: WeatherCache = {
   current: null,
   forecast: null,
   fetchedAt: 0,

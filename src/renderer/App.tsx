@@ -13,7 +13,8 @@ import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
 import { MoodProvider } from './contexts/MoodContext';
-import { MoodDesktopViz, MoodVoiceOrb } from './components/MoodWrappers';
+import { MoodVoiceOrb } from './components/MoodWrappers';
+const LazyMoodDesktopViz = React.lazy(() => import('./components/MoodDesktopViz'));
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { AudioPlaybackEngine } from './audio/AudioPlaybackEngine';
 import { useWakeWord } from './hooks/useWakeWord';
@@ -1053,7 +1054,7 @@ export default function App() {
       cancelled = true;
       geminiLive.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps — init-only, runs once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- init-only, runs once on mount
   }, []);
 
   // ── IPC event listeners (extracted to hook) ──────────────────────────
@@ -1306,13 +1307,13 @@ export default function App() {
           onUnlocked={async () => {
             // Vault is unlocked — check if onboarding is done
             let done = false;
-            try { done = await window.eve.onboarding.isComplete(); } catch {}
+            try { done = await window.eve.onboarding.isComplete(); } catch { /* defaults to false */ }
             if (done) {
               setAppPhase('normal');
               try {
                 const config = await window.eve.onboarding.getAgentConfig();
                 setAgentName(config.agentName || '');
-              } catch {}
+              } catch { /* non-critical — name defaults to empty */ }
               connectToGemini();
             } else {
               setAppPhase('onboarding');
@@ -1360,14 +1361,16 @@ export default function App() {
         position: 'absolute' as const,
         inset: 0,
       }}>
-        <MoodDesktopViz
-          getLevels={getLevels}
-          semanticState={semanticState}
-          isSpeaking={geminiLive.isSpeaking}
-          isListening={geminiLive.isListening}
-          evolutionIndex={desktopEvolution.evolutionIndex}
-          transitionBlend={desktopEvolution.transitionBlend}
-        />
+        <Suspense fallback={null}>
+          <LazyMoodDesktopViz
+            getLevels={getLevels}
+            semanticState={semanticState}
+            isSpeaking={geminiLive.isSpeaking}
+            isListening={geminiLive.isListening}
+            evolutionIndex={desktopEvolution.evolutionIndex}
+            transitionBlend={desktopEvolution.transitionBlend}
+          />
+        </Suspense>
       </div>
 
       {/* ─── HUD Overlays (hidden during gate/checking/onboarding) ─── */}
@@ -1461,11 +1464,11 @@ export default function App() {
               } catch { /* use default */ }
 
               let tools: Array<{ name: string; description?: string; parameters?: unknown }> = [];
-              try { tools = await window.eve.desktop.listTools(); } catch {}
+              try { tools = await window.eve.desktop.listTools(); } catch { /* tools default to empty */ }
               try {
                 const fsTools = await window.eve.featureSetup.getToolDeclarations();
                 tools = [...tools, ...fsTools];
-              } catch {}
+              } catch { /* feature-setup tools optional */ }
 
               // Check if we have a Gemini key — route accordingly
               let hasGeminiKey = false;
@@ -1504,7 +1507,7 @@ export default function App() {
                 try {
                   const greeting = await window.eve.onboarding.getFirstGreeting();
                   if (greeting) setTimeout(() => sendText(greeting), 1500);
-                } catch {}
+                } catch { /* greeting is optional */ }
               } else {
                 // GEMINI PATH — existing cloud reconnect
                 await geminiLive.connect(newInstruction, tools, voiceName);
@@ -1517,7 +1520,7 @@ export default function App() {
                 try {
                   const greeting = await window.eve.onboarding.getFirstGreeting();
                   if (greeting) setTimeout(() => geminiLive.sendTextToGemini(greeting), 1500);
-                } catch {}
+                } catch { /* greeting is optional */ }
               }
             } catch (err) {
               console.error('[Agent] Reconnect after creation failed:', err);

@@ -1,8 +1,8 @@
 # Agent Friday — Living Architecture Document
 
 > **Method**: Adapted from Nick Tune's Domain-Driven Architecture mapping for monorepo Electron applications.
-> **Last updated**: 2026-03-24
-> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (10-step flow, graceful degradation for local-only operation), PersonaPlex voice path, Gemini WebSocket proxy (API key isolation in main process), 4-backend TTS cascade (Chatterbox Turbo > kokoro-js > Kokoro > Piper), 16-state voice state machine, living architecture flow documentation (`docs/architecture/flows/`).
+> **Last updated**: 2026-03-31
+> **Scope**: Complete system — main process, renderer, IPC bridge, agents, connectors, gateway, MCP, integrity, cryptographic security (Sovereign Vault, cLaw Attestation, Trusted File Transfer, Privacy Shield), multi-agent network (Track XI: Container Engine, Delegation Engine, Orchestration Bridge, Awareness Mesh, Capability Map, Symbiont Protocol), SOC, GitLoader, Trust Graph, Context Stream, Superpowers, Workflows, Git Analysis Suite, Intelligence Router (auto-configuration, local-first routing), tier-aware onboarding (10-step flow, graceful degradation for local-only operation), PersonaPlex voice path, Gemini WebSocket proxy (API key isolation in main process), 4-backend TTS cascade (Chatterbox Turbo > kokoro-js > Kokoro > Piper), 16-state voice state machine, autoresearch system (6-engine self-improvement loop with dev directives and TUNABLE zones), living architecture flow documentation (`docs/architecture/flows/`).
 
 ---
 
@@ -155,6 +155,15 @@ graph LR
         OFFICE_MGR[Agent Office]
     end
 
+    subgraph "Autoresearch & Self-Improvement"
+        ITER_LOOP[Iteration Engine]
+        DIR_PARSE[Directive Loader]
+        LEDGER[Results Ledger]
+        PROMPT_MUT[Prompt Evolver]
+        MODEL_SEL[Model Breeder]
+        TUNABLE_ADJ[Self-Improver]
+    end
+
     subgraph "Safety & Integrity"
         CLAWS[Core Laws]
         HMAC_SYS[HMAC Verification]
@@ -254,6 +263,13 @@ graph LR
     AGENT_FW --> DRAFT
     AGENT_FW --> OFFICE_MGR
 
+    ITER_LOOP --> DIR_PARSE
+    ITER_LOOP --> LEDGER
+    ITER_LOOP --> PROMPT_MUT
+    ITER_LOOP --> MODEL_SEL
+    ITER_LOOP --> TUNABLE_ADJ
+    AGENT_FW --> ITER_LOOP
+
     CLAWS --> HMAC_SYS
     HMAC_SYS --> WATCHDOG
     WATCHDOG --> SAFE_MODE
@@ -312,6 +328,7 @@ graph LR
 | Sovereign Vault | `vault.ts` | `friday-data/vault-meta.json` + encrypted files | Settings, Memory, Trust Graph save paths | All file I/O for sensitive data |
 | cLaw Attestation | `claw-attestation.ts` | In-memory (ephemeral) | Core laws, Agent network | Outbound/inbound P2P messages |
 | File Transfer | `network/file-transfer.ts` | `friday-data/file-transfers/`, audit JSON | Agent network, Trust Graph | Inbound file storage, audit trail |
+| Autoresearch | `agents/iteration-engine.ts`, `directive-loader.ts`, `results-ledger.ts`, `prompt-evolver.ts`, `model-breeder.ts`, `self-improver.ts` | `dev/` directives, TUNABLE zones | Agent framework, dev directives | Prompt mutations, model selection, TUNABLE adjustments |
 | Presentation | React components | React state, MoodContext | All main process data | User display |
 
 ---
@@ -358,6 +375,12 @@ graph TD
         CAPMAP[capability-map.ts<br/>Intelligent Agent Routing]
         SYMBIONT[symbiont-protocol.ts<br/>Cross-Agent Learning]
         OFFICE_MGR[office-manager.ts<br/>Pixel Office State]
+        ITER_ENG[iteration-engine.ts<br/>Autoresearch Loop Runner]
+        DIR_LOAD[directive-loader.ts<br/>Dev Directive Parser]
+        RES_LEDGER[results-ledger.ts<br/>Run History Tracker]
+        PROMPT_EVO[prompt-evolver.ts<br/>Prompt Mutation Engine]
+        MODEL_BREED[model-breeder.ts<br/>Model Selection Optimizer]
+        SELF_IMP[self-improver.ts<br/>TUNABLE Zone Adjuster]
     end
 
     subgraph "Safety Domain"
@@ -437,6 +460,13 @@ graph TD
     INDEX --> OPENROUTER
     INDEX --> VAULT_MOD
     INDEX --> FILE_XFER_MOD
+    INDEX --> ITER_ENG
+
+    ITER_ENG --> DIR_LOAD
+    ITER_ENG --> RES_LEDGER
+    ITER_ENG --> PROMPT_EVO
+    ITER_ENG --> MODEL_BREED
+    ITER_ENG --> SELF_IMP
 
     MEMORY --> SEMANTIC
     MEMORY --> OBSIDIAN
@@ -480,6 +510,9 @@ graph TD
 | `vault.ts` | 10+ | 2 | **Afferent hub** | Read/write by all persistent stores; depends on node-machine-id, crypto |
 | `claw-attestation.ts` | 1 | 2 | **Safety core** | Used by agent-network.ts; depends on core-laws, crypto |
 | `network/file-transfer.ts` | 1 | 3 | **Domain core** | Used by index.ts IPC; depends on vault, crypto, fs |
+| `agents/iteration-engine.ts` | 2 | 5 | **Orchestrator** | Drives autoresearch loop; coordinates directive-loader, results-ledger, prompt-evolver, model-breeder, self-improver |
+| `agents/directive-loader.ts` | 1 | 1 | **Adapter** | Parses `dev/` markdown directives into engine instructions |
+| `agents/self-improver.ts` | 1 | 1 | **Effector** | Writes TUNABLE zone adjustments back to source files |
 
 ---
 
@@ -1064,6 +1097,7 @@ sequenceDiagram
 | `code-review` | Claude Sonnet | 4096 | 0.1 | File reading, diff analysis, security scanning |
 | `draft-email` | Claude Sonnet | 2048 | 0.4 | Tone matching, recipient context, Gmail integration |
 | `orchestrate` | Claude Sonnet | 4096 | 0.3 | Task decomposition, multi-agent coordination |
+| `autoresearch` | Claude Sonnet | 4096 | 0.2 | Autonomous improvement loop: dev directive execution, TUNABLE zone adjustment, prompt mutation, model selection optimization via 6-engine pipeline |
 
 ---
 

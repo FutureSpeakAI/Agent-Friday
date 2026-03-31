@@ -469,7 +469,7 @@ function DesktopVizInner({
         container.removeChild(renderer.domElement);
       }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps — stable scene init callback
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- stable scene init callback
 
   useEffect(() => {
     initScene();

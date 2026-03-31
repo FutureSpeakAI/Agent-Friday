@@ -23,7 +23,7 @@ export default function LocalAITab({ settings, loadSettings, flash }: LocalAITab
     if (settings.localModelEnabled) {
       handleDiscover();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps — discover once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- discover once on mount
   }, []);
 
   const handleDiscover = async () => {

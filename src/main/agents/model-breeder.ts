@@ -153,7 +153,7 @@ Return ONLY a JSON array: [{"input": "test query", "criteria": "what good output
     ctx.setPhase('baseline model');
     ctx.setProgress(10);
 
-    let currentSpec = defaultSpec(baseModel, taskDescription);
+    const currentSpec = defaultSpec(baseModel, taskDescription);
 
     // Design initial prompt via Claude
     ctx.think('designing', 'Designing initial specialized system prompt');

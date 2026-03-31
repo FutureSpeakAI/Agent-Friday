@@ -44,13 +44,13 @@ export interface StreamData {
   entities: EntityRef[];
 }
 
-export interface BriefingData extends Array<{
+export type BriefingData = Array<{
   id: string;
   topic: string;
   content: string;
   priority: 'urgent' | 'relevant' | 'informational';
   timestamp: number;
-}> {}
+}>;
 
 export interface AppContext {
   activeStream: SerializedStream | null;

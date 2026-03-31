@@ -173,7 +173,7 @@ let _store: WorkContextStore | null = null;
 function getStore(): WorkContextStore {
   if (!_store) {
     // Access the preload-injected ipcRenderer
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer } = require('electron'); // eslint-disable-line @typescript-eslint/no-require-imports -- Electron renderer lazy singleton init
     _store = new WorkContextStore(ipcRenderer);
   }
   return _store;

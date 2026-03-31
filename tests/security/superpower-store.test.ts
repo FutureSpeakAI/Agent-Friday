@@ -17,7 +17,11 @@
  *  11. cLaw Gate Safety (consent boundary enforcement)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { randomUUID } from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 import {
   SuperpowerStore,
@@ -33,6 +37,19 @@ import {
 
 import type { CapabilityManifest, Capability, Dependency } from '../../src/main/capability-manifest';
 import type { LoadedRepo } from '../../src/main/git-loader';
+
+// ── Isolated temp directory per test run ─────────────────────────────
+const TEST_ROOT = path.join(os.tmpdir(), `sp-store-test-${randomUUID()}`);
+let testCounter = 0;
+
+/** Return a unique data dir for each test to prevent cross-test leakage. */
+function uniqueDataDir(): string {
+  return path.join(TEST_ROOT, `t${++testCounter}`);
+}
+
+afterAll(async () => {
+  try { await fs.rm(TEST_ROOT, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+});
 
 // ── Test Helpers ────────────────────────────────────────────────────
 
@@ -108,13 +125,13 @@ function makeVerdict(approved = true): SecurityVerdictSummary {
 describe('SuperpowerStore — Initialization', () => {
   it('should initialize with empty store', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test-data');
+    await store.initialize(uniqueDataDir());
     expect(store.getAll()).toHaveLength(0);
   });
 
   it('should report correct initial status', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test-data');
+    await store.initialize(uniqueDataDir());
     const status = store.getStatus();
     expect(status.totalInstalled).toBe(0);
     expect(status.totalEnabled).toBe(0);
@@ -131,7 +148,7 @@ describe('SuperpowerStore — Installation', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test-data');
+    await store.initialize(uniqueDataDir());
   });
 
   it('should prepare a superpower for installation', () => {
@@ -173,7 +190,7 @@ describe('SuperpowerStore — Installation', () => {
 
   it('should enforce superpower limit', async () => {
     const limitedStore = new SuperpowerStore({ maxSuperpowers: 2 });
-    await limitedStore.initialize('/tmp/test');
+    await limitedStore.initialize(uniqueDataDir());
 
     const c1 = makeConnector('lib-one');
     const c2 = makeConnector('lib-two');
@@ -218,7 +235,7 @@ describe('SuperpowerStore — Enable/Disable', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -266,7 +283,7 @@ describe('SuperpowerStore — Uninstall', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -304,7 +321,7 @@ describe('SuperpowerStore — Updates', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -363,7 +380,7 @@ describe('SuperpowerStore — Usage Tracking', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -411,7 +428,7 @@ describe('SuperpowerStore — Usage Tracking', () => {
 describe('SuperpowerStore — Auto-Disable', () => {
   it('should auto-disable after N consecutive errors', async () => {
     const store = new SuperpowerStore({ autoDisableAfterErrors: 3 });
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -435,7 +452,7 @@ describe('SuperpowerStore — Queries', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
   });
 
   it('should find superpower by tool name', () => {
@@ -494,7 +511,7 @@ describe('SuperpowerStore — Queries', () => {
 describe('SuperpowerStore — Import/Export', () => {
   it('should export all superpowers', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -507,14 +524,14 @@ describe('SuperpowerStore — Import/Export', () => {
 
   it('should import superpowers with consent tokens', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
     const exported = store.exportAll();
 
     const newStore = new SuperpowerStore();
-    await newStore.initialize('/tmp/test2');
+    await newStore.initialize(uniqueDataDir());
     const result = newStore.importAll(exported);
     expect(result.imported).toBe(1);
     expect(result.skipped).toBe(0);
@@ -522,7 +539,7 @@ describe('SuperpowerStore — Import/Export', () => {
 
   it('should skip imports without consent token', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
 
     const data = JSON.stringify([{ id: 'sp-bad', name: 'Bad', consentToken: '' }]);
     const result = store.importAll(data);
@@ -532,7 +549,7 @@ describe('SuperpowerStore — Import/Export', () => {
 
   it('should skip duplicate imports', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -544,7 +561,7 @@ describe('SuperpowerStore — Import/Export', () => {
 
   it('should handle invalid import data', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const result = store.importAll('not json');
     expect(result.errors.length).toBeGreaterThan(0);
   });
@@ -557,13 +574,13 @@ describe('SuperpowerStore — Import/Export', () => {
 describe('SuperpowerStore — Prompt Context', () => {
   it('should return empty string with no superpowers', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     expect(store.getPromptContext()).toBe('');
   });
 
   it('should include enabled superpowers in context', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -575,7 +592,7 @@ describe('SuperpowerStore — Prompt Context', () => {
 
   it('should exclude disabled superpowers from context', async () => {
     const store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
     const connector = makeConnector();
     store.prepareInstall(connector, makeVerdict(), 'url', 'abc');
     store.confirmInstall('sp-test_lib', 'token');
@@ -594,7 +611,7 @@ describe('cLaw Gate — Consent Boundary Enforcement', () => {
 
   beforeEach(async () => {
     store = new SuperpowerStore();
-    await store.initialize('/tmp/test');
+    await store.initialize(uniqueDataDir());
   });
 
   it('should NEVER install without consent token', () => {
