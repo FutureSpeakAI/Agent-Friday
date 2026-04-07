@@ -4,6 +4,43 @@ All notable changes to Agent Friday are documented in this file.
 
 ---
 
+## [3.14.0] — 2026-04-07 — Zero-Cost Stack: Gemma 4 + Unified Tool Loop + FridayForge
+
+### Summary
+
+Architectural overhaul for zero-cost local-first inference. Replaces Claude as the default model with Google Gemma 4 via Ollama, consolidates the three-branch tool loop into a single provider-agnostic implementation, and introduces five new subsystems: theme engine, session persistence, cost tracking, and a complete rewrite of FridayForge into a sovereign coding environment.
+
+### Added
+
+- **Gemma 4 model family** — 4 variants in the intelligence router: E2B (2.3B active), E4B (4.5B), 26B MoE (3.8B active, 256K context), 31B Dense. All zero-cost, Apache 2.0, native tool calling. The 26B MoE is the new default Ollama model
+- **Theme engine** (`src/renderer/themes/`) — JSON token-based theming (53 color tokens) with mood-reactive modifiers. 3 built-in themes: nexus-dark, nexus-light, nexus-midnight (OLED). ThemeProvider context wraps the app root. CSS variables injected on `:root`
+- **Session persistence** (`src/main/session-persistence.ts`) — JSONL DAG format with `id`/`parentId` for conversation branching. Auto-compaction when context exceeds `contextWindow - 16K reserve`. LLM-generated structured summaries (goal, constraints, progress, key decisions, next steps)
+- **Cost tracking** (`src/main/cost-tracker.ts`) — Per-turn token count and USD cost. Session aggregation by provider/model. Savings calculator (local $0 vs. cloud equivalent). Daily aggregates persisted to disk. Real-time UI updates via IPC
+- **FridayForge coding harness** — Complete rewrite from superpower store into sovereign coding environment: syntax highlighting, git-aware file tree, split-pane layout (editor + terminal + agent panel), real-time cost display, command history
+- **Dual content/details tool return** — Tool results truncated for LLM context (saves tokens) but full results passed as details for UI rendering
+- **ToolLoopEvent emission** — `turn_start`, `tool_start`, `tool_end`, `turn_end`, `loop_end` events for real-time UI streaming during tool execution
+- **Syntax highlighting CSS** — 9 token classes (keyword, string, comment, number, function, type, operator, constant, variable) in `global.css`
+
+### Changed
+
+- **Unified tool loop** (`server.ts`) — Replaced 3 parallel implementations (Anthropic direct SDK, local LLMClient, OpenRouter) with a single provider-agnostic loop through `llmClient.complete()`. Removed direct `@anthropic-ai/sdk` import from server.ts
+- **ClaudeToolLoopOptions** — Now uses unified `ChatMessage[]` and `ToolDefinition[]` types instead of `Anthropic.MessageParam[]` and `Anthropic.Tool[]`
+- **ClaudeToolLoopResult** — Extended with `provider`, `usage: { inputTokens, outputTokens }`, `latencyMs` for cost tracking
+- **gateway-manager.ts** — Migrated from `Anthropic.Tool[]` to unified `ToolDefinition[]`; removed `import type Anthropic`
+- **git-review.ts** — Migrated from `Anthropic.MessageParam[]` to `ChatMessage[]`; removed Anthropic SDK type import
+- **Ollama provider default** — Changed from `llama3.2` to `gemma4:26b`
+- **Onboarding ModelsStep** — Gemma 4 E4B/26B/31B now listed first in chat model options; defaults updated per tier (light→E4B, standard+→26B)
+- **Intelligence router `routeVia`** — Added `'ollama'` to the union type; Ollama models get local-first scoring bonus
+- **Startup Batch 2** — Added `costTracker.initialize()` and `sessionManager.initialize()` (26 parallel engines, up from 24)
+- **App quit handlers** — Added `costTracker.flush()` and `sessionManager.close()` to `before-quit`
+
+### Infrastructure
+
+- **IPC bridge** — Added `cost:*` (5 handlers) and `session:*` (7 handlers) to preload.ts, types.d.ts, and ipc/index.ts barrel export
+- **ThemeProvider** — Wraps `MoodProvider` as outermost context in App.tsx
+
+---
+
 ## [3.13.1] — 2026-03-31 — Sprint 2 Completion + Diagnostic Fixes
 
 ### Summary

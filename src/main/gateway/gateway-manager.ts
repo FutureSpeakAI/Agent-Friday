@@ -15,8 +15,7 @@
  *   filter tools → runClaudeToolLoop → send response → audit + memory
  */
 
-import type Anthropic from '@anthropic-ai/sdk';
-import { llmClient } from '../llm-client';
+import { llmClient, type ChatMessage, type ToolDefinition } from '../llm-client';
 import { mcpClient } from '../mcp-client';
 import { connectorRegistry } from '../connectors/registry';
 import { runClaudeToolLoop } from '../server';
@@ -163,7 +162,7 @@ class GatewayManager {
 
       // Get session history for conversational context
       const history = sessionStore.getHistory(msg.channel, msg.senderId);
-      const messages: Anthropic.MessageParam[] = [
+      const messages: ChatMessage[] = [
         ...history.map((h) => ({
           role: h.role as 'user' | 'assistant',
           content: h.content,
@@ -276,7 +275,7 @@ class GatewayManager {
    * Returns tools formatted for Anthropic API + routing name sets.
    */
   private async gatherFilteredTools(policy: import('./types').TrustPolicy): Promise<{
-    allTools: Anthropic.Tool[];
+    allTools: ToolDefinition[];
     browserToolNames: Set<string>;
     connectorToolNames: Set<string>;
   }> {
@@ -312,14 +311,14 @@ class GatewayManager {
       policy
     );
 
-    // Format for Anthropic API
-    const mcpFormatted: Anthropic.Tool[] = filteredMcp.map((t) => ({
+    // Format as unified ToolDefinition
+    const mcpFormatted: ToolDefinition[] = filteredMcp.map((t) => ({
       name: t.name,
       description: t.description || '',
-      input_schema: t.inputSchema || { type: 'object' as const, properties: {} },
-    })) as Anthropic.Tool[];
+      input_schema: (t.inputSchema || { type: 'object', properties: {} }) as Record<string, unknown>,
+    }));
 
-    const connectorFormatted: Anthropic.Tool[] = filteredConnectors.map((t) => ({
+    const connectorFormatted: ToolDefinition[] = filteredConnectors.map((t) => ({
       name: t.name,
       description: t.description || '',
       input_schema: {
@@ -327,7 +326,7 @@ class GatewayManager {
         properties: t.parameters.properties || {},
         ...(t.parameters.required ? { required: t.parameters.required } : {}),
       },
-    })) as Anthropic.Tool[];
+    }));
 
     // Note: Browser tools are NEVER included for gateway (no desktop access for remote tiers)
     // Only the 'local' tier gets browser tools, and that's handled by server.ts directly.

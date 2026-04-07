@@ -1,6 +1,6 @@
 # External Dependencies Reference
 
-> Agent Friday v3.13.0 — Last updated 2026-03-31
+> Agent Friday v3.14.0 — Last updated 2026-04-07
 
 ---
 
@@ -103,8 +103,22 @@ All local binaries follow a three-step discovery order unless noted otherwise:
 | Base URL | `http://localhost:11434` |
 | Health poll | Every 30 seconds |
 | Key endpoints | `/api/chat`, `/api/tags`, `/api/pull`, `/api/generate` |
-| Managed models | `llama3.1:8b`, `llama3.2`, `nomic-embed-text` (varies by user) |
+| Managed models | `llama3.1:8b`, `llama3.2`, `nomic-embed-text`, Gemma 4 family (varies by user) |
 | IPC namespace | `eve.ollama` |
+
+#### Gemma 4 Models (via Ollama)
+
+| Model | Parameters | Context Window | License |
+|---|---|---|---|
+| `gemma4:e2b` | ~2B | 128K | Apache 2.0 |
+| `gemma4:e4b` | ~4B | 128K | Apache 2.0 |
+| `gemma4:26b` | 26B MoE | 256K | Apache 2.0 |
+| `gemma4:31b` | 31B Dense | 256K | Apache 2.0 |
+
+- Zero cost, fully local via Ollama — no API key required
+- Native tool calling support (function declarations in chat API)
+- Apache 2.0 licensed — no usage restrictions, no telemetry
+- E2B/E4B suitable for lightweight tasks; 26B MoE and 31B Dense for complex reasoning
 
 Ollama lifecycle is managed by the main process. The app detects Ollama availability on startup and emits health-change events (`ollama:event:healthy`, `ollama:event:unhealthy`). Model pull progress is streamed via `ollama:event:pull-progress`.
 

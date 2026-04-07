@@ -13,6 +13,7 @@ import AgentOffice from './components/AgentOffice';
 import ActionFeed, { ActionItem } from './components/ActionFeed';
 import FileToast from './components/FileToast';
 import { MoodProvider } from './contexts/MoodContext';
+import { ThemeProvider } from './themes/ThemeContext';
 import { MoodVoiceOrb } from './components/MoodWrappers';
 const LazyMoodDesktopViz = React.lazy(() => import('./components/MoodDesktopViz'));
 import { useGeminiLive } from './hooks/useGeminiLive';
@@ -1299,6 +1300,7 @@ export default function App() {
   if (isOfficeWindow) return <OfficeApp />;
 
   return (
+    <ThemeProvider>
     <MoodProvider semanticState={semanticState}>
     <div style={styles.container}>
       {/* PassphraseGate — vault must be unlocked before anything else (returning users) */}
@@ -1641,6 +1643,7 @@ export default function App() {
       ))}
     </div>
     </MoodProvider>
+    </ThemeProvider>
   );
 }
 

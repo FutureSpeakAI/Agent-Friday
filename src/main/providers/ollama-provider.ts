@@ -32,8 +32,10 @@ import type { ProviderName } from '../intelligence-router';
 /** Default Ollama API base URL */
 const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
 
-/** Default model if none specified */
-const DEFAULT_MODEL = 'llama3.2';
+/** Default model if none specified — Gemma 4 26B MoE is the sweet spot:
+ *  25B total params, only 3.8B active per token, 256K context, native tool calling.
+ *  Falls back gracefully if not pulled yet (Ollama returns 404 → retry with llama3.2). */
+const DEFAULT_MODEL = 'gemma4:26b';
 
 /** How long to cache health check results (ms) */
 const HEALTH_CHECK_CACHE_MS = 60_000;

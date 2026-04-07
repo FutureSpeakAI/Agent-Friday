@@ -16,6 +16,14 @@ import { Cpu, Download, Check, AlertCircle, ExternalLink, X } from 'lucide-react
 import NextButton from './shared/NextButton';
 import CyberInput from './shared/CyberInput';
 
+/** Extract a human-readable message from an unknown catch value. */
+function errMsg(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message || fallback;
+  if (typeof err === 'string') return err || fallback;
+  return fallback;
+}
+
+
 // ── Types ──
 
 export type TierName = 'whisper' | 'light' | 'standard' | 'full' | 'sovereign';
@@ -58,8 +66,11 @@ interface ModelOption {
 }
 
 const CHAT_MODELS: ModelOption[] = [
-  { value: 'llama3.2',    label: 'llama3.2 (3B)',    detail: 'Fast & lightweight',   diskGB: 2.0, vramGB: 2.5 },
-  { value: 'llama3.1:8b', label: 'llama3.1:8b (8B)', detail: 'Smarter responses',    diskGB: 4.7, vramGB: 5.5 },
+  { value: 'gemma4:e4b',  label: 'Gemma 4 E4B (4.5B)',  detail: 'Fast, multimodal, tool calling',  diskGB: 5.5, vramGB: 2.5 },
+  { value: 'gemma4:26b',  label: 'Gemma 4 26B MoE',     detail: 'Best value — only 3.8B active, 256K context', diskGB: 18, vramGB: 15 },
+  { value: 'gemma4:31b',  label: 'Gemma 4 31B Dense',   detail: 'Frontier-class local, 256K context', diskGB: 20, vramGB: 18 },
+  { value: 'llama3.2',    label: 'Llama 3.2 (3B)',      detail: 'Lightweight fallback',  diskGB: 2.0, vramGB: 2.5 },
+  { value: 'llama3.1:8b', label: 'Llama 3.1 8B',        detail: 'Proven general purpose', diskGB: 4.7, vramGB: 5.5 },
 ];
 
 const WHISPER_MODELS: ModelOption[] = [
@@ -100,13 +111,13 @@ function getDefaults(tier: TierName | null): ModelSelections {
     return { chatModel: null, whisperModel: 'tiny', ttsEngine: 'cloud', embeddingModel: null };
   }
   if (tier === 'light') {
-    return { chatModel: 'llama3.2', whisperModel: 'tiny', ttsEngine: 'kokoro', embeddingModel: 'nomic-embed-text' };
+    return { chatModel: 'gemma4:e4b', whisperModel: 'tiny', ttsEngine: 'kokoro', embeddingModel: 'nomic-embed-text' };
   }
   if (tier === 'standard') {
-    return { chatModel: 'llama3.2', whisperModel: 'tiny', ttsEngine: 'kokoro', embeddingModel: 'nomic-embed-text' };
+    return { chatModel: 'gemma4:26b', whisperModel: 'tiny', ttsEngine: 'kokoro', embeddingModel: 'nomic-embed-text' };
   }
   // full / sovereign
-  return { chatModel: 'llama3.1:8b', whisperModel: 'tiny', ttsEngine: 'chatterbox', embeddingModel: 'nomic-embed-text' };
+  return { chatModel: 'gemma4:26b', whisperModel: 'tiny', ttsEngine: 'chatterbox', embeddingModel: 'nomic-embed-text' };
 }
 
 // ── Manifest builder ──
@@ -282,10 +293,11 @@ const ModelsStep: React.FC<ModelsStepProps> = ({ detectedTier, onComplete, onBac
 
         tasks[i].status = 'complete';
         tasks[i].percent = 100;
-      } catch (err: any) {
+      } catch (err) {
+        const msg = errMsg(err, 'Download failed');
         tasks[i].status = 'failed';
-        tasks[i].error = err?.message || 'Download failed';
-        setDownloadError(err?.message || 'Download failed');
+        tasks[i].error = msg;
+        setDownloadError(msg);
       }
 
       setDownloads([...tasks]);

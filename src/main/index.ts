@@ -168,6 +168,8 @@ import { osEvents } from './os-events';
 import { fileWatcher } from './file-watcher';
 import { briefingPipeline } from './briefing-pipeline';
 import { briefingDelivery } from './briefing-delivery';
+import { costTracker } from './cost-tracker';
+import { sessionManager } from './session-persistence';
 import {
   initializeNewVault,
   unlockVault,
@@ -239,6 +241,8 @@ import {
   registerConnectionStageHandlers,
   registerPersonaPlexVoicePathHandlers,
   registerTelemetryHandlers,
+  registerCostHandlers,
+  registerSessionHandlers,
   type ContextPushCleanup,
 } from './ipc';
 
@@ -612,8 +616,10 @@ app.whenReady().then(async () => {
       safe('Communications', () => communications.init()),
       safe('GitLoader', () => gitLoader.initialize()),
       safe('Meeting Intelligence', () => meetingIntelligence.initialize()),
+      safe('Cost tracker', () => costTracker.initialize()),
+      safe('Session persistence', () => sessionManager.initialize()),
     ]);
-    console.log(`[Friday] Batch 2 complete: 24 async engines initialized in ${Date.now() - startupTimer}ms`);
+    console.log(`[Friday] Batch 2 complete: 26 async engines initialized in ${Date.now() - startupTimer}ms`);
 
     // ── Batch 3: Engines with dependencies (after Batch 2) ─────────
     await Promise.all([
@@ -788,7 +794,12 @@ app.whenReady().then(async () => {
   registerPersonaPlexVoicePathHandlers();
   console.log('[IPC] Voice resilience handlers registered (state machine, fallback, stage monitor, personaplex)');
 
-  console.log('[IPC] Sprint 3-6 module handlers registered');
+  // ── Sprint 8: Zero-Cost Stack — Cost tracking, session persistence ──
+  registerCostHandlers();
+  registerSessionHandlers();
+  console.log('[IPC] Cost tracking + session persistence handlers registered');
+
+  console.log('[IPC] All module handlers registered');
 
   // ── Vault v2 IPC handlers ────────────────────────────────────────
   //
@@ -1027,6 +1038,9 @@ app.on('before-quit', () => {
   flushTextSession().catch(() => {});
   // Flush any pending chat history writes
   chatHistoryStore.flush().catch(() => {});
+  // Flush cost tracking aggregates and close session file
+  costTracker.flush().catch(() => {});
+  sessionManager.close().catch(() => {});
 });
 
 app.on('window-all-closed', async () => {

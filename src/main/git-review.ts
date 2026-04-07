@@ -25,7 +25,7 @@ import type { ScanReport, ScanFinding, RiskLevel } from './git-scanner';
 import type { BehavioralProfile } from './git-sandbox';
 import type { LoadedRepo, RepoFile } from './git-loader';
 import { runClaudeToolLoop } from './server';
-import type Anthropic from '@anthropic-ai/sdk';
+import type { ChatMessage } from './llm-client';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -477,7 +477,7 @@ export async function executeClaudeReview(
   const systemPrompt = buildReviewSystemPrompt();
   const userMessage = buildReviewUserMessage(files, scanReport, behavioralProfile);
 
-  const messages: Anthropic.MessageParam[] = [
+  const messages: ChatMessage[] = [
     { role: 'user', content: userMessage }
   ];
 

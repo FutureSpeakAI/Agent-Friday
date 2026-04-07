@@ -7,11 +7,13 @@
 | **Status** | Active, primary text interaction path |
 | **Type** | Request-response with streaming |
 | **Complexity** | Medium (multi-provider routing, tool loops, memory extraction) |
-| **Last Analysed** | 2026-03-24 |
+| **Last Analysed** | 2026-04-07 |
 
 ## Overview
 
-The text chat flow handles typed user messages from the renderer through to LLM processing and response rendering. Messages are entered via `TextInput`, routed through `App.tsx`'s `handleTextSend` to one of three backends (local Ollama, Gemini Live, or a Claude-powered Express endpoint), and responses stream back into the Zustand store for display by `ChatHistory`. Post-response hooks extract memories, create episodic records, and calibrate personality.
+The text chat flow handles typed user messages from the renderer through to LLM processing and response rendering. Messages are entered via `TextInput`, routed through `App.tsx`'s `handleTextSend` to the unified tool loop, and responses stream back into the Zustand store for display by `ChatHistory`. Post-response hooks extract memories, create episodic records, and calibrate personality.
+
+As of Sprint 8 (v3.14.0), the former three-branch implementation (local Ollama / Gemini Live / Claude Express) has been replaced by a unified tool loop that routes all providers through `llmClient.complete()`. The tool loop emits `ToolLoopEvents` for real-time UI streaming and tracks per-turn cost/usage via the cost tracker. Direct Anthropic SDK instantiation is no longer used in the chat path.
 
 ## Flow Boundaries
 
@@ -81,12 +83,14 @@ Note: The Express `POST /api/chat` endpoint exists in `server.ts:209` but is **n
 7. `handleClaude()` (server.ts:816) builds the system prompt via `buildSystemPrompt()` from `personality.ts`.
 8. History is trimmed to ~90k tokens via `trimHistoryToFit()` (server.ts:91-125).
 9. MCP tools, browser tools, and connector tools are gathered (server.ts:833-872).
-10. `runClaudeToolLoop()` (server.ts:459) executes the request:
-    - Checks preferred provider: OpenRouter, local, or Anthropic (default).
-    - For Anthropic: sends via SDK with Privacy Shield scrubbing.
+10. `runClaudeToolLoop()` (server.ts:459) executes the request via the unified tool loop:
+    - All providers route through `llmClient.complete()` — no direct Anthropic SDK instantiation.
+    - Emits `ToolLoopEvents` (`tool:start`, `tool:result`, `tool:error`) for real-time UI streaming.
     - Tool-use loop iterates up to 25 times, executing tool calls via MCP/browser/connectors.
+    - Tool results use the dual content/details pattern: truncated summary for LLM context, full output for UI display.
+    - Per-turn token usage and estimated USD cost are tracked by `costTracker`.
     - cLaw safe mode strips side-effect tools when integrity is compromised.
-11. Response is returned as `{ response, model, toolCalls }`.
+11. Response is returned as `{ response, model, toolCalls, usage }`.
 
 ### 5. Response Rendering (Renderer)
 

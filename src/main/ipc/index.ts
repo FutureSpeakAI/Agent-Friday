@@ -70,3 +70,7 @@ export { registerConnectionStageHandlers } from './connection-stage-handlers';
 export type { ConnectionStageHandlerDeps } from './connection-stage-handlers';
 export { registerPersonaPlexVoicePathHandlers } from '../voice/personaplex-voice-path';
 export { registerTelemetryHandlers } from './telemetry-handlers';
+
+// ── Sprint 8: Zero-Cost Stack — Cost tracking, session persistence ──
+export { registerCostHandlers } from './cost-handlers';
+export { registerSessionHandlers } from './session-handlers';
