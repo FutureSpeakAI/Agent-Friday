@@ -1,45 +1,54 @@
 /**
- * FridayForge.tsx — Agent Friday Superpower Forge
+ * FridayForge.tsx — Sovereign Coding Environment for Agent Friday
  *
- * Browse the registry, manage installed superpowers, and
- * discover capability gaps with auto-recommendations.
+ * Full coding harness with:
+ *   - Split-pane layout (file tree | editor | terminal + agents)
+ *   - Syntax highlighting via language-specific token coloring
+ *   - Git-aware file tree with status indicators
+ *   - Agent team panel showing active coding agents
+ *   - Real-time cost tracking (local = $0, cloud = $$$)
+ *   - Integrated terminal with code execution
  *
- * IPC: window.eve.ecosystem.*, window.eve.superpowers.*, window.eve.capabilityGaps.*
+ * Designed as the zero-cost coding experience powered by Gemma 4 via Ollama.
+ *
+ * IPC: window.eve.container.execute, window.eve.gitLoader.*,
+ *      window.eve.code.*, cost:session, cost:savings
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import AppShell from '../AppShell';
 import ContextBar from '../ContextBar';
 
-interface RegistryEntry {
-  id: string;
+// ── Types ─────────────────────────────────────────────────────────────
+
+interface FileNode {
   name: string;
-  description?: string;
-  version?: string;
-  author?: string;
-  category?: string;
-  rating?: number;
-  downloads?: number;
-  tags?: string[];
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileNode[];
+  gitStatus?: string;
 }
 
-interface InstalledPower {
+interface AgentTask {
   id: string;
-  name: string;
-  description?: string;
-  version?: string;
-  enabled: boolean;
-  status?: string;
-  installedAt?: string;
-}
-
-interface CapabilityGap {
-  id: string;
+  agentType: string;
   description: string;
-  severity?: string;
-  category?: string;
-  recommendation?: string;
-  recommendedPowerId?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  currentPhase?: string;
+}
+
+interface CostSession {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+  byProvider: Record<string, { tokens: number; costUsd: number; calls: number }>;
+}
+
+interface CostSavings {
+  localCost: number;
+  cloudEquivalent: number;
+  savedUsd: number;
 }
 
 interface Props {
@@ -47,459 +56,673 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'store' | 'installed' | 'gaps';
+type ActivePane = 'editor' | 'terminal' | 'agents';
+type Language = 'javascript' | 'typescript' | 'python' | 'bash' | 'html' | 'css' | 'json' | 'markdown';
+
+/** Map file extensions to languages */
+function detectLanguage(filename: string): Language {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, Language> = {
+    js: 'javascript', jsx: 'javascript', mjs: 'javascript',
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript',
+    py: 'python', pyw: 'python',
+    sh: 'bash', bash: 'bash', zsh: 'bash',
+    html: 'html', htm: 'html',
+    css: 'css', scss: 'css',
+    json: 'json', jsonl: 'json',
+    md: 'markdown', mdx: 'markdown',
+  };
+  return map[ext] || 'typescript';
+}
+
+/** Map git status codes to colors and labels */
+function gitStatusColor(status?: string): string {
+  if (!status) return 'transparent';
+  if (status.includes('M')) return '#f59e0b'; // modified
+  if (status.includes('A') || status.includes('?')) return '#22c55e'; // added/untracked
+  if (status.includes('D')) return '#ef4444'; // deleted
+  if (status.includes('R')) return '#8b5cf6'; // renamed
+  return '#8888a0';
+}
+
+/** File icon based on extension */
+function fileIcon(name: string, isDir: boolean): string {
+  if (isDir) return '\u{1F4C1}';
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  const icons: Record<string, string> = {
+    ts: '\u{1F535}', tsx: '\u{1F535}', js: '\u{1F7E1}', jsx: '\u{1F7E1}',
+    py: '\u{1F40D}', json: '\u{1F4CB}', md: '\u{1F4DD}',
+    html: '\u{1F310}', css: '\u{1F3A8}', sh: '\u{1F4DF}',
+  };
+  return icons[ext] || '\u{1F4C4}';
+}
+
+function errMsg(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message || fallback;
+  if (typeof err === 'string') return err || fallback;
+  return fallback;
+}
+
+// ── Syntax Highlighting (lightweight token-based) ─────────────────────
+
+function highlightLine(line: string, lang: Language): React.ReactNode[] {
+  if (lang === 'json' || lang === 'markdown') {
+    return [<span key="0">{line}</span>];
+  }
+
+  // Simple token-based highlighting (not a full parser — good enough for display)
+  const parts: Array<{ start: number; end: number; className: string }> = [];
+
+  // Comments first (highest priority)
+  const commentRe = /\/\/.*$|\/\*[\s\S]*?\*\//gm;
+  let m: RegExpExecArray | null;
+  while ((m = commentRe.exec(line)) !== null) {
+    parts.push({ start: m.index, end: m.index + m[0].length, className: 'sh-comment' });
+  }
+
+  // Strings
+  const stringRe = /(["'`])(?:(?!\1|\\).|\\.)*?\1/g;
+  while ((m = stringRe.exec(line)) !== null) {
+    parts.push({ start: m.index, end: m.index + m[0].length, className: 'sh-string' });
+  }
+
+  // Keywords
+  const kwRe = /\b(const|let|var|function|return|if|else|for|while|class|extends|import|export|from|default|new|try|catch|async|await|interface|type|enum)\b/g;
+  while ((m = kwRe.exec(line)) !== null) {
+    parts.push({ start: m.index, end: m.index + m[0].length, className: 'sh-keyword' });
+  }
+
+  // Numbers
+  const numRe = /\b\d+\.?\d*\b/g;
+  while ((m = numRe.exec(line)) !== null) {
+    parts.push({ start: m.index, end: m.index + m[0].length, className: 'sh-number' });
+  }
+
+  if (parts.length === 0) {
+    return [<span key="0">{line}</span>];
+  }
+
+  // Sort by start position, filter overlaps (comments/strings win)
+  parts.sort((a, b) => a.start - b.start);
+  const filtered: typeof parts = [];
+  let lastEnd = 0;
+  for (const part of parts) {
+    if (part.start >= lastEnd) {
+      filtered.push(part);
+      lastEnd = part.end;
+    }
+  }
+
+  // Build React elements
+  const elements: React.ReactNode[] = [];
+  let pos = 0;
+  for (let i = 0; i < filtered.length; i++) {
+    const part = filtered[i];
+    if (pos < part.start) {
+      elements.push(<span key={`t${i}`}>{line.slice(pos, part.start)}</span>);
+    }
+    elements.push(
+      <span key={`h${i}`} className={part.className}>
+        {line.slice(part.start, part.end)}
+      </span>
+    );
+    pos = part.end;
+  }
+  if (pos < line.length) {
+    elements.push(<span key="tail">{line.slice(pos)}</span>);
+  }
+
+  return elements;
+}
+
+// ── Component ─────────────────────────────────────────────────────────
 
 export default function FridayForge({ visible, onClose }: Props) {
-  const [registry, setRegistry] = useState<RegistryEntry[]>([]);
-  const [installed, setInstalled] = useState<InstalledPower[]>([]);
-  const [gaps, setGaps] = useState<CapabilityGap[]>([]);
-  const [loading, setLoading] = useState(true);
+  // File tree state
+  const [fileTree, setFileTree] = useState<FileNode[]>([]);
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  // Editor state
+  const [editorContent, setEditorContent] = useState('');
+  const [editorLanguage, setEditorLanguage] = useState<Language>('typescript');
+  const [editorModified, setEditorModified] = useState(false);
+  const [editorFileName, setEditorFileName] = useState('');
+
+  // Terminal state
+  const [terminalOutput, setTerminalOutput] = useState<Array<{ type: 'cmd' | 'stdout' | 'stderr'; text: string }>>([]);
+  const [terminalInput, setTerminalInput] = useState('');
+  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
+  const [_historyIdx, setHistoryIdx] = useState(-1);
+
+  // Agent state
+  const [agents, setAgents] = useState<AgentTask[]>([]);
+
+  // Cost state
+  const [costSession, setCostSession] = useState<CostSession | null>(null);
+  const [costSavings, setCostSavings] = useState<CostSavings | null>(null);
+
+  // UI state
+  const [activePane, setActivePane] = useState<ActivePane>('editor');
+  const [sidebarWidth] = useState(240);
+  const [bottomPaneHeight] = useState(220);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('store');
-  const [search, setSearch] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadStore = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await (window as any).eve.ecosystem.searchRegistry({});
-      setRegistry(Array.isArray(result) ? result : []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load registry');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
 
-  const loadInstalled = useCallback(async () => {
-    try {
-      const result = await (window as any).eve.superpowers.list();
-      setInstalled(Array.isArray(result) ? result : []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load installed superpowers');
-    }
-  }, []);
+  // ── Data Loading ──────────────────────────────────────────────────
 
-  const loadGaps = useCallback(async () => {
+  const loadFileTree = useCallback(async () => {
     try {
-      const result = await (window as any).eve.capabilityGaps.top();
-      setGaps(Array.isArray(result) ? result : []);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load capability gaps');
-    }
-  }, []);
-
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await Promise.all([loadStore(), loadInstalled(), loadGaps()]);
+      const repos = await (window as any).eve.gitLoader?.listLoaded?.();
+      if (repos && repos.length > 0) {
+        const tree = await (window as any).eve.gitLoader.getTree(repos[0]);
+        setFileTree(Array.isArray(tree) ? tree : []);
+      }
     } catch {
-      // Individual loaders handle their own errors
-    } finally {
-      setLoading(false);
+      // Git loader not available
     }
-  }, [loadStore, loadInstalled, loadGaps]);
+  }, []);
+
+  const loadCosts = useCallback(async () => {
+    try {
+      const [session, savings] = await Promise.all([
+        (window as any).eve?.cost?.session?.(),
+        (window as any).eve?.cost?.savings?.(),
+      ]);
+      if (session) setCostSession(session);
+      if (savings) setCostSavings(savings);
+    } catch {
+      // Cost tracking not available yet
+    }
+  }, []);
 
   useEffect(() => {
-    if (visible) loadAll();
-  }, [visible, loadAll]);
+    if (!visible) return;
+    loadFileTree();
+    loadCosts();
 
-  const handleSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      loadStore();
-      return;
-    }
-    setSearching(true);
-    try {
-      const result = await (window as any).eve.ecosystem.searchRegistry({ query: query.trim() });
-      setRegistry(Array.isArray(result) ? result : []);
-    } catch (err: any) {
-      setError(err?.message || 'Search failed');
-    } finally {
-      setSearching(false);
-    }
-  }, [loadStore]);
+    // Poll for agent updates
+    const interval = setInterval(() => {
+      loadCosts();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [visible, loadFileTree, loadCosts]);
 
-  const onSearchChange = (value: string) => {
-    setSearch(value);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => handleSearch(value), 400);
-  };
+  // Listen for agent updates
+  useEffect(() => {
+    const handler = (_event: unknown, task: AgentTask) => {
+      setAgents(prev => {
+        const idx = prev.findIndex(a => a.id === task.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = task;
+          return next;
+        }
+        return [...prev, task];
+      });
+    };
 
-  const handleInstall = async (id: string) => {
-    setActionInProgress(id);
+    (window as any).eve?.on?.('agents:update', handler);
+    return () => (window as any).eve?.off?.('agents:update', handler);
+  }, []);
+
+  // ── File Operations ───────────────────────────────────────────────
+
+  const openFile = useCallback(async (filePath: string) => {
+    setLoading(true);
     setError(null);
     try {
-      await (window as any).eve.superpowers.install(id);
-      await loadInstalled();
-    } catch (err: any) {
-      setError(err?.message || 'Install failed');
-    } finally {
-      setActionInProgress(null);
-    }
-  };
+      const repos = await (window as any).eve.gitLoader?.listLoaded?.();
+      if (!repos?.length) throw new Error('No repository loaded');
 
-  const handleUninstall = async (id: string) => {
-    setActionInProgress(id);
-    setError(null);
+      const content = await (window as any).eve.gitLoader.getFile(repos[0], filePath);
+      setEditorContent(content || '');
+      setSelectedFile(filePath);
+      setEditorFileName(filePath.split('/').pop() || filePath);
+      setEditorLanguage(detectLanguage(filePath));
+      setEditorModified(false);
+      setActivePane('editor');
+    } catch (err) {
+      setError(errMsg(err, 'Failed to open file'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const toggleDir = useCallback((dirPath: string) => {
+    setExpandedDirs(prev => {
+      const next = new Set(prev);
+      if (next.has(dirPath)) next.delete(dirPath);
+      else next.add(dirPath);
+      return next;
+    });
+  }, []);
+
+  // ── Terminal ──────────────────────────────────────────────────────
+
+  const runCommand = useCallback(async (cmd: string) => {
+    if (!cmd.trim()) return;
+
+    setTerminalOutput(prev => [...prev, { type: 'cmd', text: `$ ${cmd}` }]);
+    setTerminalHistory(prev => [...prev, cmd]);
+    setTerminalInput('');
+    setHistoryIdx(-1);
+
     try {
-      await (window as any).eve.superpowers.uninstall(id);
-      await loadInstalled();
-    } catch (err: any) {
-      setError(err?.message || 'Uninstall failed');
-    } finally {
-      setActionInProgress(null);
+      const result = await (window as any).eve.container?.execute?.({
+        code: cmd,
+        language: 'bash',
+      });
+
+      if (result?.stdout) {
+        setTerminalOutput(prev => [...prev, { type: 'stdout', text: result.stdout }]);
+      }
+      if (result?.stderr) {
+        setTerminalOutput(prev => [...prev, { type: 'stderr', text: result.stderr }]);
+      }
+    } catch (err) {
+      setTerminalOutput(prev => [...prev, { type: 'stderr', text: errMsg(err, 'Command failed') }]);
     }
-  };
 
-  const handleToggle = async (id: string, enabled: boolean) => {
-    setActionInProgress(id);
-    setError(null);
-    try {
-      await (window as any).eve.superpowers.toggle(id, enabled);
-      await loadInstalled();
-    } catch (err: any) {
-      setError(err?.message || 'Toggle failed');
-    } finally {
-      setActionInProgress(null);
+    // Scroll to bottom
+    requestAnimationFrame(() => {
+      if (terminalRef.current) {
+        terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+      }
+    });
+  }, []);
+
+  const handleTerminalKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      runCommand(terminalInput);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHistoryIdx(prev => {
+        const next = prev + 1;
+        if (next < terminalHistory.length) {
+          setTerminalInput(terminalHistory[terminalHistory.length - 1 - next]);
+          return next;
+        }
+        return prev;
+      });
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHistoryIdx(prev => {
+        const next = prev - 1;
+        if (next >= 0) {
+          setTerminalInput(terminalHistory[terminalHistory.length - 1 - next]);
+          return next;
+        }
+        setTerminalInput('');
+        return -1;
+      });
     }
-  };
+  }, [terminalInput, terminalHistory, runCommand]);
 
-  const isInstalled = (id: string): boolean =>
-    installed.some((p) => p.id === id);
+  // ── Editor Key Handling ───────────────────────────────────────────
 
-  const getSeverityColor = (severity?: string): string => {
-    switch (severity?.toLowerCase()) {
-      case 'critical': case 'high': return '#ef4444';
-      case 'medium': return '#f97316';
-      case 'low': return '#22c55e';
-      default: return '#8888a0';
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const target = e.currentTarget;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      const newValue = editorContent.substring(0, start) + '  ' + editorContent.substring(end);
+      setEditorContent(newValue);
+      setEditorModified(true);
+      requestAnimationFrame(() => {
+        target.selectionStart = target.selectionEnd = start + 2;
+      });
     }
+  }, [editorContent]);
+
+  // ── Computed Values ───────────────────────────────────────────────
+
+  const editorLines = useMemo(() => editorContent.split('\n'), [editorContent]);
+  const lineCount = editorLines.length;
+
+  const runningAgents = agents.filter(a => a.status === 'running' || a.status === 'queued');
+  const totalTokens = costSession ? costSession.totalInputTokens + costSession.totalOutputTokens : 0;
+  const savedAmount = costSavings?.savedUsd ?? 0;
+
+  // ── File Tree Renderer ────────────────────────────────────────────
+
+  const renderFileTree = (nodes: FileNode[], depth = 0): React.ReactNode[] => {
+    return nodes.map(node => {
+      const isDir = node.type === 'directory';
+      const isExpanded = expandedDirs.has(node.path);
+      const isSelected = node.path === selectedFile;
+      const indent = depth * 16;
+
+      return (
+        <React.Fragment key={node.path}>
+          <div
+            style={{
+              ...s.treeItem,
+              paddingLeft: 8 + indent,
+              background: isSelected ? 'rgba(0,240,255,0.08)' : 'transparent',
+              borderLeft: isSelected ? '2px solid #00f0ff' : '2px solid transparent',
+            }}
+            onClick={() => isDir ? toggleDir(node.path) : openFile(node.path)}
+            title={node.path}
+          >
+            <span style={s.treeIcon}>
+              {isDir ? (isExpanded ? '\u{1F4C2}' : '\u{1F4C1}') : fileIcon(node.name, false)}
+            </span>
+            <span style={{
+              ...s.treeName,
+              color: isSelected ? '#00f0ff' : '#e0e0e8',
+            }}>
+              {node.name}
+            </span>
+            {node.gitStatus && (
+              <span style={{
+                ...s.gitBadge,
+                color: gitStatusColor(node.gitStatus),
+              }}>
+                {node.gitStatus.trim()}
+              </span>
+            )}
+          </div>
+          {isDir && isExpanded && node.children && renderFileTree(node.children, depth + 1)}
+        </React.Fragment>
+      );
+    });
   };
 
-  const renderStars = (rating?: number): string => {
-    if (!rating) return '';
-    const full = Math.floor(rating);
-    const half = rating - full >= 0.5 ? 1 : 0;
-    return '\u2605'.repeat(full) + (half ? '\u00BD' : '') + '\u2606'.repeat(5 - full - half);
-  };
-
-  const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: 'store', label: 'Store', count: registry.length },
-    { key: 'installed', label: 'My Powers', count: installed.length },
-    { key: 'gaps', label: 'Gaps', count: gaps.length },
-  ];
+  // ── Render ────────────────────────────────────────────────────────
 
   return (
-    <AppShell visible={visible} onClose={onClose} title="Forge" icon="🛠️" width={980}>
+    <AppShell visible={visible} onClose={onClose} title="Forge" icon="\u{1F528}" width={1200} maxHeightVh={92}>
       <ContextBar appId="friday-forge" />
-      {/* Tab Bar */}
-      <div style={s.tabBar}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            style={{
-              ...s.tab,
-              ...(activeTab === t.key ? s.tabActive : {}),
-            }}
-            onClick={() => setActiveTab(t.key)}
-          >
-            {t.label}
-            <span style={s.tabBadge}>{t.count}</span>
-          </button>
-        ))}
+
+      {/* Status Bar */}
+      <div style={s.statusBar}>
+        <div style={s.statusLeft}>
+          <span style={s.statusItem}>
+            <span style={s.statusLabel}>Provider</span>
+            <span style={s.statusValue}>
+              {costSession?.byProvider && Object.keys(costSession.byProvider).length > 0
+                ? Object.keys(costSession.byProvider).join(' + ')
+                : 'ollama'}
+            </span>
+          </span>
+          <span style={s.statusDivider}>|</span>
+          <span style={s.statusItem}>
+            <span style={s.statusLabel}>Tokens</span>
+            <span style={s.statusValue}>{totalTokens.toLocaleString()}</span>
+          </span>
+          <span style={s.statusDivider}>|</span>
+          <span style={s.statusItem}>
+            <span style={s.statusLabel}>Cost</span>
+            <span style={{
+              ...s.statusValue,
+              color: (costSession?.totalCostUsd ?? 0) === 0 ? '#22c55e' : '#f59e0b',
+            }}>
+              ${(costSession?.totalCostUsd ?? 0).toFixed(4)}
+            </span>
+          </span>
+          {savedAmount > 0 && (
+            <>
+              <span style={s.statusDivider}>|</span>
+              <span style={s.statusItem}>
+                <span style={s.statusLabel}>Saved</span>
+                <span style={{ ...s.statusValue, color: '#22c55e' }}>
+                  ${savedAmount.toFixed(4)}
+                </span>
+              </span>
+            </>
+          )}
+        </div>
+        <div style={s.statusRight}>
+          {runningAgents.length > 0 && (
+            <span style={{ ...s.statusItem, color: '#8b5cf6' }}>
+              {runningAgents.length} agent{runningAgents.length > 1 ? 's' : ''} active
+            </span>
+          )}
+          {editorFileName && (
+            <span style={s.statusItem}>
+              {editorFileName}{editorModified ? ' *' : ''}
+              <span style={s.langBadge}>{editorLanguage}</span>
+            </span>
+          )}
+          <span style={s.statusItem}>{lineCount} lines</span>
+        </div>
       </div>
 
       {error && (
         <div style={s.errorBar}>
           <span>{error}</span>
-          <button style={s.dismissBtn} onClick={() => setError(null)}>
-            Dismiss
-          </button>
+          <button style={s.dismissBtn} onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
 
-      {loading ? (
-        <div style={s.center}>
-          <span style={s.spinner}>⟳</span>
-          <span style={s.secondaryText}>Loading forge...</span>
+      {/* Main Layout: Sidebar | Editor/Bottom */}
+      <div style={s.mainLayout}>
+        {/* Sidebar — File Tree */}
+        <div style={{ ...s.sidebar, width: sidebarWidth }}>
+          <div style={s.sidebarHeader}>
+            <span style={s.sidebarTitle}>Files</span>
+            <button style={s.refreshBtn} onClick={loadFileTree} title="Refresh">
+              \u21BB
+            </button>
+          </div>
+          <div style={s.fileTreeContainer}>
+            {fileTree.length === 0 ? (
+              <div style={s.emptyTree}>
+                <span style={s.mutedText}>No repository loaded</span>
+              </div>
+            ) : (
+              renderFileTree(fileTree)
+            )}
+          </div>
         </div>
-      ) : activeTab === 'store' ? (
-        /* ── Store Tab ── */
-        <div style={s.storeContainer}>
-          <div style={s.searchRow}>
-            <input
-              type="text"
-              placeholder="Search superpowers..."
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              style={s.searchInput}
-            />
-            {searching && <span style={s.searchingLabel}>Searching...</span>}
+
+        {/* Content Area */}
+        <div style={s.contentArea}>
+          {/* Editor (top) */}
+          <div style={{ ...s.editorArea, flex: 1 }}>
+            {loading ? (
+              <div style={s.centerContent}>
+                <span style={s.spinner}>\u27F3</span>
+                <span style={s.mutedText}>Loading...</span>
+              </div>
+            ) : editorContent ? (
+              <div style={s.editorContainer}>
+                {/* Line number gutter + highlighted code overlay */}
+                <div style={s.lineNumbers}>
+                  {editorLines.map((_, i) => (
+                    <div key={i} style={s.lineNumber}>{i + 1}</div>
+                  ))}
+                </div>
+                <div style={s.codeContainer}>
+                  {/* Syntax-highlighted overlay (read-only, rendered on top) */}
+                  <pre style={s.highlightOverlay} aria-hidden="true">
+                    {editorLines.map((line, i) => (
+                      <div key={i} style={s.codeLine}>
+                        {highlightLine(line, editorLanguage)}
+                      </div>
+                    ))}
+                  </pre>
+                  {/* Actual editable textarea (transparent text, captures input) */}
+                  <textarea
+                    ref={editorRef}
+                    style={s.editorTextarea}
+                    value={editorContent}
+                    onChange={e => {
+                      setEditorContent(e.target.value);
+                      setEditorModified(true);
+                    }}
+                    onKeyDown={handleEditorKeyDown}
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div style={s.centerContent}>
+                <div style={s.welcomeIcon}>{'\u{1F528}'}</div>
+                <div style={s.welcomeTitle}>Friday Forge</div>
+                <div style={s.welcomeSubtitle}>
+                  Select a file from the tree or open a repository to begin
+                </div>
+                <div style={s.welcomeFeatures}>
+                  <div style={s.featureItem}>
+                    <span style={s.featureDot}>{'\u{1F7E2}'}</span> Zero-cost local inference via Gemma 4
+                  </div>
+                  <div style={s.featureItem}>
+                    <span style={s.featureDot}>{'\u{1F535}'}</span> Agent team coding with live visualization
+                  </div>
+                  <div style={s.featureItem}>
+                    <span style={s.featureDot}>{'\u{1F7E3}'}</span> Privacy-first with cLaw governance
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {registry.length === 0 ? (
-            <div style={s.center}>
-              <div style={s.emptyIcon}>🔍</div>
-              <span style={s.mutedText}>No superpowers found</span>
-            </div>
-          ) : (
-            <div style={s.storeGrid}>
-              {registry.map((entry) => {
-                const alreadyInstalled = isInstalled(entry.id);
-                const busy = actionInProgress === entry.id;
-                return (
-                  <div key={entry.id} style={s.storeCard}>
-                    <div style={s.storeCardHeader}>
-                      <div style={{ flex: 1 }}>
-                        <div style={s.storeName}>{entry.name}</div>
-                        {entry.category && (
-                          <span style={s.categoryPill}>{entry.category}</span>
-                        )}
-                      </div>
-                      {entry.version && (
-                        <span style={s.versionBadge}>v{entry.version}</span>
-                      )}
-                    </div>
-                    {entry.description && (
-                      <div style={s.storeDesc}>{entry.description}</div>
-                    )}
-                    <div style={s.storeMeta}>
-                      {entry.author && (
-                        <span style={s.storeAuthor}>by {entry.author}</span>
-                      )}
-                      {entry.rating !== undefined && (
-                        <span style={s.storeRating}>
-                          {renderStars(entry.rating)}
-                        </span>
-                      )}
-                      {entry.downloads !== undefined && (
-                        <span style={s.storeDownloads}>
-                          {entry.downloads.toLocaleString()} installs
-                        </span>
-                      )}
-                    </div>
-                    {entry.tags && entry.tags.length > 0 && (
-                      <div style={s.tagsRow}>
-                        {entry.tags.slice(0, 4).map((t) => (
-                          <span key={t} style={s.tag}>{t}</span>
-                        ))}
-                      </div>
-                    )}
-                    <button
-                      style={alreadyInstalled ? s.installedBtn : s.installBtn}
-                      onClick={() => !alreadyInstalled && handleInstall(entry.id)}
-                      disabled={alreadyInstalled || busy}
-                    >
-                      {busy
-                        ? 'Installing...'
-                        : alreadyInstalled
-                        ? 'Installed'
-                        : 'Install'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      ) : activeTab === 'installed' ? (
-        /* ── Installed Tab ── */
-        <div style={s.installedContainer}>
-          {installed.length === 0 ? (
-            <div style={s.center}>
-              <div style={s.emptyIcon}>⚡</div>
-              <span style={s.mutedText}>No superpowers installed</span>
-              <button style={s.actionBtn} onClick={() => setActiveTab('store')}>
-                Browse Store
+          {/* Bottom Pane — Terminal / Agents */}
+          <div style={{ ...s.bottomPane, height: bottomPaneHeight }}>
+            {/* Bottom Pane Tabs */}
+            <div style={s.bottomTabs}>
+              <button
+                style={{
+                  ...s.bottomTab,
+                  ...(activePane === 'terminal' ? s.bottomTabActive : {}),
+                }}
+                onClick={() => setActivePane('terminal')}
+              >
+                Terminal
+              </button>
+              <button
+                style={{
+                  ...s.bottomTab,
+                  ...(activePane === 'agents' ? s.bottomTabActive : {}),
+                }}
+                onClick={() => setActivePane('agents')}
+              >
+                Agents
+                {runningAgents.length > 0 && (
+                  <span style={s.agentBadge}>{runningAgents.length}</span>
+                )}
               </button>
             </div>
-          ) : (
-            installed.map((power) => {
-              const busy = actionInProgress === power.id;
-              return (
-                <div key={power.id} style={s.powerCard}>
-                  <div style={s.powerHeader}>
-                    <div
-                      style={{
-                        ...s.powerStatusDot,
-                        background: power.enabled ? '#22c55e' : '#4a4a62',
-                      }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={s.powerName}>{power.name}</div>
-                      {power.description && (
-                        <div style={s.powerDesc}>{power.description}</div>
-                      )}
-                      <div style={s.powerMeta}>
-                        {power.version && (
-                          <span style={s.versionBadge}>v{power.version}</span>
-                        )}
-                        {power.installedAt && (
-                          <span style={s.mutedText}>
-                            Installed: {new Date(power.installedAt).toLocaleDateString()}
-                          </span>
-                        )}
-                        {power.status && (
-                          <span
-                            style={{
-                              ...s.statusPill,
-                              color:
-                                power.status === 'error'
-                                  ? '#ef4444'
-                                  : power.status === 'running'
-                                  ? '#22c55e'
-                                  : '#8888a0',
-                            }}
-                          >
-                            {power.status}
-                          </span>
+
+            {/* Terminal Content */}
+            {activePane === 'terminal' && (
+              <div style={s.terminalContainer}>
+                <div ref={terminalRef} style={s.terminalOutput}>
+                  {terminalOutput.length === 0 ? (
+                    <div style={s.terminalWelcome}>
+                      Friday Forge Terminal — Type a command to begin
+                    </div>
+                  ) : (
+                    terminalOutput.map((line, i) => (
+                      <div key={i} style={{
+                        ...s.terminalLine,
+                        color: line.type === 'stderr' ? '#ef4444'
+                          : line.type === 'cmd' ? '#00f0ff'
+                          : '#e0e0e8',
+                      }}>
+                        {line.text}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={s.terminalInputRow}>
+                  <span style={s.terminalPrompt}>$</span>
+                  <input
+                    type="text"
+                    value={terminalInput}
+                    onChange={e => setTerminalInput(e.target.value)}
+                    onKeyDown={handleTerminalKeyDown}
+                    style={s.terminalInputField}
+                    placeholder="Enter command..."
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Agents Content */}
+            {activePane === 'agents' && (
+              <div style={s.agentsContainer}>
+                {agents.length === 0 ? (
+                  <div style={s.agentsEmpty}>
+                    <span style={s.mutedText}>No agents running</span>
+                  </div>
+                ) : (
+                  agents.slice(-10).map(agent => (
+                    <div key={agent.id} style={s.agentCard}>
+                      <div style={{
+                        ...s.agentStatusDot,
+                        background: agent.status === 'running' ? '#22c55e'
+                          : agent.status === 'queued' ? '#f59e0b'
+                          : agent.status === 'failed' ? '#ef4444'
+                          : '#4a4a62',
+                      }} />
+                      <div style={s.agentInfo}>
+                        <div style={s.agentName}>{agent.agentType}</div>
+                        <div style={s.agentDesc}>{agent.description}</div>
+                        {agent.currentPhase && (
+                          <div style={s.agentPhase}>{agent.currentPhase}</div>
                         )}
                       </div>
+                      {agent.status === 'running' && (
+                        <div style={s.agentProgress}>
+                          <div style={{
+                            ...s.agentProgressBar,
+                            width: `${agent.progress}%`,
+                          }} />
+                        </div>
+                      )}
                     </div>
-                    <div style={s.powerActions}>
-                      <button
-                        style={{
-                          ...s.toggleSwitch,
-                          background: power.enabled
-                            ? 'rgba(34,197,94,0.15)'
-                            : 'rgba(255,255,255,0.03)',
-                          borderColor: power.enabled
-                            ? 'rgba(34,197,94,0.4)'
-                            : 'rgba(255,255,255,0.07)',
-                        }}
-                        onClick={() => handleToggle(power.id, !power.enabled)}
-                        disabled={busy}
-                        title={power.enabled ? 'Disable' : 'Enable'}
-                      >
-                        <div
-                          style={{
-                            ...s.toggleKnob,
-                            transform: power.enabled
-                              ? 'translateX(16px)'
-                              : 'translateX(0)',
-                            background: power.enabled ? '#22c55e' : '#4a4a62',
-                          }}
-                        />
-                      </button>
-                      <button
-                        style={s.uninstallBtn}
-                        onClick={() => handleUninstall(power.id)}
-                        disabled={busy}
-                        title="Uninstall"
-                      >
-                        {busy ? '...' : 'Uninstall'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      ) : (
-        /* ── Gaps Tab ── */
-        <div style={s.gapsContainer}>
-          {gaps.length === 0 ? (
-            <div style={s.center}>
-              <div style={s.emptyIcon}>✨</div>
-              <span style={s.mutedText}>No capability gaps detected</span>
-              <span style={s.secondaryText}>
-                Your agent is fully equipped
-              </span>
-            </div>
-          ) : (
-            gaps.map((gap) => {
-              const busy = actionInProgress === gap.recommendedPowerId;
-              return (
-                <div key={gap.id} style={s.gapCard}>
-                  <div style={s.gapHeader}>
-                    <div
-                      style={{
-                        ...s.severityBadge,
-                        color: getSeverityColor(gap.severity),
-                        borderColor: `${getSeverityColor(gap.severity)}44`,
-                        background: `${getSeverityColor(gap.severity)}11`,
-                      }}
-                    >
-                      {gap.severity || 'unknown'}
-                    </div>
-                    {gap.category && (
-                      <span style={s.gapCategory}>{gap.category}</span>
-                    )}
-                  </div>
-                  <div style={s.gapDesc}>{gap.description}</div>
-                  {gap.recommendation && (
-                    <div style={s.gapRecommendation}>
-                      <span style={s.recLabel}>Recommendation:</span>
-                      <span style={s.recText}>{gap.recommendation}</span>
-                    </div>
-                  )}
-                  {gap.recommendedPowerId && (
-                    <button
-                      style={s.installRecommendedBtn}
-                      onClick={() => handleInstall(gap.recommendedPowerId!)}
-                      disabled={
-                        busy || isInstalled(gap.recommendedPowerId)
-                      }
-                    >
-                      {busy
-                        ? 'Installing...'
-                        : isInstalled(gap.recommendedPowerId)
-                        ? 'Already Installed'
-                        : 'Install Recommended'}
-                    </button>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
+      </div>
     </AppShell>
   );
 }
 
-/* ── Styles ─────────────────────────────────────────────────────────────── */
+// ── Styles ─────────────────────────────────────────────────────────────
+
 const s: Record<string, React.CSSProperties> = {
-  tabBar: {
+  // Status Bar
+  statusBar: {
     display: 'flex',
-    gap: 4,
-    borderBottom: '1px solid rgba(255,255,255,0.07)',
-    paddingBottom: 12,
-    marginBottom: 4,
-  },
-  tab: {
-    background: 'transparent',
-    border: '1px solid transparent',
-    borderRadius: 8,
-    padding: '6px 14px',
-    color: '#8888a0',
-    fontSize: 13,
-    fontWeight: 500,
-    cursor: 'pointer',
-    fontFamily: "'Inter', system-ui, sans-serif",
-    display: 'flex',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 6,
-    transition: 'all 0.15s',
-  },
-  tabActive: {
-    background: 'rgba(0,240,255,0.08)',
-    borderColor: 'rgba(0,240,255,0.3)',
-    color: '#00f0ff',
-  },
-  tabBadge: {
-    fontSize: 10,
-    fontWeight: 700,
-    background: 'rgba(255,255,255,0.06)',
-    borderRadius: 10,
-    padding: '1px 6px',
+    padding: '4px 12px',
+    borderBottom: '1px solid rgba(255,255,255,0.07)',
+    background: 'rgba(0,0,0,0.3)',
+    fontSize: 11,
     fontFamily: "'JetBrains Mono', monospace",
+    gap: 8,
+    flexShrink: 0,
+  },
+  statusLeft: { display: 'flex', alignItems: 'center', gap: 8 },
+  statusRight: { display: 'flex', alignItems: 'center', gap: 12 },
+  statusItem: { display: 'flex', alignItems: 'center', gap: 4, color: '#8888a0' },
+  statusLabel: { color: '#4a4a62', fontSize: 10 },
+  statusValue: { color: '#e0e0e8', fontWeight: 600 },
+  statusDivider: { color: '#2a2a3a' },
+  langBadge: {
+    marginLeft: 4,
+    fontSize: 9,
+    padding: '1px 4px',
+    borderRadius: 3,
+    background: 'rgba(0,240,255,0.1)',
+    color: '#00f0ff',
   },
   errorBar: {
     display: 'flex',
@@ -507,342 +730,388 @@ const s: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     background: 'rgba(239,68,68,0.1)',
     border: '1px solid rgba(239,68,68,0.3)',
-    borderRadius: 8,
-    padding: '6px 12px',
+    borderRadius: 0,
+    padding: '4px 12px',
     color: '#ef4444',
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: "'Inter', system-ui, sans-serif",
+    flexShrink: 0,
   },
   dismissBtn: {
     background: 'none',
     border: 'none',
     color: '#ef4444',
     cursor: 'pointer',
-    fontSize: 11,
+    fontSize: 10,
   },
-  storeContainer: {
+
+  // Main Layout
+  mainLayout: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+
+  // Sidebar
+  sidebar: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 12,
-    flex: 1,
-  },
-  searchRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  searchInput: {
-    flex: 1,
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.07)',
-    borderRadius: 8,
-    padding: '8px 12px',
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    outline: 'none',
-  },
-  searchingLabel: {
-    fontSize: 12,
-    color: '#00f0ff',
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  storeGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-    gap: 10,
-    overflowY: 'auto',
-    flex: 1,
-  },
-  storeCard: {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.07)',
-    borderRadius: 12,
-    padding: 14,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  storeCardHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  storeName: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: 700,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    marginBottom: 3,
-  },
-  categoryPill: {
-    fontSize: 10,
-    fontWeight: 700,
-    color: '#8A2BE2',
-    background: 'rgba(138,43,226,0.12)',
-    padding: '2px 8px',
-    borderRadius: 4,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    textTransform: 'uppercase' as const,
-  },
-  versionBadge: {
-    fontSize: 10,
-    color: '#8888a0',
-    fontFamily: "'JetBrains Mono', monospace",
-    background: 'rgba(255,255,255,0.06)',
-    padding: '2px 6px',
-    borderRadius: 4,
+    borderRight: '1px solid rgba(255,255,255,0.07)',
+    background: 'rgba(0,0,0,0.2)',
     flexShrink: 0,
   },
-  storeDesc: {
-    color: '#8888a0',
-    fontSize: 12,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    lineHeight: 1.4,
-  },
-  storeMeta: {
-    display: 'flex',
-    gap: 10,
-    fontSize: 11,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    flexWrap: 'wrap',
-  },
-  storeAuthor: { color: '#4a4a62' },
-  storeRating: { color: '#f97316' },
-  storeDownloads: { color: '#4a4a62' },
-  tagsRow: {
-    display: 'flex',
-    gap: 4,
-    flexWrap: 'wrap',
-  },
-  tag: {
-    fontSize: 10,
-    color: '#8A2BE2',
-    background: 'rgba(138,43,226,0.1)',
-    padding: '1px 6px',
-    borderRadius: 3,
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  installBtn: {
-    marginTop: 'auto',
-    background: 'rgba(0,240,255,0.12)',
-    border: '1px solid rgba(0,240,255,0.3)',
-    borderRadius: 8,
-    padding: '6px 14px',
-    color: '#00f0ff',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: "'Inter', system-ui, sans-serif",
-    alignSelf: 'flex-start',
-  },
-  installedBtn: {
-    marginTop: 'auto',
-    background: 'rgba(34,197,94,0.08)',
-    border: '1px solid rgba(34,197,94,0.2)',
-    borderRadius: 8,
-    padding: '6px 14px',
-    color: '#22c55e',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'default',
-    fontFamily: "'Inter', system-ui, sans-serif",
-    alignSelf: 'flex-start',
-  },
-  installedContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    flex: 1,
-    overflowY: 'auto',
-  },
-  powerCard: {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.07)',
-    borderRadius: 10,
-    padding: '12px 14px',
-  },
-  powerHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  powerStatusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    marginTop: 4,
-    flexShrink: 0,
-  },
-  powerName: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: 600,
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  powerDesc: {
-    color: '#8888a0',
-    fontSize: 12,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    marginTop: 2,
-  },
-  powerMeta: {
-    display: 'flex',
-    gap: 10,
-    alignItems: 'center',
-    marginTop: 6,
-    flexWrap: 'wrap',
-  },
-  statusPill: {
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: 'capitalize' as const,
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  powerActions: {
+  sidebarHeader: {
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    flexShrink: 0,
-  },
-  toggleSwitch: {
-    width: 36,
-    height: 20,
-    borderRadius: 10,
-    border: '1px solid',
-    position: 'relative',
-    cursor: 'pointer',
-    padding: 2,
-    transition: 'all 0.2s',
-  },
-  toggleKnob: {
-    width: 14,
-    height: 14,
-    borderRadius: '50%',
-    transition: 'transform 0.2s, background 0.2s',
-  },
-  uninstallBtn: {
-    background: 'rgba(239,68,68,0.08)',
-    border: '1px solid rgba(239,68,68,0.2)',
-    borderRadius: 6,
-    padding: '4px 10px',
-    color: '#ef4444',
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  gapsContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-    flex: 1,
-    overflowY: 'auto',
-  },
-  gapCard: {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.07)',
-    borderRadius: 10,
-    padding: 14,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  gapHeader: {
-    display: 'flex',
-    gap: 8,
-    alignItems: 'center',
-  },
-  severityBadge: {
-    fontSize: 10,
-    fontWeight: 700,
-    border: '1px solid',
-    borderRadius: 6,
-    padding: '2px 8px',
-    textTransform: 'uppercase' as const,
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  gapCategory: {
-    fontSize: 11,
-    color: '#8888a0',
-    fontFamily: "'Inter', system-ui, sans-serif",
-  },
-  gapDesc: {
-    color: '#F8FAFC',
-    fontSize: 13,
-    fontFamily: "'Inter', system-ui, sans-serif",
-    lineHeight: 1.4,
-  },
-  gapRecommendation: {
-    background: 'rgba(0,240,255,0.05)',
-    border: '1px solid rgba(0,240,255,0.15)',
-    borderRadius: 8,
+    justifyContent: 'space-between',
     padding: '8px 10px',
+    borderBottom: '1px solid rgba(255,255,255,0.05)',
+  },
+  sidebarTitle: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: '#8888a0',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    fontFamily: "'Inter', system-ui, sans-serif",
+  },
+  refreshBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#4a4a62',
+    cursor: 'pointer',
+    fontSize: 14,
+    padding: 2,
+  },
+  fileTreeContainer: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+  },
+  emptyTree: {
+    padding: 20,
+    textAlign: 'center' as const,
+  },
+  treeItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '3px 8px',
+    cursor: 'pointer',
+    fontSize: 12,
+    fontFamily: "'Inter', system-ui, sans-serif",
+    borderLeft: '2px solid transparent',
+    transition: 'background 0.1s',
+  },
+  treeIcon: { fontSize: 12, flexShrink: 0, width: 16, textAlign: 'center' as const },
+  treeName: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+    flex: 1,
+  },
+  gitBadge: {
+    fontSize: 9,
+    fontWeight: 700,
+    fontFamily: "'JetBrains Mono', monospace",
+    flexShrink: 0,
+  },
+
+  // Content Area
+  contentArea: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 3,
+    flex: 1,
+    minWidth: 0,
   },
-  recLabel: {
-    fontSize: 10,
-    fontWeight: 700,
-    color: '#00f0ff',
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase' as const,
-    fontFamily: "'Inter', system-ui, sans-serif",
+
+  // Editor Area
+  editorArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    borderBottom: '1px solid rgba(255,255,255,0.07)',
   },
-  recText: {
+  editorContainer: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'auto',
+    background: '#0a0a14',
+    position: 'relative' as const,
+  },
+  lineNumbers: {
+    padding: '8px 0',
+    borderRight: '1px solid rgba(255,255,255,0.05)',
+    background: '#08080f',
+    flexShrink: 0,
+    userSelect: 'none' as const,
+    minWidth: 48,
+  },
+  lineNumber: {
+    padding: '0 8px 0 12px',
     fontSize: 12,
-    color: '#F8FAFC',
-    fontFamily: "'Inter', system-ui, sans-serif",
-    lineHeight: 1.4,
+    lineHeight: '20px',
+    color: '#3a3a4a',
+    fontFamily: "'JetBrains Mono', monospace",
+    textAlign: 'right' as const,
   },
-  installRecommendedBtn: {
-    alignSelf: 'flex-start',
-    background: 'rgba(34,197,94,0.12)',
-    border: '1px solid rgba(34,197,94,0.3)',
-    borderRadius: 8,
-    padding: '6px 14px',
-    color: '#22c55e',
+  codeContainer: {
+    flex: 1,
+    position: 'relative' as const,
+    minWidth: 0,
+  },
+  highlightOverlay: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    padding: '8px 12px',
+    margin: 0,
+    fontFamily: "'JetBrains Mono', monospace",
     fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: "'Inter', system-ui, sans-serif",
+    lineHeight: '20px',
+    color: '#e0e0e8',
+    whiteSpace: 'pre' as const,
+    pointerEvents: 'none' as const,
+    overflow: 'visible',
+    background: 'transparent',
+    border: 'none',
   },
-  actionBtn: {
-    marginTop: 8,
-    background: 'rgba(0,240,255,0.12)',
-    border: '1px solid rgba(0,240,255,0.3)',
-    borderRadius: 8,
-    padding: '6px 16px',
-    color: '#00f0ff',
+  codeLine: {
+    height: 20,
+    whiteSpace: 'pre' as const,
+  },
+  editorTextarea: {
+    position: 'relative' as const,
+    width: '100%',
+    height: '100%',
+    padding: '8px 12px',
+    margin: 0,
+    fontFamily: "'JetBrains Mono', monospace",
     fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: "'Inter', system-ui, sans-serif",
+    lineHeight: '20px',
+    color: 'transparent',
+    caretColor: '#00f0ff',
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    resize: 'none' as const,
+    overflow: 'auto',
+    whiteSpace: 'pre' as const,
+    tabSize: 2,
   },
-  center: {
+
+  // Welcome Screen
+  centerContent: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    padding: 40,
     flex: 1,
+    gap: 12,
+    padding: 40,
   },
-  spinner: {
-    fontSize: 28,
-    color: '#00f0ff',
-    animation: 'spin 1s linear infinite',
-  },
-  secondaryText: {
-    color: '#8888a0',
-    fontSize: 12,
+  welcomeIcon: { fontSize: 48, opacity: 0.4 },
+  welcomeTitle: {
+    fontSize: 20,
+    fontWeight: 700,
+    color: '#e0e0e8',
     fontFamily: "'Inter', system-ui, sans-serif",
   },
+  welcomeSubtitle: {
+    fontSize: 13,
+    color: '#8888a0',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    textAlign: 'center' as const,
+  },
+  welcomeFeatures: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 16,
+  },
+  featureItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 12,
+    color: '#8888a0',
+    fontFamily: "'Inter', system-ui, sans-serif",
+  },
+  featureDot: { fontSize: 10 },
+
+  // Bottom Pane
+  bottomPane: {
+    display: 'flex',
+    flexDirection: 'column',
+    background: 'rgba(0,0,0,0.3)',
+    flexShrink: 0,
+  },
+  bottomTabs: {
+    display: 'flex',
+    gap: 0,
+    borderBottom: '1px solid rgba(255,255,255,0.05)',
+    flexShrink: 0,
+  },
+  bottomTab: {
+    padding: '6px 14px',
+    border: 'none',
+    background: 'transparent',
+    color: '#4a4a62',
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    borderBottom: '2px solid transparent',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  bottomTabActive: {
+    color: '#00f0ff',
+    borderBottomColor: '#00f0ff',
+    background: 'rgba(0,240,255,0.03)',
+  },
+  agentBadge: {
+    fontSize: 9,
+    fontWeight: 700,
+    background: 'rgba(139,92,246,0.2)',
+    color: '#8b5cf6',
+    borderRadius: 8,
+    padding: '1px 5px',
+    fontFamily: "'JetBrains Mono', monospace",
+  },
+
+  // Terminal
+  terminalContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    overflow: 'hidden',
+  },
+  terminalOutput: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '8px 12px',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 12,
+    lineHeight: 1.5,
+    background: '#070710',
+  },
+  terminalWelcome: {
+    color: '#4a4a62',
+    fontStyle: 'italic' as const,
+  },
+  terminalLine: {
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-all' as const,
+  },
+  terminalInputRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '6px 12px',
+    borderTop: '1px solid rgba(255,255,255,0.05)',
+    background: '#050508',
+  },
+  terminalPrompt: {
+    color: '#00f0ff',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 12,
+    fontWeight: 700,
+    flexShrink: 0,
+  },
+  terminalInputField: {
+    flex: 1,
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: '#e0e0e8',
+    fontFamily: "'JetBrains Mono', monospace",
+    fontSize: 12,
+    caretColor: '#00f0ff',
+  },
+
+  // Agents Panel
+  agentsContainer: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '8px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  agentsEmpty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  agentCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '8px 10px',
+    background: 'rgba(255,255,255,0.02)',
+    border: '1px solid rgba(255,255,255,0.05)',
+    borderRadius: 8,
+  },
+  agentStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+  agentInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  agentName: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: '#e0e0e8',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    textTransform: 'capitalize' as const,
+  },
+  agentDesc: {
+    fontSize: 10,
+    color: '#8888a0',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  agentPhase: {
+    fontSize: 10,
+    color: '#00f0ff',
+    fontFamily: "'JetBrains Mono', monospace",
+    marginTop: 2,
+  },
+  agentProgress: {
+    width: 60,
+    height: 4,
+    background: 'rgba(255,255,255,0.05)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  agentProgressBar: {
+    height: '100%',
+    background: '#22c55e',
+    borderRadius: 2,
+    transition: 'width 0.3s',
+  },
+
+  // Shared
   mutedText: {
     color: '#4a4a62',
     fontSize: 12,
     fontFamily: "'Inter', system-ui, sans-serif",
   },
-  emptyIcon: { fontSize: 32, opacity: 0.5 },
+  spinner: {
+    fontSize: 24,
+    color: '#00f0ff',
+    animation: 'spin 1s linear infinite',
+  },
 };

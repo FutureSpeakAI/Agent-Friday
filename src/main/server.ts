@@ -3,15 +3,13 @@ import cors from 'cors';
 import crypto from 'crypto';
 import path from 'path';
 import dotenv from 'dotenv';
-import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { mcpClient } from './mcp-client';
 import { buildSystemPrompt } from './personality';
 import { browserToolDefs, executeBrowserTool } from './browser';
 import { connectorRegistry } from './connectors/registry';
-import { openRouter, OpenRouterMessage, OpenRouterTool } from './openrouter';
 import { settingsManager } from './settings';
-import { llmClient, type ChatMessage, type ToolDefinition } from './llm-client';
+import { llmClient, type ChatMessage, type ToolDefinition, type LLMResponse } from './llm-client';
 import { privacyShield } from './privacy-shield';
 import { integrityManager } from './integrity';
 import { assertMessageArray } from './ipc/validate';
@@ -19,6 +17,7 @@ import { memoryManager } from './memory';
 import { episodicMemory } from './episodic-memory';
 import { personalityCalibration } from './personality-calibration';
 import { encode } from 'gpt-tokenizer';
+import type { ProviderName } from './intelligence-router';
 
 /**
  * cLaw Security Fix (CRITICAL-001): Safe mode tool filtering.
@@ -421,33 +420,65 @@ export async function startServer(): Promise<number> {
   });
 }
 
-// ── Reusable Claude Tool Loop ─────────────────────────────────────────
-// Extracted so both /api/chat (local Electron UI) and the gateway manager
-// can invoke Claude with tool-use iteration using their own filtered tool
-// sets, system prompts, and iteration caps.
+// ── Unified Tool Loop ─────────────────────────────────────────────────
+// Single provider-agnostic tool loop that routes through llmClient.
+// Replaces the former three-branch implementation (Anthropic direct,
+// local LLMClient, OpenRouter) with a unified path.
+//
+// All callers pass unified ChatMessage[] and ToolDefinition[] types.
+// Provider selection is handled by llmClient based on user preference.
+
+export interface ToolLoopEvent {
+  type: 'turn_start' | 'tool_start' | 'tool_end' | 'turn_end' | 'loop_end';
+  /** Tool name (for tool_start/tool_end events) */
+  tool?: string;
+  /** Tool call ID */
+  toolCallId?: string;
+  /** Content sent to LLM context */
+  content?: string;
+  /** UI-only details (not sent to LLM — dual content/details pattern) */
+  details?: unknown;
+  /** Current iteration number */
+  iteration?: number;
+  /** Timestamp */
+  timestamp: number;
+}
 
 export interface ClaudeToolLoopOptions {
   systemPrompt: string;
-  messages: Anthropic.MessageParam[];
-  tools: Anthropic.Tool[];
+  messages: ChatMessage[];
+  tools: ToolDefinition[];
   /** Max tool-use iterations before breaking. Defaults to 25 (local tier). */
   maxIterations?: number;
   /** Tool names routed to browser automation layer */
   browserToolNames?: Set<string>;
   /** Tool names routed to connector registry */
   connectorToolNames?: Set<string>;
+  /** Explicit provider to use (omit for user preference) */
+  provider?: ProviderName;
+  /** Explicit model to use */
+  model?: string;
+  /** Event callback for UI streaming (dual content/details pattern) */
+  onEvent?: (event: ToolLoopEvent) => void;
 }
 
 export interface ClaudeToolLoopResult {
   response: string;
   model: string;
+  provider: ProviderName;
   toolCalls: number;
+  /** Token usage for cost tracking */
+  usage: { inputTokens: number; outputTokens: number };
+  /** Total latency in milliseconds */
+  latencyMs: number;
 }
 
 /**
- * Run Claude with iterative tool execution.
+ * Unified tool loop — provider-agnostic iterative tool execution.
  *
- * Handles the Anthropic API call → tool-use loop → final text response.
+ * Routes through llmClient.complete() which handles provider selection,
+ * fallback chains, and Privacy Shield (PII scrubbing for cloud providers).
+ *
  * Tool routing: browserToolNames → executeBrowserTool,
  *               connectorToolNames → connectorRegistry,
  *               everything else → MCP client.
@@ -455,6 +486,7 @@ export interface ClaudeToolLoopResult {
  * Used by:
  * - handleClaude() for local /api/chat requests
  * - GatewayManager for multi-channel inbound messages
+ * - git-review.ts, git-analyzer.ts for code analysis
  */
 export async function runClaudeToolLoop(
   options: ClaudeToolLoopOptions
@@ -464,193 +496,33 @@ export async function runClaudeToolLoop(
     maxIterations = 25,
     browserToolNames = new Set<string>(),
     connectorToolNames = new Set<string>(),
+    onEvent,
   } = options;
 
+  const startTime = Date.now();
+
   // cLaw Security Fix (CRITICAL-001): Architecturally strip side-effect tools in safe mode.
-  // This replaces the prompt-only safe mode restriction with a hard tool surface reduction.
   const tools = filterToolsForSafeMode(options.tools);
 
   // Clone messages to avoid mutating the caller's array
-  const messages = [...options.messages];
+  const messages: ChatMessage[] = [...options.messages];
 
-  // TODO: Refactor the Anthropic branch below to use llmClient.complete() from llm-client.ts.
-  // This is deferred because the tool loop uses Anthropic-specific types throughout
-  // (Anthropic.ContentBlockParam, Anthropic.ToolResultBlockParam, etc.) that require
-  // careful conversion to the unified ChatMessage/ToolCall types. The OpenRouter branch
-  // should also be migrated to llmClient once the Anthropic branch is proven stable.
-  // See: llm-client.ts for the unified LLMRequest/LLMResponse/ChatMessage types.
+  // Resolve provider: explicit option > user preference > default
+  const resolvedProvider = options.provider ?? (settingsManager.getPreferredProvider() as ProviderName);
 
-  // Check if we should use OpenRouter
-  const provider = settingsManager.getPreferredProvider();
-  if (provider === 'openrouter' && openRouter.isConfigured()) {
-    return runOpenRouterToolLoop({ ...options, messages });
-  }
+  // Emit helper
+  const emit = (event: Omit<ToolLoopEvent, 'timestamp'>) =>
+    onEvent?.({ ...event, timestamp: Date.now() });
 
-  // Route to local LLM provider (Ollama, TGI, vLLM, HuggingFace cloud)
-  if (provider === 'local') {
-    return runLocalToolLoop({ ...options, tools, messages });
-  }
-
-  // Default: direct Anthropic SDK
-  const apiKey = settingsManager.getAnthropicApiKey();
-  if (!apiKey) {
-    return {
-      response: 'Anthropic API key not configured. Please set it in Settings.',
-      model: 'claude-opus-4-6',
-      toolCalls: 0,
-    };
-  }
-
-  const anthropic = new Anthropic({ apiKey });
-
-  // Privacy Shield: scrub outbound messages and system prompt for cloud provider.
-  // Creates scrubbed copies — originals remain unmodified for tool result accumulation.
-  const shieldEnabled = privacyShield.isEnabled();
-  const scrubbedSystemPrompt = shieldEnabled
-    ? privacyShield.scrub(systemPrompt).text
-    : systemPrompt;
-
-  function scrubAnthropicMessages(msgs: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
-    if (!shieldEnabled) return msgs;
-    return (privacyShield.scrubRequest({ messages: msgs }) as any).messages;
-  }
-
-  let response = await anthropic.messages.create({
-    model: 'claude-opus-4-6',
-    max_tokens: 4096,
-    system: scrubbedSystemPrompt,
-    messages: scrubAnthropicMessages(messages),
-    tools: tools.length > 0 ? tools : undefined,
-  });
-
-  // Tool-use loop (capped by maxIterations to prevent runaway)
-  let toolIterations = 0;
-  while (response.stop_reason === 'tool_use') {
-    toolIterations++;
-    if (toolIterations > maxIterations) {
-      console.warn(`[Server] Tool-use loop exceeded ${maxIterations} iterations — breaking`);
-      return {
-        response: 'I hit my tool-use limit for this request. Please try breaking your request into smaller steps.',
-        model: 'claude-opus-4-6',
-        toolCalls: toolIterations,
-      };
-    }
-
-    const assistantContent = response.content;
-    const toolUseBlocks = assistantContent.filter(
-      (b): b is Anthropic.ContentBlockParam & { type: 'tool_use'; id: string; name: string; input: unknown } =>
-        b.type === 'tool_use'
-    );
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const toolUse of toolUseBlocks) {
-      try {
-        let result: unknown;
-        if (browserToolNames.has(toolUse.name)) {
-          result = await executeBrowserTool(toolUse.name, toolUse.input as Record<string, unknown>);
-        } else if (connectorToolNames.has(toolUse.name)) {
-          const connResult = await connectorRegistry.executeTool(
-            toolUse.name,
-            toolUse.input as Record<string, unknown>
-          );
-          result = connResult.result || connResult.error || '(no output)';
-        } else {
-          result = await mcpClient.callTool(toolUse.name, toolUse.input as Record<string, unknown>);
-        }
-
-        // Handle screenshot — send as image block to Claude
-        if (toolUse.name === 'browser_screenshot' && typeof result === 'string' && result.length > 500) {
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: [
-              {
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: 'image/jpeg',
-                  data: result as string,
-                },
-              },
-            ] as any,
-          });
-        } else {
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: typeof result === 'string' ? result : JSON.stringify(result),
-          });
-        }
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: toolUse.id,
-          content: `Error: ${errMsg}`,
-          is_error: true,
-        });
-      }
-    }
-
-    messages.push({ role: 'assistant', content: assistantContent as any });
-    messages.push({ role: 'user', content: toolResults });
-
-    response = await anthropic.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 4096,
-      system: scrubbedSystemPrompt,
-      messages: scrubAnthropicMessages(messages),
-      tools: tools.length > 0 ? tools : undefined,
-    });
-  }
-
-  const textBlock = response.content.find((b) => b.type === 'text');
-  const rawText = textBlock && 'text' in textBlock ? textBlock.text : 'No response generated.';
-  return {
-    response: shieldEnabled ? privacyShield.rehydrate(rawText) : rawText,
-    model: 'claude-opus-4-6',
-    toolCalls: toolIterations,
-  };
-}
-
-/**
- * Local LLM tool loop — routes through the unified LLMClient abstraction.
- *
- * Supports any OpenAI-compatible backend: Ollama, TGI, vLLM, HuggingFace Inference API.
- * Converts Anthropic-typed inputs → unified ChatMessage/ToolDefinition types,
- * then delegates to llmClient.complete() which handles provider selection and
- * automatic fallback if the local endpoint is unreachable.
- */
-async function runLocalToolLoop(
-  options: ClaudeToolLoopOptions
-): Promise<ClaudeToolLoopResult> {
-  const {
-    systemPrompt,
-    messages: anthropicMessages,
-    tools: anthropicTools,
-    maxIterations = 25,
-    browserToolNames = new Set<string>(),
-    connectorToolNames = new Set<string>(),
-  } = options;
-
-  // Convert Anthropic tool format → unified ToolDefinition format
-  const tools: ToolDefinition[] = anthropicTools.map((t) => ({
-    name: t.name,
-    description: t.description || '',
-    input_schema: t.input_schema as Record<string, unknown>,
-  }));
-
-  // Convert Anthropic messages → unified ChatMessage format
-  const messages: ChatMessage[] = anthropicMessages.map((m) => ({
-    role: m.role as 'user' | 'assistant',
-    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-  }));
+  // Accumulate usage across iterations
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
 
   // Tool executor — routes to browser, connector, or MCP based on tool name
   async function executeToolCall(
     name: string,
     args: Record<string, unknown>
-  ): Promise<string> {
+  ): Promise<{ content: string; details?: unknown }> {
     let result: unknown;
     if (browserToolNames.has(name)) {
       result = await executeBrowserTool(name, args);
@@ -660,39 +532,56 @@ async function runLocalToolLoop(
     } else {
       result = await mcpClient.callTool(name, args);
     }
-    return typeof result === 'string' ? result : JSON.stringify(result);
+
+    const content = typeof result === 'string' ? result : JSON.stringify(result);
+
+    // Dual content/details: truncate large tool results for LLM context,
+    // but pass full result as details for UI rendering
+    const MAX_TOOL_RESULT_TOKENS = 4000;
+    const truncated = content.length > MAX_TOOL_RESULT_TOKENS * 4
+      ? content.slice(0, MAX_TOOL_RESULT_TOKENS * 4) + '\n\n[... truncated for context window ...]'
+      : content;
+
+    return { content: truncated, details: content !== truncated ? { fullResult: content } : undefined };
   }
 
-  let response = await llmClient.complete(
+  // Initial LLM call
+  emit({ type: 'turn_start', iteration: 0 });
+
+  let response: LLMResponse = await llmClient.complete(
     {
       messages,
       systemPrompt,
+      model: options.model,
       tools: tools.length > 0 ? tools : undefined,
       maxTokens: 4096,
     },
-    'local'
+    resolvedProvider
   );
 
-  // Log which provider actually served (may fall back from local → anthropic)
-  if (response.provider !== 'local') {
-    console.warn(
-      `[Server] Local provider unavailable — fell back to ${response.provider} (${response.model})`
-    );
-  }
+  totalInputTokens += response.usage.inputTokens;
+  totalOutputTokens += response.usage.outputTokens;
 
-  // Tool-use loop (same pattern as Anthropic/OpenRouter branches)
+  emit({ type: 'turn_end', iteration: 0 });
+
+  // Tool-use loop (capped by maxIterations to prevent runaway)
   let toolIterations = 0;
   while (response.stopReason === 'tool_use' && response.toolCalls.length > 0) {
     toolIterations++;
     if (toolIterations > maxIterations) {
-      console.warn(`[Server] Local tool loop exceeded ${maxIterations} iterations — breaking`);
+      console.warn(`[Server] Tool loop exceeded ${maxIterations} iterations — breaking`);
+      emit({ type: 'loop_end', iteration: toolIterations });
       return {
-        response:
-          'I hit my tool-use limit for this request. Please try breaking your request into smaller steps.',
+        response: 'I hit my tool-use limit for this request. Please try breaking your request into smaller steps.',
         model: response.model,
+        provider: response.provider,
         toolCalls: toolIterations,
+        usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+        latencyMs: Date.now() - startTime,
       };
     }
+
+    emit({ type: 'turn_start', iteration: toolIterations });
 
     // Add assistant message with tool calls to conversation
     messages.push({
@@ -703,23 +592,27 @@ async function runLocalToolLoop(
 
     // Execute each tool call and add results
     for (const tc of response.toolCalls) {
+      emit({ type: 'tool_start', tool: tc.name, toolCallId: tc.id, iteration: toolIterations });
+
       try {
-        const resultContent = await executeToolCall(
+        const { content, details } = await executeToolCall(
           tc.name,
           tc.input as Record<string, unknown>
         );
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: resultContent,
+          content,
         });
+        emit({ type: 'tool_end', tool: tc.name, toolCallId: tc.id, content, details, iteration: toolIterations });
       } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? err.message : String(err);
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: `Error: ${errMsg}`,
+          content: `Error: ${msg}`,
         });
+        emit({ type: 'tool_end', tool: tc.name, toolCallId: tc.id, content: `Error: ${msg}`, iteration: toolIterations });
       }
     }
 
@@ -727,87 +620,28 @@ async function runLocalToolLoop(
       {
         messages,
         systemPrompt,
+        model: options.model,
         tools: tools.length > 0 ? tools : undefined,
         maxTokens: 4096,
       },
-      'local'
+      resolvedProvider
     );
+
+    totalInputTokens += response.usage.inputTokens;
+    totalOutputTokens += response.usage.outputTokens;
+
+    emit({ type: 'turn_end', iteration: toolIterations });
   }
+
+  emit({ type: 'loop_end', iteration: toolIterations });
 
   return {
     response: response.content || 'No response generated.',
     model: response.model,
+    provider: response.provider,
     toolCalls: toolIterations,
-  };
-}
-
-/**
- * OpenRouter-based tool loop — same behavior as Anthropic but via OpenRouter API.
- * Supports any model available through OpenRouter (200+ models).
- */
-async function runOpenRouterToolLoop(
-  options: ClaudeToolLoopOptions
-): Promise<ClaudeToolLoopResult> {
-  const {
-    systemPrompt,
-    messages: anthropicMessages,
-    tools: anthropicTools,
-    maxIterations = 25,
-    browserToolNames = new Set<string>(),
-    connectorToolNames = new Set<string>(),
-  } = options;
-
-  const model = settingsManager.getOpenrouterModel();
-
-  // Convert Anthropic tool format → OpenRouter tool format
-  const orTools: OpenRouterTool[] = anthropicTools.map((t) => ({
-    type: 'function' as const,
-    function: {
-      name: t.name,
-      description: t.description || '',
-      parameters: t.input_schema as Record<string, unknown>,
-    },
-  }));
-
-  // Helper to execute a tool by name
-  async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-    let result: unknown;
-    if (browserToolNames.has(name)) {
-      result = await executeBrowserTool(name, args);
-    } else if (connectorToolNames.has(name)) {
-      const connResult = await connectorRegistry.executeTool(name, args);
-      result = connResult.result || connResult.error || '(no output)';
-    } else {
-      result = await mcpClient.callTool(name, args);
-    }
-    return typeof result === 'string' ? result : JSON.stringify(result);
-  }
-
-  // Convert Anthropic messages → OpenRouter messages
-  const orMessages: OpenRouterMessage[] = anthropicMessages.map((m) => ({
-    role: m.role as 'user' | 'assistant',
-    content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-  }));
-
-  // Privacy Shield: scrub outbound messages and system prompt for cloud provider.
-  const shieldEnabled = privacyShield.isEnabled();
-  const scrubbed = shieldEnabled
-    ? privacyShield.scrubRequest({ messages: orMessages, systemPrompt })
-    : { messages: orMessages, systemPrompt };
-
-  const result = await openRouter.chatWithTools({
-    model,
-    systemPrompt: scrubbed.systemPrompt as string,
-    messages: scrubbed.messages as OpenRouterMessage[],
-    tools: orTools,
-    executeTool,
-    maxIterations,
-  });
-
-  return {
-    response: shieldEnabled ? privacyShield.rehydrate(result.text) : result.text,
-    model: result.model,
-    toolCalls: result.toolCalls,
+    usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+    latencyMs: Date.now() - startTime,
   };
 }
 
@@ -822,29 +656,29 @@ async function handleClaude(
   // Phase 1.4: Trim history to fit context window before sending to LLM
   const trimmedHistory = trimHistoryToFit(history);
 
-  const messages: Anthropic.MessageParam[] = [
+  const messages: ChatMessage[] = [
     ...trimmedHistory.map((h) => ({
       role: h.role as 'user' | 'assistant',
       content: h.content,
     })),
-    { role: 'user', content: message },
+    { role: 'user' as const, content: message },
   ];
 
   // Gather MCP tools (Desktop Commander etc.)
-  let mcpTools: Anthropic.Tool[] = [];
+  let mcpTools: ToolDefinition[] = [];
   try {
     const raw = await mcpClient.listTools();
     mcpTools = raw.map((t) => ({
       name: t.name,
       description: t.description || '',
-      input_schema: t.inputSchema || { type: 'object' as const, properties: {} },
-    })) as Anthropic.Tool[];
+      input_schema: (t.inputSchema || { type: 'object', properties: {} }) as Record<string, unknown>,
+    }));
   } catch {
     // MCP not connected
   }
 
   // Gather connector tools (PowerShell, VS Code, Git, Firecrawl, World Monitor, etc.)
-  let connectorTools: Anthropic.Tool[] = [];
+  let connectorTools: ToolDefinition[] = [];
   try {
     const rawConnectorTools = connectorRegistry.getAllTools();
     connectorTools = rawConnectorTools.map((t) => ({
@@ -855,19 +689,26 @@ async function handleClaude(
         properties: t.parameters.properties || {},
         ...(t.parameters.required ? { required: t.parameters.required } : {}),
       },
-    })) as Anthropic.Tool[];
+    }));
     if (connectorTools.length > 0) {
-      console.log(`[Server] Claude has access to ${connectorTools.length} connector tools`);
+      console.log(`[Server] LLM has access to ${connectorTools.length} connector tools`);
     }
   } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn('[Server] Failed to load connector tools:', errMsg);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[Server] Failed to load connector tools:', msg);
   }
 
+  // Gather browser tool defs in unified format
+  const unifiedBrowserTools: ToolDefinition[] = browserToolDefs.map((t) => ({
+    name: t.name,
+    description: t.description || '',
+    input_schema: (t.input_schema || { type: 'object', properties: {} }) as Record<string, unknown>,
+  }));
+
   // Combine MCP + browser + connector tools (local tier = ALL tools)
-  const allTools: Anthropic.Tool[] = [
+  const allTools: ToolDefinition[] = [
     ...mcpTools,
-    ...browserToolDefs as Anthropic.Tool[],
+    ...unifiedBrowserTools,
     ...connectorTools,
   ];
 

@@ -2042,6 +2042,47 @@ declare global {
       };
 
       onApiHealthChange: (callback: (status: Record<string, string>) => void) => () => void;
+
+      // ── Cost Tracking ──
+      cost: {
+        session: () => Promise<{
+          totalInputTokens: number;
+          totalOutputTokens: number;
+          totalCostUsd: number;
+          byProvider: Record<string, { tokens: number; costUsd: number; calls: number }>;
+          byModel: Record<string, { tokens: number; costUsd: number; calls: number }>;
+        }>;
+        savings: () => Promise<{
+          localCost: number;
+          cloudEquivalent: number;
+          savedUsd: number;
+        }>;
+        daily: (days?: number) => Promise<Array<{
+          date: string;
+          totalInputTokens: number;
+          totalOutputTokens: number;
+          totalCostUsd: number;
+          callCount: number;
+        }>>;
+        monthlySpend: () => Promise<number>;
+        resetSession: () => Promise<{ ok: boolean }>;
+      };
+
+      // ── Session Persistence ──
+      sessions: {
+        start: (options?: Record<string, unknown>) => Promise<string>;
+        load: (sessionId: string) => Promise<unknown[]>;
+        list: () => Promise<Array<{ id: string; timestamp: number; size: number }>>;
+        stats: () => Promise<{
+          entryCount: number;
+          messageCount: number;
+          compactionCount: number;
+          estimatedTokens: number;
+        }>;
+        context: () => Promise<Array<{ role: string; content: string | null }>>;
+        compact: (contextWindow: number) => Promise<boolean>;
+        close: () => Promise<void>;
+      };
     };
     SpeechRecognition: typeof SpeechRecognition;
     webkitSpeechRecognition: typeof SpeechRecognition;

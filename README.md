@@ -39,11 +39,11 @@
 
 ## Highlights
 
-- **Local-first** — Runs entirely on your machine with Ollama, local Whisper STT, and 4 local TTS backends. Auto-downloads Python 3.12 when needed. No cloud required. Your data stays yours.
+- **Local-first** — Runs entirely on your machine with Gemma 4 via Ollama (zero-cost inference), local Whisper STT, and 4 local TTS backends. Auto-downloads Python 3.12 when needed. No cloud required. Your data stays yours.
 - **Cryptographically enforced safety** — HMAC-SHA256 signed behavioral laws with attestation protocol, consent gates, and memory watchdog. Not prompt engineering. Cryptography.
 - **Trustworthy by design** — Immutable audit logs, 5-tier trust scoring, sovereignty ceremony at first launch, and a safety pipeline that validates every action before execution
 - **Privacy Shield** — All outbound API requests are scrubbed of PII (emails, phone numbers, names, addresses, SSNs) and rehydrated on return. Frontier model providers see only sanitized, identity-blind text. Local providers pass through untouched
-- **Multi-provider intelligence** — Anthropic Claude, Google Gemini, Ollama (local), OpenRouter, and HuggingFace, with automatic hardware-adaptive model selection
+- **Multi-provider intelligence** — Gemma 4 27B MoE via Ollama (zero-cost default), Anthropic Claude, Google Gemini, OpenRouter, and HuggingFace, with intelligence router that scores local models first and cloud as fallback
 - **Sovereign AI Desktop** — A full operating system with 23 native apps, a pixel art Agent Office, and a holographic desktop environment
 - **Voice-first, provider-independent** — Gemini Live for streaming conversation, plus local Whisper STT and 4 TTS backends (Chatterbox Turbo, kokoro-js, Kokoro, Piper) for fully offline voice
 - **Cognitive architecture** — Personality evolution, psychological profiling, relationship memory, confidence self-assessment, and memory-personality bridging
@@ -53,6 +53,9 @@
 - **Gateway & Federation** — Agent-to-agent networking, trust engine, audit logging, and multi-platform adapters (Telegram and more)
 - **Screen-aware & context-intelligent** — Vision system with screen context analysis, context graphs, and tool routing based on what you're doing
 - **Self-improving** — Can read and propose changes to its own source code (user-approved, integrity-verified)
+- **Theme engine** — Mood-reactive visual modifiers with 3 built-in themes that respond to agent emotional state
+- **Session persistence** — Conversation branching with auto-compaction so context survives across restarts without unbounded growth
+- **Real-time cost tracking** — Live dashboard showing local inference savings vs. cloud-equivalent pricing
 
 ---
 
@@ -203,7 +206,7 @@ Twenty-three purpose-built applications run inside the Friday desktop environmen
 | **Friday Calc** | Computation tools |
 | **Friday Recorder** | Audio/screen recording |
 | **Friday Gateway** | Federation and external agent connections |
-| **Friday Forge** | Agent creation and customization |
+| **Friday Forge** | Sovereign coding environment and agent creation studio |
 | **Friday Stage** | Presentation and stage management |
 
 ### Agent Office
@@ -291,11 +294,15 @@ Agent Friday is not locked to any AI provider. A unified provider layer supports
 
 | Provider | File | Capabilities |
 |----------|------|-------------|
-| **Anthropic** | `providers/anthropic-provider.ts` | Claude models for deep reasoning |
-| **Ollama** | `providers/ollama-provider.ts` | Local models for sovereignty and offline operation |
+| **Ollama (Gemma 4)** | `providers/ollama-provider.ts` | **Default local model.** Gemma 4 27B MoE (3.8B active params per token) — zero-cost inference, native tool calling, 256K context, Apache 2.0 licensed |
+| **Anthropic** | `providers/anthropic-provider.ts` | Claude models for deep reasoning (cloud fallback) |
 | **OpenRouter** | `providers/openrouter-provider.ts` | Access to 100+ models via single API |
 | **HuggingFace** | `providers/hf-provider.ts` | Open-source model inference |
 | **Gemini** | Via Gemini Live integration | Real-time voice and multimodal |
+
+### Zero-Cost Local Intelligence
+
+The default stack runs entirely on Gemma 4 via Ollama at zero cost. The 27B MoE architecture activates only 3.8B parameters per token, delivering strong reasoning and native tool calling within modest hardware budgets. The intelligence router scores local models first and falls back to cloud providers only when the task exceeds local capability or the user explicitly requests it.
 
 ### Hardware-Adaptive Intelligence
 
@@ -304,8 +311,9 @@ The system profiles your hardware at startup and recommends appropriate model ti
 - **Hardware Profiler** detects GPU, RAM, CPU capabilities
 - **Model Orchestrator** selects and manages model instances based on available resources
 - **Tier Recommender** suggests the best provider/model combination for your machine
+- **Intelligence Router** scores local models first, routing to cloud only as fallback
 
-This means Agent Friday can run on a modest laptop using Ollama with small local models, or scale to full cloud intelligence on powerful workstations — without the user needing to understand model selection.
+This means Agent Friday can run on a modest laptop using Ollama with Gemma 4 at zero cost, or scale to full cloud intelligence on powerful workstations — without the user needing to understand model selection.
 
 ---
 
@@ -479,7 +487,7 @@ Agent Friday works with multiple AI providers. API keys are stored locally and e
 | `HUGGINGFACE_API_KEY` | HuggingFace | Optional |
 | `ELEVENLABS_API_KEY` | ElevenLabs (agent voices) | Optional |
 
-With **Ollama** installed locally and sufficient hardware (8GB+ VRAM), Agent Friday can operate with **zero cloud API keys** — fully local, fully sovereign.
+With **Ollama** installed locally and sufficient hardware (8GB+ VRAM), Agent Friday can operate with **zero cloud API keys** — fully local, fully sovereign. The default model is **Gemma 4 27B MoE** (only 3.8B active params per token), which delivers strong reasoning with native tool calling at zero cost under the Apache 2.0 license.
 
 ---
 
@@ -594,7 +602,7 @@ src/
 | **Voice (cloud)** | Gemini Live (native audio WebSocket) |
 | **Voice (local)** | Whisper STT + Chatterbox Turbo / kokoro-js / Kokoro / Piper TTS |
 | **Deep reasoning** | Claude (Anthropic SDK) |
-| **Local models** | Ollama |
+| **Local models** | Ollama — Gemma 4 27B MoE default (Apache 2.0, 256K context, native tool calling) |
 | **Multi-model access** | OpenRouter |
 | **Open-source models** | HuggingFace |
 | **Agent voices** | ElevenLabs TTS (Turbo v2.5) |

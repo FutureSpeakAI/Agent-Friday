@@ -71,7 +71,7 @@ export interface ModelCapability {
   /** Provider this model is accessed through */
   provider: ProviderName;
   /** Which provider to route through (may differ for OpenRouter models) */
-  routeVia: 'anthropic' | 'openrouter' | 'google' | 'local';
+  routeVia: 'anthropic' | 'openrouter' | 'google' | 'local' | 'ollama';
   /** Maximum context window in tokens */
   contextWindow: number;
   /** Cost per million input tokens (USD) */
@@ -507,6 +507,81 @@ const DEFAULT_MODELS: ModelCapability[] = [
     rateLimit: 0,
     consecutiveFailures: 0,
   },
+  // ── Ollama / Gemma 4 (Local, zero cost) ──
+  // Google Gemma 4 family — Apache 2.0 licensed, native tool calling.
+  // Released April 2026. Runs via Ollama provider.
+  {
+    modelId: 'ollama/gemma4-e2b',
+    name: 'Gemma 4 E2B (2.3B active)',
+    provider: 'ollama',
+    routeVia: 'local',
+    contextWindow: 128000,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 200,
+    strengths: { reasoning: 0.42, code: 0.44, creative: 0.38, extraction: 0.50, 'tool-use': 0.25, conversation: 0.55 },
+    supportsToolUse: true,
+    supportsVision: true,
+    supportsAudio: true,
+    available: false,         // Enabled by Ollama auto-discovery
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'ollama/gemma4-e4b',
+    name: 'Gemma 4 E4B (4.5B active)',
+    provider: 'ollama',
+    routeVia: 'local',
+    contextWindow: 128000,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 150,
+    strengths: { reasoning: 0.50, code: 0.52, creative: 0.45, extraction: 0.58, 'tool-use': 0.42, conversation: 0.60, vision: 0.55 },
+    supportsToolUse: true,
+    supportsVision: true,
+    supportsAudio: true,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'ollama/gemma4-26b',
+    name: 'Gemma 4 26B MoE (3.8B active)',
+    provider: 'ollama',
+    routeVia: 'local',
+    contextWindow: 256000,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 80,
+    strengths: { reasoning: 0.75, code: 0.77, creative: 0.68, extraction: 0.78, 'tool-use': 0.68, conversation: 0.72, vision: 0.70 },
+    supportsToolUse: true,
+    supportsVision: true,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
+  {
+    modelId: 'ollama/gemma4-31b',
+    name: 'Gemma 4 31B Dense',
+    provider: 'ollama',
+    routeVia: 'local',
+    contextWindow: 256000,
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    tokensPerSecond: 45,
+    strengths: { reasoning: 0.82, code: 0.80, creative: 0.75, extraction: 0.83, 'tool-use': 0.77, conversation: 0.78, vision: 0.78 },
+    supportsToolUse: true,
+    supportsVision: true,
+    supportsAudio: false,
+    available: false,
+    lastChecked: 0,
+    rateLimit: 0,
+    consecutiveFailures: 0,
+  },
 ];
 
 // ── Exported Pure Functions (for testability) ─────────────────────────
@@ -589,7 +664,7 @@ export function scoreModel(
   // The user can still force local via settings.preferredProvider — this only
   // affects *automatic* routing.
   let localBonus = 0;
-  const isLocal = model.routeVia === 'local' || model.provider === 'local';
+  const isLocal = model.routeVia === 'local' || model.provider === 'local' || model.provider === 'ollama';
   if (isLocal) {
     const policy = config.localModelPolicy;
 

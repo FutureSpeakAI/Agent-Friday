@@ -20,6 +20,10 @@ npm run build          # Production build
 - **IPC bridge**: `src/main/preload.ts` ↔ `src/renderer/types.d.ts` (must stay in sync)
 - **Tests**: `tests/` — 141 test files, vitest, heavy use of `vi.hoisted()` mocks
 - **Agents**: `src/main/agents/` — 9 builtin agents including autoresearch engines
+- **Theme engine**: `src/renderer/themes/` — JSON token themes with mood modifiers, ThemeProvider context
+- **Session persistence**: `src/main/session-persistence.ts` — JSONL DAG with auto-compaction
+- **Cost tracking**: `src/main/cost-tracker.ts` — per-turn USD tracking, daily aggregates
+- **FridayForge**: Sovereign coding environment with syntax highlighting, agent panel, cost display
 
 ## Safety: DO NOT MODIFY
 These files are cLaw-protected. Never edit without explicit user instruction:
@@ -58,6 +62,10 @@ Register in `builtin-agents.ts`, add IPC in `agent-handlers.ts`.
 - Confirmation gate tests must echo the `challenge` back: `handleConfirmationResponse(id, approved, challenge)`
 - Provider tests mock `settingsManager` methods, not `process.env`
 
+### Unified Tool Loop
+- Tool loop uses `llmClient.complete()` for all providers — never instantiate Anthropic SDK directly
+- Tool results use dual content/details pattern (truncated for LLM, full for UI)
+
 ### TUNABLE Markers
 Performance-critical constants are marked with `// --- TUNABLE ---` blocks.
 The autoresearch iteration engine can safely adjust values within these zones.
@@ -76,7 +84,7 @@ Self-improvement engines: `prompt-evolver.ts`, `model-breeder.ts`, `self-improve
 
 ## Startup
 `index.ts` uses parallel initialization batches (Promise.all) for 40+ engines.
-Batch 1: sync engines. Batch 2: 24 async engines in parallel. Batch 3: dependency chains.
+Batch 1: sync engines. Batch 2: 26 async engines in parallel (includes costTracker, sessionManager). Batch 3: dependency chains.
 Phase A completes before vault unlock. Phase B after vault passphrase.
 
 ## Common Gotchas

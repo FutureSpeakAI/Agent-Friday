@@ -2016,4 +2016,24 @@ contextBridge.exposeInMainWorld('eve', {
     ipcRenderer.on('api-health:update', handler);
     return () => { ipcRenderer.removeListener('api-health:update', handler); };
   },
+
+  // ── Cost Tracking ──
+  cost: {
+    session: () => ipcRenderer.invoke('cost:session'),
+    savings: () => ipcRenderer.invoke('cost:savings'),
+    daily: (days?: number) => ipcRenderer.invoke('cost:daily', days),
+    monthlySpend: () => ipcRenderer.invoke('cost:monthly-spend'),
+    resetSession: () => ipcRenderer.invoke('cost:reset-session'),
+  },
+
+  // ── Session Persistence ──
+  sessions: {
+    start: (options?: Record<string, unknown>) => ipcRenderer.invoke('session:start', options),
+    load: (sessionId: string) => ipcRenderer.invoke('session:load', sessionId),
+    list: () => ipcRenderer.invoke('session:list'),
+    stats: () => ipcRenderer.invoke('session:stats'),
+    context: () => ipcRenderer.invoke('session:context'),
+    compact: (contextWindow: number) => ipcRenderer.invoke('session:compact', contextWindow),
+    close: () => ipcRenderer.invoke('session:close'),
+  },
 });

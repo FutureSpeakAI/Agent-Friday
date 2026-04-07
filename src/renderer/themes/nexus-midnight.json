@@ -1,0 +1,20 @@
+{
+  "name": "nexus-midnight",
+  "description": "Deep black OLED-optimized theme",
+  "extends": "nexus-dark",
+  "tokens": {
+    "bg-primary": "#000000",
+    "bg-secondary": "#050508",
+    "bg-surface": "rgba(255,255,255,0.02)",
+    "bg-surface-hover": "rgba(255,255,255,0.04)",
+    "bg-editor": "#000000",
+    "bg-terminal": "#000000",
+
+    "border-default": "rgba(255,255,255,0.05)",
+    "border-subtle": "rgba(255,255,255,0.02)",
+
+    "accent": "#00ffcc",
+    "viz-core": "#00ffcc"
+  },
+  "mood_modifiers": {}
+}

@@ -37,6 +37,14 @@ including key files, protocols, failure modes, and specifications.
 | [Gateway & Trust](./gateway-trust/README.md) | Request → Trust tier → Allow/Deny | cLaw enforcement gateway with 5 trust tiers, HMAC attestation, consent gates, and integrity verification. |
 | [Integration Connectors](./integration-connectors/README.md) | Telegram / Discord / Calendar / Obsidian | External service connectors configured during onboarding, managed by CommunicationHub with unified message routing. |
 
+### Session, Cost & Theming (Sprint 8)
+
+| Flow | Path | Description |
+|------|------|-------------|
+| Session Persistence | JSONL DAG with auto-compaction | Conversation sessions persisted as append-only JSONL with DAG-based parent references. Auto-compaction merges old entries to keep file sizes bounded. Managed by `src/main/session-persistence.ts`. |
+| Cost Tracking | Per-turn token and USD tracking | Tracks input/output tokens and estimated USD cost per LLM turn. Aggregates daily totals. Surfaced in UI via cost display panel. Managed by `src/main/cost-tracker.ts`. |
+| Theme System | JSON token-based theming with mood modifiers | JSON design-token themes loaded by `ThemeProvider` in the renderer. Mood modifiers dynamically adjust palette based on agent personality state. Theme files in `src/renderer/themes/`. |
+
 ## Architecture Overview
 
 ```

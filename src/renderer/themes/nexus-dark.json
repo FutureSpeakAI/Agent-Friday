@@ -1,0 +1,90 @@
+{
+  "name": "nexus-dark",
+  "description": "Default Nexus OS dark theme",
+  "extends": null,
+  "tokens": {
+    "accent": "#00f0ff",
+    "accent-secondary": "#8A2BE2",
+    "accent-warm": "#ff6b35",
+
+    "bg-primary": "#0d0d1a",
+    "bg-secondary": "#0a0a14",
+    "bg-surface": "rgba(255,255,255,0.03)",
+    "bg-surface-hover": "rgba(255,255,255,0.06)",
+    "bg-overlay": "rgba(0,0,0,0.5)",
+    "bg-editor": "#0a0a14",
+    "bg-terminal": "#070710",
+
+    "text-primary": "#F8FAFC",
+    "text-secondary": "#8888a0",
+    "text-muted": "#4a4a62",
+    "text-disabled": "#3a3a4a",
+
+    "border-default": "rgba(255,255,255,0.07)",
+    "border-subtle": "rgba(255,255,255,0.03)",
+    "border-accent": "rgba(0,240,255,0.3)",
+
+    "success": "#22c55e",
+    "success-bg": "rgba(34,197,94,0.12)",
+    "success-border": "rgba(34,197,94,0.3)",
+    "warning": "#f97316",
+    "warning-bg": "rgba(249,115,22,0.12)",
+    "warning-border": "rgba(249,115,22,0.3)",
+    "error": "#ef4444",
+    "error-bg": "rgba(239,68,68,0.1)",
+    "error-border": "rgba(239,68,68,0.3)",
+
+    "syntax-keyword": "#c792ea",
+    "syntax-function": "#82aaff",
+    "syntax-string": "#c3e88d",
+    "syntax-number": "#f78c6c",
+    "syntax-comment": "#546e7a",
+    "syntax-operator": "#89ddff",
+    "syntax-type": "#ffcb6b",
+    "syntax-variable": "#eeffff",
+    "syntax-constant": "#ff5370",
+
+    "agent-research": "#3b82f6",
+    "agent-coder": "#22c55e",
+    "agent-reviewer": "#f59e0b",
+    "agent-debugger": "#ef4444",
+    "agent-orchestrator": "#8b5cf6",
+    "agent-idle": "#4a4a62",
+
+    "viz-core": "#00f0ff",
+    "viz-network": "#8A2BE2",
+    "viz-particles": "rgba(0,240,255,0.3)",
+    "viz-ring": "rgba(0,240,255,0.15)",
+
+    "font-mono": "'JetBrains Mono', monospace",
+    "font-ui": "'Inter', system-ui, sans-serif"
+  },
+  "mood_modifiers": {
+    "focused": {
+      "accent": "#00f0ff",
+      "bg-primary": "#0a0a12",
+      "viz-core": "#00d4ff"
+    },
+    "creative": {
+      "accent": "#ff6b35",
+      "accent-secondary": "#e040fb",
+      "bg-primary": "#1a0d0d",
+      "viz-core": "#ff6b35"
+    },
+    "urgent": {
+      "accent": "#ef4444",
+      "border-default": "rgba(239,68,68,0.15)",
+      "viz-core": "#ef4444"
+    },
+    "calm": {
+      "accent": "#22c55e",
+      "bg-primary": "#0d1a0d",
+      "viz-core": "#22c55e"
+    },
+    "analytical": {
+      "accent": "#8b5cf6",
+      "bg-primary": "#0d0d1a",
+      "viz-core": "#8b5cf6"
+    }
+  }
+}

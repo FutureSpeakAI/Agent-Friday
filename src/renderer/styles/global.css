@@ -85,6 +85,17 @@ body {
   background: rgba(0, 240, 255, 0.25);
 }
 
+/* --- Syntax Highlighting (FridayForge) --- */
+.sh-keyword { color: #c792ea; font-weight: 500; }
+.sh-string { color: #c3e88d; }
+.sh-comment { color: #546e7a; font-style: italic; }
+.sh-number { color: #f78c6c; }
+.sh-function { color: #82aaff; }
+.sh-type { color: #ffcb6b; }
+.sh-operator { color: #89ddff; }
+.sh-constant { color: #ff5370; }
+.sh-variable { color: #eeffff; }
+
 /* --- Keyframes (centralised) --- */
 @keyframes spin {
   from { transform: rotate(0deg); }
