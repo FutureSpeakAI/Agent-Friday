@@ -53,13 +53,13 @@ function HomeWS(){
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
   const pending=todos.filter(t=>t.status==='proposed').length;
-  const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.name} in ${c.days_until}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
+  const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
+      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
       <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
-      <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?.length||0}</div><div className="stat-label">entities tracked</div></div>
+      <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?(Array.isArray(trust.people)?trust.people.length:Object.keys(trust.people).length):0}</div><div className="stat-label">entities tracked</div></div>
       <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
       <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
       <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:9,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:9,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
@@ -67,29 +67,52 @@ function HomeWS(){
   </div>);
 }
 function CareerWS(){
-  const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);
-  useEffect(()=>{fetch('/api/jobs').then(r=>r.json()).then(d=>{setJobs(d.content||'');setLoading(false)}).catch(()=>{setJobs('API unavailable');setLoading(false)})},[]);
-  const lines=jobs.split('\n');const roles=[];let cur=null;
-  lines.forEach(l=>{if(l.startsWith('### ')){if(cur)roles.push(cur);cur={title:l.replace('### ',''),lines:[]};}else if(cur)cur.lines.push(l)});if(cur)roles.push(cur);
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading career data...</div>;
+  const[tracker,setTracker]=useState(null);const[reports,setReports]=useState([]);const[pipeline,setPipeline]=useState('');const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);const[view,setView]=useState('tracker');const[reportContent,setReportContent]=useState('');
+  useEffect(()=>{
+    Promise.all([
+      fetch('/api/career-ops/tracker').then(r=>r.json()).then(setTracker).catch(()=>null),
+      fetch('/api/career-ops/reports').then(r=>r.json()).then(d=>setReports(d.reports||[])).catch(()=>[]),
+      fetch('/api/career-ops/pipeline').then(r=>r.json()).then(d=>setPipeline(d.content||'')).catch(()=>''),
+      fetch('/api/jobs').then(r=>r.json()).then(d=>setJobs(d.content||d.raw||'')).catch(()=>'')
+    ]).then(()=>setLoading(false));
+  },[]);
+  const loadReport=name=>{fetch(`/api/career-ops/report/${name}`).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading career pipeline...</div>;
+  const entries=tracker?.entries||[];
   return(<div>
-    <FridaySays text={roles.length>0?`${roles.length} roles in your pipeline. Target: $500K.`:null}/>
-    <div style={{display:'flex',gap:8,marginBottom:12}}><div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{roles.length}</div><div className="stat-label">curated roles</div></div><div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00ff80'}}>$500K</div><div className="stat-label">target comp</div></div></div>
-    {roles.length===0?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,2000)}</pre>:
-    roles.slice(0,15).map((r,i)=>{const scoreMatch=r.lines.join(' ').match(/Score[:\s]*(\d+)/i);const score=scoreMatch?parseInt(scoreMatch[1]):50;const color=score>80?'#00ff80':score>60?'#f59e0b':'#ff0080';
-      return(<div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{r.title}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{score}</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:score+'%',background:color}}/></div><div style={{fontSize:10,color:'#666',marginTop:4}}>{r.lines.slice(0,2).join(' ').substring(0,120)}</div></div>)})}
+    <FridaySays text={`${entries.length} evaluated roles · ${reports.length} reports · Target: $500K · Pipeline: ${pipeline?'active':'empty'}`}/>
+    <div style={{display:'flex',gap:6,marginBottom:10}}>
+      {['tracker','reports','pipeline','curated'].map(v=><button key={v} className={`btn ${view===v?'':'btn-magenta'}`} style={{fontSize:10}} onClick={()=>setView(v)}>{v}</button>)}
+    </div>
+    <div style={{display:'flex',gap:8,marginBottom:12}}>
+      <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{entries.length}</div><div className="stat-label">evaluated</div></div>
+      <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{reports.length}</div><div className="stat-label">reports</div></div>
+      <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00ff80'}}>$500K</div><div className="stat-label">target</div></div>
+    </div>
+    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';
+      return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div>{e.status&&<span className="badge-cyan" style={{fontSize:9}}>{e.status}</span>}</div>)}):<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{tracker?.raw||'No applications tracked yet. Use career-ops to evaluate roles.'}</pre>)}
+    {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:10,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12}}>No evaluation reports yet</div>)}
+    {view==='report'&&<div><button className="btn" style={{marginBottom:8,fontSize:10}} onClick={()=>setView('reports')}>← Back</button><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
+    {view==='pipeline'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline||'Pipeline empty. Add URLs to career-ops/data/pipeline.md'}</pre>}
+    {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,3000)||'No curated roles. Run the daily job intelligence scan.'}</pre>}
   </div>);
 }
 function WikiWS(){
   const[struct,setStruct]=useState(null);const[content,setContent]=useState('Select a file from the sidebar');const[path,setPath]=useState('');const[loading,setLoading]=useState(true);
-  useEffect(()=>{fetch('/api/wiki/structure').then(r=>r.json()).then(d=>{setStruct(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  useEffect(()=>{fetch('/api/wiki/structure').then(r=>r.json()).then(d=>{
+    // Convert API structure object to sections array
+    const raw=d.structure||d.sections||d;
+    if(raw&&!Array.isArray(raw)){const sections=Object.entries(raw).map(([name,files])=>({name,files:Array.isArray(files)?files.map(f=>typeof f==='string'?f:f.filename||f.name):Object.keys(files)}));d={sections}}
+    else if(!d.sections)d={sections:raw||[]};
+    setStruct(d);setLoading(false)
+  }).catch(()=>setLoading(false))},[]);
   const load=(s,f)=>{setPath(`${s}/${f}`);fetch(`/api/wiki/${s}/${f}`).then(r=>r.json()).then(d=>setContent(d.content||d.error||'Empty')).catch(()=>setContent('Error loading file'))};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading wiki...</div>;
   const totalFiles=struct?.sections?.reduce((a,s)=>a+(s.files?.length||0),0)||0;
   return(<div style={{display:'flex',gap:12,height:'100%'}}>
     <div style={{width:170,borderRight:'1px solid rgba(255,255,255,0.04)',paddingRight:8,overflowY:'auto',flexShrink:0}}>
       <div style={{fontSize:10,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
-      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:10,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({s.files?.length||0})</span></div>{s.files?.map(f=><div key={f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
+      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:10,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
     </div>
     <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
   </div>);
@@ -132,7 +155,7 @@ function FuturespeakWS(){
 function FamilyWS(){
   const[cd,setCd]=useState(null);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
-  const libbyDays=cd?.countdowns?.find(c=>c.name?.toLowerCase().includes('libby'))?.days_until;
+  const libbyDays=cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days||(cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days_until);
   return(<div>
     <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
@@ -141,7 +164,7 @@ function FamilyWS(){
       <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:9}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:9}}>monitoring</span><br/><span style={{color:'#666',fontSize:10}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
       <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
       <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
-      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
+      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
     </div>
   </div>);
 }
@@ -163,7 +186,9 @@ function TrustWS(){
   useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading trust graph...</div>;
   if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
-  const people=Array.isArray(trust?.people)?trust.people.sort((a,b)=>((b.scores?.overall)||0)-((a.scores?.overall)||0)):[];
+  // API returns people as object keyed by name, convert to array
+  const rawPeople=trust?.people||{};
+  const people=(Array.isArray(rawPeople)?rawPeople:Object.values(rawPeople)).sort((a,b)=>((b.scores?.overall)||0)-((a.scores?.overall)||0));
   const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
   return(<div>
     <FridaySays text={`${people.length} entities tracked. Click any person to see dimension breakdown.`}/>
@@ -239,7 +264,7 @@ function App(){
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   // Fetch greeting data
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{const items=(d.countdowns||[]).map(c=>`${c.name} in ${c.days_until}d`).join(' · ');setGreeting(items||'All systems nominal.')}).catch(()=>setGreeting('All systems nominal.'))},[]);
+  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{const items=(d.countdowns||[]).map(c=>`${c.label||c.name} in ${c.days||c.days_until}d`).join(' · ');setGreeting(items||'All systems nominal.')}).catch(()=>setGreeting('All systems nominal.'))},[]);
 
   const toggle=id=>{setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});

@@ -69,6 +69,47 @@ def serve_ui():
 #  LIVE DATA ENDPOINTS
 # ═══════════════════════════════════════════════════════════════
 
+@app.route('/api/career-ops/tracker')
+def career_tracker():
+    tracker_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\data', 'applications.md')
+    if os.path.isfile(tracker_path):
+        with open(tracker_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        lines = content.strip().split('\n')
+        entries = []
+        for line in lines:
+            if line.startswith('|') and '---' not in line and not any(h in line.lower() for h in ['company','score','#']):
+                cols = [c.strip() for c in line.split('|')[1:-1]]
+                if len(cols) >= 3:
+                    entries.append({'raw': cols, 'company': cols[0], 'score': cols[1] if len(cols)>1 else '', 'status': cols[2] if len(cols)>2 else ''})
+        return jsonify({'status': 'ok', 'entries': entries, 'total': len(entries), 'raw': content})
+    return jsonify({'status': 'no_tracker', 'entries': [], 'total': 0, 'raw': ''})
+
+@app.route('/api/career-ops/pipeline')
+def career_pipeline():
+    pipe_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\data', 'pipeline.md')
+    if os.path.isfile(pipe_path):
+        with open(pipe_path, 'r', encoding='utf-8') as f:
+            return jsonify({'status': 'ok', 'content': f.read()})
+    return jsonify({'status': 'empty', 'content': ''})
+
+@app.route('/api/career-ops/reports')
+def career_reports():
+    reports_dir = 'C:\\Users\\user\\Projects\\career-ops\\reports'
+    if os.path.isdir(reports_dir):
+        files = sorted(os.listdir(reports_dir), reverse=True)
+        reports = [{'name': f, 'size': os.path.getsize(os.path.join(reports_dir, f))} for f in files if f.endswith('.md')]
+        return jsonify({'status': 'ok', 'reports': reports, 'total': len(reports)})
+    return jsonify({'status': 'no_reports', 'reports': [], 'total': 0})
+
+@app.route('/api/career-ops/report/<filename>')
+def career_report(filename):
+    report_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\reports', filename)
+    if os.path.isfile(report_path):
+        with open(report_path, 'r', encoding='utf-8') as f:
+            return jsonify({'status': 'ok', 'content': f.read(), 'filename': filename})
+    return jsonify({'status': 'not_found'})
+
 @app.route('/api/jobs')
 def get_jobs():
     """Parse job-search.md and return structured data."""
