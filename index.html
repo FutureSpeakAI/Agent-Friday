@@ -116,12 +116,14 @@ const WS=[
   {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
   {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'}
 ];
+function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
+
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
   const[pos,setPos]=useState({x:60+Math.random()*300,y:40+Math.random()*80});
   const[size,setSize]=useState({w:660,h:460});
   const[dragging,setDragging]=useState(false);const[resizing,setResizing]=useState(false);
   const dOff=useRef({x:0,y:0});const rStart=useRef({x:0,y:0,w:0,h:0});
-  useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,e.clientX-dOff.current.x),y:Math.max(0,e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
+  useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,e.clientX-dOff.current.x),y:Math.max(30,e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
   useEffect(()=>{if(!resizing)return;const mv=e=>setSize({w:Math.max(400,rStart.current.w+e.clientX-rStart.current.x),h:Math.max(280,rStart.current.h+e.clientY-rStart.current.y)});const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
   return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
@@ -130,205 +132,298 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
     <div className="resize-h" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
   </div>);
 }
+
+// ═══ ERROR WRAPPER ═══
+function Safe({children,name}){
+  const[err,setErr]=useState(false);
+  if(err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {name} encountered an error</div><button className="btn" style={{marginTop:8}} onClick={()=>setErr(false)}>Retry</button></div>);
+  try{return children}catch(e){setErr(true);return null}
+}
+
+// ═══ FRIDAY SAYS (proactive insight) ═══
+function FridaySays({text}){
+  if(!text)return null;
+  return(<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#00d4ff',fontStyle:'italic'}}>💡 {text}</div>);
+}
+
 // ═══ WORKSPACES ═══
 function HomeWS(){
-  const[cd,setCd]=useState(null);const[trust,setTrust]=useState(null);const[pers,setPers]=useState(null);const[mem,setMem]=useState(null);const[epi,setEpi]=useState(null);const[todos,setTodos]=useState([]);
+  const[cd,setCd]=useState(null);const[trust,setTrust]=useState(null);const[pers,setPers]=useState(null);const[mem,setMem]=useState(null);const[epi,setEpi]=useState(null);const[todos,setTodos]=useState([]);const[loading,setLoading]=useState(true);
   useEffect(()=>{
-    fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{});
-    fetch('/api/trust').then(r=>r.json()).then(setTrust).catch(()=>{});
-    fetch('/api/personality').then(r=>r.json()).then(setPers).catch(()=>{});
-    fetch('/api/memory/stats').then(r=>r.json()).then(setMem).catch(()=>{});
-    fetch('/api/epistemic').then(r=>r.json()).then(setEpi).catch(()=>{});
-    fetch('/api/todos').then(r=>r.json()).then(d=>setTodos(d.todos||[])).catch(()=>{});
+    Promise.all([
+      fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>null),
+      fetch('/api/trust').then(r=>r.json()).then(setTrust).catch(()=>null),
+      fetch('/api/personality').then(r=>r.json()).then(setPers).catch(()=>null),
+      fetch('/api/memory/stats').then(r=>r.json()).then(setMem).catch(()=>null),
+      fetch('/api/epistemic').then(r=>r.json()).then(setEpi).catch(()=>null),
+      fetch('/api/todos').then(r=>r.json()).then(d=>setTodos(d.todos||[])).catch(()=>[])
+    ]).then(()=>setLoading(false));
   },[]);
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
-  return(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-    <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
-    <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:8}}><span className="badge-green">ONLINE</span></div></div>
-    <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?.length||0}</div><div className="stat-label">entities tracked</div></div>
-    <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:epi?.overall>0.6?'#00ff80':epi?.overall>0.4?'#f59e0b':'#ff0080'}}>{epi?.overall?.toFixed(2)||'0.50'}</div><div className="stat-label">independence index</div></div>
-    <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}><div style={{display:'flex',justifyContent:'space-between'}}><span>🔵 Short-term</span><span>{mem?.short||0}</span></div><div style={{display:'flex',justifyContent:'space-between'}}><span>🟣 Medium-term</span><span>{mem?.medium||0}</span></div><div style={{display:'flex',justifyContent:'space-between'}}><span>🟠 Long-term</span><span>{mem?.long||0}</span></div></div></div>
-    <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed</div>:todos.slice(0,5).map(t=><div key={t.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 8px',fontSize:9,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 8px',fontSize:9,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
+  const pending=todos.filter(t=>t.status==='proposed').length;
+  const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.name} in ${c.days_until}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
+  return(<div>
+    <FridaySays text={insight}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
+      <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
+      <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?.length||0}</div><div className="stat-label">entities tracked</div></div>
+      <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
+      <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
+      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:9,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:9,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
+    </div>
   </div>);
 }
 function CareerWS(){
-  const[jobs,setJobs]=useState('');const[filter,setFilter]=useState('all');
-  useEffect(()=>{fetch('/api/jobs').then(r=>r.json()).then(d=>setJobs(d.content||'')).catch(()=>setJobs('API unavailable'))},[]);
+  const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);
+  useEffect(()=>{fetch('/api/jobs').then(r=>r.json()).then(d=>{setJobs(d.content||'');setLoading(false)}).catch(()=>{setJobs('API unavailable');setLoading(false)})},[]);
   const lines=jobs.split('\n');const roles=[];let cur=null;
   lines.forEach(l=>{if(l.startsWith('### ')){if(cur)roles.push(cur);cur={title:l.replace('### ',''),lines:[]};}else if(cur)cur.lines.push(l)});if(cur)roles.push(cur);
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading career data...</div>;
   return(<div>
-    <div style={{display:'flex',gap:6,marginBottom:12}}>{['all','applied','not-applied'].map(f=><button key={f} className={`btn ${filter===f?'':'btn-magenta'}`} style={{fontSize:10}} onClick={()=>setFilter(f)}>{f}</button>)}</div>
-    <div style={{display:'flex',gap:8,marginBottom:12}}><div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{roles.length}</div><div className="stat-label">roles</div></div></div>
+    <FridaySays text={roles.length>0?`${roles.length} roles in your pipeline. Target: $500K.`:null}/>
+    <div style={{display:'flex',gap:8,marginBottom:12}}><div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{roles.length}</div><div className="stat-label">curated roles</div></div><div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00ff80'}}>$500K</div><div className="stat-label">target comp</div></div></div>
     {roles.length===0?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,2000)}</pre>:
     roles.slice(0,15).map((r,i)=>{const scoreMatch=r.lines.join(' ').match(/Score[:\s]*(\d+)/i);const score=scoreMatch?parseInt(scoreMatch[1]):50;const color=score>80?'#00ff80':score>60?'#f59e0b':'#ff0080';
       return(<div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{r.title}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{score}</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:score+'%',background:color}}/></div><div style={{fontSize:10,color:'#666',marginTop:4}}>{r.lines.slice(0,2).join(' ').substring(0,120)}</div></div>)})}
   </div>);
 }
 function WikiWS(){
-  const[struct,setStruct]=useState(null);const[content,setContent]=useState('Select a file from the sidebar');const[path,setPath]=useState('');
-  useEffect(()=>{fetch('/api/wiki/structure').then(r=>r.json()).then(setStruct).catch(()=>{})},[]);
-  const load=(s,f)=>{setPath(`${s}/${f}`);fetch(`/api/wiki/${s}/${f}`).then(r=>r.json()).then(d=>setContent(d.content||d.error||'Empty')).catch(()=>setContent('Error'))};
+  const[struct,setStruct]=useState(null);const[content,setContent]=useState('Select a file from the sidebar');const[path,setPath]=useState('');const[loading,setLoading]=useState(true);
+  useEffect(()=>{fetch('/api/wiki/structure').then(r=>r.json()).then(d=>{setStruct(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  const load=(s,f)=>{setPath(`${s}/${f}`);fetch(`/api/wiki/${s}/${f}`).then(r=>r.json()).then(d=>setContent(d.content||d.error||'Empty')).catch(()=>setContent('Error loading file'))};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading wiki...</div>;
+  const totalFiles=struct?.sections?.reduce((a,s)=>a+(s.files?.length||0),0)||0;
   return(<div style={{display:'flex',gap:12,height:'100%'}}>
     <div style={{width:170,borderRight:'1px solid rgba(255,255,255,0.04)',paddingRight:8,overflowY:'auto',flexShrink:0}}>
-      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:10,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name}</div>{s.files?.map(f=><div key={f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)||<span style={{color:'#555',fontSize:11}}>Loading...</span>}
+      <div style={{fontSize:10,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
+      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:10,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({s.files?.length||0})</span></div>{s.files?.map(f=><div key={f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
     </div>
     <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
   </div>);
 }
 function CoparentWS(){
-  const[data,setData]=useState(null);
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setData).catch(()=>{})},[]);
   const now=new Date();const month=now.getMonth();const year=now.getFullYear();const daysInMonth=new Date(year,month+1,0).getDate();
   const firstDay=new Date(year,month,1).getDay();const days=[];for(let i=0;i<firstDay;i++)days.push(null);for(let i=1;i<=daysInMonth;i++)days.push(i);
   const isThursday=d=>d&&new Date(year,month,d).getDay()===4;
-  const weekNum=d=>{if(!d)return 0;const dt=new Date(year,month,d);const first=new Date(year,month,1);let wk=0;for(let i=1;i<=d;i++){if(new Date(year,month,i).getDay()===0)wk++}return wk+1};
-  const isCustodyWeekend=d=>{if(!d)return false;const dt=new Date(year,month,d);const dow=dt.getDay();if(dow!==0&&dow!==6)return false;const wk=weekNum(d);return wk===1||wk===3||wk===5};
+  const isCustodyWeekend=d=>{if(!d)return false;const dow=new Date(year,month,d).getDay();if(dow!==0&&dow!==6)return false;let sunCount=0;for(let i=1;i<=d;i++){if(new Date(year,month,i).getDay()===0)sunCount++}return sunCount===1||sunCount===3||sunCount===5};
+  const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
   return(<div>
+    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. 852 OFW messages analyzed. 89 unanswered threads documented.`}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-      <div className="card"><div className="card-title">OFW Stats</div><div className="stat">852</div><div className="stat-label">total messages analyzed</div><div style={{marginTop:6,fontSize:11,color:'#888'}}>Response asymmetry: 25h vs 3.3h first-view</div></div>
-      <div className="card"><div className="card-title">Unanswered Threads</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">messages awaiting response</div></div>
+      <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
+      <div className="card"><div className="card-title">Unanswered</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
     </div>
     <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
         {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#555',fontFamily:'Orbitron',fontSize:9,padding:4}}>{d}</div>)}
-        {days.map((d,i)=><div key={i} style={{padding:4,borderRadius:4,background:isCustodyWeekend(d)?'rgba(0,212,255,0.12)':isThursday(d)?'rgba(124,58,237,0.12)':'transparent',color:d?(isCustodyWeekend(d)||isThursday(d)?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono'}}>{d||'·'}</div>)}
+        {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
       </div>
-      <div style={{fontSize:10,color:'#555',marginTop:6}}>🔵 1st/3rd/5th weekends · 🟣 Every Thursday</div>
+      <div style={{fontSize:10,color:'#555',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
     </div>
-    <div className="card"><div className="card-title">***REMOVED***'s Schedule</div>
-      <div style={{fontSize:12,color:'#aaa'}}>{['🥋 Kung Fu','💃 Dance','♟️ Chess','🧠 Play Therapy (Rachel Hodgdon)','🏫 ***REMOVED***'].map((a,i)=><div key={i} style={{padding:'3px 0'}}>{a}</div>)}</div>
-    </div>
+    <div className="card"><div className="card-title">***REMOVED***'s Weekly Schedule</div>
+      {['🥋 Kung Fu','💃 Dance','♟️ Chess (school)','🧠 Play Therapy — Rachel Hodgdon','🏫 ***REMOVED*** · Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
   </div>);
 }
 function FuturespeakWS(){
   return(<div>
-    <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div><div style={{fontSize:13}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance.</div><div style={{marginTop:6}}><a href="https://futurespeak.ai" target="_blank" style={{color:'#00d4ff',fontSize:11}}>futurespeak.ai →</a></div></div>
+    <FridaySays text="Adtalem Phase 3 targeting $13.75M. SAGE in alpha. 49 repos under FutureSpeakAI."/>
+    <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div><div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div><div style={{marginTop:6}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a></div></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-      <div className="card"><div className="card-title">Active Client</div><div style={{fontWeight:600}}>Adtalem (CommHub)</div><div style={{fontSize:11,color:'#888'}}>Phase 2 complete · $13.75M Phase 3 target</div><div style={{fontSize:11,color:'#f59e0b',marginTop:4}}>55-84M projected benefits · 4-6x ROI</div></div>
-      <div className="card"><div className="card-title">SAGE Platform</div><span className="badge-amber">Alpha</span><div style={{fontSize:11,color:'#888',marginTop:4}}>Multi-agent RAG marketing engine</div></div>
-      <div className="card"><div className="card-title">Agent Friday</div><div className="stat" style={{fontSize:16}}>49</div><div className="stat-label">repos · github.com/FutureSpeakAI</div></div>
-      <div className="card"><div className="card-title">Research</div><div style={{fontSize:11,color:'#aaa'}}>📄 Reverse RLHF (5th ed)<br/>📄 Asimov's Claw series<br/>📄 Non-Stationary Reward Sources</div></div>
+      <div className="card"><div className="card-title">Active Client</div><div style={{fontWeight:600}}>Adtalem / Covista (CommHub)</div><div style={{fontSize:11,color:'#888'}}>Phase 2 complete</div><div style={{fontSize:11,color:'#f59e0b',marginTop:4}}>$13.75M Phase 3 target</div><div style={{fontSize:10,color:'#666',marginTop:2}}>55-84M projected benefits · 4-6x ROI</div></div>
+      <div className="card"><div className="card-title">SAGE Platform</div><span className="badge-amber">Alpha</span><div style={{fontSize:11,color:'#888',marginTop:4}}>Multi-agent RAG marketing engine<br/>React + Express + PostgreSQL + Claude</div></div>
+      <div className="card"><div className="card-title">Agent Friday</div><div className="stat" style={{fontSize:16}}>49</div><div className="stat-label">repos · github.com/FutureSpeakAI</div><div style={{fontSize:10,color:'#666',marginTop:4}}>7 core systems · 369 tests · 40 MCP tools</div></div>
+      <div className="card"><div className="card-title">Research</div>{['📄 Reverse RLHF Hypothesis (5th ed)','📄 Non-Stationary Reward Sources','📄 Asimov\'s Claw series (LinkedIn)'].map((r,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{r}</div>)}</div>
     </div>
   </div>);
 }
 function FamilyWS(){
   const[cd,setCd]=useState(null);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
-  return(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-    <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>***REMOVED*** · Dance · Chess<br/>***REMOVED***</div>{cd?.countdowns?.find(c=>c.name?.includes('***REMOVED***'))&&<div style={{marginTop:6}}><span className="badge-cyan">{cd.countdowns.find(c=>c.name.includes('***REMOVED***')).days_until} days until birthday</span></div>}</div>
-    <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Birthday: Jan 4 · Anniversary: Feb 13</div></div>
-    <div className="card"><div className="card-title">🐕 Dogs</div><div style={{fontSize:12}}>🐾 <strong>Link</strong> — 8yr ***REMOVED***, ***REMOVED***, healthy<br/>🐾 <strong>***REMOVED***</strong> — ***REMOVED***, ***REMOVED***</div></div>
-    <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div><div style={{fontSize:12}}>Jere Jay — INNEX Energy CEO<br/>Bonnie Jay — INNEX Ops Director<br/>Julia Jay — Seattle, hydrology, Peace Corps</div></div>
-    <div className="card"><div className="card-title">🚐 Vehicles</div><div style={{fontSize:12}}>🔵 2015 Golf TSI SEL (Unitronic Stage 1)<br/>🔴 2023 GLI (stock)<br/>🚐 Ford Transit 350 camper</div></div>
-    <div className="card"><div className="card-title">🗓️ Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.name} — <span style={{color:'#00d4ff'}}>{c.days_until}d</span></div>)}</div>
+  const libbyDays=cd?.countdowns?.find(c=>c.name?.toLowerCase().includes('libby'))?.days_until;
+  return(<div>
+    <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+      <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🥋 ***REMOVED*** · 💃 Dance · ♟️ Chess<br/>🏫 ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
+      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:10,color:'#666',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
+      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:9}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:9}}>monitoring</span><br/><span style={{color:'#666',fontSize:10}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
+      <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
+      <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
+      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
+    </div>
   </div>);
 }
 function StudioWS(){
-  const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);
-  useEffect(()=>{fetch('/api/creations').then(r=>r.json()).then(d=>setCreations(d.files||[])).catch(()=>{})},[]);
-  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});fetch('/api/creations').then(r=>r.json()).then(d=>setCreations(d.files||[]))}catch(e){}setGen(false)};
+  const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);
+  useEffect(()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});const r=await fetch('/api/creations');const d=await r.json();setCreations(d.files||[])}catch(e){}setGen(false)};
   return(<div>
+    <FridaySays text={`${creations.length} creations in the gallery. Daily creation runs at 2 PM.`}/>
     <div className="card-title">Friday's Creative Studio</div>
-    <div style={{display:'flex',gap:6,marginBottom:10}}><input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..."/></div>
-    <div style={{display:'flex',gap:4,marginBottom:14,flexWrap:'wrap'}}>{['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:10}}>{gen?'...':t}</button>)}</div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>{creations.slice(0,12).map((f,i)=><div key={i} className="card" style={{textAlign:'center',fontSize:10}}><div style={{fontSize:20}}>🎨</div><div style={{color:'#888',wordBreak:'break-all'}}>{typeof f==='string'?f:f.name}</div></div>)}</div>
+    <div style={{display:'flex',gap:6,marginBottom:10}}><input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/></div>
+    <div style={{display:'flex',gap:4,marginBottom:14,flexWrap:'wrap'}}>{['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:10}}>{gen?'Creating...':t}</button>)}</div>
+    {loading?<div style={{color:'#555'}}>Loading gallery...</div>:
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>{creations.slice(0,12).map((f,i)=>{const name=typeof f==='string'?f:f.name||'creation';const ext=name.split('.').pop();const typeIcon={html:'💻',md:'📝',svg:'🎨',png:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'}[ext]||'📄';return <div key={i} className="card" style={{textAlign:'center',fontSize:10}}><div style={{fontSize:20}}>{typeIcon}</div><div style={{color:'#888',wordBreak:'break-all',marginTop:2}}>{name}</div></div>})}</div>}
   </div>);
 }
 function TrustWS(){
-  const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);
-  useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(setTrust).catch(()=>{})},[]);
-  const people=(trust?.people||[]).sort((a,b)=>(b.scores?.overall||0)-(a.scores?.overall||0));
+  const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
+  useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading trust graph...</div>;
+  if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
+  const people=Array.isArray(trust?.people)?trust.people.sort((a,b)=>((b.scores?.overall)||0)-((a.scores?.overall)||0)):[];
   const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
   return(<div>
+    <FridaySays text={`${people.length} entities tracked. Click any person to see dimension breakdown.`}/>
     <div className="card-title">Trust Graph — {people.length} Entities</div>
-    {people.map((p,i)=>{const s=p.scores?.overall||0.5;const pct=Math.round(s*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
+    {people.map((p,i)=>{
+      const overall=p&&p.scores&&typeof p.scores.overall==='number'?p.scores.overall:0.5;
+      const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
       return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontWeight:600}}>{p.name}</span>{p.aliases?.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div><span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span></div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div><span style={{fontWeight:600}}>{p.name||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
+          <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
+        </div>
         <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
         {expanded===i&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-          {dims.map(d=>{const v=Math.round((p.scores?.[d]||0.5)*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}><span style={{width:120,fontSize:10,color:'#666'}}>{d.replace(/_/g,' ')}</span><div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div><span style={{fontSize:10,fontFamily:'JetBrains Mono',color:dc,width:30}}>{v}%</span></div>)})}
-          <div style={{fontSize:10,color:'#555',marginTop:4}}>Evidence: {p.evidence?.length||0} records</div>
+          {dims.map(d=>{const val=p.scores&&typeof p.scores[d]==='number'?p.scores[d]:0.5;const v=Math.round(val*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
+            return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+              <span style={{width:120,fontSize:10,color:'#666'}}>{d.replace(/_/g,' ')}</span>
+              <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
+              <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
+            </div>)})}
+          <div style={{fontSize:10,color:'#555',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
         </div>}
       </div>)})}
   </div>);
 }
 function SystemWS(){
-  const[sys,setSys]=useState(null);
-  useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(setSys).catch(()=>{})},[]);
+  const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
+  useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Scanning system...</div>;
   return(<div>
-    <div className="card-title">System Status</div>
-    {sys?.disk?.map((d,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{d.drive}</span><span style={{color:'#00d4ff'}}>{d.free_gb?.toFixed(1)} GB free / {d.total_gb?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:((1-d.free_gb/d.total_gb)*100)+'%',background:d.free_gb/d.total_gb<0.1?'#ff0080':'#00d4ff'}}/></div></div>)}
+    <div className="card-title">Disk Space</div>
+    {(sys?.disk||[]).map((d,i)=>{const used=d.total_gb>0?(1-d.free_gb/d.total_gb)*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{d.drive}</span><span style={{color:'#00d4ff'}}>{d.free_gb?.toFixed(1)} GB free / {d.total_gb?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
     <div className="card-title" style={{marginTop:10}}>Top Processes</div>
-    {sys?.processes?.slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{p.name}</span><span style={{color:'#f59e0b'}}>{p.memory_mb?.toFixed(0)} MB</span></div>)}
+    {(sys?.processes||[]).slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{p.name}</span><span style={{color:'#f59e0b'}}>{(p.memory_mb||0).toFixed(0)} MB</span></div>)}
   </div>);
 }
 function CodeWS(){
   const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('C:\\Users\\user\\Projects');const[status,setStatus]=useState([]);
   useEffect(()=>{const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setStatus(d.terminals||[])).catch(()=>{})},5000);return()=>clearInterval(iv)},[]);
-  const launch=async()=>{const lines=tasks.split('\n').filter(l=>l.trim());if(!lines.length)return;
-    await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})});};
+  const launch=async()=>{const lines=tasks.split('\n').filter(l=>l.trim());if(!lines.length)return;await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})})};
   return(<div>
-    <div className="card-title">Vibe Code — Parallel Terminals</div>
-    <div style={{marginBottom:10}}><input className="input" style={{width:'100%',marginBottom:6}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/><textarea className="input" style={{width:'100%',height:80,resize:'vertical'}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line..."/></div>
+    <FridaySays text={status.length>0?`${status.filter(t=>t.status==='running').length} terminals active.`:'Launch parallel Claude Code terminals.'}/>
+    <div className="card-title">Vibe Code</div>
+    <input className="input" style={{width:'100%',marginBottom:6}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/>
+    <textarea className="input" style={{width:'100%',height:80,resize:'vertical',marginBottom:8}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line..."/>
     <div style={{display:'flex',gap:4,marginBottom:10}}><button className="btn" onClick={launch}>Launch All</button></div>
-    {status.length>0&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{status.map((t,i)=><div key={i} className="card"><div style={{fontSize:10,color:t.status==='running'?'#00ff80':'#888'}}>{t.status}</div><div style={{fontSize:11,marginTop:4}}>{t.task?.substring(0,80)}</div></div>)}</div>}
+    {status.length>0&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{status.map((t,i)=><div key={i} className="card"><div style={{fontSize:10,color:t.status==='running'?'#00ff80':'#888'}}>{t.status||'unknown'}</div><div style={{fontSize:11,marginTop:4}}>{(t.task||'').substring(0,80)}</div></div>)}</div>}
   </div>);
 }
 function NewsWS(){
-  const[content,setContent]=useState('Loading...');
-  useEffect(()=>{fetch('/api/wiki/meta/latest-briefing').then(r=>r.json()).then(d=>setContent(d.content||'No briefing yet')).catch(()=>setContent('API unavailable'))},[]);
-  return(<div><div className="card-title">Daily News Briefing + Op-Ed</div><pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>);
+  const[content,setContent]=useState('');const[loading,setLoading]=useState(true);
+  useEffect(()=>{fetch('/api/wiki/meta/latest-briefing').then(r=>r.json()).then(d=>{setContent(d.content||'No briefing yet — check friday-creations folder');setLoading(false)}).catch(()=>{setContent('API unavailable');setLoading(false)})},[]);
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing...</div>;
+  return(<div>
+    <FridaySays text="Today's briefing with Friday's Take op-ed. Open the HTML version for full formatting."/>
+    <div className="card-title">Daily News Briefing + Op-Ed</div>
+    <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content.substring(0,5000)}{content.length>5000?'\n\n[...truncated — open HTML version for full content]':''}</pre>
+  </div>);
 }
-// ═══ APP ═══
+
+// ═══ MAIN APP ═══
 function App(){
-  const[openWins,setOpenWins]=useState(new Set(['home']));const[focusWin,setFocusWin]=useState('home');
-  const[zMap,setZMap]=useState({home:41});const[zC,setZC]=useState(42);
+  const[openWins,setOpenWins]=useState(new Set());
+  const[focusWin,setFocusWin]=useState(null);
+  const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const[clock,setClock]=useState(new Date());const[notifs,setNotifs]=useState([]);
+  const[greeting,setGreeting]=useState(null);const[promptText,setPromptText]=useState('');
   const chatEnd=useRef(null);
+
   useEffect(()=>{const t=setInterval(()=>setClock(new Date()),1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
+  // Fetch greeting data
+  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{const items=(d.countdowns||[]).map(c=>`${c.name} in ${c.days_until}d`).join(' · ');setGreeting(items||'All systems nominal.')}).catch(()=>setGreeting('All systems nominal.'))},[]);
+
   const toggle=id=>{setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
-  const sendChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
-    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
+  const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
+    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
+
+  const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
+
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
+  const noWindows=openWins.size===0;
+
   return(<>
+    {/* Top Bar */}
     <div className="top-bar">
-      <div style={{display:'flex',alignItems:'center',gap:10}}><span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span><span style={{color:'rgba(124,58,237,0.4)'}}>|</span><span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.5)',letterSpacing:'.08em'}}>FutureSpeak.AI</span></div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#555'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>🔔{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}}>{unread}</span>}</button>
+        <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
+        <span style={{color:'rgba(124,58,237,0.3)'}}>|</span>
+        <span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.4)',letterSpacing:'.08em'}}>FutureSpeak.AI</span>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
+        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>🔔{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}</button>
         <button onClick={()=>setChatOpen(!chatOpen)} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>💬</button>
-        <div style={{width:7,height:7,borderRadius:'50%',background:'#00ff80'}}/>
+        <div style={{width:7,height:7,borderRadius:'50%',background:'#00ff80'}} title="Connected"/>
       </div>
     </div>
-    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}>{wsMap[id]||<div>Coming soon</div>}</FWin>)})}
+
+    {/* Calm Default State — when no windows are open */}
+    {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
+      <div style={{fontFamily:'Orbitron',fontSize:24,color:'rgba(0,212,255,0.6)',marginBottom:8,animation:'fadeIn 1s ease'}}>{getGreeting()}, Stephen.</div>
+      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.25)',maxWidth:500,textAlign:'center',marginBottom:24}}>{greeting}</div>
+      <div style={{pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
+        <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
+          placeholder="Ask Friday anything..."
+          style={{width:360,background:'rgba(6,6,11,0.6)',backdropFilter:'blur(12px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:24,padding:'10px 20px',color:'#e0e0e8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s'}}/>
+        <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>🎤</button>
+      </div>
+    </div>}
+
+    {/* Floating Windows */}
+    {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
+
+    {/* Chat Panel */}
     <div className={`chat-panel ${chatOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>✕</button>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
-        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday...</div>}
+        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-block',maxWidth:'80%',padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
-          <div style={{fontSize:9,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time}</div>
+          <div style={{fontSize:9,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
-        {chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Friday is thinking...</div>}
+        {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-        <div style={{display:'flex',gap:6}}><input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder="Talk to Friday..."/><button className="btn" onClick={sendChat}>Send</button></div>
+        <div style={{display:'flex',gap:6}}>
+          <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder="Talk to Friday..."/>
+          <button className="btn" onClick={()=>sendChat()}>Send</button>
+        </div>
       </div>
     </div>
-    <div className="dock">{WS.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}><span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/></button>)}</div>
+
+    {/* Dock */}
+    <div className="dock">
+      {WS.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
+        <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
+      </button>)}
+    </div>
   </>);
 }
 ReactDOM.createRoot(document.getElementById('ui-root')).render(<App/>);
