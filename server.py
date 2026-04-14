@@ -110,6 +110,30 @@ def career_report(filename):
             return jsonify({'status': 'ok', 'content': f.read(), 'filename': filename})
     return jsonify({'status': 'not_found'})
 
+@app.route('/api/briefings')
+def list_briefings():
+    """List all daily briefing files (never delete these)."""
+    briefings = []
+    creations = HOME / 'Desktop' / 'friday-creations'
+    if creations.exists():
+        for f in sorted(creations.iterdir(), reverse=True):
+            if f.name.startswith('daily-briefing') and f.suffix in ('.html', '.md'):
+                date_part = f.name.replace('daily-briefing-', '').replace('.html', '').replace('.md', '')
+                existing = next((b for b in briefings if b['date'] == date_part), None)
+                if existing:
+                    existing[f.suffix.lstrip('.')] = f.name
+                else:
+                    briefings.append({'date': date_part, 'name': f.stem, f.suffix.lstrip('.'): f.name, 'size': f.stat().st_size})
+    return jsonify({'status': 'ok', 'briefings': briefings, 'total': len(briefings)})
+
+@app.route('/api/briefing/<filename>')
+def get_briefing(filename):
+    """Serve a briefing file content."""
+    path = HOME / 'Desktop' / 'friday-creations' / filename
+    if path.exists() and path.name.startswith('daily-briefing'):
+        return jsonify({'status': 'ok', 'content': path.read_text(encoding='utf-8'), 'filename': filename, 'is_html': path.suffix == '.html'})
+    return jsonify({'status': 'not_found'}), 404
+
 @app.route('/api/jobs')
 def get_jobs():
     """Parse job-search.md and return structured data."""

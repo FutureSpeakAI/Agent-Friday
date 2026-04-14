@@ -254,17 +254,49 @@ function CodeWS(){
   </div>);
 }
 function NewsWS(){
-  const[content,setContent]=useState('');const[loading,setLoading]=useState(true);
-  useEffect(()=>{fetch('/api/wiki/meta/latest-briefing').then(r=>r.json()).then(d=>{setContent(d.content||'No briefing yet — check friday-creations folder');setLoading(false)}).catch(()=>{setContent('API unavailable');setLoading(false)})},[]);
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing...</div>;
+  const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
+  const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
+  useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{setHtmlContent(d.content||'');setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
+  const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('file:///C:/Users/user/Desktop/friday-creations/'+file,'_blank')};
+  const readAloud=()=>{if(!htmlContent)return;const text=htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').substring(0,5000);const u=new SpeechSynthesisUtterance(text);u.rate=0.9;u.pitch=1;speechSynthesis.speak(u)};
+  const stopReading=()=>speechSynthesis.cancel();
+  const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
+    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
+  if(selected)return(<div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:10}}>Back to Archive</button>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" onClick={readAloud} style={{fontSize:10}}>Read Aloud</button>
+        <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:10}}>Stop</button>
+        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:10}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
+        <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:10}}>Open in Tab</button>
+      </div>
+    </div>
+    <div style={{display:'flex',gap:12}}>
+      <div style={{flex:1,overflowY:'auto'}}>
+        {selected.isHtml?<iframe srcDoc={htmlContent} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+        <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{htmlContent}</pre>}
+      </div>
+      {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
+        <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
+        <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:10,color:'#00d4ff'}}>Thinking...</div>}</div>
+        <div style={{display:'flex',gap:4}}><input className="input" style={{flex:1,fontSize:11}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendBriefingChat()} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:10}} onClick={sendBriefingChat}>Send</button></div>
+      </div>}
+    </div>
+  </div>);
   return(<div>
-    <FridaySays text="Today's briefing with Friday's Take op-ed. Open the HTML version for full formatting."/>
-    <div className="card-title">Daily News Briefing + Op-Ed</div>
-    <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content.substring(0,5000)}{content.length>5000?'\n\n[...truncated — open HTML version for full content]':''}</pre>
+    <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
+    <div className="card-title">Briefing Archive</div>
+    {briefings.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
+    briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
+      <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:10,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
+      <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:9,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
+    </div>)}
   </div>);
 }
 
-// ═══ MAIN APP ═══
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
