@@ -1262,7 +1262,7 @@ def tts():
 
         response = client.models.generate_content(
             model="gemini-2.5-flash-preview-tts",
-            contents=text,
+            contents=f"Say this aloud: {text}",
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(
