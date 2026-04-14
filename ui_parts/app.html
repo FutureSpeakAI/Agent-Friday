@@ -443,7 +443,7 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
     </div>
   </>);
 }
-ReactDOM.createRoot(document.getElementById('ui-root')).render(<App/>);
+ReactDOM.createRoot(document.getElementById('ui-inner')||document.getElementById('ui-root')).render(<App/>);
 </script>
 </body>
 </html>

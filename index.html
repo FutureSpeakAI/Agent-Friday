@@ -335,7 +335,7 @@
         </div>
     </div>
     
-<div id="ui-root" style="position:relative;z-index:10;height:100vh;pointer-events:none"></div>
+<div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none;opacity:0;transition:opacity 1s ease"><div id="ui-inner" style="pointer-events:auto;height:100vh"></div></div>
 <div style="position:fixed;bottom:8px;left:12px;z-index:1;font-family:Orbitron,monospace;font-size:10px;color:rgba(124,58,237,0.08);letter-spacing:.1em;pointer-events:none">FutureSpeak.AI</div>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
@@ -1123,6 +1123,9 @@
                 micActive = true; lastSoundTime = clock.getElapsedTime(); 
             } catch (err) { console.warn("Using procedural heartbeat."); }
             document.getElementById('interaction-prompt').classList.add('fade-out');
+        // Show Friday OS UI after awakening
+        const fridayUI = document.getElementById('ui-root');
+        if(fridayUI) { fridayUI.style.opacity = '1'; fridayUI.style.transition = 'opacity 1s ease'; }
         }
 
         function onWindowResize() {
@@ -2022,7 +2025,7 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
     </div>
   </>);
 }
-ReactDOM.createRoot(document.getElementById('ui-root')).render(<App/>);
+ReactDOM.createRoot(document.getElementById('ui-inner')).render(<App/>);
 </script>
 </body>
 </html>
