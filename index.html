@@ -323,7 +323,7 @@ function TrustWS(){
       const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
       return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><span style={{fontWeight:600}}>{p.name||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
+          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
         </div>
         <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
@@ -345,9 +345,9 @@ function SystemWS(){
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Scanning system...</div>;
   return(<div>
     <div className="card-title">Disk Space</div>
-    {(sys?.disk||[]).map((d,i)=>{const used=d.total_gb>0?(1-d.free_gb/d.total_gb)*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{d.drive}</span><span style={{color:'#00d4ff'}}>{d.free_gb?.toFixed(1)} GB free / {d.total_gb?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
+    {((sys?.disk||sys?.disks||[])).map((d,i)=>{const used=(d.total_gb||d.TotalGB||1)>0?(1-(d.free_gb||d.FreeGB||0)/(d.total_gb||d.TotalGB||1))*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{(d.drive||d.Name||d.name||'?')}</span><span style={{color:'#00d4ff'}}>{(d.free_gb||d.FreeGB||0)?.toFixed(1)} GB free / {(d.total_gb||d.TotalGB||1)?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
     <div className="card-title" style={{marginTop:10}}>Top Processes</div>
-    {(sys?.processes||[]).slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{p.name}</span><span style={{color:'#f59e0b'}}>{(p.memory_mb||0).toFixed(0)} MB</span></div>)}
+    {((sys?.processes||[])).slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{(p.name||p.Name||'unknown')}</span><span style={{color:'#f59e0b'}}>{((p.memory_mb||p.MemMB||p.mem_mb||0)).toFixed(0)} MB</span></div>)}
   </div>);
 }
 function CodeWS(){

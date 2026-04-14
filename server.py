@@ -226,6 +226,7 @@ def get_memory_stats():
 @app.route('/api/wiki/<section>/<filename>')
 def wiki_page(section, filename):
     """Read a wiki markdown file."""
+    if not filename.endswith('.md') and not filename.endswith('.txt'): filename += '.md'
     safe_path = WIKI_DIR / section / filename
     if safe_path.exists() and safe_path.suffix in ('.md', '.txt'):
         return jsonify({"status": "ok", "content": safe_path.read_text(encoding='utf-8'),
