@@ -384,9 +384,9 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
         <span style={{color:'rgba(124,58,237,0.3)'}}>|</span>
         <span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.4)',letterSpacing:'.08em'}}>FutureSpeak.AI</span>
         <div style={{display:'flex',alignItems:'center',gap:4,marginLeft:12}}>
-          <button onClick={()=>window.fridayVibe?.prevStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25C0}</button>
+          <button onClick={()=>window.fridayVibe?.prevStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>◀</button>
           <span style={{fontFamily:'JetBrains Mono',fontSize:9,color:'#444',minWidth:100,textAlign:'center'}}>{structureName}</span>
-          <button onClick={()=>window.fridayVibe?.nextStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25B6}</button>
+          <button onClick={()=>window.fridayVibe?.nextStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>▶</button>
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
