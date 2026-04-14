@@ -5,6 +5,7 @@ Powered by FutureSpeak.AI
 """
 
 import os
+import io
 import json
 import glob
 import subprocess
@@ -834,7 +835,7 @@ def chat_search():
 
 @app.route('/api/voice/tts', methods=['POST'])
 def tts():
-    """Text-to-speech using Gemini 2.5 Flash TTS model."""
+    """Text-to-speech using Gemini 2.5 Flash TTS model — returns WAV binary directly."""
     try:
         import wave
         from google import genai
@@ -845,10 +846,10 @@ def tts():
         voice = request.json.get('voice', 'Kore')
 
         if not text:
-            return jsonify({"status": "error", "message": "No text provided"})
+            return jsonify({"status": "error", "message": "No text provided"}), 400
 
         response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-tts',
+            model="gemini-2.5-flash-preview-tts",
             contents=text,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
@@ -862,22 +863,20 @@ def tts():
             )
         )
 
-        for part in response.candidates[0].content.parts:
-            if part.inline_data and part.inline_data.data:
-                # Wrap raw PCM in WAV headers (24kHz, 16-bit, mono)
-                filename = f"tts-{uuid.uuid4().hex[:8]}.wav"
-                filepath = TEMP_AUDIO_DIR / filename
-                with wave.open(str(filepath), 'wb') as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(24000)
-                    wf.writeframes(part.inline_data.data)
-                return jsonify({"status": "ok", "url": f"/api/audio/{filename}"})
+        audio_data = response.candidates[0].content.parts[0].inline_data.data
 
-        return jsonify({"status": "error", "message": "No audio generated"})
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(audio_data)
+        buf.seek(0)
+        return send_file(buf, mimetype='audio/wav')
+
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route('/api/audio/<path:filename>')
