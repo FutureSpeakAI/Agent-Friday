@@ -669,6 +669,330 @@ FRIDAY_SYSTEM_PROMPT = (
     "You call him 'boss' sometimes, but you're equals. Think Jarvis meets Hunter S. Thompson's editor."
 )
 
+
+# ═══════════════════════════════════════════════════════════════
+#  CONTEXT AWARENESS ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+CAREER_OPS_DIR = Path('C:\\Users\\user\\Projects\\career-ops\\data')
+WIKI_DIR_FRIDAY = HOME / ".friday" / "wiki"
+
+def _load_vault_summary():
+    """Load a lightweight summary of all core vault data for context injection."""
+    ctx = {}
+
+    # Personality state
+    pfile = FRIDAY_DIR / "personality.json"
+    if pfile.exists():
+        try:
+            data = json.loads(pfile.read_text(encoding='utf-8'))
+            ctx['personality'] = {
+                'maturity': data.get('maturity', 0.5),
+                'session_count': data.get('session_count', 0),
+                'top_traits': {k: round(v, 2) for k, v in list(data.get('traits', {}).items())[:5]},
+                'temperature': data.get('temperature', 0.7),
+            }
+        except Exception:
+            pass
+
+    # Trust graph — names and scores only (lightweight)
+    tfile = FRIDAY_DIR / "trust_graph.json"
+    if tfile.exists():
+        try:
+            data = json.loads(tfile.read_text(encoding='utf-8'))
+            people = data.get('people', {})
+            if isinstance(people, dict):
+                ctx['trust_people'] = {
+                    name: {
+                        'overall': round(info.get('overall_score', info.get('score', 0.5)), 2),
+                        'relationship': info.get('relationship', ''),
+                    }
+                    for name, info in people.items()
+                }
+            elif isinstance(people, list):
+                ctx['trust_people'] = {
+                    p.get('name', 'unknown'): {
+                        'overall': round(p.get('overall_score', p.get('score', 0.5)), 2),
+                        'relationship': p.get('relationship', ''),
+                    }
+                    for p in people
+                }
+        except Exception:
+            pass
+
+    # Memory stats
+    mem_file = FRIDAY_DIR / "memory.json"
+    if mem_file.exists():
+        try:
+            data = json.loads(mem_file.read_text(encoding='utf-8'))
+            # Pull recent memories for conversational awareness
+            recent = []
+            for tier in ['short_term', 'working', 'recent']:
+                if tier in data and isinstance(data[tier], list):
+                    for m in data[tier][-5:]:
+                        if isinstance(m, dict):
+                            recent.append(m.get('content', m.get('text', str(m)))[:200])
+                        elif isinstance(m, str):
+                            recent.append(m[:200])
+            ctx['recent_memories'] = recent
+        except Exception:
+            pass
+
+    # Todos
+    todo_file = FRIDAY_DIR / "todos.json"
+    if todo_file.exists():
+        try:
+            todos = json.loads(todo_file.read_text(encoding='utf-8'))
+            active = [t for t in todos if t.get('status') in ('proposed', 'approved')]
+            ctx['active_todos'] = [
+                {'task': t.get('title', t.get('task', '')), 'status': t.get('status', '')}
+                for t in active[:10]
+            ]
+        except Exception:
+            pass
+
+    # Epistemic score
+    efile = FRIDAY_DIR / "epistemic_scores.json"
+    if not efile.exists():
+        efile = FRIDAY_DIR / "epistemic.json"
+    if efile.exists():
+        try:
+            data = json.loads(efile.read_text(encoding='utf-8'))
+            ctx['epistemic'] = {
+                'overall': round(data.get('overall_score', data.get('overall', 0.72)), 2),
+            }
+        except Exception:
+            pass
+
+    return ctx
+
+
+def _lookup_trust_person(name, trust_data):
+    """Look up a person's full trust entry by name (fuzzy match)."""
+    if not trust_data:
+        return None
+    people = trust_data.get('people', {})
+    name_lower = name.lower()
+
+    if isinstance(people, dict):
+        for pname, pdata in people.items():
+            if name_lower in pname.lower():
+                return {pname: pdata}
+    elif isinstance(people, list):
+        for p in people:
+            if name_lower in p.get('name', '').lower():
+                return p
+    return None
+
+
+def _get_career_context():
+    """Load career-ops summary for career-related queries."""
+    ctx = {}
+    tracker_path = CAREER_OPS_DIR / 'applications.md'
+    if tracker_path.exists():
+        try:
+            content = tracker_path.read_text(encoding='utf-8')
+            lines = [l for l in content.strip().split('\n')
+                     if l.startswith('|') and '---' not in l
+                     and not any(h in l.lower() for h in ['company', 'score', '#'])]
+            ctx['applications_count'] = len(lines)
+            ctx['recent_applications'] = lines[-5:]  # last 5 entries
+        except Exception:
+            pass
+
+    pipeline_path = CAREER_OPS_DIR / 'pipeline.md'
+    if pipeline_path.exists():
+        try:
+            ctx['pipeline_summary'] = pipeline_path.read_text(encoding='utf-8')[:1000]
+        except Exception:
+            pass
+    return ctx
+
+
+def _get_wiki_context(topic):
+    """Search wiki for content matching a topic."""
+    results = []
+    for wiki_dir in [HOME / "wiki", WIKI_DIR_FRIDAY]:
+        if not wiki_dir.exists():
+            continue
+        for md_file in wiki_dir.rglob('*.md'):
+            try:
+                content = md_file.read_text(encoding='utf-8')
+                if topic.lower() in content.lower() or topic.lower() in md_file.stem.lower():
+                    results.append({
+                        'file': str(md_file.relative_to(wiki_dir)),
+                        'excerpt': content[:500],
+                    })
+                    if len(results) >= 3:
+                        return results
+            except Exception:
+                continue
+    return results
+
+
+def _detect_context_needs(message, workspace):
+    """Analyze the message and workspace to decide what data to pull."""
+    msg_lower = message.lower()
+    needs = set()
+
+    # Always include personality for tone calibration
+    needs.add('personality')
+
+    # Workspace-driven context
+    ws_map = {
+        'career': {'career', 'trust'},
+        'trust': {'trust'},
+        'coparent': {'trust', 'wiki'},
+        'wiki': {'wiki'},
+        'home': {'todos', 'personality'},
+        'family': {'trust'},
+        'futurespeak': {'career'},
+        'code': set(),
+        'studio': set(),
+        'system': set(),
+        'news': set(),
+    }
+    needs.update(ws_map.get(workspace, set()))
+
+    # Message keyword detection
+    career_words = ['job', 'career', 'interview', 'resume', 'salary', 'apply', 'application',
+                    'hire', 'offer', 'pipeline', 'role', 'position', 'recruiter']
+    trust_words = ['trust', 'who is', 'tell me about', 'what do you know about',
+                   'relationship', 'score', 'person']
+    family_words = ['libby', 'liberty', 'janet', 'link', 'kismet', 'daughter',
+                    'partner', 'dog', 'family', 'custody', 'birthday']
+    todo_words = ['todo', 'task', 'to-do', 'to do', 'pending', 'approve', 'action item']
+    wiki_words = ['briefing', 'wiki', 'notes', 'article', 'research', 'report']
+    memory_words = ['remember', 'recall', 'memory', 'earlier', 'last time', 'you said',
+                    'we discussed', 'we talked']
+
+    if any(w in msg_lower for w in career_words):
+        needs.add('career')
+    if any(w in msg_lower for w in trust_words):
+        needs.add('trust')
+    if any(w in msg_lower for w in family_words):
+        needs.add('trust')
+    if any(w in msg_lower for w in todo_words):
+        needs.add('todos')
+    if any(w in msg_lower for w in wiki_words):
+        needs.add('wiki')
+    if any(w in msg_lower for w in memory_words):
+        needs.add('memory')
+
+    return needs
+
+
+def _build_context_prompt(message, workspace='', workspace_context=None, vision_description=None):
+    """Build an enriched system prompt with all relevant context layers."""
+    vault = _load_vault_summary()
+    needs = _detect_context_needs(message, workspace)
+    sources_consulted = []
+
+    sections = [FRIDAY_SYSTEM_PROMPT]
+
+    # Layer 1: Active workspace context (from frontend)
+    if workspace_context:
+        sections.append(
+            f"\n== ACTIVE WORKSPACE: {workspace_context.get('name', workspace)} ==\n"
+            f"What Stephen is looking at right now:\n"
+            f"{json.dumps(workspace_context.get('data', {}), indent=2, default=str)[:2000]}"
+        )
+        if workspace_context.get('focus'):
+            sections.append(f"Current focus: {workspace_context['focus']}")
+        sources_consulted.append('workspace')
+
+    # Layer 2: Vault data (personality always included)
+    if 'personality' in needs and 'personality' in vault:
+        p = vault['personality']
+        sections.append(
+            f"\n== FRIDAY STATE ==\n"
+            f"Maturity: {p.get('maturity', 0.5):.0%} · Sessions: {p.get('session_count', 0)} · "
+            f"Temperature: {p.get('temperature', 0.7)}"
+        )
+        sources_consulted.append('personality')
+
+    if 'trust' in needs and 'trust_people' in vault:
+        # Check if message references a specific person
+        trust_data_raw = None
+        tfile = FRIDAY_DIR / "trust_graph.json"
+        if tfile.exists():
+            try:
+                trust_data_raw = json.loads(tfile.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+        # Try to find a specific person mentioned
+        person_match = None
+        if trust_data_raw:
+            for name in vault['trust_people']:
+                if name.lower() in message.lower():
+                    person_match = _lookup_trust_person(name, trust_data_raw)
+                    break
+
+        if person_match:
+            sections.append(
+                f"\n== TRUST DATA (specific person) ==\n"
+                f"{json.dumps(person_match, indent=2, default=str)[:1500]}"
+            )
+        else:
+            # General trust summary
+            summary = ', '.join(
+                f"{n} ({d.get('relationship', '?')}: {d.get('overall', '?')})"
+                for n, d in list(vault['trust_people'].items())[:8]
+            )
+            sections.append(f"\n== TRUST NETWORK ==\n{summary}")
+        sources_consulted.append('trust_graph')
+
+    if 'career' in needs:
+        career = _get_career_context()
+        if career:
+            sections.append(
+                f"\n== CAREER OPS ==\n"
+                f"Applications tracked: {career.get('applications_count', 0)}\n"
+                f"Recent: {career.get('recent_applications', [])}\n"
+                f"Pipeline: {career.get('pipeline_summary', 'N/A')[:500]}"
+            )
+            sources_consulted.append('career_ops')
+
+    if 'todos' in needs and 'active_todos' in vault:
+        todo_list = '\n'.join(
+            f"- [{t['status']}] {t['task']}" for t in vault['active_todos']
+        )
+        sections.append(f"\n== ACTIVE TASKS ==\n{todo_list or 'No pending tasks.'}")
+        sources_consulted.append('todos')
+
+    if 'memory' in needs and 'recent_memories' in vault:
+        mem_text = '\n'.join(f"- {m}" for m in vault['recent_memories'])
+        sections.append(f"\n== RECENT MEMORIES ==\n{mem_text}")
+        sources_consulted.append('memory')
+
+    if 'wiki' in needs:
+        # Extract a search term from the message
+        topic = message.strip()[:50]
+        wiki_results = _get_wiki_context(topic)
+        if wiki_results:
+            wiki_text = '\n'.join(
+                f"[{r['file']}]: {r['excerpt'][:300]}" for r in wiki_results
+            )
+            sections.append(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}")
+            sources_consulted.append('wiki')
+
+    if 'epistemic' in needs and 'epistemic' in vault:
+        sections.append(
+            f"\n== EPISTEMIC STATE ==\n"
+            f"Independence score: {vault['epistemic'].get('overall', 0.72)}"
+        )
+
+    # Layer 3: Vision context (from Gemini screen capture)
+    if vision_description:
+        sections.append(
+            f"\n== SCREEN VISION (what Stephen's screen shows) ==\n"
+            f"{vision_description[:1500]}"
+        )
+        sources_consulted.append('vision')
+
+    return '\n'.join(sections), sources_consulted
+
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"
 
@@ -696,10 +1020,37 @@ def chat():
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
-        message = request.json.get('message', '')
+        data = request.get_json(silent=True) or {}
+        message = data.get('message', '')
+        workspace = data.get('workspace', '')
+        workspace_context = data.get('workspaceContext', None)
+        include_vision = data.get('includeVision', False)
+        vision_description = None
+
+        # Vision capture: if requested, describe a provided screenshot via Gemini
+        screenshot_b64 = data.get('screenshot', None)
+        if include_vision and screenshot_b64:
+            try:
+                from google.genai import types
+                img_bytes = base64.b64decode(screenshot_b64)
+                vision_resp = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[
+                        "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                    ],
+                )
+                vision_description = vision_resp.text
+            except Exception as ve:
+                vision_description = f"[Vision unavailable: {ve}]"
+
+        # Build context-enriched system prompt
+        system_prompt, sources = _build_context_prompt(
+            message, workspace, workspace_context, vision_description
+        )
 
         # Build conversation with history (last 20 messages for context)
-        conversation = FRIDAY_SYSTEM_PROMPT + '\n\n'
+        conversation = system_prompt + '\n\n'
         for msg in CHAT_HISTORY[-20:]:
             role_label = 'User' if msg.get('role') == 'user' else 'Friday'
             conversation += f"{role_label}: {msg.get('text', '')}\n"
@@ -712,20 +1063,22 @@ def chat():
 
         reply = response.text
 
-        # Store in history with IDs and timestamps
+        # Store in history with IDs, timestamps, and context metadata
         user_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
             'role': 'user',
             'text': message,
-            'pinned': False
+            'pinned': False,
+            'workspace': workspace,
         }
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
             'role': 'friday',
             'text': reply,
-            'pinned': False
+            'pinned': False,
+            'sources': sources,
         }
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
@@ -735,7 +1088,12 @@ def chat():
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
         _save_chat_history(CHAT_HISTORY)
 
-        return jsonify({"response": reply, "user_msg": user_msg, "friday_msg": friday_msg})
+        return jsonify({
+            "response": reply,
+            "user_msg": user_msg,
+            "friday_msg": friday_msg,
+            "sources": sources,
+        })
     except Exception as e:
         traceback.print_exc()
         return jsonify({"response": f"[Friday offline] {str(e)}"})
@@ -754,18 +1112,46 @@ def chat_history():
 
 @app.route('/api/chat/send', methods=['POST'])
 def chat_send():
-    """Send a message, save to persistent history, return Friday's response."""
+    """Send a message, save to persistent history, return Friday's response.
+    Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}
+    """
     try:
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
         data = request.get_json(silent=True) or {}
         message = data.get('message', '')
+        workspace = data.get('workspace', '')
+        workspace_context = data.get('workspaceContext', None)
+        include_vision = data.get('includeVision', False)
+        vision_description = None
 
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
+        # Vision capture
+        screenshot_b64 = data.get('screenshot', None)
+        if include_vision and screenshot_b64:
+            try:
+                from google.genai import types
+                img_bytes = base64.b64decode(screenshot_b64)
+                vision_resp = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[
+                        "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                    ],
+                )
+                vision_description = vision_resp.text
+            except Exception as ve:
+                vision_description = f"[Vision unavailable: {ve}]"
+
+        # Build context-enriched system prompt
+        system_prompt, sources = _build_context_prompt(
+            message, workspace, workspace_context, vision_description
+        )
+
         # Build conversation with history
-        conversation = FRIDAY_SYSTEM_PROMPT + '\n\n'
+        conversation = system_prompt + '\n\n'
         for msg in CHAT_HISTORY[-20:]:
             role_label = 'User' if msg.get('role') == 'user' else 'Friday'
             conversation += f"{role_label}: {msg['text']}\n"
@@ -783,14 +1169,16 @@ def chat_send():
             'timestamp': datetime.now().isoformat(),
             'role': 'user',
             'text': message,
-            'pinned': False
+            'pinned': False,
+            'workspace': workspace,
         }
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
             'role': 'friday',
             'text': reply,
-            'pinned': False
+            'pinned': False,
+            'sources': sources,
         }
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
@@ -800,7 +1188,7 @@ def chat_send():
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
         _save_chat_history(CHAT_HISTORY)
 
-        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg})
+        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg, "sources": sources})
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
