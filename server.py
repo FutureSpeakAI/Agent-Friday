@@ -113,33 +113,57 @@ def career_report(filename):
 
 @app.route('/api/briefings')
 def list_briefings():
-    """List all daily briefing files (never delete these)."""
-    briefings = []
+    """List all daily briefing files from both known locations (never delete these)."""
+    briefings_by_date = {}
+
+    # Location 1: Desktop/friday-creations — filenames like daily-briefing-2026-04-14.html
     creations = HOME / 'Desktop' / 'friday-creations'
     if creations.exists():
-        for f in sorted(creations.iterdir(), reverse=True):
+        for f in creations.iterdir():
             if f.name.startswith('daily-briefing') and f.suffix in ('.html', '.md'):
                 date_part = f.name.replace('daily-briefing-', '').replace('.html', '').replace('.md', '')
-                existing = next((b for b in briefings if b['date'] == date_part), None)
-                if existing:
-                    existing[f.suffix.lstrip('.')] = f.name
-                else:
-                    briefings.append({'date': date_part, 'name': f.stem, f.suffix.lstrip('.'): f.name, 'size': f.stat().st_size})
+                entry = briefings_by_date.setdefault(date_part, {'date': date_part, 'name': f.stem})
+                entry[f.suffix.lstrip('.')] = f.name
+                entry['size'] = f.stat().st_size
+
+    # Location 2: ~/.friday/wiki/briefings — filenames like 2026-04-14.html
+    wiki_briefings = HOME / '.friday' / 'wiki' / 'briefings'
+    if wiki_briefings.exists():
+        for f in wiki_briefings.iterdir():
+            if f.suffix == '.html' and len(f.stem) == 10 and f.stem[4] == '-' and f.stem[7] == '-':
+                date_part = f.stem  # e.g. "2026-04-14"
+                entry = briefings_by_date.setdefault(date_part, {'date': date_part, 'name': f.stem})
+                entry['html'] = f.name
+                entry.setdefault('size', f.stat().st_size)
+
+    briefings = sorted(briefings_by_date.values(), key=lambda b: b['date'], reverse=True)
     return jsonify({'status': 'ok', 'briefings': briefings, 'total': len(briefings)})
+
+def _find_briefing_path(filename):
+    """Return the Path for a briefing file, checking both known locations."""
+    # Location 1: Desktop/friday-creations (legacy daily-briefing-*.html files)
+    p1 = HOME / 'Desktop' / 'friday-creations' / filename
+    if p1.exists() and p1.name.startswith('daily-briefing'):
+        return p1
+    # Location 2: ~/.friday/wiki/briefings (date-named files like 2026-04-14.html)
+    p2 = HOME / '.friday' / 'wiki' / 'briefings' / filename
+    if p2.exists():
+        return p2
+    return None
 
 @app.route('/briefing/<filename>')
 def serve_briefing(filename):
     """Serve a briefing HTML file directly for browser viewing."""
-    path = HOME / 'Desktop' / 'friday-creations' / filename
-    if path.exists() and path.name.startswith('daily-briefing'):
-        return send_from_directory(str(HOME / 'Desktop' / 'friday-creations'), filename)
+    path = _find_briefing_path(filename)
+    if path:
+        return send_from_directory(str(path.parent), filename)
     return 'Not found', 404
 
 @app.route('/api/briefing/<filename>')
 def get_briefing(filename):
     """Serve a briefing file content."""
-    path = HOME / 'Desktop' / 'friday-creations' / filename
-    if path.exists() and path.name.startswith('daily-briefing'):
+    path = _find_briefing_path(filename)
+    if path:
         return jsonify({'status': 'ok', 'content': path.read_text(encoding='utf-8'), 'filename': filename, 'is_html': path.suffix == '.html'})
     return jsonify({'status': 'not_found'}), 404
 
