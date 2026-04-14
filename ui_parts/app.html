@@ -258,7 +258,7 @@ function NewsWS(){
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{setHtmlContent(d.content||'');setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
-  const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('file:///C:/Users/user/Desktop/friday-creations/'+file,'_blank')};
+  const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=()=>{if(!htmlContent)return;const text=htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').substring(0,5000);const u=new SpeechSynthesisUtterance(text);u.rate=0.9;u.pitch=1;speechSynthesis.speak(u)};
   const stopReading=()=>speechSynthesis.cancel();
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);

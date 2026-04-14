@@ -126,6 +126,14 @@ def list_briefings():
                     briefings.append({'date': date_part, 'name': f.stem, f.suffix.lstrip('.'): f.name, 'size': f.stat().st_size})
     return jsonify({'status': 'ok', 'briefings': briefings, 'total': len(briefings)})
 
+@app.route('/briefing/<filename>')
+def serve_briefing(filename):
+    """Serve a briefing HTML file directly for browser viewing."""
+    path = HOME / 'Desktop' / 'friday-creations' / filename
+    if path.exists() and path.name.startswith('daily-briefing'):
+        return send_from_directory(str(HOME / 'Desktop' / 'friday-creations'), filename)
+    return 'Not found', 404
+
 @app.route('/api/briefing/<filename>')
 def get_briefing(filename):
     """Serve a briefing file content."""
