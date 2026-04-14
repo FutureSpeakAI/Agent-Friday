@@ -1492,37 +1492,6 @@ function Safe({children,name}){
   try{return children}catch(e){setErr(true);return null}
 }
 
-// ═══ CONTEXT AWARENESS REGISTRY ═══
-// Workspaces register getContext() so chat can include what the user is looking at.
-window.fridayContextRegistry = window.fridayContextRegistry || {};
-function useContextProvider(wsId, getContextFn) {
-  const { useEffect, useRef } = React;
-  const ref = useRef(getContextFn);
-  ref.current = getContextFn;
-  useEffect(() => {
-    window.fridayContextRegistry[wsId] = () => ref.current();
-    return () => { delete window.fridayContextRegistry[wsId]; };
-  }, [wsId]);
-}
-function gatherWorkspaceContext(openWins) {
-  const contexts = {};
-  for (const wsId of openWins) {
-    const fn = window.fridayContextRegistry[wsId];
-    if (fn) {
-      try { contexts[wsId] = fn(); } catch (e) { contexts[wsId] = { error: e.message }; }
-    }
-  }
-  return contexts;
-}
-async function captureScreenshot() {
-  try {
-    const canvas = document.querySelector('canvas');
-    if (canvas) return canvas.toDataURL('image/png').split(',')[1];
-    // Fallback: use html2canvas-style capture of viewport (just the canvas for now)
-    return null;
-  } catch (e) { return null; }
-}
-
 // ═══ FRIDAY SAYS (proactive insight) ═══
 function FridaySays({text}){
   if(!text)return null;
@@ -1542,15 +1511,6 @@ function HomeWS(){
       fetch('/api/todos').then(r=>r.json()).then(d=>setTodos(d.todos||[])).catch(()=>[])
     ]).then(()=>setLoading(false));
   },[]);
-  useContextProvider('home', () => ({
-    name: 'Home Dashboard', data: {
-      countdowns: cd?.countdowns?.map(c => c.label || c.name) || [],
-      personality_sessions: pers?.session_count, maturity: pers?.maturity_pct,
-      trust_count: trust?.people ? (Array.isArray(trust.people) ? trust.people.length : Object.keys(trust.people).length) : 0,
-      epistemic: epi?.overall || epi?.overall_score,
-      pending_todos: todos.filter(t => t.status === 'proposed').length,
-    }
-  }));
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
@@ -1578,16 +1538,6 @@ function CareerWS(){
     fetch('/api/career-ops/pipeline').then(r=>r.json()).then(d=>setPipeline(d.content||'')).catch(()=>''),
     fetch('/api/jobs').then(r=>r.json()).then(d=>setJobs(d.content||d.raw||'')).catch(()=>'')
   ]).then(()=>setLoading(false))},[]);
-  useContextProvider('career', () => {
-    const entries = tracker?.entries || [];
-    return { name: 'Career Ops', data: {
-      view, total_evaluated: entries.length,
-      applied: entries.filter(e => (e.status||'').toLowerCase().includes('appli')).length,
-      interviewing: entries.filter(e => (e.status||'').toLowerCase().includes('interview')).length,
-      reports_count: reports.length,
-      viewing_report: view === 'report' ? reportContent.substring(0, 300) : null,
-    }};
-  });
   const loadReport=name=>{fetch('/api/career-ops/report/'+name).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
   const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:'C:\\Users\\user\\Projects\\career-ops'})}).then(()=>{setEvalUrl('');alert('Evaluation launched')}).catch(()=>{})};
   const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:'C:\\Users\\user\\Projects\\career-ops'})}).then(()=>alert('Scan launched')).catch(()=>{})};
@@ -1626,11 +1576,6 @@ function CareerWS(){
 }
 function WikiWS(){
   const[struct,setStruct]=useState(null);const[content,setContent]=useState('Select a file from the sidebar');const[path,setPath]=useState('');const[loading,setLoading]=useState(true);
-  useContextProvider('wiki', () => ({
-    name: 'Wiki', data: { currentFile: path || null, excerpt: content?.substring(0, 400) || null,
-      totalSections: struct?.sections?.length || 0 },
-    focus: path ? `Reading wiki/${path}` : null,
-  }));
   useEffect(()=>{fetch('/api/wiki/structure').then(r=>r.json()).then(d=>{
     // Convert API structure object to sections array
     const raw=d.structure||d.sections||d;
@@ -1650,14 +1595,6 @@ function WikiWS(){
   </div>);
 }
 function CoparentWS(){
-  useContextProvider('coparent', () => {
-    const now = new Date(); const d = new Date(now);
-    while (d.getDay() !== 4) d.setDate(d.getDate() + 1);
-    return { name: 'Co-Parent Dashboard', data: {
-      nextCustodyDay: d.toLocaleDateString('en-US', {month:'short',day:'numeric'}),
-      ofwMessages: 852, unansweredThreads: 89,
-    }};
-  });
   const now=new Date();const month=now.getMonth();const year=now.getFullYear();const daysInMonth=new Date(year,month+1,0).getDate();
   const firstDay=new Date(year,month,1).getDay();const days=[];for(let i=0;i<firstDay;i++)days.push(null);for(let i=1;i<=daysInMonth;i++)days.push(i);
   const isThursday=d=>d&&new Date(year,month,d).getDay()===4;
@@ -1681,10 +1618,6 @@ function CoparentWS(){
   </div>);
 }
 function FuturespeakWS(){
-  useContextProvider('futurespeak', () => ({ name: 'FutureSpeak.AI', data: {
-    activeClient: 'Adtalem/Covista (CommHub)', phase3Target: '$13.75M',
-    sageStatus: 'Alpha', repos: 49, coreTools: 40,
-  }}));
   return(<div>
     <FridaySays text="Adtalem Phase 3 targeting $13.75M. SAGE in alpha. 49 repos under FutureSpeakAI."/>
     <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div><div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div><div style={{marginTop:6}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a></div></div>
@@ -1698,11 +1631,6 @@ function FuturespeakWS(){
 }
 function FamilyWS(){
   const[cd,setCd]=useState(null);
-  useContextProvider('family', () => ({
-    name: 'Family', data: {
-      countdowns: cd?.countdowns?.map(c => ({label: c.label||c.name, days: c.days||c.days_until})) || [],
-    }
-  }));
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
   const libbyDays=cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days||(cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days_until);
   return(<div>
@@ -1719,7 +1647,6 @@ function FamilyWS(){
 }
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);
-  useContextProvider('studio', () => ({ name: 'Creative Studio', data: { creationsCount: creations.length, generating: gen }}));
   useEffect(()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});const r=await fetch('/api/creations');const d=await r.json();setCreations(d.files||[])}catch(e){}setGen(false)};
   return(<div>
@@ -1733,12 +1660,6 @@ function StudioWS(){
 }
 function TrustWS(){
   const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
-  useContextProvider('trust', () => {
-    const people = trust?.people || {};
-    const names = Array.isArray(people) ? people.map(p=>p.name) : Object.keys(people);
-    return { name: 'Trust Graph', data: { entityCount: names.length, expandedPerson: expanded },
-      focus: expanded ? `Viewing trust entry: ${expanded}` : null };
-  });
   useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading trust graph...</div>;
   if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
@@ -1772,10 +1693,6 @@ function TrustWS(){
 }
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
-  useContextProvider('system', () => ({ name: 'System Monitor', data: {
-    disks: (sys?.disks||sys?.disk||[]).map(d => ({drive: d.drive||d.Name, freeGB: d.free_gb||d.FreeGB})),
-    topProcess: (sys?.processes||[])[0]?.name || (sys?.processes||[])[0]?.Name || null,
-  }}));
   useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Scanning system...</div>;
   return(<div>
@@ -1788,13 +1705,6 @@ function SystemWS(){
 function CodeWS(){
   const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('C:\\Users\\user\\Projects');const[terminals,setTerminals]=useState([]);const[loading,setLoading]=useState(false);
   const[presets,setPresets]=useState([]);const[selectedTerminal,setSelectedTerminal]=useState(null);
-  useContextProvider('code', () => {
-    const running = terminals.filter(t => t.status === 'running');
-    return { name: 'Vibe Code', data: {
-      runningTerminals: running.length, totalTerminals: terminals.length, cwd,
-      activeTasks: running.map(t => (t.task||'').substring(0, 80)),
-    }};
-  });
   useEffect(()=>{
     fetch('/api/vibe-code/presets').then(r=>r.json()).then(d=>setPresets(d.presets||[])).catch(()=>{});
     const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setTerminals(d.terminals||[])).catch(()=>{})},3000);
@@ -1857,24 +1767,13 @@ function NewsWS(){
   const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);
-  useContextProvider('news', () => ({
-    name: 'News/Briefings', data: {
-      totalBriefings: briefings.length,
-      readingBriefing: selected ? selected.date : null,
-      briefingExcerpt: selected ? htmlContent.replace(/<[^>]*>/g,' ').substring(0, 300) : null,
-    },
-    focus: selected ? `Reading briefing from ${selected.date}` : null,
-  }));
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);try{const text=htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').substring(0,5000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null};a.play()}catch(e){console.error('TTS error:',e)}finally{setTtsLoading(false)}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e)}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
-    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      message:m, workspace:'news',
-      workspaceContext:{name:'News/Briefings',data:{readingBriefing:selected?.date,briefingExcerpt:htmlContent?.replace(/<[^>]*>/g,' ')?.substring(0,500)},focus:'Reading briefing from '+selected?.date},
-    })});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
+    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
   if(selected)return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
@@ -1933,37 +1832,12 @@ function App(){
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
 
   const[vibeMode,setVibeMode]=useState(false);
-  const[visionOn,setVisionOn]=useState(false);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
   const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
-    try{
-      // Gather workspace context from all open windows
-      const wsContexts = gatherWorkspaceContext(openWins);
-      const activeWsList = [...openWins];
-      const primaryWs = activeWsList[activeWsList.length - 1] || '';
-      const payload = {
-        message: m,
-        workspace: primaryWs,
-        workspaceContext: Object.keys(wsContexts).length > 0 ? {
-          name: wsContexts[primaryWs]?.name || primaryWs,
-          data: wsContexts,
-          focus: wsContexts[primaryWs]?.focus || null,
-          openWorkspaces: activeWsList,
-        } : null,
-        includeVision: visionOn,
-      };
-      // Capture screenshot if vision is enabled
-      if(visionOn){
-        const shot = await captureScreenshot();
-        if(shot) payload.screenshot = shot;
-      }
-      const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const d=await r.json();
-      setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString(),sources:d.sources||[]}]);
-    }catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
+    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>};
@@ -2027,27 +1901,18 @@ function App(){
     <div className={`chat-panel ${chatOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <button onClick={()=>setVisionOn(v=>!v)} title={visionOn?'Screen vision ON':'Screen vision OFF'} style={{background:visionOn?'rgba(0,255,128,0.12)':'none',border:visionOn?'1px solid rgba(0,255,128,0.3)':'1px solid rgba(255,255,255,0.08)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:10,color:visionOn?'#00ff80':'#555',fontFamily:'JetBrains Mono',transition:'all .2s'}}>
-            {visionOn?'👁 VISION':'👁'}
-          </button>
-          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
-        </div>
+        <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
-        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.<br/><span style={{fontSize:10,color:'#333',marginTop:4,display:'inline-block'}}>Context-aware: Friday sees your open workspaces.</span></div>}
+        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-block',maxWidth:'80%',padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
-          <div style={{fontSize:9,color:'#444',marginTop:1}}>
-            {m.role==='user'?'You':'Friday'} · {m.time||''}
-            {m.sources&&m.sources.length>0&&<span style={{marginLeft:4}}>{m.sources.map((s,j)=><span key={j} style={{display:'inline-block',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:3,padding:'0 4px',marginLeft:2,fontSize:8,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{s}</span>)}</span>}
-          </div>
+          <div style={{fontSize:9,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
         {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-        {openWins.size>0&&<div style={{fontSize:9,color:'#333',marginBottom:4,fontFamily:'JetBrains Mono'}}>ctx: {[...openWins].join(', ')}{visionOn?' + vision':''}</div>}
         <div style={{display:'flex',gap:6}}>
           <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder="Talk to Friday..."/>
           <button className="btn" onClick={()=>sendChat()}>Send</button>
