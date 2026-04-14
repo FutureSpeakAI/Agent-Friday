@@ -512,7 +512,7 @@ def _run_claude_terminal(terminal_id, task, cwd):
     """Launch a Claude Code instance in a new CMD window."""
     log_file = VIBE_LOG_DIR / f"{terminal_id}.log"
     try:
-        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd} && claude --yes \"{task}\" 2>&1 | tee {log_file}"'
+        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd} && claude --yes \"{task}\""'
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd)
         VIBE_TERMINALS[terminal_id].update({
             'status': 'running',
