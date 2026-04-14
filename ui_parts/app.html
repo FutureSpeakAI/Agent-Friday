@@ -350,11 +350,11 @@ function App(){
   const[focusWin,setFocusWin]=useState(null);
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
-  const[clock,setClock]=useState(new Date());const[notifs,setNotifs]=useState([]);
+  const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[greeting,setGreeting]=useState(null);const[promptText,setPromptText]=useState('');
   const chatEnd=useRef(null);
 
-  useEffect(()=>{const t=setInterval(()=>setClock(new Date()),1000);return()=>clearInterval(t)},[]);
+  useEffect(()=>{const t=setInterval(()=>{setClock(new Date());if(window.fridayVibe)setStructureName(window.fridayVibe.getStructure?.()?.name||'Genesis Lattice')},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
@@ -383,6 +383,11 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
         <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
         <span style={{color:'rgba(124,58,237,0.3)'}}>|</span>
         <span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.4)',letterSpacing:'.08em'}}>FutureSpeak.AI</span>
+        <div style={{display:'flex',alignItems:'center',gap:4,marginLeft:12}}>
+          <button onClick={()=>window.fridayVibe?.prevStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25C0}</button>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:9,color:'#444',minWidth:100,textAlign:'center'}}>{structureName}</span>
+          <button onClick={()=>window.fridayVibe?.nextStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25B6}</button>
+        </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>

@@ -101,10 +101,79 @@ function initScene(){
   addEventListener('resize',()=>{threeCamera.aspect=innerWidth/innerHeight;threeCamera.updateProjectionMatrix();threeRenderer.setSize(innerWidth,innerHeight);threeComposer.setSize(innerWidth,innerHeight)});
   animate();
 }
+// ═══ MOOD + EVOLUTION SYSTEM ═══
+let currentMood = 'CALM';
+let currentStructure = 0;
+const MOODS = {
+  CALM:     {primary:'#0a1628',accent:0x00d4ff,bloom:0.6,speed:0.5},
+  LISTENING:{primary:'#0a1a2e',accent:0x00ffaa,bloom:0.8,speed:0.7},
+  REASONING:{primary:'#1a0a2e',accent:0x7c3aed,bloom:1.0,speed:1.0},
+  EXECUTING:{primary:'#2e0a1a',accent:0xff0080,bloom:1.2,speed:1.5},
+  CREATING: {primary:'#0a2e1a',accent:0x00ff80,bloom:1.0,speed:1.2}
+};
+let targetBloom=0.8, targetSpeed=0.5, currentSpeed=0.5;
+const STRUCTURES=['Genesis Lattice','Resonance Dome','Neural Grid','Orbital Network','Quantum Rings',
+  'Mandelbrot Cloud','Tesseract','Mobius Flow','Crystalline Matrix','Void Sphere','Phoenix Spiral','Giga Earth','REZ Tunnel'];
+
+window.fridayVibe = {
+  setMood: function(mood) {
+    if(MOODS[mood]){currentMood=mood;const m=MOODS[mood];targetBloom=m.bloom;targetSpeed=m.speed;
+      if(threeComposer&&threeComposer.passes[1]){threeComposer.passes[1].strength=m.bloom}
+    }
+  },
+  nextStructure: function() { currentStructure=(currentStructure+1)%STRUCTURES.length; rebuildStructure(); },
+  prevStructure: function() { currentStructure=(currentStructure-1+STRUCTURES.length)%STRUCTURES.length; rebuildStructure(); },
+  setStructure: function(i) { if(i>=0&&i<STRUCTURES.length){currentStructure=i;rebuildStructure()} },
+  getStructure: function() { return {index:currentStructure, name:STRUCTURES[currentStructure]}; },
+  getMood: function() { return currentMood; }
+};
+
+function rebuildStructure(){
+  if(!cubeGroup||!threeScene)return;
+  threeScene.remove(cubeGroup);
+  cubeGroup=new THREE.Group();
+  const i=currentStructure;
+  if(i===0){buildCubeOfCubes()}
+  else if(i===1){const g=new THREE.IcosahedronGeometry(1.2,2);const m=new THREE.MeshPhongMaterial({color:0x7c3aed,emissive:0x3b1f8c,emissiveIntensity:0.3,transparent:true,opacity:0.2,wireframe:true});cubeGroup.add(new THREE.Mesh(g,m))}
+  else if(i===2){const g=new THREE.PlaneGeometry(4,4,32,32);const m=new THREE.MeshPhongMaterial({color:0x00d4ff,emissive:0x003355,transparent:true,opacity:0.15,wireframe:true,side:THREE.DoubleSide});cubeGroup.add(new THREE.Mesh(g,m));cubeGroup.rotation.x=-Math.PI/4}
+  else if(i===3){for(let j=0;j<20;j++){const g=new THREE.SphereGeometry(0.06,8,8);const m=new THREE.MeshBasicMaterial({color:0x00d4ff,transparent:true,opacity:0.4});const s=new THREE.Mesh(g,m);s.position.set((Math.random()-0.5)*3,(Math.random()-0.5)*3,(Math.random()-0.5)*3);cubeGroup.add(s)}}
+  else if(i===4){for(let j=0;j<3;j++){const g=new THREE.TorusGeometry(0.8+j*0.5,0.02,16,64);const m=new THREE.MeshBasicMaterial({color:new THREE.Color().setHSL(j/3,1,0.5),transparent:true,opacity:0.3});const t=new THREE.Mesh(g,m);t.rotation.x=j*0.8;t.rotation.y=j*0.5;cubeGroup.add(t)}}
+  else if(i===5){const pts=[];for(let x=-20;x<20;x++)for(let y=-20;y<20;y++){const cx=x/10,cy=y/10;let zr=0,zi=0,n=0;while(zr*zr+zi*zi<4&&n<20){const t=zr*zr-zi*zi+cx;zi=2*zr*zi+cy;zr=t;n++}if(n<20){pts.push(new THREE.Vector3(cx,cy,n/20))}}const g=new THREE.BufferGeometry().setFromPoints(pts);cubeGroup.add(new THREE.Points(g,new THREE.PointsMaterial({color:0x7c3aed,size:0.03,transparent:true,opacity:0.5})))}
+  else if(i===6){const verts=[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1],[-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],[-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]];const mat=new THREE.LineBasicMaterial({color:0x00d4ff,transparent:true,opacity:0.25});for(let j=0;j<8;j++){const pts=[new THREE.Vector3(...verts[j].map(v=>v*0.5)),new THREE.Vector3(...verts[j+8].map(v=>v*0.5))];cubeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat))}for(let j=0;j<4;j++){const a=[j,(j+1)%4,j+4,(j+1)%4+4];for(let k=0;k<2;k++){const pts=[new THREE.Vector3(...verts[a[k*2]].map(v=>v*0.5)),new THREE.Vector3(...verts[a[k*2+1]].map(v=>v*0.5))];cubeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat))}}}
+  else{buildCubeOfCubes()}
+  threeScene.add(cubeGroup);
+}
+
+function buildCubeOfCubes(){
+  const sz=0.22,gp=0.12,n=3,off=(n-1)*(sz+gp)/2;
+  for(let x=0;x<n;x++)for(let y=0;y<n;y++)for(let z=0;z<n;z++){
+    const g=new THREE.BoxGeometry(sz,sz,sz);
+    const m=new THREE.MeshPhongMaterial({color:0x7c3aed,emissive:0x3b1f8c,emissiveIntensity:0.4,transparent:true,opacity:0.15});
+    const cube=new THREE.Mesh(g,m);cube.position.set(x*(sz+gp)-off,y*(sz+gp)-off,z*(sz+gp)-off);cube.userData={ix:x,iy:y,iz:z};cubeGroup.add(cube);
+    const wm=new THREE.MeshBasicMaterial({color:0x00d4ff,wireframe:true,transparent:true,opacity:0.07});
+    const w=new THREE.Mesh(g.clone(),wm);w.position.copy(cube.position);cubeGroup.add(w);
+  }
+}
+
+// Keyboard controls for structure cycling
+document.addEventListener('keydown',function(e){
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  if(e.key==='ArrowRight')window.fridayVibe.nextStructure();
+  if(e.key==='ArrowLeft')window.fridayVibe.prevStructure();
+  if(e.key==='1')window.fridayVibe.setMood('CALM');
+  if(e.key==='2')window.fridayVibe.setMood('LISTENING');
+  if(e.key==='3')window.fridayVibe.setMood('REASONING');
+  if(e.key==='4')window.fridayVibe.setMood('EXECUTING');
+  if(e.key==='5')window.fridayVibe.setMood('CREATING');
+});
+
 function animate(){requestAnimationFrame(animate);const t=Date.now()*0.001;
-  if(cubeGroup){cubeGroup.rotation.y=t*0.08;cubeGroup.rotation.x=Math.sin(t*0.06)*0.12;
-    cubeGroup.children.forEach(c=>{if(c.userData.ix!==undefined){c.scale.setScalar(0.95+Math.sin(t*1.5+c.userData.ix*0.8+c.userData.iy*0.6+c.userData.iz*0.4)*0.05)}});}
-  orbitalRings.forEach((r,i)=>{r.rotation.z=t*(0.03+i*0.01)});if(particles)particles.rotation.y=t*0.003;threeComposer.render();}
+  currentSpeed+=(targetSpeed-currentSpeed)*0.02;
+  if(cubeGroup){cubeGroup.rotation.y=t*0.08*currentSpeed;cubeGroup.rotation.x=Math.sin(t*0.06)*0.12;
+    cubeGroup.children.forEach(c=>{if(c.userData.ix!==undefined){c.scale.setScalar(0.95+Math.sin(t*1.5*currentSpeed+c.userData.ix*0.8+c.userData.iy*0.6+c.userData.iz*0.4)*0.05)}});}
+  orbitalRings.forEach((r,i)=>{r.rotation.z=t*(0.03+i*0.01)*currentSpeed});
+  if(particles)particles.rotation.y=t*0.003*currentSpeed;
+  threeComposer.render();}
 addEventListener('DOMContentLoaded',initScene);
 </script>
 
@@ -460,11 +529,11 @@ function App(){
   const[focusWin,setFocusWin]=useState(null);
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
-  const[clock,setClock]=useState(new Date());const[notifs,setNotifs]=useState([]);
+  const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[greeting,setGreeting]=useState(null);const[promptText,setPromptText]=useState('');
   const chatEnd=useRef(null);
 
-  useEffect(()=>{const t=setInterval(()=>setClock(new Date()),1000);return()=>clearInterval(t)},[]);
+  useEffect(()=>{const t=setInterval(()=>{setClock(new Date());if(window.fridayVibe)setStructureName(window.fridayVibe.getStructure?.()?.name||'Genesis Lattice')},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
@@ -493,6 +562,11 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
         <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
         <span style={{color:'rgba(124,58,237,0.3)'}}>|</span>
         <span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.4)',letterSpacing:'.08em'}}>FutureSpeak.AI</span>
+        <div style={{display:'flex',alignItems:'center',gap:4,marginLeft:12}}>
+          <button onClick={()=>window.fridayVibe?.prevStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25C0}</button>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:9,color:'#444',minWidth:100,textAlign:'center'}}>{structureName}</span>
+          <button onClick={()=>window.fridayVibe?.nextStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>u{25B6}</button>
+        </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
