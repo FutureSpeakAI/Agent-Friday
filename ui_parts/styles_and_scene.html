@@ -26,71 +26,6 @@
             </div>
         </div>
 
-        <!-- Collapsible API Panel -->
-        <div class="hud-api-panel" id="api-panel" onclick="toggleApiPanel()">
-            <div class="api-item"><span class="api-name">Anthropic</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">OpenAI</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Google Gemini</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Perplexity</span><div class="status-dot yellow" title="Latency Detected"></div></div>
-            <div class="api-item"><span class="api-name">Elevenlabs</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Firecrawl</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Openrouter</span><div class="status-dot red" title="Offline"></div></div>
-        </div>
-
-        <!-- Right Side App Tray -->
-        <div id="app-tray">
-            <div class="app-icon" style="border-color: rgba(0, 255, 255, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(138, 43, 226, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 170, 0, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(0, 255, 102, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 50, 100, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(100, 150, 255, 0.3);"></div>
-        </div>
-
-        <div class="hud-side-panel right" id="telemetry-right" onclick="toggleAppTray()"></div>
-
-        <!-- On-Screen Instructions -->
-        <div class="hud-instructions">
-            <div id="instr-holo" class="instr-box">SYS.HOLO: Face tracking active. Move head to shift perspective.</div>
-            <div id="instr-hand" class="instr-box">SYS.HAND: Pinch to Left-Click. Pinch &amp; Hold for Right-Click.</div>
-        </div>
-
-        <div class="hud-footer">
-            <span>Join our Discord and help us develop this app! <a href="https://discord.gg/f2VM6qNk" target="_blank" class="discord-link">discord.gg/f2VM6qNk</a></span>
-            <span id="mood-text">STATE: LISTENING</span>
-        </div>
-    </div>
-
-    <div id="control-panel">
-        <div class="panel-section">
-            <div class="panel-title">EVOLUTION GENOME</div>
-            <button class="btn structure-btn active" onclick="setEvolution(0)">DAY 1: LATTICE</button>
-            <button class="btn structure-btn" onclick="setEvolution(1)">DAY 2: SPHERE</button>
-            <button class="btn structure-btn" onclick="setEvolution(2)">DAY 3: NETWORK</button>
-            <button class="btn structure-btn" onclick="setEvolution(3)">DAY 4: CATHEDRAL</button>
-            <button class="btn structure-btn" onclick="setEvolution(4)">DAY 5: ASTROLABE</button>
-            <button class="btn structure-btn" onclick="setEvolution(5)">DAY 6: TESSERACT</button>
-            <button class="btn structure-btn" onclick="setEvolution(6)">DAY 7: QUANTUM</button>
-            <button class="btn structure-btn" onclick="setEvolution(7)">DAY 8: MANDELBROT</button>
-            <button class="btn structure-btn" onclick="setEvolution(8)">DAY 9: MOBIUS</button>
-            <button class="btn structure-btn" onclick="setEvolution(9)">DAY 10: OCEAN</button>
-            <button class="btn structure-btn" onclick="setEvolution(10)">DAY 11: NERVE</button>
-            <button class="btn structure-btn" onclick="setEvolution(11)">DAY 12: TRANSCEND</button>
-            <button class="btn structure-btn" style="border-color: #ffaa00; color: #ffdd88;" onclick="setEvolution(12)">DAY 13: GIGA EARTH</button>
-            
-            <button class="btn dev-btn" id="timelapse-btn" onclick="toggleTimeLapse()">DEV MODE: TIMELAPSE</button>
-        </div>
-        <div class="panel-section">
-            <div class="panel-title">CONSCIOUSNESS</div>
-            <button class="btn hand-btn" id="hand-btn" onclick="toggleHands()">HANDS: OFF</button>
-            <button class="btn holo-btn" id="holo-btn" onclick="toggleHologram()">HOLOGRAM: OFF</button>
-            
-            <button class="btn mood-btn active" onclick="setMood('LISTENING')">LISTENING</button>
-            <button class="btn mood-btn" onclick="setMood('REASONING')">REASONING</button>
-            <button class="btn mood-btn" onclick="setMood('EXECUTING')">EXECUTING</button>
-            <button class="btn mood-btn" onclick="setMood('EXCITED')">EXCITED</button>
-            <button class="btn mood-btn" onclick="setMood('CALM')">CALM</button>
-        </div>
     </div>
 
     <!-- Friday OS React UI Layer -->
@@ -115,26 +50,6 @@
 
     <script>
         // --- UI INTERACTION LOGIC ---
-        let apiPanelOpen = true;
-        function toggleApiPanel() {
-            apiPanelOpen = !apiPanelOpen;
-            const p = document.getElementById('api-panel');
-            if(apiPanelOpen) p.classList.remove('collapsed'); else p.classList.add('collapsed');
-        }
-
-        let appTrayOpen = false;
-        function toggleAppTray() {
-            appTrayOpen = !appTrayOpen;
-            const t = document.getElementById('app-tray');
-            if(appTrayOpen) t.classList.add('open'); else t.classList.remove('open');
-        }
-
-        function updateInstructions() {
-            const holoBox = document.getElementById('instr-holo');
-            const handBox = document.getElementById('instr-hand');
-            if (isHologramMode) holoBox.classList.add('active'); else holoBox.classList.remove('active');
-            if (isHandTrackingMode) handBox.classList.add('active'); else handBox.classList.remove('active');
-        }
 
         // Mouse Tracker Fallback
         let mouseX = 0, mouseY = 0;
@@ -183,10 +98,9 @@
         // --- HAND TRACKING (Minority Report) ---
         async function toggleHands() {
             isHandTrackingMode = !isHandTrackingMode;
-            const btn = document.getElementById('hand-btn');
             const cursor = document.getElementById('hand-cursor');
             if (isHandTrackingMode) {
-                btn.innerText = "HANDS: ON"; btn.classList.add('active'); cursor.classList.add('active');
+                if (cursor) cursor.classList.add('active');
                 if (!handsMP) {
                     handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
                     handsMP.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
@@ -194,9 +108,8 @@
                 }
                 await startSharedCamera();
             } else {
-                btn.innerText = "HANDS: OFF"; btn.classList.remove('active'); cursor.classList.remove('active');
+                if (cursor) cursor.classList.remove('active');
             }
-            updateInstructions();
         }
 
         function onHandsResults(results) {
@@ -238,9 +151,7 @@
         // --- FACE TRACKING (Parallax) ---
         async function toggleHologram() {
             isHologramMode = !isHologramMode;
-            const btn = document.getElementById('holo-btn');
             if (isHologramMode) {
-                btn.innerText = "HOLOGRAM: ON"; btn.classList.add('active');
                 if (!faceDetectionMP) {
                     faceDetectionMP = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
                     faceDetectionMP.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
@@ -248,10 +159,9 @@
                 }
                 await startSharedCamera();
             } else {
-                btn.innerText = "HOLOGRAM: OFF"; btn.classList.remove('active');
                 isFaceVisible = false; updateCameraIndicator(false);
             }
-            updateInstructions();
+            updateCameraIndicator(isHologramMode && isFaceVisible);
         }
 
         function onFaceResults(results) {
@@ -270,8 +180,9 @@
 
         function updateCameraIndicator(active) {
             const ind = document.getElementById('camera-indicator');
-            if (active && isHologramMode) { ind.style.background = '#00ff66'; ind.style.boxShadow = '0 0 8px #00ff66'; } 
-            else { ind.style.background = '#444'; ind.style.boxShadow = 'none'; }
+            if (!ind) return;
+            if (active && isHologramMode) { ind.classList.add('holo-active'); }
+            else { ind.classList.remove('holo-active'); }
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -329,7 +240,6 @@
         let mobiusSystem = null, quantumRings = [], abyssParticles = null, cathedralRings = [];
         let edenDebris = [], edenPlayer = null, edenLady = null; 
         
-        let telemetryBarsR = [];
         let audioContext, analyser, dataArray;
         let micActive = false;
         let lastSoundTime = -10; 
@@ -366,30 +276,22 @@
         }
 
         function setMood(m) {
-            document.querySelectorAll('.mood-btn').forEach(b => {
-                if(b.innerText.includes(m)) b.classList.add('active'); 
-                else b.classList.remove('active');
-            });
-            currentMood = m; 
-            document.getElementById('mood-text').innerText = `STATE: ${m}`;
+            currentMood = m;
         }
 
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
             currentEvolutionIdx = idx;
-            document.querySelectorAll('.structure-btn').forEach((b, i) => {
-                if (i === idx) b.classList.add('active'); else b.classList.remove('active');
-            });
             currentStructure = targetStructure; targetStructure = EVOLUTION_PATH[idx].id;
-            transitionProgress = 0.0; metamorphosisFlash = 1.0; 
+            transitionProgress = 0.0; metamorphosisFlash = 1.0;
             if (structures[targetStructure]) structures[targetStructure].visible = true;
-            document.getElementById('evolution-day-text').innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
+            const dayText = document.getElementById('evolution-day-text');
+            if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
         }
 
         function toggleTimeLapse() {
             timeLapseActive = !timeLapseActive;
-            const btn = document.getElementById('timelapse-btn');
-            if (timeLapseActive) { btn.classList.add('active'); timeLapseTimer = 0; } else btn.classList.remove('active');
+            if (timeLapseActive) { timeLapseTimer = 0; }
         }
 
         function init() {
@@ -406,7 +308,7 @@
             renderer.setClearColor(0x000103, 1);
             document.body.appendChild(renderer.domElement);
 
-            buildBackgroundEnvironment(); buildAllStructures(); buildTelemetry();
+            buildBackgroundEnvironment(); buildAllStructures();
 
             const renderScene = new THREE.RenderPass(scene, camera);
             bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.6, 0.15);
@@ -462,13 +364,6 @@
             scene.add(line); energyLines.push(line);
         }
 
-        function buildTelemetry() {
-            const rightPanel = document.getElementById('telemetry-right');
-            for(let i=0; i<20; i++) {
-                let barR = document.createElement('div'); barR.className = 'telemetry-bar';
-                rightPanel.appendChild(barR); telemetryBarsR.push(barR);
-            }
-        }
 
         function createMaterial(type, color, opacity, additive = true, wireframe = false, dashed = false) {
             let mat;
@@ -863,10 +758,6 @@
                 hudEl.style.transform = `perspective(1000px) rotateY(${currFaceX * -2}deg) rotateX(${currFaceY * 2}deg) translateZ(0px)`;
             }
 
-            const flickerRate = 0.05 + (audioData.high * 1.5) + (audioData.mid * 0.5) + (metamorphosisFlash * 0.8);
-            if (Math.random() < flickerRate) {
-                telemetryBarsR.forEach(bar => { if(bar && Math.random() < flickerRate) { bar.style.width = (4 + Math.random() * 30) + 'px'; bar.style.opacity = 0.2 + Math.random() * 0.8; } });
-            }
 
             nebulaClouds.forEach(cloud => {
                 if(cloud && cloud.material && cloud.userData && cloud.rotation) {
@@ -1211,8 +1102,32 @@ window.fridayVibe = {
                 : 'Unknown'
         };
     },
+    getStructures: function() {
+        return typeof EVOLUTION_PATH !== 'undefined' ? EVOLUTION_PATH : [];
+    },
     getMood: function() {
         return typeof currentMood !== 'undefined' ? currentMood : 'LISTENING';
+    },
+    getMoods: function() {
+        return typeof MOODS !== 'undefined' ? Object.keys(MOODS) : ['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
+    },
+    toggleHologram: function() {
+        if (typeof toggleHologram === 'function') toggleHologram();
+    },
+    isHologramOn: function() {
+        return typeof isHologramMode !== 'undefined' ? isHologramMode : false;
+    },
+    toggleHands: function() {
+        if (typeof toggleHands === 'function') toggleHands();
+    },
+    isHandsOn: function() {
+        return typeof isHandTrackingMode !== 'undefined' ? isHandTrackingMode : false;
+    },
+    toggleTimeLapse: function() {
+        if (typeof toggleTimeLapse === 'function') toggleTimeLapse();
+    },
+    isTimeLapseOn: function() {
+        return typeof timeLapseActive !== 'undefined' ? timeLapseActive : false;
     }
 };
 

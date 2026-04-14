@@ -65,88 +65,8 @@
         .status-dot.red { background: #ff0033; box-shadow: 0 0 10px #ff0033, 0 0 2px #fff inset; }
         .status-dot.yellow { background: #ffcc00; box-shadow: 0 0 10px #ffcc00, 0 0 2px #fff inset; }
 
-        /* API PROVIDER READOUT (Left Sidebar) */
-        .hud-api-panel {
-            position: absolute; top: 50%; left: 120px; transform: translateY(-50%);
-            display: flex; flex-direction: column; gap: 12px;
-            font-family: 'Courier New', Courier, monospace; font-size: 8px;
-            color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.8);
-            letter-spacing: 2px; text-transform: uppercase;
-            width: 140px; transition: width 0.4s cubic-bezier(0.1, 0.8, 0.3, 1);
-            overflow: hidden; pointer-events: auto; cursor: pointer;
-            padding: 10px 0;
-        }
-        .hud-api-panel.collapsed { width: 24px; }
-        .api-item {
-            display: flex; align-items: center; gap: 12px; justify-content: space-between;
-            width: 130px; border-bottom: 1px solid rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.1);
-            padding-bottom: 4px; transition: opacity 0.3s ease;
-        }
-        .api-name { white-space: nowrap; transition: opacity 0.3s; }
-        .hud-api-panel.collapsed .api-name { opacity: 0; }
-
-        /* TELEMETRY & APP TRAY (Right Sidebar) */
-        .hud-side-panel {
-            position: absolute; top: 50%; transform: translateY(-50%); right: 120px;
-            display: flex; flex-direction: column; gap: 6px; width: 40px; align-items: flex-end;
-            pointer-events: auto; cursor: pointer; z-index: 52;
-            padding: 20px 0;
-        }
-        .telemetry-bar {
-            height: 1px; background: rgba(var(--hud-r), var(--hud-g), var(--hud-b), var(--hud-opacity));
-            transition: width 0.3s cubic-bezier(0.1, 0.8, 0.3, 1), opacity 0.3s ease;
-            box-shadow: 0 0 5px rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.3);
-        }
-
-        #app-tray {
-            position: absolute; right: 120px; top: 50%; transform: translateY(-50%);
-            width: 0px; height: 320px; background: rgba(0, 5, 15, 0.6);
-            border: 1px solid rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.2);
-            backdrop-filter: blur(15px); border-radius: 8px;
-            transition: width 0.4s cubic-bezier(0.1, 0.8, 0.3, 1), opacity 0.4s, right 0.4s;
-            opacity: 0; pointer-events: none; overflow: hidden;
-            display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 60px; gap: 15px; box-sizing: border-box;
-            z-index: 51;
-        }
-        #app-tray.open {
-            width: 220px; opacity: 1; pointer-events: auto; right: 180px; padding: 20px;
-        }
-        .app-icon {
-            width: 100%; height: 100%; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.02); transition: all 0.2s; cursor: pointer;
-        }
-        .app-icon:hover { background: rgba(255,255,255,0.1); border-color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.5); }
-
-        /* INSTRUCTIONS PANEL */
-        .hud-instructions {
-            position: absolute; bottom: 120px; left: 140px;
-            display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
-            font-family: 'Courier New', Courier, monospace; font-size: 8px;
-            color: rgba(0, 255, 255, 0.8); letter-spacing: 2px; text-transform: uppercase;
-            pointer-events: none; z-index: 100;
-        }
-        .hud-instructions .instr-box {
-            background: rgba(0, 15, 30, 0.6); padding: 8px 12px; border-radius: 4px;
-            border-left: 2px solid #00ffff; backdrop-filter: blur(4px);
-            opacity: 0; transform: translateX(-20px); transition: all 0.5s cubic-bezier(0.1, 0.8, 0.3, 1);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-        }
-        .hud-instructions .instr-box.active { opacity: 1; transform: translateX(0); }
-
-        /* FOOTER */
-        .hud-footer {
-            position: absolute; bottom: 80px; left: 140px; right: 140px;
-            display: flex; justify-content: space-between; align-items: flex-end;
-            font-family: 'Courier New', Courier, monospace; font-size: 9px;
-            color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), calc(var(--hud-opacity) + 0.5));
-            letter-spacing: 2px; text-transform: uppercase;
-        }
-        .discord-link {
-            color: #00ffff; text-decoration: none; pointer-events: auto;
-            border-bottom: 1px solid rgba(0,255,255,0.3); transition: all 0.3s ease;
-            padding-bottom: 2px; text-shadow: 0 0 8px rgba(0,255,255,0.5);
-        }
-        .discord-link:hover { color: #fff; border-bottom-color: #fff; text-shadow: 0 0 12px rgba(255,255,255,0.8); }
+        /* Camera indicator: only visible when holo mode active */
+        #camera-indicator.holo-active { background: #00ff66; box-shadow: 0 0 8px #00ff66; }
 
         /* MINORITY REPORT HAND CURSOR */
         #hand-cursor {
@@ -179,48 +99,223 @@
             border-radius: 50%; background: #444; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
 
-        /* --- CONTROL PANEL --- */
-        #control-panel {
-            position: fixed; top: 150px; right: 100px; display: flex; gap: 15px; z-index: 110;
-            opacity: 0.05; transition: opacity 0.8s ease; max-height: calc(100vh - 300px); pointer-events: auto;
-        }
-        #control-panel:hover { opacity: 1.0; }
+        /* --- REACT UI LAYER STYLES --- */
 
-        .panel-section {
-            display: flex; flex-direction: column; gap: 6px;
-            background: rgba(0, 5, 15, 0.4); backdrop-filter: blur(15px);
-            padding: 15px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5); overflow-y: auto;
-        }
-        .panel-section::-webkit-scrollbar { width: 0px; }
-
-        .panel-title {
-            color: rgba(255, 255, 255, 0.6); font-size: 8px; text-align: center; margin-bottom: 8px;
-            letter-spacing: 3px; font-weight: 400; font-family: 'Courier New', monospace;
-        }
-
+        /* Base button (used by React UI) */
         .btn {
-            background: none; border: 1px solid transparent; color: rgba(255, 255, 255, 0.4);
-            padding: 6px 14px; font-size: 8px; cursor: pointer; text-align: left; border-radius: 4px;
-            transition: all 0.4s cubic-bezier(0.1, 0.8, 0.3, 1); text-transform: uppercase; letter-spacing: 2px; min-width: 150px;
-            font-family: 'Courier New', monospace; pointer-events: auto;
+            background: none; border: 1px solid rgba(255,255,255,0.08); color: rgba(255, 255, 255, 0.5);
+            padding: 6px 14px; font-size: 10px; cursor: pointer; border-radius: 4px;
+            transition: all 0.3s ease; letter-spacing: 1px;
+            font-family: 'Inter', sans-serif; pointer-events: auto;
         }
         .btn:hover { background: rgba(255, 255, 255, 0.05); color: #fff; border-color: rgba(255,255,255,0.2); }
-        .btn.active {
-            color: #fff; background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.4); box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        .btn.active { color: #fff; background: rgba(255, 255, 255, 0.08); border-color: rgba(0,212,255,0.4); }
+        .btn-magenta { border-color: rgba(255,0,128,0.2); color: rgba(255,0,128,0.7); }
+        .btn-magenta:hover { background: rgba(255,0,128,0.08); color: #ff0080; border-color: rgba(255,0,128,0.4); }
+
+        /* Top bar */
+        .top-bar {
+            position: fixed; top: 0; left: 0; right: 0; height: 36px; z-index: 70;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 16px; background: rgba(3,3,8,0.7); backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255,255,255,0.04);
         }
-        .btn.dev-btn { border-color: rgba(255, 0, 0, 0.3); color: rgba(255, 100, 100, 0.8); margin-top: 5px; text-align: center; }
-        .btn.dev-btn:hover { background: rgba(255, 0, 0, 0.1); color: #fff; border-color: #ff0000; }
-        .btn.dev-btn.active { background: rgba(255, 0, 0, 0.2); color: #fff; border-color: #ff0000; box-shadow: 0 0 15px rgba(255, 0, 0, 0.3); }
 
-        .btn.holo-btn { border-color: rgba(0, 255, 150, 0.3); color: rgba(0, 255, 150, 0.8); text-align: center; margin-bottom: 5px;}
-        .btn.holo-btn:hover { background: rgba(0, 255, 150, 0.1); color: #fff; border-color: #00ff96; }
-        .btn.holo-btn.active { background: rgba(0, 255, 150, 0.2); color: #fff; border-color: #00ff96; box-shadow: 0 0 15px rgba(0, 255, 150, 0.3); }
+        /* Model status pills */
+        .model-pill {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 2px 8px; border-radius: 10px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em;
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+            color: rgba(255,255,255,0.5); transition: all 0.3s;
+        }
+        .model-pill .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+        .model-pill .dot.active { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
+        .model-pill .dot.idle { background: #555; }
 
-        .btn.hand-btn { border-color: rgba(200, 100, 255, 0.3); color: rgba(200, 100, 255, 0.8); text-align: center; margin-bottom: 10px;}
-        .btn.hand-btn:hover { background: rgba(200, 100, 255, 0.1); color: #fff; border-color: #c864ff; }
-        .btn.hand-btn.active { background: rgba(200, 100, 255, 0.2); color: #fff; border-color: #c864ff; box-shadow: 0 0 15px rgba(200, 100, 255, 0.3); }
+        /* Dock */
+        .dock {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 70;
+            display: flex; justify-content: center; gap: 2px;
+            padding: 6px 12px 8px; background: rgba(3,3,8,0.7);
+            backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.04);
+        }
+        .dock-btn {
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+            padding: 6px 12px 4px; background: none; border: 1px solid transparent;
+            border-radius: 8px; color: rgba(255,255,255,0.35); cursor: pointer;
+            font-family: 'Inter', sans-serif; font-size: 9px; transition: all 0.25s ease;
+            min-width: 56px; position: relative;
+        }
+        .dock-btn .ico { font-size: 18px; line-height: 1; }
+        .dock-btn .dot {
+            width: 3px; height: 3px; border-radius: 50%;
+            background: transparent; transition: all 0.3s;
+        }
+        .dock-btn:hover {
+            color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.04);
+            border-color: rgba(0,212,255,0.15);
+            box-shadow: 0 0 12px rgba(0,212,255,0.06), inset 0 0 12px rgba(0,212,255,0.03);
+        }
+        .dock-btn.active {
+            color: #00d4ff; background: rgba(0,212,255,0.06);
+            border-color: rgba(0,212,255,0.2);
+            box-shadow: 0 0 16px rgba(0,212,255,0.1), inset 0 0 16px rgba(0,212,255,0.04);
+        }
+        .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
+
+        /* Floating windows — glassmorphism */
+        .fwin {
+            position: fixed; display: flex; flex-direction: column;
+            background: rgba(6,6,14,0.65); backdrop-filter: blur(14px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.1); border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 1px rgba(0,212,255,0.2);
+            overflow: hidden; transition: box-shadow 0.3s;
+        }
+        .fwin:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,212,255,0.06); }
+        .fwin-bar {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; cursor: grab; user-select: none;
+            background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .fwin-bar:active { cursor: grabbing; }
+        .fwin-title { font-family: 'Inter', sans-serif; font-size: 12px; color: rgba(255,255,255,0.7); font-weight: 500; }
+        .fwin-btns button {
+            background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer;
+            font-size: 16px; padding: 0 4px; transition: color 0.2s;
+        }
+        .fwin-btns button:hover { color: #ff0080; }
+        .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        .fwin-body::-webkit-scrollbar { width: 4px; }
+        .fwin-body::-webkit-scrollbar-track { background: transparent; }
+        .fwin-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+        .resize-h {
+            position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
+            cursor: nwse-resize; opacity: 0;
+        }
+
+        /* Cards */
+        .card {
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 8px; padding: 12px; transition: border-color 0.2s;
+        }
+        .card:hover { border-color: rgba(255,255,255,0.08); }
+        .card-title {
+            font-family: 'Orbitron', monospace; font-size: 10px; color: rgba(0,212,255,0.6);
+            letter-spacing: 0.08em; margin-bottom: 8px;
+        }
+        .stat { font-family: 'Orbitron', monospace; font-size: 22px; color: #fff; }
+        .stat-label { font-size: 11px; color: #555; margin-top: 2px; }
+
+        /* Badges */
+        .badge-green { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; background: rgba(0,255,128,0.1); color: #00ff80; border: 1px solid rgba(0,255,128,0.2); }
+        .badge-cyan { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; background: rgba(0,212,255,0.1); color: #00d4ff; border: 1px solid rgba(0,212,255,0.2); }
+        .badge-magenta { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; background: rgba(255,0,128,0.1); color: #ff0080; border: 1px solid rgba(255,0,128,0.2); }
+        .badge-amber { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; background: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); }
+
+        /* Progress bars */
+        .progress-bar { height: 3px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+
+        /* Inputs */
+        .input {
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 6px; padding: 7px 10px; color: #ddd; font-size: 12px;
+            font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.2s;
+        }
+        .input:focus { border-color: rgba(0,212,255,0.3); }
+
+        /* Chat panel */
+        .chat-panel {
+            position: fixed; top: 36px; right: -340px; bottom: 44px;
+            width: 320px; z-index: 65; display: flex; flex-direction: column;
+            background: rgba(6,6,14,0.8); backdrop-filter: blur(16px);
+            border-left: 1px solid rgba(255,255,255,0.04);
+            transition: right 0.3s ease;
+        }
+        .chat-panel.open { right: 0; }
+
+        /* Greeting ticker */
+        .greeting-ticker {
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+            justify-content: center;
+        }
+        .greeting-ticker-item {
+            display: flex; align-items: baseline; gap: 6px;
+            font-family: 'Inter', sans-serif; font-size: 13px; color: rgba(255,255,255,0.35);
+        }
+        .greeting-ticker-item .days {
+            font-family: 'Orbitron', monospace; font-size: 18px; color: #00d4ff;
+            text-shadow: 0 0 12px rgba(0,212,255,0.3);
+        }
+        .greeting-ticker-sep {
+            width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.15);
+        }
+
+        /* Settings panel */
+        .settings-panel {
+            position: fixed; top: 36px; right: -360px; bottom: 44px;
+            width: 340px; z-index: 68; display: flex; flex-direction: column;
+            background: rgba(6,6,14,0.75); backdrop-filter: blur(18px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.1);
+            box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+            transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+            overflow-y: auto;
+        }
+        .settings-panel.open { right: 0; }
+        .settings-panel::-webkit-scrollbar { width: 4px; }
+        .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+        .settings-section {
+            padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .settings-section-title {
+            font-family: 'Orbitron', monospace; font-size: 9px; color: rgba(0,212,255,0.5);
+            letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
+        }
+        .settings-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+        }
+        .settings-btn {
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 5px; padding: 6px 8px; color: rgba(255,255,255,0.4);
+            font-family: 'JetBrains Mono', monospace; font-size: 9px; cursor: pointer;
+            transition: all 0.2s; text-align: left; letter-spacing: 0.03em;
+        }
+        .settings-btn:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.12); }
+        .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.3); background: rgba(0,212,255,0.06); box-shadow: 0 0 10px rgba(0,212,255,0.08); }
+        .settings-toggle {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 0; cursor: pointer;
+        }
+        .settings-toggle-label { font-size: 11px; color: rgba(255,255,255,0.6); font-family: 'Inter', sans-serif; }
+        .settings-toggle-switch {
+            width: 32px; height: 18px; border-radius: 9px;
+            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1);
+            position: relative; transition: all 0.25s; cursor: pointer;
+        }
+        .settings-toggle-switch::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 12px; height: 12px; border-radius: 50%;
+            background: rgba(255,255,255,0.3); transition: all 0.25s;
+        }
+        .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
+        .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
+
+        /* Discord footer */
+        .discord-footer {
+            position: fixed; bottom: 48px; left: 12px; z-index: 55;
+            font-family: 'Courier New', monospace; font-size: 9px; letter-spacing: 1px;
+        }
+        .discord-footer a {
+            color: rgba(0,255,255,0.4); text-decoration: none;
+            border-bottom: 1px solid rgba(0,255,255,0.15); padding-bottom: 1px;
+            transition: all 0.3s;
+        }
+        .discord-footer a:hover { color: #00ffff; border-bottom-color: rgba(0,255,255,0.5); text-shadow: 0 0 8px rgba(0,255,255,0.4); }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
 
@@ -252,71 +347,6 @@
             </div>
         </div>
 
-        <!-- Collapsible API Panel -->
-        <div class="hud-api-panel" id="api-panel" onclick="toggleApiPanel()">
-            <div class="api-item"><span class="api-name">Anthropic</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">OpenAI</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Google Gemini</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Perplexity</span><div class="status-dot yellow" title="Latency Detected"></div></div>
-            <div class="api-item"><span class="api-name">Elevenlabs</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Firecrawl</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Openrouter</span><div class="status-dot red" title="Offline"></div></div>
-        </div>
-
-        <!-- Right Side App Tray -->
-        <div id="app-tray">
-            <div class="app-icon" style="border-color: rgba(0, 255, 255, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(138, 43, 226, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 170, 0, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(0, 255, 102, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 50, 100, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(100, 150, 255, 0.3);"></div>
-        </div>
-
-        <div class="hud-side-panel right" id="telemetry-right" onclick="toggleAppTray()"></div>
-
-        <!-- On-Screen Instructions -->
-        <div class="hud-instructions">
-            <div id="instr-holo" class="instr-box">SYS.HOLO: Face tracking active. Move head to shift perspective.</div>
-            <div id="instr-hand" class="instr-box">SYS.HAND: Pinch to Left-Click. Pinch &amp; Hold for Right-Click.</div>
-        </div>
-
-        <div class="hud-footer">
-            <span>Join our Discord and help us develop this app! <a href="https://discord.gg/f2VM6qNk" target="_blank" class="discord-link">discord.gg/f2VM6qNk</a></span>
-            <span id="mood-text">STATE: LISTENING</span>
-        </div>
-    </div>
-
-    <div id="control-panel">
-        <div class="panel-section">
-            <div class="panel-title">EVOLUTION GENOME</div>
-            <button class="btn structure-btn active" onclick="setEvolution(0)">DAY 1: LATTICE</button>
-            <button class="btn structure-btn" onclick="setEvolution(1)">DAY 2: SPHERE</button>
-            <button class="btn structure-btn" onclick="setEvolution(2)">DAY 3: NETWORK</button>
-            <button class="btn structure-btn" onclick="setEvolution(3)">DAY 4: CATHEDRAL</button>
-            <button class="btn structure-btn" onclick="setEvolution(4)">DAY 5: ASTROLABE</button>
-            <button class="btn structure-btn" onclick="setEvolution(5)">DAY 6: TESSERACT</button>
-            <button class="btn structure-btn" onclick="setEvolution(6)">DAY 7: QUANTUM</button>
-            <button class="btn structure-btn" onclick="setEvolution(7)">DAY 8: MANDELBROT</button>
-            <button class="btn structure-btn" onclick="setEvolution(8)">DAY 9: MOBIUS</button>
-            <button class="btn structure-btn" onclick="setEvolution(9)">DAY 10: OCEAN</button>
-            <button class="btn structure-btn" onclick="setEvolution(10)">DAY 11: NERVE</button>
-            <button class="btn structure-btn" onclick="setEvolution(11)">DAY 12: TRANSCEND</button>
-            <button class="btn structure-btn" style="border-color: #ffaa00; color: #ffdd88;" onclick="setEvolution(12)">DAY 13: GIGA EARTH</button>
-            
-            <button class="btn dev-btn" id="timelapse-btn" onclick="toggleTimeLapse()">DEV MODE: TIMELAPSE</button>
-        </div>
-        <div class="panel-section">
-            <div class="panel-title">CONSCIOUSNESS</div>
-            <button class="btn hand-btn" id="hand-btn" onclick="toggleHands()">HANDS: OFF</button>
-            <button class="btn holo-btn" id="holo-btn" onclick="toggleHologram()">HOLOGRAM: OFF</button>
-            
-            <button class="btn mood-btn active" onclick="setMood('LISTENING')">LISTENING</button>
-            <button class="btn mood-btn" onclick="setMood('REASONING')">REASONING</button>
-            <button class="btn mood-btn" onclick="setMood('EXECUTING')">EXECUTING</button>
-            <button class="btn mood-btn" onclick="setMood('EXCITED')">EXCITED</button>
-            <button class="btn mood-btn" onclick="setMood('CALM')">CALM</button>
-        </div>
     </div>
 
     <!-- Friday OS React UI Layer -->
@@ -341,26 +371,6 @@
 
     <script>
         // --- UI INTERACTION LOGIC ---
-        let apiPanelOpen = true;
-        function toggleApiPanel() {
-            apiPanelOpen = !apiPanelOpen;
-            const p = document.getElementById('api-panel');
-            if(apiPanelOpen) p.classList.remove('collapsed'); else p.classList.add('collapsed');
-        }
-
-        let appTrayOpen = false;
-        function toggleAppTray() {
-            appTrayOpen = !appTrayOpen;
-            const t = document.getElementById('app-tray');
-            if(appTrayOpen) t.classList.add('open'); else t.classList.remove('open');
-        }
-
-        function updateInstructions() {
-            const holoBox = document.getElementById('instr-holo');
-            const handBox = document.getElementById('instr-hand');
-            if (isHologramMode) holoBox.classList.add('active'); else holoBox.classList.remove('active');
-            if (isHandTrackingMode) handBox.classList.add('active'); else handBox.classList.remove('active');
-        }
 
         // Mouse Tracker Fallback
         let mouseX = 0, mouseY = 0;
@@ -409,10 +419,9 @@
         // --- HAND TRACKING (Minority Report) ---
         async function toggleHands() {
             isHandTrackingMode = !isHandTrackingMode;
-            const btn = document.getElementById('hand-btn');
             const cursor = document.getElementById('hand-cursor');
             if (isHandTrackingMode) {
-                btn.innerText = "HANDS: ON"; btn.classList.add('active'); cursor.classList.add('active');
+                if (cursor) cursor.classList.add('active');
                 if (!handsMP) {
                     handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
                     handsMP.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
@@ -420,9 +429,8 @@
                 }
                 await startSharedCamera();
             } else {
-                btn.innerText = "HANDS: OFF"; btn.classList.remove('active'); cursor.classList.remove('active');
+                if (cursor) cursor.classList.remove('active');
             }
-            updateInstructions();
         }
 
         function onHandsResults(results) {
@@ -464,9 +472,7 @@
         // --- FACE TRACKING (Parallax) ---
         async function toggleHologram() {
             isHologramMode = !isHologramMode;
-            const btn = document.getElementById('holo-btn');
             if (isHologramMode) {
-                btn.innerText = "HOLOGRAM: ON"; btn.classList.add('active');
                 if (!faceDetectionMP) {
                     faceDetectionMP = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
                     faceDetectionMP.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
@@ -474,10 +480,9 @@
                 }
                 await startSharedCamera();
             } else {
-                btn.innerText = "HOLOGRAM: OFF"; btn.classList.remove('active');
                 isFaceVisible = false; updateCameraIndicator(false);
             }
-            updateInstructions();
+            updateCameraIndicator(isHologramMode && isFaceVisible);
         }
 
         function onFaceResults(results) {
@@ -496,8 +501,9 @@
 
         function updateCameraIndicator(active) {
             const ind = document.getElementById('camera-indicator');
-            if (active && isHologramMode) { ind.style.background = '#00ff66'; ind.style.boxShadow = '0 0 8px #00ff66'; } 
-            else { ind.style.background = '#444'; ind.style.boxShadow = 'none'; }
+            if (!ind) return;
+            if (active && isHologramMode) { ind.classList.add('holo-active'); }
+            else { ind.classList.remove('holo-active'); }
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -555,7 +561,6 @@
         let mobiusSystem = null, quantumRings = [], abyssParticles = null, cathedralRings = [];
         let edenDebris = [], edenPlayer = null, edenLady = null; 
         
-        let telemetryBarsR = [];
         let audioContext, analyser, dataArray;
         let micActive = false;
         let lastSoundTime = -10; 
@@ -592,30 +597,22 @@
         }
 
         function setMood(m) {
-            document.querySelectorAll('.mood-btn').forEach(b => {
-                if(b.innerText.includes(m)) b.classList.add('active'); 
-                else b.classList.remove('active');
-            });
-            currentMood = m; 
-            document.getElementById('mood-text').innerText = `STATE: ${m}`;
+            currentMood = m;
         }
 
         function setEvolution(idx) {
             if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
             currentEvolutionIdx = idx;
-            document.querySelectorAll('.structure-btn').forEach((b, i) => {
-                if (i === idx) b.classList.add('active'); else b.classList.remove('active');
-            });
             currentStructure = targetStructure; targetStructure = EVOLUTION_PATH[idx].id;
-            transitionProgress = 0.0; metamorphosisFlash = 1.0; 
+            transitionProgress = 0.0; metamorphosisFlash = 1.0;
             if (structures[targetStructure]) structures[targetStructure].visible = true;
-            document.getElementById('evolution-day-text').innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
+            const dayText = document.getElementById('evolution-day-text');
+            if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
         }
 
         function toggleTimeLapse() {
             timeLapseActive = !timeLapseActive;
-            const btn = document.getElementById('timelapse-btn');
-            if (timeLapseActive) { btn.classList.add('active'); timeLapseTimer = 0; } else btn.classList.remove('active');
+            if (timeLapseActive) { timeLapseTimer = 0; }
         }
 
         function init() {
@@ -632,7 +629,7 @@
             renderer.setClearColor(0x000103, 1);
             document.body.appendChild(renderer.domElement);
 
-            buildBackgroundEnvironment(); buildAllStructures(); buildTelemetry();
+            buildBackgroundEnvironment(); buildAllStructures();
 
             const renderScene = new THREE.RenderPass(scene, camera);
             bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.6, 0.15);
@@ -688,13 +685,6 @@
             scene.add(line); energyLines.push(line);
         }
 
-        function buildTelemetry() {
-            const rightPanel = document.getElementById('telemetry-right');
-            for(let i=0; i<20; i++) {
-                let barR = document.createElement('div'); barR.className = 'telemetry-bar';
-                rightPanel.appendChild(barR); telemetryBarsR.push(barR);
-            }
-        }
 
         function createMaterial(type, color, opacity, additive = true, wireframe = false, dashed = false) {
             let mat;
@@ -1089,10 +1079,6 @@
                 hudEl.style.transform = `perspective(1000px) rotateY(${currFaceX * -2}deg) rotateX(${currFaceY * 2}deg) translateZ(0px)`;
             }
 
-            const flickerRate = 0.05 + (audioData.high * 1.5) + (audioData.mid * 0.5) + (metamorphosisFlash * 0.8);
-            if (Math.random() < flickerRate) {
-                telemetryBarsR.forEach(bar => { if(bar && Math.random() < flickerRate) { bar.style.width = (4 + Math.random() * 30) + 'px'; bar.style.opacity = 0.2 + Math.random() * 0.8; } });
-            }
 
             nebulaClouds.forEach(cloud => {
                 if(cloud && cloud.material && cloud.userData && cloud.rotation) {
@@ -1437,8 +1423,32 @@ window.fridayVibe = {
                 : 'Unknown'
         };
     },
+    getStructures: function() {
+        return typeof EVOLUTION_PATH !== 'undefined' ? EVOLUTION_PATH : [];
+    },
     getMood: function() {
         return typeof currentMood !== 'undefined' ? currentMood : 'LISTENING';
+    },
+    getMoods: function() {
+        return typeof MOODS !== 'undefined' ? Object.keys(MOODS) : ['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
+    },
+    toggleHologram: function() {
+        if (typeof toggleHologram === 'function') toggleHologram();
+    },
+    isHologramOn: function() {
+        return typeof isHologramMode !== 'undefined' ? isHologramMode : false;
+    },
+    toggleHands: function() {
+        if (typeof toggleHands === 'function') toggleHands();
+    },
+    isHandsOn: function() {
+        return typeof isHandTrackingMode !== 'undefined' ? isHandTrackingMode : false;
+    },
+    toggleTimeLapse: function() {
+        if (typeof toggleTimeLapse === 'function') toggleTimeLapse();
+    },
+    isTimeLapseOn: function() {
+        return typeof timeLapseActive !== 'undefined' ? timeLapseActive : false;
     }
 };
 
@@ -1803,24 +1813,30 @@ function App(){
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
-  const[greeting,setGreeting]=useState(null);const[promptText,setPromptText]=useState('');
+  const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
+  const[settingsOpen,setSettingsOpen]=useState(false);
+  const[models]=useState([{name:'Claude Opus',active:true},{name:'Gemini',active:true}]);
   const chatEnd=useRef(null);
 
-  useEffect(()=>{const t=setInterval(()=>{setClock(new Date());if(window.fridayVibe)setStructureName(window.fridayVibe.getStructure?.()?.name||'Genesis Lattice')},1000);return()=>clearInterval(t)},[]);
+  // Poll scene state for settings panel
+  const[sceneState,setSceneState]=useState({structIdx:0,mood:'LISTENING',holo:false,hands:false,timelapse:false});
+
+  useEffect(()=>{const t=setInterval(()=>{setClock(new Date());if(window.fridayVibe){
+    setStructureName(window.fridayVibe.getStructure?.()?.name||'Genesis Lattice');
+    setSceneState({structIdx:window.fridayVibe.getStructure?.()?.index||0,mood:window.fridayVibe.getMood?.()??'LISTENING',holo:window.fridayVibe.isHologramOn?.()??false,hands:window.fridayVibe.isHandsOn?.()??false,timelapse:window.fridayVibe.isTimeLapseOn?.()??false});
+  }},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
-  // Fetch greeting data
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{const items=(d.countdowns||[]).map(c=>`${c.label||c.name} in ${c.days||c.days_until}d`).join(' · ');setGreeting(items||'All systems nominal.')}).catch(()=>setGreeting('All systems nominal.'))},[]);
+  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
 
   const[vibeMode,setVibeMode]=useState(false);
-const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
-const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
+  const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
+  const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
-
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>};
@@ -1828,36 +1844,52 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
   const unread=notifs.filter(n=>!n.read).length;
   const noWindows=openWins.size===0;
 
+  const structures=window.fridayVibe?.getStructures?.()??[];
+  const moods=window.fridayVibe?.getMoods?.()??['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
+
   return(<>
     {/* Top Bar */}
     <div className="top-bar">
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
-        <span style={{color:'rgba(124,58,237,0.3)'}}>|</span>
-        <span style={{fontFamily:'Orbitron',fontSize:10,color:'rgba(124,58,237,0.4)',letterSpacing:'.08em'}}>FutureSpeak.AI</span>
-        <div style={{display:'flex',alignItems:'center',gap:4,marginLeft:12}}>
-          <button onClick={()=>window.fridayVibe?.prevStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>◀</button>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:9,color:'#444',minWidth:100,textAlign:'center'}}>{structureName}</span>
-          <button onClick={()=>window.fridayVibe?.nextStructure()} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:10}}>▶</button>
+        <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          {models.map((m,i)=><span key={i} className="model-pill"><span className={`dot ${m.active?'active':'idle'}`}/>{m.name}</span>)}
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>🔔{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}</button>
-        <button onClick={()=>setChatOpen(!chatOpen)} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>💬</button>
+        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>
+          <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
+        </button>
+        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen)setSettingsOpen(false)}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>
+          <span style={{fontSize:13}}>&#x1F4AC;</span>
+        </button>
+        <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:15}} title="Settings">
+          <span>&#x2699;</span>
+        </button>
         <div style={{width:7,height:7,borderRadius:'50%',background:'#00ff80'}} title="Connected"/>
       </div>
     </div>
 
-    {/* Calm Default State — when no windows are open */}
+    {/* Calm Default State — greeting with ticker */}
     {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-      <div style={{fontFamily:'Orbitron',fontSize:24,color:'rgba(0,212,255,0.6)',marginBottom:8,animation:'fadeIn 1s ease'}}>{getGreeting()}, Stephen.</div>
-      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.25)',maxWidth:500,textAlign:'center',marginBottom:24}}>{greeting}</div>
+      <div style={{fontFamily:'Orbitron',fontSize:24,color:'rgba(0,212,255,0.6)',marginBottom:12,animation:'fadeIn 1s ease'}}>{getGreeting()}, Stephen.</div>
+      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:28}}>
+        {countdowns.map((c,i)=><React.Fragment key={i}>
+          {i>0&&<span className="greeting-ticker-sep"/>}
+          <span className="greeting-ticker-item">
+            <span>{c.emoji||''} {c.label||c.name}</span>
+            <span className="days">{c.days||c.days_until}d</span>
+          </span>
+        </React.Fragment>)}
+      </div>}
+      {countdowns.length===0&&<div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.2)',marginBottom:28}}>All systems nominal.</div>}
       <div style={{pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
           style={{width:360,background:'rgba(6,6,11,0.6)',backdropFilter:'blur(12px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:24,padding:'10px 20px',color:'#e0e0e8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s'}}/>
-        <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>🎤</button>
+        <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>&#x1F3A4;</button>
       </div>
     </div>}
 
@@ -1868,7 +1900,7 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
     <div className={`chat-panel ${chatOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
-        <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>✕</button>
+        <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
@@ -1885,6 +1917,61 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
           <button className="btn" onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
+    </div>
+
+    {/* Settings Panel */}
+    <div className={`settings-panel ${settingsOpen?'open':''}`}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>SETTINGS</span>
+        <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Evolution Structure</div>
+        <div className="settings-grid">
+          {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
+            <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
+              onClick={()=>window.fridayVibe?.setStructure(i)}>
+              <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Mood</div>
+        <div className="settings-grid">
+          {moods.map(m=>
+            <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
+              onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
+          )}
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Consciousness</div>
+        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
+          <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
+          <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
+        </div>
+        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
+          <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
+          <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Dev Mode</div>
+        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
+          <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
+          <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
+        </div>
+      </div>
+    </div>
+
+    {/* Discord Footer */}
+    <div className="discord-footer">
+      <a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener">discord.gg/f2VM6qNk</a>
     </div>
 
     {/* Dock */}
