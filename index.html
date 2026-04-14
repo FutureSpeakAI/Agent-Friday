@@ -221,26 +221,10 @@
         .btn.hand-btn { border-color: rgba(200, 100, 255, 0.3); color: rgba(200, 100, 255, 0.8); text-align: center; margin-bottom: 10px;}
         .btn.hand-btn:hover { background: rgba(200, 100, 255, 0.1); color: #fff; border-color: #c864ff; }
         .btn.hand-btn.active { background: rgba(200, 100, 255, 0.2); color: #fff; border-color: #c864ff; box-shadow: 0 0 15px rgba(200, 100, 255, 0.3); }
-
-        #interaction-prompt {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,2,5,0.6); backdrop-filter: blur(8px); color: #fff;
-            font-family: 'Courier New', Courier, monospace; cursor: pointer; z-index: 200;
-            transition: opacity 1.5s ease, visibility 1.5s; letter-spacing: 6px; text-transform: uppercase; text-align: center; padding: 20px;
-            font-weight: 300; font-size: 14px; pointer-events: auto;
-        }
-        #interaction-prompt.fade-out { opacity: 0; visibility: hidden; pointer-events: none; }
-        .hint { font-size: 10px; opacity: 0.6; margin-top: 20px; letter-spacing: 2px; }
     </style>
 </head>
 
 <body>
-    <div id="interaction-prompt">
-        Awaken The Core
-        <div class="hint">(Click to establish neural link)</div>
-    </div>
-
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
         <svg id="pinch-progress">
@@ -294,7 +278,7 @@
         <!-- On-Screen Instructions -->
         <div class="hud-instructions">
             <div id="instr-holo" class="instr-box">SYS.HOLO: Face tracking active. Move head to shift perspective.</div>
-            <div id="instr-hand" class="instr-box">SYS.HAND: Pinch to Left-Click. Pinch & Hold for Right-Click.</div>
+            <div id="instr-hand" class="instr-box">SYS.HAND: Pinch to Left-Click. Pinch &amp; Hold for Right-Click.</div>
         </div>
 
         <div class="hud-footer">
@@ -334,113 +318,19 @@
             <button class="btn mood-btn" onclick="setMood('CALM')">CALM</button>
         </div>
     </div>
-    
-<div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none;opacity:0;transition:opacity 1s ease"><div id="ui-inner" style="pointer-events:auto;height:100vh"></div></div>
-<div style="position:fixed;bottom:8px;left:12px;z-index:1;font-family:Orbitron,monospace;font-size:10px;color:rgba(124,58,237,0.08);letter-spacing:.1em;pointer-events:none">FutureSpeak.AI</div>
+
+    <!-- Friday OS React UI Layer -->
+    <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+    </div>
+    <div style="position:fixed;bottom:8px;left:12px;z-index:1;font-family:Orbitron,monospace;font-size:10px;color:rgba(124,58,237,0.08);letter-spacing:.1em;pointer-events:none">FutureSpeak.AI</div>
+
+    <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-</head>
-<body>
-    <div id="interaction-prompt">
-        Awaken The Core
-        <div class="hint">(Click to establish neural link)</div>
-    </div>
 
-    <!-- Hand Cursor -->
-    <div id="hand-cursor" class="hidden">
-        <svg id="pinch-progress">
-            <circle class="pinch-circle" cx="17" cy="17" r="15" />
-        </svg>
-    </div>
-
-    <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
-
-    <div id="hud-overlay">
-        <!-- Minimalist Optical Arcs -->
-        <div class="hud-corner top-left"><div class="dot"></div></div>
-        <div class="hud-corner top-right"><div class="dot"></div></div>
-        <div class="hud-corner bottom-left"><div class="dot"></div></div>
-        <div class="hud-corner bottom-right"><div class="dot"></div></div>
-        
-        <div class="hud-header">
-            <div class="hud-title-container">
-                <a href="https://futurespeak.ai" target="_blank" class="hud-main-title">FutureSpeak.AI</a>
-                <span>AGENT FRIDAY v.2.0.0 // <span id="evolution-day-text">DAY 1: GENESIS LATTICE</span></span>
-            </div>
-            <div class="hud-laws">
-                ASIMOV cLAWS VERIFIED <div class="status-dot green"></div>
-            </div>
-        </div>
-
-        <!-- Collapsible API Panel -->
-        <div class="hud-api-panel" id="api-panel" onclick="toggleApiPanel()">
-            <div class="api-item"><span class="api-name">Anthropic</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">OpenAI</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Google Gemini</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Perplexity</span><div class="status-dot yellow" title="Latency Detected"></div></div>
-            <div class="api-item"><span class="api-name">Elevenlabs</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Firecrawl</span><div class="status-dot green"></div></div>
-            <div class="api-item"><span class="api-name">Openrouter</span><div class="status-dot red" title="Offline"></div></div>
-        </div>
-
-        <!-- Right Side App Tray -->
-        <div id="app-tray">
-            <div class="app-icon" style="border-color: rgba(0, 255, 255, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(138, 43, 226, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 170, 0, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(0, 255, 102, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(255, 50, 100, 0.3);"></div>
-            <div class="app-icon" style="border-color: rgba(100, 150, 255, 0.3);"></div>
-        </div>
-
-        <div class="hud-side-panel right" id="telemetry-right" onclick="toggleAppTray()"></div>
-
-        <!-- On-Screen Instructions -->
-        <div class="hud-instructions">
-            <div id="instr-holo" class="instr-box">SYS.HOLO: Face tracking active. Move head to shift perspective.</div>
-            <div id="instr-hand" class="instr-box">SYS.HAND: Pinch to Left-Click. Pinch & Hold for Right-Click.</div>
-        </div>
-
-        <div class="hud-footer">
-            <span>Join our Discord and help us develop this app! <a href="https://discord.gg/f2VM6qNk" target="_blank" class="discord-link">discord.gg/f2VM6qNk</a></span>
-            <span id="mood-text">STATE: LISTENING</span>
-        </div>
-    </div>
-
-    <div id="control-panel">
-        <div class="panel-section">
-            <div class="panel-title">EVOLUTION GENOME</div>
-            <button class="btn structure-btn active" onclick="setEvolution(0)">DAY 1: LATTICE</button>
-            <button class="btn structure-btn" onclick="setEvolution(1)">DAY 2: SPHERE</button>
-            <button class="btn structure-btn" onclick="setEvolution(2)">DAY 3: NETWORK</button>
-            <button class="btn structure-btn" onclick="setEvolution(3)">DAY 4: CATHEDRAL</button>
-            <button class="btn structure-btn" onclick="setEvolution(4)">DAY 5: ASTROLABE</button>
-            <button class="btn structure-btn" onclick="setEvolution(5)">DAY 6: TESSERACT</button>
-            <button class="btn structure-btn" onclick="setEvolution(6)">DAY 7: QUANTUM</button>
-            <button class="btn structure-btn" onclick="setEvolution(7)">DAY 8: MANDELBROT</button>
-            <button class="btn structure-btn" onclick="setEvolution(8)">DAY 9: MOBIUS</button>
-            <button class="btn structure-btn" onclick="setEvolution(9)">DAY 10: OCEAN</button>
-            <button class="btn structure-btn" onclick="setEvolution(10)">DAY 11: NERVE</button>
-            <button class="btn structure-btn" onclick="setEvolution(11)">DAY 12: TRANSCEND</button>
-            <button class="btn structure-btn" style="border-color: #ffaa00; color: #ffdd88;" onclick="setEvolution(12)">DAY 13: GIGA EARTH</button>
-            
-            <button class="btn dev-btn" id="timelapse-btn" onclick="toggleTimeLapse()">DEV MODE: TIMELAPSE</button>
-        </div>
-        <div class="panel-section">
-            <div class="panel-title">CONSCIOUSNESS</div>
-            <button class="btn hand-btn" id="hand-btn" onclick="toggleHands()">HANDS: OFF</button>
-            <button class="btn holo-btn" id="holo-btn" onclick="toggleHologram()">HOLOGRAM: OFF</button>
-            
-            <button class="btn mood-btn active" onclick="setMood('LISTENING')">LISTENING</button>
-            <button class="btn mood-btn" onclick="setMood('REASONING')">REASONING</button>
-            <button class="btn mood-btn" onclick="setMood('EXECUTING')">EXECUTING</button>
-            <button class="btn mood-btn" onclick="setMood('EXCITED')">EXCITED</button>
-            <button class="btn mood-btn" onclick="setMood('CALM')">CALM</button>
-        </div>
-    </div>
-    
+    <!-- Three.js + Post-Processing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
@@ -540,15 +430,11 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 const indexTip = landmarks[8]; const thumbTip = landmarks[4];
-                
-                // Track midpoint of thumb and index for standard movement to prevent "jump" on pinch
                 const targetX = (1.0 - (indexTip.x + thumbTip.x) / 2) * window.innerWidth;
                 const targetY = ((indexTip.y + thumbTip.y) / 2) * window.innerHeight;
-                
                 const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
                 isPinching = dist < 0.06;
-                const isApproachingPinch = dist < 0.1; // Threshold to activate anti-dip stabilization
-                
+                const isApproachingPinch = dist < 0.1;
                 if (!handVisible) {
                     currHandX = targetX; currHandY = targetY;
                     rawHandX = targetX; rawHandY = targetY;
@@ -556,20 +442,15 @@
                     cursor.classList.remove('hidden');
                 } else {
                     if (!isApproachingPinch) {
-                        rawHandX = targetX;
-                        rawHandY = targetY;
+                        rawHandX = targetX; rawHandY = targetY;
                     } else {
-                        // ANTI-DIP STABILIZATION:
-                        // When fingers are closing to pinch, severely restrict positional updates 
-                        // so the cursor locks in place exactly where you meant to click.
                         rawHandX += (targetX - rawHandX) * 0.05;
                         rawHandY += (targetY - rawHandY) * 0.05;
                     }
                 }
             } else {
-                isPinching = false;
-                handVisible = false;
-                cursor.classList.add('hidden'); // Fade out elegantly when hand is put away
+                isPinching = false; handVisible = false;
+                cursor.classList.add('hidden');
             }
         }
 
@@ -604,12 +485,9 @@
                 const bbox = results.detections[0].boundingBox;
                 rawFaceX = (bbox.xCenter - 0.5) * 2.0; 
                 rawFaceY = (bbox.yCenter - 0.5) * 2.0;
-                
-                // Z-Axis Depth Tracking via Bounding Box Width
                 let fw = Math.max(0.05, Math.min(bbox.width, 0.4)); 
                 let targetZ = (fw - 0.18) * 3.0; 
-                rawFaceZ += (targetZ - rawFaceZ) * 0.1; // Smooth Z to prevent bounciness
-                
+                rawFaceZ += (targetZ - rawFaceZ) * 0.1;
                 isFaceVisible = true; updateCameraIndicator(true);
                 clearTimeout(faceLostTimeout);
                 faceLostTimeout = setTimeout(() => { isFaceVisible = false; updateCameraIndicator(false); }, 2000); 
@@ -763,7 +641,11 @@
             composer.addPass(renderScene); composer.addPass(bloomPass); composer.addPass(holoPass);
 
             window.addEventListener('resize', onWindowResize);
-            document.getElementById('interaction-prompt').addEventListener('click', setupAudio);
+
+            // Auto-start audio on first user interaction (no overlay needed)
+            const autoStartAudio = () => { setupAudio(); document.removeEventListener('click', autoStartAudio); document.removeEventListener('keydown', autoStartAudio); };
+            document.addEventListener('click', autoStartAudio);
+            document.addEventListener('keydown', autoStartAudio);
 
             Object.values(structures).forEach(g => { if(g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); }});
             if (structures['CUBES']) { structures['CUBES'].visible = true; setGroupOpacity(structures['CUBES'], 1); }
@@ -825,34 +707,22 @@
         }
 
         function buildAllStructures() {
-            // 1. CUBES (Genesis Lattice - Solid blocks with glowing edges)
+            // 1. CUBES (Genesis Lattice)
             const gCubes = new THREE.Group();
-            const boxMat = createMaterial('mesh', 0x00ffff, 0.85, false); // Solid faces
+            const boxMat = createMaterial('mesh', 0x00ffff, 0.85, false);
             const edgeMat = createMaterial('line', 0x00ffff, 0.8, true); edgeMat.userData.isAccent = true;
             const boxGeo = new THREE.BoxGeometry(1.4, 1.4, 1.4); const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-            
-            const gridSize = 3;
-            const spacing = 1.6;
-            const offset = (gridSize * spacing) / 2 - (spacing / 2);
-
-            for(let x=0; x<gridSize; x++) { 
-                for(let y=0; y<gridSize; y++) { 
-                    for(let z=0; z<gridSize; z++) {
-                        if (Math.random() > 0.85) continue; // Drop ~15% to create fractured logo look
-                        
-                        const mesh = new THREE.Mesh(boxGeo, boxMat); 
-                        mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
-                        
-                        const posX = (x * spacing) - offset;
-                        const posY = (y * spacing) - offset;
-                        const posZ = (z * spacing) - offset;
-                        
-                        mesh.position.set(posX, posY, posZ); 
-                        const dir = new THREE.Vector3(posX, posY, posZ).normalize();
-                        if(dir.length() === 0) dir.set(0,1,0); // Center block safe fallback
-
-                        mesh.userData = { baseX: posX, baseY: posY, baseZ: posZ, dir: dir, rx: Math.random()*Math.PI*2, speed: 0.5+Math.random()*0.5 };
-                        gCubes.add(mesh); coreCubes.push(mesh);
+            const gridSize = 3; const spacing = 1.6; const offset = (gridSize * spacing) / 2 - (spacing / 2);
+            for(let x=0; x<gridSize; x++) { for(let y=0; y<gridSize; y++) { for(let z=0; z<gridSize; z++) {
+                if (Math.random() > 0.85) continue;
+                const mesh = new THREE.Mesh(boxGeo, boxMat); 
+                mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
+                const posX = (x * spacing) - offset; const posY = (y * spacing) - offset; const posZ = (z * spacing) - offset;
+                mesh.position.set(posX, posY, posZ); 
+                const dir = new THREE.Vector3(posX, posY, posZ).normalize();
+                if(dir.length() === 0) dir.set(0,1,0);
+                mesh.userData = { baseX: posX, baseY: posY, baseZ: posZ, dir: dir, rx: Math.random()*Math.PI*2, speed: 0.5+Math.random()*0.5 };
+                gCubes.add(mesh); coreCubes.push(mesh);
             }}}
             gCubes.scale.set(1.5, 1.5, 1.5);
             structures['CUBES'] = gCubes;
@@ -993,7 +863,7 @@
             }
             structures['QUANTUM'] = gQuantum;
 
-            // 12. NONE
+            // 12. NONE (Transcendence)
             const gNone = new THREE.Group();
             const lineMat = createMaterial('line', 0x00ffff, 0.2, true, false); lineMat.userData.isAccent = true;
             for(let i=0; i<100; i++) {
@@ -1006,12 +876,10 @@
 
             // 13. EDEN TRANCE (Giga Earth Rez Tribute)
             const gEden = new THREE.Group();
-            
             const tunnelGroup = new THREE.Group();
             const tunnelGeo = new THREE.BoxGeometry(40, 40, 200, 4, 4, 20);
             const tunnelWireMat = createMaterial('line', 0xff00ff, 0.3, true, false); tunnelWireMat.userData.isAccent = true;
             const tunnelWire = new THREE.LineSegments(new THREE.EdgesGeometry(tunnelGeo), tunnelWireMat);
-            
             const tunnelSolidMat = new THREE.MeshBasicMaterial({ color: 0x050515, side: THREE.BackSide });
             tunnelSolidMat.userData = { isTunnelSolid: true };
             const tunnelSolid = new THREE.Mesh(tunnelGeo, tunnelSolidMat);
@@ -1022,7 +890,6 @@
             const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 });
             sphereMat.userData = { isBossSphere: true };
             edenLady = new THREE.Mesh(sphereGeo, sphereMat);
-            
             const sphereWire = new THREE.WireframeGeometry(sphereGeo);
             const sphereWireMat = new THREE.LineBasicMaterial({ color: 0x550000, transparent: true, opacity: 0.6 });
             sphereWireMat.userData = { isBossWire: true };
@@ -1032,11 +899,9 @@
             const spineGroup = new THREE.Group();
             const spineMat = createMaterial('line', 0xff3300, 0.8, true, false); spineMat.userData.isAccent = true;
             for(let i=0; i<15; i++) {
-                const x = (Math.random() - 0.5) * 4;
-                const z = (Math.random() - 0.5) * 4;
+                const x = (Math.random() - 0.5) * 4; const z = (Math.random() - 0.5) * 4;
                 const pts = [new THREE.Vector3(x, -50, z), new THREE.Vector3(x, 50, z)];
-                const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), spineMat);
-                spineGroup.add(line);
+                spineGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), spineMat));
             }
             gEden.add(spineGroup);
 
@@ -1045,16 +910,11 @@
             const pBody = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.3, 1.5, 8), pBodyMat);
             const pHead = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), pBodyMat);
             pHead.position.y = 0.9;
-            
             const ringPts = [];
-            for(let i=0; i<=32; i++) {
-                const th = (i/32) * Math.PI * 2;
-                ringPts.push(new THREE.Vector3(Math.cos(th)*1.5, Math.sin(th)*1.5, 0));
-            }
+            for(let i=0; i<=32; i++) { const th = (i/32) * Math.PI * 2; ringPts.push(new THREE.Vector3(Math.cos(th)*1.5, Math.sin(th)*1.5, 0)); }
             const pRingMat = createMaterial('line', 0x00ffff, 0.8, true, false); pRingMat.userData.isAccent = true;
             const pRing = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), pRingMat);
             pRing.rotation.x = Math.PI / 2;
-            
             edenPlayer.add(pBody); edenPlayer.add(pHead); edenPlayer.add(pRing);
             gEden.add(edenPlayer);
 
@@ -1103,7 +963,6 @@
                     } else if (child.material.color && targetStructure !== 'QUANTUM') {
                         child.material.color.copy(targetColor);
                         if(child.geometry && child.geometry.type === 'BoxGeometry' && !child.material.wireframe && (currentStructure === 'CUBES' || targetStructure === 'CUBES')) {
-                            // Darken the solid faces of the genesis lattice so glowing edges pop beautifully
                             child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.15); 
                         }
                     }
@@ -1122,10 +981,6 @@
                 source.connect(analyser); dataArray = new Uint8Array(analyser.frequencyBinCount);
                 micActive = true; lastSoundTime = clock.getElapsedTime(); 
             } catch (err) { console.warn("Using procedural heartbeat."); }
-            document.getElementById('interaction-prompt').classList.add('fade-out');
-        // Show Friday OS UI after awakening
-        const fridayUI = document.getElementById('ui-root');
-        if(fridayUI) { fridayUI.style.opacity = '1'; fridayUI.style.transition = 'opacity 1s ease'; }
         }
 
         function onWindowResize() {
@@ -1152,12 +1007,10 @@
                 if (isPinching) {
                     if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
                     const duration = performance.now() - pinchStartTime;
-                    
                     if (duration > 200) {
                         document.getElementById('pinch-progress').style.opacity = 1;
                         const progress = Math.min(1.0, (duration - 200) / PINCH_HOLD_TIME);
                         pRing.style.strokeDashoffset = 95 * (1.0 - progress);
-                        
                         if (progress >= 1.0 && !rightClickFired) {
                             rightClickFired = true; spawnRipple(currHandX, currHandY, '#ff00ff');
                         }
@@ -1185,7 +1038,6 @@
                 currFaceY += (rawFaceY - currFaceY) * 0.08;
                 currFaceZ += (rawFaceZ - currFaceZ) * 0.05; 
             } else {
-                // Fallback to mouse tracking if hologram is off to keep scene perfectly alive
                 currFaceX += (mouseX - currFaceX) * 0.04; 
                 currFaceY += (mouseY - currFaceY) * 0.04; 
                 currFaceZ += (0 - currFaceZ) * 0.04;
@@ -1311,10 +1163,8 @@
                 coreCubes.forEach(c => {
                     if (c && c.rotation && c.position && c.userData) {
                         c.rotation.x += 0.01 * c.userData.speed * idleFactor; c.rotation.y += 0.012 * c.userData.speed * idleFactor;
-                        
                         const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
                         const expansion = organicBreathe + (audioData.low * 1.5) + (interactionForce * 1.5);
-                        
                         c.position.set(
                             c.userData.baseX + c.userData.dir.x * expansion, 
                             c.userData.baseY + c.userData.dir.y * expansion, 
@@ -1376,7 +1226,6 @@
                     tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0) * delta * idleFactor;
                     const cosXW = Math.cos(tesseractLines.userData.angleXW), sinXW = Math.sin(tesseractLines.userData.angleXW);
                     const cosYW = Math.cos(tesseractLines.userData.angleYW), sinYW = Math.sin(tesseractLines.userData.angleYW);
-                    
                     const pts3D = [];
                     if (tesseractLines.userData.pts4D) {
                         tesseractLines.userData.pts4D.forEach(p => {
@@ -1387,7 +1236,6 @@
                             pts3D.push(new THREE.Vector3(x*w_factor, y*w_factor, z*w_factor));
                         });
                     }
-                    
                     const lPositions = tesseractLines.geometry.attributes.position.array;
                     const edges = tesseractLines.userData.edges;
                     if (edges && pts3D.length > 0) {
@@ -1400,7 +1248,6 @@
                         }
                     }
                     tesseractLines.geometry.attributes.position.needsUpdate = true;
-                    
                     if (tessNodes && tessNodes.geometry && tessNodes.geometry.attributes.position) {
                         const nPositions = tessNodes.geometry.attributes.position.array;
                         pts3D.forEach((p, i) => { if(p) { nPositions[i*3] = p.x; nPositions[i*3+1] = p.y; nPositions[i*3+2] = p.z; } });
@@ -1419,7 +1266,6 @@
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
                         p.add(v); if(p.length() > 20) v.multiplyScalar(-1); 
                         nodePos[i*3] = p.x; nodePos[i*3+1] = p.y; nodePos[i*3+2] = p.z;
-                        
                         let connected = 0;
                         for(let j=i+1; j<120; j++) {
                             if(connected > 3 || !shannonNodes[j] || !shannonNodes[j].pos) break;
@@ -1511,24 +1357,19 @@
                     for (let i = 0; i < pData.length; i++) {
                         const p = pData[i];
                         let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * idleFactor;
-                        
                         if (scatterIntensity > 0) { 
                             speed += scatterIntensity * 3.0; 
                             p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
                         }
                         p.theta += speed * delta;
-                        
                         if (scatterIntensity === 0) {
                             const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (Math.random()-0.5)*0.1) : p.basePhi;
                             p.phi = THREE.MathUtils.lerp(p.phi, targetPhi, delta * 1.0);
                         }
-                        
                         const moodRadialForce = tMood && tMood.radialForce !== undefined ? tMood.radialForce : 0;
                         let radTarget = p.baseRadius + (moodRadialForce * 5.0) + (scatterIntensity * 10.0); 
                         if (targetStructure === 'GRID') radTarget += 8.0;
-
                         p.radius = THREE.MathUtils.lerp(p.radius, radTarget, delta * 1.5);
-
                         positions[i*3] = p.radius * Math.sin(p.phi) * Math.cos(p.theta); positions[i*3+1] = p.radius * Math.sin(p.phi) * Math.sin(p.theta); positions[i*3+2] = p.radius * Math.cos(p.phi);
                         colors[i*3] = moodLerpValues.accentColor.r; colors[i*3+1] = moodLerpValues.accentColor.g; colors[i*3+2] = moodLerpValues.accentColor.b;
                     }
@@ -1555,7 +1396,6 @@
             if (bloomPass && holoPass && holoPass.uniforms) {
                 const currentBloom = moodLerpValues.bloomStrength * (0.8 + audioData.low * 2.5) * idleFactor;
                 bloomPass.strength = currentBloom + (metamorphosisFlash * 4.0);
-                
                 if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
@@ -1568,16 +1408,46 @@
 
         window.onload = init;
     </script>
+
 <script>
-// Wire fridayVibe API to Gemini's scene
-window.fridayVibe = window.fridayVibe || {
-    setMood: function(m) { if(typeof setMood === 'function') setMood(m); },
-    nextStructure: function() { if(typeof nextStructure === 'function') nextStructure(); else if(typeof currentStructureIndex !== 'undefined') { currentStructureIndex = (currentStructureIndex + 1) % structureBuilders.length; switchStructure(currentStructureIndex); }},
-    prevStructure: function() { if(typeof currentStructureIndex !== 'undefined' && typeof structureBuilders !== 'undefined') { currentStructureIndex = (currentStructureIndex - 1 + structureBuilders.length) % structureBuilders.length; switchStructure(currentStructureIndex); }},
-    setStructure: function(i) { if(typeof switchStructure === 'function') switchStructure(i); },
-    getStructure: function() { return {index: typeof currentStructureIndex !== 'undefined' ? currentStructureIndex : 0, name: 'Structure ' + (typeof currentStructureIndex !== 'undefined' ? currentStructureIndex : 0)}; },
-    getMood: function() { return typeof currentMood !== 'undefined' ? currentMood : 'LISTENING'; }
+// === FRIDAY VIBE API ===
+// Wire window.fridayVibe to Gemini's actual scene functions
+window.fridayVibe = {
+    setMood: function(m) {
+        if (typeof setMood === 'function') setMood(m);
+    },
+    nextStructure: function() {
+        if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {
+            setEvolution((currentEvolutionIdx + 1) % EVOLUTION_PATH.length);
+        }
+    },
+    prevStructure: function() {
+        if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {
+            setEvolution((currentEvolutionIdx - 1 + EVOLUTION_PATH.length) % EVOLUTION_PATH.length);
+        }
+    },
+    setStructure: function(i) {
+        if (typeof setEvolution === 'function') setEvolution(i);
+    },
+    getStructure: function() {
+        return {
+            index: typeof currentEvolutionIdx !== 'undefined' ? currentEvolutionIdx : 0,
+            name: typeof EVOLUTION_PATH !== 'undefined' && typeof currentEvolutionIdx !== 'undefined'
+                ? EVOLUTION_PATH[currentEvolutionIdx].name
+                : 'Unknown'
+        };
+    },
+    getMood: function() {
+        return typeof currentMood !== 'undefined' ? currentMood : 'LISTENING';
+    }
 };
+
+// === KEYBOARD CONTROLS ===
+document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
+    if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
 </script>
 
 <script type="text/babel">
@@ -2025,7 +1895,7 @@ const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=ne
     </div>
   </>);
 }
-ReactDOM.createRoot(document.getElementById('ui-inner')).render(<App/>);
+ReactDOM.createRoot(document.getElementById('ui-inner')||document.getElementById('ui-root')).render(<App/>);
 </script>
 </body>
 </html>
