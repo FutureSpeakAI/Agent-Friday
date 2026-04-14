@@ -351,16 +351,64 @@ function SystemWS(){
   </div>);
 }
 function CodeWS(){
-  const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('C:\\Users\\user\\Projects');const[status,setStatus]=useState([]);
-  useEffect(()=>{const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setStatus(d.terminals||[])).catch(()=>{})},5000);return()=>clearInterval(iv)},[]);
-  const launch=async()=>{const lines=tasks.split('\n').filter(l=>l.trim());if(!lines.length)return;await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})})};
+  const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('C:\\Users\\user\\Projects');const[terminals,setTerminals]=useState([]);const[loading,setLoading]=useState(false);
+  const[presets,setPresets]=useState([]);const[selectedTerminal,setSelectedTerminal]=useState(null);
+  useEffect(()=>{
+    fetch('/api/vibe-code/presets').then(r=>r.json()).then(d=>setPresets(d.presets||[])).catch(()=>{});
+    const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setTerminals(d.terminals||[])).catch(()=>{})},3000);
+    return()=>clearInterval(iv);
+  },[]);
+  const launch=async(taskList)=>{const lines=(taskList||tasks).split('\n').filter(l=>l.trim());if(!lines.length)return;setLoading(true);
+    await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})});setLoading(false);setTasks('')};
+  const launchPreset=(p)=>{launch(p.tasks.join('\n'))};
+  const stopTerminal=(id)=>{fetch('/api/vibe-code/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})};
+  const running=terminals.filter(t=>t.status==='running').length;
+  const colors=['#00d4ff','#00ff80','#f59e0b','#ff0080'];
   return(<div>
-    <FridaySays text={status.length>0?`${status.filter(t=>t.status==='running').length} terminals active.`:'Launch parallel Claude Code terminals.'}/>
-    <div className="card-title">Vibe Code</div>
-    <input className="input" style={{width:'100%',marginBottom:6}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/>
-    <textarea className="input" style={{width:'100%',height:80,resize:'vertical',marginBottom:8}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line..."/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}><button className="btn" onClick={launch}>Launch All</button></div>
-    {status.length>0&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>{status.map((t,i)=><div key={i} className="card"><div style={{fontSize:10,color:t.status==='running'?'#00ff80':'#888'}}>{t.status||'unknown'}</div><div style={{fontSize:11,marginTop:4}}>{(t.task||'').substring(0,80)}</div></div>)}</div>}
+    <FridaySays text={running>0?running+' terminal'+(running>1?'s':'')+' active. Click to expand.':'Launch Claude Code terminals. Use presets or type custom tasks.'}/>
+    <div className="card" style={{marginBottom:10,padding:10}}>
+      <div style={{display:'flex',gap:6,marginBottom:6}}><input className="input" style={{flex:1}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/></div>
+      <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:6}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line... (e.g. 'Scan portals for AI director roles')"/>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        <button className="btn" onClick={()=>launch()} disabled={loading} style={{fontWeight:600}}>{loading?'Launching...':'Launch All'}</button>
+        <button className="btn" onClick={()=>launch(tasks||'Ready for instructions')} style={{fontSize:10}}>1 Terminal</button>
+        <button className="btn" onClick={()=>{const t=tasks||'Task 1\nTask 2';launch(t+'\n'+t)}} style={{fontSize:10}}>Quad Code (4x)</button>
+      </div>
+    </div>
+    {presets.length>0&&<div style={{marginBottom:10}}><div className="card-title">Presets</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+      {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:10}} onClick={()=>launchPreset(p)}>{p.name}</button>)}
+    </div></div>}
+    {terminals.length>0&&<div><div className="card-title">Terminals ({running} active)</div>
+      <div style={{display:'grid',gridTemplateColumns:selectedTerminal?'1fr':'1fr 1fr',gap:6}}>
+        {terminals.map((t,i)=>{const color=colors[i%4];const isSelected=selectedTerminal===t.id;
+          return(<div key={t.id} className="card" style={{borderColor:t.status==='running'?color:'rgba(255,255,255,0.04)',cursor:'pointer',transition:'all .2s'}}
+            onClick={()=>setSelectedTerminal(isSelected?null:t.id)}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <div style={{width:8,height:8,borderRadius:'50%',background:t.status==='running'?color:'#555',boxShadow:t.status==='running'?'0 0 8px '+color:'none'}}/>
+                <span style={{fontFamily:'Orbitron',fontSize:10,color}}>Q{i+1}</span>
+              </div>
+              <div style={{display:'flex',gap:4}}>
+                <span style={{fontSize:9,color:t.status==='running'?'#00ff80':'#888',fontFamily:'JetBrains Mono'}}>{t.status||'unknown'}</span>
+                {t.status==='running'&&<button className="btn btn-magenta" style={{fontSize:8,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();stopTerminal(t.id)}}>Stop</button>}
+              </div>
+            </div>
+            <div style={{fontSize:11,color:'#aaa',marginTop:4,wordBreak:'break-word'}}>{(t.task||'').substring(0,isSelected?500:80)}{!isSelected&&(t.task||'').length>80?'...':''}</div>
+            {isSelected&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+              <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
+              <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
+              <div style={{marginTop:6,padding:8,background:'rgba(0,0,0,0.3)',borderRadius:4,fontFamily:'JetBrains Mono',fontSize:10,color:'#888',minHeight:60}}>
+                Terminal output will appear here when log streaming is enabled.
+                For now, check the CMD window on your desktop.
+              </div>
+            </div>}
+          </div>)})}
+      </div>
+    </div>}
+    {terminals.length===0&&<div className="card" style={{textAlign:'center',padding:16}}>
+      <div style={{fontSize:13,marginBottom:6}}>No terminals running</div>
+      <div style={{fontSize:11,color:'#888'}}>Type tasks above or use a preset to launch parallel Claude Code instances.</div>
+    </div>}
   </div>);
 }
 function NewsWS(){
@@ -423,7 +471,9 @@ function App(){
   // Fetch greeting data
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{const items=(d.countdowns||[]).map(c=>`${c.label||c.name} in ${c.days||c.days_until}d`).join(' · ');setGreeting(items||'All systems nominal.')}).catch(()=>setGreeting('All systems nominal.'))},[]);
 
-  const toggle=id=>{setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
+  const[vibeMode,setVibeMode]=useState(false);
+const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
+const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
