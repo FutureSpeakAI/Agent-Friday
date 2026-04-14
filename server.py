@@ -834,12 +834,19 @@ def chat_search():
 
 @app.route('/api/voice/tts', methods=['POST'])
 def tts():
+    """Text-to-speech using Gemini 2.5 Flash TTS model."""
     try:
+        import wave
         from google import genai
         from google.genai import types
+
         client = genai.Client(api_key=GEMINI_API_KEY)
         text = request.json.get('text', '')
-        # Use Gemini TTS model
+        voice = request.json.get('voice', 'Kore')
+
+        if not text:
+            return jsonify({"status": "error", "message": "No text provided"})
+
         response = client.models.generate_content(
             model='gemini-2.5-flash-preview-tts',
             contents=text,
@@ -847,17 +854,24 @@ def tts():
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(
                     voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name='Kore')
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice
+                        )
                     )
                 )
             )
         )
 
         for part in response.candidates[0].content.parts:
-            if part.inline_data and 'audio' in part.inline_data.mime_type:
+            if part.inline_data and part.inline_data.data:
+                # Wrap raw PCM in WAV headers (24kHz, 16-bit, mono)
                 filename = f"tts-{uuid.uuid4().hex[:8]}.wav"
                 filepath = TEMP_AUDIO_DIR / filename
-                filepath.write_bytes(part.inline_data.data)
+                with wave.open(str(filepath), 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(24000)
+                    wf.writeframes(part.inline_data.data)
                 return jsonify({"status": "ok", "url": f"/api/audio/{filename}"})
 
         return jsonify({"status": "error", "message": "No audio generated"})

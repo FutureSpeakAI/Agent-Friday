@@ -1766,11 +1766,12 @@ function CodeWS(){
 function NewsWS(){
   const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
+  const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
-  const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{setHtmlContent(d.content||'');setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
+  const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=()=>{if(!htmlContent)return;const text=htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').substring(0,5000);const u=new SpeechSynthesisUtterance(text);u.rate=0.9;u.pitch=1;speechSynthesis.speak(u)};
-  const stopReading=()=>speechSynthesis.cancel();
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);try{const text=htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').substring(0,5000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const d=await r.json();if(d.status==='ok'&&d.url){const a=new Audio(d.url);ttsAudio.current=a;a.onended=()=>{ttsAudio.current=null};a.play()}}catch(e){console.error('TTS error:',e)}finally{setTtsLoading(false)}};
+  const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();ttsAudio.current.currentTime=0;ttsAudio.current=null}};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
@@ -1778,7 +1779,7 @@ function NewsWS(){
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
       <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:10}}>Back to Archive</button>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" onClick={readAloud} style={{fontSize:10}}>Read Aloud</button>
+        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:10}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:10}}>Stop</button>
         <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:10}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
         <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:10}}>Open in Tab</button>
