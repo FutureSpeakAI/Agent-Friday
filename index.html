@@ -1498,6 +1498,45 @@ function FridaySays({text}){
   return(<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#00d4ff',fontStyle:'italic'}}>💡 {text}</div>);
 }
 
+// ═══ SEND-TO DROPDOWN (Data Flow) ═══
+function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
+  const[open,setOpen]=useState(false);const[status,setStatus]=useState(null);const ref=useRef(null);
+  useEffect(()=>{if(!open)return;const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h)},[open]);
+  const defaultOpts=[
+    {label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},
+    {label:'Save to Trust Graph',dest:'trust_graph',ico:'🔗',needsPerson:true},
+    {label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},
+    {label:'Add to Briefing',dest:'briefing',ico:'📰'},
+    {label:'Draft Email',dest:'gmail_draft',ico:'✉️'},
+  ];
+  const opts=(options||defaultOpts).filter(o=>{
+    if(o.needsPerson&&!personName)return false;
+    if(o.needsEvent&&!eventId)return false;
+    return true;
+  });
+  const send=async(dest)=>{
+    setStatus('sending');setOpen(false);
+    try{
+      const r=await fetch('/api/flow',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        data_type:dataType||'general',content:typeof content==='function'?content():content,
+        metadata:{person_name:personName||'',event_id:eventId||'',email_thread_id:emailThreadId||''},
+        destinations:[dest]
+      })});
+      const d=await r.json();
+      const ok=d.results&&d.results[0]&&d.results[0].ok;
+      setStatus(ok?'ok':'fail');
+    }catch(e){setStatus('fail')}
+    setTimeout(()=>setStatus(null),2000);
+  };
+  if(opts.length===0)return null;
+  return(<div ref={ref} style={{position:'relative',display:'inline-block'}}>
+    <button onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{background:'none',border:'1px solid rgba(0,212,255,0.15)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:12,color:status==='ok'?'#00ff80':status==='fail'?'#ff0080':'#00d4ff',transition:'color .2s'}} title="Send to...">{status==='ok'?'✓':status==='fail'?'✗':status==='sending'?'⏳':'📤'}</button>
+    {open&&<div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'rgba(10,10,18,0.95)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6,padding:4,minWidth:160,zIndex:9999,backdropFilter:'blur(12px)',boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
+      {opts.map((o,i)=><div key={i} onClick={()=>send(o.dest)} style={{padding:'6px 10px',fontSize:11,color:'#ccc',cursor:'pointer',borderRadius:4,display:'flex',alignItems:'center',gap:6,transition:'background .15s'}} onMouseOver={e=>e.currentTarget.style.background='rgba(0,212,255,0.08)'} onMouseOut={e=>e.currentTarget.style.background='transparent'}><span>{o.ico}</span><span>{o.label}</span></div>)}
+    </div>}
+  </div>);
+}
+
 // ═══ WORKSPACES ═══
 function HomeWS(){
   const[cd,setCd]=useState(null);const[trust,setTrust]=useState(null);const[pers,setPers]=useState(null);const[mem,setMem]=useState(null);const[epi,setEpi]=useState(null);const[todos,setTodos]=useState([]);const[loading,setLoading]=useState(true);
@@ -1568,7 +1607,7 @@ function CareerWS(){
     </div>}
     {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:9,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:10,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
-    {view==='report'&&<div><button className="btn" style={{marginBottom:8,fontSize:10}} onClick={()=>setView('reports')}>Back</button><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
+    {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:10}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
@@ -1676,7 +1715,10 @@ function TrustWS(){
       return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
-          <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
+            <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
+          </div>
         </div>
         <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
         {expanded===i&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
@@ -1782,6 +1824,7 @@ function NewsWS(){
         <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:10}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:10}}>Stop</button>
         <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:10}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
+        <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
         <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:10}}>Open in Tab</button>
       </div>
     </div>
@@ -2025,7 +2068,10 @@ function App(){
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
-          <div style={{display:'inline-block',maxWidth:'80%',padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
+          <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
+            {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
+          </div>
           <div style={{fontSize:9,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
         {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
