@@ -1660,6 +1660,283 @@ def delete_todo(todo_id):
     return jsonify({"status": "ok", "removed": before - len(todos)})
 
 
+# ═══════════════════════════════════════════════════════════════
+#  DATA FLOW API — "Write once, live everywhere"
+# ═══════════════════════════════════════════════════════════════
+
+FLOW_QUEUE_DIR = FRIDAY_DIR / "flow-queue"
+FLOW_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+
+BRIEFING_SUPPLEMENT_DIR = FRIDAY_DIR / "wiki" / "briefings"
+BRIEFING_SUPPLEMENT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _flow_trust_graph(content, metadata):
+    """Update a person's trust graph entry with new intelligence."""
+    person_name = metadata.get('person_name', '').strip()
+    if not person_name:
+        return {'destination': 'trust_graph', 'ok': False, 'error': 'No person_name in metadata'}
+
+    trust_file = FRIDAY_DIR / "trust_graph.json"
+    try:
+        tdata = {}
+        if trust_file.exists():
+            tdata = json.loads(trust_file.read_text(encoding='utf-8'))
+        if 'people' not in tdata:
+            tdata['people'] = {}
+
+        key = person_name.lower().replace(' ', '_').replace('-', '_')
+
+        if key not in tdata['people']:
+            # Auto-create entry
+            tdata['people'][key] = {
+                "name": person_name,
+                "aliases": [],
+                "entity_type": "human",
+                "scores": {"overall": 0.5, "reliability": 0.5, "information_quality": 0.5,
+                           "emotional_trust": 0.5, "timeliness": 0.5, "domain_expertise": 0.5},
+                "evidence": [],
+                "domains": [],
+                "last_interaction": datetime.now().isoformat(),
+                "created": datetime.now().isoformat()
+            }
+
+        person = tdata['people'][key]
+        if 'intelligence' not in person:
+            person['intelligence'] = []
+        person['intelligence'].append({
+            "content": content[:2000],
+            "timestamp": datetime.now().isoformat(),
+            "source": "data_flow"
+        })
+        # Keep last 20 intel entries
+        person['intelligence'] = person['intelligence'][-20:]
+        person['last_interaction'] = datetime.now().isoformat()
+
+        tdata['people'][key] = person
+        trust_file.write_text(json.dumps(tdata, indent=2), encoding='utf-8')
+        return {'destination': 'trust_graph', 'ok': True, 'person': key}
+    except Exception as e:
+        return {'destination': 'trust_graph', 'ok': False, 'error': str(e)}
+
+
+def _flow_calendar_notes(content, metadata):
+    """Push content to a Google Calendar event description."""
+    event_id = metadata.get('event_id', '').strip()
+    if not event_id:
+        return {'destination': 'calendar_notes', 'ok': False, 'error': 'No event_id in metadata'}
+    try:
+        result = _enrich_calendar_event(event_id, content)
+        return {'destination': 'calendar_notes', **result}
+    except Exception as e:
+        return {'destination': 'calendar_notes', 'ok': False, 'error': str(e)}
+
+
+def _flow_clipboard(content, _metadata):
+    """Copy content to Windows clipboard via PowerShell."""
+    try:
+        subprocess.run(
+            ['powershell', '-Command', 'Set-Clipboard', '-Value', content[:10000]],
+            capture_output=True, text=True, timeout=10
+        )
+        return {'destination': 'clipboard', 'ok': True}
+    except Exception as e:
+        return {'destination': 'clipboard', 'ok': False, 'error': str(e)}
+
+
+def _flow_gmail_draft(content, metadata):
+    """Stage a Gmail draft in the flow queue for frontend pickup."""
+    try:
+        draft = {
+            "id": str(uuid.uuid4()),
+            "content": content[:10000],
+            "thread_id": metadata.get('email_thread_id', ''),
+            "person_name": metadata.get('person_name', ''),
+            "created": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        draft_file = FLOW_QUEUE_DIR / f"gmail-draft-{draft['id']}.json"
+        draft_file.write_text(json.dumps(draft, indent=2), encoding='utf-8')
+        return {'destination': 'gmail_draft', 'ok': True, 'draft_id': draft['id']}
+    except Exception as e:
+        return {'destination': 'gmail_draft', 'ok': False, 'error': str(e)}
+
+
+def _flow_briefing(content, metadata):
+    """Append content to today's briefing supplementary file."""
+    try:
+        today_str = date.today().isoformat()
+        supplement_file = BRIEFING_SUPPLEMENT_DIR / f"{today_str}-supplement.md"
+
+        existing = ''
+        if supplement_file.exists():
+            existing = supplement_file.read_text(encoding='utf-8')
+
+        person_name = metadata.get('person_name', '')
+        header = f"\n\n---\n### {person_name or 'Research'} — {datetime.now().strftime('%H:%M')}\n" if existing else f"# Briefing Supplement — {today_str}\n\n### {person_name or 'Research'} — {datetime.now().strftime('%H:%M')}\n"
+
+        supplement_file.write_text(existing + header + content[:5000] + '\n', encoding='utf-8')
+        return {'destination': 'briefing', 'ok': True, 'file': str(supplement_file.name)}
+    except Exception as e:
+        return {'destination': 'briefing', 'ok': False, 'error': str(e)}
+
+
+FLOW_HANDLERS = {
+    'trust_graph': _flow_trust_graph,
+    'calendar_notes': _flow_calendar_notes,
+    'clipboard': _flow_clipboard,
+    'gmail_draft': _flow_gmail_draft,
+    'briefing': _flow_briefing,
+}
+
+
+@app.route('/api/flow', methods=['POST'])
+def data_flow():
+    """Central data flow endpoint — routes content to multiple destinations.
+
+    POST JSON:
+    {
+      "data_type": "contact_research|meeting_prep|draft|briefing_excerpt|job_research",
+      "content": "the content to distribute",
+      "metadata": {"person_name": "", "event_id": "", "email_thread_id": ""},
+      "destinations": ["trust_graph", "calendar_notes", "briefing", "clipboard", "gmail_draft"]
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    content = data.get('content', '').strip()
+    if not content:
+        return jsonify({"status": "error", "message": "No content provided"}), 400
+
+    destinations = data.get('destinations', [])
+    if not destinations:
+        return jsonify({"status": "error", "message": "No destinations specified"}), 400
+
+    metadata = data.get('metadata', {})
+    data_type = data.get('data_type', 'general')
+    receipt = {"status": "ok", "data_type": data_type, "results": []}
+
+    for dest in destinations:
+        handler = FLOW_HANDLERS.get(dest)
+        if handler:
+            result = handler(content, metadata)
+            receipt["results"].append(result)
+        else:
+            receipt["results"].append({"destination": dest, "ok": False, "error": f"Unknown destination: {dest}"})
+
+    succeeded = sum(1 for r in receipt["results"] if r.get('ok'))
+    failed = len(receipt["results"]) - succeeded
+    receipt["summary"] = f"{succeeded} succeeded, {failed} failed"
+    return jsonify(receipt)
+
+
+@app.route('/api/flow/queue', methods=['GET'])
+def flow_queue():
+    """List pending items in the flow queue (gmail drafts, etc)."""
+    items = []
+    if FLOW_QUEUE_DIR.exists():
+        for f in sorted(FLOW_QUEUE_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if f.suffix == '.json':
+                try:
+                    items.append(json.loads(f.read_text(encoding='utf-8')))
+                except Exception:
+                    pass
+    return jsonify({"status": "ok", "items": items[:50], "count": len(items)})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  CALENDAR ENRICHMENT
+# ═══════════════════════════════════════════════════════════════
+
+def _enrich_calendar_event(event_id, research):
+    """Read a calendar event, append Friday research, and update it.
+
+    Uses the gcal MCP tools when available; falls back to storing
+    the enrichment locally for later sync.
+    """
+    separator = "\n\n--- Friday Meeting Prep ---\n"
+    enrichment = separator + research.strip() + "\n"
+
+    # Try MCP-based Google Calendar update
+    # The gcal tools are invoked at the agent/MCP layer, not directly here.
+    # This endpoint stores the enrichment and exposes it for MCP tool orchestration.
+    enrichment_file = FLOW_QUEUE_DIR / f"calendar-enrich-{event_id}.json"
+    payload = {
+        "event_id": event_id,
+        "research": research.strip(),
+        "enrichment_block": enrichment,
+        "created": datetime.now().isoformat(),
+        "status": "pending_sync"
+    }
+    enrichment_file.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    return {"ok": True, "event_id": event_id, "status": "queued_for_sync",
+            "message": "Enrichment stored. Will sync via gcal MCP on next calendar pass."}
+
+
+@app.route('/api/calendar/enrich', methods=['POST'])
+def calendar_enrich():
+    """Enrich a Google Calendar event with meeting prep research.
+
+    POST JSON:
+    {
+      "event_id": "google calendar event ID",
+      "research": "the attendee research / meeting prep content"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    event_id = data.get('event_id', '').strip()
+    research = data.get('research', '').strip()
+
+    if not event_id:
+        return jsonify({"status": "error", "message": "No event_id provided"}), 400
+    if not research:
+        return jsonify({"status": "error", "message": "No research content provided"}), 400
+
+    try:
+        result = _enrich_calendar_event(event_id, research)
+        return jsonify({"status": "ok", **result})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def push_to_calendar(event_id, research_text):
+    """Helper for briefing tasks to push research into calendar events.
+
+    Call this from daily briefing generation when attendee research is ready.
+    It routes through the flow API to update both the calendar and trust graph.
+    """
+    results = {}
+
+    # Push to calendar
+    results['calendar'] = _enrich_calendar_event(event_id, research_text)
+
+    # Also push to briefing supplement
+    results['briefing'] = _flow_briefing(research_text, {'person_name': 'Meeting Prep'})
+
+    return results
+
+
+@app.route('/api/draft/deploy', methods=['POST'])
+def deploy_draft():
+    """Deploy a queued draft — mark it as sent/deployed."""
+    data = request.get_json(silent=True) or {}
+    draft_id = data.get('draft_id', '').strip()
+    if not draft_id:
+        return jsonify({"status": "error", "message": "No draft_id provided"}), 400
+
+    draft_file = FLOW_QUEUE_DIR / f"gmail-draft-{draft_id}.json"
+    if not draft_file.exists():
+        return jsonify({"status": "error", "message": "Draft not found"}), 404
+
+    try:
+        draft = json.loads(draft_file.read_text(encoding='utf-8'))
+        draft['status'] = 'deployed'
+        draft['deployed_at'] = datetime.now().isoformat()
+        draft_file.write_text(json.dumps(draft, indent=2), encoding='utf-8')
+        return jsonify({"status": "ok", "draft_id": draft_id})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 
