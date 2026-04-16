@@ -357,6 +357,125 @@ def serve_creation(filename):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  FINANCE WORKSPACE
+# ═══════════════════════════════════════════════════════════════
+
+FINANCE_DIR = FRIDAY_DIR / "finance"
+FINANCE_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.route('/api/finance/portfolio')
+def finance_portfolio():
+    """Read portfolio positions from config."""
+    path = FINANCE_DIR / "portfolio.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    # Create template if missing
+    template = {"positions": [{"ticker": "NVDA", "shares": 0, "cost_basis": 0}], "accounts": ["RW Baird - Lisa Schmidt"]}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+@app.route('/api/finance/perks')
+def finance_perks():
+    """Read Amex perks from config."""
+    path = FINANCE_DIR / "amex_perks.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    template = {"perks": [{"name": "Perk name", "value": "$X/yr", "used": False, "expires": "", "notes": ""}]}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+@app.route('/api/finance/contacts')
+def finance_contacts():
+    """Financial contacts reference."""
+    return jsonify({"status": "ok", "contacts": [
+        {"name": "Lisa J. Schmidt", "role": "Financial Advisor", "firm": "RW Baird", "phone": "", "email": ""},
+        {"name": "Claudia Gonzalez-Chavez", "role": "CPA", "firm": "Whitley Penn", "phone": "", "email": ""}
+    ]})
+
+@app.route('/api/finance/quickref')
+def finance_quickref():
+    """Quick reference for financial accounts."""
+    return jsonify({"status": "ok", "accounts": [
+        {"name": "Capital One", "type": "Banking", "notes": ""},
+        {"name": "Cigna Healthcare", "type": "Insurance", "notes": ""},
+        {"name": "Amex Platinum — Stephen", "type": "Credit Card", "notes": ""},
+        {"name": "Amex Platinum — ***REMOVED***", "type": "Credit Card", "notes": ""}
+    ]})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  HEALTH WORKSPACE
+# ═══════════════════════════════════════════════════════════════
+
+HEALTH_DIR = FRIDAY_DIR / "health"
+HEALTH_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.route('/api/health/medications')
+def health_medications():
+    """Read medications from config."""
+    path = HEALTH_DIR / "medications.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    template = {"medications": [{"name": "GLP-1 (Henry Meds)", "dose": "", "frequency": "", "notes": ""}]}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+@app.route('/api/health/appointments')
+def health_appointments():
+    """Read appointments from config."""
+    path = HEALTH_DIR / "appointments.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    template = {"appointments": [{"provider": "Rachel Hodgdon", "type": "***REMOVED*** play therapy", "email": "user@example.com", "next": "", "frequency": ""}]}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+@app.route('/api/health/insurance')
+def health_insurance():
+    """Read insurance info from config."""
+    path = HEALTH_DIR / "insurance.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    template = {"insurance": {"provider": "Cigna Healthcare", "plan": "Add your plan name", "policy_number": "Add your policy number", "group_number": "Add your group number"}}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+@app.route('/api/health/vehicles')
+def health_vehicles():
+    """Read vehicle fleet data from config."""
+    path = HEALTH_DIR / "vehicles.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return jsonify({"status": "ok", **data})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)})
+    template = {"vehicles": [{"name": "2015 VW Golf TSI SEL", "miles": "~60K", "notes": "", "mechanic": "Motormania Austin", "service_history": []}], "mechanics": []}
+    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    return jsonify({"status": "ok", **template})
+
+
+# ═══════════════════════════════════════════════════════════════
 #  CALENDAR & COUNTDOWNS
 # ═══════════════════════════════════════════════════════════════
 
@@ -876,6 +995,8 @@ def _detect_context_needs(message, workspace):
         'studio': set(),
         'system': set(),
         'news': set(),
+        'finance': set(),
+        'health': set(),
     }
     needs.update(ws_map.get(workspace, set()))
 
