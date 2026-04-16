@@ -4,7 +4,8 @@ const WS=[
   {id:'home',ico:'🏠',label:'Home'},{id:'career',ico:'💼',label:'Career'},{id:'wiki',ico:'📚',label:'Wiki'},
   {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},{id:'futurespeak',ico:'🚀',label:'FutureSpeak'},{id:'family',ico:'👪',label:'Family'},
   {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
-  {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'}
+  {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'},
+  {id:'finance',ico:'💰',label:'Finance'},{id:'health',ico:'❤️',label:'Health'}
 ];
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
@@ -346,6 +347,115 @@ function NewsWS(){
   </div>);
 }
 
+function FinanceWS(){
+  const[portfolio,setPortfolio]=useState(null);const[perks,setPerks]=useState(null);const[loading,setLoading]=useState(true);
+  const[view,setView]=useState('overview');
+  useEffect(()=>{Promise.all([
+    fetch('/api/finance/portfolio').then(r=>r.json()).then(setPortfolio).catch(()=>null),
+    fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)
+  ]).then(()=>setLoading(false))},[]);
+  const copyText=(t)=>{navigator.clipboard.writeText(t)};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading finance data...</div>;
+  const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
+  const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
+  const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
+  const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused Amex perks · $${totalPerkValue} total perk value`;
+  return(<div>
+    <FridaySays text={insight}/>
+    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    {view==='overview'&&<div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+        <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
+        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:9}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
+      </div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#555',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
+      <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:10}}>{p.value}</span></div>)}</div>
+    </div>}
+    {view==='portfolio'&&<div>
+      <div className="card-title">Portfolio Positions</div>
+      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#666'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
+      <div style={{fontSize:10,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
+      <div style={{fontSize:10,color:'#444',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
+    </div>}
+    {view==='perks'&&<div>
+      <div className="card-title">Amex Platinum Perks</div>
+      {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:9,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:9,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
+        {p.notes&&<div style={{fontSize:10,color:'#666',marginTop:3}}>{p.notes}</div>}
+        {p.expires&&<div style={{fontSize:10,color:'#555',marginTop:2}}>Expires: {p.expires}</div>}
+      </div>})}
+    </div>}
+    {view==='contacts'&&<div>
+      <div className="card-title">Financial Contacts</div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor · RW Baird</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA · Whitley Penn</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
+    </div>}
+    {view==='quickref'&&<div>
+      <div className="card-title">Quick Reference</div>
+      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:10,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
+    </div>}
+  </div>);
+}
+function HealthWS(){
+  const[meds,setMeds]=useState(null);const[appts,setAppts]=useState(null);const[insurance,setInsurance]=useState(null);const[vehicles,setVehicles]=useState(null);
+  const[loading,setLoading]=useState(true);const[view,setView]=useState('overview');
+  useEffect(()=>{Promise.all([
+    fetch('/api/health/medications').then(r=>r.json()).then(setMeds).catch(()=>null),
+    fetch('/api/health/appointments').then(r=>r.json()).then(setAppts).catch(()=>null),
+    fetch('/api/health/insurance').then(r=>r.json()).then(setInsurance).catch(()=>null),
+    fetch('/api/health/vehicles').then(r=>r.json()).then(setVehicles).catch(()=>null)
+  ]).then(()=>setLoading(false))},[]);
+  const copyText=(t)=>{navigator.clipboard.writeText(t)};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading health data...</div>;
+  const medList=meds?.medications||[];const apptList=appts?.appointments||[];const ins=insurance?.insurance||{};const vehList=vehicles?.vehicles||[];const mechList=vehicles?.mechanics||[];
+  const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
+  return(<div>
+    <FridaySays text={insight}/>
+    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    {view==='overview'&&<div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+        <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
+        <div className="card"><div className="card-title">Appointments</div><div className="stat">{apptList.length}</div><div className="stat-label">providers</div>{apptList.slice(0,3).map((a,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{a.provider}{a.type?' — '+a.type:''}</div>)}</div>
+        <div className="card"><div className="card-title">Insurance</div><div style={{fontSize:13,color:'#00d4ff'}}>{ins.provider||'Not configured'}</div><div style={{fontSize:11,color:'#888',marginTop:4}}>{ins.plan||'Add plan details'}</div></div>
+        <div className="card"><div className="card-title">Fleet Health</div><div className="stat">{vehList.length}</div><div className="stat-label">vehicles</div>{vehList.slice(0,2).map((v,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{v.name}</div>)}</div>
+      </div>
+    </div>}
+    {view==='medications'&&<div>
+      <div className="card-title">Medications</div>
+      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:10,color:'#666',marginTop:2}}>{m.notes}</div>}</div>)}
+      <div style={{fontSize:10,color:'#444',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
+    </div>}
+    {view==='appointments'&&<div>
+      <div className="card-title">Appointments & Providers</div>
+      {apptList.map((a,i)=><div key={i} className="card" style={{marginBottom:6}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:9}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
+        {a.frequency&&<div style={{fontSize:11,color:'#888',marginTop:2}}>Frequency: {a.frequency}</div>}
+        {a.next&&<div style={{fontSize:11,color:'#f59e0b',marginTop:2}}>Next: {a.next}</div>}
+        {a.email&&<div style={{fontSize:10,color:'#666',marginTop:2}}>{a.email}</div>}
+      </div>)}
+    </div>}
+    {view==='insurance'&&<div>
+      <div className="card-title">Insurance</div>
+      <div className="card" style={{marginBottom:8}}>
+        <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Cigna Healthcare'}</div>
+        {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:8,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
+        {ins.notes&&<div style={{fontSize:10,color:'#666',marginTop:6}}>{ins.notes}</div>}
+      </div>
+      <div style={{fontSize:10,color:'#444'}}>Edit ~/.friday/health/insurance.json to add your details</div>
+    </div>}
+    {view==='vehicles'&&<div>
+      <div className="card-title">Fleet Health</div>
+      {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:10}}>{v.miles} mi</span>}</div>
+        {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
+        {v.mechanic&&<div style={{fontSize:10,color:'#666',marginTop:2}}>🔧 {v.mechanic}</div>}
+        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:10,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:10,color:'#666',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
+      </div>)}
+      <div className="card-title" style={{marginTop:12}}>Mechanics</div>
+      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:10,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
+    </div>}
+  </div>);
+}
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -378,7 +488,7 @@ function App(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,finance:<FinanceWS/>,health:<HealthWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const noWindows=openWins.size===0;
