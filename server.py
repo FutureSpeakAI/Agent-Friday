@@ -1660,6 +1660,147 @@ def delete_todo(todo_id):
     return jsonify({"status": "ok", "removed": before - len(todos)})
 
 
+# ═══════════════════════════════════════════════════════════════
+#  CLIPBOARD DRAFTING ENGINE
+# ═══════════════════════════════════════════════════════════════
+
+DRAFT_MODE_PROMPTS = {
+    'linkedin_post': (
+        "You are a LinkedIn ghostwriter for a senior AI/engineering leader. "
+        "Write a professional but personable post — 1-3 paragraphs, strong opening hook, "
+        "no hashtag spam (2-3 max at the end if any). Conversational authority, not corporate fluff. "
+        "The voice should feel like a seasoned journalist who pivoted to AI."
+    ),
+    'email_reply': (
+        "You are drafting a professional email reply. Match the formality of the original message. "
+        "Be concise and clear. Include a specific call-to-action or next step. "
+        "No filler phrases like 'I hope this email finds you well.'"
+    ),
+    'slack_message': (
+        "You are drafting a Slack message. Keep it casual and brief — this is internal team chat. "
+        "Emoji are fine where they feel natural. One short paragraph max. No sign-offs."
+    ),
+    'tweet': (
+        "You are drafting a tweet. MUST be under 280 characters. Punchy, sharp, quotable. "
+        "No hashtags unless they're genuinely clever. Think journalist, not influencer."
+    ),
+    'ofw_response': (
+        "You are drafting a response for OurFamilyWizard (co-parenting communication platform). "
+        "CRITICAL RULES: Stay calm, factual, and brief. Answer only what needs answering. "
+        "Ignore all bait and emotional provocation. Never match the other party's emotional register. "
+        "Everything you write should be something a family court judge would find reasonable, measured, and cooperative. "
+        "Do not over-explain, do not defend, do not attack. Short sentences. Airtight logic."
+    ),
+    'freeform': (
+        "You are a versatile writing assistant. Follow the user's format instructions exactly. "
+        "Write clearly and concisely unless told otherwise."
+    ),
+}
+
+COPARENTING_DIR = HOME / ".friday" / "wiki" / "coparenting"
+
+
+def _load_ofw_context():
+    """Load co-parenting wiki context for OFW drafts."""
+    context_parts = []
+    if COPARENTING_DIR.exists():
+        for md_file in sorted(COPARENTING_DIR.glob('*.md'))[:5]:
+            try:
+                text = md_file.read_text(encoding='utf-8')[:2000]
+                context_parts.append(f"[{md_file.name}]: {text}")
+            except Exception:
+                continue
+    return '\n\n'.join(context_parts) if context_parts else ''
+
+
+@app.route('/api/draft', methods=['POST'])
+def draft_generate():
+    """Generate a draft using Gemini based on mode, context, and prompt."""
+    try:
+        from google import genai
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        data = request.get_json(silent=True) or {}
+
+        mode = data.get('mode', 'freeform')
+        context = data.get('context', '')
+        prompt = data.get('prompt', '')
+
+        if not prompt.strip():
+            return jsonify({"status": "error", "message": "No prompt provided"}), 400
+
+        # Build the system prompt for this mode
+        system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
+
+        # For OFW mode, inject co-parenting context
+        if mode == 'ofw_response':
+            ofw_ctx = _load_ofw_context()
+            if ofw_ctx:
+                system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
+
+        # Build the full prompt
+        parts = [system]
+        if context:
+            parts.append(f"\nCONTEXT (what the user is looking at / replying to):\n{context}")
+        parts.append(f"\nUSER INSTRUCTION:\n{prompt}")
+        parts.append("\nWrite the draft now. Output ONLY the draft text, no commentary or labels.")
+
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents='\n'.join(parts)
+        )
+
+        draft_text = response.text.strip()
+
+        return jsonify({
+            "status": "ok",
+            "draft": draft_text,
+            "mode": mode,
+            "char_count": len(draft_text),
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/draft/deploy', methods=['POST'])
+def draft_deploy():
+    """Deploy a draft to clipboard or other destination."""
+    data = request.get_json(silent=True) or {}
+    text = data.get('text', '')
+    destination = data.get('destination', 'clipboard')
+
+    if not text:
+        return jsonify({"status": "error", "message": "No text provided"}), 400
+
+    if destination == 'clipboard':
+        try:
+            # Escape for PowerShell: replace double quotes and backticks
+            escaped = text.replace('`', '``').replace('"', '`"').replace('$', '`$')
+            subprocess.run(
+                ['powershell', '-command', f'Set-Clipboard -Value "{escaped}"'],
+                capture_output=True, text=True, timeout=10
+            )
+            return jsonify({"status": "ok", "destination": "clipboard", "char_count": len(text)})
+        except subprocess.TimeoutExpired:
+            return jsonify({"status": "error", "message": "Clipboard operation timed out"}), 500
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    elif destination == 'gmail_draft':
+        # Frontend handles Gmail draft creation via MCP tools — return acknowledgment
+        return jsonify({
+            "status": "ok",
+            "destination": "gmail_draft",
+            "gmail_to": data.get('gmail_to', ''),
+            "gmail_subject": data.get('gmail_subject', ''),
+            "text": text,
+            "message": "Gmail draft data ready — frontend will create via MCP"
+        })
+
+    return jsonify({"status": "error", "message": f"Unknown destination: {destination}"}), 400
+
+
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 

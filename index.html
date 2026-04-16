@@ -1466,7 +1466,7 @@ const WS=[
   {id:'home',ico:'🏠',label:'Home'},{id:'career',ico:'💼',label:'Career'},{id:'wiki',ico:'📚',label:'Wiki'},
   {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},{id:'futurespeak',ico:'🚀',label:'FutureSpeak'},{id:'family',ico:'👪',label:'Family'},
   {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
-  {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'}
+  {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'},{id:'draft',ico:'✍️',label:'Draft'}
 ];
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
@@ -1808,6 +1808,119 @@ function NewsWS(){
   </div>);
 }
 
+const DRAFT_MODES=[
+  {id:'linkedin_post',label:'LinkedIn',ico:'💼'},
+  {id:'email_reply',label:'Email',ico:'📧'},
+  {id:'slack_message',label:'Slack',ico:'💬'},
+  {id:'tweet',label:'Tweet',ico:'🐦'},
+  {id:'ofw_response',label:'OFW',ico:'⚖️'},
+  {id:'freeform',label:'Freeform',ico:'📝'},
+];
+function DraftWS(){
+  const[mode,setMode]=useState('freeform');
+  const[prompt,setPrompt]=useState('');
+  const[context,setContext]=useState('');
+  const[showCtx,setShowCtx]=useState(false);
+  const[draft,setDraft]=useState('');
+  const[loading,setLoading]=useState(false);
+  const[copied,setCopied]=useState(false);
+  const[history,setHistory]=useState([]);
+  const[charCount,setCharCount]=useState(0);
+
+  const generate=async()=>{
+    if(!prompt.trim()||loading)return;
+    setLoading(true);setCopied(false);
+    try{
+      const r=await fetch('/api/draft',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({mode,prompt,context:showCtx?context:''})});
+      const d=await r.json();
+      if(d.status==='ok'){
+        setDraft(d.draft);setCharCount(d.char_count||d.draft.length);
+        setHistory(h=>[{mode,prompt:prompt.substring(0,60),draft:d.draft,time:new Date().toLocaleTimeString()},...h].slice(0,20));
+      }else{setDraft('[Error] '+(d.message||'Generation failed'))}
+    }catch(e){setDraft('[Error] '+e.message)}
+    setLoading(false);
+  };
+
+  const deploy=async(dest)=>{
+    if(!draft)return;
+    setCopied(false);
+    try{
+      const r=await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text:draft,destination:dest})});
+      const d=await r.json();
+      if(d.status==='ok'&&dest==='clipboard'){setCopied(true);setTimeout(()=>setCopied(false),2000)}
+    }catch(e){console.error('Deploy error:',e)}
+  };
+
+  return(<div>
+    <FridaySays text="Draft engine ready. Pick a mode, describe what you need, and generate."/>
+    {/* Mode selector */}
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
+      {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(mode===m.id?'':'btn-magenta')}
+        style={{fontSize:10,padding:'4px 10px'}} onClick={()=>setMode(m.id)}>
+        {m.ico} {m.label}
+      </button>)}
+    </div>
+
+    {/* Prompt input */}
+    <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:8,fontFamily:'JetBrains Mono',fontSize:12}}
+      value={prompt} onChange={e=>setPrompt(e.target.value)}
+      onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)generate()}}
+      placeholder={mode==='linkedin_post'?'Write a LinkedIn post about...':mode==='email_reply'?'Reply to this email saying...':mode==='tweet'?'Tweet about...':mode==='ofw_response'?'Respond to this OFW message...':'Describe what to write...'}/>
+
+    {/* Context toggle */}
+    <div style={{marginBottom:8}}>
+      <button className="btn" style={{fontSize:9,padding:'2px 8px',marginRight:6}} onClick={()=>setShowCtx(!showCtx)}>
+        {showCtx?'Hide Context':'+ Context'}
+      </button>
+      {showCtx&&<textarea className="input" style={{width:'100%',height:50,resize:'vertical',marginTop:4,fontSize:11}}
+        value={context} onChange={e=>setContext(e.target.value)}
+        placeholder="Paste the message you're replying to, or describe what you're looking at..."/>}
+    </div>
+
+    {/* Actions */}
+    <div style={{display:'flex',gap:4,marginBottom:12}}>
+      <button className="btn" onClick={generate} disabled={loading} style={{fontWeight:600}}>
+        {loading?'Generating...':'Generate'}
+      </button>
+      {draft&&<button className="btn" onClick={generate} disabled={loading} style={{fontSize:10}}>Regenerate</button>}
+    </div>
+
+    {/* Draft output */}
+    {draft&&<div style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>DRAFT OUTPUT</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:mode==='tweet'&&charCount>280?'#ff0080':'#555'}}>
+          {charCount} chars{mode==='tweet'&&charCount>280?' ⚠️ over limit':''}
+        </span>
+      </div>
+      <textarea className="input" style={{width:'100%',minHeight:120,resize:'vertical',fontFamily:'JetBrains Mono',fontSize:12,lineHeight:1.6,color:'#e0e0e8'}}
+        value={draft} onChange={e=>{setDraft(e.target.value);setCharCount(e.target.value.length)}}/>
+      <div style={{display:'flex',gap:4,marginTop:6}}>
+        <button className="btn" onClick={()=>deploy('clipboard')} style={{fontWeight:600}}>
+          {copied?'✓ Copied!':'📋 Copy to Clipboard'}
+        </button>
+        <button className="btn btn-magenta" onClick={()=>deploy('gmail_draft')} style={{fontSize:10}}>
+          📧 Gmail Draft
+        </button>
+      </div>
+    </div>}
+
+    {/* History */}
+    {history.length>0&&<div>
+      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#555',marginBottom:6}}>RECENT DRAFTS</div>
+      {history.map((h,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',padding:'6px 10px'}}
+        onClick={()=>{setDraft(h.draft);setCharCount(h.draft.length);setMode(h.mode)}}>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+          <span style={{color:'#aaa'}}>{DRAFT_MODES.find(m=>m.id===h.mode)?.ico||'📝'} {h.prompt}...</span>
+          <span style={{color:'#555'}}>{h.time}</span>
+        </div>
+      </div>)}
+    </div>}
+  </div>);
+}
+
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -1816,6 +1929,9 @@ function App(){
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[quickDraft,setQuickDraft]=useState(false);const[qdMode,setQdMode]=useState('freeform');const[qdPrompt,setQdPrompt]=useState('');const[qdResult,setQdResult]=useState('');const[qdLoading,setQdLoading]=useState(false);const[qdCopied,setQdCopied]=useState(false);
+  const qdGenerate=async()=>{if(!qdPrompt.trim()||qdLoading)return;setQdLoading(true);setQdCopied(false);try{const r=await fetch('/api/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:qdMode,prompt:qdPrompt})});const d=await r.json();setQdResult(d.status==='ok'?d.draft:'[Error] '+(d.message||'Failed'))}catch(e){setQdResult('[Error] '+e.message)}setQdLoading(false)};
+  const qdCopy=async()=>{if(!qdResult)return;try{await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:qdResult,destination:'clipboard'})});setQdCopied(true);setTimeout(()=>setQdCopied(false),2000)}catch(e){}};
   const[models]=useState([{name:'Claude Opus',active:true},{name:'Gemini',active:true}]);
   const chatEnd=useRef(null);
 
@@ -1840,7 +1956,7 @@ function App(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const noWindows=openWins.size===0;
@@ -1863,7 +1979,10 @@ function App(){
         <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>
           <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
         </button>
-        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen)setSettingsOpen(false)}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>
+        <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#555',cursor:'pointer',fontSize:14}} title="Quick Draft">
+          <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
+        </button>
+        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:15}} title="Settings">
@@ -1969,6 +2088,25 @@ function App(){
         </div>
       </div>
     </div>
+
+    {/* Quick Draft Popup */}
+    {quickDraft&&<div style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>QUICK DRAFT</span>
+        <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+      </div>
+      <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
+        {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:8,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
+      </div>
+      <textarea className="input" style={{width:'100%',height:48,resize:'none',fontSize:11,marginBottom:6}} value={qdPrompt} onChange={e=>setQdPrompt(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)qdGenerate()}} placeholder="What do you need drafted? (Ctrl+Enter)"/>
+      <div style={{display:'flex',gap:4,marginBottom:qdResult?8:0}}>
+        <button className="btn" onClick={qdGenerate} disabled={qdLoading} style={{fontSize:10,fontWeight:600}}>{qdLoading?'Generating...':'Generate'}</button>
+        {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:10}}>{qdCopied?'✓ Copied':'📋 Copy'}</button>}
+      </div>
+      {qdResult&&<div style={{marginTop:4,maxHeight:180,overflowY:'auto',background:'rgba(255,255,255,0.02)',borderRadius:6,padding:8}}>
+        <pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',margin:0,lineHeight:1.5}}>{qdResult}</pre>
+      </div>}
+    </div>}
 
     {/* Discord Footer */}
     <div className="discord-footer">
