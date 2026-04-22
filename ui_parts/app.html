@@ -294,15 +294,200 @@ function CoparentWS(){
   </div>);
 }
 function FuturespeakWS(){
+  const[view,setView]=useState('overview');
+  const[pipe,setPipe]=useState(null);const[rev,setRev]=useState(null);const[legal,setLegal]=useState(null);const[assets,setAssets]=useState(null);
+  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
+  useEffect(()=>{Promise.all([
+    fetch('/api/futurespeak/pipeline').then(r=>r.json()).then(setPipe).catch(()=>null),
+    fetch('/api/futurespeak/revenue').then(r=>r.json()).then(setRev).catch(()=>null),
+    fetch('/api/futurespeak/legal').then(r=>r.json()).then(setLegal).catch(()=>null),
+    fetch('/api/futurespeak/assets').then(r=>r.json()).then(setAssets).catch(()=>null)
+  ]).then(()=>setLoading(false))},[]);
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(''),2000)};
+  const draftProposal=async(opp)=>{setDrafting(opp.id);setDraft('');
+    try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:opp.name,angle:'proposal',channel:'email',context:`Opportunity: ${opp.name}. Status: ${opp.status}. Value: $${opp.value_usd}. Next: ${opp.next_action}. ${opp.notes||''}`})});
+      const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
+  const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
+  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'C:\\Users\\user\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
+  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
+
+  const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'—';
+  const maxRev=Math.max(...((rev?.months||[]).map(m=>Math.max(m.projected||0,m.actual||0))),1);
+  const STATUS_COLORS={discovery:'#888',qualified:'#00d4ff',proposal:'#f59e0b',executed:'#00ff80',closed:'#00ff80','in-review':'#f59e0b',active:'#00ff80'};
+
   return(<div>
-    <FridaySays text="Adtalem Phase 3 targeting $13.75M. SAGE in alpha. 49 repos under FutureSpeakAI."/>
-    <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div><div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div><div style={{marginTop:6}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a></div></div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-      <div className="card"><div className="card-title">Active Client</div><div style={{fontWeight:600}}>Adtalem / Covista (CommHub)</div><div style={{fontSize:11,color:'#888'}}>Phase 2 complete</div><div style={{fontSize:11,color:'#f59e0b',marginTop:4}}>$13.75M Phase 3 target</div><div style={{fontSize:10,color:'#666',marginTop:2}}>55-84M projected benefits · 4-6x ROI</div></div>
-      <div className="card"><div className="card-title">SAGE Platform</div><span className="badge-amber">Alpha</span><div style={{fontSize:11,color:'#888',marginTop:4}}>Multi-agent RAG marketing engine<br/>React + Express + PostgreSQL + Claude</div></div>
-      <div className="card"><div className="card-title">Agent Friday</div><div className="stat" style={{fontSize:16}}>49</div><div className="stat-label">repos · github.com/FutureSpeakAI</div><div style={{fontSize:10,color:'#666',marginTop:4}}>7 core systems · 369 tests · 40 MCP tools</div></div>
-      <div className="card"><div className="card-title">Research</div>{['📄 Reverse RLHF Hypothesis (5th ed)','📄 Non-Stationary Reward Sources','📄 Asimov\'s Claw series (LinkedIn)'].map((r,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{r}</div>)}</div>
-    </div>
+    <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+
+    {view==='overview'&&<div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div>
+        <div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div>
+        <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a><a href="https://innexenergy.com" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>innexenergy.com →</a><a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{color:'#7c3aed',fontSize:11,textDecoration:'none'}}>discord →</a></div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:10}}>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{pipe?.total||0}</div><div className="stat-label">opportunities</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#f59e0b'}}>{fmt(pipe?.total_value)}</div><div className="stat-label">pipeline value</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00d4ff'}}>{fmt(pipe?.weighted_value)}</div><div className="stat-label">weighted</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00ff80'}}>{fmt(rev?.last_actual_month)}</div><div className="stat-label">last mo. actual</div></div>
+      </div>
+      <div className="card"><div className="card-title">Top Opportunities</div>
+        {(pipe?.opportunities||[]).slice(0,3).map((o,i)=>(<div key={o.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
+          <div style={{fontSize:10,color:'#666'}}>{o.next_action}</div>
+        </div>))}
+      </div>
+    </div>}
+
+    {view==='pipeline'&&<div>
+      {(pipe?.opportunities||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:10,color:'#666',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
+          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
+        </div>
+        <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
+        <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
+        {o.notes&&<div style={{fontSize:10,color:'#666',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
+        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+          <button className="btn" style={{fontSize:10}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
+          <span style={{fontSize:10,color:'#666',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
+        </div>
+        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:10,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.02)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
+      </div>)})}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:9}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+    </div>}
+
+    {view==='revenue'&&<div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#00ff80'}}>{fmt(rev?.ytd_actual)}</div><div className="stat-label">ytd actual</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#f59e0b'}}>{fmt(rev?.ytd_projected)}</div><div className="stat-label">ytd projected</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:rev?.runway_months&&rev.runway_months<6?'#ff0080':'#00d4ff'}}>{rev?.runway_months?rev.runway_months+' mo':'∞'}</div><div className="stat-label">runway</div></div>
+      </div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">Monthly Revenue</div>
+        <div style={{display:'flex',gap:4,alignItems:'flex-end',height:100,marginTop:8,marginBottom:4}}>
+          {(rev?.months||[]).map((m,i)=>{const pH=(m.projected||0)/maxRev*100;const aH=(m.actual||0)/maxRev*100;return(<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+            <div style={{display:'flex',gap:2,alignItems:'flex-end',height:80}}>
+              <div style={{width:10,height:pH+'%',background:'rgba(245,158,11,0.4)',borderRadius:'2px 2px 0 0'}} title={'Projected: '+fmt(m.projected)}/>
+              <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'—')}/>
+            </div>
+            <div style={{fontSize:8,color:'#666',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
+          </div>)})}
+        </div>
+        <div style={{fontSize:9,color:'#666',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
+      </div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">Quarterly</div>
+        {(rev?.quarters||[]).map((q,i)=>(<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:12}}>
+          <span style={{fontFamily:'JetBrains Mono',color:'#aaa'}}>{q.quarter}</span>
+          <span style={{color:'#f59e0b'}}>{fmt(q.projected)}</span>
+          <span style={{color:q.actual?'#00ff80':'#555'}}>{q.actual?fmt(q.actual):'pending'}</span>
+        </div>))}
+      </div>
+      <div className="card"><div className="card-title">Cash + Burn</div>
+        <div style={{display:'flex',justifyContent:'space-around',fontSize:12}}>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:9,color:'#666'}}>cash on hand</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:9,color:'#666'}}>monthly burn</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:9,color:'#666'}}>net/mo</div></div>
+        </div>
+      </div>
+    </div>}
+
+    {view==='legal'&&<div>
+      {(legal?.items||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:10,color:'#666'}}>{it.counterparty} · {it.type}</div></div>
+          <span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
+        </div>
+        <div style={{fontSize:10,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
+        {it.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4,fontStyle:'italic'}}>{it.notes}</div>}
+      </div>)})}
+    </div>}
+
+    {view==='website'&&<div>
+      <div className="card" style={{marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:10,color:'#666'}}>Primary brand site · Replit-hosted</div></div>
+          <span className="badge-green" style={{fontSize:9}}>LIVE</span>
+        </div>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:10}} onClick={()=>launchVibeCode('Update futurespeak.ai website','C:\\Users\\user\\Projects\\futurespeak-site')}>💻 Open in Claude Code</button>
+        </div>
+      </div>
+      <div className="card" style={{marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:10,color:'#666'}}>Portfolio site · Replit-hosted</div></div>
+          <span className="badge-green" style={{fontSize:9}}>LIVE</span>
+        </div>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:10}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>💻 Open in Claude Code</button>
+        </div>
+      </div>
+      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#666'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
+    </div>}
+
+    {view==='discord'&&<div>
+      <div className="card" style={{textAlign:'center',padding:20}}>
+        <div style={{fontSize:32,marginBottom:8}}>💬</div>
+        <div style={{fontSize:16,fontWeight:600,color:'#7c3aed',marginBottom:4}}>FutureSpeak.AI Discord</div>
+        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server · member activity · announcements</div>
+        <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>🚀 Open Discord</a>
+        <div style={{fontSize:10,color:'#555',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
+      </div>
+    </div>}
+
+    {view==='talent'&&<div>
+      <div className="card" style={{textAlign:'center',padding:30,borderStyle:'dashed',borderColor:'rgba(255,255,255,0.08)'}}>
+        <div style={{fontSize:32,marginBottom:8}}>🎯</div>
+        <div style={{fontSize:14,fontWeight:600,color:'#888',marginBottom:4}}>Talent Pipeline</div>
+        <span className="badge-amber" style={{fontSize:10}}>Coming Soon</span>
+        <div style={{fontSize:11,color:'#555',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
+      </div>
+    </div>}
+
+    {view==='demos'&&<div>
+      <div style={{fontSize:10,color:'#555',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
+      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#555',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+        {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
+          <div style={{fontSize:9,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
+          <div style={{display:'flex',gap:3}}>
+            <button className="btn" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
+            <button className="btn btn-magenta" style={{fontSize:9,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
+          </div>
+        </div>)})}
+      </div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:9}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+    </div>}
+
+    {view==='studio'&&<div>
+      <div className="card" style={{marginBottom:8}}>
+        <div className="card-title">Creative Studio — Brand Assets</div>
+        <div style={{fontSize:11,color:'#888',marginBottom:10}}>On-brand FutureSpeak.AI asset creation hub. Outputs route to Studio + Content pipelines.</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
+          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>{showToast('Canva / Gemini integration pending');launchVibeCode('Generate on-brand FutureSpeak social graphic','C:\\Users\\user\\Projects\\friday-desktop')}}>
+            <span style={{fontSize:20}}>🎨</span><span>Generate Social Graphic</span>
+          </button>
+          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={draftBlog}>
+            <span style={{fontSize:20}}>📝</span><span>Draft Blog Post</span>
+          </button>
+          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity','C:\\Users\\user\\Projects\\friday-desktop')}>
+            <span style={{fontSize:20}}>📄</span><span>Create One-Pager</span>
+          </button>
+        </div>
+      </div>
+      <div className="card"><div className="card-title">Brand Anchors</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,color:'#aaa'}}>
+          <div><strong style={{color:'#00d4ff'}}>Colors</strong><br/>Cyan #00d4ff · Magenta #ff0080 · Amber #f59e0b</div>
+          <div><strong style={{color:'#00d4ff'}}>Type</strong><br/>Orbitron (display) · Inter (body) · JetBrains Mono (code)</div>
+          <div><strong style={{color:'#00d4ff'}}>Voice</strong><br/>Direct · technical · contrarian · credible</div>
+          <div><strong style={{color:'#00d4ff'}}>Positioning</strong><br/>Enterprise AI · agentic systems · AI governance</div>
+        </div>
+      </div>
+    </div>}
   </div>);
 }
 function FamilyWS(){

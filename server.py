@@ -2782,6 +2782,121 @@ def content_draft():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  FUTURESPEAK BUSINESS WORKSPACE
+# ═══════════════════════════════════════════════════════════════
+
+FUTURESPEAK_DIR = FRIDAY_DIR / "futurespeak"
+FUTURESPEAK_DIR.mkdir(parents=True, exist_ok=True)
+FS_PIPELINE_FILE = FUTURESPEAK_DIR / "pipeline.json"
+FS_REVENUE_FILE = FUTURESPEAK_DIR / "revenue.json"
+FS_LEGAL_FILE = FUTURESPEAK_DIR / "legal.json"
+FS_ASSETS_DIR = FUTURESPEAK_DIR / "demo-assets"
+FS_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _fs_load(path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return fallback
+
+
+@app.route('/api/futurespeak/pipeline')
+def fs_pipeline():
+    data = _fs_load(FS_PIPELINE_FILE, {"opportunities": []})
+    opps = data.get('opportunities', []) or []
+    total_value = sum((o.get('value_usd') or 0) for o in opps)
+    weighted = sum((o.get('value_usd') or 0) * (o.get('probability') or 0) for o in opps)
+    by_status = {}
+    for o in opps:
+        s = o.get('status', 'unknown')
+        by_status[s] = by_status.get(s, 0) + 1
+    return jsonify({
+        "status": "ok",
+        "opportunities": opps,
+        "total": len(opps),
+        "total_value": total_value,
+        "weighted_value": weighted,
+        "by_status": by_status,
+    })
+
+
+@app.route('/api/futurespeak/revenue')
+def fs_revenue():
+    data = _fs_load(FS_REVENUE_FILE, {"months": [], "quarters": []})
+    months = data.get('months', []) or []
+    quarters = data.get('quarters', []) or []
+    burn = data.get('monthly_burn') or 0
+    cash = data.get('cash_on_hand') or 0
+
+    last_actual = 0
+    for m in months:
+        if isinstance(m.get('actual'), (int, float)):
+            last_actual = m['actual']
+    net_monthly = last_actual - burn
+    runway_months = None
+    if burn > 0 and net_monthly < 0:
+        runway_months = round(cash / burn, 1)
+
+    ytd_actual = sum(m.get('actual') or 0 for m in months)
+    ytd_projected = sum(m.get('projected') or 0 for m in months)
+
+    return jsonify({
+        "status": "ok",
+        "currency": data.get('currency', 'USD'),
+        "months": months,
+        "quarters": quarters,
+        "monthly_burn": burn,
+        "cash_on_hand": cash,
+        "last_actual_month": last_actual,
+        "net_monthly": net_monthly,
+        "runway_months": runway_months,
+        "ytd_actual": ytd_actual,
+        "ytd_projected": ytd_projected,
+    })
+
+
+@app.route('/api/futurespeak/legal')
+def fs_legal():
+    data = _fs_load(FS_LEGAL_FILE, {"items": []})
+    items = data.get('items', []) or []
+    by_status, by_type = {}, {}
+    for it in items:
+        s = it.get('status', 'unknown')
+        t = it.get('type', 'other')
+        by_status[s] = by_status.get(s, 0) + 1
+        by_type[t] = by_type.get(t, 0) + 1
+    return jsonify({
+        "status": "ok",
+        "items": items,
+        "total": len(items),
+        "by_status": by_status,
+        "by_type": by_type,
+    })
+
+
+@app.route('/api/futurespeak/assets')
+def fs_assets():
+    assets = []
+    if FS_ASSETS_DIR.exists():
+        for p in sorted(FS_ASSETS_DIR.iterdir()):
+            try:
+                stat = p.stat()
+                assets.append({
+                    "name": p.name,
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "ext": p.suffix.lower().lstrip('.'),
+                    "kind": "dir" if p.is_dir() else "file",
+                })
+            except Exception:
+                continue
+    return jsonify({"status": "ok", "assets": assets, "total": len(assets), "path": str(FS_ASSETS_DIR)})
+
+
+# ═══════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 
