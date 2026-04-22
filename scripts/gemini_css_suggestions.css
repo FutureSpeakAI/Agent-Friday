@@ -1,0 +1,109 @@
+/* 1. SUBTLE HOLOGRAPHIC OVERLAY */
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    background: repeating-linear-gradient(transparent, transparent 2px, rgba(0, 212, 255, 0.05) 3px);
+    opacity: 0.1;
+    mix-blend-mode: color-dodge;
+}
+
+/* 2. REFINED GLASSMORPHISM */
+.fwin {
+    background: rgba(12, 12, 22, 0.6);
+    backdrop-filter: blur(24px) saturate(1.5);
+    border-radius: 12px;
+    border: none;
+    box-shadow: 
+        0 16px 48px rgba(0,0,0,0.7),
+        inset 0 1px 1px rgba(255,255,255,0.07),
+        0 0 0 1px rgba(0, 212, 255, 0.15);
+}
+.fwin:hover {
+    box-shadow: 
+        0 16px 48px rgba(0,0,0,0.7),
+        inset 0 1px 1px rgba(255,255,255,0.07),
+        0 0 0 1px rgba(0, 212, 255, 0.25),
+        0 0 32px rgba(0, 212, 255, 0.1);
+}
+
+/* 3. DOCK BUTTON POLISH */
+.dock-btn .ico {
+    width: 24px; height: 24px;
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    margin-bottom: 2px;
+    transition: transform 0.2s ease, filter 0.2s ease;
+}
+.dock-btn:hover {
+    color: #fff;
+    background: radial-gradient(circle at 50% 100%, rgba(0,212,255,0.1), transparent 70%);
+    border-color: rgba(0,212,255,0.2);
+    box-shadow: none;
+}
+.dock-btn.active {
+    color: #fff;
+    background: radial-gradient(circle at 50% 100%, rgba(0,212,255,0.2), transparent 80%);
+    border-color: rgba(0,212,255,0.35);
+    text-shadow: 0 0 8px rgba(0,212,255,0.5);
+    box-shadow: none;
+}
+.dock-btn.active .ico {
+    filter: drop-shadow(0 0 6px rgba(0,212,255,0.7));
+}
+
+/* 4. KEYBOARD ACCESSIBILITY */
+.btn:focus-visible, .dock-btn:focus-visible, .input:focus-visible, 
+.fwin-btns button:focus-visible, .settings-btn:focus-visible, 
+.settings-toggle-switch:focus-visible, a:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #030308, 0 0 0 4px #00d4ff;
+    transition: box-shadow 0.2s ease;
+}
+.cmd-palette-item:focus-visible {
+    outline: 2px solid #00d4ff;
+    outline-offset: -2px;
+}
+
+/* 5. REDUCED MOTION SUPPORT */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 6. BOOT SPLASH OVERLAY */
+.boot-splash {
+    position: fixed; inset: 0; z-index: 99999;
+    display: flex; justify-content: center; align-items: center;
+    background: #030308 url('/assets/friday-splash-bg.png') center/cover no-repeat;
+    transition: opacity 0.6s 1.5s ease-out; /* Fade out after 1.5s delay */
+}
+.boot-splash.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+.boot-splash::before { /* Animated scanline on splash */
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: #00d4ff;
+    box-shadow: 0 0 10px 2px #00d4ff;
+    animation: bootScan 2.1s cubic-bezier(0.6, 0, 0.4, 1) forwards;
+}
+@keyframes bootScan {
+    from { top: -10px; } to { top: 100%; }
+}
+.boot-splash-caption {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 13px; letter-spacing: 0.3em;
+    color: rgba(255,255,255,0.6);
+    text-transform: uppercase;
+    text-shadow: 0 0 15px rgba(0,212,255,0.4);
+    animation: fadeIn 1s ease-out;
+}

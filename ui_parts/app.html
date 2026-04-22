@@ -1398,8 +1398,8 @@ function App(){
         {gi>0&&<div className="dock-divider"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
-              <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)} aria-label={w.label}>
+              <span className="ico-img" style={{backgroundImage:`url('assets/icons/${w.id}.png')`}} role="img" aria-hidden="true"/><span>{w.label}</span><span className="dot"/>
             </button>)}
           </div>
           <div className="dock-group-label">{g.name}</div>

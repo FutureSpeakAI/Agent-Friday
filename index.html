@@ -409,10 +409,129 @@
             padding: 24px; text-align: center; color: rgba(255,255,255,0.35);
             font-size: 12px;
         }
+
+        /* ═══════════════════════════════════════════════════════════
+           GEMINI DESIGN PASS — holographic refinements
+           ═══════════════════════════════════════════════════════════ */
+
+        /* Subtle scanline overlay (very low opacity — must not harm readability) */
+        body::after {
+            content: ''; position: fixed; inset: 0; z-index: 9999;
+            pointer-events: none; opacity: 0.35;
+            background: repeating-linear-gradient(
+                transparent, transparent 2px,
+                rgba(0, 212, 255, 0.025) 3px
+            );
+        }
+
+        /* Refined glassmorphism — layered inset glow, better edge light catch */
+        .fwin {
+            background: rgba(10, 10, 20, 0.62);
+            backdrop-filter: blur(22px) saturate(1.4);
+            border: none;
+            border-radius: 12px;
+            box-shadow:
+                0 16px 48px rgba(0, 0, 0, 0.7),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                0 0 0 1px rgba(0, 212, 255, 0.14);
+        }
+        .fwin:hover {
+            box-shadow:
+                0 16px 48px rgba(0, 0, 0, 0.7),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 0 0 1px rgba(0, 212, 255, 0.28),
+                0 0 32px rgba(0, 212, 255, 0.1);
+        }
+
+        /* Dock icon-image support — swaps emoji for generated holographic PNG */
+        .dock-btn .ico-img {
+            width: 28px; height: 28px;
+            background-size: contain; background-position: center; background-repeat: no-repeat;
+            filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.2));
+            transition: filter 0.25s ease, transform 0.25s ease;
+        }
+        .dock-btn:hover .ico-img {
+            filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.5));
+            transform: translateY(-1px);
+        }
+        .dock-btn.active .ico-img {
+            filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.8));
+        }
+        .dock-btn:hover {
+            background: radial-gradient(circle at 50% 100%, rgba(0, 212, 255, 0.08), transparent 70%);
+            border-color: rgba(0, 212, 255, 0.18);
+            box-shadow: none;
+        }
+        .dock-btn.active {
+            background: radial-gradient(circle at 50% 100%, rgba(0, 212, 255, 0.18), transparent 80%);
+            border-color: rgba(0, 212, 255, 0.32);
+            text-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+            box-shadow: none;
+        }
+
+        /* Focus-visible keyboard accessibility — consistent cyan ring */
+        .btn:focus-visible, .dock-btn:focus-visible, .input:focus-visible,
+        .fwin-btns button:focus-visible, .settings-btn:focus-visible,
+        a:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 2px #030308, 0 0 0 4px #00d4ff;
+        }
+        .cmd-palette-item:focus-visible {
+            outline: 2px solid #00d4ff; outline-offset: -2px;
+        }
+
+        /* Reduced-motion support */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+
+        /* Boot splash — fullscreen overlay, fades out after 1.5s */
+        .boot-splash {
+            position: fixed; inset: 0; z-index: 99999;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            background: #030308 url('assets/splash/boot.png') center/cover no-repeat;
+            opacity: 1; transition: opacity 0.6s ease-out;
+        }
+        .boot-splash::before {
+            content: ''; position: absolute; left: 0; right: 0; height: 2px;
+            background: #00d4ff; box-shadow: 0 0 12px 2px #00d4ff;
+            animation: bootScan 1.6s cubic-bezier(0.6, 0, 0.4, 1) forwards;
+        }
+        @keyframes bootScan {
+            0% { top: 0%; } 100% { top: 100%; }
+        }
+        .boot-splash-caption {
+            position: relative;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px; letter-spacing: 0.4em;
+            color: rgba(255, 255, 255, 0.75);
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+            animation: fadeIn 1s ease-out;
+            margin-top: 42vh;
+        }
+        .boot-splash.fade-out { opacity: 0; pointer-events: none; }
     </style>
 </head>
 
 <body>
+    <!-- Boot Splash — fades out after 1.5s -->
+    <div id="boot-splash" class="boot-splash">
+        <div class="boot-splash-caption">INITIALIZING FRIDAY OS</div>
+    </div>
+    <script>
+        (function(){
+            var el=document.getElementById('boot-splash');
+            if(el) setTimeout(function(){ el.classList.add('fade-out'); setTimeout(function(){ el.style.display='none'; },700); },1500);
+        })();
+    </script>
+
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
         <svg id="pinch-progress">
@@ -2953,8 +3072,8 @@ function App(){
         {gi>0&&<div className="dock-divider"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
-              <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)} aria-label={w.label}>
+              <span className="ico-img" style={{backgroundImage:`url('assets/icons/${w.id}.png')`}} role="img" aria-hidden="true"/><span>{w.label}</span><span className="dot"/>
             </button>)}
           </div>
           <div className="dock-group-label">{g.name}</div>
