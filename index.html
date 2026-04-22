@@ -1468,7 +1468,7 @@ const WS=[
   {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
   {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'},{id:'draft',ico:'✍️',label:'Draft'},
   {id:'finance',ico:'💰',label:'Finance'},{id:'health',ico:'❤️',label:'Health'},
-  {id:'contacts',ico:'👥',label:'Contacts'}
+  {id:'contacts',ico:'👥',label:'Contacts'},{id:'content',ico:'📝',label:'Content'}
 ];
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
@@ -1618,7 +1618,7 @@ function CareerWS(){
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}><input className="input" style={{flex:1}} value={evalUrl} onChange={e=>setEvalUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&launchEval()} placeholder="Paste a job URL to evaluate..."/><button className="btn" onClick={launchEval}>Evaluate</button></div>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}><button className="btn" onClick={launchScan} style={{fontSize:10}}>Scan Portals</button><button className="btn" style={{fontSize:10}} onClick={()=>setView('interview')}>Interview Prep</button><button className="btn" style={{fontSize:10}} onClick={()=>setView('overview')}>Overview</button></div>
     </div>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','tracker','reports','pipeline','curated','interview'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
       <div style={{display:'flex',gap:8,marginBottom:12}}>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20}}>{entries.length}</div><div className="stat-label">evaluated</div></div>
@@ -1638,6 +1638,76 @@ function CareerWS(){
     {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
+    {view==='outreach'&&<OutreachPanel/>}
+  </div>);
+}
+function OutreachPanel(){
+  const[sug,setSug]=useState(null);const[pipe,setPipe]=useState(null);const[loading,setLoading]=useState(true);
+  const[selected,setSelected]=useState(null);const[angle,setAngle]=useState('reconnect');const[channel,setChannel]=useState('email');
+  const[ctx,setCtx]=useState('');const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);
+  const[toast,setToast]=useState('');
+  const load=()=>{setLoading(true);Promise.all([
+    fetch('/api/outreach/suggestions').then(r=>r.json()).then(setSug).catch(()=>null),
+    fetch('/api/outreach/pipeline').then(r=>r.json()).then(setPipe).catch(()=>null)
+  ]).then(()=>setLoading(false))};
+  useEffect(()=>{load()},[]);
+  const pickContact=(name)=>{setSelected({type:'contact',name});setDraft('')};
+  const pickCompany=(name)=>{setSelected({type:'company',name});setDraft('')};
+  const doDraft=async()=>{if(!selected||drafting)return;setDrafting(true);setDraft('');
+    const body=selected.type==='contact'?{contact:selected.name,angle,channel,context:ctx}:{company:selected.name,angle,channel,context:ctx};
+    try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();setDraft(d.draft||d.message||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(false)};
+  const doLog=async(status)=>{if(!selected)return;
+    const body={contact:selected.type==='contact'?selected.name:'',company:selected.type==='company'?selected.name:'',channel,angle,message:draft,status};
+    try{await fetch('/api/outreach/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});setToast('Logged as '+status);load()}catch(e){setToast('Log failed')}
+    setTimeout(()=>setToast(''),2000)};
+  const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading outreach pipeline...</div>;
+  const warm=sug?.warm_contacts||[];const targets=sug?.career_targets||[];const recent=pipe?.recent||[];
+  return(<div>
+    <FridaySays text={`${pipe?.total||0} outreach events logged · ${warm.length} warm contacts · ${targets.length} career targets.`}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+      <div className="card"><div className="card-title">Warm Contacts</div>
+        {warm.length===0?<div style={{color:'#555',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:col}}>{pct}%</span></div>
+          <div style={{fontSize:10,color:'#666'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
+        </div>)})}
+      </div>
+      <div className="card"><div className="card-title">Career Targets</div>
+        {targets.length===0?<div style={{color:'#555',fontSize:11}}>No applied/interviewing targets.</div>:targets.map((t,i)=>(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer'}} onClick={()=>pickCompany(t.company)}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{t.company}</span><span className="badge-cyan" style={{fontSize:9}}>{t.status||''}</span></div>
+          <div style={{fontSize:10,color:'#666'}}>{t.reason}</div>
+        </div>))}
+      </div>
+    </div>
+    {selected&&<div className="card" style={{marginBottom:10}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:10,color:'#555',marginLeft:6}}>({selected.type})</span></div>
+        <button className="btn" style={{fontSize:9}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
+      </div>
+      <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
+        {['reconnect','intro','referral','follow-up','thank-you','ask'].map(a=><button key={a} className={'btn '+(angle===a?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setAngle(a)}>{a}</button>)}
+      </div>
+      <div style={{display:'flex',gap:4,marginBottom:6}}>
+        {['email','linkedin','sms','call'].map(c=><button key={c} className={'btn '+(channel===c?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setChannel(c)}>{c}</button>)}
+      </div>
+      <textarea className="input" style={{width:'100%',height:44,resize:'vertical',fontSize:11,marginBottom:6}} value={ctx} onChange={e=>setCtx(e.target.value)} placeholder="Context / specifics (optional)"/>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        <button className="btn" onClick={doDraft} disabled={drafting} style={{fontSize:10,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
+        {draft&&<>
+          <button className="btn" onClick={doCopy} style={{fontSize:10}}>📋 Copy</button>
+          <button className="btn" onClick={()=>doLog('sent')} style={{fontSize:10}}>Log Sent</button>
+          <button className="btn btn-magenta" onClick={()=>doLog('drafted')} style={{fontSize:10}}>Log Drafted</button>
+        </>}
+      </div>
+      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{toast}</div>}
+      {draft&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',marginTop:8,background:'rgba(255,255,255,0.02)',padding:8,borderRadius:6,lineHeight:1.5}}>{draft}</pre>}
+    </div>}
+    <div className="card"><div className="card-title">Recent Pipeline ({pipe?.total||0})</div>
+      {recent.length===0?<div style={{color:'#555',fontSize:11}}>No outreach logged yet.</div>:recent.slice(0,15).map((e,i)=>(<div key={e.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#555'}}>· {e.channel}</span></span><span style={{fontSize:9,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
+        <div style={{fontSize:10,color:'#666'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:9}}>{e.status}</span></div>
+      </div>))}
+    </div>
   </div>);
 }
 function WikiWS(){
@@ -2224,6 +2294,87 @@ function ContactsWS(){
     </div>}
   </div>);
 }
+function ContentWS(){
+  const[pipe,setPipe]=useState(null);const[loading,setLoading]=useState(true);
+  const[showNew,setShowNew]=useState(false);const[newTitle,setNewTitle]=useState('');const[newType,setNewType]=useState('post');const[newChannel,setNewChannel]=useState('linkedin');const[newNotes,setNewNotes]=useState('');
+  const[selected,setSelected]=useState(null);const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);const[toast,setToast]=useState('');
+  const STAGES=['idea','drafting','review','scheduled','published'];
+  const STAGE_COLORS={idea:'#888',drafting:'#f59e0b',review:'#00d4ff',scheduled:'#7c3aed',published:'#00ff80'};
+  const load=()=>{setLoading(true);fetch('/api/content/pipeline').then(r=>r.json()).then(d=>{setPipe(d);setLoading(false)}).catch(()=>setLoading(false))};
+  useEffect(()=>{load()},[]);
+  const addIdea=async()=>{if(!newTitle.trim())return;
+    try{await fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:newTitle,type:newType,channel:newChannel,notes:newNotes})});
+      setNewTitle('');setNewNotes('');setShowNew(false);load();setToast('Idea added')}catch(e){setToast('Add failed')}
+    setTimeout(()=>setToast(''),1500)};
+  const openItem=(it)=>{setSelected(it);setDraft(it.draft||'')};
+  const doDraft=async(advance)=>{if(!selected||drafting)return;setDrafting(true);
+    try{const r=await fetch('/api/content/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:selected.id,advance_stage:!!advance})});
+      const d=await r.json();setDraft(d.draft||'');setToast(advance?'Drafted · advanced stage':'Drafted');load();
+      if(advance&&d.stage)setSelected({...selected,draft:d.draft,stage:d.stage})}catch(e){setToast('Draft failed')}
+    setDrafting(false);setTimeout(()=>setToast(''),2000)};
+  const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
+  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading content pipeline...</div>;
+  if(selected){
+    const col=STAGE_COLORS[selected.stage]||'#888';
+    return(<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <button className="btn" style={{fontSize:10}} onClick={()=>{setSelected(null);setDraft('')}}>← Back</button>
+        <div style={{display:'flex',gap:4}}>
+          <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:10,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
+          <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:10}}>Draft + Advance</button>
+          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:10}}>📋 Copy</button>}
+        </div>
+      </div>
+      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+      <div className="card" style={{marginBottom:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
+          <span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
+        </div>
+        <div style={{fontSize:10,color:'#666'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
+        {selected.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:6,fontStyle:'italic'}}>{selected.notes}</div>}
+      </div>
+      {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
+    </div>);
+  }
+  const by=pipe?.by_stage||{};
+  return(<div>
+    <FridaySays text={`${pipe?.total||0} items in pipeline · kanban across ${STAGES.length} stages. Click + to capture an idea.`}/>
+    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
+      <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" style={{fontSize:10}} onClick={load}>↻</button>
+        <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
+      </div>
+    </div>
+    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    {showNew&&<div className="card" style={{marginBottom:10}}>
+      <div className="card-title">New Idea</div>
+      <input className="input" style={{width:'100%',marginBottom:6,fontSize:12}} value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="Title / hook..."/>
+      <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
+        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn '+(newType===t?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
+      </div>
+      <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
+        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn '+(newChannel===c?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
+      </div>
+      <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:11,marginBottom:6}} value={newNotes} onChange={e=>setNewNotes(e.target.value)} placeholder="Notes, angle, references..."/>
+      <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={addIdea}>Capture</button>
+    </div>}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(5, 1fr)',gap:6,minHeight:200}}>
+      {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.02)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,paddingBottom:4,borderBottom:'1px solid '+col+'22'}}>
+          <span style={{fontFamily:'Orbitron',fontSize:9,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
+          <span style={{fontSize:9,color:'#555',fontFamily:'JetBrains Mono'}}>{items.length}</span>
+        </div>
+        {items.length===0?<div style={{fontSize:10,color:'#444',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
+          <div style={{fontSize:11,color:'#ccc',fontWeight:600,lineHeight:1.3,marginBottom:2}}>{it.title}</div>
+          <div style={{fontSize:9,color:'#666'}}>{it.type} · {it.channel}</div>
+          {it.tags&&it.tags.length>0&&<div style={{fontSize:8,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
+        </div>))}
+      </div>)})}
+    </div>
+  </div>);
+}
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -2259,7 +2410,7 @@ function App(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const noWindows=openWins.size===0;
