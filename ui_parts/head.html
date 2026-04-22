@@ -410,112 +410,80 @@
             font-size: 12px;
         }
 
-        /* ═══════════════════════════════════════════════════════════
-           GEMINI DESIGN PASS — holographic refinements
-           ═══════════════════════════════════════════════════════════ */
-
-        /* Subtle scanline overlay (very low opacity — must not harm readability) */
-        body::after {
-            content: ''; position: fixed; inset: 0; z-index: 9999;
-            pointer-events: none; opacity: 0.35;
-            background: repeating-linear-gradient(
-                transparent, transparent 2px,
-                rgba(0, 212, 255, 0.025) 3px
-            );
+        /* ═══ GEMINI DESIGN PASS — Holographic Dock Refinements ═══ */
+        @keyframes holoShimmer {
+          0%   { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes holoPulse {
+          0%, 100% { filter: brightness(1) drop-shadow(0 0 2px rgba(0,212,255,0.2)); }
+          50%      { filter: brightness(1.15) drop-shadow(0 0 6px rgba(123,97,255,0.35)); }
+        }
+        @keyframes prismaticBorder {
+          0%   { border-color: rgba(0,212,255,0.25); }
+          33%  { border-color: rgba(123,97,255,0.25); }
+          66%  { border-color: rgba(255,0,255,0.2); }
+          100% { border-color: rgba(0,212,255,0.25); }
         }
 
-        /* Refined glassmorphism — layered inset glow, better edge light catch */
-        .fwin {
-            background: rgba(10, 10, 20, 0.62);
-            backdrop-filter: blur(22px) saturate(1.4);
-            border: none;
-            border-radius: 12px;
-            box-shadow:
-                0 16px 48px rgba(0, 0, 0, 0.7),
-                inset 0 1px 0 rgba(255, 255, 255, 0.06),
-                0 0 0 1px rgba(0, 212, 255, 0.14);
+        .dock {
+          background:
+            linear-gradient(90deg,
+              transparent 0%, rgba(0,212,255,0.03) 25%,
+              rgba(123,97,255,0.04) 50%, rgba(255,0,255,0.03) 75%,
+              transparent 100%),
+            rgba(3,3,8,0.75);
+          background-size: 200% 100%, 100% 100%;
+          animation: holoShimmer 8s linear infinite;
+          border-top: 1px solid rgba(0,212,255,0.08);
+          box-shadow: 0 -1px 0 rgba(123,97,255,0.05), inset 0 1px 30px rgba(0,212,255,0.02);
         }
-        .fwin:hover {
-            box-shadow:
-                0 16px 48px rgba(0, 0, 0, 0.7),
-                inset 0 1px 0 rgba(255, 255, 255, 0.08),
-                0 0 0 1px rgba(0, 212, 255, 0.28),
-                0 0 32px rgba(0, 212, 255, 0.1);
+        .dock::after {
+          content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: repeating-linear-gradient(0deg, transparent, transparent 2px,
+            rgba(0,212,255,0.008) 2px, rgba(0,212,255,0.008) 4px);
+          pointer-events: none; z-index: 1;
         }
 
-        /* Dock icon-image support — swaps emoji for generated holographic PNG */
-        .dock-btn .ico-img {
-            width: 28px; height: 28px;
-            background-size: contain; background-position: center; background-repeat: no-repeat;
-            filter: drop-shadow(0 0 4px rgba(0, 212, 255, 0.2));
-            transition: filter 0.25s ease, transform 0.25s ease;
-        }
-        .dock-btn:hover .ico-img {
-            filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.5));
-            transform: translateY(-1px);
-        }
-        .dock-btn.active .ico-img {
-            filter: drop-shadow(0 0 10px rgba(0, 212, 255, 0.8));
-        }
+        .dock-btn { position: relative; z-index: 2; animation: prismaticBorder 6s ease infinite; }
         .dock-btn:hover {
-            background: radial-gradient(circle at 50% 100%, rgba(0, 212, 255, 0.08), transparent 70%);
-            border-color: rgba(0, 212, 255, 0.18);
-            box-shadow: none;
+          background: rgba(0,212,255,0.06); border-color: rgba(123,97,255,0.3);
+          box-shadow: 0 0 12px rgba(0,212,255,0.1), 0 0 24px rgba(123,97,255,0.06),
+            inset 0 0 12px rgba(0,212,255,0.04);
         }
         .dock-btn.active {
-            background: radial-gradient(circle at 50% 100%, rgba(0, 212, 255, 0.18), transparent 80%);
-            border-color: rgba(0, 212, 255, 0.32);
-            text-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
-            box-shadow: none;
+          background: linear-gradient(135deg, rgba(0,212,255,0.08), rgba(123,97,255,0.06), rgba(255,0,255,0.04));
+          border-color: rgba(0,212,255,0.3);
+          box-shadow: 0 0 16px rgba(0,212,255,0.15), 0 0 32px rgba(123,97,255,0.08),
+            inset 0 0 16px rgba(0,212,255,0.05);
         }
 
-        /* Focus-visible keyboard accessibility — consistent cyan ring */
-        .btn:focus-visible, .dock-btn:focus-visible, .input:focus-visible,
-        .fwin-btns button:focus-visible, .settings-btn:focus-visible,
-        a:focus-visible {
-            outline: none;
-            box-shadow: 0 0 0 2px #030308, 0 0 0 4px #00d4ff;
+        .dock-btn .ico { display: flex; align-items: center; justify-content: center; }
+        .dock-btn .ico img {
+          width: 20px; height: 20px;
+          filter: drop-shadow(0 0 2px rgba(0,212,255,0.4));
+          transition: filter 0.3s ease, transform 0.3s ease;
         }
-        .cmd-palette-item:focus-visible {
-            outline: 2px solid #00d4ff; outline-offset: -2px;
+        .dock-btn:hover .ico img {
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.6)) drop-shadow(0 0 8px rgba(123,97,255,0.3));
+          transform: scale(1.1);
         }
-
-        /* Reduced-motion support */
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-                scroll-behavior: auto !important;
-            }
+        .dock-btn.active .ico img {
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.7)) drop-shadow(0 0 10px rgba(123,97,255,0.4))
+            drop-shadow(0 0 2px rgba(255,0,255,0.2));
+          animation: holoPulse 3s ease-in-out infinite;
         }
 
-        /* Boot splash — fullscreen overlay, fades out after 1.5s */
-        .boot-splash {
-            position: fixed; inset: 0; z-index: 99999;
-            display: flex; flex-direction: column;
-            justify-content: center; align-items: center;
-            background: #030308 url('assets/splash/boot.png') center/cover no-repeat;
-            opacity: 1; transition: opacity 0.6s ease-out;
+        .dock-btn.active .dot {
+          background: linear-gradient(90deg, #00d4ff, #7b61ff, #ff00ff);
+          background-size: 200% 100%; animation: holoShimmer 3s linear infinite;
+          box-shadow: 0 0 6px #00d4ff, 0 0 12px rgba(123,97,255,0.4);
         }
-        .boot-splash::before {
-            content: ''; position: absolute; left: 0; right: 0; height: 2px;
-            background: #00d4ff; box-shadow: 0 0 12px 2px #00d4ff;
-            animation: bootScan 1.6s cubic-bezier(0.6, 0, 0.4, 1) forwards;
+
+        .dock-sep {
+          width: 1px; margin: 8px 4px;
+          background: linear-gradient(180deg, transparent, rgba(0,212,255,0.15) 30%,
+            rgba(123,97,255,0.2) 50%, rgba(255,0,255,0.15) 70%, transparent);
         }
-        @keyframes bootScan {
-            0% { top: 0%; } 100% { top: 100%; }
-        }
-        .boot-splash-caption {
-            position: relative;
-            font-family: 'Orbitron', sans-serif;
-            font-size: 13px; letter-spacing: 0.4em;
-            color: rgba(255, 255, 255, 0.75);
-            text-transform: uppercase;
-            text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
-            animation: fadeIn 1s ease-out;
-            margin-top: 42vh;
-        }
-        .boot-splash.fade-out { opacity: 0; pointer-events: none; }
     </style>
 </head>

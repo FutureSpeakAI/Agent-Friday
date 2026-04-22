@@ -1,0 +1,24 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="40%" stop-color="#7b61ff"/>
+      <stop offset="100%" stop-color="#ff00ff"/>
+    </linearGradient>
+    <linearGradient id="hg2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00ffcc"/>
+      <stop offset="50%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#7b61ff"/>
+    </linearGradient>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="0.7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <polyline points="10,8 4,16 10,24" stroke="url(#hg)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#gl)" />
+  <polyline points="22,8 28,16 22,24" stroke="url(#hg)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#gl)" />
+  <line x1="18" y1="6" x2="14" y2="26" stroke="url(#hg2)" stroke-width="1.2" opacity="0.6" filter="url(#gl)"/>
+  <rect x="14" y="15" width="4" height="2" rx="0.5" fill="url(#hg)" opacity="0.3">
+    <animate attributeName="opacity" values="0.3;0.7;0.3" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+</svg>

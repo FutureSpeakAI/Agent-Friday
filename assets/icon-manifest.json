@@ -1,0 +1,18 @@
+{
+  "home": "assets/icons/home.svg",
+  "family": "assets/icons/family.svg",
+  "coparent": "assets/icons/coparent.svg",
+  "health": "assets/icons/health.svg",
+  "finance": "assets/icons/finance.svg",
+  "career": "assets/icons/career.svg",
+  "futurespeak": "assets/icons/futurespeak.svg",
+  "contacts": "assets/icons/contacts.svg",
+  "draft": "assets/icons/draft.svg",
+  "content": "assets/icons/content.svg",
+  "news": "assets/icons/news.svg",
+  "wiki": "assets/icons/wiki.svg",
+  "trust": "assets/icons/trust.svg",
+  "studio": "assets/icons/studio.svg",
+  "code": "assets/icons/code.svg",
+  "system": "assets/icons/system.svg"
+}

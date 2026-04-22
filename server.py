@@ -17,9 +17,84 @@ import time as _time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory, send_file
+from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response
+from functools import wraps
 
 app = Flask(__name__, static_folder='.', static_url_path='')
+app.secret_key = os.environ.get("FRIDAY_SECRET_KEY", "friday-default-secret-change-me")
+
+# ── Authentication ───────────────────────────────────────────
+FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not FRIDAY_PASSWORD:
+            return f(*args, **kwargs)
+        if not session.get("authenticated"):
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify({"error": "unauthorized"}), 401
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FRIDAY — Authenticate</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0f;color:#e0e0ff;font-family:'Orbitron',monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(124,58,237,.12) 0%,transparent 70%);pointer-events:none}
+.login-box{background:rgba(15,15,30,.85);border:1px solid rgba(124,58,237,.35);border-radius:12px;padding:40px 36px;width:340px;backdrop-filter:blur(20px);box-shadow:0 0 40px rgba(124,58,237,.15),inset 0 0 30px rgba(124,58,237,.05);position:relative}
+.login-box::before{content:'';position:absolute;top:-1px;left:20%;right:20%;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.8),transparent);border-radius:2px}
+h1{font-size:14px;letter-spacing:.25em;text-align:center;color:rgba(124,58,237,.9);margin-bottom:8px}
+.subtitle{font-size:9px;letter-spacing:.15em;text-align:center;color:rgba(180,160,255,.4);margin-bottom:32px}
+input[type=password]{width:100%;padding:12px 16px;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:6px;color:#e0e0ff;font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.15em;outline:none;transition:border-color .3s}
+input[type=password]:focus{border-color:rgba(124,58,237,.7);box-shadow:0 0 15px rgba(124,58,237,.15)}
+input[type=password]::placeholder{color:rgba(180,160,255,.25)}
+button{width:100%;padding:12px;margin-top:16px;background:linear-gradient(135deg,rgba(124,58,237,.3),rgba(124,58,237,.15));border:1px solid rgba(124,58,237,.4);border-radius:6px;color:rgba(200,180,255,.9);font-family:'Orbitron',monospace;font-size:11px;letter-spacing:.2em;cursor:pointer;transition:all .3s}
+button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,237,.25));border-color:rgba(124,58,237,.7);box-shadow:0 0 20px rgba(124,58,237,.2)}
+.error{color:#ff4466;font-size:9px;text-align:center;margin-top:12px;letter-spacing:.1em}
+.scan-line{position:fixed;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(124,58,237,.15),transparent);animation:scan 4s linear infinite;pointer-events:none}
+@keyframes scan{0%{top:0}100%{top:100vh}}
+</style>
+</head>
+<body>
+<div class="scan-line"></div>
+<div class="login-box">
+<h1>FRIDAY</h1>
+<div class="subtitle">AUTHENTICATION REQUIRED</div>
+<form method="POST">
+<input type="password" name="password" placeholder="ENTER ACCESS CODE" autofocus autocomplete="current-password">
+<button type="submit">AUTHENTICATE</button>
+</form>
+{{ error }}
+</div>
+</body>
+</html>"""
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if not FRIDAY_PASSWORD:
+        return redirect('/')
+    error = ""
+    if request.method == 'POST':
+        if request.form.get('password') == FRIDAY_PASSWORD:
+            session['authenticated'] = True
+            session.permanent = True
+            app.permanent_session_lifetime = timedelta(days=30)
+            return redirect('/')
+        error = '<div class="error">ACCESS DENIED — INVALID CODE</div>'
+    html = LOGIN_HTML.replace('{{ error }}', error)
+    return Response(html, content_type='text/html')
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login')
 
 # ── Vibe Code: Terminal State ─────────────────────────────────
 VIBE_TERMINALS = {}   # id -> { id, task, status, cwd, pid, started, stopped, log_file }
@@ -55,6 +130,18 @@ def get_genai_client():
         except ImportError:
             print("  [FRIDAY] WARNING: google-genai not installed. Creative endpoints disabled.")
     return _genai_client
+
+
+@app.before_request
+def check_auth():
+    if not FRIDAY_PASSWORD:
+        return None
+    if request.endpoint in ('login', 'static'):
+        return None
+    if not session.get("authenticated"):
+        if request.is_json or request.path.startswith("/api/"):
+            return jsonify({"error": "unauthorized"}), 401
+        return redirect(url_for("login"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2917,4 +3004,6 @@ if __name__ == '__main__':
     print(f"  Chat Log:  {CHAT_HISTORY_FILE}")
     print()
 
-    app.run(host='127.0.0.1', port=3000, debug=False)
+    # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only
+    bind_host = '0.0.0.0' if FRIDAY_PASSWORD else '127.0.0.1'
+    app.run(host=bind_host, port=3000, debug=False)
