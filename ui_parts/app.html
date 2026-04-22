@@ -1,13 +1,30 @@
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
-const WS=[
-  {id:'home',ico:'🏠',label:'Home'},{id:'career',ico:'💼',label:'Career'},{id:'wiki',ico:'📚',label:'Wiki'},
-  {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},{id:'futurespeak',ico:'🚀',label:'FutureSpeak'},{id:'family',ico:'👪',label:'Family'},
-  {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
-  {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'},{id:'draft',ico:'✍️',label:'Draft'},
-  {id:'finance',ico:'💰',label:'Finance'},{id:'health',ico:'❤️',label:'Health'},
-  {id:'contacts',ico:'👥',label:'Contacts'},{id:'content',ico:'📝',label:'Content'}
+const DOCK_GROUPS=[
+  {name:'Life',items:[
+    {id:'home',ico:'🏠',label:'Home'},
+    {id:'family',ico:'👪',label:'Family'},
+    {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},
+    {id:'health',ico:'❤️',label:'Health'},
+    {id:'finance',ico:'💰',label:'Finance'},
+  ]},
+  {name:'Work',items:[
+    {id:'career',ico:'💼',label:'Career'},
+    {id:'futurespeak',ico:'🚀',label:'FutureSpeak'},
+    {id:'contacts',ico:'👥',label:'Contacts'},
+    {id:'draft',ico:'✍️',label:'Draft'},
+    {id:'content',ico:'📝',label:'Content'},
+  ]},
+  {name:'System',items:[
+    {id:'news',ico:'📰',label:'News'},
+    {id:'wiki',ico:'📚',label:'Wiki'},
+    {id:'trust',ico:'🔗',label:'Trust'},
+    {id:'studio',ico:'🎨',label:'Studio'},
+    {id:'code',ico:'💻',label:'Code'},
+    {id:'system',ico:'🖥️',label:'System'},
+  ]},
 ];
+const WS=DOCK_GROUPS.flatMap(g=>g.items);
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
@@ -36,6 +53,75 @@ function Safe({children,name}){
 function FridaySays({text}){
   if(!text)return null;
   return(<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#00d4ff',fontStyle:'italic'}}>💡 {text}</div>);
+}
+
+// ═══ COMMAND PALETTE (Ctrl+K) ═══
+function CommandPalette({onClose,onOpenWs,openWins}){
+  const[q,setQ]=useState('');
+  const[sel,setSel]=useState(0);
+  const[contacts,setContacts]=useState([]);
+  const[routines,setRoutines]=useState([]);
+  const inputRef=useRef(null);
+
+  useEffect(()=>{inputRef.current?.focus()},[]);
+  useEffect(()=>{
+    fetch('/api/contacts').then(r=>r.json()).then(d=>setContacts(d.contacts||d.items||[])).catch(()=>{});
+    fetch('/api/routines').then(r=>r.json()).then(d=>setRoutines(d.routines||d.items||[])).catch(()=>{});
+  },[]);
+
+  const query=q.trim().toLowerCase();
+  const wsResults=WS.filter(w=>!query||w.label.toLowerCase().includes(query)||w.id.includes(query))
+    .map(w=>({kind:'ws',id:w.id,ico:w.ico,label:w.label,meta:openWins.has(w.id)?'open':'open workspace'}));
+  const contactResults=(query?contacts.filter(c=>(c.name||c.label||'').toLowerCase().includes(query)):[]).slice(0,6)
+    .map(c=>({kind:'contact',id:c.id||c.name,ico:'👤',label:c.name||c.label,meta:c.email||c.role||'contact'}));
+  const routineResults=(query?routines.filter(r=>(r.label||r.name||'').toLowerCase().includes(query)):[]).slice(0,6)
+    .map(r=>({kind:'routine',id:r.id,ico:'⚡',label:r.label||r.name,meta:r.schedule||r.category||'routine'}));
+  const sections=[
+    {title:'Workspaces',items:wsResults},
+    {title:'Contacts',items:contactResults},
+    {title:'Routines',items:routineResults},
+  ].filter(s=>s.items.length>0);
+  const flat=sections.flatMap(s=>s.items);
+  useEffect(()=>{setSel(0)},[q]);
+
+  const activate=(item)=>{
+    if(!item)return;
+    if(item.kind==='ws')onOpenWs(item.id);
+    else if(item.kind==='routine'){
+      fetch(`/api/routines/${item.id}/run`,{method:'POST'}).catch(()=>{});
+      onClose();
+    }else if(item.kind==='contact'){
+      onOpenWs('contacts');
+    }
+  };
+
+  const onKey=(e)=>{
+    if(e.key==='Escape'){e.preventDefault();onClose()}
+    else if(e.key==='ArrowDown'){e.preventDefault();setSel(s=>Math.min(flat.length-1,s+1))}
+    else if(e.key==='ArrowUp'){e.preventDefault();setSel(s=>Math.max(0,s-1))}
+    else if(e.key==='Enter'){e.preventDefault();activate(flat[sel])}
+  };
+
+  return(<div className="cmd-palette-overlay" onClick={onClose}>
+    <div className="cmd-palette" onClick={e=>e.stopPropagation()} onKeyDown={onKey}>
+      <input ref={inputRef} className="cmd-palette-input" placeholder="Search workspaces, contacts, routines…"
+        value={q} onChange={e=>setQ(e.target.value)}/>
+      <div className="cmd-palette-results">
+        {flat.length===0&&<div className="cmd-palette-empty">No matches</div>}
+        {(()=>{let idx=-1;return sections.map(s=>(<div key={s.title}>
+          <div className="cmd-palette-section">{s.title}</div>
+          {s.items.map(it=>{idx++;const i=idx;return(
+            <div key={`${it.kind}-${it.id}`} className={`cmd-palette-item ${i===sel?'selected':''}`}
+              onMouseEnter={()=>setSel(i)} onClick={()=>activate(it)}>
+              <span className="ico">{it.ico}</span>
+              <span>{it.label}</span>
+              <span className="meta">{it.meta}</span>
+            </div>
+          )})}
+        </div>))})()}
+      </div>
+    </div>
+  </div>);
 }
 
 // ═══ SEND-TO DROPDOWN (Data Flow) ═══
@@ -102,19 +188,19 @@ function HomeWS(){
   const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:10}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
+    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
       <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
       <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?(Array.isArray(trust.people)?trust.people.length:Object.keys(trust.people).length):0}</div><div className="stat-label">entities tracked</div></div>
       <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
       <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
-      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:9,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:9,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
+      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
     </div>
     <div className="card" style={{marginTop:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
         <div className="card-title" style={{margin:0}}>Routines</div>
-        {routineToast&&<span style={{fontSize:10,color:'#00d4ff'}}>{routineToast}</span>}
+        {routineToast&&<span style={{fontSize:11,color:'#00d4ff'}}>{routineToast}</span>}
       </div>
       {routines.length===0?<div style={{color:'#555',fontSize:11}}>No routines registered</div>:
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
@@ -123,9 +209,9 @@ function HomeWS(){
             <span style={{fontSize:16}}>{r.ico}</span>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:11,color:'#ccc',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
-              <div style={{fontSize:9,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
+              <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
             </div>
-            <button className="btn" style={{fontSize:9,padding:'3px 7px'}} disabled={busy} onClick={()=>runRoutine(r.id,r.label)}>{busy?'...':'Run Now'}</button>
+            <button className="btn" style={{fontSize:11,padding:'3px 7px'}} disabled={busy} onClick={()=>runRoutine(r.id,r.label)}>{busy?'...':'Run Now'}</button>
           </div>);
         })}
       </div>}
@@ -154,9 +240,9 @@ function CareerWS(){
     {hasData?<FridaySays text={entries.length+' evaluated, '+applied+' applied, '+interviewing+' interviewing, '+reports.length+' reports. Target: $500K'}/>:<FridaySays text="Career-ops ready. Paste a job URL below to evaluate, or scan portals for new opportunities."/>}
     <div className="card" style={{marginBottom:12,padding:10}}>
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8}}><input className="input" style={{flex:1}} value={evalUrl} onChange={e=>setEvalUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&launchEval()} placeholder="Paste a job URL to evaluate..."/><button className="btn" onClick={launchEval}>Evaluate</button></div>
-      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}><button className="btn" onClick={launchScan} style={{fontSize:10}}>Scan Portals</button><button className="btn" style={{fontSize:10}} onClick={()=>setView('interview')}>Interview Prep</button><button className="btn" style={{fontSize:10}} onClick={()=>setView('overview')}>Overview</button></div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}><button className="btn" onClick={launchScan} style={{fontSize:11}}>Scan Portals</button><button className="btn" style={{fontSize:11}} onClick={()=>setView('interview')}>Interview Prep</button><button className="btn" style={{fontSize:11}} onClick={()=>setView('overview')}>Overview</button></div>
     </div>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','tracker','reports','pipeline','curated','interview','outreach'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
       <div style={{display:'flex',gap:8,marginBottom:12}}>
         <div className="card" style={{flex:1,textAlign:'center'}}><div className="stat" style={{fontSize:20}}>{entries.length}</div><div className="stat-label">evaluated</div></div>
@@ -170,9 +256,9 @@ function CareerWS(){
       {reports.length>0&&<div className="card"><div className="card-title">Recent Evaluations</div>{reports.slice(0,5).map((r,i)=><div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11,cursor:'pointer',color:'#aaa'}} onClick={()=>loadReport(r.name)}>{r.name}</div>)}</div>}
       {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#555'}}>Career-ops uses A-F scoring across 10 weighted dimensions. Generates tailored CVs and tracks applications.</div></div>}
     </div>}
-    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:9,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
-    {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:10,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
-    {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:10}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
+    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
+    {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
+    {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
@@ -207,34 +293,34 @@ function OutreachPanel(){
       <div className="card"><div className="card-title">Warm Contacts</div>
         {warm.length===0?<div style={{color:'#555',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:col}}>{pct}%</span></div>
-          <div style={{fontSize:10,color:'#666'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
+          <div style={{fontSize:11,color:'#666'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
         </div>)})}
       </div>
       <div className="card"><div className="card-title">Career Targets</div>
         {targets.length===0?<div style={{color:'#555',fontSize:11}}>No applied/interviewing targets.</div>:targets.map((t,i)=>(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer'}} onClick={()=>pickCompany(t.company)}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{t.company}</span><span className="badge-cyan" style={{fontSize:9}}>{t.status||''}</span></div>
-          <div style={{fontSize:10,color:'#666'}}>{t.reason}</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{t.company}</span><span className="badge-cyan" style={{fontSize:11}}>{t.status||''}</span></div>
+          <div style={{fontSize:11,color:'#666'}}>{t.reason}</div>
         </div>))}
       </div>
     </div>
     {selected&&<div className="card" style={{marginBottom:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:10,color:'#555',marginLeft:6}}>({selected.type})</span></div>
-        <button className="btn" style={{fontSize:9}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
+        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:11,color:'#555',marginLeft:6}}>({selected.type})</span></div>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['reconnect','intro','referral','follow-up','thank-you','ask'].map(a=><button key={a} className={'btn '+(angle===a?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setAngle(a)}>{a}</button>)}
+        {['reconnect','intro','referral','follow-up','thank-you','ask'].map(a=><button key={a} className={'btn '+(angle===a?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setAngle(a)}>{a}</button>)}
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6}}>
-        {['email','linkedin','sms','call'].map(c=><button key={c} className={'btn '+(channel===c?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setChannel(c)}>{c}</button>)}
+        {['email','linkedin','sms','call'].map(c=><button key={c} className={'btn '+(channel===c?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setChannel(c)}>{c}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:44,resize:'vertical',fontSize:11,marginBottom:6}} value={ctx} onChange={e=>setCtx(e.target.value)} placeholder="Context / specifics (optional)"/>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-        <button className="btn" onClick={doDraft} disabled={drafting} style={{fontSize:10,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
+        <button className="btn" onClick={doDraft} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
         {draft&&<>
-          <button className="btn" onClick={doCopy} style={{fontSize:10}}>📋 Copy</button>
-          <button className="btn" onClick={()=>doLog('sent')} style={{fontSize:10}}>Log Sent</button>
-          <button className="btn btn-magenta" onClick={()=>doLog('drafted')} style={{fontSize:10}}>Log Drafted</button>
+          <button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>
+          <button className="btn" onClick={()=>doLog('sent')} style={{fontSize:11}}>Log Sent</button>
+          <button className="btn btn-magenta" onClick={()=>doLog('drafted')} style={{fontSize:11}}>Log Drafted</button>
         </>}
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{toast}</div>}
@@ -242,8 +328,8 @@ function OutreachPanel(){
     </div>}
     <div className="card"><div className="card-title">Recent Pipeline ({pipe?.total||0})</div>
       {recent.length===0?<div style={{color:'#555',fontSize:11}}>No outreach logged yet.</div>:recent.slice(0,15).map((e,i)=>(<div key={e.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#555'}}>· {e.channel}</span></span><span style={{fontSize:9,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
-        <div style={{fontSize:10,color:'#666'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:9}}>{e.status}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#555'}}>· {e.channel}</span></span><span style={{fontSize:11,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
+        <div style={{fontSize:11,color:'#666'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:11}}>{e.status}</span></div>
       </div>))}
     </div>
   </div>);
@@ -262,10 +348,10 @@ function WikiWS(){
   const totalFiles=struct?.sections?.reduce((a,s)=>a+(s.files?.length||0),0)||0;
   return(<div style={{display:'flex',gap:12,height:'100%'}}>
     <div style={{width:170,borderRight:'1px solid rgba(255,255,255,0.04)',paddingRight:8,overflowY:'auto',flexShrink:0}}>
-      <div style={{fontSize:10,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
-      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:10,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
+      <div style={{fontSize:11,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
+      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
     </div>
-    <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
+    <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
   </div>);
 }
 function CoparentWS(){
@@ -277,17 +363,17 @@ function CoparentWS(){
   const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate co-parent weekly summary'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Weekly summary generation launched')).catch(()=>{})};
   return(<div>
     <FridaySays text={`Next custody day: Thursday ${nextThursday()}. 852 OFW messages analyzed. 89 unanswered threads documented.`}/>
-    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:10}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
+    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
       <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
       <div className="card"><div className="card-title">Unanswered</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
     </div>
     <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
-        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#555',fontFamily:'Orbitron',fontSize:9,padding:4}}>{d}</div>)}
+        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#555',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
         {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
       </div>
-      <div style={{fontSize:10,color:'#555',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
+      <div style={{fontSize:11,color:'#555',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
     </div>
     <div className="card"><div className="card-title">***REMOVED***'s Weekly Schedule</div>
       {['🥋 Kung Fu','💃 Dance','♟️ Chess (school)','🧠 Play Therapy — Rachel Hodgdon','🏫 ***REMOVED*** · Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
@@ -318,7 +404,7 @@ function FuturespeakWS(){
 
   return(<div>
     <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
 
     {view==='overview'&&<div>
@@ -335,7 +421,7 @@ function FuturespeakWS(){
       <div className="card"><div className="card-title">Top Opportunities</div>
         {(pipe?.opportunities||[]).slice(0,3).map((o,i)=>(<div key={o.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
-          <div style={{fontSize:10,color:'#666'}}>{o.next_action}</div>
+          <div style={{fontSize:11,color:'#666'}}>{o.next_action}</div>
         </div>))}
       </div>
     </div>}
@@ -343,19 +429,19 @@ function FuturespeakWS(){
     {view==='pipeline'&&<div>
       {(pipe?.opportunities||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
-          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:10,color:'#666',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
-          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#666',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
+          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
         </div>
         <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
         <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
-        {o.notes&&<div style={{fontSize:10,color:'#666',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
+        {o.notes&&<div style={{fontSize:11,color:'#666',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <button className="btn" style={{fontSize:10}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
-          <span style={{fontSize:10,color:'#666',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
+          <button className="btn" style={{fontSize:11}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
+          <span style={{fontSize:11,color:'#666',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
         </div>
-        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:10,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.02)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
+        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.02)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
       </div>)})}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:9}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='revenue'&&<div>
@@ -371,10 +457,10 @@ function FuturespeakWS(){
               <div style={{width:10,height:pH+'%',background:'rgba(245,158,11,0.4)',borderRadius:'2px 2px 0 0'}} title={'Projected: '+fmt(m.projected)}/>
               <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'—')}/>
             </div>
-            <div style={{fontSize:8,color:'#666',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
+            <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
           </div>)})}
         </div>
-        <div style={{fontSize:9,color:'#666',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
+        <div style={{fontSize:11,color:'#666',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Quarterly</div>
         {(rev?.quarters||[]).map((q,i)=>(<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:12}}>
@@ -385,9 +471,9 @@ function FuturespeakWS(){
       </div>
       <div className="card"><div className="card-title">Cash + Burn</div>
         <div style={{display:'flex',justifyContent:'space-around',fontSize:12}}>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:9,color:'#666'}}>cash on hand</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:9,color:'#666'}}>monthly burn</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:9,color:'#666'}}>net/mo</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#666'}}>cash on hand</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#666'}}>monthly burn</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#666'}}>net/mo</div></div>
         </div>
       </div>
     </div>}
@@ -395,10 +481,10 @@ function FuturespeakWS(){
     {view==='legal'&&<div>
       {(legal?.items||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:10,color:'#666'}}>{it.counterparty} · {it.type}</div></div>
-          <span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#666'}}>{it.counterparty} · {it.type}</div></div>
+          <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
         </div>
-        <div style={{fontSize:10,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
+        <div style={{fontSize:11,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
         {it.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4,fontStyle:'italic'}}>{it.notes}</div>}
       </div>)})}
     </div>}
@@ -406,24 +492,24 @@ function FuturespeakWS(){
     {view==='website'&&<div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:10,color:'#666'}}>Primary brand site · Replit-hosted</div></div>
-          <span className="badge-green" style={{fontSize:9}}>LIVE</span>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#666'}}>Primary brand site · Replit-hosted</div></div>
+          <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
-          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
-          <button className="btn" style={{fontSize:10}} onClick={()=>launchVibeCode('Update futurespeak.ai website','C:\\Users\\user\\Projects\\futurespeak-site')}>💻 Open in Claude Code</button>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update futurespeak.ai website','C:\\Users\\user\\Projects\\futurespeak-site')}>💻 Open in Claude Code</button>
         </div>
       </div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:10,color:'#666'}}>Portfolio site · Replit-hosted</div></div>
-          <span className="badge-green" style={{fontSize:9}}>LIVE</span>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#666'}}>Portfolio site · Replit-hosted</div></div>
+          <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">🌐 Visit</a>
-          <a className="btn" style={{fontSize:10,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
-          <button className="btn" style={{fontSize:10}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>💻 Open in Claude Code</button>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>💻 Open in Claude Code</button>
         </div>
       </div>
       <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#666'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
@@ -435,7 +521,7 @@ function FuturespeakWS(){
         <div style={{fontSize:16,fontWeight:600,color:'#7c3aed',marginBottom:4}}>FutureSpeak.AI Discord</div>
         <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server · member activity · announcements</div>
         <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>🚀 Open Discord</a>
-        <div style={{fontSize:10,color:'#555',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
+        <div style={{fontSize:11,color:'#555',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
       </div>
     </div>}
 
@@ -443,24 +529,24 @@ function FuturespeakWS(){
       <div className="card" style={{textAlign:'center',padding:30,borderStyle:'dashed',borderColor:'rgba(255,255,255,0.08)'}}>
         <div style={{fontSize:32,marginBottom:8}}>🎯</div>
         <div style={{fontSize:14,fontWeight:600,color:'#888',marginBottom:4}}>Talent Pipeline</div>
-        <span className="badge-amber" style={{fontSize:10}}>Coming Soon</span>
+        <span className="badge-amber" style={{fontSize:11}}>Coming Soon</span>
         <div style={{fontSize:11,color:'#555',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
       </div>
     </div>}
 
     {view==='demos'&&<div>
-      <div style={{fontSize:10,color:'#555',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
+      <div style={{fontSize:11,color:'#555',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
       {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#555',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
         {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
-          <div style={{fontSize:9,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
+          <div style={{fontSize:11,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
           <div style={{display:'flex',gap:3}}>
-            <button className="btn" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
-            <button className="btn btn-magenta" style={{fontSize:9,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
+            <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
+            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
           </div>
         </div>)})}
       </div>}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:9}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='studio'&&<div>
@@ -498,8 +584,8 @@ function FamilyWS(){
     <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🥋 ***REMOVED*** · 💃 Dance · ♟️ Chess<br/>🏫 ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
-      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:10,color:'#666',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
-      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:9}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:9}}>monitoring</span><br/><span style={{color:'#666',fontSize:10}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
+      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:11,color:'#666',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
+      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#666',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
       <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
       <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
       <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
@@ -521,10 +607,10 @@ function StudioWS(){
     const ext=(selected.name||'').split('.').pop().toLowerCase();const url='/api/creations/'+selected.name;
     return(<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:10}}>Back to Gallery</button>
+        <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:11}}>Back to Gallery</button>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:10,color:'#555'}}>{selected.name}</span>
-          <button className="btn" onClick={()=>window.open(url,'_blank')} style={{fontSize:10}}>Open in Tab</button>
+          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#555'}}>{selected.name}</span>
+          <button className="btn" onClick={()=>window.open(url,'_blank')} style={{fontSize:11}}>Open in Tab</button>
         </div>
       </div>
       {ext==='html'&&<iframe src={url} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
@@ -538,24 +624,24 @@ function StudioWS(){
     <FridaySays text={creations.length+' creations in the gallery. Daily creation runs at 2 PM.'}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
-      <button className="btn" style={{fontSize:10,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
+      <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
     </div>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
-      {['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:10}}>{gen?'Creating...':t}</button>)}
-      {creationLog&&<button className="btn btn-magenta" style={{fontSize:10}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
+      {['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:11}}>{gen?'Creating...':t}</button>)}
+      {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
     </div>
-    {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:10,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
+    {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:9,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
+      {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
     </div>
     {loading?<div style={{color:'#555'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
       {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
         return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
           <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
-          <div style={{fontSize:10,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
-          <div style={{fontSize:9,color:'#555',marginTop:2}}>{date}</div>
-          <button className="btn" style={{fontSize:8,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/api/creations/'+f.name,'_blank')}}>Open in Tab</button>
+          <div style={{fontSize:11,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
+          <div style={{fontSize:11,color:'#555',marginTop:2}}>{date}</div>
+          <button className="btn" style={{fontSize:11,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/api/creations/'+f.name,'_blank')}}>Open in Tab</button>
         </div>);
       })}
     </div>}
@@ -578,7 +664,7 @@ function TrustWS(){
       const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
       return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:10,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
+          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
             <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
@@ -588,11 +674,11 @@ function TrustWS(){
         {expanded===i&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
           {dims.map(d=>{const val=p.scores&&typeof p.scores[d]==='number'?p.scores[d]:0.5;const v=Math.round(val*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
             return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
-              <span style={{width:120,fontSize:10,color:'#666'}}>{d.replace(/_/g,' ')}</span>
+              <span style={{width:120,fontSize:11,color:'#666'}}>{d.replace(/_/g,' ')}</span>
               <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
-              <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
+              <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
             </div>)})}
-          <div style={{fontSize:10,color:'#555',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
+          <div style={{fontSize:11,color:'#555',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
         </div>}
       </div>)})}
   </div>);
@@ -629,12 +715,12 @@ function CodeWS(){
       <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:6}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line... (e.g. 'Scan portals for AI director roles')"/>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
         <button className="btn" onClick={()=>launch()} disabled={loading} style={{fontWeight:600}}>{loading?'Launching...':'Launch All'}</button>
-        <button className="btn" onClick={()=>launch(tasks||'Ready for instructions')} style={{fontSize:10}}>1 Terminal</button>
-        <button className="btn" onClick={()=>{const t=tasks||'Task 1\nTask 2';launch(t+'\n'+t)}} style={{fontSize:10}}>Quad Code (4x)</button>
+        <button className="btn" onClick={()=>launch(tasks||'Ready for instructions')} style={{fontSize:11}}>1 Terminal</button>
+        <button className="btn" onClick={()=>{const t=tasks||'Task 1\nTask 2';launch(t+'\n'+t)}} style={{fontSize:11}}>Quad Code (4x)</button>
       </div>
     </div>
     {presets.length>0&&<div style={{marginBottom:10}}><div className="card-title">Presets</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-      {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:10}} onClick={()=>launchPreset(p)}>{p.name}</button>)}
+      {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>launchPreset(p)}>{p.name}</button>)}
     </div></div>}
     {terminals.length>0&&<div><div className="card-title">Terminals ({running} active)</div>
       <div style={{display:'grid',gridTemplateColumns:selectedTerminal?'1fr':'1fr 1fr',gap:6}}>
@@ -644,18 +730,18 @@ function CodeWS(){
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
                 <div style={{width:8,height:8,borderRadius:'50%',background:t.status==='running'?color:'#555',boxShadow:t.status==='running'?'0 0 8px '+color:'none'}}/>
-                <span style={{fontFamily:'Orbitron',fontSize:10,color}}>Q{i+1}</span>
+                <span style={{fontFamily:'Orbitron',fontSize:11,color}}>Q{i+1}</span>
               </div>
               <div style={{display:'flex',gap:4}}>
-                <span style={{fontSize:9,color:t.status==='running'?'#00ff80':'#888',fontFamily:'JetBrains Mono'}}>{t.status||'unknown'}</span>
-                {t.status==='running'&&<button className="btn btn-magenta" style={{fontSize:8,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();stopTerminal(t.id)}}>Stop</button>}
+                <span style={{fontSize:11,color:t.status==='running'?'#00ff80':'#888',fontFamily:'JetBrains Mono'}}>{t.status||'unknown'}</span>
+                {t.status==='running'&&<button className="btn btn-magenta" style={{fontSize:11,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();stopTerminal(t.id)}}>Stop</button>}
               </div>
             </div>
             <div style={{fontSize:11,color:'#aaa',marginTop:4,wordBreak:'break-word'}}>{(t.task||'').substring(0,isSelected?500:80)}{!isSelected&&(t.task||'').length>80?'...':''}</div>
             {isSelected&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-              <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
-              <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
-              <div style={{marginTop:6,padding:8,background:'rgba(0,0,0,0.3)',borderRadius:4,fontFamily:'JetBrains Mono',fontSize:10,color:'#888',minHeight:60}}>
+              <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
+              <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
+              <div style={{marginTop:6,padding:8,background:'rgba(0,0,0,0.3)',borderRadius:4,fontFamily:'JetBrains Mono',fontSize:11,color:'#888',minHeight:60}}>
                 Terminal output will appear here when log streaming is enabled.
                 For now, check the CMD window on your desktop.
               </div>
@@ -684,13 +770,13 @@ function NewsWS(){
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
   if(selected)return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:10}}>Back to Archive</button>
+      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>Back to Archive</button>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:10}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
-        <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:10}}>Stop</button>
-        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:10}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
+        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
+        <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:11}}>Stop</button>
+        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
         <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
-        <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:10}}>Open in Tab</button>
+        <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>
       </div>
     </div>
     <div style={{display:'flex',gap:12}}>
@@ -699,19 +785,19 @@ function NewsWS(){
         <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{htmlContent}</pre>}
       </div>
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
-        <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
-        <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:10,color:'#00d4ff'}}>Thinking...</div>}</div>
-        <div style={{display:'flex',gap:4}}><input className="input" style={{flex:1,fontSize:11}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendBriefingChat()} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:10}} onClick={sendBriefingChat}>Send</button></div>
+        <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
+        <div style={{flex:1,overflowY:'auto',marginBottom:8}}>{chatMsgs.map((m,i)=><div key={i} style={{marginBottom:6,textAlign:m.role==='user'?'right':'left'}}><div style={{display:'inline-block',maxWidth:'90%',padding:'5px 8px',borderRadius:6,fontSize:11,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div></div>)}{chatLoad&&<div style={{fontSize:11,color:'#00d4ff'}}>Thinking...</div>}</div>
+        <div style={{display:'flex',gap:4}}><input className="input" style={{flex:1,fontSize:11}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendBriefingChat()} placeholder="Ask about this briefing..."/><button className="btn" style={{fontSize:11}} onClick={sendBriefingChat}>Send</button></div>
       </div>}
     </div>
   </div>);
   return(<div>
     <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:10}} onClick={launchBriefing}>Generate Briefing</button></div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:11}} onClick={launchBriefing}>Generate Briefing</button></div>
     {briefings.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
     briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
-      <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:10,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
-      <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:9,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
+      <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:11,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
+      <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
     </div>)}
   </div>);
 }
@@ -766,7 +852,7 @@ function DraftWS(){
     {/* Mode selector */}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
       {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(mode===m.id?'':'btn-magenta')}
-        style={{fontSize:10,padding:'4px 10px'}} onClick={()=>setMode(m.id)}>
+        style={{fontSize:11,padding:'4px 10px'}} onClick={()=>setMode(m.id)}>
         {m.ico} {m.label}
       </button>)}
     </div>
@@ -779,7 +865,7 @@ function DraftWS(){
 
     {/* Context toggle */}
     <div style={{marginBottom:8}}>
-      <button className="btn" style={{fontSize:9,padding:'2px 8px',marginRight:6}} onClick={()=>setShowCtx(!showCtx)}>
+      <button className="btn" style={{fontSize:11,padding:'2px 8px',marginRight:6}} onClick={()=>setShowCtx(!showCtx)}>
         {showCtx?'Hide Context':'+ Context'}
       </button>
       {showCtx&&<textarea className="input" style={{width:'100%',height:50,resize:'vertical',marginTop:4,fontSize:11}}
@@ -792,14 +878,14 @@ function DraftWS(){
       <button className="btn" onClick={generate} disabled={loading} style={{fontWeight:600}}>
         {loading?'Generating...':'Generate'}
       </button>
-      {draft&&<button className="btn" onClick={generate} disabled={loading} style={{fontSize:10}}>Regenerate</button>}
+      {draft&&<button className="btn" onClick={generate} disabled={loading} style={{fontSize:11}}>Regenerate</button>}
     </div>
 
     {/* Draft output */}
     {draft&&<div style={{marginBottom:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>DRAFT OUTPUT</span>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:mode==='tweet'&&charCount>280?'#ff0080':'#555'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>DRAFT OUTPUT</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:mode==='tweet'&&charCount>280?'#ff0080':'#555'}}>
           {charCount} chars{mode==='tweet'&&charCount>280?' ⚠️ over limit':''}
         </span>
       </div>
@@ -809,7 +895,7 @@ function DraftWS(){
         <button className="btn" onClick={()=>deploy('clipboard')} style={{fontWeight:600}}>
           {copied?'✓ Copied!':'📋 Copy to Clipboard'}
         </button>
-        <button className="btn btn-magenta" onClick={()=>deploy('gmail_draft')} style={{fontSize:10}}>
+        <button className="btn btn-magenta" onClick={()=>deploy('gmail_draft')} style={{fontSize:11}}>
           📧 Gmail Draft
         </button>
       </div>
@@ -817,10 +903,10 @@ function DraftWS(){
 
     {/* History */}
     {history.length>0&&<div>
-      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#555',marginBottom:6}}>RECENT DRAFTS</div>
+      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#555',marginBottom:6}}>RECENT DRAFTS</div>
       {history.map((h,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',padding:'6px 10px'}}
         onClick={()=>{setDraft(h.draft);setCharCount(h.draft.length);setMode(h.mode)}}>
-        <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
           <span style={{color:'#aaa'}}>{DRAFT_MODES.find(m=>m.id===h.mode)?.ico||'📝'} {h.prompt}...</span>
           <span style={{color:'#555'}}>{h.time}</span>
         </div>
@@ -845,37 +931,37 @@ function FinanceWS(){
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused Amex perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:10}} onClick={refreshFinance}>Refresh Data</button></div>
+    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
-        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:9}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
+        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#555',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
-      <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:10}}>{p.value}</span></div>)}</div>
+      <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
     </div>}
     {view==='portfolio'&&<div>
       <div className="card-title">Portfolio Positions</div>
       {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#666'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
-      <div style={{fontSize:10,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
-      <div style={{fontSize:10,color:'#444',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
+      <div style={{fontSize:11,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
+      <div style={{fontSize:11,color:'#444',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
       <div className="card-title">Amex Platinum Perks</div>
       {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:9,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:9,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
-        {p.notes&&<div style={{fontSize:10,color:'#666',marginTop:3}}>{p.notes}</div>}
-        {p.expires&&<div style={{fontSize:10,color:'#555',marginTop:2}}>Expires: {p.expires}</div>}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
+        {p.notes&&<div style={{fontSize:11,color:'#666',marginTop:3}}>{p.notes}</div>}
+        {p.expires&&<div style={{fontSize:11,color:'#555',marginTop:2}}>Expires: {p.expires}</div>}
       </div>})}
     </div>}
     {view==='contacts'&&<div>
       <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor · RW Baird</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA · Whitley Penn</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor · RW Baird</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA · Whitley Penn</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
     </div>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
-      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:10,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
+      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -894,7 +980,7 @@ function HealthWS(){
   const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
@@ -905,37 +991,37 @@ function HealthWS(){
     </div>}
     {view==='medications'&&<div>
       <div className="card-title">Medications</div>
-      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:10,color:'#666',marginTop:2}}>{m.notes}</div>}</div>)}
-      <div style={{fontSize:10,color:'#444',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
+      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#666',marginTop:2}}>{m.notes}</div>}</div>)}
+      <div style={{fontSize:11,color:'#444',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
     </div>}
     {view==='appointments'&&<div>
       <div className="card-title">Appointments & Providers</div>
       {apptList.map((a,i)=><div key={i} className="card" style={{marginBottom:6}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:9}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
         {a.frequency&&<div style={{fontSize:11,color:'#888',marginTop:2}}>Frequency: {a.frequency}</div>}
         {a.next&&<div style={{fontSize:11,color:'#f59e0b',marginTop:2}}>Next: {a.next}</div>}
-        {a.email&&<div style={{fontSize:10,color:'#666',marginTop:2}}>{a.email}</div>}
+        {a.email&&<div style={{fontSize:11,color:'#666',marginTop:2}}>{a.email}</div>}
       </div>)}
     </div>}
     {view==='insurance'&&<div>
       <div className="card-title">Insurance</div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Cigna Healthcare'}</div>
-        {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:8,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
-        {ins.notes&&<div style={{fontSize:10,color:'#666',marginTop:6}}>{ins.notes}</div>}
+        {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:11,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
+        {ins.notes&&<div style={{fontSize:11,color:'#666',marginTop:6}}>{ins.notes}</div>}
       </div>
-      <div style={{fontSize:10,color:'#444'}}>Edit ~/.friday/health/insurance.json to add your details</div>
+      <div style={{fontSize:11,color:'#444'}}>Edit ~/.friday/health/insurance.json to add your details</div>
     </div>}
     {view==='vehicles'&&<div>
       <div className="card-title">Fleet Health</div>
       {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:10}}>{v.miles} mi</span>}</div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
         {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
-        {v.mechanic&&<div style={{fontSize:10,color:'#666',marginTop:2}}>🔧 {v.mechanic}</div>}
-        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:10,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:10,color:'#666',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
+        {v.mechanic&&<div style={{fontSize:11,color:'#666',marginTop:2}}>🔧 {v.mechanic}</div>}
+        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#666',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
       </div>)}
       <div className="card-title" style={{marginTop:12}}>Mechanics</div>
-      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:10,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:9}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
+      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:11,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -954,17 +1040,17 @@ function ContactsWS(){
     const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
     return(<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" style={{fontSize:10}} onClick={()=>{setSelected(null);setDetail(null)}}>← Back</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDetail(null)}}>← Back</button>
         <div style={{display:'flex',gap:4}}>
-          <button className="btn" style={{fontSize:10}} onClick={doResearch} disabled={researching}>{researching?'Researching...':'🔎 Research'}</button>
+          <button className="btn" style={{fontSize:11}} onClick={doResearch} disabled={researching}>{researching?'Researching...':'🔎 Research'}</button>
           <SendTo content={()=>JSON.stringify(detail||selected,null,2)} personName={selected.name} dataType="contact_research" options={[{label:'Draft Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>
-          <button className="btn" style={{fontSize:10}} onClick={doCopy}>📋 Copy</button>
+          <button className="btn" style={{fontSize:11}} onClick={doCopy}>📋 Copy</button>
         </div>
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:10,color:'#555'}}>aka {selected.aliases.join(', ')}</div>}</div>
+          <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:11,color:'#555'}}>aka {selected.aliases.join(', ')}</div>}</div>
           <div style={{fontFamily:'Orbitron',fontSize:16,color:col}}>{pct}%</div>
         </div>
         <div className="progress-bar"><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
@@ -974,17 +1060,17 @@ function ContactsWS(){
           <div className="card-title">Trust Dimensions</div>
           {dims.map(d=>{const v=Math.round((detail.scores&&typeof detail.scores[d]==='number'?detail.scores[d]:0.5)*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
             return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
-              <span style={{width:140,fontSize:10,color:'#888'}}>{d.replace(/_/g,' ')}</span>
+              <span style={{width:140,fontSize:11,color:'#888'}}>{d.replace(/_/g,' ')}</span>
               <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
-              <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
+              <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
             </div>)})}
         </div>
         {detail.domains&&detail.domains.length>0&&<div className="card" style={{marginBottom:10}}><div className="card-title">Domains</div><div style={{fontSize:11,color:'#aaa'}}>{detail.domains.join(' · ')}</div></div>}
-        {detail.last_interaction&&<div style={{fontSize:10,color:'#666',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
+        {detail.last_interaction&&<div style={{fontSize:11,color:'#666',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
         {Array.isArray(detail.evidence)&&detail.evidence.length>0&&<div className="card" style={{marginBottom:10}}>
           <div className="card-title">Evidence ({detail.evidence.length})</div>
           {detail.evidence.slice(0,20).map((e,i)=><div key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',padding:'4px 0',fontSize:11}}>
-            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#00d4ff'}}>{e.type||'event'}</span><span style={{color:'#555',fontSize:10}}>{e.timestamp||''}</span></div>
+            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#00d4ff'}}>{e.type||'event'}</span><span style={{color:'#555',fontSize:11}}>{e.timestamp||''}</span></div>
             {e.notes&&<div style={{color:'#aaa',marginTop:2}}>{e.notes}</div>}
           </div>)}
         </div>}
@@ -996,7 +1082,7 @@ function ContactsWS(){
     <FridaySays text={contacts.length+' contacts tracked · search, research, and draft outreach.'}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts..."/>
-      <button className="btn" style={{fontSize:10}} onClick={loadList}>↻</button>
+      <button className="btn" style={{fontSize:11}} onClick={loadList}>↻</button>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
     {loading?<div style={{color:'#555',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
@@ -1006,12 +1092,12 @@ function ContactsWS(){
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:12,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
-              {c.aliases&&c.aliases.length>0&&<div style={{fontSize:9,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
+              {c.aliases&&c.aliases.length>0&&<div style={{fontSize:11,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
             </div>
             <div style={{fontFamily:'Orbitron',fontSize:12,color:col,marginLeft:6}}>{pct}%</div>
           </div>
           <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
-          <div style={{fontSize:9,color:'#555',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
+          <div style={{fontSize:11,color:'#555',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
         </div>);
       })}
     </div>}
@@ -1041,20 +1127,20 @@ function ContentWS(){
     const col=STAGE_COLORS[selected.stage]||'#888';
     return(<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" style={{fontSize:10}} onClick={()=>{setSelected(null);setDraft('')}}>← Back</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>← Back</button>
         <div style={{display:'flex',gap:4}}>
-          <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:10,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
-          <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:10}}>Draft + Advance</button>
-          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:10}}>📋 Copy</button>}
+          <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
+          <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:11}}>Draft + Advance</button>
+          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>}
         </div>
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
           <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
-          <span className="badge-cyan" style={{fontSize:9,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
+          <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
         </div>
-        <div style={{fontSize:10,color:'#666'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
+        <div style={{fontSize:11,color:'#666'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
         {selected.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:6,fontStyle:'italic'}}>{selected.notes}</div>}
       </div>
       {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
@@ -1064,10 +1150,10 @@ function ContentWS(){
   return(<div>
     <FridaySays text={`${pipe?.total||0} items in pipeline · kanban across ${STAGES.length} stages. Click + to capture an idea.`}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
-      <div style={{fontSize:10,color:'#555',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
+      <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" style={{fontSize:10}} onClick={load}>↻</button>
-        <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
+        <button className="btn" style={{fontSize:11}} onClick={load}>↻</button>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
       </div>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
@@ -1075,24 +1161,24 @@ function ContentWS(){
       <div className="card-title">New Idea</div>
       <input className="input" style={{width:'100%',marginBottom:6,fontSize:12}} value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="Title / hook..."/>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn '+(newType===t?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
+        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn '+(newType===t?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn '+(newChannel===c?'':'btn-magenta')} style={{fontSize:9,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
+        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn '+(newChannel===c?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:11,marginBottom:6}} value={newNotes} onChange={e=>setNewNotes(e.target.value)} placeholder="Notes, angle, references..."/>
-      <button className="btn" style={{fontSize:10,fontWeight:600}} onClick={addIdea}>Capture</button>
+      <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={addIdea}>Capture</button>
     </div>}
     <div style={{display:'grid',gridTemplateColumns:'repeat(5, 1fr)',gap:6,minHeight:200}}>
       {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.02)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,paddingBottom:4,borderBottom:'1px solid '+col+'22'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:9,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
-          <span style={{fontSize:9,color:'#555',fontFamily:'JetBrains Mono'}}>{items.length}</span>
+          <span style={{fontFamily:'Orbitron',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
+          <span style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{items.length}</span>
         </div>
-        {items.length===0?<div style={{fontSize:10,color:'#444',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
+        {items.length===0?<div style={{fontSize:11,color:'#444',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
           <div style={{fontSize:11,color:'#ccc',fontWeight:600,lineHeight:1.3,marginBottom:2}}>{it.title}</div>
-          <div style={{fontSize:9,color:'#666'}}>{it.type} · {it.channel}</div>
-          {it.tags&&it.tags.length>0&&<div style={{fontSize:8,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
+          <div style={{fontSize:11,color:'#666'}}>{it.type} · {it.channel}</div>
+          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
         </div>))}
       </div>)})}
     </div>
@@ -1106,6 +1192,7 @@ function App(){
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[paletteOpen,setPaletteOpen]=useState(false);
   const[quickDraft,setQuickDraft]=useState(false);const[qdMode,setQdMode]=useState('freeform');const[qdPrompt,setQdPrompt]=useState('');const[qdResult,setQdResult]=useState('');const[qdLoading,setQdLoading]=useState(false);const[qdCopied,setQdCopied]=useState(false);
   const qdGenerate=async()=>{if(!qdPrompt.trim()||qdLoading)return;setQdLoading(true);setQdCopied(false);try{const r=await fetch('/api/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:qdMode,prompt:qdPrompt})});const d=await r.json();setQdResult(d.status==='ok'?d.draft:'[Error] '+(d.message||'Failed'))}catch(e){setQdResult('[Error] '+e.message)}setQdLoading(false)};
   const qdCopy=async()=>{if(!qdResult)return;try{await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:qdResult,destination:'clipboard'})});setQdCopied(true);setTimeout(()=>setQdCopied(false),2000)}catch(e){}};
@@ -1123,6 +1210,18 @@ function App(){
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
+
+  // Ctrl+K opens command palette
+  useEffect(()=>{
+    const h=(e)=>{
+      if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){
+        e.preventDefault();
+        setPaletteOpen(p=>!p);
+      }
+    };
+    window.addEventListener('keydown',h);
+    return()=>window.removeEventListener('keydown',h);
+  },[]);
 
   const[vibeMode,setVibeMode]=useState(false);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
@@ -1154,7 +1253,7 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>
-          <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:8,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
+          <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#555',cursor:'pointer',fontSize:14}} title="Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
@@ -1206,7 +1305,7 @@ function App(){
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
             {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
           </div>
-          <div style={{fontSize:9,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
+          <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
         {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
         <div ref={chatEnd}/>
@@ -1272,16 +1371,16 @@ function App(){
     {/* Quick Draft Popup */}
     {quickDraft&&<div style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>QUICK DRAFT</span>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
-        {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:8,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
+        {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
       </div>
       <textarea className="input" style={{width:'100%',height:48,resize:'none',fontSize:11,marginBottom:6}} value={qdPrompt} onChange={e=>setQdPrompt(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)qdGenerate()}} placeholder="What do you need drafted? (Ctrl+Enter)"/>
       <div style={{display:'flex',gap:4,marginBottom:qdResult?8:0}}>
-        <button className="btn" onClick={qdGenerate} disabled={qdLoading} style={{fontSize:10,fontWeight:600}}>{qdLoading?'Generating...':'Generate'}</button>
-        {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:10}}>{qdCopied?'✓ Copied':'📋 Copy'}</button>}
+        <button className="btn" onClick={qdGenerate} disabled={qdLoading} style={{fontSize:11,fontWeight:600}}>{qdLoading?'Generating...':'Generate'}</button>
+        {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:11}}>{qdCopied?'✓ Copied':'📋 Copy'}</button>}
       </div>
       {qdResult&&<div style={{marginTop:4,maxHeight:180,overflowY:'auto',background:'rgba(255,255,255,0.02)',borderRadius:6,padding:8}}>
         <pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',margin:0,lineHeight:1.5}}>{qdResult}</pre>
@@ -1293,12 +1392,21 @@ function App(){
       <a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener">discord.gg/f2VM6qNk</a>
     </div>
 
-    {/* Dock */}
+    {/* Dock — grouped (Life / Work / System) */}
     <div className="dock">
-      {WS.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
-        <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
-      </button>)}
+      {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
+        {gi>0&&<div className="dock-divider"/>}
+        <div className="dock-group">
+          <div className="dock-group-btns">
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
+              <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
+            </button>)}
+          </div>
+          <div className="dock-group-label">{g.name}</div>
+        </div>
+      </React.Fragment>))}
     </div>
+    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
   </>);
 }
 ReactDOM.createRoot(document.getElementById('ui-inner')||document.getElementById('ui-root')).render(<App/>);
