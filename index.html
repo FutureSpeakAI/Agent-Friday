@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>FRIDAY Desktop â€” FutureSpeak.AI</title>
+<title>FRIDAY Desktop — FutureSpeak.AI</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -164,7 +164,7 @@
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Floating windows â€” glassmorphism */
+        /* Floating windows — glassmorphism */
         .fwin {
             position: fixed; display: flex; flex-direction: column;
             background: rgba(6,6,14,0.65); backdrop-filter: blur(14px) saturate(1.2);
@@ -410,7 +410,7 @@
             font-size: 12px;
         }
 
-        /* â•â•â• GEMINI DESIGN PASS â€” Holographic Dock Refinements â•â•â• */
+        /* ═══ GEMINI DESIGN PASS — Holographic Dock Refinements ═══ */
         @keyframes holoShimmer {
           0%   { background-position: -200% 0; }
           100% { background-position: 200% 0; }
@@ -1633,26 +1633,26 @@ document.addEventListener('keydown', function(e) {
 const{useState,useEffect,useRef,useCallback}=React;
 const DOCK_GROUPS=[
   {name:'Life',items:[
-    {id:'home',ico:'ðŸ ',label:'Home'},
-    {id:'family',ico:'ðŸ‘ª',label:'Family'},
-    {id:'coparent',ico:'ðŸ‘¨â€ðŸ‘©â€ðŸ‘§',label:'Co-Parent'},
-    {id:'health',ico:'â¤ï¸',label:'Health'},
-    {id:'finance',ico:'ðŸ’°',label:'Finance'},
+    {id:'home',ico:'🏠',label:'Home'},
+    {id:'family',ico:'👪',label:'Family'},
+    {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},
+    {id:'health',ico:'❤️',label:'Health'},
+    {id:'finance',ico:'💰',label:'Finance'},
   ]},
   {name:'Work',items:[
-    {id:'career',ico:'ðŸ’¼',label:'Career'},
-    {id:'futurespeak',ico:'ðŸš€',label:'FutureSpeak'},
-    {id:'contacts',ico:'ðŸ‘¥',label:'Contacts'},
-    {id:'draft',ico:'âœï¸',label:'Draft'},
-    {id:'content',ico:'ðŸ“',label:'Content'},
+    {id:'career',ico:'💼',label:'Career'},
+    {id:'futurespeak',ico:'🚀',label:'FutureSpeak'},
+    {id:'contacts',ico:'👥',label:'Contacts'},
+    {id:'draft',ico:'✍️',label:'Draft'},
+    {id:'content',ico:'📝',label:'Content'},
   ]},
   {name:'System',items:[
-    {id:'news',ico:'ðŸ“°',label:'News'},
-    {id:'wiki',ico:'ðŸ“š',label:'Wiki'},
-    {id:'trust',ico:'ðŸ”—',label:'Trust'},
-    {id:'studio',ico:'ðŸŽ¨',label:'Studio'},
-    {id:'code',ico:'ðŸ’»',label:'Code'},
-    {id:'system',ico:'ðŸ–¥ï¸',label:'System'},
+    {id:'news',ico:'📰',label:'News'},
+    {id:'wiki',ico:'📚',label:'Wiki'},
+    {id:'trust',ico:'🔗',label:'Trust'},
+    {id:'studio',ico:'🎨',label:'Studio'},
+    {id:'code',ico:'💻',label:'Code'},
+    {id:'system',ico:'🖥️',label:'System'},
   ]},
 ];
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
@@ -1667,26 +1667,26 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
   useEffect(()=>{if(!resizing)return;const mv=e=>setSize({w:Math.max(400,rStart.current.w+e.clientX-rStart.current.x),h:Math.max(280,rStart.current.h+e.clientY-rStart.current.y)});const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
   return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
-      <span className="fwin-title">{emoji} {title}</span><div className="fwin-btns"><button onClick={onClose}>Ã—</button></div>
+      <span className="fwin-title">{emoji} {title}</span><div className="fwin-btns"><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body">{children}</div>
     <div className="resize-h" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
   </div>);
 }
 
-// â•â•â• ERROR WRAPPER â•â•â•
+// ═══ ERROR WRAPPER ═══
 function Safe({children,name}){
   const[err,setErr]=useState(false);
-  if(err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>âš ï¸ {name} encountered an error</div><button className="btn" style={{marginTop:8}} onClick={()=>setErr(false)}>Retry</button></div>);
+  if(err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {name} encountered an error</div><button className="btn" style={{marginTop:8}} onClick={()=>setErr(false)}>Retry</button></div>);
   try{return children}catch(e){setErr(true);return null}
 }
 
-// â•â•â• FRIDAY SAYS (proactive insight) â•â•â•
+// ═══ FRIDAY SAYS (proactive insight) ═══
 function FridaySays({text}){
   if(!text)return null;
-  return(<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#00d4ff',fontStyle:'italic'}}>ðŸ’¡ {text}</div>);
+  return(<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.1)',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#00d4ff',fontStyle:'italic'}}>💡 {text}</div>);
 }
 
-// â•â•â• COMMAND PALETTE (Ctrl+K) â•â•â•
+// ═══ COMMAND PALETTE (Ctrl+K) ═══
 function CommandPalette({onClose,onOpenWs,openWins}){
   const[q,setQ]=useState('');
   const[sel,setSel]=useState(0);
@@ -1704,9 +1704,9 @@ function CommandPalette({onClose,onOpenWs,openWins}){
   const wsResults=WS.filter(w=>!query||w.label.toLowerCase().includes(query)||w.id.includes(query))
     .map(w=>({kind:'ws',id:w.id,ico:w.ico,label:w.label,meta:openWins.has(w.id)?'open':'open workspace'}));
   const contactResults=(query?contacts.filter(c=>(c.name||c.label||'').toLowerCase().includes(query)):[]).slice(0,6)
-    .map(c=>({kind:'contact',id:c.id||c.name,ico:'ðŸ‘¤',label:c.name||c.label,meta:c.email||c.role||'contact'}));
+    .map(c=>({kind:'contact',id:c.id||c.name,ico:'👤',label:c.name||c.label,meta:c.email||c.role||'contact'}));
   const routineResults=(query?routines.filter(r=>(r.label||r.name||'').toLowerCase().includes(query)):[]).slice(0,6)
-    .map(r=>({kind:'routine',id:r.id,ico:'âš¡',label:r.label||r.name,meta:r.schedule||r.category||'routine'}));
+    .map(r=>({kind:'routine',id:r.id,ico:'⚡',label:r.label||r.name,meta:r.schedule||r.category||'routine'}));
   const sections=[
     {title:'Workspaces',items:wsResults},
     {title:'Contacts',items:contactResults},
@@ -1735,7 +1735,7 @@ function CommandPalette({onClose,onOpenWs,openWins}){
 
   return(<div className="cmd-palette-overlay" onClick={onClose}>
     <div className="cmd-palette" onClick={e=>e.stopPropagation()} onKeyDown={onKey}>
-      <input ref={inputRef} className="cmd-palette-input" placeholder="Search workspaces, contacts, routinesâ€¦"
+      <input ref={inputRef} className="cmd-palette-input" placeholder="Search workspaces, contacts, routines…"
         value={q} onChange={e=>setQ(e.target.value)}/>
       <div className="cmd-palette-results">
         {flat.length===0&&<div className="cmd-palette-empty">No matches</div>}
@@ -1755,16 +1755,16 @@ function CommandPalette({onClose,onOpenWs,openWins}){
   </div>);
 }
 
-// â•â•â• SEND-TO DROPDOWN (Data Flow) â•â•â•
+// ═══ SEND-TO DROPDOWN (Data Flow) ═══
 function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
   const[open,setOpen]=useState(false);const[status,setStatus]=useState(null);const ref=useRef(null);
   useEffect(()=>{if(!open)return;const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h)},[open]);
   const defaultOpts=[
-    {label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'},
-    {label:'Save to Trust Graph',dest:'trust_graph',ico:'ðŸ”—',needsPerson:true},
-    {label:'Send to Calendar',dest:'calendar_notes',ico:'ðŸ“…',needsEvent:true},
-    {label:'Add to Briefing',dest:'briefing',ico:'ðŸ“°'},
-    {label:'Draft Email',dest:'gmail_draft',ico:'âœ‰ï¸'},
+    {label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},
+    {label:'Save to Trust Graph',dest:'trust_graph',ico:'🔗',needsPerson:true},
+    {label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},
+    {label:'Add to Briefing',dest:'briefing',ico:'📰'},
+    {label:'Draft Email',dest:'gmail_draft',ico:'✉️'},
   ];
   const opts=(options||defaultOpts).filter(o=>{
     if(o.needsPerson&&!personName)return false;
@@ -1787,14 +1787,14 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
   };
   if(opts.length===0)return null;
   return(<div ref={ref} style={{position:'relative',display:'inline-block'}}>
-    <button onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{background:'none',border:'1px solid rgba(0,212,255,0.15)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:12,color:status==='ok'?'#00ff80':status==='fail'?'#ff0080':'#00d4ff',transition:'color .2s'}} title="Send to...">{status==='ok'?'âœ“':status==='fail'?'âœ—':status==='sending'?'â³':'ðŸ“¤'}</button>
+    <button onClick={e=>{e.stopPropagation();setOpen(!open)}} style={{background:'none',border:'1px solid rgba(0,212,255,0.15)',borderRadius:4,padding:'2px 6px',cursor:'pointer',fontSize:12,color:status==='ok'?'#00ff80':status==='fail'?'#ff0080':'#00d4ff',transition:'color .2s'}} title="Send to...">{status==='ok'?'✓':status==='fail'?'✗':status==='sending'?'⏳':'📤'}</button>
     {open&&<div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'rgba(10,10,18,0.95)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6,padding:4,minWidth:160,zIndex:9999,backdropFilter:'blur(12px)',boxShadow:'0 8px 24px rgba(0,0,0,0.5)'}}>
       {opts.map((o,i)=><div key={i} onClick={()=>send(o.dest)} style={{padding:'6px 10px',fontSize:11,color:'#ccc',cursor:'pointer',borderRadius:4,display:'flex',alignItems:'center',gap:6,transition:'background .15s'}} onMouseOver={e=>e.currentTarget.style.background='rgba(0,212,255,0.08)'} onMouseOut={e=>e.currentTarget.style.background='transparent'}><span>{o.ico}</span><span>{o.label}</span></div>)}
     </div>}
   </div>);
 }
 
-// â•â•â• WORKSPACES â•â•â•
+// ═══ WORKSPACES ═══
 function HomeWS(){
   const[cd,setCd]=useState(null);const[trust,setTrust]=useState(null);const[pers,setPers]=useState(null);const[mem,setMem]=useState(null);const[epi,setEpi]=useState(null);const[todos,setTodos]=useState([]);const[loading,setLoading]=useState(true);
   const[routines,setRoutines]=useState([]);const[runningRoutine,setRunningRoutine]=useState(null);const[routineToast,setRoutineToast]=useState('');
@@ -1816,17 +1816,17 @@ function HomeWS(){
   const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Morning routines launched')).catch(()=>{})};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
   const pending=todos.filter(t=>t.status==='proposed').length;
-  const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' Â· ')}${pending>0?` Â· ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
+  const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'ðŸ“…'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
-      <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions Â· {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
+      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
+      <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
       <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?(Array.isArray(trust.people)?trust.people.length:Object.keys(trust.people).length):0}</div><div className="stat-label">entities tracked</div></div>
       <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
-      <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['ðŸ”µ','Short-term',mem?.short||0],['ðŸŸ£','Medium-term',mem?.medium||0],['ðŸŸ ','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
-      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>âœ“</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>âœ—</button></>}</div>)}</div>
+      <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
+      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
     </div>
     <div className="card" style={{marginTop:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
@@ -1840,7 +1840,7 @@ function HomeWS(){
             <span style={{fontSize:16}}>{r.ico}</span>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:11,color:'#ccc',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
-              <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} Â· last {lr}</div>
+              <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
             </div>
             <button className="btn" style={{fontSize:11,padding:'3px 7px'}} disabled={busy} onClick={()=>runRoutine(r.id,r.label)}>{busy?'...':'Run Now'}</button>
           </div>);
@@ -1889,7 +1889,7 @@ function CareerWS(){
     </div>}
     {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
-    {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'},{label:'Draft Application Email',dest:'gmail_draft',ico:'âœ‰ï¸'},{label:'Add to Briefing',dest:'briefing',ico:'ðŸ“°'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
+    {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
@@ -1919,12 +1919,12 @@ function OutreachPanel(){
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading outreach pipeline...</div>;
   const warm=sug?.warm_contacts||[];const targets=sug?.career_targets||[];const recent=pipe?.recent||[];
   return(<div>
-    <FridaySays text={`${pipe?.total||0} outreach events logged Â· ${warm.length} warm contacts Â· ${targets.length} career targets.`}/>
+    <FridaySays text={`${pipe?.total||0} outreach events logged · ${warm.length} warm contacts · ${targets.length} career targets.`}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
       <div className="card"><div className="card-title">Warm Contacts</div>
         {warm.length===0?<div style={{color:'#555',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:col}}>{pct}%</span></div>
-          <div style={{fontSize:11,color:'#666'}}>{w.reason}{w.already_contacted?' Â· contacted':''}</div>
+          <div style={{fontSize:11,color:'#666'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
         </div>)})}
       </div>
       <div className="card"><div className="card-title">Career Targets</div>
@@ -1936,7 +1936,7 @@ function OutreachPanel(){
     </div>
     {selected&&<div className="card" style={{marginBottom:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting â†’ {selected.name}</span><span style={{fontSize:11,color:'#555',marginLeft:6}}>({selected.type})</span></div>
+        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:11,color:'#555',marginLeft:6}}>({selected.type})</span></div>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
@@ -1949,7 +1949,7 @@ function OutreachPanel(){
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
         <button className="btn" onClick={doDraft} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
         {draft&&<>
-          <button className="btn" onClick={doCopy} style={{fontSize:11}}>ðŸ“‹ Copy</button>
+          <button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>
           <button className="btn" onClick={()=>doLog('sent')} style={{fontSize:11}}>Log Sent</button>
           <button className="btn btn-magenta" onClick={()=>doLog('drafted')} style={{fontSize:11}}>Log Drafted</button>
         </>}
@@ -1959,8 +1959,8 @@ function OutreachPanel(){
     </div>}
     <div className="card"><div className="card-title">Recent Pipeline ({pipe?.total||0})</div>
       {recent.length===0?<div style={{color:'#555',fontSize:11}}>No outreach logged yet.</div>:recent.slice(0,15).map((e,i)=>(<div key={e.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'â€”'} <span style={{color:'#555'}}>Â· {e.channel}</span></span><span style={{fontSize:11,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
-        <div style={{fontSize:11,color:'#666'}}>{e.angle||''} Â· <span className="badge-cyan" style={{fontSize:11}}>{e.status}</span></div>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#555'}}>· {e.channel}</span></span><span style={{fontSize:11,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
+        <div style={{fontSize:11,color:'#666'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:11}}>{e.status}</span></div>
       </div>))}
     </div>
   </div>);
@@ -1979,7 +1979,7 @@ function WikiWS(){
   const totalFiles=struct?.sections?.reduce((a,s)=>a+(s.files?.length||0),0)||0;
   return(<div style={{display:'flex',gap:12,height:'100%'}}>
     <div style={{width:170,borderRight:'1px solid rgba(255,255,255,0.04)',paddingRight:8,overflowY:'auto',flexShrink:0}}>
-      <div style={{fontSize:11,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files Â· {struct?.sections?.length||0} sections</div>
+      <div style={{fontSize:11,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
       {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
     </div>
     <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
@@ -1996,18 +1996,18 @@ function CoparentWS(){
     <FridaySays text={`Next custody day: Thursday ${nextThursday()}. 852 OFW messages analyzed. 89 unanswered threads documented.`}/>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-      <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages Â· 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
+      <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
       <div className="card"><div className="card-title">Unanswered</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
     </div>
-    <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar â€” {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
+    <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
         {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#555',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
-        {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'Â·'}</div>})}
+        {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
       </div>
-      <div style={{fontSize:11,color:'#555',marginTop:6}}>ðŸ”µ Custody weekends Â· ðŸŸ£ Thursdays Â· ðŸ”´ Today</div>
+      <div style={{fontSize:11,color:'#555',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
     </div>
     <div className="card"><div className="card-title">***REMOVED***'s Weekly Schedule</div>
-      {['ðŸ¥‹ Kung Fu','ðŸ’ƒ Dance','â™Ÿï¸ Chess (school)','ðŸ§  Play Therapy â€” Rachel Hodgdon','ðŸ« ***REMOVED*** Â· Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
+      {['🥋 Kung Fu','💃 Dance','♟️ Chess (school)','🧠 Play Therapy — Rachel Hodgdon','🏫 ***REMOVED*** · Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
   </div>);
 }
 function FuturespeakWS(){
@@ -2026,22 +2026,22 @@ function FuturespeakWS(){
       const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
   const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
   const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'C:\\Users\\user\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
-  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI â€” Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
+  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
 
-  const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'â€”';
+  const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'—';
   const maxRev=Math.max(...((rev?.months||[]).map(m=>Math.max(m.projected||0,m.actual||0))),1);
   const STATUS_COLORS={discovery:'#888',qualified:'#00d4ff',proposal:'#f59e0b',executed:'#00ff80',closed:'#00ff80','in-review':'#f59e0b',active:'#00ff80'};
 
   return(<div>
-    <FridaySays text={`FutureSpeak.AI Â· ${pipe?.total||0} opportunities Â· ${fmt(pipe?.weighted_value)} weighted pipeline Â· ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
+    <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
 
     {view==='overview'&&<div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div>
         <div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div>
-        <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai â†’</a><a href="https://innexenergy.com" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>innexenergy.com â†’</a><a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{color:'#7c3aed',fontSize:11,textDecoration:'none'}}>discord â†’</a></div>
+        <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a><a href="https://innexenergy.com" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>innexenergy.com →</a><a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{color:'#7c3aed',fontSize:11,textDecoration:'none'}}>discord →</a></div>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:10}}>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{pipe?.total||0}</div><div className="stat-label">opportunities</div></div>
@@ -2060,33 +2060,33 @@ function FuturespeakWS(){
     {view==='pipeline'&&<div>
       {(pipe?.opportunities||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
-          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#666',marginTop:2}}>{(o.tags||[]).join(' Â· ')}</div></div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#666',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
           <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
         </div>
         <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
         <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
         {o.notes&&<div style={{fontSize:11,color:'#666',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <button className="btn" style={{fontSize:11}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'ðŸ“ Draft Proposal'}</button>
-          <span style={{fontSize:11,color:'#666',alignSelf:'center'}}>Â· Contacts: {(o.contacts||[]).join(', ')||'â€”'}</span>
+          <button className="btn" style={{fontSize:11}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
+          <span style={{fontSize:11,color:'#666',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
         </div>
         {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.02)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
       </div>)})}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>ðŸ“‹ Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='revenue'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#00ff80'}}>{fmt(rev?.ytd_actual)}</div><div className="stat-label">ytd actual</div></div>
         <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#f59e0b'}}>{fmt(rev?.ytd_projected)}</div><div className="stat-label">ytd projected</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:rev?.runway_months&&rev.runway_months<6?'#ff0080':'#00d4ff'}}>{rev?.runway_months?rev.runway_months+' mo':'âˆž'}</div><div className="stat-label">runway</div></div>
+        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:rev?.runway_months&&rev.runway_months<6?'#ff0080':'#00d4ff'}}>{rev?.runway_months?rev.runway_months+' mo':'∞'}</div><div className="stat-label">runway</div></div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Monthly Revenue</div>
         <div style={{display:'flex',gap:4,alignItems:'flex-end',height:100,marginTop:8,marginBottom:4}}>
           {(rev?.months||[]).map((m,i)=>{const pH=(m.projected||0)/maxRev*100;const aH=(m.actual||0)/maxRev*100;return(<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
             <div style={{display:'flex',gap:2,alignItems:'flex-end',height:80}}>
               <div style={{width:10,height:pH+'%',background:'rgba(245,158,11,0.4)',borderRadius:'2px 2px 0 0'}} title={'Projected: '+fmt(m.projected)}/>
-              <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'â€”')}/>
+              <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'—')}/>
             </div>
             <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
           </div>)})}
@@ -2112,10 +2112,10 @@ function FuturespeakWS(){
     {view==='legal'&&<div>
       {(legal?.items||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#666'}}>{it.counterparty} Â· {it.type}</div></div>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#666'}}>{it.counterparty} · {it.type}</div></div>
           <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
         </div>
-        <div style={{fontSize:11,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' Â· Renewal '+it.renewal:''}</div>
+        <div style={{fontSize:11,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
         {it.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4,fontStyle:'italic'}}>{it.notes}</div>}
       </div>)})}
     </div>}
@@ -2123,85 +2123,85 @@ function FuturespeakWS(){
     {view==='website'&&<div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#666'}}>Primary brand site Â· Replit-hosted</div></div>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#666'}}>Primary brand site · Replit-hosted</div></div>
           <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">ðŸŒ Visit</a>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">âš¡ Open in Replit</a>
-          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update futurespeak.ai website','C:\\Users\\user\\Projects\\futurespeak-site')}>ðŸ’» Open in Claude Code</button>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update futurespeak.ai website','C:\\Users\\user\\Projects\\futurespeak-site')}>💻 Open in Claude Code</button>
         </div>
       </div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#666'}}>Portfolio site Â· Replit-hosted</div></div>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#666'}}>Portfolio site · Replit-hosted</div></div>
           <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">ðŸŒ Visit</a>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">âš¡ Open in Replit</a>
-          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>ðŸ’» Open in Claude Code</button>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">🌐 Visit</a>
+          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
+          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>💻 Open in Claude Code</button>
         </div>
       </div>
-      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#666'}}>Last check: manual Â· use Claude Code for deploy actions.</div></div>
+      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#666'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
     </div>}
 
     {view==='discord'&&<div>
       <div className="card" style={{textAlign:'center',padding:20}}>
-        <div style={{fontSize:32,marginBottom:8}}>ðŸ’¬</div>
+        <div style={{fontSize:32,marginBottom:8}}>💬</div>
         <div style={{fontSize:16,fontWeight:600,color:'#7c3aed',marginBottom:4}}>FutureSpeak.AI Discord</div>
-        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server Â· member activity Â· announcements</div>
-        <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>ðŸš€ Open Discord</a>
+        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server · member activity · announcements</div>
+        <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>🚀 Open Discord</a>
         <div style={{fontSize:11,color:'#555',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
       </div>
     </div>}
 
     {view==='talent'&&<div>
       <div className="card" style={{textAlign:'center',padding:30,borderStyle:'dashed',borderColor:'rgba(255,255,255,0.08)'}}>
-        <div style={{fontSize:32,marginBottom:8}}>ðŸŽ¯</div>
+        <div style={{fontSize:32,marginBottom:8}}>🎯</div>
         <div style={{fontSize:14,fontWeight:600,color:'#888',marginBottom:4}}>Talent Pipeline</div>
         <span className="badge-amber" style={{fontSize:11}}>Coming Soon</span>
-        <div style={{fontSize:11,color:'#555',marginTop:12,lineHeight:1.5}}>Recruiting Â· network sourcing Â· contractor bench.<br/>Placeholder Â· backend not yet built.</div>
+        <div style={{fontSize:11,color:'#555',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
       </div>
     </div>}
 
     {view==='demos'&&<div>
       <div style={{fontSize:11,color:'#555',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
       {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#555',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-        {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'ðŸŽ¬',mov:'ðŸŽ¬',pdf:'ðŸ“„',pptx:'ðŸ“Š',key:'ðŸ“Š',png:'ðŸ–¼ï¸',jpg:'ðŸ–¼ï¸',svg:'ðŸŽ¨',md:'ðŸ“'};const icon=ICONS[a.ext]||'ðŸ“Ž';return(<div key={i} className="card" style={{padding:8}}>
+        {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
-          <div style={{fontSize:11,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB Â· {(a.modified||'').slice(0,10)}</div>
+          <div style={{fontSize:11,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
           <div style={{display:'flex',gap:3}}>
-            <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>ðŸ“‹ Link</button>
-            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted â€” see below')}catch(e){showToast('Draft failed')}}}>âœ‰ï¸ Draft Follow-up</button>
+            <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
+            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
           </div>
         </div>)})}
       </div>}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>ðŸ“‹ Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
+      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
 
     {view==='studio'&&<div>
       <div className="card" style={{marginBottom:8}}>
-        <div className="card-title">Creative Studio â€” Brand Assets</div>
+        <div className="card-title">Creative Studio — Brand Assets</div>
         <div style={{fontSize:11,color:'#888',marginBottom:10}}>On-brand FutureSpeak.AI asset creation hub. Outputs route to Studio + Content pipelines.</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
           <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>{showToast('Canva / Gemini integration pending');launchVibeCode('Generate on-brand FutureSpeak social graphic','C:\\Users\\user\\Projects\\friday-desktop')}}>
-            <span style={{fontSize:20}}>ðŸŽ¨</span><span>Generate Social Graphic</span>
+            <span style={{fontSize:20}}>🎨</span><span>Generate Social Graphic</span>
           </button>
           <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={draftBlog}>
-            <span style={{fontSize:20}}>ðŸ“</span><span>Draft Blog Post</span>
+            <span style={{fontSize:20}}>📝</span><span>Draft Blog Post</span>
           </button>
           <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity','C:\\Users\\user\\Projects\\friday-desktop')}>
-            <span style={{fontSize:20}}>ðŸ“„</span><span>Create One-Pager</span>
+            <span style={{fontSize:20}}>📄</span><span>Create One-Pager</span>
           </button>
         </div>
       </div>
       <div className="card"><div className="card-title">Brand Anchors</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,color:'#aaa'}}>
-          <div><strong style={{color:'#00d4ff'}}>Colors</strong><br/>Cyan #00d4ff Â· Magenta #ff0080 Â· Amber #f59e0b</div>
-          <div><strong style={{color:'#00d4ff'}}>Type</strong><br/>Orbitron (display) Â· Inter (body) Â· JetBrains Mono (code)</div>
-          <div><strong style={{color:'#00d4ff'}}>Voice</strong><br/>Direct Â· technical Â· contrarian Â· credible</div>
-          <div><strong style={{color:'#00d4ff'}}>Positioning</strong><br/>Enterprise AI Â· agentic systems Â· AI governance</div>
+          <div><strong style={{color:'#00d4ff'}}>Colors</strong><br/>Cyan #00d4ff · Magenta #ff0080 · Amber #f59e0b</div>
+          <div><strong style={{color:'#00d4ff'}}>Type</strong><br/>Orbitron (display) · Inter (body) · JetBrains Mono (code)</div>
+          <div><strong style={{color:'#00d4ff'}}>Voice</strong><br/>Direct · technical · contrarian · credible</div>
+          <div><strong style={{color:'#00d4ff'}}>Positioning</strong><br/>Enterprise AI · agentic systems · AI governance</div>
         </div>
       </div>
     </div>}
@@ -2214,12 +2214,12 @@ function FamilyWS(){
   return(<div>
     <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">ðŸŽ‚ ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>ðŸ¥‹ ***REMOVED*** Â· ðŸ’ƒ Dance Â· â™Ÿï¸ Chess<br/>ðŸ« ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
-      <div className="card"><div className="card-title">â¤ï¸ ***REMOVED***</div><div style={{fontSize:13}}>Journalist Â· ***REMOVED*** Â· ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>ðŸŽ‚ Jan 4 Â· ðŸ’ Anniversary Feb 13</div><div style={{fontSize:11,color:'#666',marginTop:2}}>Popular Science Â· VICE Â· MAKE Â· US Pain Foundation</div></div>
-      <div className="card"><div className="card-title">ðŸ¾ Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> â€” 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> â€” ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#666',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
-      <div className="card"><div className="card-title">ðŸ‘¨â€ðŸ‘©â€ðŸ‘§ Jay Family</div>{['Jere Jay â€” INNEX Energy CEO','Bonnie Jay â€” INNEX Ops Director','Julia Jay â€” Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
-      <div className="card"><div className="card-title">ðŸš— Vehicles</div>{['ðŸ”µ 2015 Golf TSI SEL â€” Unitronic Stage 1, ~60K mi','ðŸ”´ 2023 GLI â€” stock, ~20K mi','ðŸš Transit 350 â€” camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
-      <div className="card"><div className="card-title">ðŸ“… Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'ðŸ“…'} {c.label||c.name} â€” <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
+      <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🥋 ***REMOVED*** · 💃 Dance · ♟️ Chess<br/>🏫 ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
+      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:11,color:'#666',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
+      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#666',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
+      <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
+      <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
+      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
     </div>
   </div>);
 }
@@ -2227,7 +2227,7 @@ function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
   const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);
-  const ICONS={html:'ðŸ’»',md:'ðŸ“',svg:'ðŸŽ¨',png:'ðŸ–¼ï¸',jpg:'ðŸ–¼ï¸',mp3:'ðŸŽµ',wav:'ðŸ”Š',mp4:'ðŸŽ¬'};
+  const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'};
   const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
   useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{})},[]);
   const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});loadCreations()}catch(e){}setGen(false)};
@@ -2246,9 +2246,9 @@ function StudioWS(){
       </div>
       {ext==='html'&&<iframe src={url} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
       {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
-      {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'ðŸ”Š'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
+      {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
       {ext==='md'&&<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{preview||'Loading...'}</pre>}
-      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#555',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file â†’</a></div>}
+      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#555',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
     </div>);
   }
   return(<div>
@@ -2267,7 +2267,7 @@ function StudioWS(){
     </div>
     {loading?<div style={{color:'#555'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
-      {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'ðŸ“„';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+      {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
         return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
           <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
           <div style={{fontSize:11,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
@@ -2282,14 +2282,14 @@ function TrustWS(){
   const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
   useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading trust graph...</div>;
-  if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>âš ï¸ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
+  if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
   // API returns people as object keyed by name, convert to array
   const rawPeople=trust?.people||{};
   const people=(Array.isArray(rawPeople)?rawPeople:Object.values(rawPeople)).sort((a,b)=>((b.scores?.overall)||0)-((a.scores?.overall)||0));
   const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
   return(<div>
     <FridaySays text={`${people.length} entities tracked. Click any person to see dimension breakdown.`}/>
-    <div className="card-title">Trust Graph â€” {people.length} Entities</div>
+    <div className="card-title">Trust Graph — {people.length} Entities</div>
     {people.map((p,i)=>{
       const overall=p&&p.scores&&typeof p.scores.overall==='number'?p.scores.overall:0.5;
       const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
@@ -2298,7 +2298,7 @@ function TrustWS(){
           <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
-            <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'ðŸ“…',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'},{label:'Add to Briefing',dest:'briefing',ico:'ðŸ“°'}]}/>
+            <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
           </div>
         </div>
         <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
@@ -2406,7 +2406,7 @@ function NewsWS(){
         <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:11}}>Stop</button>
         <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
-        <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'},{label:'Draft Email',dest:'gmail_draft',ico:'âœ‰ï¸'}]}/>
+        <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
         <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>
       </div>
     </div>
@@ -2434,12 +2434,12 @@ function NewsWS(){
 }
 
 const DRAFT_MODES=[
-  {id:'linkedin_post',label:'LinkedIn',ico:'ðŸ’¼'},
-  {id:'email_reply',label:'Email',ico:'ðŸ“§'},
-  {id:'slack_message',label:'Slack',ico:'ðŸ’¬'},
-  {id:'tweet',label:'Tweet',ico:'ðŸ¦'},
-  {id:'ofw_response',label:'OFW',ico:'âš–ï¸'},
-  {id:'freeform',label:'Freeform',ico:'ðŸ“'},
+  {id:'linkedin_post',label:'LinkedIn',ico:'💼'},
+  {id:'email_reply',label:'Email',ico:'📧'},
+  {id:'slack_message',label:'Slack',ico:'💬'},
+  {id:'tweet',label:'Tweet',ico:'🐦'},
+  {id:'ofw_response',label:'OFW',ico:'⚖️'},
+  {id:'freeform',label:'Freeform',ico:'📝'},
 ];
 function DraftWS(){
   const[mode,setMode]=useState('freeform');
@@ -2517,17 +2517,17 @@ function DraftWS(){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>DRAFT OUTPUT</span>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:mode==='tweet'&&charCount>280?'#ff0080':'#555'}}>
-          {charCount} chars{mode==='tweet'&&charCount>280?' âš ï¸ over limit':''}
+          {charCount} chars{mode==='tweet'&&charCount>280?' ⚠️ over limit':''}
         </span>
       </div>
       <textarea className="input" style={{width:'100%',minHeight:120,resize:'vertical',fontFamily:'JetBrains Mono',fontSize:12,lineHeight:1.6,color:'#e0e0e8'}}
         value={draft} onChange={e=>{setDraft(e.target.value);setCharCount(e.target.value.length)}}/>
       <div style={{display:'flex',gap:4,marginTop:6}}>
         <button className="btn" onClick={()=>deploy('clipboard')} style={{fontWeight:600}}>
-          {copied?'âœ“ Copied!':'ðŸ“‹ Copy to Clipboard'}
+          {copied?'✓ Copied!':'📋 Copy to Clipboard'}
         </button>
         <button className="btn btn-magenta" onClick={()=>deploy('gmail_draft')} style={{fontSize:11}}>
-          ðŸ“§ Gmail Draft
+          📧 Gmail Draft
         </button>
       </div>
     </div>}
@@ -2538,7 +2538,7 @@ function DraftWS(){
       {history.map((h,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',padding:'6px 10px'}}
         onClick={()=>{setDraft(h.draft);setCharCount(h.draft.length);setMode(h.mode)}}>
         <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
-          <span style={{color:'#aaa'}}>{DRAFT_MODES.find(m=>m.id===h.mode)?.ico||'ðŸ“'} {h.prompt}...</span>
+          <span style={{color:'#aaa'}}>{DRAFT_MODES.find(m=>m.id===h.mode)?.ico||'📝'} {h.prompt}...</span>
           <span style={{color:'#555'}}>{h.time}</span>
         </div>
       </div>)}
@@ -2559,14 +2559,14 @@ function FinanceWS(){
   const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
   const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
   const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
-  const insight=`${positions.length} positions tracked Â· ${unusedPerks.length} unused Amex perks Â· $${totalPerkValue} total perk value`;
+  const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused Amex perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-        <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions Â· {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
-        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>âš  {expiringPerks.length} expiring soon</span></div>}</div>
+        <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
+        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#555',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
       <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
@@ -2574,7 +2574,7 @@ function FinanceWS(){
     {view==='portfolio'&&<div>
       <div className="card-title">Portfolio Positions</div>
       {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#666'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
-      <div style={{fontSize:11,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' Â· ')}</div>
+      <div style={{fontSize:11,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
       <div style={{fontSize:11,color:'#444',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
@@ -2587,12 +2587,12 @@ function FinanceWS(){
     </div>}
     {view==='contacts'&&<div>
       <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor Â· RW Baird</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA Â· Whitley Penn</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor · RW Baird</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA · Whitley Penn</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
     </div>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
-      {[{name:'Capital One',type:'Banking',ico:'ðŸ¦'},{name:'Cigna Healthcare',type:'Insurance',ico:'ðŸ¥'},{name:'Amex Platinum â€” Stephen',type:'Credit Card',ico:'ðŸ’³'},{name:'Amex Platinum â€” ***REMOVED***',type:'Credit Card',ico:'ðŸ’³'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
+      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -2608,14 +2608,14 @@ function HealthWS(){
   const copyText=(t)=>{navigator.clipboard.writeText(t)};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading health data...</div>;
   const medList=meds?.medications||[];const apptList=appts?.appointments||[];const ins=insurance?.insurance||{};const vehList=vehicles?.vehicles||[];const mechList=vehicles?.mechanics||[];
-  const insight=`${medList.length} medications Â· ${apptList.length} providers Â· ${vehList.length} vehicles in fleet`;
+  const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-        <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' â€” '+m.dose:''}</div>)}</div>
-        <div className="card"><div className="card-title">Appointments</div><div className="stat">{apptList.length}</div><div className="stat-label">providers</div>{apptList.slice(0,3).map((a,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{a.provider}{a.type?' â€” '+a.type:''}</div>)}</div>
+        <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
+        <div className="card"><div className="card-title">Appointments</div><div className="stat">{apptList.length}</div><div className="stat-label">providers</div>{apptList.slice(0,3).map((a,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{a.provider}{a.type?' — '+a.type:''}</div>)}</div>
         <div className="card"><div className="card-title">Insurance</div><div style={{fontSize:13,color:'#00d4ff'}}>{ins.provider||'Not configured'}</div><div style={{fontSize:11,color:'#888',marginTop:4}}>{ins.plan||'Add plan details'}</div></div>
         <div className="card"><div className="card-title">Fleet Health</div><div className="stat">{vehList.length}</div><div className="stat-label">vehicles</div>{vehList.slice(0,2).map((v,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{v.name}</div>)}</div>
       </div>
@@ -2646,13 +2646,13 @@ function HealthWS(){
     {view==='vehicles'&&<div>
       <div className="card-title">Fleet Health</div>
       {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['ðŸ”µ','ðŸ”´','ðŸš'][i]||'ðŸš—'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
         {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
-        {v.mechanic&&<div style={{fontSize:11,color:'#666',marginTop:2}}>ðŸ”§ {v.mechanic}</div>}
-        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#666',padding:'1px 0'}}>{s.date} â€” {s.description}</div>)}</div>}
+        {v.mechanic&&<div style={{fontSize:11,color:'#666',marginTop:2}}>🔧 {v.mechanic}</div>}
+        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#666',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
       </div>)}
       <div className="card-title" style={{marginTop:12}}>Mechanics</div>
-      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>ðŸ”§ {m.name}</div><div style={{fontSize:11,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
+      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:11,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -2671,11 +2671,11 @@ function ContactsWS(){
     const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
     return(<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDetail(null)}}>â† Back</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDetail(null)}}>← Back</button>
         <div style={{display:'flex',gap:4}}>
-          <button className="btn" style={{fontSize:11}} onClick={doResearch} disabled={researching}>{researching?'Researching...':'ðŸ”Ž Research'}</button>
-          <SendTo content={()=>JSON.stringify(detail||selected,null,2)} personName={selected.name} dataType="contact_research" options={[{label:'Draft Email',dest:'gmail_draft',ico:'âœ‰ï¸'},{label:'Add to Briefing',dest:'briefing',ico:'ðŸ“°'},{label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'}]}/>
-          <button className="btn" style={{fontSize:11}} onClick={doCopy}>ðŸ“‹ Copy</button>
+          <button className="btn" style={{fontSize:11}} onClick={doResearch} disabled={researching}>{researching?'Researching...':'🔎 Research'}</button>
+          <SendTo content={()=>JSON.stringify(detail||selected,null,2)} personName={selected.name} dataType="contact_research" options={[{label:'Draft Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>
+          <button className="btn" style={{fontSize:11}} onClick={doCopy}>📋 Copy</button>
         </div>
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
@@ -2696,7 +2696,7 @@ function ContactsWS(){
               <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
             </div>)})}
         </div>
-        {detail.domains&&detail.domains.length>0&&<div className="card" style={{marginBottom:10}}><div className="card-title">Domains</div><div style={{fontSize:11,color:'#aaa'}}>{detail.domains.join(' Â· ')}</div></div>}
+        {detail.domains&&detail.domains.length>0&&<div className="card" style={{marginBottom:10}}><div className="card-title">Domains</div><div style={{fontSize:11,color:'#aaa'}}>{detail.domains.join(' · ')}</div></div>}
         {detail.last_interaction&&<div style={{fontSize:11,color:'#666',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
         {Array.isArray(detail.evidence)&&detail.evidence.length>0&&<div className="card" style={{marginBottom:10}}>
           <div className="card-title">Evidence ({detail.evidence.length})</div>
@@ -2710,10 +2710,10 @@ function ContactsWS(){
     </div>);
   }
   return(<div>
-    <FridaySays text={contacts.length+' contacts tracked Â· search, research, and draft outreach.'}/>
+    <FridaySays text={contacts.length+' contacts tracked · search, research, and draft outreach.'}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts..."/>
-      <button className="btn" style={{fontSize:11}} onClick={loadList}>â†»</button>
+      <button className="btn" style={{fontSize:11}} onClick={loadList}>↻</button>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
     {loading?<div style={{color:'#555',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
@@ -2749,7 +2749,7 @@ function ContentWS(){
   const openItem=(it)=>{setSelected(it);setDraft(it.draft||'')};
   const doDraft=async(advance)=>{if(!selected||drafting)return;setDrafting(true);
     try{const r=await fetch('/api/content/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:selected.id,advance_stage:!!advance})});
-      const d=await r.json();setDraft(d.draft||'');setToast(advance?'Drafted Â· advanced stage':'Drafted');load();
+      const d=await r.json();setDraft(d.draft||'');setToast(advance?'Drafted · advanced stage':'Drafted');load();
       if(advance&&d.stage)setSelected({...selected,draft:d.draft,stage:d.stage})}catch(e){setToast('Draft failed')}
     setDrafting(false);setTimeout(()=>setToast(''),2000)};
   const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
@@ -2758,11 +2758,11 @@ function ContentWS(){
     const col=STAGE_COLORS[selected.stage]||'#888';
     return(<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>â† Back</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>← Back</button>
         <div style={{display:'flex',gap:4}}>
           <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
           <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:11}}>Draft + Advance</button>
-          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:11}}>ðŸ“‹ Copy</button>}
+          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>}
         </div>
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
@@ -2771,7 +2771,7 @@ function ContentWS(){
           <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
           <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
         </div>
-        <div style={{fontSize:11,color:'#666'}}>{selected.type} Â· {selected.channel} Â· {(selected.tags||[]).join(' Â· ')}</div>
+        <div style={{fontSize:11,color:'#666'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
         {selected.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:6,fontStyle:'italic'}}>{selected.notes}</div>}
       </div>
       {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
@@ -2779,12 +2779,12 @@ function ContentWS(){
   }
   const by=pipe?.by_stage||{};
   return(<div>
-    <FridaySays text={`${pipe?.total||0} items in pipeline Â· kanban across ${STAGES.length} stages. Click + to capture an idea.`}/>
+    <FridaySays text={`${pipe?.total||0} items in pipeline · kanban across ${STAGES.length} stages. Click + to capture an idea.`}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
       <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" style={{fontSize:11}} onClick={load}>â†»</button>
-        <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'Ã— Cancel':'+ Idea'}</button>
+        <button className="btn" style={{fontSize:11}} onClick={load}>↻</button>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
       </div>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
@@ -2806,10 +2806,10 @@ function ContentWS(){
           <span style={{fontFamily:'Orbitron',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
           <span style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{items.length}</span>
         </div>
-        {items.length===0?<div style={{fontSize:11,color:'#444',textAlign:'center',padding:'8px 0'}}>â€”</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
+        {items.length===0?<div style={{fontSize:11,color:'#444',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
           <div style={{fontSize:11,color:'#ccc',fontWeight:600,lineHeight:1.3,marginBottom:2}}>{it.title}</div>
-          <div style={{fontSize:11,color:'#666'}}>{it.type} Â· {it.channel}</div>
-          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' Â· ')}</div>}
+          <div style={{fontSize:11,color:'#666'}}>{it.type} · {it.channel}</div>
+          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
         </div>))}
       </div>)})}
     </div>
@@ -2899,7 +2899,7 @@ function App(){
       </div>
     </div>
 
-    {/* Calm Default State â€” greeting with ticker */}
+    {/* Calm Default State — greeting with ticker */}
     {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
       <div style={{fontFamily:'Orbitron',fontSize:24,color:'rgba(0,212,255,0.6)',marginBottom:12,animation:'fadeIn 1s ease'}}>{getGreeting()}, Stephen.</div>
       {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:28}}>
@@ -2934,9 +2934,9 @@ function App(){
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
-            {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'ðŸ“‹'}]}/>}
+            {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
           </div>
-          <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} Â· {m.time||''}</div>
+          <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
         {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
         <div ref={chatEnd}/>
@@ -3011,7 +3011,7 @@ function App(){
       <textarea className="input" style={{width:'100%',height:48,resize:'none',fontSize:11,marginBottom:6}} value={qdPrompt} onChange={e=>setQdPrompt(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)qdGenerate()}} placeholder="What do you need drafted? (Ctrl+Enter)"/>
       <div style={{display:'flex',gap:4,marginBottom:qdResult?8:0}}>
         <button className="btn" onClick={qdGenerate} disabled={qdLoading} style={{fontSize:11,fontWeight:600}}>{qdLoading?'Generating...':'Generate'}</button>
-        {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:11}}>{qdCopied?'âœ“ Copied':'ðŸ“‹ Copy'}</button>}
+        {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:11}}>{qdCopied?'✓ Copied':'📋 Copy'}</button>}
       </div>
       {qdResult&&<div style={{marginTop:4,maxHeight:180,overflowY:'auto',background:'rgba(255,255,255,0.02)',borderRadius:6,padding:8}}>
         <pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',margin:0,lineHeight:1.5}}>{qdResult}</pre>
@@ -3023,7 +3023,7 @@ function App(){
       <a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener">discord.gg/f2VM6qNk</a>
     </div>
 
-    {/* Dock â€” grouped (Life / Work / System) */}
+    {/* Dock — grouped (Life / Work / System) */}
     <div className="dock">
       {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
         {gi>0&&<div className="dock-sep"/>}
@@ -3037,11 +3037,4 @@ function App(){
         </div>
       </React.Fragment>))}
     </div>
-    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
-  </>);
-}
-ReactDOM.createRoot(document.getElementById('ui-inner')||document.getElementById('ui-root')).render(<App/>);
-</script>
-</body>
-</html>
-
+    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}}
