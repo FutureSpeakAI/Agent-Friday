@@ -1553,11 +1553,13 @@ function HomeWS(){
   },[]);
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
+  const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Morning routines launched')).catch(()=>{})};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
   const pending=todos.filter(t=>t.status==='proposed').length;
   const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
   return(<div>
     <FridaySays text={insight}/>
+    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:10}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
       <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
@@ -1640,8 +1642,10 @@ function CoparentWS(){
   const isThursday=d=>d&&new Date(year,month,d).getDay()===4;
   const isCustodyWeekend=d=>{if(!d)return false;const dow=new Date(year,month,d).getDay();if(dow!==0&&dow!==6)return false;let sunCount=0;for(let i=1;i<=d;i++){if(new Date(year,month,i).getDay()===0)sunCount++}return sunCount===1||sunCount===3||sunCount===5};
   const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
+  const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate co-parent weekly summary'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Weekly summary generation launched')).catch(()=>{})};
   return(<div>
     <FridaySays text={`Next custody day: Thursday ${nextThursday()}. 852 OFW messages analyzed. 89 unanswered threads documented.`}/>
+    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:10}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
       <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
       <div className="card"><div className="card-title">Unanswered</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
@@ -1687,15 +1691,57 @@ function FamilyWS(){
 }
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);
-  useEffect(()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
-  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});const r=await fetch('/api/creations');const d=await r.json();setCreations(d.files||[])}catch(e){}setGen(false)};
+  const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
+  const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);
+  const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'};
+  const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
+  useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{})},[]);
+  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});loadCreations()}catch(e){}setGen(false)};
+  const createNow=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Daily creation launched')).catch(()=>{})};
+  const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
+  const filtered=filter==='all'?creations:creations.filter(f=>f.type===filter);
+  if(selected){
+    const ext=(selected.name||'').split('.').pop().toLowerCase();const url='/api/creations/'+selected.name;
+    return(<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:10}}>Back to Gallery</button>
+        <div style={{display:'flex',gap:4,alignItems:'center'}}>
+          <span style={{fontFamily:'Orbitron',fontSize:10,color:'#555'}}>{selected.name}</span>
+          <button className="btn" onClick={()=>window.open(url,'_blank')} style={{fontSize:10}}>Open in Tab</button>
+        </div>
+      </div>
+      {ext==='html'&&<iframe src={url} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+      {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
+      {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
+      {ext==='md'&&<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{preview||'Loading...'}</pre>}
+      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#555',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
+    </div>);
+  }
   return(<div>
-    <FridaySays text={`${creations.length} creations in the gallery. Daily creation runs at 2 PM.`}/>
-    <div className="card-title">Friday's Creative Studio</div>
-    <div style={{display:'flex',gap:6,marginBottom:10}}><input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/></div>
-    <div style={{display:'flex',gap:4,marginBottom:14,flexWrap:'wrap'}}>{['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:10}}>{gen?'Creating...':t}</button>)}</div>
-    {loading?<div style={{color:'#555'}}>Loading gallery...</div>:
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>{creations.slice(0,12).map((f,i)=>{const name=typeof f==='string'?f:f.name||'creation';const ext=name.split('.').pop();const typeIcon={html:'💻',md:'📝',svg:'🎨',png:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'}[ext]||'📄';return <div key={i} className="card" style={{textAlign:'center',fontSize:10}}><div style={{fontSize:20}}>{typeIcon}</div><div style={{color:'#888',wordBreak:'break-all',marginTop:2}}>{name}</div></div>})}</div>}
+    <FridaySays text={creations.length+' creations in the gallery. Daily creation runs at 2 PM.'}/>
+    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
+      <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
+      <button className="btn" style={{fontSize:10,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
+    </div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
+      {['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:10}}>{gen?'Creating...':t}</button>)}
+      {creationLog&&<button className="btn btn-magenta" style={{fontSize:10}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
+    </div>
+    {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:10,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
+      {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:9,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
+    </div>
+    {loading?<div style={{color:'#555'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
+      {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+        return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
+          <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
+          <div style={{fontSize:10,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
+          <div style={{fontSize:9,color:'#555',marginTop:2}}>{date}</div>
+          <button className="btn" style={{fontSize:8,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/api/creations/'+f.name,'_blank')}}>Open in Tab</button>
+        </div>);
+      })}
+    </div>}
   </div>);
 }
 function TrustWS(){
@@ -1815,6 +1861,7 @@ function NewsWS(){
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e)}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
+  const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
@@ -1843,7 +1890,7 @@ function NewsWS(){
   </div>);
   return(<div>
     <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
-    <div className="card-title">Briefing Archive</div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:10}} onClick={launchBriefing}>Generate Briefing</button></div>
     {briefings.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
     briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
       <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:10,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
@@ -1973,6 +2020,7 @@ function FinanceWS(){
     fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)
   ]).then(()=>setLoading(false))},[]);
   const copyText=(t)=>{navigator.clipboard.writeText(t)};
+  const refreshFinance=()=>{setLoading(true);Promise.all([fetch('/api/finance/portfolio').then(r=>r.json()).then(setPortfolio).catch(()=>null),fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)]).then(()=>setLoading(false))};
   if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading finance data...</div>;
   const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
   const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
@@ -1980,7 +2028,7 @@ function FinanceWS(){
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused Amex perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:9,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:10}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
