@@ -4,10 +4,40 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>FRIDAY Desktop — FutureSpeak.AI</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+// Surface any script-load failures (blocked CDN, tunnel CSP, offline) instead of blank UI.
+window.__fridayCdnErrors=[];
+window.addEventListener('error',function(e){
+  if(e&&e.target&&(e.target.tagName==='SCRIPT'||e.target.tagName==='LINK')){
+    var src=e.target.src||e.target.href||'?';
+    window.__fridayCdnErrors.push(src);
+    console.error('[FRIDAY] Failed to load resource:',src);
+  }
+},true);
+</script>
+<script src="https://cdn.tailwindcss.com" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+<script>
+// Hard fail-fast if any critical CDN didn't load — show a visible banner on mobile.
+window.addEventListener('DOMContentLoaded',function(){
+  var missing=[];
+  if(typeof React==='undefined')missing.push('React');
+  if(typeof ReactDOM==='undefined')missing.push('ReactDOM');
+  if(typeof Babel==='undefined')missing.push('Babel');
+  if(missing.length){
+    var errs=window.__fridayCdnErrors||[];
+    var box=document.createElement('div');
+    box.style.cssText='position:fixed;left:12px;right:12px;top:12px;z-index:99999;background:rgba(20,0,10,.95);border:1px solid #ff0080;border-radius:10px;padding:12px 14px;color:#ffdbe8;font:12px/1.45 monospace;max-height:45vh;overflow:auto';
+    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY — CDN load failed</div>'
+      +'<div>Missing: '+missing.join(', ')+'</div>'
+      +(errs.length?'<div style="margin-top:6px;opacity:.75">Blocked URLs:<br>'+errs.map(function(u){return '&middot; '+u}).join('<br>')+'</div>':'')
+      +'<div style="margin-top:8px;opacity:.8">Likely a tunnel CSP, ad-blocker, or offline state. Reload when a network is available.</div>';
+    document.body&&document.body.appendChild(box);
+  }
+});
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }

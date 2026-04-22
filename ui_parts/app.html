@@ -1406,4 +1406,25 @@ function App(){
         </div>
       </React.Fragment>))}
     </div>
-    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}}
+    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
+  </>);
+}
+
+// Mount with error surface so mobile failures are visible instead of a blank dock.
+(function mountFriday(){
+  try{
+    var target=document.getElementById('ui-inner')||document.getElementById('ui-root');
+    if(!target){throw new Error('Mount target #ui-inner/#ui-root not found');}
+    ReactDOM.createRoot(target).render(<App/>);
+  }catch(err){
+    console.error('[FRIDAY] React mount failed:',err);
+    var host=document.getElementById('ui-inner')||document.getElementById('ui-root')||document.body;
+    var box=document.createElement('div');
+    box.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:rgba(20,0,10,.92);border:1px solid #ff0080;border-radius:10px;padding:12px 14px;color:#ffdbe8;font:12px/1.4 monospace;pointer-events:auto;max-height:45vh;overflow:auto';
+    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY UI failed to mount</div><pre style="white-space:pre-wrap;margin:0">'+(err&&err.stack?err.stack:String(err))+'</pre>';
+    host.appendChild(box);
+  }
+})();
+</script>
+</body>
+</html>
