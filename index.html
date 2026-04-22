@@ -409,9 +409,8 @@
             padding: 24px; text-align: center; color: rgba(255,255,255,0.35);
             font-size: 12px;
         }
-    </style>
-</head>
 
+        /* ═══ 
 <body>
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
@@ -2950,22 +2949,15 @@ function App(){
     {/* Dock — grouped (Life / Work / System) */}
     <div className="dock">
       {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
-        {gi>0&&<div className="dock-divider"/>}
+        {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
             {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)}>
-              <span className="ico">{w.ico}</span><span>{w.label}</span><span className="dot"/>
+              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
             </button>)}
           </div>
           <div className="dock-group-label">{g.name}</div>
         </div>
       </React.Fragment>))}
     </div>
-    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
-  </>);
-}
-ReactDOM.createRoot(document.getElementById('ui-inner')||document.getElementById('ui-root')).render(<App/>);
-</script>
-</body>
-</html>
-
+    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}}
