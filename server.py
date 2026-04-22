@@ -2420,6 +2420,483 @@ def run_routine(routine_id):
     })
 
 
+# ═══════════════════════════════════════════════════════════════
+#  OUTREACH PIPELINE
+# ═══════════════════════════════════════════════════════════════
+
+OUTREACH_DIR = FRIDAY_DIR / "outreach"
+OUTREACH_DIR.mkdir(parents=True, exist_ok=True)
+OUTREACH_LOG_FILE = OUTREACH_DIR / "outreach-log.json"
+
+
+def _load_outreach_log():
+    if not OUTREACH_LOG_FILE.exists():
+        return {"version": 1, "entries": []}
+    try:
+        return json.loads(OUTREACH_LOG_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return {"version": 1, "entries": []}
+
+
+def _save_outreach_log(log):
+    log["updated"] = datetime.now().isoformat()
+    try:
+        OUTREACH_LOG_FILE.write_text(json.dumps(log, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"  [FRIDAY] outreach log save failed: {e}")
+
+
+def _career_ops_companies():
+    """Return list of companies currently in the career-ops tracker (applied/interviewing)."""
+    tracker_path = Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'applications.md'
+    if not tracker_path.is_file():
+        return []
+    try:
+        content = tracker_path.read_text(encoding='utf-8')
+    except Exception:
+        return []
+    companies = []
+    for line in content.strip().split('\n'):
+        if line.startswith('|') and '---' not in line and 'company' not in line.lower():
+            cols = [c.strip() for c in line.split('|')[1:-1]]
+            if len(cols) >= 3 and cols[0]:
+                companies.append({"company": cols[0], "score": cols[1] if len(cols) > 1 else '', "status": cols[2] if len(cols) > 2 else ''})
+    return companies
+
+
+@app.route('/api/outreach/suggestions')
+def outreach_suggestions():
+    """Warm leads pulled from trust graph + career-ops tracker."""
+    graph = _load_trust_graph()
+    people_raw = graph.get('people') or {}
+    people_items = people_raw.values() if isinstance(people_raw, dict) else people_raw
+
+    log = _load_outreach_log()
+    recent_targets = {
+        (e.get('contact') or '').strip().lower()
+        for e in log.get('entries', [])
+        if e.get('contact')
+    }
+
+    suggestions = []
+    for p in people_items:
+        if not isinstance(p, dict):
+            continue
+        scores = p.get('scores') or {}
+        overall = scores.get('overall')
+        if not isinstance(overall, (int, float)):
+            overall = 0.5
+        if overall < 0.55:
+            continue
+        name = p.get('name') or 'Unknown'
+        last = p.get('last_interaction') or ''
+        suggestions.append({
+            "type": "warm_contact",
+            "contact": name,
+            "score": round(overall, 2),
+            "domains": p.get('domains') or [],
+            "last_interaction": last,
+            "reason": f"Trust {int(overall*100)}%" + (f" · last contact {last[:10]}" if last else " · no recent touch"),
+            "already_contacted": name.lower() in recent_targets,
+        })
+    suggestions.sort(key=lambda s: s['score'], reverse=True)
+
+    companies = _career_ops_companies()
+    company_suggestions = []
+    for c in companies[:10]:
+        status = (c.get('status') or '').lower()
+        if any(t in status for t in ('applied', 'interview', 'evaluated')):
+            company_suggestions.append({
+                "type": "career_target",
+                "company": c.get('company'),
+                "status": c.get('status'),
+                "score": c.get('score'),
+                "reason": f"Career-ops: {c.get('status') or 'tracked'}",
+            })
+
+    return jsonify({
+        "status": "ok",
+        "warm_contacts": suggestions[:20],
+        "career_targets": company_suggestions,
+        "total": len(suggestions) + len(company_suggestions),
+    })
+
+
+@app.route('/api/outreach/draft', methods=['POST'])
+def outreach_draft():
+    """Draft outreach message. Uses Gemini if available, else templated fallback."""
+    data = request.get_json(silent=True) or {}
+    contact = (data.get('contact') or data.get('name') or '').strip()
+    company = (data.get('company') or '').strip()
+    angle = (data.get('angle') or 'reconnect').strip()
+    channel = (data.get('channel') or 'email').strip()
+    context_notes = (data.get('context') or '').strip()
+
+    if not contact and not company:
+        return jsonify({"status": "error", "message": "contact or company required"}), 400
+
+    target_label = contact or company
+    prompt = (
+        f"Draft a {channel} outreach to {target_label}. "
+        f"Angle: {angle}. "
+        f"Tone: warm, concise, specific. Sender: Stephen Webster (FutureSpeak.AI). "
+        f"Keep under 150 words. End with a single clear ask. "
+        f"Context: {context_notes}"
+    )
+
+    draft_text = None
+    try:
+        client = get_genai_client()
+        if client:
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            draft_text = (getattr(resp, 'text', None) or '').strip()
+    except Exception as e:
+        print(f"  [FRIDAY] outreach draft Gemini error: {e}")
+
+    if not draft_text:
+        subject = f"Quick hello — {angle.title()}"
+        body = (
+            f"Hi {contact or 'there'},\n\n"
+            f"Wanted to reach out — {angle}. "
+            f"Specifically: {context_notes or 'would love to catch up when you have a few minutes.'}\n\n"
+            f"Does next week work for a short call?\n\n"
+            f"— Stephen"
+        )
+        draft_text = f"Subject: {subject}\n\n{body}"
+
+    return jsonify({
+        "status": "ok",
+        "contact": contact,
+        "company": company,
+        "channel": channel,
+        "angle": angle,
+        "draft": draft_text,
+    })
+
+
+@app.route('/api/outreach/log', methods=['POST'])
+def outreach_log():
+    """Append an outreach event to the log."""
+    data = request.get_json(silent=True) or {}
+    contact = (data.get('contact') or '').strip()
+    company = (data.get('company') or '').strip()
+    channel = (data.get('channel') or 'email').strip()
+    angle = (data.get('angle') or '').strip()
+    message = (data.get('message') or '').strip()
+    status = (data.get('status') or 'sent').strip()
+
+    if not contact and not company:
+        return jsonify({"status": "error", "message": "contact or company required"}), 400
+
+    log = _load_outreach_log()
+    entry = {
+        "id": str(uuid.uuid4())[:8],
+        "contact": contact,
+        "company": company,
+        "channel": channel,
+        "angle": angle,
+        "status": status,
+        "message": message[:2000],
+        "timestamp": datetime.now().isoformat(),
+    }
+    log.setdefault('entries', []).append(entry)
+    _save_outreach_log(log)
+    return jsonify({"status": "ok", "entry": entry, "total": len(log['entries'])})
+
+
+@app.route('/api/outreach/pipeline')
+def outreach_pipeline():
+    """Pipeline view: counts by channel/angle/status plus recent entries."""
+    log = _load_outreach_log()
+    entries = list(reversed(log.get('entries', [])))
+
+    by_status, by_channel, by_angle = {}, {}, {}
+    for e in entries:
+        by_status[e.get('status', 'unknown')] = by_status.get(e.get('status', 'unknown'), 0) + 1
+        by_channel[e.get('channel', 'unknown')] = by_channel.get(e.get('channel', 'unknown'), 0) + 1
+        if e.get('angle'):
+            by_angle[e['angle']] = by_angle.get(e['angle'], 0) + 1
+
+    return jsonify({
+        "status": "ok",
+        "total": len(entries),
+        "by_status": by_status,
+        "by_channel": by_channel,
+        "by_angle": by_angle,
+        "recent": entries[:25],
+    })
+
+
+# ═══════════════════════════════════════════════════════════════
+#  CONTENT PIPELINE
+# ═══════════════════════════════════════════════════════════════
+
+CONTENT_DIR = FRIDAY_DIR / "content"
+CONTENT_DIR.mkdir(parents=True, exist_ok=True)
+CONTENT_PIPELINE_FILE = CONTENT_DIR / "pipeline.json"
+CONTENT_STAGES = ["idea", "drafting", "review", "scheduled", "published"]
+
+
+def _load_content_pipeline():
+    if not CONTENT_PIPELINE_FILE.exists():
+        return {"version": 1, "items": []}
+    try:
+        return json.loads(CONTENT_PIPELINE_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return {"version": 1, "items": []}
+
+
+def _save_content_pipeline(pipe):
+    pipe["updated"] = datetime.now().isoformat()
+    try:
+        CONTENT_PIPELINE_FILE.write_text(json.dumps(pipe, indent=2), encoding='utf-8')
+    except Exception as e:
+        print(f"  [FRIDAY] content pipeline save failed: {e}")
+
+
+@app.route('/api/content/pipeline')
+def content_pipeline():
+    """Return content pipeline grouped by stage for kanban view."""
+    pipe = _load_content_pipeline()
+    items = pipe.get('items', [])
+    by_stage = {s: [] for s in CONTENT_STAGES}
+    for it in items:
+        stage = it.get('stage') or 'idea'
+        if stage not in by_stage:
+            by_stage.setdefault(stage, [])
+        by_stage[stage].append(it)
+    return jsonify({
+        "status": "ok",
+        "stages": CONTENT_STAGES,
+        "by_stage": by_stage,
+        "total": len(items),
+    })
+
+
+@app.route('/api/content/idea', methods=['POST'])
+def content_idea():
+    """Add a new content idea to the pipeline."""
+    data = request.get_json(silent=True) or {}
+    title = (data.get('title') or '').strip()
+    if not title:
+        return jsonify({"status": "error", "message": "title required"}), 400
+
+    stage = (data.get('stage') or 'idea').strip()
+    if stage not in CONTENT_STAGES:
+        stage = 'idea'
+
+    pipe = _load_content_pipeline()
+    stamp = datetime.now().isoformat()
+    item = {
+        "id": str(uuid.uuid4())[:8],
+        "title": title,
+        "type": (data.get('type') or 'post').strip(),
+        "stage": stage,
+        "channel": (data.get('channel') or 'linkedin').strip(),
+        "notes": (data.get('notes') or '').strip(),
+        "tags": data.get('tags') or [],
+        "created": stamp,
+        "updated": stamp,
+    }
+    pipe.setdefault('items', []).append(item)
+    _save_content_pipeline(pipe)
+    return jsonify({"status": "ok", "item": item, "total": len(pipe['items'])})
+
+
+@app.route('/api/content/draft', methods=['POST'])
+def content_draft():
+    """Draft content from a pipeline item (or ad-hoc title). Optionally advances stage."""
+    data = request.get_json(silent=True) or {}
+    item_id = (data.get('id') or '').strip()
+    title = (data.get('title') or '').strip()
+    channel = (data.get('channel') or 'linkedin').strip()
+    notes = (data.get('notes') or '').strip()
+    advance = bool(data.get('advance_stage'))
+
+    pipe = _load_content_pipeline()
+    item = None
+    if item_id:
+        for it in pipe.get('items', []):
+            if it.get('id') == item_id:
+                item = it
+                break
+        if not item:
+            return jsonify({"status": "error", "message": "item not found"}), 404
+        title = title or item.get('title', '')
+        channel = item.get('channel') or channel
+        notes = notes or item.get('notes', '')
+
+    if not title:
+        return jsonify({"status": "error", "message": "title or id required"}), 400
+
+    prompt = (
+        f"Draft a {channel} {item.get('type') if item else 'post'} titled: {title}. "
+        f"Author: Stephen Webster (FutureSpeak.AI). "
+        f"Tone: sharp, specific, credible. "
+        f"Structure: hook, 2-3 body beats, ask/CTA. "
+        f"Length: 180-260 words for LinkedIn, longer for article. "
+        f"Context / notes: {notes}"
+    )
+
+    draft_text = None
+    try:
+        client = get_genai_client()
+        if client:
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            draft_text = (getattr(resp, 'text', None) or '').strip()
+    except Exception as e:
+        print(f"  [FRIDAY] content draft Gemini error: {e}")
+
+    if not draft_text:
+        draft_text = (
+            f"[{channel.upper()} DRAFT — {title}]\n\n"
+            f"Hook: (one-line opener)\n\n"
+            f"Body:\n- Point 1\n- Point 2\n- Point 3\n\n"
+            f"Notes: {notes or '(no notes)'}\n\n"
+            f"CTA: (single ask)\n\n— Stephen"
+        )
+
+    if item is not None:
+        item['draft'] = draft_text
+        item['updated'] = datetime.now().isoformat()
+        if advance and item.get('stage') in CONTENT_STAGES:
+            idx = CONTENT_STAGES.index(item['stage'])
+            if idx < len(CONTENT_STAGES) - 1:
+                item['stage'] = CONTENT_STAGES[idx + 1]
+        _save_content_pipeline(pipe)
+
+    return jsonify({
+        "status": "ok",
+        "id": item_id or None,
+        "title": title,
+        "channel": channel,
+        "draft": draft_text,
+        "stage": (item or {}).get('stage'),
+    })
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FUTURESPEAK BUSINESS WORKSPACE
+# ═══════════════════════════════════════════════════════════════
+
+FUTURESPEAK_DIR = FRIDAY_DIR / "futurespeak"
+FUTURESPEAK_DIR.mkdir(parents=True, exist_ok=True)
+FS_PIPELINE_FILE = FUTURESPEAK_DIR / "pipeline.json"
+FS_REVENUE_FILE = FUTURESPEAK_DIR / "revenue.json"
+FS_LEGAL_FILE = FUTURESPEAK_DIR / "legal.json"
+FS_ASSETS_DIR = FUTURESPEAK_DIR / "demo-assets"
+FS_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _fs_load(path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return fallback
+
+
+@app.route('/api/futurespeak/pipeline')
+def fs_pipeline():
+    data = _fs_load(FS_PIPELINE_FILE, {"opportunities": []})
+    opps = data.get('opportunities', []) or []
+    total_value = sum((o.get('value_usd') or 0) for o in opps)
+    weighted = sum((o.get('value_usd') or 0) * (o.get('probability') or 0) for o in opps)
+    by_status = {}
+    for o in opps:
+        s = o.get('status', 'unknown')
+        by_status[s] = by_status.get(s, 0) + 1
+    return jsonify({
+        "status": "ok",
+        "opportunities": opps,
+        "total": len(opps),
+        "total_value": total_value,
+        "weighted_value": weighted,
+        "by_status": by_status,
+    })
+
+
+@app.route('/api/futurespeak/revenue')
+def fs_revenue():
+    data = _fs_load(FS_REVENUE_FILE, {"months": [], "quarters": []})
+    months = data.get('months', []) or []
+    quarters = data.get('quarters', []) or []
+    burn = data.get('monthly_burn') or 0
+    cash = data.get('cash_on_hand') or 0
+
+    last_actual = 0
+    for m in months:
+        if isinstance(m.get('actual'), (int, float)):
+            last_actual = m['actual']
+    net_monthly = last_actual - burn
+    runway_months = None
+    if burn > 0 and net_monthly < 0:
+        runway_months = round(cash / burn, 1)
+
+    ytd_actual = sum(m.get('actual') or 0 for m in months)
+    ytd_projected = sum(m.get('projected') or 0 for m in months)
+
+    return jsonify({
+        "status": "ok",
+        "currency": data.get('currency', 'USD'),
+        "months": months,
+        "quarters": quarters,
+        "monthly_burn": burn,
+        "cash_on_hand": cash,
+        "last_actual_month": last_actual,
+        "net_monthly": net_monthly,
+        "runway_months": runway_months,
+        "ytd_actual": ytd_actual,
+        "ytd_projected": ytd_projected,
+    })
+
+
+@app.route('/api/futurespeak/legal')
+def fs_legal():
+    data = _fs_load(FS_LEGAL_FILE, {"items": []})
+    items = data.get('items', []) or []
+    by_status, by_type = {}, {}
+    for it in items:
+        s = it.get('status', 'unknown')
+        t = it.get('type', 'other')
+        by_status[s] = by_status.get(s, 0) + 1
+        by_type[t] = by_type.get(t, 0) + 1
+    return jsonify({
+        "status": "ok",
+        "items": items,
+        "total": len(items),
+        "by_status": by_status,
+        "by_type": by_type,
+    })
+
+
+@app.route('/api/futurespeak/assets')
+def fs_assets():
+    assets = []
+    if FS_ASSETS_DIR.exists():
+        for p in sorted(FS_ASSETS_DIR.iterdir()):
+            try:
+                stat = p.stat()
+                assets.append({
+                    "name": p.name,
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "ext": p.suffix.lower().lstrip('.'),
+                    "kind": "dir" if p.is_dir() else "file",
+                })
+            except Exception:
+                continue
+    return jsonify({"status": "ok", "assets": assets, "total": len(assets), "path": str(FS_ASSETS_DIR)})
+
+
+# ═══════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 
