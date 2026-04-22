@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#05060c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/friday-live/manifest.json">
+<title>FRIDAY LIVE</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#05060c;color:#e0f6ff;font-family:'Orbitron','Courier New',monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
+body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.bg{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(0,212,255,.08) 0%,rgba(123,97,255,.04) 35%,transparent 70%),linear-gradient(180deg,#05060c 0%,#08091a 100%);pointer-events:none;z-index:0}
+.scan{position:fixed;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.35),transparent);animation:scan 5s linear infinite;pointer-events:none;z-index:1}
+@keyframes scan{0%{top:0}100%{top:100vh}}
+header{position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid rgba(0,212,255,.08);background:rgba(5,6,12,.6);backdrop-filter:blur(10px)}
+header h1{font-size:12px;letter-spacing:.4em;color:#00d4ff;font-weight:700}
+header .status{font-size:10px;letter-spacing:.25em;color:rgba(180,220,255,.5);display:flex;align-items:center;gap:6px}
+header .status .dot{width:7px;height:7px;border-radius:50%;background:#555;box-shadow:0 0 6px currentColor;transition:background .3s}
+header .status.connecting .dot{background:#ff9500;animation:pulse-fast 1s ease-in-out infinite}
+header .status.live .dot{background:#00ff88;animation:pulse-fast 2s ease-in-out infinite}
+header .status.error .dot{background:#ff0066}
+@keyframes pulse-fast{0%,100%{opacity:1}50%{opacity:.4}}
+
+main{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:20px}
+
+.orb-wrap{position:relative;width:min(260px,60vw);height:min(260px,60vw);display:flex;align-items:center;justify-content:center}
+.orb{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 35% 30%,rgba(120,230,255,.55),rgba(0,180,255,.25) 40%,rgba(80,40,200,.18) 70%,transparent 100%);box-shadow:0 0 60px rgba(0,212,255,.35),0 0 120px rgba(123,97,255,.25),inset 0 0 60px rgba(0,212,255,.15);animation:breathe 4s ease-in-out infinite;transition:transform .08s ease-out,box-shadow .2s}
+.orb.speaking{animation:speak .6s ease-in-out infinite alternate;box-shadow:0 0 90px rgba(0,255,200,.55),0 0 180px rgba(0,212,255,.3),inset 0 0 80px rgba(120,230,255,.25)}
+.orb.listening{animation:breathe 4s ease-in-out infinite}
+.orb-ring{position:absolute;inset:-14px;border:1px solid rgba(0,212,255,.2);border-radius:50%;animation:spin 20s linear infinite}
+.orb-ring.inner{inset:-4px;border-color:rgba(255,0,150,.15);animation-duration:14s;animation-direction:reverse}
+.orb-core{position:relative;z-index:2;font-size:10px;letter-spacing:.4em;color:rgba(240,250,255,.85);text-shadow:0 0 10px rgba(0,212,255,.8)}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+@keyframes speak{from{transform:scale(1.04)}to{transform:scale(1.14)}}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+.transcript{min-height:22px;max-width:92%;font-size:12px;letter-spacing:.06em;color:rgba(200,230,255,.75);text-align:center;line-height:1.4;font-family:Inter,'Courier New',sans-serif}
+.transcript.self{color:rgba(255,150,200,.6);font-style:italic}
+
+.cam-pip{position:fixed;top:64px;right:16px;width:96px;height:128px;border-radius:10px;overflow:hidden;background:#000;border:1px solid rgba(0,212,255,.25);box-shadow:0 4px 16px rgba(0,0,0,.6),0 0 10px rgba(0,212,255,.15);z-index:5;transition:transform .2s;cursor:move;touch-action:none}
+.cam-pip.off{display:none}
+.cam-pip video{width:100%;height:100%;object-fit:cover}
+.cam-pip .label{position:absolute;top:4px;left:4px;font-size:8px;letter-spacing:.2em;color:#00d4ff;background:rgba(0,0,0,.5);padding:1px 5px;border-radius:3px}
+
+footer{position:relative;z-index:3;display:flex;justify-content:center;align-items:center;gap:14px;padding:16px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid rgba(0,212,255,.08);background:rgba(5,6,12,.6);backdrop-filter:blur(10px)}
+.btn{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:62px;padding:10px 8px;background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.2);border-radius:14px;color:#00d4ff;font-family:inherit;font-size:9px;letter-spacing:.2em;cursor:pointer;transition:all .2s}
+.btn:active{transform:scale(.95)}
+.btn.active{background:rgba(0,255,136,.1);border-color:rgba(0,255,136,.4);color:#00ff88;box-shadow:0 0 14px rgba(0,255,136,.15)}
+.btn.off{background:rgba(100,100,120,.05);border-color:rgba(150,150,160,.15);color:rgba(180,200,220,.4)}
+.btn.danger{background:rgba(255,0,100,.06);border-color:rgba(255,0,100,.25);color:#ff4477}
+.btn .ico{font-size:20px;line-height:1}
+.btn .lbl{font-weight:700}
+
+.hint{position:fixed;top:48%;left:50%;transform:translate(-50%,120px);font-size:9px;letter-spacing:.3em;color:rgba(180,200,255,.35);pointer-events:none;z-index:2}
+.err-banner{position:fixed;left:12px;right:12px;top:56px;z-index:20;background:rgba(40,0,20,.95);border:1px solid rgba(255,0,100,.5);border-radius:10px;padding:10px 12px;color:#ffccdd;font-size:11px;letter-spacing:.05em;line-height:1.4;display:none}
+.err-banner.show{display:block}
+</style>
+</head>
+<body>
+<div class="bg"></div><div class="scan"></div>
+
+<header>
+  <h1>FRIDAY · LIVE</h1>
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">IDLE</span></div>
+</header>
+
+<div class="err-banner" id="errBanner"></div>
+
+<main>
+  <div class="orb-wrap">
+    <div class="orb-ring"></div>
+    <div class="orb-ring inner"></div>
+    <div class="orb" id="orb"></div>
+    <div class="orb-core" id="orbCore">TAP TO START</div>
+  </div>
+  <div class="transcript" id="transcript"></div>
+  <div class="hint">PHONE IN POCKET · AIRPODS OK · SESSION PERSISTS</div>
+</main>
+
+<div class="cam-pip off" id="camPip">
+  <div class="label">CAM</div>
+  <video id="camVideo" autoplay playsinline muted></video>
+</div>
+
+<footer>
+  <button class="btn off" id="btnMic"><span class="ico">🎤</span><span class="lbl">MIC</span></button>
+  <button class="btn off" id="btnCam"><span class="ico">📷</span><span class="lbl">CAM</span></button>
+  <button class="btn" id="btnFlip"><span class="ico">🔄</span><span class="lbl">FLIP</span></button>
+  <button class="btn danger" id="btnEnd"><span class="ico">⏹</span><span class="lbl">END</span></button>
+</footer>
+
+<script>
+const PCM_IN_RATE = 16000;   // rate we send to Gemini
+const PCM_OUT_RATE = 24000;  // rate Gemini returns
+const FRAME_INTERVAL_MS = 2500;
+
+const el = id => document.getElementById(id);
+const orb = el('orb'), orbCore = el('orbCore'), statusEl = el('status'), statusText = el('statusText');
+const transcriptEl = el('transcript'), errBanner = el('errBanner');
+const btnMic = el('btnMic'), btnCam = el('btnCam'), btnFlip = el('btnFlip'), btnEnd = el('btnEnd');
+const camPip = el('camPip'), camVideo = el('camVideo');
+
+let ws = null, audioCtx = null, micStream = null, camStream = null;
+let micNode = null, micSource = null, playQueue = [], playCursor = 0;
+let camFacing = 'environment', camTimer = null, camCanvas = null;
+let wakeLock = null, keepAliveOsc = null;
+let micOn = false, camOn = false, sessionActive = false;
+
+function setStatus(mode, text){
+  statusEl.className = 'status ' + mode;
+  statusText.textContent = text;
+}
+function showError(msg){
+  errBanner.textContent = '⚠ ' + msg;
+  errBanner.classList.add('show');
+  setTimeout(() => errBanner.classList.remove('show'), 6000);
+}
+function setTranscript(text, self){
+  transcriptEl.textContent = text || '';
+  transcriptEl.className = 'transcript' + (self ? ' self' : '');
+}
+
+// ── Audio capture: resample to 16kHz PCM16 ──
+function floatTo16BitPCM(float32, outRate, inRate){
+  if (outRate === inRate){
+    const buf = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++){
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      buf[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return buf;
+  }
+  const ratio = inRate / outRate;
+  const outLen = Math.floor(float32.length / ratio);
+  const out = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++){
+    const src = i * ratio;
+    const i0 = Math.floor(src), i1 = Math.min(i0 + 1, float32.length - 1);
+    const f = src - i0;
+    const s = Math.max(-1, Math.min(1, float32[i0] * (1 - f) + float32[i1] * f));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+function int16ToBase64(int16){
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+function base64ToInt16(b64){
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Int16Array(bytes.buffer);
+}
+
+async function openAudioContext(){
+  if (audioCtx) return audioCtx;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  // Silent keep-alive oscillator — prevents Android Chrome from suspending the tab in background
+  keepAliveOsc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.0001;
+  keepAliveOsc.frequency.value = 20;
+  keepAliveOsc.connect(gain).connect(audioCtx.destination);
+  keepAliveOsc.start();
+  return audioCtx;
+}
+
+async function startMic(){
+  if (micOn) return;
+  await openAudioContext();
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  micSource = audioCtx.createMediaStreamSource(micStream);
+  const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = ev => {
+    if (!micOn || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    const pcm16 = floatTo16BitPCM(input, PCM_IN_RATE, audioCtx.sampleRate);
+    ws.send(JSON.stringify({ type: 'audio', data: int16ToBase64(pcm16) }));
+  };
+  micSource.connect(processor);
+  processor.connect(audioCtx.destination);
+  micNode = processor;
+  micOn = true;
+  btnMic.classList.remove('off');
+  btnMic.classList.add('active');
+}
+function stopMic(){
+  micOn = false;
+  btnMic.classList.remove('active');
+  btnMic.classList.add('off');
+  if (micNode){ try { micNode.disconnect(); } catch(_){} micNode = null; }
+  if (micSource){ try { micSource.disconnect(); } catch(_){} micSource = null; }
+  if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
+
+async function startCam(facing){
+  stopCam();
+  camFacing = facing || camFacing;
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: camFacing, width: { ideal: 640 }, height: { ideal: 480 } } });
+  } catch(e){
+    // Fallback: if exact facing not available, try any
+    camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+  }
+  camVideo.srcObject = camStream;
+  camPip.classList.remove('off');
+  btnCam.classList.remove('off');
+  btnCam.classList.add('active');
+  camOn = true;
+  if (!camCanvas){ camCanvas = document.createElement('canvas'); camCanvas.width = 640; camCanvas.height = 480; }
+  clearInterval(camTimer);
+  camTimer = setInterval(sendFrame, FRAME_INTERVAL_MS);
+}
+function stopCam(){
+  clearInterval(camTimer); camTimer = null;
+  if (camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  camVideo.srcObject = null;
+  camPip.classList.add('off');
+  btnCam.classList.remove('active');
+  btnCam.classList.add('off');
+  camOn = false;
+}
+function sendFrame(){
+  if (!camOn || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (document.hidden) return; // skip frames while page in background
+  const v = camVideo;
+  if (!v.videoWidth) return;
+  const cw = camCanvas.width = Math.min(640, v.videoWidth);
+  const ch = camCanvas.height = Math.round(cw * v.videoHeight / v.videoWidth);
+  const ctx = camCanvas.getContext('2d');
+  ctx.drawImage(v, 0, 0, cw, ch);
+  const dataUrl = camCanvas.toDataURL('image/jpeg', 0.6);
+  const b64 = dataUrl.split(',')[1];
+  ws.send(JSON.stringify({ type: 'image', data: b64 }));
+}
+async function flipCam(){
+  if (!camOn) return;
+  await startCam(camFacing === 'environment' ? 'user' : 'environment');
+}
+
+// ── Audio playback: queued PCM16 @ 24kHz ──
+function playPcm16(int16, rate){
+  if (!audioCtx) return;
+  const buf = audioCtx.createBuffer(1, int16.length, rate);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768;
+  const now = audioCtx.currentTime;
+  const startAt = Math.max(now, playCursor);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf; src.connect(audioCtx.destination);
+  src.start(startAt);
+  playCursor = startAt + buf.duration;
+  orb.classList.add('speaking'); orb.classList.remove('listening');
+  setStatus('live', 'SPEAKING');
+  src.onended = () => {
+    if (playCursor - audioCtx.currentTime < 0.05){
+      orb.classList.remove('speaking'); orb.classList.add('listening');
+      setStatus('live', 'LISTENING');
+    }
+  };
+}
+
+// ── WebSocket bridge ──
+async function connect(){
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/live');
+  setStatus('connecting', 'CONNECTING');
+  orbCore.textContent = 'CONNECTING';
+  ws.onopen = () => {
+    setStatus('live', 'LISTENING');
+    orbCore.textContent = 'LIVE';
+    orb.classList.add('listening');
+  };
+  ws.onmessage = ev => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch(_){ return; }
+    if (m.type === 'audio'){
+      playPcm16(base64ToInt16(m.data), PCM_OUT_RATE);
+    } else if (m.type === 'text'){
+      setTranscript(m.text, false);
+    } else if (m.type === 'turn_end'){
+      // optional: clear old transcript after a delay
+    } else if (m.type === 'status'){
+      setTranscript('· ' + m.text + ' ·', true);
+    } else if (m.type === 'error'){
+      showError(m.error || 'live session error');
+      setStatus('error', 'ERROR');
+    }
+  };
+  ws.onerror = () => {
+    showError('WebSocket error — check network / auth');
+    setStatus('error', 'ERROR');
+  };
+  ws.onclose = () => {
+    setStatus('', 'DISCONNECTED');
+    orbCore.textContent = 'TAP TO RESTART';
+    orb.classList.remove('speaking', 'listening');
+    sessionActive = false;
+  };
+}
+
+async function requestWakeLock(){
+  try {
+    if ('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch(_){}
+}
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden && sessionActive && !wakeLock) await requestWakeLock();
+});
+
+async function startSession(){
+  if (sessionActive) return;
+  sessionActive = true;
+  await openAudioContext();
+  await requestWakeLock();
+  await connect();
+  await startMic();
+  // Request notification permission quietly — persistent notification lives on service worker
+  if ('Notification' in window && Notification.permission === 'default'){
+    try { await Notification.requestPermission(); } catch(_){}
+  }
+  if (navigator.serviceWorker && Notification.permission === 'granted'){
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      reg.showNotification('FRIDAY LIVE — Connected', {
+        body: 'Voice session active · tap to return',
+        tag: 'friday-live',
+        silent: true,
+        requireInteraction: true,
+      });
+    } catch(_){}
+  }
+}
+async function endSession(){
+  sessionActive = false;
+  stopMic(); stopCam();
+  if (ws){ try { ws.send(JSON.stringify({ type: 'end' })); } catch(_){} try { ws.close(); } catch(_){} ws = null; }
+  if (wakeLock){ try { await wakeLock.release(); } catch(_){} wakeLock = null; }
+  if (keepAliveOsc){ try { keepAliveOsc.stop(); } catch(_){} keepAliveOsc = null; }
+  if (navigator.serviceWorker){
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const notes = await reg.getNotifications({ tag: 'friday-live' });
+      notes.forEach(n => n.close());
+    } catch(_){}
+  }
+  setStatus('', 'IDLE');
+  orbCore.textContent = 'TAP TO START';
+  orb.classList.remove('speaking', 'listening');
+}
+
+// ── Button wiring ──
+orb.addEventListener('click', startSession);
+orbCore.addEventListener('click', startSession);
+btnMic.addEventListener('click', async () => { if (!sessionActive) return startSession(); micOn ? stopMic() : await startMic(); });
+btnCam.addEventListener('click', async () => { camOn ? stopCam() : await startCam(camFacing); });
+btnFlip.addEventListener('click', flipCam);
+btnEnd.addEventListener('click', endSession);
+
+// ── Draggable PIP ──
+(function makeDraggable(){
+  let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+  const onDown = e => {
+    dragging = true;
+    const p = e.touches ? e.touches[0] : e;
+    startX = p.clientX; startY = p.clientY;
+    const r = camPip.getBoundingClientRect();
+    origX = r.left; origY = r.top;
+    camPip.style.right = 'auto'; camPip.style.top = origY + 'px'; camPip.style.left = origX + 'px';
+  };
+  const onMove = e => {
+    if (!dragging) return;
+    const p = e.touches ? e.touches[0] : e;
+    camPip.style.left = Math.max(4, origX + (p.clientX - startX)) + 'px';
+    camPip.style.top = Math.max(4, origY + (p.clientY - startY)) + 'px';
+  };
+  const onUp = () => { dragging = false; };
+  camPip.addEventListener('touchstart', onDown, { passive: true });
+  camPip.addEventListener('touchmove', onMove, { passive: true });
+  camPip.addEventListener('touchend', onUp);
+  camPip.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+})();
+
+// ── Service worker registration (best-effort) ──
+if ('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/friday-live/sw.js').catch(err => console.warn('SW reg failed:', err));
+}
+</script>
+</body>
+</html>
