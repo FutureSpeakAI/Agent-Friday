@@ -1467,7 +1467,8 @@ const WS=[
   {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},{id:'futurespeak',ico:'🚀',label:'FutureSpeak'},{id:'family',ico:'👪',label:'Family'},
   {id:'studio',ico:'🎨',label:'Studio'},{id:'trust',ico:'🔗',label:'Trust'},{id:'system',ico:'🖥️',label:'System'},
   {id:'code',ico:'💻',label:'Code'},{id:'news',ico:'📰',label:'News'},{id:'draft',ico:'✍️',label:'Draft'},
-  {id:'finance',ico:'💰',label:'Finance'},{id:'health',ico:'❤️',label:'Health'}
+  {id:'finance',ico:'💰',label:'Finance'},{id:'health',ico:'❤️',label:'Health'},
+  {id:'contacts',ico:'👥',label:'Contacts'}
 ];
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
@@ -1541,6 +1542,8 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
 // ═══ WORKSPACES ═══
 function HomeWS(){
   const[cd,setCd]=useState(null);const[trust,setTrust]=useState(null);const[pers,setPers]=useState(null);const[mem,setMem]=useState(null);const[epi,setEpi]=useState(null);const[todos,setTodos]=useState([]);const[loading,setLoading]=useState(true);
+  const[routines,setRoutines]=useState([]);const[runningRoutine,setRunningRoutine]=useState(null);const[routineToast,setRoutineToast]=useState('');
+  const loadRoutines=()=>fetch('/api/routines').then(r=>r.json()).then(d=>setRoutines(d.routines||[])).catch(()=>{});
   useEffect(()=>{
     Promise.all([
       fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>null),
@@ -1548,9 +1551,11 @@ function HomeWS(){
       fetch('/api/personality').then(r=>r.json()).then(setPers).catch(()=>null),
       fetch('/api/memory/stats').then(r=>r.json()).then(setMem).catch(()=>null),
       fetch('/api/epistemic').then(r=>r.json()).then(setEpi).catch(()=>null),
-      fetch('/api/todos').then(r=>r.json()).then(d=>setTodos(d.todos||[])).catch(()=>[])
+      fetch('/api/todos').then(r=>r.json()).then(d=>setTodos(d.todos||[])).catch(()=>[]),
+      loadRoutines()
     ]).then(()=>setLoading(false));
   },[]);
+  const runRoutine=async(id,label)=>{setRunningRoutine(id);try{const r=await fetch('/api/routines/'+id+'/run',{method:'POST'});const d=await r.json();setRoutineToast(d.status==='ok'?(label+' launched'):'Launch failed');loadRoutines()}catch(e){setRoutineToast('Launch failed')}setRunningRoutine(null);setTimeout(()=>setRoutineToast(''),2500)};
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
   const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Morning routines launched')).catch(()=>{})};
@@ -1567,6 +1572,25 @@ function HomeWS(){
       <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
       <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
       <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:9,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:9,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
+    </div>
+    <div className="card" style={{marginTop:10}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+        <div className="card-title" style={{margin:0}}>Routines</div>
+        {routineToast&&<span style={{fontSize:10,color:'#00d4ff'}}>{routineToast}</span>}
+      </div>
+      {routines.length===0?<div style={{color:'#555',fontSize:11}}>No routines registered</div>:
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+        {routines.map(r=>{const busy=runningRoutine===r.id;const lr=r.last_run?new Date(r.last_run).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'never';
+          return(<div key={r.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 6px',borderRadius:6,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.04)'}}>
+            <span style={{fontSize:16}}>{r.ico}</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,color:'#ccc',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
+              <div style={{fontSize:9,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
+            </div>
+            <button className="btn" style={{fontSize:9,padding:'3px 7px'}} disabled={busy} onClick={()=>runRoutine(r.id,r.label)}>{busy?'...':'Run Now'}</button>
+          </div>);
+        })}
+      </div>}
     </div>
   </div>);
 }
@@ -2122,6 +2146,84 @@ function HealthWS(){
     </div>}
   </div>);
 }
+function ContactsWS(){
+  const[contacts,setContacts]=useState([]);const[loading,setLoading]=useState(true);const[q,setQ]=useState('');
+  const[selected,setSelected]=useState(null);const[detail,setDetail]=useState(null);const[detailLoad,setDetailLoad]=useState(false);
+  const[researching,setResearching]=useState(false);const[toast,setToast]=useState('');
+  const loadList=()=>{setLoading(true);fetch('/api/contacts').then(r=>r.json()).then(d=>{setContacts(d.contacts||[]);setLoading(false)}).catch(()=>{setLoading(false)})};
+  useEffect(()=>{loadList()},[]);
+  const openContact=async(c)=>{setSelected(c);setDetail(null);setDetailLoad(true);try{const r=await fetch('/api/contacts/'+encodeURIComponent((c.name||'').toLowerCase()));const d=await r.json();setDetail(d.status==='ok'?{...d.contact,research:d.research}:null)}catch(e){setDetail(null)}setDetailLoad(false)};
+  const doResearch=async()=>{if(!selected||researching)return;setResearching(true);try{const r=await fetch('/api/contacts/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected.name})});const d=await r.json();setToast(d.status==='ok'?('Research queued for '+selected.name):'Research failed')}catch(e){setToast('Research failed')}setResearching(false);setTimeout(()=>setToast(''),2500)};
+  const doCopy=async()=>{if(!detail)return;try{await navigator.clipboard.writeText(JSON.stringify(detail,null,2));setToast('Copied contact JSON')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),2000)};
+  const filtered=contacts.filter(c=>!q||((c.name||'')+' '+((c.aliases||[]).join(' '))).toLowerCase().includes(q.toLowerCase()));
+  if(selected){
+    const score=detail?.scores?.overall??selected.overall??0.5;const pct=Math.round(score*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
+    const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
+    return(<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <button className="btn" style={{fontSize:10}} onClick={()=>{setSelected(null);setDetail(null)}}>← Back</button>
+        <div style={{display:'flex',gap:4}}>
+          <button className="btn" style={{fontSize:10}} onClick={doResearch} disabled={researching}>{researching?'Researching...':'🔎 Research'}</button>
+          <SendTo content={()=>JSON.stringify(detail||selected,null,2)} personName={selected.name} dataType="contact_research" options={[{label:'Draft Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>
+          <button className="btn" style={{fontSize:10}} onClick={doCopy}>📋 Copy</button>
+        </div>
+      </div>
+      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+      <div className="card" style={{marginBottom:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:10,color:'#555'}}>aka {selected.aliases.join(', ')}</div>}</div>
+          <div style={{fontFamily:'Orbitron',fontSize:16,color:col}}>{pct}%</div>
+        </div>
+        <div className="progress-bar"><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
+      </div>
+      {detailLoad?<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>Loading trust dimensions...</div>:detail?<>
+        <div className="card" style={{marginBottom:10}}>
+          <div className="card-title">Trust Dimensions</div>
+          {dims.map(d=>{const v=Math.round((detail.scores&&typeof detail.scores[d]==='number'?detail.scores[d]:0.5)*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
+            return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+              <span style={{width:140,fontSize:10,color:'#888'}}>{d.replace(/_/g,' ')}</span>
+              <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
+              <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
+            </div>)})}
+        </div>
+        {detail.domains&&detail.domains.length>0&&<div className="card" style={{marginBottom:10}}><div className="card-title">Domains</div><div style={{fontSize:11,color:'#aaa'}}>{detail.domains.join(' · ')}</div></div>}
+        {detail.last_interaction&&<div style={{fontSize:10,color:'#666',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
+        {Array.isArray(detail.evidence)&&detail.evidence.length>0&&<div className="card" style={{marginBottom:10}}>
+          <div className="card-title">Evidence ({detail.evidence.length})</div>
+          {detail.evidence.slice(0,20).map((e,i)=><div key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',padding:'4px 0',fontSize:11}}>
+            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#00d4ff'}}>{e.type||'event'}</span><span style={{color:'#555',fontSize:10}}>{e.timestamp||''}</span></div>
+            {e.notes&&<div style={{color:'#aaa',marginTop:2}}>{e.notes}</div>}
+          </div>)}
+        </div>}
+        {detail.research&&<div className="card"><div className="card-title">Research Notes</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6,margin:0}}>{detail.research}</pre></div>}
+      </>:<div style={{color:'#ff0080',fontSize:11,textAlign:'center',padding:20}}>Could not load contact detail.</div>}
+    </div>);
+  }
+  return(<div>
+    <FridaySays text={contacts.length+' contacts tracked · search, research, and draft outreach.'}/>
+    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
+      <input className="input" style={{flex:1}} value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts..."/>
+      <button className="btn" style={{fontSize:10}} onClick={loadList}>↻</button>
+    </div>
+    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    {loading?<div style={{color:'#555',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+      {filtered.map((c,i)=>{const pct=Math.round((c.overall||0)*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
+        return(<div key={i} className="card" style={{cursor:'pointer',padding:8}} onClick={()=>openContact(c)}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:12,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
+              {c.aliases&&c.aliases.length>0&&<div style={{fontSize:9,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
+            </div>
+            <div style={{fontFamily:'Orbitron',fontSize:12,color:col,marginLeft:6}}>{pct}%</div>
+          </div>
+          <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
+          <div style={{fontSize:9,color:'#555',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
+        </div>);
+      })}
+    </div>}
+  </div>);
+}
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -2157,7 +2259,7 @@ function App(){
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const noWindows=openWins.size===0;

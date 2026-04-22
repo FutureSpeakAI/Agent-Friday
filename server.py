@@ -2198,6 +2198,228 @@ def confirm_draft():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ═══════════════════════════════════════════════════════════════
+#  CONTACTS / CRM
+# ═══════════════════════════════════════════════════════════════
+
+def _load_trust_graph():
+    """Load trust graph with consistent shape. Returns dict with people keyed by name."""
+    tfile = FRIDAY_DIR / "trust_graph.json"
+    if not tfile.exists():
+        return {"people": {}}
+    try:
+        return json.loads(tfile.read_text(encoding='utf-8'))
+    except Exception:
+        return {"people": {}}
+
+
+def _contacts_list():
+    """Merge trust graph people into a flat contacts list."""
+    graph = _load_trust_graph()
+    raw = graph.get('people') or {}
+    items = raw.values() if isinstance(raw, dict) else raw
+    contacts = []
+    for p in items:
+        if not isinstance(p, dict):
+            continue
+        scores = p.get('scores') or {}
+        overall = scores.get('overall')
+        if not isinstance(overall, (int, float)):
+            overall = 0.5
+        contacts.append({
+            "name": p.get('name') or 'Unknown',
+            "aliases": p.get('aliases') or [],
+            "domains": p.get('domains') or [],
+            "overall": overall,
+            "last_interaction": p.get('last_interaction'),
+            "evidence_count": len(p.get('evidence') or []),
+        })
+    contacts.sort(key=lambda c: c.get('overall') or 0, reverse=True)
+    return contacts
+
+
+def _contacts_research_dir():
+    d = FRIDAY_DIR / "contacts-research"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@app.route('/api/contacts')
+def get_contacts():
+    """Merged contact list built from trust_graph.json."""
+    contacts = _contacts_list()
+    return jsonify({"status": "ok", "contacts": contacts, "count": len(contacts)})
+
+
+@app.route('/api/contacts/<path:name>')
+def get_contact(name):
+    """Full trust dimensions + evidence for a single contact (case-insensitive name)."""
+    graph = _load_trust_graph()
+    raw = graph.get('people') or {}
+    target = (name or '').strip().lower()
+    match = None
+    if isinstance(raw, dict):
+        if target in raw:
+            match = raw[target]
+        else:
+            for k, v in raw.items():
+                if not isinstance(v, dict):
+                    continue
+                cand = (v.get('name') or k or '').strip().lower()
+                aliases = [a.lower() for a in (v.get('aliases') or [])]
+                if cand == target or target in aliases:
+                    match = v
+                    break
+    else:
+        for v in raw:
+            if not isinstance(v, dict):
+                continue
+            cand = (v.get('name') or '').strip().lower()
+            aliases = [a.lower() for a in (v.get('aliases') or [])]
+            if cand == target or target in aliases:
+                match = v
+                break
+    if not match:
+        return jsonify({"status": "error", "message": "Contact not found"}), 404
+
+    # Look for a stored research file.
+    research_file = _contacts_research_dir() / f"{target.replace(' ', '_')}.md"
+    research = research_file.read_text(encoding='utf-8') if research_file.exists() else ''
+
+    return jsonify({"status": "ok", "contact": match, "research": research})
+
+
+@app.route('/api/contacts/research', methods=['POST'])
+def contacts_research():
+    """Kick off web research on a contact. Writes a stub and launches a background terminal."""
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"status": "error", "message": "name required"}), 400
+    key = name.lower().replace(' ', '_')
+    research_file = _contacts_research_dir() / f"{key}.md"
+    stamp = datetime.now().isoformat()
+    if not research_file.exists():
+        research_file.write_text(
+            f"# Research: {name}\n\n_Initialized {stamp}_\n\n"
+            f"- Public profile search: pending\n"
+            f"- LinkedIn / GitHub: pending\n"
+            f"- Recent news mentions: pending\n",
+            encoding='utf-8'
+        )
+    try:
+        tid = str(uuid.uuid4())[:8]
+        VIBE_TERMINALS[tid] = {
+            "id": tid, "task": f"Research contact: {name}",
+            "status": "pending", "cwd": str(FRIDAY_DIR),
+            "started": stamp, "log_file": None
+        }
+    except Exception:
+        tid = None
+    return jsonify({
+        "status": "ok", "name": name,
+        "research_file": str(research_file),
+        "task_id": tid,
+        "message": f"Research queued for {name}"
+    })
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ROUTINES
+# ═══════════════════════════════════════════════════════════════
+
+ROUTINES_DIR = FRIDAY_DIR / "routines"
+ROUTINES_DIR.mkdir(parents=True, exist_ok=True)
+ROUTINE_STATUS_FILE = FRIDAY_DIR / "routine_status.json"
+
+# Registered routine catalog. Defines display + default schedule when a template is missing.
+ROUTINE_REGISTRY = [
+    {"id": "morning-briefing",   "label": "Morning Briefing",    "ico": "🌅", "category": "briefing",    "schedule": "Daily · 7:00 AM"},
+    {"id": "afternoon-briefing", "label": "Afternoon Briefing",  "ico": "☀️", "category": "briefing",    "schedule": "Daily · 2:00 PM"},
+    {"id": "weekly-legal-prep",  "label": "Weekly Legal Prep",   "ico": "⚖️", "category": "legal",       "schedule": "Sundays · 6:00 PM"},
+    {"id": "libby-weekend-prep", "label": "***REMOVED*** Weekend Prep",  "ico": "👧", "category": "family",      "schedule": "Thursdays · 6:00 PM"},
+    {"id": "portfolio-snapshot", "label": "Portfolio Snapshot",  "ico": "💰", "category": "finance",     "schedule": "Daily · 5:00 PM"},
+    {"id": "content-pipeline",   "label": "Content Pipeline",    "ico": "✍️", "category": "content",     "schedule": "Daily · 10:00 AM"},
+    {"id": "daily-creation",     "label": "Daily Creation",      "ico": "🎨", "category": "studio",      "schedule": "Daily · 2:00 PM"},
+    {"id": "job-intelligence",   "label": "Job Intelligence",    "ico": "💼", "category": "career",      "schedule": "Daily · 8:00 AM"},
+    {"id": "repo-sync",          "label": "Repo Sync",           "ico": "🔄", "category": "engineering", "schedule": "Daily · 11:00 PM"},
+]
+
+
+def _load_routine_status():
+    if ROUTINE_STATUS_FILE.exists():
+        try:
+            return json.loads(ROUTINE_STATUS_FILE.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_routine_status(status):
+    try:
+        ROUTINE_STATUS_FILE.write_text(json.dumps(status, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+
+@app.route('/api/routines')
+def list_routines():
+    """Return the routine registry plus last-run status for each."""
+    status = _load_routine_status()
+    out = []
+    for r in ROUTINE_REGISTRY:
+        s = status.get(r['id'], {}) or {}
+        template_exists = (ROUTINES_DIR / f"{r['id']}.md").exists()
+        out.append({
+            **r,
+            "last_run": s.get('last_run'),
+            "last_status": s.get('last_status'),
+            "last_task_id": s.get('last_task_id'),
+            "template_exists": template_exists,
+        })
+    return jsonify({"status": "ok", "routines": out})
+
+
+@app.route('/api/routines/<routine_id>/run', methods=['POST'])
+def run_routine(routine_id):
+    """Trigger a routine on demand. Launches a background Vibe-Code task and records status."""
+    reg = next((r for r in ROUTINE_REGISTRY if r['id'] == routine_id), None)
+    if not reg:
+        return jsonify({"status": "error", "message": "Unknown routine"}), 404
+
+    template = ROUTINES_DIR / f"{routine_id}.md"
+    task_desc = f"Run routine: {reg['label']}"
+    if template.exists():
+        task_desc += f" (see {template.name})"
+
+    stamp = datetime.now().isoformat()
+    tid = str(uuid.uuid4())[:8]
+    try:
+        VIBE_TERMINALS[tid] = {
+            "id": tid, "task": task_desc,
+            "status": "pending", "cwd": str(Path.cwd()),
+            "started": stamp, "log_file": None
+        }
+    except Exception:
+        pass
+
+    status = _load_routine_status()
+    status[routine_id] = {
+        "last_run": stamp,
+        "last_status": "launched",
+        "last_task_id": tid,
+    }
+    _save_routine_status(status)
+
+    return jsonify({
+        "status": "ok",
+        "routine": routine_id,
+        "task_id": tid,
+        "started_at": stamp,
+        "message": f"{reg['label']} launched",
+    })
+
+
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
 
