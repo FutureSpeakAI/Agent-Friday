@@ -409,5 +409,81 @@
             padding: 24px; text-align: center; color: rgba(255,255,255,0.35);
             font-size: 12px;
         }
+
+        /* ═══ GEMINI DESIGN PASS — Holographic Dock Refinements ═══ */
+        @keyframes holoShimmer {
+          0%   { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes holoPulse {
+          0%, 100% { filter: brightness(1) drop-shadow(0 0 2px rgba(0,212,255,0.2)); }
+          50%      { filter: brightness(1.15) drop-shadow(0 0 6px rgba(123,97,255,0.35)); }
+        }
+        @keyframes prismaticBorder {
+          0%   { border-color: rgba(0,212,255,0.25); }
+          33%  { border-color: rgba(123,97,255,0.25); }
+          66%  { border-color: rgba(255,0,255,0.2); }
+          100% { border-color: rgba(0,212,255,0.25); }
+        }
+
+        .dock {
+          background:
+            linear-gradient(90deg,
+              transparent 0%, rgba(0,212,255,0.03) 25%,
+              rgba(123,97,255,0.04) 50%, rgba(255,0,255,0.03) 75%,
+              transparent 100%),
+            rgba(3,3,8,0.75);
+          background-size: 200% 100%, 100% 100%;
+          animation: holoShimmer 8s linear infinite;
+          border-top: 1px solid rgba(0,212,255,0.08);
+          box-shadow: 0 -1px 0 rgba(123,97,255,0.05), inset 0 1px 30px rgba(0,212,255,0.02);
+        }
+        .dock::after {
+          content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: repeating-linear-gradient(0deg, transparent, transparent 2px,
+            rgba(0,212,255,0.008) 2px, rgba(0,212,255,0.008) 4px);
+          pointer-events: none; z-index: 1;
+        }
+
+        .dock-btn { position: relative; z-index: 2; animation: prismaticBorder 6s ease infinite; }
+        .dock-btn:hover {
+          background: rgba(0,212,255,0.06); border-color: rgba(123,97,255,0.3);
+          box-shadow: 0 0 12px rgba(0,212,255,0.1), 0 0 24px rgba(123,97,255,0.06),
+            inset 0 0 12px rgba(0,212,255,0.04);
+        }
+        .dock-btn.active {
+          background: linear-gradient(135deg, rgba(0,212,255,0.08), rgba(123,97,255,0.06), rgba(255,0,255,0.04));
+          border-color: rgba(0,212,255,0.3);
+          box-shadow: 0 0 16px rgba(0,212,255,0.15), 0 0 32px rgba(123,97,255,0.08),
+            inset 0 0 16px rgba(0,212,255,0.05);
+        }
+
+        .dock-btn .ico { display: flex; align-items: center; justify-content: center; }
+        .dock-btn .ico img {
+          width: 20px; height: 20px;
+          filter: drop-shadow(0 0 2px rgba(0,212,255,0.4));
+          transition: filter 0.3s ease, transform 0.3s ease;
+        }
+        .dock-btn:hover .ico img {
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.6)) drop-shadow(0 0 8px rgba(123,97,255,0.3));
+          transform: scale(1.1);
+        }
+        .dock-btn.active .ico img {
+          filter: drop-shadow(0 0 4px rgba(0,212,255,0.7)) drop-shadow(0 0 10px rgba(123,97,255,0.4))
+            drop-shadow(0 0 2px rgba(255,0,255,0.2));
+          animation: holoPulse 3s ease-in-out infinite;
+        }
+
+        .dock-btn.active .dot {
+          background: linear-gradient(90deg, #00d4ff, #7b61ff, #ff00ff);
+          background-size: 200% 100%; animation: holoShimmer 3s linear infinite;
+          box-shadow: 0 0 6px #00d4ff, 0 0 12px rgba(123,97,255,0.4);
+        }
+
+        .dock-sep {
+          width: 1px; margin: 8px 4px;
+          background: linear-gradient(180deg, transparent, rgba(0,212,255,0.15) 30%,
+            rgba(123,97,255,0.2) 50%, rgba(255,0,255,0.15) 70%, transparent);
+        }
     </style>
 </head>
