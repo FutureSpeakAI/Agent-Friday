@@ -26,6 +26,10 @@
             </div>
         </div>
 
+        <div style="position:absolute;bottom:12px;left:18px;font-family:'Orbitron',sans-serif;font-size:9px;color:rgba(0,212,255,0.4);letter-spacing:2px;pointer-events:none;">
+            <span id="mood-text">STATE: LISTENING</span>
+        </div>
+
     </div>
 
     <!-- Friday OS React UI Layer -->
@@ -189,6 +193,9 @@
         const MOODS = {
             LISTENING: { baseColor: 0x00d2ff, accentColor: 0x8a2be2, rotationSpeed: 0.001, bloomStrength: 0.8, particleSpeedScale: 1.0, grain: 0.035 },
             REASONING: { baseColor: 0x4b0082, accentColor: 0x00ffff, rotationSpeed: 0.003, bloomStrength: 0.6, particleSpeedScale: 0.5, grain: 0.02 },
+            SPEAKING:  { baseColor: 0x00ff80, accentColor: 0x00d4ff, rotationSpeed: 0.005, bloomStrength: 1.4, particleSpeedScale: 2.0, grain: 0.04 },
+            CREATING:  { baseColor: 0xff00aa, accentColor: 0xff6600, rotationSpeed: 0.006, bloomStrength: 1.6, particleSpeedScale: 1.5, grain: 0.06 },
+            IDLE:      { baseColor: 0x030312, accentColor: 0x001122, rotationSpeed: 0.0001, bloomStrength: 0.25, particleSpeedScale: 0.1, grain: 0.015 },
             EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, rotationSpeed: 0.008, bloomStrength: 1.2, particleSpeedScale: 1.8, grain: 0.05 },
             EXCITED:   { baseColor: 0xffffff, accentColor: 0x00e5ff, rotationSpeed: 0.015, bloomStrength: 1.8, particleSpeedScale: 2.5, grain: 0.08 },
             CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 }
@@ -232,6 +239,7 @@
         let transitionProgress = 1.0;
         let metamorphosisFlash = 0.0; 
         let currentMood = 'LISTENING';
+        let moodOverride = null;
         let timeLapseActive = false;
         let timeLapseTimer = 0;
         
@@ -275,8 +283,26 @@
             return new THREE.CanvasTexture(canvas);
         }
 
-        function setMood(m) {
+        function _applyMoodText(m) {
+            const el = document.getElementById('mood-text');
+            if (el) el.innerText = 'STATE: ' + m;
+        }
+
+        function setMood(m, isManualOverride) {
+            if (isManualOverride) moodOverride = m;
             currentMood = m;
+            _applyMoodText(m);
+        }
+
+        function setSystemMood(m) {
+            if (!moodOverride) {
+                currentMood = m;
+                _applyMoodText(m);
+            }
+        }
+
+        function clearMoodOverride() {
+            moodOverride = null;
         }
 
         function setEvolution(idx) {
@@ -1079,7 +1105,16 @@
 // Wire window.fridayVibe to Gemini's actual scene functions
 window.fridayVibe = {
     setMood: function(m) {
-        if (typeof setMood === 'function') setMood(m);
+        if (typeof setMood === 'function') setMood(m, true);
+    },
+    setSystemMood: function(m) {
+        if (typeof setSystemMood === 'function') setSystemMood(m);
+    },
+    clearMoodOverride: function() {
+        if (typeof clearMoodOverride === 'function') clearMoodOverride();
+    },
+    isMicActive: function() {
+        return typeof micActive !== 'undefined' ? micActive : false;
     },
     nextStructure: function() {
         if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {

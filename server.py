@@ -253,6 +253,46 @@ def career_report(filename):
         return jsonify({'status': 'ok', 'content': report_path.read_text(encoding='utf-8'), 'filename': filename, 'source': str(report_path)})
     return jsonify({'status': 'not_found'})
 
+@app.route('/api/evolution')
+def get_evolution():
+    """Return evolution day count and structure index based on first_launch in personality.json."""
+    from datetime import date as _date
+    pfile = FRIDAY_DIR / "personality.json"
+    data = {}
+    if pfile.exists():
+        try:
+            data = json.loads(pfile.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    today = _date.today()
+    first_launch_str = data.get('first_launch')
+    if not first_launch_str:
+        first_launch_str = today.isoformat()
+        data['first_launch'] = first_launch_str
+        try:
+            pfile.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    try:
+        first_launch = _date.fromisoformat(first_launch_str)
+    except Exception:
+        first_launch = today
+    day_count = max(1, (today - first_launch).days + 1)
+    names = [
+        'GENESIS LATTICE', 'SACRED SPHERE', 'SHANNON NETWORK',
+        'GEODESIC CATHEDRAL', 'LOVELACE ASTROLABE', 'VON NEUMANN TESSERACT',
+        'DIRAC PROBABILITY', 'MANDELBROT SET', 'TURING MOBIUS',
+        'OCEAN OF LIGHT', 'FIBONACCI NERVE', 'TRANSCENDENCE',
+        'GIGA EARTH (REZ)'
+    ]
+    idx = ((day_count - 1) // 4) % len(names)
+    return jsonify({
+        'day': day_count,
+        'structure': f'DAY {day_count}: {names[idx]}',
+        'structure_index': idx,
+        'first_launch': first_launch_str
+    })
+
 @app.route('/api/briefings')
 def list_briefings():
     """List all daily briefing files from both known locations (never delete these)."""

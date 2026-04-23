@@ -762,7 +762,7 @@ function NewsWS(){
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e)}finally{setTtsLoading(false)}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
   const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
@@ -1205,11 +1205,21 @@ function App(){
   useEffect(()=>{const t=setInterval(()=>{setClock(new Date());if(window.fridayVibe){
     setStructureName(window.fridayVibe.getStructure?.()?.name||'Genesis Lattice');
     setSceneState({structIdx:window.fridayVibe.getStructure?.()?.index||0,mood:window.fridayVibe.getMood?.()??'LISTENING',holo:window.fridayVibe.isHologramOn?.()??false,hands:window.fridayVibe.isHandsOn?.()??false,timelapse:window.fridayVibe.isTimeLapseOn?.()??false});
+    const sig=window._fridayMoodSignals||{};
+    const micOn=window.fridayVibe.isMicActive?.()??false;
+    let sysMood='IDLE';
+    if(sig.ttsActive)sysMood='SPEAKING';
+    else if(sig.chatLoad)sysMood='REASONING';
+    else if(sig.routineRunning)sysMood='EXECUTING';
+    else if(micOn)sysMood='LISTENING';
+    window.fridayVibe.setSystemMood?.(sysMood);
   }},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
+  useEffect(()=>{fetch('/api/evolution').then(r=>r.json()).then(d=>{if(typeof d.structure_index==='number')setTimeout(()=>window.fridayVibe?.setStructure(d.structure_index),600)}).catch(()=>{})},[]);
+  useEffect(()=>{if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.chatLoad=chatLoad||qdLoading;},[chatLoad,qdLoading]);
 
   // Ctrl+K opens command palette
   useEffect(()=>{
@@ -1338,8 +1348,9 @@ function App(){
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-title">Mood</div>
+        <div className="settings-section-title">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4}}>— manual override</span></div>
         <div className="settings-grid">
+          <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
           {moods.map(m=>
             <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
               onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
