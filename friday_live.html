@@ -287,8 +287,14 @@ async function connect(){
       playPcm16(base64ToInt16(m.data), PCM_OUT_RATE);
     } else if (m.type === 'text'){
       setTranscript(m.text, false);
+    } else if (m.type === 'input_transcript'){
+      setTranscript('you: ' + m.text, true);
     } else if (m.type === 'turn_end'){
-      // optional: clear old transcript after a delay
+      // Natural pause — nothing to clear yet
+    } else if (m.type === 'interrupted'){
+      playCursor = audioCtx ? audioCtx.currentTime : 0;
+      orb.classList.remove('speaking'); orb.classList.add('listening');
+      setStatus('live', 'LISTENING');
     } else if (m.type === 'status'){
       setTranscript('· ' + m.text + ' ·', true);
     } else if (m.type === 'error'){
@@ -304,7 +310,12 @@ async function connect(){
     setStatus('', 'DISCONNECTED');
     orbCore.textContent = 'TAP TO RESTART';
     orb.classList.remove('speaking', 'listening');
-    sessionActive = false;
+    // Auto-reconnect with backoff if the user didn't explicitly end the session
+    if (sessionActive){
+      setStatus('connecting', 'RECONNECTING');
+      orbCore.textContent = 'RECONNECTING';
+      setTimeout(() => { if (sessionActive) connect().catch(()=>{}); }, 1500);
+    }
   };
 }
 

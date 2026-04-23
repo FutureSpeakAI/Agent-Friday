@@ -2885,6 +2885,8 @@ function App(){
   },[]);
 
   const[vibeMode,setVibeMode]=useState(false);
+  const[liveMode,setLiveMode]=useState(false);
+  const toggleLive=()=>setLiveMode(v=>!v);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
   const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
@@ -2922,12 +2924,21 @@ function App(){
         <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
+        <button onClick={toggleLive} title={liveMode?'Exit Live Mode':'Enter Live Mode (voice + camera)'} style={{background:liveMode?'rgba(0,255,136,0.12)':'none',border:liveMode?'1px solid rgba(0,255,136,0.4)':'1px solid transparent',borderRadius:6,padding:'2px 8px',color:liveMode?'#00ff88':'#555',cursor:'pointer',fontSize:11,letterSpacing:'0.15em',fontFamily:'Orbitron',fontWeight:700,display:'flex',alignItems:'center',gap:4}}>
+          <span style={{width:6,height:6,borderRadius:'50%',background:liveMode?'#00ff88':'#555',boxShadow:liveMode?'0 0 6px #00ff88':'none'}}/>LIVE
+        </button>
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:15}} title="Settings">
           <span>&#x2699;</span>
         </button>
         <div style={{width:7,height:7,borderRadius:'50%',background:'#00ff80'}} title="Connected"/>
       </div>
     </div>
+
+    {/* Live Mode overlay — voice + camera conversational layer */}
+    {liveMode&&<div style={{position:'fixed',inset:'36px 0 0 0',zIndex:80,background:'#05060c',display:'flex',flexDirection:'column'}}>
+      <iframe src="/friday-live" title="Friday Live" allow="microphone; camera; autoplay; display-capture" style={{flex:1,width:'100%',border:'none',background:'#05060c'}}/>
+      <button onClick={toggleLive} style={{position:'absolute',top:10,right:14,background:'rgba(255,0,100,0.12)',border:'1px solid rgba(255,0,100,0.4)',borderRadius:6,padding:'4px 10px',color:'#ff4477',cursor:'pointer',fontSize:10,letterSpacing:'0.2em',fontFamily:'Orbitron',fontWeight:700,zIndex:2}}>EXIT LIVE</button>
+    </div>}
 
     {/* Calm Default State — greeting with ticker */}
     {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>

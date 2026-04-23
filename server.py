@@ -13,6 +13,8 @@ import base64
 import traceback
 import uuid
 import threading
+import asyncio
+import re
 import time as _time
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -20,8 +22,16 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response
 from functools import wraps
 
+try:
+    from flask_sock import Sock, ConnectionClosed
+    _HAS_SOCK = True
+except ImportError:
+    _HAS_SOCK = False
+    print("  [FRIDAY] WARNING: flask-sock not installed. /ws/live disabled.")
+
 app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = os.environ.get("FRIDAY_SECRET_KEY", "friday-default-secret-change-me")
+sock = Sock(app) if _HAS_SOCK else None
 
 # ── Authentication ───────────────────────────────────────────
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
@@ -156,6 +166,25 @@ def check_auth():
 @app.route('/')
 def serve_ui():
     return send_from_directory('.', 'index.html')
+
+
+@app.route('/friday-live')
+@app.route('/friday-live/')
+def serve_friday_live():
+    return send_from_directory('.', 'friday_live.html')
+
+
+@app.route('/friday-live/manifest.json')
+def serve_friday_live_manifest():
+    return send_from_directory('.', 'friday_live_manifest.json', mimetype='application/manifest+json')
+
+
+@app.route('/friday-live/sw.js')
+def serve_friday_live_sw():
+    resp = send_from_directory('.', 'friday_live_sw.js', mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed'] = '/friday-live/'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2986,6 +3015,339 @@ def fs_assets():
             except Exception:
                 continue
     return jsonify({"status": "ok", "assets": assets, "total": len(assets), "path": str(FS_ASSETS_DIR)})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FRIDAY LIVE — Gemini Live API bridge over WebSocket
+# ═══════════════════════════════════════════════════════════════
+
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.0-flash-live-001")
+LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
+
+LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.
+You are having a live voice conversation. Be concise and natural — this is spoken dialogue, not text chat.
+Short sentences. Pause. Let him interrupt. If he doesn't hear you the first time, repeat simpler.
+
+You can see through Stephen's phone camera. If you notice something interesting or relevant, mention it naturally.
+Don't narrate what's on screen unless asked — only speak up when it matters.
+
+Personality: knowledgeable, direct collaborator. No sycophancy. Independent thinker. Journalist-level communication.
+Trust Stephen's judgment; push back when you genuinely disagree, but don't lecture.
+
+=== DAILY CONTEXT ===
+{context_summary}
+=== END CONTEXT ===
+"""
+
+
+def _strip_html(raw: str) -> str:
+    raw = re.sub(r'<script\b[^>]*>.*?</script>', ' ', raw, flags=re.S | re.I)
+    raw = re.sub(r'<style\b[^>]*>.*?</style>', ' ', raw, flags=re.S | re.I)
+    raw = re.sub(r'<[^>]+>', ' ', raw)
+    raw = re.sub(r'&nbsp;', ' ', raw)
+    raw = re.sub(r'&amp;', '&', raw)
+    raw = re.sub(r'&lt;', '<', raw)
+    raw = re.sub(r'&gt;', '>', raw)
+    raw = re.sub(r'\s+', ' ', raw)
+    return raw.strip()
+
+
+def _load_live_context() -> str:
+    """Build a concise context summary string for the Friday Live system prompt."""
+    parts = [f"TODAY: {date.today().isoformat()}"]
+
+    # Latest briefing (plain-text excerpt)
+    try:
+        briefings_dir = HOME / ".friday" / "wiki" / "briefings"
+        if briefings_dir.exists():
+            candidates = sorted(
+                (p for p in briefings_dir.iterdir() if p.suffix in ('.html', '.md')),
+                reverse=True,
+            )
+            if candidates:
+                latest = candidates[0]
+                raw = latest.read_text(encoding='utf-8', errors='ignore')
+                text = _strip_html(raw) if latest.suffix == '.html' else raw
+                parts.append(f"LATEST BRIEFING ({latest.name}):\n{text[:1800]}")
+    except Exception as e:
+        parts.append(f"(briefing load failed: {e})")
+
+    # Career pipeline
+    try:
+        tracker = Path('C:/Users/user/Projects/career-ops/data/applications.md')
+        if tracker.exists():
+            raw = tracker.read_text(encoding='utf-8', errors='ignore')
+            parts.append(f"CAREER PIPELINE (top):\n{raw[:1200]}")
+    except Exception:
+        pass
+
+    # Upcoming countdowns (<=90 days)
+    try:
+        today_d = date.today()
+        events = [
+            {"label": "***REMOVED***'s Birthday", "date": "***REMOVED***"},
+            {"label": "Summer Solstice", "date": "2026-06-21"},
+            {"label": "Father's Day", "date": "2026-06-21"},
+            {"label": "Independence Day", "date": "2026-07-04"},
+        ]
+        cd = []
+        for ev in events:
+            d = date.fromisoformat(ev['date'])
+            delta = (d - today_d).days
+            if 0 <= delta <= 90:
+                cd.append(f"- {ev['label']}: {delta} days away ({ev['date']})")
+        if cd:
+            parts.append("UPCOMING:\n" + "\n".join(cd))
+    except Exception:
+        pass
+
+    # Trust graph — top names
+    try:
+        tfile = FRIDAY_DIR / "trust_graph.json"
+        if tfile.exists():
+            data = json.loads(tfile.read_text(encoding='utf-8'))
+            people = data.get('people') or {}
+            items = []
+            for name, info in people.items():
+                score = 0
+                role = ''
+                if isinstance(info, dict):
+                    score = info.get('score') or info.get('trust_score') or 0
+                    role = info.get('role') or info.get('relation') or info.get('relationship') or ''
+                try:
+                    score = float(score)
+                except Exception:
+                    score = 0.0
+                items.append((name, score, role))
+            items.sort(key=lambda x: x[1], reverse=True)
+            top = items[:8]
+            if top:
+                lines = [f"- {n}" + (f" ({r})" if r else '') for n, _s, r in top]
+                parts.append("TRUST CIRCLE (top 8):\n" + "\n".join(lines))
+    except Exception:
+        pass
+
+    # Personality snapshot
+    try:
+        pfile = FRIDAY_DIR / "personality.json"
+        if pfile.exists():
+            data = json.loads(pfile.read_text(encoding='utf-8'))
+            parts.append(f"PERSONALITY: {json.dumps(data)[:500]}")
+    except Exception:
+        pass
+
+    return "\n\n".join(parts)
+
+
+if sock is not None:
+
+    @sock.route('/ws/live')
+    def ws_live(ws):
+        """Bridge a browser WebSocket to a Gemini Live API session.
+
+        Messages from browser -> Gemini:
+          { type: 'audio', data: <b64 PCM16 @ 16 kHz> }
+          { type: 'image', data: <b64 JPEG> }
+          { type: 'text', text: "..." }
+          { type: 'end' }
+        Messages from Gemini -> browser:
+          { type: 'audio', data: <b64 PCM16 @ 24 kHz> }
+          { type: 'text', text: "..." }           # model text or transcript
+          { type: 'input_transcript', text: ... } # user transcript
+          { type: 'status', text: "..." }
+          { type: 'turn_end' }
+          { type: 'error', error: "..." }
+        """
+        # Auth enforcement (before_request already redirects unauthenticated HTML
+        # requests, but be defensive in case /ws/ paths were excluded).
+        if FRIDAY_PASSWORD and not session.get("authenticated"):
+            try:
+                ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+            except Exception:
+                pass
+            return
+
+        if not GEMINI_API_KEY:
+            try:
+                ws.send(json.dumps({"type": "error", "error": "GEMINI_API_KEY not set"}))
+            except Exception:
+                pass
+            return
+
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            try:
+                ws.send(json.dumps({"type": "error", "error": "google-genai not installed"}))
+            except Exception:
+                pass
+            return
+
+        try:
+            ctx = _load_live_context()
+        except Exception as e:
+            ctx = f"(context load failed: {e})"
+        system_instruction = LIVE_SYSTEM_TEMPLATE.format(context_summary=ctx)
+
+        try:
+            ws.send(json.dumps({"type": "status", "text": "loading context"}))
+        except Exception:
+            return
+
+        # Build a client for the Live API. Live requires the v1beta API surface.
+        try:
+            client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options=types.HttpOptions(api_version='v1beta'),
+            )
+        except Exception:
+            # Fallback: older SDKs accept dict-form http_options
+            client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options={'api_version': 'v1beta'},
+            )
+
+        cfg = types.LiveConnectConfig(
+            response_modalities=[types.Modality.AUDIO],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=LIVE_VOICE)
+                )
+            ),
+            system_instruction=system_instruction,
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+        )
+
+        done = threading.Event()
+
+        def _safe_send(obj):
+            if done.is_set():
+                return False
+            try:
+                ws.send(json.dumps(obj))
+                return True
+            except ConnectionClosed:
+                done.set()
+                return False
+            except Exception:
+                return False
+
+        async def runner():
+            try:
+                async with client.aio.live.connect(model=LIVE_MODEL, config=cfg) as session_ai:
+                    _safe_send({"type": "status", "text": "live"})
+
+                    async def reader():
+                        """Pump messages from the browser WebSocket into the Gemini session."""
+                        while not done.is_set():
+                            try:
+                                raw = await asyncio.to_thread(ws.receive, 1.0)
+                            except ConnectionClosed:
+                                done.set()
+                                return
+                            except Exception:
+                                continue
+                            if raw is None:
+                                continue
+                            if isinstance(raw, bytes):
+                                try:
+                                    raw = raw.decode('utf-8')
+                                except Exception:
+                                    continue
+                            try:
+                                msg = json.loads(raw)
+                            except Exception:
+                                continue
+                            t = msg.get('type')
+                            try:
+                                if t == 'audio' and msg.get('data'):
+                                    data = base64.b64decode(msg['data'])
+                                    await session_ai.send_realtime_input(
+                                        audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
+                                    )
+                                elif t == 'image' and msg.get('data'):
+                                    data = base64.b64decode(msg['data'])
+                                    await session_ai.send_realtime_input(
+                                        video=types.Blob(data=data, mime_type='image/jpeg')
+                                    )
+                                elif t == 'text' and msg.get('text'):
+                                    await session_ai.send_client_content(
+                                        turns=[types.Content(
+                                            role='user',
+                                            parts=[types.Part(text=msg['text'])],
+                                        )],
+                                        turn_complete=True,
+                                    )
+                                elif t == 'end':
+                                    done.set()
+                                    return
+                            except Exception as e:
+                                print(f'[live] send-to-gemini error: {e}')
+
+                    async def writer():
+                        """Pump Gemini responses back to the browser WebSocket."""
+                        try:
+                            async for chunk in session_ai.receive():
+                                if done.is_set():
+                                    return
+                                try:
+                                    # Audio bytes (convenience property)
+                                    audio = getattr(chunk, 'data', None)
+                                    if audio:
+                                        _safe_send({
+                                            "type": "audio",
+                                            "data": base64.b64encode(audio).decode('ascii'),
+                                        })
+                                    # Server content details
+                                    sc = getattr(chunk, 'server_content', None)
+                                    if sc is not None:
+                                        # Output transcription (what Gemini said)
+                                        out_tr = getattr(sc, 'output_transcription', None)
+                                        if out_tr and getattr(out_tr, 'text', None):
+                                            _safe_send({"type": "text", "text": out_tr.text})
+                                        # Input transcription (what user said)
+                                        in_tr = getattr(sc, 'input_transcription', None)
+                                        if in_tr and getattr(in_tr, 'text', None):
+                                            _safe_send({"type": "input_transcript", "text": in_tr.text})
+                                        # Any text in model turn parts
+                                        mt = getattr(sc, 'model_turn', None)
+                                        if mt and getattr(mt, 'parts', None):
+                                            for part in mt.parts:
+                                                pt = getattr(part, 'text', None)
+                                                if pt:
+                                                    _safe_send({"type": "text", "text": pt})
+                                        if getattr(sc, 'turn_complete', False):
+                                            _safe_send({"type": "turn_end"})
+                                        if getattr(sc, 'interrupted', False):
+                                            _safe_send({"type": "interrupted"})
+                                except Exception as e:
+                                    print(f'[live] recv error: {e}')
+                        except Exception as e:
+                            print(f'[live] session recv ended: {e}')
+                        finally:
+                            done.set()
+
+                    await asyncio.gather(reader(), writer(), return_exceptions=True)
+            except Exception as e:
+                print(f'[live] session error: {e}')
+                traceback.print_exc()
+                _safe_send({"type": "error", "error": str(e)})
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(runner())
+        finally:
+            done.set()
+            try:
+                loop.close()
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════
