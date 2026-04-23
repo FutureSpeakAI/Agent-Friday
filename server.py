@@ -121,7 +121,8 @@ HOME = Path(os.path.expanduser("~"))
 WIKI_DIR = HOME / "wiki"
 FRIDAY_DIR = HOME / ".friday"
 CREATIONS_DIR = HOME / "Desktop" / "friday-creations"
-JOB_SEARCH_FILE = WIKI_DIR / "professional" / "job-search.md"
+WIKI_PROFESSIONAL_DIR = WIKI_DIR / "professional"
+JOB_SEARCH_FILE = WIKI_PROFESSIONAL_DIR / "job-search.md"
 
 # Ensure creations dir exists
 CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -193,10 +194,13 @@ def serve_friday_live_sw():
 
 @app.route('/api/career-ops/tracker')
 def career_tracker():
-    tracker_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\data', 'applications.md')
-    if os.path.isfile(tracker_path):
-        with open(tracker_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    candidates = [
+        WIKI_PROFESSIONAL_DIR / 'application-log.md',
+        Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'applications.md',
+    ]
+    tracker_path = next((p for p in candidates if p.is_file()), None)
+    if tracker_path:
+        content = tracker_path.read_text(encoding='utf-8')
         lines = content.strip().split('\n')
         entries = []
         for line in lines:
@@ -204,32 +208,49 @@ def career_tracker():
                 cols = [c.strip() for c in line.split('|')[1:-1]]
                 if len(cols) >= 3:
                     entries.append({'raw': cols, 'company': cols[0], 'score': cols[1] if len(cols)>1 else '', 'status': cols[2] if len(cols)>2 else ''})
-        return jsonify({'status': 'ok', 'entries': entries, 'total': len(entries), 'raw': content})
+        return jsonify({'status': 'ok', 'entries': entries, 'total': len(entries), 'raw': content, 'source': str(tracker_path)})
     return jsonify({'status': 'no_tracker', 'entries': [], 'total': 0, 'raw': ''})
 
 @app.route('/api/career-ops/pipeline')
 def career_pipeline():
-    pipe_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\data', 'pipeline.md')
-    if os.path.isfile(pipe_path):
-        with open(pipe_path, 'r', encoding='utf-8') as f:
-            return jsonify({'status': 'ok', 'content': f.read()})
+    candidates = [
+        WIKI_PROFESSIONAL_DIR / 'job-search.md',
+        Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'pipeline.md',
+    ]
+    pipe_path = next((p for p in candidates if p.is_file()), None)
+    if pipe_path:
+        return jsonify({'status': 'ok', 'content': pipe_path.read_text(encoding='utf-8'), 'source': str(pipe_path)})
     return jsonify({'status': 'empty', 'content': ''})
 
 @app.route('/api/career-ops/reports')
 def career_reports():
-    reports_dir = 'C:\\Users\\user\\Projects\\career-ops\\reports'
-    if os.path.isdir(reports_dir):
-        files = sorted(os.listdir(reports_dir), reverse=True)
-        reports = [{'name': f, 'size': os.path.getsize(os.path.join(reports_dir, f))} for f in files if f.endswith('.md')]
+    reports = []
+    seen = set()
+    # wiki/professional/ is primary — collect all .md files there
+    if WIKI_PROFESSIONAL_DIR.is_dir():
+        for f in sorted(WIKI_PROFESSIONAL_DIR.iterdir(), reverse=True):
+            if f.suffix == '.md':
+                reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'wiki'})
+                seen.add(f.name)
+    # career-ops/reports/ is fallback — add any files not already in wiki
+    fallback_dir = Path('C:\\Users\\user\\Projects\\career-ops\\reports')
+    if fallback_dir.is_dir():
+        for f in sorted(fallback_dir.iterdir(), reverse=True):
+            if f.suffix == '.md' and f.name not in seen:
+                reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'career-ops'})
+    if reports:
         return jsonify({'status': 'ok', 'reports': reports, 'total': len(reports)})
     return jsonify({'status': 'no_reports', 'reports': [], 'total': 0})
 
 @app.route('/api/career-ops/report/<filename>')
 def career_report(filename):
-    report_path = os.path.join('C:\\Users\\user\\Projects\\career-ops\\reports', filename)
-    if os.path.isfile(report_path):
-        with open(report_path, 'r', encoding='utf-8') as f:
-            return jsonify({'status': 'ok', 'content': f.read(), 'filename': filename})
+    candidates = [
+        WIKI_PROFESSIONAL_DIR / filename,
+        Path('C:\\Users\\user\\Projects\\career-ops\\reports') / filename,
+    ]
+    report_path = next((p for p in candidates if p.is_file()), None)
+    if report_path:
+        return jsonify({'status': 'ok', 'content': report_path.read_text(encoding='utf-8'), 'filename': filename, 'source': str(report_path)})
     return jsonify({'status': 'not_found'})
 
 @app.route('/api/briefings')
@@ -1053,20 +1074,22 @@ def _lookup_trust_person(name, trust_data):
 def _get_career_context():
     """Load career-ops summary for career-related queries."""
     ctx = {}
-    tracker_path = CAREER_OPS_DIR / 'applications.md'
-    if tracker_path.exists():
+    tracker_candidates = [WIKI_PROFESSIONAL_DIR / 'application-log.md', CAREER_OPS_DIR / 'applications.md']
+    tracker_path = next((p for p in tracker_candidates if p.exists()), None)
+    if tracker_path:
         try:
             content = tracker_path.read_text(encoding='utf-8')
             lines = [l for l in content.strip().split('\n')
                      if l.startswith('|') and '---' not in l
                      and not any(h in l.lower() for h in ['company', 'score', '#'])]
             ctx['applications_count'] = len(lines)
-            ctx['recent_applications'] = lines[-5:]  # last 5 entries
+            ctx['recent_applications'] = lines[-5:]
         except Exception:
             pass
 
-    pipeline_path = CAREER_OPS_DIR / 'pipeline.md'
-    if pipeline_path.exists():
+    pipeline_candidates = [WIKI_PROFESSIONAL_DIR / 'job-search.md', CAREER_OPS_DIR / 'pipeline.md']
+    pipeline_path = next((p for p in pipeline_candidates if p.exists()), None)
+    if pipeline_path:
         try:
             ctx['pipeline_summary'] = pipeline_path.read_text(encoding='utf-8')[:1000]
         except Exception:
@@ -2569,8 +2592,9 @@ def _save_outreach_log(log):
 
 def _career_ops_companies():
     """Return list of companies currently in the career-ops tracker (applied/interviewing)."""
-    tracker_path = Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'applications.md'
-    if not tracker_path.is_file():
+    candidates = [WIKI_PROFESSIONAL_DIR / 'application-log.md', CAREER_OPS_DIR / 'applications.md']
+    tracker_path = next((p for p in candidates if p.is_file()), None)
+    if not tracker_path:
         return []
     try:
         content = tracker_path.read_text(encoding='utf-8')
@@ -3074,8 +3098,9 @@ def _load_live_context() -> str:
 
     # Career pipeline
     try:
-        tracker = Path('C:/Users/user/Projects/career-ops/data/applications.md')
-        if tracker.exists():
+        tracker_candidates = [WIKI_PROFESSIONAL_DIR / 'application-log.md', CAREER_OPS_DIR / 'applications.md']
+        tracker = next((p for p in tracker_candidates if p.exists()), None)
+        if tracker:
             raw = tracker.read_text(encoding='utf-8', errors='ignore')
             parts.append(f"CAREER PIPELINE (top):\n{raw[:1200]}")
     except Exception:
