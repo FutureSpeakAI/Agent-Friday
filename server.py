@@ -3399,6 +3399,26 @@ def chat_search():
     return jsonify({"status": "ok", "results": results[-50:], "count": len(results)})
 
 
+@app.route('/api/chat/clear', methods=['POST'])
+def chat_clear():
+    """Reset the chat panel's conversation. Pinned messages survive unless
+    `pinned=true` is sent in the body. Append-only context log is NOT touched."""
+    keep_pinned = True
+    try:
+        data = request.get_json(silent=True) or {}
+        if data.get('include_pinned'):
+            keep_pinned = False
+    except Exception:
+        pass
+    before = len(CHAT_HISTORY)
+    if keep_pinned:
+        CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned')]
+    else:
+        CHAT_HISTORY.clear()
+    _save_chat_history(CHAT_HISTORY)
+    return jsonify({"status": "ok", "removed": before - len(CHAT_HISTORY), "remaining": len(CHAT_HISTORY)})
+
+
 # ═══════════════════════════════════════════════════════════════
 #  TEXT-TO-SPEECH & AUDIO
 # ═══════════════════════════════════════════════════════════════

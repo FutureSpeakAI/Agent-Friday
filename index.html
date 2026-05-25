@@ -2260,7 +2260,7 @@ function HomeWS(){
 function CareerWS(){
   const[tracker,setTracker]=useState(null);const[reports,setReports]=useState([]);const[pipeline,setPipeline]=useState('');
   const[jobs,setJobs]=useState('');const[loading,setLoading]=useState(true);const[view,setView]=useState('overview');
-  const[reportContent,setReportContent]=useState('');const[evalUrl,setEvalUrl]=useState('');const[storyBank,setStoryBank]=useState('');
+  const[reportContent,setReportContent]=useState('');const[evalUrl,setEvalUrl]=useState('');
   useEffect(()=>{Promise.all([
     fetch('/api/career-ops/tracker').then(r=>r.json()).then(setTracker).catch(()=>null),
     fetch('/api/career-ops/reports').then(r=>r.json()).then(d=>setReports(d.reports||[])).catch(()=>[]),
@@ -2300,7 +2300,7 @@ function CareerWS(){
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
     {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
-    {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
+    {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#a8a8b4',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div>{reports.length===0?<div style={{fontSize:12,color:'#999',textAlign:'center',padding:20}}>No evaluations yet — story bank is empty.</div>:<div style={{fontSize:12,color:'#bbb',padding:10,background:'rgba(255,255,255,0.03)',borderRadius:6,lineHeight:1.6}}>{reports.length} evaluation{reports.length===1?'':'s'} available. Open one from the <button className="btn" style={{fontSize:11,padding:'2px 8px',marginLeft:4}} onClick={()=>setView('reports')}>Reports</button> tab to read the embedded STAR stories — bulk extraction is on the roadmap.</div>}</div>}
     {view==='outreach'&&<OutreachPanel/>}
   </div>);
 }
@@ -2517,8 +2517,8 @@ function WikiWS(){
         </div>}
 
         {struct?.sections?.map(s=><div key={s.name}>
-          <div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#999'}}>({(s.files||[]).length})</span></div>
-          {(s.files||[]).map(f=>{const fn=typeof f==='string'?f:(f.filename||f.name);const p=`${s.name}/${fn}`;return(<div key={fn} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===p?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>{if(path!==p)e.currentTarget.style.color='#666'}}>{fn}</div>)})}
+          <div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#a8a8b4'}}>({(s.files||[]).length})</span></div>
+          {(s.files||[]).map(f=>{const fn=typeof f==='string'?f:(f.filename||f.name);const p=`${s.name}/${fn}`;return(<div key={fn} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===p?'#00d4ff':'#a8a8b4',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>{if(path!==p)e.currentTarget.style.color='#a8a8b4'}}>{fn}</div>)})}
         </div>)}
       </div>
 
@@ -2562,11 +2562,11 @@ function CoparentWS(){
   const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
   const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate co-parent weekly summary'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Weekly summary generation launched')).catch(()=>{})};
   return(<div>
-    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. 852 OFW messages analyzed. 89 unanswered threads documented.`}/>
+    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. OFW stats below are placeholders — wire an /api/coparent/stats endpoint to make them live.`}/>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-      <div className="card"><div className="card-title">OFW Communication</div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#888'}}>First-view asymmetry: <span style={{color:'#ff0080'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
-      <div className="card"><div className="card-title">Unanswered</div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
+      <div className="card"><div className="card-title">OFW Communication <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#a8a8b4'}}>First-view asymmetry: <span style={{color:'#ff6699'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
+      <div className="card"><div className="card-title">Unanswered <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
     </div>
     <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
@@ -3624,7 +3624,7 @@ function TaskCard({task,expanded,onToggle,onCancel,onView}){
       <button className="task-card-btn results" onClick={onView}>View Results</button>
     </div>}
     {expanded&&<div className="task-card-log">
-      {(task.log||[]).length===0?<div className="task-card-log-line" style={{color:'#555'}}>— waiting for activity —</div>:
+      {(task.log||[]).length===0?<div className="task-card-log-line" style={{color:'#888'}}>— waiting for activity —</div>:
         (task.log||[]).slice(-30).map((line,i)=><div key={i} className="task-card-log-line">→ {line}</div>)}
     </div>}
   </div>);
@@ -3672,6 +3672,17 @@ function App(){
   const topBarTimer=useRef(null);
   const dockTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
+  // Real connection-health for the top-bar dot. Polled every 15s.
+  const[connHealth,setConnHealth]=useState('unknown'); // 'ok' | 'degraded' | 'down' | 'unknown'
+  useEffect(()=>{
+    let cancelled=false;
+    const ping=async()=>{
+      try{const r=await fetch('/api/health',{cache:'no-store'});if(cancelled)return;setConnHealth(r.ok?'ok':'degraded')}
+      catch{if(!cancelled)setConnHealth('down')}
+    };
+    ping();const iv=setInterval(ping,15000);
+    return()=>{cancelled=true;clearInterval(iv)};
+  },[]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
   const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede'};
@@ -3959,9 +3970,30 @@ function App(){
     return()=>{document.removeEventListener('mousedown',onDown);document.removeEventListener('keydown',onKey)};
   },[notifOpen]);
 
-  const[vibeMode,setVibeMode]=useState(false);
-  const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
-  const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
+  // Settings panel: Escape closes (outside click handled via the slide-out itself + dedicated × button)
+  useEffect(()=>{
+    if(!settingsOpen)return;
+    const onKey=(e)=>{if(e.key==='Escape')setSettingsOpen(false)};
+    document.addEventListener('keydown',onKey);
+    return()=>document.removeEventListener('keydown',onKey);
+  },[settingsOpen]);
+  // Quick Draft popup: Escape + outside-click close
+  const quickDraftRef=useRef(null);
+  useEffect(()=>{
+    if(!quickDraft)return;
+    const onDown=(e)=>{
+      if(quickDraftRef.current&&quickDraftRef.current.contains(e.target))return;
+      // Avoid stealing clicks aimed at the top-bar ✍️ toggle button itself
+      if(e.target.closest&&e.target.closest('[title="Quick Draft"]'))return;
+      setQuickDraft(false);
+    };
+    const onKey=(e)=>{if(e.key==='Escape')setQuickDraft(false)};
+    document.addEventListener('mousedown',onDown);
+    document.addEventListener('keydown',onKey);
+    return()=>{document.removeEventListener('mousedown',onDown);document.removeEventListener('keydown',onKey)};
+  },[quickDraft]);
+
+  const toggle=id=>{setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
@@ -4009,7 +4041,9 @@ function App(){
     {/* Top Bar */}
     <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
+        <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff',cursor:'pointer',userSelect:'none'}} title="Open System workspace">FRIDAY</span>
+        <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.65)',letterSpacing:'.05em'}}>{structureName}</span>
         <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
           {models.map((m,i)=><span key={i} className="model-pill"><span className={`dot ${m.active?'active':'idle'}`}/>{m.name}</span>)}
@@ -4039,7 +4073,7 @@ function App(){
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:15}} title="Settings">
           <span>&#x2699;</span>
         </button>
-        <div style={{width:7,height:7,borderRadius:'50%',background:'#00ff80'}} title="Connected"/>
+        <div style={{width:7,height:7,borderRadius:'50%',background:connHealth==='ok'?'#00ff80':connHealth==='degraded'?'#f59e0b':connHealth==='down'?'#ff0080':'#888',boxShadow:connHealth==='ok'?'0 0 6px rgba(0,255,128,0.7)':connHealth==='down'?'0 0 6px rgba(255,0,128,0.7)':'none',transition:'background .3s, box-shadow .3s'}} title={connHealth==='ok'?'Connected':connHealth==='degraded'?'Degraded — server returned a non-OK status':connHealth==='down'?'Disconnected — cannot reach /api/health':'Checking…'}/>
       </div>
     </div>
 
@@ -4103,7 +4137,7 @@ function App(){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <button onClick={()=>setChatMsgs([])} title="Start a new conversation" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
+          <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
           <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
@@ -4140,7 +4174,7 @@ function App(){
     {notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
       <div className="notif-section-header">
         <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.5)',letterSpacing:'0.04em'}}>{sortedBgTasks.length||0}</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.7)',letterSpacing:'0.04em'}}>{sortedBgTasks.length||0}</span>
       </div>
       {sortedBgTasks.length===0
         ?<div className="notif-empty">No active tasks</div>
@@ -4504,7 +4538,7 @@ function App(){
     </div>
 
     {/* Quick Draft Popup */}
-    {quickDraft&&<div style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
