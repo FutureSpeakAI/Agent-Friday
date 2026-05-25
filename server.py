@@ -133,7 +133,7 @@ CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 # ── Gemini Client (lazy init) ─────────────────────────────────
 _genai_client = None
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "***REDACTED-GEMINI-KEY***")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 TEMP_AUDIO_DIR = FRIDAY_DIR / "audio-cache"
 TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
