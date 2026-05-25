@@ -77,17 +77,19 @@ window.addEventListener('DOMContentLoaded',function(){
             position: absolute; top: 80px; left: 140px; right: 140px;
             display: flex; justify-content: space-between; align-items: flex-start;
             font-family: 'Courier New', Courier, monospace; font-size: 11px;
-            color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), calc(var(--hud-opacity) + 0.5));
-            letter-spacing: 4px; text-shadow: 0 0 10px rgba(var(--hud-r), var(--hud-g), var(--hud-b), 0.5);
-            font-weight: 300; text-transform: uppercase;
+            color: rgba(var(--hud-r), var(--hud-g), var(--hud-b), calc(var(--hud-opacity) + 0.7));
+            letter-spacing: 4px;
+            text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 0 20px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.8);
+            font-weight: 400; text-transform: uppercase;
         }
 
         .hud-title-container { display: flex; flex-direction: column; gap: 6px; }
-        .hud-main-title { 
-            font-size: 13px; color: #fff; letter-spacing: 6px; font-weight: 400; 
+        .hud-main-title {
+            font-size: 13px; color: #fff; letter-spacing: 6px; font-weight: 500;
             text-decoration: none; pointer-events: auto; cursor: pointer; transition: text-shadow 0.3s;
+            text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 0 16px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.8);
         }
-        .hud-main-title:hover { text-shadow: 0 0 15px rgba(255,255,255,0.8); }
+        .hud-main-title:hover { text-shadow: 0 0 15px rgba(255,255,255,0.8), 0 0 8px rgba(0,0,0,0.85); }
         
         .hud-laws { display: flex; align-items: center; gap: 8px; }
         .status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
@@ -125,30 +127,32 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* CAMERA TRACKING INDICATOR */
         #camera-indicator {
-            position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px; 
-            border-radius: 50%; background: #444; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
+            position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px;
+            border-radius: 50%; background: #666; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
 
         /* --- REACT UI LAYER STYLES --- */
 
         /* Base button (used by React UI) */
         .btn {
-            background: none; border: 1px solid rgba(255,255,255,0.08); color: rgba(255, 255, 255, 0.5);
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
             padding: 6px 14px; font-size: 11px; cursor: pointer; border-radius: 4px;
             transition: all 0.3s ease; letter-spacing: 1px;
             font-family: 'Inter', sans-serif; pointer-events: auto;
         }
-        .btn:hover { background: rgba(255, 255, 255, 0.05); color: #fff; border-color: rgba(255,255,255,0.2); }
-        .btn.active { color: #fff; background: rgba(255, 255, 255, 0.08); border-color: rgba(0,212,255,0.4); }
-        .btn-magenta { border-color: rgba(255,0,128,0.2); color: rgba(255,0,128,0.7); }
-        .btn-magenta:hover { background: rgba(255,0,128,0.08); color: #ff0080; border-color: rgba(255,0,128,0.4); }
+        .btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; border-color: rgba(255,255,255,0.28); }
+        .btn.active { color: #fff; background: rgba(0,212,255,0.12); border-color: rgba(0,212,255,0.5); }
+        .btn-magenta { border-color: rgba(255,0,128,0.35); color: rgba(255,128,180,0.92); }
+        .btn-magenta:hover { background: rgba(255,0,128,0.12); color: #ff66a8; border-color: rgba(255,0,128,0.55); }
 
-        /* Top bar */
+        /* Top bar — solid-anchored gradient backdrop so text reads against bright scene */
         .top-bar {
             position: fixed; top: 0; left: 0; right: 0; height: 36px; z-index: 70;
             display: flex; justify-content: space-between; align-items: center;
-            padding: 0 16px; background: rgba(3,3,8,0.7); backdrop-filter: blur(16px);
-            border-bottom: 1px solid rgba(255,255,255,0.04);
+            padding: 0 16px;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .top-bar.hidden { transform: translateY(-100%); }
@@ -162,28 +166,30 @@ window.addEventListener('DOMContentLoaded',function(){
             display: inline-flex; align-items: center; gap: 5px;
             padding: 2px 8px; border-radius: 10px; font-size: 11px;
             font-family: 'JetBrains Mono', monospace; letter-spacing: 0.03em;
-            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
-            color: rgba(255,255,255,0.5); transition: all 0.3s;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            color: rgba(255,255,255,0.82); transition: all 0.3s;
         }
         .model-pill .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
         .model-pill .dot.active { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
-        .model-pill .dot.idle { background: #555; }
+        .model-pill .dot.idle { background: #888; }
 
-        /* Dock */
+        /* Dock — solid-anchored gradient backdrop so labels read against bright scene */
         .dock {
             position: fixed; bottom: 0; left: 0; right: 0; z-index: 70;
             display: flex; justify-content: center; gap: 2px;
-            padding: 6px 12px 8px; background: rgba(3,3,8,0.7);
-            backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.04);
+            padding: 6px 12px 8px;
+            background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 80%, transparent 100%);
+            backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.06);
             transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
         .dock.hidden { transform: translateY(100%); }
         .dock-btn {
             display: flex; flex-direction: column; align-items: center; gap: 2px;
             padding: 6px 12px 4px; background: none; border: 1px solid transparent;
-            border-radius: 8px; color: rgba(255,255,255,0.35); cursor: pointer;
+            border-radius: 8px; color: rgba(255,255,255,0.7); cursor: pointer;
             font-family: 'Inter', sans-serif; font-size: 11px; transition: all 0.25s ease;
             min-width: 56px; position: relative;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
         }
         .dock-btn .ico { font-size: 18px; line-height: 1; }
         .dock-btn .dot {
@@ -202,31 +208,31 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Floating windows — glassmorphism */
+        /* Floating windows — solid enough that text is always readable */
         .fwin {
             position: fixed; display: flex; flex-direction: column;
-            background: rgba(6,6,14,0.65); backdrop-filter: blur(14px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.1); border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 1px rgba(0,212,255,0.2);
+            background: rgba(6,6,11,0.92); backdrop-filter: blur(20px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.65), 0 0 1px rgba(0,212,255,0.25);
             overflow: hidden; transition: box-shadow 0.3s;
         }
-        .fwin:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,212,255,0.06); }
+        .fwin:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 20px rgba(0,212,255,0.12); }
         .fwin-bar {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 12px; cursor: grab; user-select: none;
-            background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.04);
+            background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.08);
         }
         .fwin-bar:active { cursor: grabbing; }
-        .fwin-title { font-family: 'Inter', sans-serif; font-size: 12px; color: rgba(255,255,255,0.7); font-weight: 500; }
+        .fwin-title { font-family: 'Inter', sans-serif; font-size: 12px; color: rgba(255,255,255,0.9); font-weight: 600; }
         .fwin-btns button {
-            background: none; border: none; color: rgba(255,255,255,0.3); cursor: pointer;
+            background: none; border: none; color: rgba(255,255,255,0.6); cursor: pointer;
             font-size: 16px; padding: 0 4px; transition: color 0.2s;
         }
         .fwin-btns button:hover { color: #ff0080; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
         .fwin-body::-webkit-scrollbar { width: 4px; }
         .fwin-body::-webkit-scrollbar-track { background: transparent; }
-        .fwin-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+        .fwin-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         .resize-h {
             position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
             cursor: nwse-resize; opacity: 0;
@@ -234,16 +240,16 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Cards */
         .card {
-            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
             border-radius: 8px; padding: 12px; transition: border-color 0.2s;
         }
-        .card:hover { border-color: rgba(255,255,255,0.08); }
+        .card:hover { border-color: rgba(255,255,255,0.18); }
         .card-title {
-            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.6);
+            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.92);
             letter-spacing: 0.08em; margin-bottom: 8px;
         }
         .stat { font-family: 'Orbitron', monospace; font-size: 22px; color: #fff; }
-        .stat-label { font-size: 11px; color: #555; margin-top: 2px; }
+        .stat-label { font-size: 11px; color: #b0b0c0; margin-top: 2px; }
 
         /* Badges */
         .badge-green { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: rgba(0,255,128,0.1); color: #00ff80; border: 1px solid rgba(0,255,128,0.2); }
@@ -263,12 +269,13 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
-        /* Chat panel */
+        /* Chat panel — solid enough to read against any scene */
         .chat-panel {
             position: fixed; top: 36px; right: -340px; bottom: 68px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
-            background: rgba(6,6,14,0.8); backdrop-filter: blur(16px);
-            border-left: 1px solid rgba(255,255,255,0.04);
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
+            border-left: 1px solid rgba(255,255,255,0.08);
+            box-shadow: -4px 0 24px rgba(0,0,0,0.5);
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
@@ -280,38 +287,40 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .greeting-ticker-item {
             display: flex; align-items: baseline; gap: 6px;
-            font-family: 'Inter', sans-serif; font-size: 13px; color: rgba(255,255,255,0.35);
+            font-family: 'Inter', sans-serif; font-size: 13px;
+            color: rgba(255,255,255,0.85);
+            text-shadow: 0 1px 3px rgba(0,0,0,0.85), 0 0 12px rgba(0,0,0,0.7);
         }
         .greeting-ticker-item .days {
             font-family: 'Orbitron', monospace; font-size: 18px; color: #00d4ff;
-            text-shadow: 0 0 12px rgba(0,212,255,0.3);
+            text-shadow: 0 0 12px rgba(0,212,255,0.45), 0 1px 4px rgba(0,0,0,0.9);
         }
         .greeting-ticker-sep {
-            width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.15);
+            width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
 
-        /* Settings panel */
+        /* Settings panel — solid enough to read against bright scene */
         .settings-panel {
             position: fixed; top: 36px; right: -360px; bottom: 68px;
             width: 340px; z-index: 68; display: flex; flex-direction: column;
-            background: rgba(6,6,14,0.75); backdrop-filter: blur(18px) saturate(1.2);
-            border-left: 1px solid rgba(0,212,255,0.1);
-            box-shadow: -4px 0 24px rgba(0,0,0,0.4);
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.18);
+            box-shadow: -4px 0 24px rgba(0,0,0,0.55);
             transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
             overflow-y: auto;
         }
         .settings-panel.open { right: 0; }
         .settings-panel::-webkit-scrollbar { width: 4px; }
-        .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+        .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
         .settings-section {
-            padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.04);
+            padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
         }
         .settings-section-title {
-            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.5);
+            font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.95);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
         }
         .settings-subtitle {
-            font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.5);
+            font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.78);
             letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px;
             font-weight: 600;
         }
@@ -319,27 +328,28 @@ window.addEventListener('DOMContentLoaded',function(){
             display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
         }
         .settings-btn {
-            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 5px; padding: 6px 8px; color: rgba(255,255,255,0.4);
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 5px; padding: 6px 8px; color: rgba(255,255,255,0.78);
             font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer;
             transition: all 0.2s; text-align: left; letter-spacing: 0.03em;
         }
-        .settings-btn:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.12); }
-        .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.3); background: rgba(0,212,255,0.06); box-shadow: 0 0 10px rgba(0,212,255,0.08); }
+        .settings-btn:hover { background: rgba(255,255,255,0.08); color: #fff; border-color: rgba(255,255,255,0.22); }
+        .settings-btn.active { color: #00d4ff; border-color: rgba(0,212,255,0.5); background: rgba(0,212,255,0.12); box-shadow: 0 0 10px rgba(0,212,255,0.15); }
+        .settings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         .settings-toggle {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 0; cursor: pointer;
         }
-        .settings-toggle-label { font-size: 11px; color: rgba(255,255,255,0.6); font-family: 'Inter', sans-serif; }
+        .settings-toggle-label { font-size: 11px; color: rgba(255,255,255,0.85); font-family: 'Inter', sans-serif; }
         .settings-toggle-switch {
             width: 32px; height: 18px; border-radius: 9px;
-            background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.18);
             position: relative; transition: all 0.25s; cursor: pointer;
         }
         .settings-toggle-switch::after {
             content: ''; position: absolute; top: 2px; left: 2px;
             width: 12px; height: 12px; border-radius: 50%;
-            background: rgba(255,255,255,0.3); transition: all 0.25s;
+            background: rgba(255,255,255,0.6); transition: all 0.25s;
         }
         .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
         .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
@@ -391,8 +401,8 @@ window.addEventListener('DOMContentLoaded',function(){
             display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 8px;
         }
         .camera-control-panel .src-btn {
-            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08);
-            color: rgba(255,255,255,0.55); font-family: 'JetBrains Mono', monospace;
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.14);
+            color: rgba(255,255,255,0.82); font-family: 'JetBrains Mono', monospace;
             font-size: 11px; padding: 6px 0; border-radius: 5px; cursor: pointer;
             text-align: center; transition: all 0.18s;
         }
@@ -416,7 +426,7 @@ window.addEventListener('DOMContentLoaded',function(){
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes typingDot {
-            0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.55; }
             30%           { transform: translateY(-4px); opacity: 1; }
         }
         .typing-indicator { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; }
@@ -464,13 +474,14 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-group-label {
             font-family: 'Orbitron', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.22); letter-spacing: 0.18em;
+            color: rgba(255,255,255,0.6); letter-spacing: 0.18em;
             text-transform: uppercase; margin-top: 2px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.85);
             user-select: none;
         }
         .dock-divider {
             width: 1px; align-self: stretch; margin: 4px 2px 16px;
-            background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.12), transparent);
+            background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.22), transparent);
         }
 
         /* Command Palette */
@@ -496,30 +507,30 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'Inter', sans-serif;
             border-bottom: 1px solid rgba(255,255,255,0.06);
         }
-        .cmd-palette-input::placeholder { color: rgba(255,255,255,0.3); }
+        .cmd-palette-input::placeholder { color: rgba(255,255,255,0.55); }
         .cmd-palette-results {
             overflow-y: auto; padding: 6px 0;
         }
         .cmd-palette-section {
             font-family: 'Orbitron', monospace; font-size: 11px;
-            color: rgba(0,212,255,0.5); letter-spacing: 0.14em;
+            color: rgba(0,212,255,0.9); letter-spacing: 0.14em;
             text-transform: uppercase; padding: 10px 20px 4px;
         }
         .cmd-palette-item {
             display: flex; align-items: center; gap: 10px;
             padding: 8px 20px; cursor: pointer;
-            color: rgba(255,255,255,0.72); font-size: 13px;
+            color: rgba(255,255,255,0.88); font-size: 13px;
             transition: background 0.12s ease, color 0.12s ease;
         }
         .cmd-palette-item:hover, .cmd-palette-item.selected {
-            background: rgba(0,212,255,0.08); color: #fff;
+            background: rgba(0,212,255,0.12); color: #fff;
         }
         .cmd-palette-item .ico { font-size: 16px; }
         .cmd-palette-item .meta {
-            margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.35);
+            margin-left: auto; font-size: 11px; color: rgba(255,255,255,0.6);
         }
         .cmd-palette-empty {
-            padding: 24px; text-align: center; color: rgba(255,255,255,0.35);
+            padding: 24px; text-align: center; color: rgba(255,255,255,0.65);
             font-size: 12px;
         }
 
@@ -542,14 +553,14 @@ window.addEventListener('DOMContentLoaded',function(){
         .dock {
           background:
             linear-gradient(90deg,
-              transparent 0%, rgba(0,212,255,0.03) 25%,
-              rgba(123,97,255,0.04) 50%, rgba(255,0,255,0.03) 75%,
+              transparent 0%, rgba(0,212,255,0.05) 25%,
+              rgba(123,97,255,0.06) 50%, rgba(255,0,255,0.05) 75%,
               transparent 100%),
-            rgba(3,3,8,0.75);
+            linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.1) 100%);
           background-size: 200% 100%, 100% 100%;
           animation: holoShimmer 8s linear infinite;
-          border-top: 1px solid rgba(0,212,255,0.08);
-          box-shadow: 0 -1px 0 rgba(123,97,255,0.05), inset 0 1px 30px rgba(0,212,255,0.02);
+          border-top: 1px solid rgba(0,212,255,0.18);
+          box-shadow: 0 -2px 16px rgba(0,0,0,0.5), 0 -1px 0 rgba(123,97,255,0.12), inset 0 1px 30px rgba(0,212,255,0.04);
         }
         .dock::after {
           content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -721,7 +732,7 @@ window.addEventListener('DOMContentLoaded',function(){
             </div>
         </div>
 
-        <div style="position:absolute;bottom:12px;left:18px;font-family:'Orbitron',sans-serif;font-size:9px;color:rgba(0,212,255,0.4);letter-spacing:2px;pointer-events:none;">
+        <div style="position:absolute;bottom:12px;left:18px;font-family:'Orbitron',sans-serif;font-size:9px;color:rgba(0,212,255,0.85);letter-spacing:2px;pointer-events:none;text-shadow:0 0 6px rgba(0,0,0,0.85),0 1px 2px rgba(0,0,0,0.8);">
             <span id="mood-text">STATE: LISTENING</span>
         </div>
 
@@ -2054,33 +2065,33 @@ function HomeWS(){
   const approveTodo=id=>fetch(`/api/todos/${id}/approve`,{method:'POST'}).then(()=>setTodos(t=>t.map(x=>x.id===id?{...x,status:'approved'}:x)));
   const rejectTodo=id=>fetch(`/api/todos/${id}/reject`,{method:'POST'}).then(()=>setTodos(t=>t.filter(x=>x.id!==id)));
   const runMorningRoutines=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing','Run email scan'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Morning routines launched')).catch(()=>{})};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading systems...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading systems...</div>;
   const pending=todos.filter(t=>t.status==='proposed').length;
   const insight=cd?.countdowns?`${cd.countdowns.map(c=>`${c.label||c.name||'Event'} in ${c.days||c.days_until||'?'}d`).join(' · ')}${pending>0?` · ${pending} task${pending>1?'s':''} awaiting approval`:''}`:'Systems initializing...';
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
+      <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#999'}}>No events</span>}</div>
       <div className="card"><div className="card-title">Personality</div>{(()=>{const sc=pers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));return(<><div className="stat">{sc}</div><div className="stat-label">sessions · {mp}% maturity</div><div className="progress-bar" style={{marginTop:6}}><div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/></div></>)})()}</div>
       <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?(Array.isArray(trust.people)?trust.people.length:Object.keys(trust.people).length):0}</div><div className="stat-label">entities tracked</div></div>
       <div className="card"><div className="card-title">Epistemic Score</div>{(()=>{const e=(epi?.overall_score??epi?.overall??0.72);return(<><div className="stat" style={{color:e>0.6?'#00ff80':e>0.4?'#f59e0b':'#ff0080'}}>{e.toFixed(2)}</div><div className="stat-label">{e>0.6?'making user smarter':e>0.4?'neutral':'dependency risk'}</div></>)})()}</div>
       <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
-      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
+      <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#999',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
     </div>
     <div className="card" style={{marginTop:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
         <div className="card-title" style={{margin:0}}>Routines</div>
         {routineToast&&<span style={{fontSize:11,color:'#00d4ff'}}>{routineToast}</span>}
       </div>
-      {routines.length===0?<div style={{color:'#555',fontSize:11}}>No routines registered</div>:
+      {routines.length===0?<div style={{color:'#999',fontSize:11}}>No routines registered</div>:
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
         {routines.map(r=>{const busy=runningRoutine===r.id;const lr=r.last_run?new Date(r.last_run).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'never';
-          return(<div key={r.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 6px',borderRadius:6,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.04)'}}>
+          return(<div key={r.id} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 6px',borderRadius:6,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.04)'}}>
             <span style={{fontSize:16}}>{r.ico}</span>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:11,color:'#ccc',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.label}</div>
-              <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
+              <div style={{fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{r.schedule||r.category} · last {lr}</div>
             </div>
             <button className="btn" style={{fontSize:11,padding:'3px 7px'}} disabled={busy} onClick={()=>runRoutine(r.id,r.label)}>{busy?'...':'Run Now'}</button>
           </div>);
@@ -2102,7 +2113,7 @@ function CareerWS(){
   const loadReport=name=>{fetch('/api/career-ops/report/'+name).then(r=>r.json()).then(d=>{setReportContent(d.content||'');setView('report')}).catch(()=>{})};
   const launchEval=()=>{if(!evalUrl.trim())return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Evaluate this job: '+evalUrl],cwd:'C:\\Users\\user\\Projects\\career-ops'})}).then(()=>{setEvalUrl('');alert('Evaluation launched')}).catch(()=>{})};
   const launchScan=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run portal scan'],cwd:'C:\\Users\\user\\Projects\\career-ops'})}).then(()=>alert('Scan launched')).catch(()=>{})};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading career pipeline...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading career pipeline...</div>;
   const entries=tracker?.entries||[];const applied=entries.filter(e=>(e.status||'').toLowerCase().includes('appli')).length;
   const interviewing=entries.filter(e=>(e.status||'').toLowerCase().includes('interview')).length;
   const offered=entries.filter(e=>(e.status||'').toLowerCase().includes('offer')).length;
@@ -2125,12 +2136,12 @@ function CareerWS(){
         {[{l:'Evaluated',c:entries.length,cl:'#f59e0b',p:100},{l:'Applied',c:applied,cl:'#00d4ff',p:entries.length?Math.round(applied/entries.length*100):0},{l:'Interviewing',c:interviewing,cl:'#7c3aed',p:entries.length?Math.round(interviewing/entries.length*100):0},{l:'Offers',c:offered,cl:'#00ff80',p:entries.length?Math.round(offered/entries.length*100):0}].map((s,i)=><div key={i} style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}><span style={{color:'#aaa'}}>{s.l}</span><span style={{fontFamily:'Orbitron',color:s.cl}}>{s.c} ({s.p}%)</span></div><div className="progress-bar"><div className="progress-fill" style={{width:Math.max(s.p,2)+'%',background:s.cl}}/></div></div>)}
       </div>
       {reports.length>0&&<div className="card"><div className="card-title">Recent Evaluations</div>{reports.slice(0,5).map((r,i)=><div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11,cursor:'pointer',color:'#aaa'}} onClick={()=>loadReport(r.name)}>{r.name}</div>)}</div>}
-      {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#555'}}>Career-ops uses A-F scoring across 10 weighted dimensions. Generates tailored CVs and tracks applications.</div></div>}
+      {!hasData&&<div className="card" style={{textAlign:'center',padding:20}}><div style={{fontSize:16,marginBottom:8}}>Get Started</div><div style={{fontSize:12,color:'#888',marginBottom:12}}>Paste a job URL above to evaluate your first role.</div><div style={{fontSize:11,color:'#999'}}>Career-ops uses A-F scoring across 10 weighted dimensions. Generates tailored CVs and tracks applications.</div></div>}
     </div>}
-    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
-    {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#555'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
+    {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
+    {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
-    {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
+    {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
     {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#888',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{storyBank||'Loading story bank...'}</pre></div>}
     {view==='outreach'&&<OutreachPanel/>}
@@ -2156,27 +2167,27 @@ function OutreachPanel(){
     try{await fetch('/api/outreach/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});setToast('Logged as '+status);load()}catch(e){setToast('Log failed')}
     setTimeout(()=>setToast(''),2000)};
   const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading outreach pipeline...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading outreach pipeline...</div>;
   const warm=sug?.warm_contacts||[];const targets=sug?.career_targets||[];const recent=pipe?.recent||[];
   return(<div>
     <FridaySays text={`${pipe?.total||0} outreach events logged · ${warm.length} warm contacts · ${targets.length} career targets.`}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
       <div className="card"><div className="card-title">Warm Contacts</div>
-        {warm.length===0?<div style={{color:'#555',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
+        {warm.length===0?<div style={{color:'#999',fontSize:11}}>No warm leads (trust &lt; 55%).</div>:warm.slice(0,10).map((w,i)=>{const pct=Math.round((w.score||0)*100);const col=pct>70?'#00ff80':pct>55?'#f59e0b':'#888';return(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',opacity:w.already_contacted?0.5:1}} onClick={()=>pickContact(w.contact)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{w.contact}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:col}}>{pct}%</span></div>
-          <div style={{fontSize:11,color:'#666'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
+          <div style={{fontSize:11,color:'#a8a8b4'}}>{w.reason}{w.already_contacted?' · contacted':''}</div>
         </div>)})}
       </div>
       <div className="card"><div className="card-title">Career Targets</div>
-        {targets.length===0?<div style={{color:'#555',fontSize:11}}>No applied/interviewing targets.</div>:targets.map((t,i)=>(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer'}} onClick={()=>pickCompany(t.company)}>
+        {targets.length===0?<div style={{color:'#999',fontSize:11}}>No applied/interviewing targets.</div>:targets.map((t,i)=>(<div key={i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer'}} onClick={()=>pickCompany(t.company)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc'}}>{t.company}</span><span className="badge-cyan" style={{fontSize:11}}>{t.status||''}</span></div>
-          <div style={{fontSize:11,color:'#666'}}>{t.reason}</div>
+          <div style={{fontSize:11,color:'#a8a8b4'}}>{t.reason}</div>
         </div>))}
       </div>
     </div>
     {selected&&<div className="card" style={{marginBottom:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:11,color:'#555',marginLeft:6}}>({selected.type})</span></div>
+        <div><span style={{fontSize:12,fontWeight:600,color:'#00d4ff'}}>Drafting → {selected.name}</span><span style={{fontSize:11,color:'#999',marginLeft:6}}>({selected.type})</span></div>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>Clear</button>
       </div>
       <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
@@ -2195,12 +2206,12 @@ function OutreachPanel(){
         </>}
       </div>
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginTop:6}}>{toast}</div>}
-      {draft&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',marginTop:8,background:'rgba(255,255,255,0.02)',padding:8,borderRadius:6,lineHeight:1.5}}>{draft}</pre>}
+      {draft&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',marginTop:8,background:'rgba(255,255,255,0.05)',padding:8,borderRadius:6,lineHeight:1.5}}>{draft}</pre>}
     </div>}
     <div className="card"><div className="card-title">Recent Pipeline ({pipe?.total||0})</div>
-      {recent.length===0?<div style={{color:'#555',fontSize:11}}>No outreach logged yet.</div>:recent.slice(0,15).map((e,i)=>(<div key={e.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
-        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#555'}}>· {e.channel}</span></span><span style={{fontSize:11,color:'#666'}}>{(e.timestamp||'').slice(0,10)}</span></div>
-        <div style={{fontSize:11,color:'#666'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:11}}>{e.status}</span></div>
+      {recent.length===0?<div style={{color:'#999',fontSize:11}}>No outreach logged yet.</div>:recent.slice(0,15).map((e,i)=>(<div key={e.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
+        <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#ccc'}}>{e.contact||e.company||'—'} <span style={{color:'#999'}}>· {e.channel}</span></span><span style={{fontSize:11,color:'#a8a8b4'}}>{(e.timestamp||'').slice(0,10)}</span></div>
+        <div style={{fontSize:11,color:'#a8a8b4'}}>{e.angle||''} · <span className="badge-cyan" style={{fontSize:11}}>{e.status}</span></div>
       </div>))}
     </div>
   </div>);
@@ -2215,14 +2226,14 @@ function WikiWS(){
     setStruct(d);setLoading(false)
   }).catch(()=>setLoading(false))},[]);
   const load=(s,f)=>{setPath(`${s}/${f}`);fetch(`/api/wiki/${s}/${f}`).then(r=>r.json()).then(d=>setContent(d.content||d.error||'Empty')).catch(()=>setContent('Error loading file'))};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading wiki...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading wiki...</div>;
   const totalFiles=struct?.sections?.reduce((a,s)=>a+(s.files?.length||0),0)||0;
   return(<div style={{display:'flex',gap:12,height:'100%'}}>
     <div style={{width:170,borderRight:'1px solid rgba(255,255,255,0.04)',paddingRight:8,overflowY:'auto',flexShrink:0}}>
       <div style={{fontSize:11,color:'#888',marginBottom:8,fontFamily:'JetBrains Mono'}}>{totalFiles} files · {struct?.sections?.length||0} sections</div>
-      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#555'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
+      {struct?.sections?.map(s=><div key={s.name}><div style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron',margin:'8px 0 3px',letterSpacing:'.05em'}}>{s.name} <span style={{color:'#999'}}>({(s.files||[]).length})</span></div>{(s.files||[]).map(f=><div key={typeof f==='string'?f:f} onClick={()=>load(s.name,f)} style={{fontSize:11,color:path===`${s.name}/${f}`?'#00d4ff':'#666',cursor:'pointer',padding:'2px 0',transition:'color .15s'}} onMouseOver={e=>e.target.style.color='#00d4ff'} onMouseOut={e=>{if(path!==`${s.name}/${f}`)e.target.style.color='#666'}}>{f}</div>)}</div>)}
     </div>
-    <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
+    <div style={{flex:1,overflowY:'auto'}}>{path&&<div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono',marginBottom:8}}>wiki/{path}</div>}<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{content}</pre></div>
   </div>);
 }
 function CoparentWS(){
@@ -2241,10 +2252,10 @@ function CoparentWS(){
     </div>
     <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
-        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#555',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
+        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#999',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
         {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
       </div>
-      <div style={{fontSize:11,color:'#555',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
+      <div style={{fontSize:11,color:'#999',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
     </div>
     <div className="card"><div className="card-title">***REMOVED***'s Weekly Schedule</div>
       {['🥋 Kung Fu','💃 Dance','♟️ Chess (school)','🧠 Play Therapy — Rachel Hodgdon','🏫 ***REMOVED*** · Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
@@ -2267,7 +2278,7 @@ function FuturespeakWS(){
   const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
   const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'C:\\Users\\user\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
   const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
 
   const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'—';
   const maxRev=Math.max(...((rev?.months||[]).map(m=>Math.max(m.projected||0,m.actual||0))),1);
@@ -2292,25 +2303,25 @@ function FuturespeakWS(){
       <div className="card"><div className="card-title">Top Opportunities</div>
         {(pipe?.opportunities||[]).slice(0,3).map((o,i)=>(<div key={o.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
-          <div style={{fontSize:11,color:'#666'}}>{o.next_action}</div>
+          <div style={{fontSize:11,color:'#a8a8b4'}}>{o.next_action}</div>
         </div>))}
       </div>
     </div>}
 
     {view==='pipeline'&&<div>
-      {(pipe?.opportunities||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
+      {(pipe?.opportunities||[]).length===0?<div style={{color:'#999',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
-          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#666',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
           <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
         </div>
         <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
         <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
-        {o.notes&&<div style={{fontSize:11,color:'#666',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
+        {o.notes&&<div style={{fontSize:11,color:'#a8a8b4',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
           <button className="btn" style={{fontSize:11}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
-          <span style={{fontSize:11,color:'#666',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
+          <span style={{fontSize:11,color:'#a8a8b4',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
         </div>
-        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.02)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
+        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.05)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
       </div>)})}
       {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
     </div>}
@@ -2328,10 +2339,10 @@ function FuturespeakWS(){
               <div style={{width:10,height:pH+'%',background:'rgba(245,158,11,0.4)',borderRadius:'2px 2px 0 0'}} title={'Projected: '+fmt(m.projected)}/>
               <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'—')}/>
             </div>
-            <div style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
+            <div style={{fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
           </div>)})}
         </div>
-        <div style={{fontSize:11,color:'#666',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
+        <div style={{fontSize:11,color:'#a8a8b4',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Quarterly</div>
         {(rev?.quarters||[]).map((q,i)=>(<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:12}}>
@@ -2342,20 +2353,20 @@ function FuturespeakWS(){
       </div>
       <div className="card"><div className="card-title">Cash + Burn</div>
         <div style={{display:'flex',justifyContent:'space-around',fontSize:12}}>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#666'}}>cash on hand</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#666'}}>monthly burn</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#666'}}>net/mo</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>cash on hand</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>monthly burn</div></div>
+          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#a8a8b4'}}>net/mo</div></div>
         </div>
       </div>
     </div>}
 
     {view==='legal'&&<div>
-      {(legal?.items||[]).length===0?<div style={{color:'#555',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
+      {(legal?.items||[]).length===0?<div style={{color:'#999',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#666'}}>{it.counterparty} · {it.type}</div></div>
+          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#a8a8b4'}}>{it.counterparty} · {it.type}</div></div>
           <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
         </div>
-        <div style={{fontSize:11,color:'#666',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
+        <div style={{fontSize:11,color:'#a8a8b4',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
         {it.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4,fontStyle:'italic'}}>{it.notes}</div>}
       </div>)})}
     </div>}
@@ -2363,7 +2374,7 @@ function FuturespeakWS(){
     {view==='website'&&<div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#666'}}>Primary brand site · Replit-hosted</div></div>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#a8a8b4'}}>Primary brand site · Replit-hosted</div></div>
           <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
@@ -2374,7 +2385,7 @@ function FuturespeakWS(){
       </div>
       <div className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#666'}}>Portfolio site · Replit-hosted</div></div>
+          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#a8a8b4'}}>Portfolio site · Replit-hosted</div></div>
           <span className="badge-green" style={{fontSize:11}}>LIVE</span>
         </div>
         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
@@ -2383,7 +2394,7 @@ function FuturespeakWS(){
           <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update innexenergy.com website','C:\\Users\\user\\Projects\\innex-site')}>💻 Open in Claude Code</button>
         </div>
       </div>
-      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#666'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
+      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#a8a8b4'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
     </div>}
 
     {view==='discord'&&<div>
@@ -2392,7 +2403,7 @@ function FuturespeakWS(){
         <div style={{fontSize:16,fontWeight:600,color:'#7c3aed',marginBottom:4}}>FutureSpeak.AI Discord</div>
         <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server · member activity · announcements</div>
         <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>🚀 Open Discord</a>
-        <div style={{fontSize:11,color:'#555',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
+        <div style={{fontSize:11,color:'#999',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
       </div>
     </div>}
 
@@ -2401,16 +2412,16 @@ function FuturespeakWS(){
         <div style={{fontSize:32,marginBottom:8}}>🎯</div>
         <div style={{fontSize:14,fontWeight:600,color:'#888',marginBottom:4}}>Talent Pipeline</div>
         <span className="badge-amber" style={{fontSize:11}}>Coming Soon</span>
-        <div style={{fontSize:11,color:'#555',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
+        <div style={{fontSize:11,color:'#999',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
       </div>
     </div>}
 
     {view==='demos'&&<div>
-      <div style={{fontSize:11,color:'#555',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
-      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#555',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+      <div style={{fontSize:11,color:'#999',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
+      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
         {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
-          <div style={{fontSize:11,color:'#555',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
+          <div style={{fontSize:11,color:'#999',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
           <div style={{display:'flex',gap:3}}>
             <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
             <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
@@ -2455,11 +2466,11 @@ function FamilyWS(){
     <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🥋 ***REMOVED*** · 💃 Dance · ♟️ Chess<br/>🏫 ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
-      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:11,color:'#666',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
-      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#666',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
+      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
+      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#a8a8b4',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
       <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
       <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
-      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>Loading...</span>}</div>
+      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#999'}}>Loading...</span>}</div>
     </div>
   </div>);
 }
@@ -2480,7 +2491,7 @@ function StudioWS(){
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
         <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:11}}>Back to Gallery</button>
         <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#555'}}>{selected.name}</span>
+          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#999'}}>{selected.name}</span>
           <button className="btn" onClick={()=>window.open(url,'_blank')} style={{fontSize:11}}>Open in Tab</button>
         </div>
       </div>
@@ -2488,7 +2499,7 @@ function StudioWS(){
       {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
       {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
       {ext==='md'&&<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{preview||'Loading...'}</pre>}
-      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#555',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
+      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
     </div>);
   }
   return(<div>
@@ -2505,13 +2516,13 @@ function StudioWS(){
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
       {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
     </div>
-    {loading?<div style={{color:'#555'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
+    {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
       {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
         return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
           <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
           <div style={{fontSize:11,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
-          <div style={{fontSize:11,color:'#555',marginTop:2}}>{date}</div>
+          <div style={{fontSize:11,color:'#999',marginTop:2}}>{date}</div>
           <button className="btn" style={{fontSize:11,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/api/creations/'+f.name,'_blank')}}>Open in Tab</button>
         </div>);
       })}
@@ -2521,7 +2532,7 @@ function StudioWS(){
 function TrustWS(){
   const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
   useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading trust graph...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading trust graph...</div>;
   if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
   // API returns people as object keyed by name, convert to array
   const rawPeople=trust?.people||{};
@@ -2535,7 +2546,7 @@ function TrustWS(){
       const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
       return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#555',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
+          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#999',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
             <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
@@ -2545,11 +2556,11 @@ function TrustWS(){
         {expanded===i&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
           {dims.map(d=>{const val=p.scores&&typeof p.scores[d]==='number'?p.scores[d]:0.5;const v=Math.round(val*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
             return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
-              <span style={{width:120,fontSize:11,color:'#666'}}>{d.replace(/_/g,' ')}</span>
+              <span style={{width:120,fontSize:11,color:'#a8a8b4'}}>{d.replace(/_/g,' ')}</span>
               <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
               <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
             </div>)})}
-          <div style={{fontSize:11,color:'#555',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
+          <div style={{fontSize:11,color:'#999',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
         </div>}
       </div>)})}
   </div>);
@@ -2557,7 +2568,7 @@ function TrustWS(){
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
   useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Scanning system...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Scanning system...</div>;
   return(<div>
     <div className="card-title">Disk Space</div>
     {((sys?.disk||sys?.disks||[])).map((d,i)=>{const used=(d.total_gb||d.TotalGB||1)>0?(1-(d.free_gb||d.FreeGB||0)/(d.total_gb||d.TotalGB||1))*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{(d.drive||d.Name||d.name||'?')}</span><span style={{color:'#00d4ff'}}>{(d.free_gb||d.FreeGB||0)?.toFixed(1)} GB free / {(d.total_gb||d.TotalGB||1)?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
@@ -2600,7 +2611,7 @@ function CodeWS(){
             onClick={()=>setSelectedTerminal(isSelected?null:t.id)}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <div style={{width:8,height:8,borderRadius:'50%',background:t.status==='running'?color:'#555',boxShadow:t.status==='running'?'0 0 8px '+color:'none'}}/>
+                <div style={{width:8,height:8,borderRadius:'50%',background:t.status==='running'?color:'#999',boxShadow:t.status==='running'?'0 0 8px '+color:'none'}}/>
                 <span style={{fontFamily:'Orbitron',fontSize:11,color}}>Q{i+1}</span>
               </div>
               <div style={{display:'flex',gap:4}}>
@@ -2610,8 +2621,8 @@ function CodeWS(){
             </div>
             <div style={{fontSize:11,color:'#aaa',marginTop:4,wordBreak:'break-word'}}>{(t.task||'').substring(0,isSelected?500:80)}{!isSelected&&(t.task||'').length>80?'...':''}</div>
             {isSelected&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-              <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
-              <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
+              <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
+              <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
               <div style={{marginTop:6,padding:8,background:'rgba(0,0,0,0.3)',borderRadius:4,fontFamily:'JetBrains Mono',fontSize:11,color:'#888',minHeight:60}}>
                 Terminal output will appear here when log streaming is enabled.
                 For now, check the CMD window on your desktop.
@@ -2638,7 +2649,7 @@ function NewsWS(){
   const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
   if(selected)return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
       <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>Back to Archive</button>
@@ -2665,7 +2676,7 @@ function NewsWS(){
   return(<div>
     <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:11}} onClick={launchBriefing}>Generate Briefing</button></div>
-    {briefings.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
+    {briefings.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
     briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
       <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:11,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
       <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
@@ -2774,12 +2785,12 @@ function DraftWS(){
 
     {/* History */}
     {history.length>0&&<div>
-      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#555',marginBottom:6}}>RECENT DRAFTS</div>
+      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#999',marginBottom:6}}>RECENT DRAFTS</div>
       {history.map((h,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',padding:'6px 10px'}}
         onClick={()=>{setDraft(h.draft);setCharCount(h.draft.length);setMode(h.mode)}}>
         <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
           <span style={{color:'#aaa'}}>{DRAFT_MODES.find(m=>m.id===h.mode)?.ico||'📝'} {h.prompt}...</span>
-          <span style={{color:'#555'}}>{h.time}</span>
+          <span style={{color:'#999'}}>{h.time}</span>
         </div>
       </div>)}
     </div>}
@@ -2795,7 +2806,7 @@ function FinanceWS(){
   ]).then(()=>setLoading(false))},[]);
   const copyText=(t)=>{navigator.clipboard.writeText(t)};
   const refreshFinance=()=>{setLoading(true);Promise.all([fetch('/api/finance/portfolio').then(r=>r.json()).then(setPortfolio).catch(()=>null),fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)]).then(()=>setLoading(false))};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading finance data...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading finance data...</div>;
   const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
   const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
   const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
@@ -2808,21 +2819,21 @@ function FinanceWS(){
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
         <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#555',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
+      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#999',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
       <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
     </div>}
     {view==='portfolio'&&<div>
       <div className="card-title">Portfolio Positions</div>
-      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#666'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
-      <div style={{fontSize:11,color:'#555',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
-      <div style={{fontSize:11,color:'#444',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
+      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
+      <div style={{fontSize:11,color:'#999',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
+      <div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
       <div className="card-title">Amex Platinum Perks</div>
       {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
-        {p.notes&&<div style={{fontSize:11,color:'#666',marginTop:3}}>{p.notes}</div>}
-        {p.expires&&<div style={{fontSize:11,color:'#555',marginTop:2}}>Expires: {p.expires}</div>}
+        {p.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:3}}>{p.notes}</div>}
+        {p.expires&&<div style={{fontSize:11,color:'#999',marginTop:2}}>Expires: {p.expires}</div>}
       </div>})}
     </div>}
     {view==='contacts'&&<div>
@@ -2832,7 +2843,7 @@ function FinanceWS(){
     </div>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
-      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#666',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
+      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -2846,7 +2857,7 @@ function HealthWS(){
     fetch('/api/health/vehicles').then(r=>r.json()).then(setVehicles).catch(()=>null)
   ]).then(()=>setLoading(false))},[]);
   const copyText=(t)=>{navigator.clipboard.writeText(t)};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading health data...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading health data...</div>;
   const medList=meds?.medications||[];const apptList=appts?.appointments||[];const ins=insurance?.insurance||{};const vehList=vehicles?.vehicles||[];const mechList=vehicles?.mechanics||[];
   const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
   return(<div>
@@ -2862,8 +2873,8 @@ function HealthWS(){
     </div>}
     {view==='medications'&&<div>
       <div className="card-title">Medications</div>
-      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#666',marginTop:2}}>{m.notes}</div>}</div>)}
-      <div style={{fontSize:11,color:'#444',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
+      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{m.notes}</div>}</div>)}
+      <div style={{fontSize:11,color:'#888',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
     </div>}
     {view==='appointments'&&<div>
       <div className="card-title">Appointments & Providers</div>
@@ -2871,7 +2882,7 @@ function HealthWS(){
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
         {a.frequency&&<div style={{fontSize:11,color:'#888',marginTop:2}}>Frequency: {a.frequency}</div>}
         {a.next&&<div style={{fontSize:11,color:'#f59e0b',marginTop:2}}>Next: {a.next}</div>}
-        {a.email&&<div style={{fontSize:11,color:'#666',marginTop:2}}>{a.email}</div>}
+        {a.email&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{a.email}</div>}
       </div>)}
     </div>}
     {view==='insurance'&&<div>
@@ -2879,17 +2890,17 @@ function HealthWS(){
       <div className="card" style={{marginBottom:8}}>
         <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Cigna Healthcare'}</div>
         {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:11,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
-        {ins.notes&&<div style={{fontSize:11,color:'#666',marginTop:6}}>{ins.notes}</div>}
+        {ins.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:6}}>{ins.notes}</div>}
       </div>
-      <div style={{fontSize:11,color:'#444'}}>Edit ~/.friday/health/insurance.json to add your details</div>
+      <div style={{fontSize:11,color:'#888'}}>Edit ~/.friday/health/insurance.json to add your details</div>
     </div>}
     {view==='vehicles'&&<div>
       <div className="card-title">Fleet Health</div>
       {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
         {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
-        {v.mechanic&&<div style={{fontSize:11,color:'#666',marginTop:2}}>🔧 {v.mechanic}</div>}
-        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#555',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#666',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
+        {v.mechanic&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>🔧 {v.mechanic}</div>}
+        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#999',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#a8a8b4',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
       </div>)}
       <div className="card-title" style={{marginTop:12}}>Mechanics</div>
       {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:11,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
@@ -2921,12 +2932,12 @@ function ContactsWS(){
       {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
       <div className="card" style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:11,color:'#555'}}>aka {selected.aliases.join(', ')}</div>}</div>
+          <div><div style={{fontWeight:600,fontSize:14}}>{selected.name}</div>{selected.aliases&&selected.aliases.length>0&&<div style={{fontSize:11,color:'#999'}}>aka {selected.aliases.join(', ')}</div>}</div>
           <div style={{fontFamily:'Orbitron',fontSize:16,color:col}}>{pct}%</div>
         </div>
         <div className="progress-bar"><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
       </div>
-      {detailLoad?<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>Loading trust dimensions...</div>:detail?<>
+      {detailLoad?<div style={{color:'#999',fontSize:11,textAlign:'center',padding:20}}>Loading trust dimensions...</div>:detail?<>
         <div className="card" style={{marginBottom:10}}>
           <div className="card-title">Trust Dimensions</div>
           {dims.map(d=>{const v=Math.round((detail.scores&&typeof detail.scores[d]==='number'?detail.scores[d]:0.5)*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
@@ -2937,11 +2948,11 @@ function ContactsWS(){
             </div>)})}
         </div>
         {detail.domains&&detail.domains.length>0&&<div className="card" style={{marginBottom:10}}><div className="card-title">Domains</div><div style={{fontSize:11,color:'#aaa'}}>{detail.domains.join(' · ')}</div></div>}
-        {detail.last_interaction&&<div style={{fontSize:11,color:'#666',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
+        {detail.last_interaction&&<div style={{fontSize:11,color:'#a8a8b4',marginBottom:8,fontFamily:'JetBrains Mono'}}>Last interaction: {detail.last_interaction}</div>}
         {Array.isArray(detail.evidence)&&detail.evidence.length>0&&<div className="card" style={{marginBottom:10}}>
           <div className="card-title">Evidence ({detail.evidence.length})</div>
           {detail.evidence.slice(0,20).map((e,i)=><div key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',padding:'4px 0',fontSize:11}}>
-            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#00d4ff'}}>{e.type||'event'}</span><span style={{color:'#555',fontSize:11}}>{e.timestamp||''}</span></div>
+            <div style={{display:'flex',justifyContent:'space-between'}}><span style={{color:'#00d4ff'}}>{e.type||'event'}</span><span style={{color:'#999',fontSize:11}}>{e.timestamp||''}</span></div>
             {e.notes&&<div style={{color:'#aaa',marginTop:2}}>{e.notes}</div>}
           </div>)}
         </div>}
@@ -2956,19 +2967,19 @@ function ContactsWS(){
       <button className="btn" style={{fontSize:11}} onClick={loadList}>↻</button>
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
-    {loading?<div style={{color:'#555',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#555',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
+    {loading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading contacts...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>{q?'No matches':'No contacts yet'}</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
       {filtered.map((c,i)=>{const pct=Math.round((c.overall||0)*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
         return(<div key={i} className="card" style={{cursor:'pointer',padding:8}} onClick={()=>openContact(c)}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:12,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.name}</div>
-              {c.aliases&&c.aliases.length>0&&<div style={{fontSize:11,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
+              {c.aliases&&c.aliases.length>0&&<div style={{fontSize:11,color:'#999',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.aliases.join(', ')}</div>}
             </div>
             <div style={{fontFamily:'Orbitron',fontSize:12,color:col,marginLeft:6}}>{pct}%</div>
           </div>
           <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
-          <div style={{fontSize:11,color:'#555',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
+          <div style={{fontSize:11,color:'#999',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
         </div>);
       })}
     </div>}
@@ -2993,7 +3004,7 @@ function ContentWS(){
       if(advance&&d.stage)setSelected({...selected,draft:d.draft,stage:d.stage})}catch(e){setToast('Draft failed')}
     setDrafting(false);setTimeout(()=>setToast(''),2000)};
   const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
-  if(loading)return <div style={{color:'#555',textAlign:'center',padding:40}}>Loading content pipeline...</div>;
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading content pipeline...</div>;
   if(selected){
     const col=STAGE_COLORS[selected.stage]||'#888';
     return(<div>
@@ -3011,17 +3022,17 @@ function ContentWS(){
           <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
           <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
         </div>
-        <div style={{fontSize:11,color:'#666'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
+        <div style={{fontSize:11,color:'#a8a8b4'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
         {selected.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:6,fontStyle:'italic'}}>{selected.notes}</div>}
       </div>
-      {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#555',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
+      {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.05)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#999',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
     </div>);
   }
   const by=pipe?.by_stage||{};
   return(<div>
     <FridaySays text={`${pipe?.total||0} items in pipeline · kanban across ${STAGES.length} stages. Click + to capture an idea.`}/>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
-      <div style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
+      <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={load}>↻</button>
         <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
@@ -3041,15 +3052,15 @@ function ContentWS(){
       <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={addIdea}>Capture</button>
     </div>}
     <div style={{display:'grid',gridTemplateColumns:'repeat(5, 1fr)',gap:6,minHeight:200}}>
-      {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.02)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
+      {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.05)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,paddingBottom:4,borderBottom:'1px solid '+col+'22'}}>
           <span style={{fontFamily:'Orbitron',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
-          <span style={{fontSize:11,color:'#555',fontFamily:'JetBrains Mono'}}>{items.length}</span>
+          <span style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{items.length}</span>
         </div>
-        {items.length===0?<div style={{fontSize:11,color:'#444',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
+        {items.length===0?<div style={{fontSize:11,color:'#888',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
           <div style={{fontSize:11,color:'#ccc',fontWeight:600,lineHeight:1.3,marginBottom:2}}>{it.title}</div>
-          <div style={{fontSize:11,color:'#666'}}>{it.type} · {it.channel}</div>
-          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#555',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
+          <div style={{fontSize:11,color:'#a8a8b4'}}>{it.type} · {it.channel}</div>
+          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
         </div>))}
       </div>)})}
     </div>
@@ -3365,8 +3376,8 @@ function App(){
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#444'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:14,position:'relative'}}>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
+        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:14,position:'relative'}}>
           <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#555',cursor:'pointer',fontSize:14}} title="Quick Draft">
@@ -3390,8 +3401,10 @@ function App(){
 
     {/* Calm Default State — greeting with ticker */}
     {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-      <div style={{fontFamily:'Orbitron',fontSize:24,color:'rgba(0,212,255,0.6)',marginBottom:12,animation:'fadeIn 1s ease'}}>{getGreeting()}, Stephen.</div>
-      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:28}}>
+      {/* Radial dark backdrop so greeting reads against any scene state */}
+      <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-55%)',width:560,height:240,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.45) 45%, transparent 75%)',pointerEvents:'none',zIndex:0}}/>
+      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, Stephen.</div>
+      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:28,position:'relative',zIndex:1}}>
         {countdowns.map((c,i)=><React.Fragment key={i}>
           {i>0&&<span className="greeting-ticker-sep"/>}
           <span className="greeting-ticker-item">
@@ -3400,12 +3413,12 @@ function App(){
           </span>
         </React.Fragment>)}
       </div>}
-      {countdowns.length===0&&<div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.2)',marginBottom:28}}>All systems nominal.</div>}
-      <div style={{pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
+      {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:28,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
+      <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
-          style={{width:360,background:'rgba(6,6,11,0.6)',backdropFilter:'blur(12px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:24,padding:'10px 20px',color:'#e0e0e8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s'}}/>
-        <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>&#x1F3A4;</button>
+          style={{width:360,background:'rgba(6,6,11,0.88)',backdropFilter:'blur(14px)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}/>
+        <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.18)',border:'1px solid rgba(0,212,255,0.4)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}>&#x1F3A4;</button>
       </div>
     </div>}
 
@@ -3418,9 +3431,9 @@ function App(){
     {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
-        <button onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:13}}>&#x2715;</button>
+        <button onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:13}}>&#x2715;</button>
       </div>
-      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:4}}>Source</div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.8)',marginTop:4}}>Source</div>
       <div className="row">
         {['screen','webcam','both'].map(s=>
           <button key={s} className={`src-btn ${cameraSource===s?'active':''}`} onClick={()=>setCameraSource(s)}>{s}</button>
@@ -3432,7 +3445,7 @@ function App(){
         <button className={`src-btn ${cameraFacing==='environment'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('environment')}>rear</button>
       </div>}
       <div className="camera-privacy-banner"><span className="pulse"/>Camera is active</div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8,fontSize:11,color:'rgba(255,255,255,0.5)',fontFamily:'JetBrains Mono'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8,fontSize:11,color:'rgba(255,255,255,0.8)',fontFamily:'JetBrains Mono'}}>
         <span>Frame every {cameraIntervalSec}s</span>
         <button className="src-btn" style={{padding:'4px 10px'}} onClick={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}>Stop</button>
       </div>
@@ -3447,17 +3460,17 @@ function App(){
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>setChatMsgs([])} title="Start a new conversation" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
-          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
-        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
+        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
             {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
           </div>
-          <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
+          <div style={{fontSize:11,color:'#888',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
         <div ref={chatEnd}/>
@@ -3476,7 +3489,7 @@ function App(){
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>SETTINGS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           {settingsSaveMsg&&<span style={{fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{settingsSaveMsg}</span>}
-          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
 
@@ -3500,7 +3513,7 @@ function App(){
             onMouseUp={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
             onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
             style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4,marginBottom:14}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginTop:4,marginBottom:14}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
 
           {/* Default Model */}
           <div className="settings-subtitle">Default Model</div>
@@ -3511,7 +3524,7 @@ function App(){
               </span>
             ))}
             {(!stHealth?.models||stHealth.models.length===0)&&!models?.length&&
-              <span style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>Claude Sonnet 4.6 (text) · Gemini 2.5 Flash (vision)</span>}
+              <span style={{fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>Claude Sonnet 4.6 (text) · Gemini 2.5 Flash (vision)</span>}
           </div>
 
           {/* Response Preferences */}
@@ -3556,12 +3569,12 @@ function App(){
         {openSections.personality&&<div style={{padding:'0 16px 14px'}}>
           {/* Agent Personality */}
           <div className="settings-subtitle">Agent Personality</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
           <textarea
             value={personalityDraft}
             onChange={e=>setPersonalityDraft(e.target.value)}
             rows={5}
-            style={{width:'100%',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
+            style={{width:'100%',background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
           <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center',marginBottom:14}}>
             <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
               disabled={personalityDraft===agentPersonality} onClick={savePersonality}>Save</button>
@@ -3589,7 +3602,7 @@ function App(){
                 <li>An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.</li>
                 <li>All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.</li>
               </ol>
-              <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.45)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
+              <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.78)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
             </>}
           </div>
 
@@ -3604,7 +3617,7 @@ function App(){
               <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
             </div>
             {Object.keys(dims).length>0&&<>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
               {Object.entries(dims).map(([k,v],i)=>(
                 <div key={i} style={{marginBottom:5}}>
                   <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
@@ -3628,8 +3641,8 @@ function App(){
             <div className="progress-bar" style={{marginBottom:10}}>
               <div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/>
             </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
-            {top.length===0?<div style={{fontSize:11,color:'#555'}}>No trait data yet</div>:top.map(([k,v],i)=>(
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
+            {top.length===0?<div style={{fontSize:11,color:'#999'}}>No trait data yet</div>:top.map(([k,v],i)=>(
               <div key={i} style={{marginBottom:5}}>
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
                   <span style={{color:'#bbb'}}>{k}</span>
@@ -3652,11 +3665,11 @@ function App(){
         </div>
         {openSections.voice&&<div style={{padding:'0 16px 14px'}}>
           <div className="settings-subtitle">TTS Voice</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:8}}>Voice used by briefing Read Aloud and other speech output.</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8}}>Voice used by briefing Read Aloud and other speech output.</div>
           <select
             value={agentSettings.tts_voice||'Aoede'}
             onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.03)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
             {TTS_VOICES.map(v=><option key={v.id} value={v.id} style={{background:'#0a0a14',color:'#ccc'}}>{v.label}</option>)}
           </select>
           <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}}
@@ -3733,7 +3746,7 @@ function App(){
             <span className="settings-toggle-label">Auto-describe what Friday sees</span>
             <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
           </div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
         </div>}
       </div>
 
@@ -3741,25 +3754,25 @@ function App(){
       <div className="settings-section">
         <div className="settings-section-title">Friday System Health</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11}}>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
             <div style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{stEvo?.day??'—'}</div>
           </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
             <div style={{fontFamily:'Orbitron',fontSize:13,color:'#7c3aed'}}>{sceneState.mood||'—'}</div>
           </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
             <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00ff80'}}>{formatUptime(stHealth?.uptime_seconds)}</div>
           </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
             <div style={{fontFamily:'Orbitron',fontSize:15,color:'#f59e0b'}}>{stHealth?.creations_today??'—'}</div>
           </div>
         </div>
         <div style={{marginTop:8}}>
-          <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
+          <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
           <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
             {(stHealth?.models||models).map((m,i)=>(
               <span key={i} className="model-pill" style={{fontSize:11}}>
@@ -3769,7 +3782,7 @@ function App(){
             ))}
           </div>
         </div>
-        {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
+        {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
       </div>
     </div>
 
@@ -3777,7 +3790,7 @@ function App(){
     {quickDraft&&<div style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
-        <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
       </div>
       <div style={{display:'flex',gap:3,marginBottom:8,flexWrap:'wrap'}}>
         {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(qdMode===m.id?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setQdMode(m.id)}>{m.ico} {m.label}</button>)}
@@ -3787,7 +3800,7 @@ function App(){
         <button className="btn" onClick={qdGenerate} disabled={qdLoading} style={{fontSize:11,fontWeight:600}}>{qdLoading?'Generating...':'Generate'}</button>
         {qdResult&&<button className="btn" onClick={qdCopy} style={{fontSize:11}}>{qdCopied?'✓ Copied':'📋 Copy'}</button>}
       </div>
-      {qdResult&&<div style={{marginTop:4,maxHeight:180,overflowY:'auto',background:'rgba(255,255,255,0.02)',borderRadius:6,padding:8}}>
+      {qdResult&&<div style={{marginTop:4,maxHeight:180,overflowY:'auto',background:'rgba(255,255,255,0.05)',borderRadius:6,padding:8}}>
         <pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',margin:0,lineHeight:1.5}}>{qdResult}</pre>
       </div>}
     </div>}
