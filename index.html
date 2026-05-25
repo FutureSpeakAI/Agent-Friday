@@ -539,6 +539,46 @@ window.addEventListener('DOMContentLoaded',function(){
             50% { background-position: 0% 100%; }
         }
 
+        /* ─── Notifications + Tasks dropdown (under bell icon) ─── */
+        .notif-dropdown {
+            position: fixed; width: 360px; max-height: 400px;
+            z-index: 80;
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.22); border-radius: 12px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+            overflow-y: auto; overflow-x: hidden;
+            animation: notifDropdownSlide 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+            font-family: 'Inter', sans-serif;
+        }
+        .notif-dropdown::-webkit-scrollbar { width: 4px; }
+        .notif-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+        .notif-section-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 9px 14px; border-bottom: 1px solid rgba(0,212,255,0.08);
+            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            position: sticky; top: 0; z-index: 2;
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
+        }
+        .notif-section-divider {
+            height: 1px; background: rgba(0,212,255,0.12);
+            margin: 0;
+        }
+        .notif-empty {
+            padding: 14px; font-size: 11px; color: rgba(255,255,255,0.45);
+            font-family: 'JetBrains Mono', monospace; text-align: center;
+            letter-spacing: 0.04em;
+        }
+        @keyframes notifDropdownSlide {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bellBadgePulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.75); }
+            50%      { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
+        }
+        .bell-badge-pulse { animation: bellBadgePulse 1.4s infinite ease-out; }
+
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -3623,6 +3663,10 @@ function App(){
   const[wikiPending,setWikiPending]=useState(0);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[notifOpen,setNotifOpen]=useState(false);
+  const[notifCardExpanded,setNotifCardExpanded]=useState({});
+  const bellRef=useRef(null);const notifPanelRef=useRef(null);
+  const[notifAnchor,setNotifAnchor]=useState({top:40,right:12});
   const[topBarHidden,setTopBarHidden]=useState(false);
   const[dockHidden,setDockHidden]=useState(false);
   const topBarTimer=useRef(null);
@@ -3798,11 +3842,29 @@ function App(){
   },[]);
   // Always show top bar when any overlay panel is open
   useEffect(()=>{
-    if(settingsOpen||chatOpen||quickDraft||paletteOpen){
+    if(settingsOpen||chatOpen||quickDraft||paletteOpen||notifOpen){
       setTopBarHidden(false);
       if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}
     }
-  },[settingsOpen,chatOpen,quickDraft,paletteOpen]);
+  },[settingsOpen,chatOpen,quickDraft,paletteOpen,notifOpen]);
+
+  // Anchor notif dropdown below bell + close on outside click / Escape
+  useEffect(()=>{
+    if(!notifOpen)return;
+    if(bellRef.current){
+      const r=bellRef.current.getBoundingClientRect();
+      setNotifAnchor({top:r.bottom+8,right:Math.max(8,window.innerWidth-r.right-4)});
+    }
+    const onDown=(e)=>{
+      if(notifPanelRef.current&&notifPanelRef.current.contains(e.target))return;
+      if(bellRef.current&&bellRef.current.contains(e.target))return;
+      setNotifOpen(false);
+    };
+    const onKey=(e)=>{if(e.key==='Escape')setNotifOpen(false)};
+    document.addEventListener('mousedown',onDown);
+    document.addEventListener('keydown',onKey);
+    return()=>{document.removeEventListener('mousedown',onDown);document.removeEventListener('keydown',onKey)};
+  },[notifOpen]);
 
   const[vibeMode,setVibeMode]=useState(false);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
@@ -3842,6 +3904,9 @@ function App(){
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
+  const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
+  const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
+  const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
   const noWindows=openWins.size===0;
 
   const structures=window.fridayVibe?.getStructures?.()??[];
@@ -3859,8 +3924,12 @@ function App(){
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
-        <button onClick={()=>{}} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:14,position:'relative'}}>
-          <span style={{fontSize:13}}>&#x1F514;</span>{unread>0&&<span style={{position:'absolute',top:-4,right:-4,width:14,height:14,borderRadius:'50%',background:'#ff0080',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700}}>{unread}</span>}
+        <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
+          style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#999',cursor:'pointer',fontSize:14,position:'relative'}}
+          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}>
+          <span style={{fontSize:13}}>&#x1F514;</span>
+          {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
+            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#555',cursor:'pointer',fontSize:14}} title="Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
@@ -3964,6 +4033,32 @@ function App(){
         </div>
       </div>
     </div>
+
+    {/* Notifications + Tasks dropdown (anchored under bell icon) */}
+    {notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
+      <div className="notif-section-header">
+        <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.5)',letterSpacing:'0.04em'}}>{sortedBgTasks.length||0}</span>
+      </div>
+      {sortedBgTasks.length===0
+        ?<div className="notif-empty">No active tasks</div>
+        :sortedBgTasks.slice(0,8).map(t=><TaskCard key={t.task_id} task={t}
+          expanded={!!notifCardExpanded[t.task_id]}
+          onToggle={()=>setNotifCardExpanded(e=>({...e,[t.task_id]:!e[t.task_id]}))}
+          onCancel={()=>cancelBgTask(t.task_id)}
+          onView={()=>viewBgTaskResult(t)}/>)}
+      <div className="notif-section-divider"/>
+      <div className="notif-section-header">
+        <span>NOTIFICATIONS</span>
+        {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
+      </div>
+      {notifs.length===0
+        ?<div className="notif-empty">No notifications</div>
+        :notifs.slice(0,10).map((n,i)=><div key={n.id||i} style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.55)':'#fff'}}>
+          <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4}}>{n.title||n.message||n.text||'Notification'}</div>
+          {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888',marginTop:3}}>{n.time}</div>}
+        </div>)}
+    </div>}
 
     {/* Settings Panel */}
     <div className={`settings-panel ${settingsOpen?'open':''}`}>
@@ -4342,8 +4437,7 @@ function App(){
     </div>
     {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
 
-    {/* Background Task Tray (bottom-right) */}
-    <TaskTray tasks={bgTasks} onCancel={cancelBgTask} onView={viewBgTaskResult}/>
+    {/* Background tasks now live in the bell-icon dropdown above */}
 
     {/* Task Result Modal */}
     {taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>

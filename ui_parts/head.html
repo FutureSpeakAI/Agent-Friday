@@ -422,6 +422,163 @@ window.addEventListener('DOMContentLoaded',function(){
             box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
         }
 
+        /* ─── Task Tray ─── */
+        .task-tray {
+            position: fixed; right: 16px; bottom: 96px; width: 320px; z-index: 72;
+            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
+            border: 1px solid rgba(0,212,255,0.12); border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            font-family: 'Inter', sans-serif;
+            max-height: 60vh; overflow-y: auto;
+            animation: taskTraySlide 0.3s ease-out;
+        }
+        .task-tray-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; border-bottom: 1px solid rgba(0,212,255,0.08);
+            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            letter-spacing: 0.08em; position: sticky; top: 0;
+            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
+        }
+        .task-tray-pill {
+            position: fixed; right: 16px; bottom: 96px; z-index: 72;
+            padding: 5px 10px; border-radius: 999px;
+            background: rgba(6,6,11,0.85); backdrop-filter: blur(10px);
+            border: 1px solid rgba(0,212,255,0.18);
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: #00d4ff; cursor: pointer; user-select: none;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .task-tray-pill:hover { border-color: rgba(0,212,255,0.5); transform: translateY(-1px); }
+        .task-card {
+            position: relative;
+            padding: 10px 12px 10px 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            overflow: hidden;
+        }
+        .task-card:last-child { border-bottom: none; }
+        .task-card-edge {
+            position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px;
+            border-radius: 2px;
+            background: linear-gradient(180deg, rgba(0,212,255,0.15) 0%, #00d4ff 50%, rgba(0,212,255,0.15) 100%);
+            background-size: 100% 200%;
+            animation: taskEdgePulse 1.6s ease-in-out infinite;
+        }
+        .task-card.complete .task-card-edge {
+            background: #00ff80; animation: none;
+            box-shadow: 0 0 8px rgba(0,255,128,0.5);
+        }
+        .task-card.failed .task-card-edge {
+            background: #ff0080; animation: none;
+            box-shadow: 0 0 8px rgba(255,0,128,0.5);
+        }
+        .task-card-row {
+            display: flex; justify-content: space-between; align-items: center; gap: 8px;
+        }
+        .task-card-title {
+            color: #fff; font-size: 13px; font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+        }
+        .task-card-sub {
+            color: rgba(0,212,255,0.55); font-size: 11px;
+            margin-top: 2px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .task-card-meta {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-top: 6px; font-size: 11px;
+        }
+        .task-card-elapsed {
+            font-family: 'JetBrains Mono', monospace; color: #888;
+        }
+        .task-card-status {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-family: 'Orbitron', monospace; font-size: 11px;
+            letter-spacing: 0.06em;
+        }
+        .task-card.running .task-card-status { color: #f59e0b; }
+        .task-card.complete .task-card-status { color: #00ff80; }
+        .task-card.failed .task-card-status { color: #ff0080; }
+        .task-card-spinner {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,0.7);
+            animation: pulse 1s ease-in-out infinite;
+        }
+        .task-card-check { color: #00ff80; font-weight: 700; }
+        .task-card-actions {
+            display: flex; gap: 4px; align-items: center;
+        }
+        .task-card-btn {
+            background: none; border: 1px solid rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.55); cursor: pointer;
+            font-size: 11px; padding: 2px 6px; border-radius: 4px;
+            transition: all 0.15s;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .task-card-btn:hover { color: #00d4ff; border-color: rgba(0,212,255,0.3); }
+        .task-card-btn.results { color: #00ff80; border-color: rgba(0,255,128,0.25); }
+        .task-card-btn.cancel:hover { color: #ff0080; border-color: rgba(255,0,128,0.3); }
+        .task-card-log {
+            margin-top: 8px; padding: 6px 8px;
+            background: rgba(0,0,0,0.35); border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.04);
+            max-height: 160px; overflow-y: auto;
+        }
+        .task-card-log-line {
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(200,200,220,0.65); padding: 1px 0;
+            animation: fadeIn 0.3s ease-out;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        @keyframes taskTraySlide {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes taskEdgePulse {
+            0%, 100% { background-position: 0% 0%; }
+            50% { background-position: 0% 100%; }
+        }
+
+        /* ─── Notifications + Tasks dropdown (under bell icon) ─── */
+        .notif-dropdown {
+            position: fixed; width: 360px; max-height: 400px;
+            z-index: 80;
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.22); border-radius: 12px;
+            box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+            overflow-y: auto; overflow-x: hidden;
+            animation: notifDropdownSlide 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+            font-family: 'Inter', sans-serif;
+        }
+        .notif-dropdown::-webkit-scrollbar { width: 4px; }
+        .notif-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+        .notif-section-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 9px 14px; border-bottom: 1px solid rgba(0,212,255,0.08);
+            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            letter-spacing: 0.1em; text-transform: uppercase;
+            position: sticky; top: 0; z-index: 2;
+            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
+        }
+        .notif-section-divider {
+            height: 1px; background: rgba(0,212,255,0.12);
+            margin: 0;
+        }
+        .notif-empty {
+            padding: 14px; font-size: 11px; color: rgba(255,255,255,0.45);
+            font-family: 'JetBrains Mono', monospace; text-align: center;
+            letter-spacing: 0.04em;
+        }
+        @keyframes notifDropdownSlide {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes bellBadgePulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.75); }
+            50%      { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
+        }
+        .bell-badge-pulse { animation: bellBadgePulse 1.4s infinite ease-out; }
+
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
