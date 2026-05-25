@@ -846,13 +846,114 @@ function TrustWS(){
 }
 function SystemWS(){
   const[sys,setSys]=useState(null);const[loading,setLoading]=useState(true);
-  useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  // Context log state
+  const[ctxStats,setCtxStats]=useState(null);
+  const[ctxQuery,setCtxQuery]=useState('');
+  const[ctxFrom,setCtxFrom]=useState('');
+  const[ctxTo,setCtxTo]=useState('');
+  const[ctxType,setCtxType]=useState('');
+  const[ctxResults,setCtxResults]=useState(null);
+  const[ctxSearching,setCtxSearching]=useState(false);
+  const[ctxToast,setCtxToast]=useState('');
+  const[ctxDelOpen,setCtxDelOpen]=useState(false);
+  const[ctxDelConfirm,setCtxDelConfirm]=useState('');
+
+  const showCtxToast=(m)=>{setCtxToast(m);setTimeout(()=>setCtxToast(''),2200)};
+  const refreshCtxStats=()=>fetch('/api/context/stats').then(r=>r.json()).then(setCtxStats).catch(()=>{});
+
+  useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false));refreshCtxStats()},[]);
+
+  const runCtxSearch=async()=>{setCtxSearching(true);
+    try{const r=await fetch('/api/context/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:ctxQuery.trim(),date_from:ctxFrom||null,date_to:ctxTo||null,type:ctxType||null,limit:200})});
+      const d=await r.json();setCtxResults(d.results||[])}catch{setCtxResults([])}
+    setCtxSearching(false);
+  };
+  const toggleLogging=async()=>{
+    const next=!ctxStats?.enabled;
+    try{await fetch(next?'/api/context/resume':'/api/context/pause',{method:'POST'});showCtxToast(next?'Logging resumed':'Logging paused');refreshCtxStats()}catch{showCtxToast('Toggle failed')}
+  };
+  const deleteRange=async()=>{
+    if(ctxDelConfirm!=='DELETE'){showCtxToast('Type DELETE to confirm');return}
+    try{const r=await fetch('/api/context/range',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({date_from:ctxFrom||null,date_to:ctxTo||null,confirm:'DELETE'})});
+      const d=await r.json();showCtxToast(`Deleted ${d.count} day${d.count===1?'':'s'}`);setCtxDelOpen(false);setCtxDelConfirm('');refreshCtxStats();setCtxResults(null)}catch{showCtxToast('Delete failed')}
+  };
+  const exportLog=()=>{window.open('/api/context/export','_blank')};
+
+  const fmtBytes=(n)=>{if(!n)return'0 B';if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';return(n/1048576).toFixed(2)+' MB'};
+  const fmtTs=(s)=>{try{return new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return s}};
+  const typeColor=(t)=>({chat_user:'#7c3aed',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
+
   if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Scanning system...</div>;
   return(<div>
     <div className="card-title">Disk Space</div>
     {((sys?.disk||sys?.disks||[])).map((d,i)=>{const used=(d.total_gb||d.TotalGB||1)>0?(1-(d.free_gb||d.FreeGB||0)/(d.total_gb||d.TotalGB||1))*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{(d.drive||d.Name||d.name||'?')}</span><span style={{color:'#00d4ff'}}>{(d.free_gb||d.FreeGB||0)?.toFixed(1)} GB free / {(d.total_gb||d.TotalGB||1)?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
     <div className="card-title" style={{marginTop:10}}>Top Processes</div>
     {((sys?.processes||[])).slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{(p.name||p.Name||'unknown')}</span><span style={{color:'#f59e0b'}}>{((p.memory_mb||p.MemMB||p.mem_mb||0)).toFixed(0)} MB</span></div>)}
+
+    {/* ─── Context Log ─── */}
+    <div className="card-title" style={{marginTop:14,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <span>Context Log {ctxStats?.off_record&&<span style={{color:'#ff0080',fontSize:11,marginLeft:6}}>(OFF RECORD)</span>}</span>
+      <span style={{display:'flex',gap:4,alignItems:'center'}}>
+        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={toggleLogging}>{ctxStats?.enabled?'⏸ Pause Logging':'▶ Resume Logging'}</button>
+        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={exportLog}>⤓ Export</button>
+      </span>
+    </div>
+    {ctxToast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6,fontFamily:'JetBrains Mono'}}>✓ {ctxToast}</div>}
+    <div className="card" style={{marginBottom:8}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:6}}>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Days:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.days??0}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Entries:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.total_entries??0}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Size:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{fmtBytes(ctxStats?.total_bytes)}</span></div>
+        <div style={{fontSize:11}}><span style={{color:'#888'}}>Avg/day:</span> <span style={{color:'#00d4ff',fontFamily:'Orbitron'}}>{ctxStats?.avg_entries_per_day??0}</span></div>
+      </div>
+      <div style={{fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{ctxStats?.first_date?`${ctxStats.first_date} → ${ctxStats.last_date}`:'No entries yet'}</div>
+    </div>
+    <div className="card" style={{marginBottom:8,padding:8}}>
+      <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
+        <input value={ctxQuery} onChange={e=>setCtxQuery(e.target.value)} placeholder="Search query..." style={{flex:1,minWidth:140,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:12,outline:'none'}}/>
+        <input type="date" value={ctxFrom} onChange={e=>setCtxFrom(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <input type="date" value={ctxTo} onChange={e=>setCtxTo(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <select value={ctxType} onChange={e=>setCtxType(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}>
+          <option value="">All types</option>
+          <option value="chat_user">chat_user</option>
+          <option value="chat_agent">chat_agent</option>
+          <option value="tool_call">tool_call</option>
+          <option value="wiki_edit">wiki_edit</option>
+          <option value="wiki_delete">wiki_delete</option>
+          <option value="file_read">file_read</option>
+          <option value="task_spawn">task_spawn</option>
+        </select>
+      </div>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" style={{fontSize:11}} onClick={runCtxSearch} disabled={ctxSearching}>{ctxSearching?'Searching...':'🔍 Search'}</button>
+        <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setCtxDelOpen(true)} disabled={!ctxFrom&&!ctxTo}>🗑 Delete Range</button>
+      </div>
+    </div>
+    {ctxResults!==null&&<div className="card" style={{padding:8,maxHeight:340,overflowY:'auto'}}>
+      <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:6,letterSpacing:'.05em'}}>{ctxResults.length} ENTR{ctxResults.length===1?'Y':'IES'}</div>
+      {ctxResults.length===0&&<div style={{fontSize:11,color:'#888',textAlign:'center',padding:12}}>No matching entries.</div>}
+      {ctxResults.map((e,i)=>(<div key={i} style={{padding:'5px 0',borderTop:i?'1px solid rgba(255,255,255,0.04)':'none'}}>
+        <div style={{display:'flex',gap:8,alignItems:'baseline'}}>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{fmtTs(e.ts)}</span>
+          <span style={{fontFamily:'Orbitron',fontSize:10,letterSpacing:'.05em',color:typeColor(e.type),padding:'1px 5px',borderRadius:3,border:'1px solid '+typeColor(e.type)+'44'}}>{e.type}</span>
+        </div>
+        <pre style={{fontSize:11,color:'#bbb',fontFamily:'JetBrains Mono',whiteSpace:'pre-wrap',margin:'3px 0 0 0',lineHeight:1.5,maxHeight:120,overflowY:'auto'}}>{JSON.stringify(e.data,null,2)}</pre>
+      </div>))}
+    </div>}
+
+    {/* Delete confirmation modal */}
+    {ctxDelOpen&&<div onClick={()=>{setCtxDelOpen(false);setCtxDelConfirm('')}} style={{position:'fixed',inset:0,zIndex:300,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:'min(460px,90vw)',background:'rgba(15,5,15,0.97)',border:'1px solid rgba(255,0,128,0.45)',borderRadius:10,padding:18}}>
+        <div style={{fontFamily:'Orbitron',fontSize:12,color:'#ff0080',letterSpacing:'.1em',marginBottom:8}}>⚠ DELETE CONTEXT LOG RANGE</div>
+        <div style={{fontSize:12,color:'#ddd',marginBottom:10,lineHeight:1.5}}>This will permanently delete log files from <strong style={{color:'#ff0080'}}>{ctxFrom||'(beginning)'}</strong> to <strong style={{color:'#ff0080'}}>{ctxTo||'(end)'}</strong>. Type <strong>DELETE</strong> to confirm.</div>
+        <input value={ctxDelConfirm} onChange={e=>setCtxDelConfirm(e.target.value)} placeholder="DELETE" autoFocus
+          style={{width:'100%',background:'rgba(0,0,0,0.4)',color:'#fff',border:'1px solid rgba(255,0,128,0.4)',borderRadius:6,padding:'8px 10px',fontFamily:'JetBrains Mono',fontSize:13,outline:'none',marginBottom:10}}/>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button className="btn" style={{fontSize:11}} onClick={()=>{setCtxDelOpen(false);setCtxDelConfirm('')}}>Cancel</button>
+          <button className="btn" style={{fontSize:11,color:'#ff0080',borderColor:'rgba(255,0,128,0.5)'}} disabled={ctxDelConfirm!=='DELETE'} onClick={deleteRange}>Delete Permanently</button>
+        </div>
+      </div>
+    </div>}
   </div>);
 }
 function CodeWS(){
@@ -1535,7 +1636,7 @@ function App(){
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false});
+  const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false,privacy:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
   const TTS_VOICES=[
     {id:'Aoede',label:'Aoede — warm female (default)'},
@@ -2129,6 +2230,44 @@ function App(){
             <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
           </div>
           <div style={{fontSize:11,color:'rgba(255,255,255,0.72)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
+        </div>}
+      </div>
+
+      {/* ── GROUP: Privacy ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('privacy')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Privacy</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.privacy?'▾':'▸'}</span>
+        </div>
+        {openSections.privacy&&<div style={{padding:'0 16px 14px'}}>
+          <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
+            <span className="settings-toggle-label">Full Context Logging</span>
+            <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
+          </div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Append-only event log of chats, tool calls, wiki edits, and file reads. Stored locally in <code style={{color:'#00d4ff'}}>~/.friday/vault/context-log/</code>.</div>
+
+          <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
+            <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record (quick toggle)</span>
+            <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
+          </div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>When on, chat messages are not written to the context log even if logging is enabled.</div>
+
+          <div className="settings-subtitle">Retention Period</div>
+          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',marginBottom:12}}>
+            {[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=>
+              <button key={o.v} className={`settings-btn ${(agentSettings.context_retention_days??0)===o.v?'active':''}`}
+                style={{textAlign:'center',fontSize:11}}
+                onClick={()=>saveAgentSettings({context_retention_days:o.v})}>{o.l}</button>
+            )}
+          </div>
+
+          <div className="settings-subtitle">Your Email (passes through unscrubbed)</div>
+          <input value={agentSettings.user_email||''} onChange={e=>setAgentSettings(s=>({...s,user_email:e.target.value}))} onBlur={e=>saveAgentSettings({user_email:e.target.value})}
+            placeholder="you@example.com"
+            style={{width:'100%',background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',marginBottom:6}}/>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Other emails are replaced with <code style={{color:'#00d4ff'}}>[PII:email:hash]</code> before being sent to the Claude API and rehydrated on the way back. Yours stays plain.</div>
+
+          <button className="settings-btn" style={{width:'100%',fontSize:12}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
         </div>}
       </div>
 

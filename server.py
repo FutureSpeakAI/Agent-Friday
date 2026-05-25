@@ -248,6 +248,149 @@ def _pii_redact(text):
     return out
 
 
+# ── PII Scrub/Rehydrate (bidirectional, tagged placeholders) ──
+# Outbound: real PII is replaced with [PII:type:hash] markers; the agent sees
+# stable references it can speak about without ever seeing the raw value.
+# Inbound: the response is scanned for those markers and rehydrated from an
+# in-memory lookup that NEVER touches disk and is rebuilt per request.
+
+import hashlib as _hashlib
+
+_PII_TAG_RE = re.compile(r"\[PII:[a-z]+:[0-9a-f]{8}\]")
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.\-]?)?\(?[2-9][0-9]{2}\)?[\s.\-]?[0-9]{3}[\s.\-]?[0-9]{4}(?!\d)")
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+_STREET_RE = re.compile(
+    r"\b\d{1,6}\s+[A-Z][\w'.\-]*(?:\s+[A-Z][\w'.\-]*){0,5}\s+"
+    r"(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|"
+    r"Court|Ct|Place|Pl|Trail|Trl|Tr|Way|Circle|Cir|Highway|Hwy|"
+    r"Parkway|Pkwy|Terrace|Ter|Loop|Cove|Cv|Path|Square|Sq|Plaza|Pl)\b"
+    r"(?:,?\s+(?:Apt|Apartment|Suite|Ste|Unit|#)\s*[\w\-]+)?"
+    r"(?:,?\s+[A-Z][\w\-]+(?:\s+[A-Z][\w\-]+)*)?"
+    r"(?:,?\s+[A-Z]{2})?"
+    r"(?:\s+\d{5}(?:-\d{4})?)?",
+    re.IGNORECASE,
+)
+_ZIP_FALLBACK_RE = re.compile(r"\b\d{5}(?:-\d{4})?\b")
+
+
+def _owner_emails():
+    """Email addresses that belong to the user and should pass through unscrubbed."""
+    try:
+        settings = _load_settings()
+        raw = settings.get('user_email') or settings.get('owner_email') or ''
+        items = []
+        if isinstance(raw, str) and raw.strip():
+            items.append(raw.strip().lower())
+        extras = settings.get('owner_identities') or []
+        if isinstance(extras, list):
+            for x in extras:
+                if isinstance(x, str) and '@' in x:
+                    items.append(x.strip().lower())
+        return items
+    except Exception:
+        return []
+
+
+def _pii_hash(val):
+    return _hashlib.blake2b(val.encode('utf-8'), digest_size=4).hexdigest()
+
+
+def _scrub_pii(text):
+    """Replace PII with tagged placeholders. Returns (scrubbed_text, lookup_table).
+
+    lookup_table maps tag -> original value. Caller passes it to _rehydrate_pii
+    on the response. The table is created fresh per call and lives only in memory.
+    """
+    if not isinstance(text, str) or not text:
+        return text, {}
+    lookup = {}
+
+    def _make_tag(kind, val):
+        tag = f"[PII:{kind}:{_pii_hash(val)}]"
+        lookup[tag] = val
+        return tag
+
+    out = text
+
+    # 1. SSN
+    out = _SSN_RE.sub(lambda m: _make_tag("ssn", m.group(0)), out)
+
+    # 2. Credit-card-ish
+    def _cc_sub(m):
+        digits = re.sub(r"\D", "", m.group(0))
+        if 13 <= len(digits) <= 19:
+            return _make_tag("cc", m.group(0))
+        return m.group(0)
+    out = _CC_RE.sub(_cc_sub, out)
+
+    # 3. Phone numbers
+    out = _PHONE_RE.sub(lambda m: _make_tag("phone", m.group(0)), out)
+
+    # 4. Email — preserve the user's own addresses
+    owner_set = set(_owner_emails())
+    def _email_sub(m):
+        addr = m.group(0)
+        if addr.lower() in owner_set:
+            return addr
+        return _make_tag("email", addr)
+    out = _EMAIL_RE.sub(_email_sub, out)
+
+    # 5. Street address (best-effort US-style)
+    out = _STREET_RE.sub(lambda m: _make_tag("addr", m.group(0)), out)
+
+    # 6. Watchlist exact-match tokens (names, account numbers, etc.)
+    for token in _load_privacy_watchlist():
+        if token and token in out:
+            tag = _make_tag("name", token)
+            out = out.replace(token, tag)
+
+    return out, lookup
+
+
+def _rehydrate_pii(text, lookup):
+    """Restore real PII values from tagged placeholders. Pure replacement."""
+    if not isinstance(text, str) or not text or not lookup:
+        return text
+    out = text
+    for tag, val in lookup.items():
+        if tag in out:
+            out = out.replace(tag, val)
+    return out
+
+
+# ── Full Context Log (append-only JSONL per day) ──────────────
+CONTEXT_LOG_DIR = FRIDAY_DIR / "vault" / "context-log"
+
+
+def _context_logging_enabled():
+    try:
+        s = _load_settings()
+        # Default ON unless explicitly disabled.
+        return bool(s.get('context_logging_enabled', True))
+    except Exception:
+        return True
+
+
+def _log_context(event_type, data):
+    """Append an event to today's full context log. Silently no-ops if disabled."""
+    try:
+        if not _context_logging_enabled():
+            return
+        CONTEXT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        today = date.today().isoformat()
+        log_file = CONTEXT_LOG_DIR / f"{today}.jsonl"
+        entry = {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "type": event_type,
+            "data": data,
+        }
+        with open(log_file, "a", encoding='utf-8') as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except Exception as e:
+        # Logging must never break the request.
+        print(f"  [CTX-LOG] {event_type} failed: {e}")
+
+
 # ── Claude Tool-Use Agent ─────────────────────────────────────
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
@@ -322,6 +465,7 @@ def _tool_read_file(inp):
         return f"File not found or outside allowed root: {raw}"
     try:
         text = p.read_text(encoding='utf-8', errors='replace')
+        _log_context("file_read", {"path": str(p), "bytes": len(text)})
         return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
     except Exception as e:
         return f"Read error: {e}"
@@ -570,6 +714,12 @@ def _spawn_task(name, prompt, description=''):
             'log': [],
             'result': '',
         }
+    _log_context("task_spawn", {
+        "task_id": task_id,
+        "name": name,
+        "description": description,
+        "prompt": prompt[:1000],
+    })
     th = threading.Thread(target=_task_worker, args=(task_id, name, prompt, description), daemon=True)
     th.start()
     return task_id
@@ -706,7 +856,9 @@ CLAUDE_TOOL_HANDLERS = {
 }
 
 
-def _execute_tool(name, tool_input):
+def _execute_tool(name, tool_input, pii_lookup=None):
+    """Run a Claude tool. If pii_lookup is a dict, scrub PII into it instead of
+    destructively redacting; otherwise fall back to non-recoverable redaction."""
     handler = CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         return f"Unknown tool: {name}"
@@ -714,17 +866,34 @@ def _execute_tool(name, tool_input):
         result = handler(tool_input or {})
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
+        # Log every tool execution to the context log.
+        try:
+            _log_context("tool_call", {
+                "name": name,
+                "input": tool_input,
+                "result_preview": result[:500],
+                "result_len": len(result),
+            })
+        except Exception:
+            pass
+        if isinstance(pii_lookup, dict):
+            scrubbed, sub = _scrub_pii(result)
+            pii_lookup.update(sub)
+            return scrubbed
         return _pii_redact(result)
     except Exception as e:
         traceback.print_exc()
         return f"Tool error ({name}): {e}"
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, temperature=None, max_iters=6):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, temperature=None, max_iters=6, pii_lookup=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
-    tool_trace is a list of {"name", "input", "result"} entries — useful for
-    debugging and for showing the user what the agent did.
+    If pii_lookup is a dict, it is assumed the caller has already scrubbed
+    `messages` and `system` and added entries to the lookup; tool results
+    are scrubbed into the same lookup so the rehydrator at the end of the
+    request can substitute every placeholder back. If pii_lookup is None,
+    falls back to the legacy non-recoverable redaction (`_pii_redact`).
     """
     client = get_anthropic_client()
     if client is None:
@@ -732,15 +901,20 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, tempe
             "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
         )
 
-    # Redact outgoing user/assistant text and any string system prompt.
-    safe_messages = []
-    for m in messages:
-        content = m.get('content')
-        if isinstance(content, str):
-            safe_messages.append({"role": m['role'], "content": _pii_redact(content)})
-        else:
-            safe_messages.append(m)
-    safe_system = _pii_redact(system) if isinstance(system, str) else system
+    if pii_lookup is None:
+        # Legacy path — destructively redact on the way out.
+        safe_messages = []
+        for m in messages:
+            content = m.get('content')
+            if isinstance(content, str):
+                safe_messages.append({"role": m['role'], "content": _pii_redact(content)})
+            else:
+                safe_messages.append(m)
+        safe_system = _pii_redact(system) if isinstance(system, str) else system
+    else:
+        # Caller already scrubbed — trust the inputs.
+        safe_messages = list(messages)
+        safe_system = system
 
     tool_trace = []
     convo = list(safe_messages)
@@ -793,7 +967,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, tempe
         # Execute tools and feed results back
         tool_results = []
         for tu in tool_uses:
-            result = _execute_tool(tu.name, tu.input)
+            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup)
             tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:500]})
             tool_results.append({
                 "type": "tool_result",
@@ -825,6 +999,11 @@ DEFAULT_SETTINGS = {
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "camera_auto_describe": False,
     "tts_voice": "Aoede",                  # Aoede | Kore | Leda | Puck | Charon
+    # ── Privacy / Context Log ──
+    "context_logging_enabled": True,       # master switch for the append-only event log
+    "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
+    "user_email": "",                      # the user's own email — passed through unscrubbed
+    "off_record": False,                   # quick toggle — when true, chat is not logged either
 }
 
 
@@ -1289,6 +1468,7 @@ def _mirror_wiki_file(rel, content):
     rel = rel.replace('\\', '/').lstrip('/')
     primary = WIKI_DIR / rel
     primary.parent.mkdir(parents=True, exist_ok=True)
+    old_content = primary.read_text(encoding='utf-8', errors='replace') if primary.exists() else ""
     primary.write_text(content, encoding='utf-8')
     try:
         if WIKI_MIRROR_DIR.exists():
@@ -1297,6 +1477,13 @@ def _mirror_wiki_file(rel, content):
             mirror.write_text(content, encoding='utf-8')
     except Exception as e:
         print(f"  [WIKI] Mirror failed for {rel}: {e}")
+    _log_context("wiki_edit", {
+        "file": rel,
+        "old_len": len(old_content),
+        "new_len": len(content),
+        "old_preview": old_content[:400],
+        "new_preview": content[:400],
+    })
 
 
 def _delete_wiki_file(rel):
@@ -1314,6 +1501,8 @@ def _delete_wiki_file(rel):
                 mirror.unlink()
     except Exception as e:
         print(f"  [WIKI] Mirror delete failed for {rel}: {e}")
+    if deleted:
+        _log_context("wiki_delete", {"file": rel})
     return deleted
 
 
@@ -1662,6 +1851,142 @@ def wiki_setup_research():
 
     return jsonify({"status": "ok", "drafts": drafts, "count": len(drafts),
                     "message": "Drafts created as pending. Approve each in the Wiki workspace."})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  CONTEXT LOG (append-only JSONL per day, vault-scoped)
+# ═══════════════════════════════════════════════════════════════
+
+def _context_log_files(date_from=None, date_to=None):
+    """Yield (date_str, Path) for log files in the inclusive range."""
+    if not CONTEXT_LOG_DIR.exists():
+        return
+    files = []
+    for f in sorted(CONTEXT_LOG_DIR.glob("*.jsonl")):
+        d = f.stem
+        if date_from and d < date_from:
+            continue
+        if date_to and d > date_to:
+            continue
+        files.append((d, f))
+    return files
+
+
+@app.route('/api/context/search', methods=['POST'])
+def context_search():
+    data = request.get_json(force=True, silent=True) or {}
+    query = (data.get("query") or "").strip()
+    date_from = (data.get("date_from") or "").strip() or None
+    date_to = (data.get("date_to") or "").strip() or None
+    type_filter = (data.get("type") or "").strip() or None
+    limit = int(data.get("limit") or 200)
+    q_lower = query.lower()
+    out = []
+    for d, f in (_context_log_files(date_from, date_to) or []):
+        try:
+            with open(f, "r", encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if type_filter and entry.get("type") != type_filter:
+                        continue
+                    if q_lower and q_lower not in json.dumps(entry, default=str).lower():
+                        continue
+                    out.append(entry)
+                    if len(out) >= limit:
+                        break
+        except Exception:
+            continue
+        if len(out) >= limit:
+            break
+    return jsonify({"status": "ok", "count": len(out), "results": out})
+
+
+@app.route('/api/context/stats', methods=['GET'])
+def context_stats():
+    enabled = _context_logging_enabled()
+    settings = _load_settings()
+    files = _context_log_files() or []
+    total_entries = 0
+    total_bytes = 0
+    dates = []
+    for d, f in files:
+        try:
+            sz = f.stat().st_size
+            total_bytes += sz
+            with open(f, "r", encoding='utf-8') as fh:
+                total_entries += sum(1 for _ in fh)
+            dates.append(d)
+        except Exception:
+            pass
+    avg_per_day = round(total_entries / len(dates), 1) if dates else 0
+    return jsonify({
+        "status": "ok",
+        "enabled": enabled,
+        "off_record": bool(settings.get('off_record')),
+        "retention_days": settings.get('context_retention_days', 0),
+        "days": len(dates),
+        "first_date": dates[0] if dates else None,
+        "last_date": dates[-1] if dates else None,
+        "total_entries": total_entries,
+        "total_bytes": total_bytes,
+        "avg_entries_per_day": avg_per_day,
+        "log_dir": str(CONTEXT_LOG_DIR),
+    })
+
+
+@app.route('/api/context/range', methods=['DELETE'])
+def context_delete_range():
+    data = request.get_json(force=True, silent=True) or {}
+    if data.get("confirm") != "DELETE":
+        return jsonify({"status": "error", "message": "confirmation token required"}), 400
+    date_from = (data.get("date_from") or "").strip() or None
+    date_to = (data.get("date_to") or "").strip() or None
+    deleted = []
+    for d, f in (_context_log_files(date_from, date_to) or []):
+        try:
+            f.unlink()
+            deleted.append(d)
+        except Exception:
+            pass
+    return jsonify({"status": "ok", "deleted": deleted, "count": len(deleted)})
+
+
+@app.route('/api/context/pause', methods=['POST'])
+def context_pause():
+    merged = _save_settings({**_load_settings(), "context_logging_enabled": False})
+    return jsonify({"status": "ok", "enabled": merged.get('context_logging_enabled', False)})
+
+
+@app.route('/api/context/resume', methods=['POST'])
+def context_resume():
+    merged = _save_settings({**_load_settings(), "context_logging_enabled": True})
+    return jsonify({"status": "ok", "enabled": merged.get('context_logging_enabled', True)})
+
+
+@app.route('/api/context/export', methods=['GET'])
+def context_export():
+    """Stream a zip of all context log files."""
+    import zipfile, io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for d, f in (_context_log_files() or []):
+            try:
+                zf.write(f, arcname=f"context-log/{f.name}")
+            except Exception:
+                pass
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'friday-context-log-{date.today().isoformat()}.zip',
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2507,7 +2832,62 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
         )
         sources_consulted.append('vision')
 
+    # Layer 4: ALWAYS-ON full wiki context. The user's personal knowledge
+    # base ships with every chat turn so the agent can reference any fact.
+    # PII is scrubbed downstream by the chat handler before the prompt
+    # ever leaves the machine.
+    try:
+        wiki_full = _load_full_wiki_context()
+        if wiki_full:
+            sections.append(
+                "\n== PERSONAL WIKI (always available — reference freely) ==\n"
+                "Each file is delimited by `--- wiki: <path> ---`. "
+                "When you mention a fact, you can cite the file path.\n\n"
+                f"{wiki_full}"
+            )
+            sources_consulted.append('wiki_full')
+    except Exception as _e:
+        sections.append(f"\n== PERSONAL WIKI ==\n(load failed: {_e})")
+
     return '\n'.join(sections), sources_consulted
+
+
+def _load_full_wiki_context(max_total_chars=80000, max_file_chars=8000):
+    """Return the entire wiki concatenated as a single context block.
+
+    Bounded by max_total_chars so a runaway wiki can't blow out the context
+    window. Files are ordered by modified-time (most recent first) so newer
+    facts win if we hit the cap.
+    """
+    if not WIKI_DIR.exists():
+        return ""
+    files = []
+    for f in WIKI_DIR.rglob('*'):
+        if f.is_file() and f.suffix in ('.md', '.txt'):
+            try:
+                files.append((f.stat().st_mtime, f))
+            except Exception:
+                pass
+    files.sort(key=lambda x: x[0], reverse=True)
+    chunks = []
+    total = 0
+    for _, f in files:
+        try:
+            rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
+            text = f.read_text(encoding='utf-8', errors='replace').strip()
+        except Exception:
+            continue
+        if not text:
+            continue
+        if len(text) > max_file_chars:
+            text = text[:max_file_chars] + "\n[...truncated]"
+        block = f"--- wiki: {rel} ---\n{text}\n"
+        if total + len(block) > max_total_chars:
+            chunks.append(f"--- wiki: [{len(files) - len(chunks)} more files omitted — context cap reached] ---")
+            break
+        chunks.append(block)
+        total += len(block)
+    return "\n".join(chunks)
 
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"
@@ -2617,9 +2997,44 @@ def chat():
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
+        # ── Privacy Shield: scrub PII out of system prompt + all messages ──
+        # All real PII is replaced with [PII:type:hash] tags before any byte
+        # leaves the machine. The lookup table lives only in this request.
+        pii_lookup = {}
+        if system_prompt:
+            system_prompt, sub = _scrub_pii(system_prompt)
+            pii_lookup.update(sub)
+        for m in messages:
+            c = m.get('content')
+            if isinstance(c, str) and c:
+                m['content'], sub = _scrub_pii(c)
+                pii_lookup.update(sub)
+
+        # Tell the agent how to handle the placeholders — Claude has to know
+        # they refer to real values that will be substituted before display.
+        if pii_lookup:
+            system_prompt += (
+                "\n\n== PRIVACY PLACEHOLDERS ==\n"
+                "Some private values in your context appear as tags like "
+                "[PII:type:hash] (types: addr, phone, email, ssn, cc, name). "
+                "These are stable references to real data on the user's device. "
+                "Use them in your reply EXACTLY as written when you need to "
+                "reference the underlying value — they will be substituted "
+                "with the real data before the user sees your response."
+            )
+
         reply, tool_trace = _call_claude_agent(
-            messages, system=system_prompt, temperature=settings.get('temperature')
+            messages, system=system_prompt, temperature=settings.get('temperature'),
+            pii_lookup=pii_lookup,
         )
+
+        # ── Rehydrate: restore real PII before returning to the user. ──
+        if pii_lookup:
+            reply = _rehydrate_pii(reply, pii_lookup)
+            # Also rehydrate the tool trace so the UI shows real values.
+            for entry in tool_trace:
+                if isinstance(entry.get('result'), str):
+                    entry['result'] = _rehydrate_pii(entry['result'], pii_lookup)
 
         # Store in history with IDs, timestamps, and context metadata
         user_msg = {
@@ -2640,6 +3055,19 @@ def chat():
         }
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
+
+        # ── Context log: append both turns unless off-record. ──
+        if not settings.get('off_record'):
+            _log_context("chat_user", {
+                "message": message,
+                "workspace": workspace,
+                "had_image": bool(screenshot_b64),
+            })
+            _log_context("chat_agent", {
+                "reply": reply,
+                "sources": sources,
+                "tool_count": len(tool_trace or []),
+            })
 
         # Prune: keep pinned forever, others for 30 days, cap at 500 messages
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
