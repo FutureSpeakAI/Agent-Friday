@@ -201,6 +201,389 @@ def _call_claude(messages, system=None, model=None, max_tokens=2048, temperature
     return "".join(parts).strip()
 
 
+# ── PII Privacy Shield ────────────────────────────────────────
+# Lightweight redactor applied to outbound prompts and to tool outputs
+# before they re-enter the model context. SSN + credit-card patterns are
+# always redacted; additional watchlist tokens come from
+# ~/.friday/privacy_shield.json => {"watchlist": ["...", ...]}
+_PII_WATCHLIST_CACHE = {"mtime": 0.0, "items": []}
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CC_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
+
+def _load_privacy_watchlist():
+    path = FRIDAY_DIR / "privacy_shield.json"
+    try:
+        mtime = path.stat().st_mtime if path.exists() else 0.0
+        if mtime != _PII_WATCHLIST_CACHE["mtime"]:
+            items = []
+            if path.exists():
+                data = json.loads(path.read_text(encoding='utf-8'))
+                raw = data.get('watchlist') if isinstance(data, dict) else data
+                if isinstance(raw, list):
+                    items = [str(x) for x in raw if isinstance(x, (str, int, float)) and str(x).strip()]
+            _PII_WATCHLIST_CACHE["mtime"] = mtime
+            _PII_WATCHLIST_CACHE["items"] = items
+    except Exception:
+        pass
+    return _PII_WATCHLIST_CACHE["items"]
+
+
+def _pii_redact(text):
+    """Redact SSNs, credit-card-like sequences (Luhn-ish), and watchlist tokens."""
+    if not isinstance(text, str) or not text:
+        return text
+    out = _SSN_RE.sub("[REDACTED-SSN]", text)
+
+    def _cc_sub(m):
+        digits = re.sub(r"\D", "", m.group(0))
+        if 13 <= len(digits) <= 19:
+            return "[REDACTED-CC]"
+        return m.group(0)
+
+    out = _CC_RE.sub(_cc_sub, out)
+    for token in _load_privacy_watchlist():
+        if token and token in out:
+            out = out.replace(token, "[REDACTED]")
+    return out
+
+
+# ── Claude Tool-Use Agent ─────────────────────────────────────
+# Tools Claude can call when answering the user. Each tool has a handler
+# in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
+CLAUDE_TOOLS = [
+    {"name": "search_web", "description": "Search the web for current information. Returns a brief answer or a note if the web is unavailable.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "read_file", "description": "Read a file from the user's home directory tree. Path must be under C:\\Users\\user\\.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "write_clipboard", "description": "Copy text to the user's Windows clipboard.",
+     "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "query_calendar", "description": "Check today's calendar events.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "search_email", "description": "Search Gmail for messages matching a query.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "run_command", "description": "Run a non-destructive PowerShell command on the system. Destructive commands (rm, del, format, shutdown, reg delete, etc.) are blocked.",
+     "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
+    {"name": "open_url", "description": "Open a URL in the user's default Chrome browser.",
+     "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+    {"name": "draft_email", "description": "Create a Gmail draft (placeholder — requires Gmail connector).",
+     "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
+     "input_schema": {"type": "object", "properties": {}}},
+]
+
+# Block list for run_command (case-insensitive substring match).
+_RUN_COMMAND_BLOCKLIST = (
+    "remove-item", "rmdir", "rd ", "del ", " del\t", "format ",
+    "shutdown", "restart-computer", "stop-computer",
+    "diskpart", "fdisk", "mkfs", "cipher /w",
+    "reg delete", "reg add hklm",
+    "icacls", "takeown",
+    "schtasks /delete",
+    "net user", "net localgroup",
+    "invoke-webrequest -outfile", "iwr -outfile",
+    "iex ", "invoke-expression",
+    "wmic.*delete", "get-childitem.*remove",
+    "rm -", "rmdir -",
+)
+
+
+def _safe_under_home(path_str):
+    """Resolve a path and return it only if it stays within HOME."""
+    try:
+        p = Path(path_str).expanduser().resolve()
+        home_resolved = HOME.resolve()
+        # is_relative_to is 3.9+; emulate
+        try:
+            p.relative_to(home_resolved)
+        except ValueError:
+            return None
+        return p
+    except Exception:
+        return None
+
+
+def _tool_search_web(inp):
+    # No web-search dependency wired yet. Return a graceful note.
+    q = (inp or {}).get('query', '')
+    return f"Web search is not connected. Query was: {q!r}. Use read_wiki, get_briefing, or query_calendar for local context."
+
+
+def _tool_read_file(inp):
+    raw = (inp or {}).get('path', '')
+    p = _safe_under_home(raw)
+    if not p or not p.exists() or not p.is_file():
+        return f"File not found or outside allowed root: {raw}"
+    try:
+        text = p.read_text(encoding='utf-8', errors='replace')
+        return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
+    except Exception as e:
+        return f"Read error: {e}"
+
+
+def _tool_write_clipboard(inp):
+    text = (inp or {}).get('text', '')
+    if not text:
+        return "No text provided."
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text],
+            check=True, capture_output=True, timeout=10,
+        )
+        return f"Copied {len(text)} chars to clipboard."
+    except Exception as e:
+        return f"Clipboard error: {e}"
+
+
+def _tool_query_trust_graph(inp):
+    name = ((inp or {}).get('name') or '').strip().lower()
+    if not name:
+        return "No name provided."
+    graph = _load_trust_graph()
+    people = graph.get('people') or {}
+    items = people.values() if isinstance(people, dict) else people
+    for p in items:
+        if not isinstance(p, dict):
+            continue
+        if (p.get('name') or '').strip().lower() == name:
+            return json.dumps(p, default=str)[:8000]
+        aliases = [str(a).lower() for a in (p.get('aliases') or [])]
+        if name in aliases:
+            return json.dumps(p, default=str)[:8000]
+    return f"No trust-graph entry found for {name!r}."
+
+
+def _tool_query_calendar(_inp):
+    # Mirror the /api/calendar endpoint
+    return json.dumps({"events": [], "note": "Google Calendar connector not wired; calendar is empty."})
+
+
+def _tool_search_email(inp):
+    q = (inp or {}).get('query', '')
+    return f"Email search requires the Gmail connector (not installed). Query was: {q!r}."
+
+
+def _tool_read_wiki(inp):
+    raw = (inp or {}).get('path', '')
+    p = (WIKI_DIR / raw).resolve()
+    wiki_resolved = WIKI_DIR.resolve()
+    try:
+        p.relative_to(wiki_resolved)
+    except ValueError:
+        return f"Path escapes the wiki root: {raw}"
+    if not p.exists() or not p.is_file():
+        return f"Wiki file not found: {raw}"
+    try:
+        text = p.read_text(encoding='utf-8', errors='replace')
+        return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
+    except Exception as e:
+        return f"Read error: {e}"
+
+
+def _tool_run_command(inp):
+    cmd = ((inp or {}).get('command') or '').strip()
+    if not cmd:
+        return "Empty command."
+    low = cmd.lower()
+    for bad in _RUN_COMMAND_BLOCKLIST:
+        if bad in low:
+            return f"Blocked by cLaws safety: command matches blocklist token {bad!r}."
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        out = (proc.stdout or '') + (("\n[stderr]\n" + proc.stderr) if proc.stderr else '')
+        return out[:8000] if out else f"(exit {proc.returncode}, no output)"
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30s."
+    except Exception as e:
+        return f"Command error: {e}"
+
+
+def _tool_open_url(inp):
+    url = ((inp or {}).get('url') or '').strip()
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return f"Refusing to open non-http(s) URL: {url!r}"
+    try:
+        # Try Chrome first, fall back to default browser
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        for cp in chrome_paths:
+            if Path(cp).exists():
+                subprocess.Popen([cp, url])
+                return f"Opened in Chrome: {url}"
+        os.startfile(url)  # type: ignore[attr-defined]
+        return f"Opened in default browser: {url}"
+    except Exception as e:
+        return f"Open URL error: {e}"
+
+
+def _tool_draft_email(inp):
+    return "Email drafting requires the Gmail connector (not installed)."
+
+
+def _tool_get_career_pipeline(_inp):
+    try:
+        if JOB_SEARCH_FILE.exists():
+            text = JOB_SEARCH_FILE.read_text(encoding='utf-8', errors='replace')
+            return text[:12000] + ("\n...[truncated]" if len(text) > 12000 else "")
+        return "No career pipeline file found at ~/wiki/professional/job-search.md."
+    except Exception as e:
+        return f"Pipeline read error: {e}"
+
+
+def _tool_get_briefing(_inp):
+    """Return the most recent daily briefing (HTML stripped, plus markdown)."""
+    candidates = []
+    briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
+    if briefings_dir.exists():
+        for f in briefings_dir.iterdir():
+            if f.is_file() and f.suffix in ('.html', '.md'):
+                candidates.append(f)
+    creations_dir = CREATIONS_DIR
+    if creations_dir.exists():
+        for f in creations_dir.iterdir():
+            if f.is_file() and f.name.startswith('daily-briefing') and f.suffix in ('.html', '.md'):
+                candidates.append(f)
+    if not candidates:
+        return "No briefings found."
+    latest = max(candidates, key=lambda f: f.stat().st_mtime)
+    try:
+        text = latest.read_text(encoding='utf-8', errors='replace')
+        if latest.suffix == '.html':
+            text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', text, flags=re.I)
+            text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+        return f"[{latest.name}]\n{text[:8000]}"
+    except Exception as e:
+        return f"Briefing read error: {e}"
+
+
+CLAUDE_TOOL_HANDLERS = {
+    "search_web": _tool_search_web,
+    "read_file": _tool_read_file,
+    "write_clipboard": _tool_write_clipboard,
+    "query_trust_graph": _tool_query_trust_graph,
+    "query_calendar": _tool_query_calendar,
+    "search_email": _tool_search_email,
+    "read_wiki": _tool_read_wiki,
+    "run_command": _tool_run_command,
+    "open_url": _tool_open_url,
+    "draft_email": _tool_draft_email,
+    "get_career_pipeline": _tool_get_career_pipeline,
+    "get_briefing": _tool_get_briefing,
+}
+
+
+def _execute_tool(name, tool_input):
+    handler = CLAUDE_TOOL_HANDLERS.get(name)
+    if not handler:
+        return f"Unknown tool: {name}"
+    try:
+        result = handler(tool_input or {})
+        if not isinstance(result, str):
+            result = json.dumps(result, default=str)
+        return _pii_redact(result)
+    except Exception as e:
+        traceback.print_exc()
+        return f"Tool error ({name}): {e}"
+
+
+def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, temperature=None, max_iters=6):
+    """Tool-using Claude loop. Returns (final_text, tool_trace).
+
+    tool_trace is a list of {"name", "input", "result"} entries — useful for
+    debugging and for showing the user what the agent did.
+    """
+    client = get_anthropic_client()
+    if client is None:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
+        )
+
+    # Redact outgoing user/assistant text and any string system prompt.
+    safe_messages = []
+    for m in messages:
+        content = m.get('content')
+        if isinstance(content, str):
+            safe_messages.append({"role": m['role'], "content": _pii_redact(content)})
+        else:
+            safe_messages.append(m)
+    safe_system = _pii_redact(system) if isinstance(system, str) else system
+
+    tool_trace = []
+    convo = list(safe_messages)
+
+    for _ in range(max_iters):
+        kwargs = {
+            "model": model or ANTHROPIC_MODEL_DEFAULT,
+            "max_tokens": max_tokens,
+            "messages": convo,
+            "tools": CLAUDE_TOOLS,
+        }
+        if safe_system:
+            kwargs["system"] = safe_system
+        if temperature is not None:
+            try:
+                kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
+            except (TypeError, ValueError):
+                pass
+
+        resp = client.messages.create(**kwargs)
+
+        # Collect text and tool_use blocks
+        text_parts = []
+        tool_uses = []
+        for b in resp.content:
+            btype = getattr(b, 'type', None)
+            if btype == 'text':
+                text_parts.append(b.text)
+            elif btype == 'tool_use':
+                tool_uses.append(b)
+
+        if resp.stop_reason != 'tool_use' or not tool_uses:
+            return ("".join(text_parts).strip(), tool_trace)
+
+        # Echo assistant turn (text + tool_use blocks) into the convo
+        assistant_content = []
+        for b in resp.content:
+            btype = getattr(b, 'type', None)
+            if btype == 'text':
+                assistant_content.append({"type": "text", "text": b.text})
+            elif btype == 'tool_use':
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": b.id,
+                    "name": b.name,
+                    "input": b.input,
+                })
+        convo.append({"role": "assistant", "content": assistant_content})
+
+        # Execute tools and feed results back
+        tool_results = []
+        for tu in tool_uses:
+            result = _execute_tool(tu.name, tu.input)
+            tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:500]})
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result,
+            })
+        convo.append({"role": "user", "content": tool_results})
+
+    return ("[Agent hit max tool iterations without completing.]", tool_trace)
+
+
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
@@ -1633,7 +2016,9 @@ def chat():
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
-        reply = _call_claude(messages, system=system_prompt, temperature=settings.get('temperature'))
+        reply, tool_trace = _call_claude_agent(
+            messages, system=system_prompt, temperature=settings.get('temperature')
+        )
 
         # Store in history with IDs, timestamps, and context metadata
         user_msg = {
@@ -1665,6 +2050,7 @@ def chat():
             "user_msg": user_msg,
             "friday_msg": friday_msg,
             "sources": sources,
+            "tool_trace": tool_trace,
         })
     except Exception as e:
         traceback.print_exc()
@@ -1739,7 +2125,9 @@ def chat_send():
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
-        reply = _call_claude(messages, system=system_prompt, temperature=settings.get('temperature'))
+        reply, tool_trace = _call_claude_agent(
+            messages, system=system_prompt, temperature=settings.get('temperature')
+        )
 
         # Create persistent message objects
         user_msg = {
@@ -1766,7 +2154,7 @@ def chat_send():
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
         _save_chat_history(CHAT_HISTORY)
 
-        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg, "sources": sources})
+        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg, "sources": sources, "tool_trace": tool_trace})
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1800,7 +2188,13 @@ def chat_search():
 
 @app.route('/api/voice/tts', methods=['POST'])
 def tts():
-    """Text-to-speech using Gemini 2.5 Flash TTS model — returns WAV binary directly."""
+    """Text-to-speech using Gemini 2.5 Flash TTS model — returns WAV binary directly.
+
+    Default voice is "Puck" (warmer / more natural than "Kore"). Callers can
+    override via `voice` in the JSON body. The text is wrapped with a
+    conversational style hint so the model delivers it as a news anchor
+    rather than reading robotically.
+    """
     try:
         import wave
         from google import genai
@@ -1808,14 +2202,23 @@ def tts():
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         text = request.json.get('text', '')
-        voice = request.json.get('voice', 'Kore')
+        voice = request.json.get('voice', 'Puck')
+        style = request.json.get('style', 'briefing')
 
         if not text:
             return jsonify({"status": "error", "message": "No text provided"}), 400
 
+        # Conversational prefix — Gemini TTS responds to natural-language
+        # delivery cues in the prompt. "Briefing" gives a warm news-anchor read.
+        style_prefix = {
+            'briefing': "Read this aloud in a warm, conversational news-anchor voice — natural pacing, light intonation, no robotic flatness: ",
+            'chat': "Say this aloud in a calm, friendly tone, like a trusted assistant talking to a colleague: ",
+            'plain': "Say this aloud: ",
+        }.get(style, "Read this aloud in a warm, conversational voice: ")
+
         response = client.models.generate_content(
             model="gemini-2.5-flash-preview-tts",
-            contents=f"Say this aloud: {text}",
+            contents=f"{style_prefix}{text}",
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
                 speech_config=types.SpeechConfig(
