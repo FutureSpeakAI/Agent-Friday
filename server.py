@@ -409,6 +409,8 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "search_wiki", "description": "Keyword-search the personal wiki (and ~/.friday/wiki/) for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]}},
     {"name": "run_command", "description": "Run a non-destructive PowerShell command on the system. Destructive commands (rm, del, format, shutdown, reg delete, etc.) are blocked.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
     {"name": "open_url", "description": "Open a URL in the user's default Chrome browser.",
@@ -528,6 +530,59 @@ def _tool_read_wiki(inp):
         return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
     except Exception as e:
         return f"Read error: {e}"
+
+
+def _tool_search_wiki(inp):
+    """Keyword-search the wiki and return up to N hits with excerpts."""
+    inp = inp or {}
+    query = (inp.get('query') or '').strip()
+    if not query:
+        return "search_wiki error: 'query' is required."
+    try:
+        limit = int(inp.get('limit') or 5)
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(20, limit))
+    q_low = query.lower()
+
+    results = []
+    for root, label in [(WIKI_DIR, 'wiki'), (FRIDAY_DIR / 'wiki', 'friday-wiki')]:
+        if not root.exists():
+            continue
+        for f in root.rglob('*'):
+            if len(results) >= limit:
+                break
+            if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            try:
+                content = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            name_match = q_low in f.stem.lower()
+            idx = content.lower().find(q_low)
+            if not name_match and idx < 0:
+                continue
+            if idx < 0:
+                excerpt = content[:400]
+            else:
+                start = max(0, idx - 120)
+                end = min(len(content), idx + 280)
+                excerpt = content[start:end]
+            try:
+                rel = str(f.relative_to(root)).replace('\\', '/')
+            except ValueError:
+                rel = str(f)
+            results.append({
+                'root': label,
+                'path': rel,
+                'excerpt': excerpt.strip(),
+            })
+        if len(results) >= limit:
+            break
+
+    if not results:
+        return f"No wiki files matched {query!r}."
+    return json.dumps({'query': query, 'hits': results}, default=str)[:8000]
 
 
 def _tool_run_command(inp):
@@ -845,6 +900,7 @@ CLAUDE_TOOL_HANDLERS = {
     "query_calendar": _tool_query_calendar,
     "search_email": _tool_search_email,
     "read_wiki": _tool_read_wiki,
+    "search_wiki": _tool_search_wiki,
     "run_command": _tool_run_command,
     "open_url": _tool_open_url,
     "draft_email": _tool_draft_email,
@@ -2832,62 +2888,158 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
         )
         sources_consulted.append('vision')
 
-    # Layer 4: ALWAYS-ON full wiki context. The user's personal knowledge
-    # base ships with every chat turn so the agent can reference any fact.
-    # PII is scrubbed downstream by the chat handler before the prompt
-    # ever leaves the machine.
+    # Layer 4: SMART context — only the wiki sections this turn likely needs.
+    # Keyword-routed (career/family/finance/health/person-name) plus workspace
+    # hints. Anything missing can be fetched on demand via search_wiki /
+    # read_wiki tools. Capped ~8KB to keep the system prompt lean.
     try:
-        wiki_full = _load_full_wiki_context()
-        if wiki_full:
+        wiki_smart = _load_smart_context(message, workspace)
+        if wiki_smart:
             sections.append(
-                "\n== PERSONAL WIKI (always available — reference freely) ==\n"
-                "Each file is delimited by `--- wiki: <path> ---`. "
-                "When you mention a fact, you can cite the file path.\n\n"
-                f"{wiki_full}"
+                "\n== PERSONAL CONTEXT (smart-loaded for this turn) ==\n"
+                "If you need a fact not present here, call search_wiki "
+                "(keyword search) or read_wiki (specific file).\n\n"
+                f"{wiki_smart}"
             )
-            sources_consulted.append('wiki_full')
+            sources_consulted.append('wiki_smart')
     except Exception as _e:
-        sections.append(f"\n== PERSONAL WIKI ==\n(load failed: {_e})")
+        sections.append(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})")
 
     return '\n'.join(sections), sources_consulted
 
 
-def _load_full_wiki_context(max_total_chars=80000, max_file_chars=8000):
-    """Return the entire wiki concatenated as a single context block.
+def _load_smart_context(user_message, workspace=None):
+    """Load only relevant wiki context based on the user's message and active workspace.
 
-    Bounded by max_total_chars so a runaway wiki can't blow out the context
-    window. Files are ordered by modified-time (most recent first) so newer
-    facts win if we hit the cap.
+    Keyword-driven loader — instead of dumping the full ~80KB wiki into every
+    system prompt, we route on intent: career talk pulls professional/, family
+    talk pulls family/ + legal/, person names trigger a trust-graph hit, etc.
+    The result is capped at ~8KB. Anything the loader missed, Claude can pull
+    on demand via the search_wiki / read_wiki tools.
     """
-    if not WIKI_DIR.exists():
-        return ""
-    files = []
-    for f in WIKI_DIR.rglob('*'):
-        if f.is_file() and f.suffix in ('.md', '.txt'):
-            try:
-                files.append((f.stat().st_mtime, f))
-            except Exception:
-                pass
-    files.sort(key=lambda x: x[0], reverse=True)
-    chunks = []
-    total = 0
-    for _, f in files:
+    context_parts = []
+
+    # ALWAYS: core identity (first 500 chars only — enough to anchor)
+    core_profile = WIKI_DIR / "identity" / "core-profile.md"
+    if core_profile.exists():
         try:
-            rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
-            text = f.read_text(encoding='utf-8', errors='replace').strip()
+            text = core_profile.read_text(encoding='utf-8', errors='replace')[:500]
+            context_parts.append(f"== CORE IDENTITY ==\n{text}")
+        except Exception:
+            pass
+
+    # ALWAYS: today's date and active workspace
+    context_parts.append(f"Today: {date.today().isoformat()}")
+    if workspace:
+        context_parts.append(f"Active workspace: {workspace}")
+
+    msg_lower = (user_message or "").lower()
+
+    # Career / job keywords
+    if any(w in msg_lower for w in ['career', 'job', 'role', 'interview', 'resume', 'application', 'salary', 'pipeline', 'novartis', 'aquent']):
+        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=4000)
+
+    # Family / co-parent keywords
+    if any(w in msg_lower for w in ['family', 'libby', 'liberty', 'janet', 'elisabeth', 'custody', 'coparent', 'daughter', 'partner']):
+        _load_section(context_parts, WIKI_DIR / "family", max_bytes=3000)
+        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=2000)
+
+    # Finance keywords
+    if any(w in msg_lower for w in ['finance', 'money', 'budget', 'investment', 'nvidia', 'amex', 'bank', 'tax']):
+        _load_friday_data(context_parts, "finance", max_bytes=2000)
+
+    # Health keywords
+    if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'glp', 'henry meds', 'cigna']):
+        _load_friday_data(context_parts, "health", max_bytes=2000)
+
+    # Person-name detection — pull the trust-graph entry for anyone named
+    trust_path = FRIDAY_DIR / "trust_graph.json"
+    if trust_path.exists():
+        try:
+            trust = json.loads(trust_path.read_text(encoding='utf-8'))
+            people = trust.get('people', {})
+            if isinstance(people, dict):
+                for name, entry in people.items():
+                    if name and name.lower() in msg_lower:
+                        context_parts.append(
+                            f"== TRUST GRAPH: {name} ==\n{json.dumps(entry, indent=2, default=str)[:1500]}"
+                        )
+        except Exception:
+            pass
+
+    # FutureSpeak / business keywords
+    if any(w in msg_lower for w in ['futurespeak', 'business', 'client', 'sage', 'adtalem', 'revenue']):
+        _load_friday_data(context_parts, "futurespeak", max_bytes=2000)
+
+    # Workspace-specific context
+    if workspace == 'news':
+        _load_latest_briefing_summary(context_parts)
+    elif workspace == 'career':
+        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=4000)
+    elif workspace == 'coparent':
+        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=3000)
+
+    # Target: under 8KB total. Hard cap.
+    result = "\n\n".join(context_parts)
+    if len(result) > 8000:
+        result = result[:8000] + "\n[context truncated — use search_wiki or read_wiki tools for more]"
+    return result
+
+
+def _load_section(parts, directory, max_bytes=3000):
+    """Load wiki section files up to max_bytes (most-recent first)."""
+    if not directory.exists():
+        return
+    total = 0
+    try:
+        files = sorted(directory.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
+    except Exception:
+        return
+    for f in files:
+        if total >= max_bytes:
+            break
+        try:
+            text = f.read_text(encoding='utf-8', errors='replace')
         except Exception:
             continue
-        if not text:
-            continue
-        if len(text) > max_file_chars:
-            text = text[:max_file_chars] + "\n[...truncated]"
-        block = f"--- wiki: {rel} ---\n{text}\n"
-        if total + len(block) > max_total_chars:
-            chunks.append(f"--- wiki: [{len(files) - len(chunks)} more files omitted — context cap reached] ---")
+        chunk = text[:max_bytes - total]
+        parts.append(f"== {f.stem.upper()} ==\n{chunk}")
+        total += len(chunk)
+
+
+def _load_friday_data(parts, subdir, max_bytes=2000):
+    """Load JSON files from ~/.friday/<subdir>/, most-recent first."""
+    data_dir = FRIDAY_DIR / subdir
+    if not data_dir.exists():
+        return
+    total = 0
+    try:
+        files = sorted(data_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+    except Exception:
+        return
+    for f in files:
+        if total >= max_bytes:
             break
-        chunks.append(block)
-        total += len(block)
-    return "\n".join(chunks)
+        try:
+            text = f.read_text(encoding='utf-8', errors='replace')
+        except Exception:
+            continue
+        chunk = text[:max_bytes - total]
+        parts.append(f"== {subdir.upper()}/{f.stem} ==\n{chunk}")
+        total += len(chunk)
+
+
+def _load_latest_briefing_summary(parts):
+    """Note the most recent briefing exists; don't load the full HTML."""
+    briefing_dir = FRIDAY_DIR / "wiki" / "briefings"
+    if not briefing_dir.exists():
+        return
+    try:
+        files = sorted(briefing_dir.glob("*.html"), reverse=True)
+    except Exception:
+        return
+    if files:
+        parts.append(f"== LATEST BRIEFING ==\nMost recent: {files[0].name} (use get_briefing tool to read it)")
 
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"
