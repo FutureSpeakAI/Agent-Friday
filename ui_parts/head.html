@@ -149,6 +149,12 @@ window.addEventListener('DOMContentLoaded',function(){
             display: flex; justify-content: space-between; align-items: center;
             padding: 0 16px; background: rgba(3,3,8,0.7); backdrop-filter: blur(16px);
             border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+        }
+        .top-bar.hidden { transform: translateY(-100%); }
+        .top-edge-hover {
+            position: fixed; top: 0; left: 0; right: 0; height: 18px; z-index: 69;
+            pointer-events: auto; background: transparent;
         }
 
         /* Model status pills */
@@ -257,7 +263,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Chat panel */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 44px;
+            position: fixed; top: 36px; right: -340px; bottom: 68px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(6,6,14,0.8); backdrop-filter: blur(16px);
             border-left: 1px solid rgba(255,255,255,0.04);
@@ -284,7 +290,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Settings panel */
         .settings-panel {
-            position: fixed; top: 36px; right: -360px; bottom: 44px;
+            position: fixed; top: 36px; right: -360px; bottom: 68px;
             width: 340px; z-index: 68; display: flex; flex-direction: column;
             background: rgba(6,6,14,0.75); backdrop-filter: blur(18px) saturate(1.2);
             border-left: 1px solid rgba(0,212,255,0.1);
@@ -346,6 +352,20 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes typingDot {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+            30%           { transform: translateY(-4px); opacity: 1; }
+        }
+        .typing-indicator { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; }
+        .typing-indicator .label { font-size: 11px; color: #00d4ff; font-family: 'Inter', sans-serif; margin-right: 6px; }
+        .typing-indicator .dot {
+            width: 5px; height: 5px; border-radius: 50%; background: #00d4ff;
+            box-shadow: 0 0 6px rgba(0,212,255,0.6);
+            animation: typingDot 1.1s infinite ease-in-out;
+        }
+        .typing-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+        .typing-indicator .dot:nth-child(3) { animation-delay: 0.30s; }
+        .typing-indicator .dot:nth-child(4) { animation-delay: 0.45s; }
         @keyframes fwinOpen {
             from { opacity: 0; transform: scale(0.95); }
             to { opacity: 1; transform: scale(1); }
@@ -514,6 +534,101 @@ window.addEventListener('DOMContentLoaded',function(){
           width: 1px; margin: 8px 4px;
           background: linear-gradient(180deg, transparent, rgba(0,212,255,0.15) 30%,
             rgba(123,97,255,0.2) 50%, rgba(255,0,255,0.15) 70%, transparent);
+        }
+
+        /* ═══ MOBILE RESPONSIVE — Android Chrome via Cloudflare tunnel ═══ */
+        @media (max-width: 768px) {
+          /* No horizontal overflow */
+          html, body { max-width: 100vw; overflow-x: hidden; }
+
+          /* Hide decorative HUD corners — too large on small screens */
+          .hud-corner { display: none; }
+
+          /* Compact HUD header */
+          .hud-header {
+            top: 44px; left: 12px; right: 12px;
+            font-size: 9px; letter-spacing: 2px;
+          }
+          .hud-main-title { font-size: 10px; letter-spacing: 3px; }
+
+          /* Top bar — keep compact */
+          .top-bar { padding: 0 8px; height: 40px; }
+          .model-pill { font-size: 9px; padding: 1px 5px; }
+
+          /* Dock — horizontally scrollable strip */
+          .dock {
+            overflow-x: auto; overflow-y: hidden;
+            justify-content: flex-start;
+            padding: 4px 8px 6px;
+            gap: 0;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+          .dock::-webkit-scrollbar { display: none; }
+          .dock-group { flex-direction: row; align-items: center; gap: 0; padding: 0 4px; }
+          .dock-group-btns { flex-direction: row; align-items: center; gap: 2px; }
+          .dock-group-label { display: none; }
+          .dock-btn {
+            min-width: 52px; min-height: 44px;
+            padding: 4px 6px 4px;
+            font-size: 10px;
+          }
+          .dock-btn .ico { font-size: 20px; }
+          .dock-btn .ico img { width: 22px; height: 22px; }
+          .dock-sep { height: 28px; width: 1px; align-self: center; margin: 0 4px; }
+
+          /* Floating windows — full-width, stacked from top bar, no drag */
+          .fwin {
+            position: fixed !important;
+            left: 0 !important; right: 0 !important;
+            top: 40px !important;
+            width: 100vw !important;
+            height: calc(100vh - 40px - 52px) !important;
+            border-radius: 0;
+            border-left: none; border-right: none; border-top: none;
+          }
+          .fwin-bar { cursor: default; }
+          .resize-h { display: none; }
+
+          /* Chat panel — full-width slide up from bottom */
+          .chat-panel {
+            top: auto !important;
+            bottom: 52px !important;
+            right: 0 !important;
+            left: -100vw !important;
+            width: 100vw !important;
+            height: 65vh !important;
+            border-left: none;
+            border-top: 1px solid rgba(0,212,255,0.15);
+            border-radius: 12px 12px 0 0;
+            transition: left 0.3s ease;
+          }
+          .chat-panel.open { left: 0 !important; right: 0 !important; }
+
+          /* Settings panel — full-width */
+          .settings-panel {
+            top: 40px !important;
+            bottom: 52px !important;
+            width: 100vw !important;
+            right: -100vw !important;
+          }
+          .settings-panel.open { right: 0 !important; }
+
+          /* Command palette — full-width */
+          .cmd-palette { width: 96vw !important; }
+
+          /* Inputs and buttons — touch-friendly */
+          .btn { min-height: 36px; font-size: 12px; padding: 8px 14px; }
+          .input { font-size: 14px; padding: 9px 12px; }
+
+          /* Quick Draft — full-width */
+          .discord-footer { display: none; }
+        }
+
+        /* Extra-small screens (iPhone SE, etc.) */
+        @media (max-width: 390px) {
+          .dock-btn { min-width: 44px; font-size: 9px; }
+          .model-pill { display: none; }
         }
     </style>
 </head>

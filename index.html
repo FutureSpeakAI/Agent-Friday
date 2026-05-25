@@ -149,6 +149,12 @@ window.addEventListener('DOMContentLoaded',function(){
             display: flex; justify-content: space-between; align-items: center;
             padding: 0 16px; background: rgba(3,3,8,0.7); backdrop-filter: blur(16px);
             border-bottom: 1px solid rgba(255,255,255,0.04);
+            transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+        }
+        .top-bar.hidden { transform: translateY(-100%); }
+        .top-edge-hover {
+            position: fixed; top: 0; left: 0; right: 0; height: 18px; z-index: 69;
+            pointer-events: auto; background: transparent;
         }
 
         /* Model status pills */
@@ -257,7 +263,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Chat panel */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 44px;
+            position: fixed; top: 36px; right: -340px; bottom: 68px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(6,6,14,0.8); backdrop-filter: blur(16px);
             border-left: 1px solid rgba(255,255,255,0.04);
@@ -284,7 +290,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Settings panel */
         .settings-panel {
-            position: fixed; top: 36px; right: -360px; bottom: 44px;
+            position: fixed; top: 36px; right: -360px; bottom: 68px;
             width: 340px; z-index: 68; display: flex; flex-direction: column;
             background: rgba(6,6,14,0.75); backdrop-filter: blur(18px) saturate(1.2);
             border-left: 1px solid rgba(0,212,255,0.1);
@@ -346,6 +352,20 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes typingDot {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+            30%           { transform: translateY(-4px); opacity: 1; }
+        }
+        .typing-indicator { display: inline-flex; align-items: center; gap: 5px; padding: 6px 2px; }
+        .typing-indicator .label { font-size: 11px; color: #00d4ff; font-family: 'Inter', sans-serif; margin-right: 6px; }
+        .typing-indicator .dot {
+            width: 5px; height: 5px; border-radius: 50%; background: #00d4ff;
+            box-shadow: 0 0 6px rgba(0,212,255,0.6);
+            animation: typingDot 1.1s infinite ease-in-out;
+        }
+        .typing-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+        .typing-indicator .dot:nth-child(3) { animation-delay: 0.30s; }
+        .typing-indicator .dot:nth-child(4) { animation-delay: 0.45s; }
         @keyframes fwinOpen {
             from { opacity: 0; transform: scale(0.95); }
             to { opacity: 1; transform: scale(1); }
@@ -2983,6 +3003,8 @@ function App(){
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[topBarHidden,setTopBarHidden]=useState(false);
+  const topBarTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   const refreshSettingsData=()=>{
     fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
@@ -3046,6 +3068,29 @@ function App(){
     return()=>window.removeEventListener('keydown',h);
   },[]);
 
+  // Top bar auto-hide on idle, show on hover near top edge
+  useEffect(()=>{
+    const armHide=()=>{
+      if(topBarTimer.current)clearTimeout(topBarTimer.current);
+      topBarTimer.current=setTimeout(()=>setTopBarHidden(true),3000);
+    };
+    const onMove=(e)=>{
+      const y=e.clientY||0;
+      if(y<60){setTopBarHidden(false);if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}}
+      else{armHide();}
+    };
+    window.addEventListener('mousemove',onMove);
+    armHide();
+    return()=>{window.removeEventListener('mousemove',onMove);if(topBarTimer.current)clearTimeout(topBarTimer.current);};
+  },[]);
+  // Always show top bar when any overlay panel is open
+  useEffect(()=>{
+    if(settingsOpen||chatOpen||quickDraft||paletteOpen){
+      setTopBarHidden(false);
+      if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}
+    }
+  },[settingsOpen,chatOpen,quickDraft,paletteOpen]);
+
   const[vibeMode,setVibeMode]=useState(false);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
   const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
@@ -3065,7 +3110,7 @@ function App(){
 
   return(<>
     {/* Top Bar */}
-    <div className="top-bar">
+    <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
         <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
@@ -3119,7 +3164,10 @@ function App(){
     <div className={`chat-panel ${chatOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
-        <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button onClick={()=>setChatMsgs([])} title="Start a new conversation" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
+          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        </div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
@@ -3130,7 +3178,7 @@ function App(){
           </div>
           <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
-        {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
+        {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>

@@ -1192,6 +1192,8 @@ function App(){
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[topBarHidden,setTopBarHidden]=useState(false);
+  const topBarTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   const refreshSettingsData=()=>{
     fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
@@ -1255,6 +1257,29 @@ function App(){
     return()=>window.removeEventListener('keydown',h);
   },[]);
 
+  // Top bar auto-hide on idle, show on hover near top edge
+  useEffect(()=>{
+    const armHide=()=>{
+      if(topBarTimer.current)clearTimeout(topBarTimer.current);
+      topBarTimer.current=setTimeout(()=>setTopBarHidden(true),3000);
+    };
+    const onMove=(e)=>{
+      const y=e.clientY||0;
+      if(y<60){setTopBarHidden(false);if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}}
+      else{armHide();}
+    };
+    window.addEventListener('mousemove',onMove);
+    armHide();
+    return()=>{window.removeEventListener('mousemove',onMove);if(topBarTimer.current)clearTimeout(topBarTimer.current);};
+  },[]);
+  // Always show top bar when any overlay panel is open
+  useEffect(()=>{
+    if(settingsOpen||chatOpen||quickDraft||paletteOpen){
+      setTopBarHidden(false);
+      if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}
+    }
+  },[settingsOpen,chatOpen,quickDraft,paletteOpen]);
+
   const[vibeMode,setVibeMode]=useState(false);
   const toggleVibe=()=>{const entering=!vibeMode;setVibeMode(entering);if(entering){setOpenWins(new Set());document.documentElement.requestFullscreen?.().catch(()=>{});const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(SR){const r=new SR();r.continuous=false;r.onresult=e=>{const t=e.results[0][0].transcript;setChatOpen(true);sendChat(t)};r.start()}}else{document.exitFullscreen?.().catch(()=>{})}};
   const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
@@ -1274,7 +1299,7 @@ function App(){
 
   return(<>
     {/* Top Bar */}
-    <div className="top-bar">
+    <div className={`top-bar ${topBarHidden?'hidden':''}`}>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'Orbitron',fontWeight:900,fontSize:16,color:'#00d4ff'}}>FRIDAY</span>
         <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
@@ -1328,7 +1353,10 @@ function App(){
     <div className={`chat-panel ${chatOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
-        <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button onClick={()=>setChatMsgs([])} title="Start a new conversation" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
+          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        </div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#444',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
@@ -1339,7 +1367,7 @@ function App(){
           </div>
           <div style={{fontSize:11,color:'#444',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
         </div>)}
-        {chatLoad&&<div style={{fontSize:11,color:'#00d4ff',animation:'pulse 1s infinite'}}>Friday is thinking...</div>}
+        {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
