@@ -811,6 +811,30 @@ CLAUDE_TOOLS.append({
 })
 
 
+# ── Task Tray HTTP endpoints (consumed by the frontend TaskTray) ──
+@app.route('/api/tasks')
+def list_tasks():
+    return jsonify({"tasks": _task_snapshot() or []})
+
+
+@app.route('/api/tasks/<task_id>')
+def get_task(task_id):
+    task = _task_snapshot(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify(task)
+
+
+@app.route('/api/tasks/<task_id>', methods=['DELETE'])
+def delete_task(task_id):
+    with TASKS_LOCK:
+        if task_id in TASKS:
+            TASKS[task_id]['status'] = 'cancelled'
+            del TASKS[task_id]
+            return jsonify({"status": "cancelled"})
+    return jsonify({"error": "Task not found"}), 404
+
+
 def _tool_propose_wiki_update(inp):
     """Queue a wiki update as pending — the user approves it in the Wiki workspace."""
     inp = inp or {}
