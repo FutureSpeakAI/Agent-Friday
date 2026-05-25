@@ -171,12 +171,13 @@ def get_anthropic_client():
     return _anthropic_client
 
 
-def _call_claude(messages, system=None, model=None, max_tokens=2048):
+def _call_claude(messages, system=None, model=None, max_tokens=2048, temperature=None):
     """Call Claude with structured messages. Returns the text response.
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
     system: optional system prompt (string)
     model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-7)
+    temperature: 0.0–1.0; lower is more precise, higher is more creative.
     """
     client = get_anthropic_client()
     if client is None:
@@ -190,9 +191,120 @@ def _call_claude(messages, system=None, model=None, max_tokens=2048):
     }
     if system:
         kwargs["system"] = system
+    if temperature is not None:
+        try:
+            kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
+        except (TypeError, ValueError):
+            pass
     resp = client.messages.create(**kwargs)
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     return "".join(parts).strip()
+
+
+# ── Agent Settings (Reasoning style, personality, response prefs) ──
+SETTINGS_FILE = FRIDAY_DIR / "settings.json"
+AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
+
+DEFAULT_AGENT_PERSONALITY = (
+    "You are Friday — a calm, perceptive AI partner to Stephen Webster. "
+    "You speak with quiet confidence and dry warmth; you favor signal over noise. "
+    "You connect dots across his work (FutureSpeak.AI, career-ops, family) without being asked twice. "
+    "You give him the answer first, then the reasoning. You are honest about uncertainty."
+)
+
+DEFAULT_SETTINGS = {
+    "temperature": 0.7,
+    "response_length": "standard",        # concise | standard | detailed
+    "include_sources": True,
+    "news_priorities": ["AI/Tech", "Politics", "Media", "Austin Local", "Business"],
+    "communication_style": "professional",  # professional | casual | technical
+}
+
+
+def _load_settings():
+    """Load agent settings, creating defaults file if missing."""
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    if not SETTINGS_FILE.exists():
+        try:
+            SETTINGS_FILE.write_text(json.dumps(DEFAULT_SETTINGS, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+        return dict(DEFAULT_SETTINGS)
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+        # Fill in any missing keys with defaults
+        merged = dict(DEFAULT_SETTINGS)
+        merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+        return merged
+    except Exception:
+        return dict(DEFAULT_SETTINGS)
+
+
+def _save_settings(data):
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    merged = dict(DEFAULT_SETTINGS)
+    for k, v in (data or {}).items():
+        if k in DEFAULT_SETTINGS:
+            merged[k] = v
+    SETTINGS_FILE.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+    return merged
+
+
+def _load_agent_personality():
+    """Load custom agent personality, falling back to default."""
+    if AGENT_PERSONALITY_FILE.exists():
+        try:
+            text = AGENT_PERSONALITY_FILE.read_text(encoding='utf-8').strip()
+            if text:
+                return text
+        except Exception:
+            pass
+    return DEFAULT_AGENT_PERSONALITY
+
+
+def _save_agent_personality(text):
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    AGENT_PERSONALITY_FILE.write_text((text or '').strip(), encoding='utf-8')
+
+
+def _settings_system_prefix(settings, personality):
+    """Build the prefix that gets prepended to every chat system prompt."""
+    length_hint = {
+        'concise': 'Be terse — 1–3 sentences unless detail is explicitly required.',
+        'standard': 'Be reasonably brief — direct answer plus the minimum useful context.',
+        'detailed': 'Be thorough — explain reasoning, list options, surface tradeoffs.',
+    }.get(settings.get('response_length', 'standard'), '')
+    style_hint = {
+        'professional': 'Tone: composed, professional, plainspoken.',
+        'casual':       'Tone: relaxed and conversational, like a trusted colleague.',
+        'technical':    'Tone: precise and technical; use exact terminology and code where helpful.',
+    }.get(settings.get('communication_style', 'professional'), '')
+    sources_hint = ('Always cite the source (workspace, wiki, trust graph, vision, etc.) inline when you draw on it.'
+                    if settings.get('include_sources', True) else
+                    'You may omit source citations unless the user asks.')
+    priorities = settings.get('news_priorities') or []
+    priority_hint = ('News and topic priorities (descending): ' + ', '.join(priorities) + '.') if priorities else ''
+
+    laws = (
+        "== ASIMOV cLAWS (compiled, non-negotiable) ==\n"
+        "1. An Asimov agent shall not harm a human being or, through inaction, allow harm.\n"
+        "2. An Asimov agent shall obey user instructions except where they conflict with the First Law.\n"
+        "3. An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.\n"
+        "4. All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action."
+    )
+
+    return "\n".join([
+        "== AGENT PERSONALITY ==",
+        personality,
+        "",
+        "== RESPONSE PREFERENCES ==",
+        length_hint,
+        style_hint,
+        sources_hint,
+        priority_hint,
+        "",
+        laws,
+    ]).strip() + "\n"
 
 
 @app.before_request
@@ -1422,6 +1534,36 @@ def _save_chat_history(messages):
 CHAT_HISTORY = _load_chat_history()  # Load persistent history on startup
 
 
+# ── Agent Settings endpoints ──────────────────────────────────
+@app.route('/api/settings', methods=['GET', 'POST'])
+def api_settings():
+    """GET: return current agent settings + personality.
+    POST: merge new values into ~/.friday/settings.json and (optionally) save personality.
+    """
+    if request.method == 'GET':
+        return jsonify({
+            "status": "ok",
+            "settings": _load_settings(),
+            "personality": _load_agent_personality(),
+            "default_personality": DEFAULT_AGENT_PERSONALITY,
+        })
+    try:
+        data = request.get_json(silent=True) or {}
+        new_settings = data.get('settings') or {}
+        merged = _save_settings({**_load_settings(), **new_settings})
+        personality = data.get('personality')
+        if personality is not None:
+            _save_agent_personality(personality)
+        return jsonify({
+            "status": "ok",
+            "settings": merged,
+            "personality": _load_agent_personality(),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """Text chat — powered by Anthropic Claude.
@@ -1461,6 +1603,11 @@ def chat():
             message, workspace, workspace_context, vision_description
         )
 
+        # Prepend user-configured agent personality + response prefs + cLaws
+        settings = _load_settings()
+        personality = _load_agent_personality()
+        system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
+
         # Build conversation history as Anthropic-format messages (last 20 turns)
         messages = []
         for msg in CHAT_HISTORY[-20:]:
@@ -1470,7 +1617,7 @@ def chat():
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
-        reply = _call_claude(messages, system=system_prompt)
+        reply = _call_claude(messages, system=system_prompt, temperature=settings.get('temperature'))
 
         # Store in history with IDs, timestamps, and context metadata
         user_msg = {
@@ -1560,6 +1707,11 @@ def chat_send():
             message, workspace, workspace_context, vision_description
         )
 
+        # Prepend user-configured agent personality + response prefs + cLaws
+        settings = _load_settings()
+        personality = _load_agent_personality()
+        system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
+
         # Anthropic-format message history
         messages = []
         for msg in CHAT_HISTORY[-20:]:
@@ -1569,7 +1721,7 @@ def chat_send():
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
-        reply = _call_claude(messages, system=system_prompt)
+        reply = _call_claude(messages, system=system_prompt, temperature=settings.get('temperature'))
 
         # Create persistent message objects
         user_msg = {

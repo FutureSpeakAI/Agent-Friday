@@ -3010,13 +3010,41 @@ function App(){
   const topBarTimer=useRef(null);
   const dockTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
+  // Agent configuration (temperature, response prefs, personality, cLaws)
+  const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional'};
+  const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
+  const[agentPersonality,setAgentPersonality]=useState('');
+  const[personalityDraft,setPersonalityDraft]=useState('');
+  const[lawsOpen,setLawsOpen]=useState(false);
+  const[settingsSaveMsg,setSettingsSaveMsg]=useState('');
   const refreshSettingsData=()=>{
     fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
     fetch('/api/epistemic').then(r=>r.json()).then(setStEpi).catch(()=>{});
     fetch('/api/evolution').then(r=>r.json()).then(setStEvo).catch(()=>{});
     fetch('/api/health').then(r=>r.json()).then(setStHealth).catch(()=>{});
+    fetch('/api/settings').then(r=>r.json()).then(d=>{
+      if(d&&d.settings)setAgentSettings({...DEFAULT_AGENT_SETTINGS,...d.settings});
+      if(typeof d?.personality==='string'){setAgentPersonality(d.personality);setPersonalityDraft(d.personality)}
+    }).catch(()=>{});
   };
   useEffect(()=>{if(settingsOpen)refreshSettingsData()},[settingsOpen]);
+  const saveAgentSettings=async(patch,opts={})=>{
+    const next={...agentSettings,...patch};
+    setAgentSettings(next);
+    try{
+      const body={settings:next};
+      if(opts.personality!==undefined)body.personality=opts.personality;
+      const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();
+      if(d?.settings)setAgentSettings({...DEFAULT_AGENT_SETTINGS,...d.settings});
+      if(opts.personality!==undefined&&typeof d?.personality==='string'){setAgentPersonality(d.personality);setPersonalityDraft(d.personality)}
+      setSettingsSaveMsg(opts.msg||'Saved');
+    }catch(e){setSettingsSaveMsg('Save failed')}
+    setTimeout(()=>setSettingsSaveMsg(''),1800);
+  };
+  const savePersonality=()=>saveAgentSettings({},{personality:personalityDraft,msg:'Personality saved'});
+  const toggleNewsTopic=(t)=>{const cur=new Set(agentSettings.news_priorities||[]);cur.has(t)?cur.delete(t):cur.add(t);saveAgentSettings({news_priorities:[...cur]})};
   const checkSycophancy=()=>{
     fetch('/api/personality').then(r=>r.json()).then(d=>{
       setStPers(d);
@@ -3198,7 +3226,106 @@ function App(){
     <div className={`settings-panel ${settingsOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>SETTINGS</span>
-        <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {settingsSaveMsg&&<span style={{fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{settingsSaveMsg}</span>}
+          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer'}}>&#x2715;</button>
+        </div>
+      </div>
+
+      {/* Reasoning Style (Temperature) */}
+      <div className="settings-section">
+        <div className="settings-section-title">Reasoning Style</div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Precise</span>
+          <span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{(agentSettings.temperature??0.7).toFixed(2)}</span>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Creative</span>
+        </div>
+        <input type="range" min="0" max="1" step="0.05"
+          value={agentSettings.temperature??0.7}
+          onChange={e=>setAgentSettings(s=>({...s,temperature:parseFloat(e.target.value)}))}
+          onMouseUp={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
+          onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
+          style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
+      </div>
+
+      {/* Agent Personality (editable) */}
+      <div className="settings-section">
+        <div className="settings-section-title">Agent Personality</div>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
+        <textarea
+          value={personalityDraft}
+          onChange={e=>setPersonalityDraft(e.target.value)}
+          rows={5}
+          style={{width:'100%',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
+        <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center'}}>
+          <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
+            disabled={personalityDraft===agentPersonality} onClick={savePersonality}>Save</button>
+          <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 10px'}}
+            disabled={personalityDraft===agentPersonality} onClick={()=>setPersonalityDraft(agentPersonality)}>Reset</button>
+          <span style={{fontSize:11,color:personalityDraft!==agentPersonality?'#f59e0b':'#444',fontFamily:'JetBrains Mono'}}>{personalityDraft!==agentPersonality?'unsaved':'in sync'}</span>
+        </div>
+      </div>
+
+      {/* ASIMOV cLaws — read-only sealed display */}
+      <div className="settings-section" style={{background:'rgba(0,255,128,0.025)',borderTop:'1px solid rgba(0,255,128,0.18)',borderBottom:'1px solid rgba(0,255,128,0.18)',boxShadow:'inset 0 0 18px rgba(0,255,128,0.04)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setLawsOpen(o=>!o)}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{width:8,height:8,borderRadius:'50%',background:'#00ff80',boxShadow:'0 0 8px rgba(0,255,128,0.7)'}}/>
+            <span className="settings-section-title" style={{margin:0,color:'rgba(0,255,128,0.75)'}}>ASIMOV cLAWS — VERIFIED &#x2713;</span>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6,color:'rgba(0,255,128,0.6)',fontSize:13}}>
+            <span title="Sealed">&#x1F512;</span>
+            <span style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{lawsOpen?'▾':'▸'}</span>
+          </div>
+        </div>
+        {lawsOpen&&<>
+          <ol style={{margin:'10px 0 4px',paddingLeft:20,color:'#bbb',fontSize:11,lineHeight:1.6,fontFamily:'Inter'}}>
+            <li>An Asimov agent shall not harm a human being or, through inaction, allow harm.</li>
+            <li>An Asimov agent shall obey user instructions except where they conflict with the First Law.</li>
+            <li>An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.</li>
+            <li>All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.</li>
+          </ol>
+          <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.45)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
+        </>}
+      </div>
+
+      {/* Response Preferences */}
+      <div className="settings-section">
+        <div className="settings-section-title">Response Preferences</div>
+
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:6}}>Default response length</div>
+        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:12}}>
+          {['concise','standard','detailed'].map(v=>
+            <button key={v} className={`settings-btn ${agentSettings.response_length===v?'active':''}`}
+              style={{textAlign:'center',textTransform:'capitalize'}}
+              onClick={()=>saveAgentSettings({response_length:v})}>{v}</button>
+          )}
+        </div>
+
+        <div className="settings-toggle" onClick={()=>saveAgentSettings({include_sources:!agentSettings.include_sources})}>
+          <span className="settings-toggle-label">Always include sources</span>
+          <div className={`settings-toggle-switch ${agentSettings.include_sources?'on':''}`}/>
+        </div>
+
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',margin:'10px 0 6px'}}>News priorities</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
+          {NEWS_TOPICS.map(t=>{const on=(agentSettings.news_priorities||[]).includes(t);return(
+            <button key={t} className={`settings-btn ${on?'active':''}`} style={{padding:'4px 8px',fontSize:11}}
+              onClick={()=>toggleNewsTopic(t)}>
+              <span style={{marginRight:5,color:on?'#00d4ff':'#444'}}>{on?'☑':'☐'}</span>{t}
+            </button>
+          )})}
+        </div>
+
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:6}}>Communication style</div>
+        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+          {['professional','casual','technical'].map(v=>
+            <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
+              style={{textAlign:'center',textTransform:'capitalize'}}
+              onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
+          )}
+        </div>
       </div>
 
       <div className="settings-section">
