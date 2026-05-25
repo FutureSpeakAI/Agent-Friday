@@ -1,0 +1,45 @@
+# Startup scripts contain API keys + passwords — never commit
+start.bat
+friday_startup.bat
+friday_startup.vbs
+launch_now.bat
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Friday runtime artifacts
+server_out.log
+server_err.log
+cloudflared.log
+commit_log.txt
+test_tts*.wav
+verify_tts.wav
+
+# Editor backups
+*.bak
+index.html.*.bak
+ui_parts/*.bak
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Asimov's Mind ephemeral state
+.asimovs-mind/vault/bridge-token
+.asimovs-mind/vault/port
+asimovs-mind/
+
+# Node
+node_modules/
+npm-install.log
+pw-install.log
+test-results/
+test-results.log
+
+# Build outputs the user wanted excluded
+assets/palette/
+assets/splash/
