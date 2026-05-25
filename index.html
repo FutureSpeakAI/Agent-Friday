@@ -175,7 +175,9 @@ window.addEventListener('DOMContentLoaded',function(){
             display: flex; justify-content: center; gap: 2px;
             padding: 6px 12px 8px; background: rgba(3,3,8,0.7);
             backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.04);
+            transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
+        .dock.hidden { transform: translateY(100%); }
         .dock-btn {
             display: flex; flex-direction: column; align-items: center; gap: 2px;
             padding: 6px 12px 4px; background: none; border: 1px solid transparent;
@@ -3004,7 +3006,9 @@ function App(){
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
   const[topBarHidden,setTopBarHidden]=useState(false);
+  const[dockHidden,setDockHidden]=useState(false);
   const topBarTimer=useRef(null);
+  const dockTimer=useRef(null);
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   const refreshSettingsData=()=>{
     fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
@@ -3068,20 +3072,21 @@ function App(){
     return()=>window.removeEventListener('keydown',h);
   },[]);
 
-  // Top bar auto-hide on idle, show on hover near top edge
+  // Top bar + dock auto-hide on idle, show on hover near respective edge
   useEffect(()=>{
-    const armHide=()=>{
-      if(topBarTimer.current)clearTimeout(topBarTimer.current);
-      topBarTimer.current=setTimeout(()=>setTopBarHidden(true),3000);
-    };
+    const armTop=()=>{if(topBarTimer.current)clearTimeout(topBarTimer.current);topBarTimer.current=setTimeout(()=>setTopBarHidden(true),3000);};
+    const armDock=()=>{if(dockTimer.current)clearTimeout(dockTimer.current);dockTimer.current=setTimeout(()=>setDockHidden(true),3000);};
     const onMove=(e)=>{
       const y=e.clientY||0;
+      const h=window.innerHeight||0;
       if(y<60){setTopBarHidden(false);if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}}
-      else{armHide();}
+      else{armTop();}
+      if(y>h-80){setDockHidden(false);if(dockTimer.current){clearTimeout(dockTimer.current);dockTimer.current=null;}}
+      else{armDock();}
     };
     window.addEventListener('mousemove',onMove);
-    armHide();
-    return()=>{window.removeEventListener('mousemove',onMove);if(topBarTimer.current)clearTimeout(topBarTimer.current);};
+    armTop();armDock();
+    return()=>{window.removeEventListener('mousemove',onMove);if(topBarTimer.current)clearTimeout(topBarTimer.current);if(dockTimer.current)clearTimeout(dockTimer.current);};
   },[]);
   // Always show top bar when any overlay panel is open
   useEffect(()=>{
@@ -3353,7 +3358,7 @@ function App(){
     </div>
 
     {/* Dock — grouped (Life / Work / System) */}
-    <div className="dock">
+    <div className={`dock ${dockHidden?'hidden':''}`}>
       {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
