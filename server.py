@@ -218,6 +218,8 @@ DEFAULT_SETTINGS = {
     "include_sources": True,
     "news_priorities": ["AI/Tech", "Politics", "Media", "Austin Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
+    "camera_interval_sec": 3,              # 1 | 3 | 5
+    "camera_auto_describe": False,
 }
 
 
@@ -1409,6 +1411,17 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
 
     sections = [FRIDAY_SYSTEM_PROMPT]
 
+    # Layer 0: Always-on daily context (briefing headlines, career pipeline,
+    # countdowns, trust circle, personality). The chat endpoint should never
+    # answer cold — Friday is a personal agent, not a generic chatbot.
+    try:
+        live_ctx = _load_live_context()
+        if live_ctx:
+            sections.append(f"\n== TODAY'S CONTEXT ==\n{live_ctx}")
+            sources_consulted.append('daily_context')
+    except Exception as _e:
+        sections.append(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})")
+
     # Layer 1: Active workspace context (from frontend)
     if workspace_context:
         sections.append(
@@ -1579,19 +1592,22 @@ def chat():
         include_vision = data.get('includeVision', False)
         vision_description = None
 
-        # Vision capture (Gemini, designer role)
-        screenshot_b64 = data.get('screenshot', None)
-        if include_vision and screenshot_b64:
+        # Vision capture (Gemini, designer role). Accept either `screenshot`
+        # (legacy) or `image` (Camera Mode frames). If an image is sent at all,
+        # use it — no need for the explicit includeVision flag.
+        screenshot_b64 = data.get('image') or data.get('screenshot') or None
+        if screenshot_b64 and (include_vision or data.get('image') is not None):
             try:
                 from google import genai
                 from google.genai import types
                 gclient = genai.Client(api_key=GEMINI_API_KEY)
                 img_bytes = base64.b64decode(screenshot_b64)
+                mime = 'image/jpeg' if data.get('image') else 'image/png'
                 vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
                         "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
-                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                        types.Part.from_bytes(data=img_bytes, mime_type=mime),
                     ],
                 )
                 vision_description = vision_resp.text
@@ -1683,19 +1699,21 @@ def chat_send():
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
-        # Vision capture (Gemini, designer role)
-        screenshot_b64 = data.get('screenshot', None)
-        if include_vision and screenshot_b64:
+        # Vision capture (Gemini, designer role). Accept either `screenshot`
+        # (legacy) or `image` (Camera Mode frames).
+        screenshot_b64 = data.get('image') or data.get('screenshot') or None
+        if screenshot_b64 and (include_vision or data.get('image') is not None):
             try:
                 from google import genai
                 from google.genai import types
                 gclient = genai.Client(api_key=GEMINI_API_KEY)
                 img_bytes = base64.b64decode(screenshot_b64)
+                mime = 'image/jpeg' if data.get('image') else 'image/png'
                 vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
                         "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
-                        types.Part.from_bytes(data=img_bytes, mime_type='image/png'),
+                        types.Part.from_bytes(data=img_bytes, mime_type=mime),
                     ],
                 )
                 vision_description = vision_resp.text

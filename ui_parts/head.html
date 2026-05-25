@@ -339,6 +339,74 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
         .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
 
+        /* Camera Mode */
+        .camera-pip {
+            position: fixed; width: 160px; height: 120px; z-index: 70;
+            background: #000; border: 1px solid rgba(0,212,255,0.45);
+            border-radius: 8px; overflow: hidden;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 12px rgba(0,212,255,0.18);
+            cursor: grab; user-select: none;
+        }
+        .camera-pip.dragging { cursor: grabbing; }
+        .camera-pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .camera-pip .cam-label {
+            position: absolute; top: 4px; left: 6px;
+            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            letter-spacing: 0.06em; text-shadow: 0 1px 4px #000;
+            pointer-events: none;
+        }
+        .camera-pip .cam-close {
+            position: absolute; top: 4px; right: 6px;
+            background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.7); border-radius: 4px;
+            font-size: 11px; line-height: 1; padding: 1px 5px; cursor: pointer;
+        }
+        .camera-pip .cam-active {
+            position: absolute; bottom: 5px; left: 6px;
+            display: inline-flex; align-items: center; gap: 4px;
+            font-size: 11px; color: #ff4d6a; font-family: 'JetBrains Mono', monospace;
+            text-shadow: 0 1px 3px #000;
+        }
+        .camera-pip .cam-active .pulse {
+            width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
+            box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
+        }
+        .camera-pip .cam-eye {
+            position: absolute; bottom: 5px; right: 6px;
+            font-size: 13px; color: #00d4ff; text-shadow: 0 0 6px rgba(0,212,255,0.7);
+        }
+        .camera-control-panel {
+            position: fixed; top: 42px; right: 12px; width: 240px; z-index: 71;
+            background: rgba(6,6,14,0.92); backdrop-filter: blur(16px);
+            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
+            padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            font-family: 'Inter', sans-serif;
+        }
+        .camera-control-panel .row {
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 8px;
+        }
+        .camera-control-panel .src-btn {
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.55); font-family: 'JetBrains Mono', monospace;
+            font-size: 11px; padding: 6px 0; border-radius: 5px; cursor: pointer;
+            text-align: center; transition: all 0.18s;
+        }
+        .camera-control-panel .src-btn:hover { color: #00d4ff; border-color: rgba(0,212,255,0.3); }
+        .camera-control-panel .src-btn.active {
+            color: #00d4ff; background: rgba(0,212,255,0.08);
+            border-color: rgba(0,212,255,0.4); box-shadow: 0 0 8px rgba(0,212,255,0.18);
+        }
+        .camera-privacy-banner {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 11px; color: #ff4d6a; font-family: 'JetBrains Mono', monospace;
+            background: rgba(255,77,106,0.08); border: 1px solid rgba(255,77,106,0.25);
+            border-radius: 5px; padding: 6px 8px; margin-top: 8px;
+        }
+        .camera-privacy-banner .pulse {
+            width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
+            box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
+        }
+
         /* Discord footer */
         .discord-footer {
             position: fixed; bottom: 48px; left: 12px; z-index: 55;

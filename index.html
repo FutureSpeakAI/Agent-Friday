@@ -339,6 +339,74 @@ window.addEventListener('DOMContentLoaded',function(){
         .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
         .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
 
+        /* Camera Mode */
+        .camera-pip {
+            position: fixed; width: 160px; height: 120px; z-index: 70;
+            background: #000; border: 1px solid rgba(0,212,255,0.45);
+            border-radius: 8px; overflow: hidden;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.5), 0 0 12px rgba(0,212,255,0.18);
+            cursor: grab; user-select: none;
+        }
+        .camera-pip.dragging { cursor: grabbing; }
+        .camera-pip video { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .camera-pip .cam-label {
+            position: absolute; top: 4px; left: 6px;
+            font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
+            letter-spacing: 0.06em; text-shadow: 0 1px 4px #000;
+            pointer-events: none;
+        }
+        .camera-pip .cam-close {
+            position: absolute; top: 4px; right: 6px;
+            background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15);
+            color: rgba(255,255,255,0.7); border-radius: 4px;
+            font-size: 11px; line-height: 1; padding: 1px 5px; cursor: pointer;
+        }
+        .camera-pip .cam-active {
+            position: absolute; bottom: 5px; left: 6px;
+            display: inline-flex; align-items: center; gap: 4px;
+            font-size: 11px; color: #ff4d6a; font-family: 'JetBrains Mono', monospace;
+            text-shadow: 0 1px 3px #000;
+        }
+        .camera-pip .cam-active .pulse {
+            width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
+            box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
+        }
+        .camera-pip .cam-eye {
+            position: absolute; bottom: 5px; right: 6px;
+            font-size: 13px; color: #00d4ff; text-shadow: 0 0 6px rgba(0,212,255,0.7);
+        }
+        .camera-control-panel {
+            position: fixed; top: 42px; right: 12px; width: 240px; z-index: 71;
+            background: rgba(6,6,14,0.92); backdrop-filter: blur(16px);
+            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
+            padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            font-family: 'Inter', sans-serif;
+        }
+        .camera-control-panel .row {
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 8px;
+        }
+        .camera-control-panel .src-btn {
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.55); font-family: 'JetBrains Mono', monospace;
+            font-size: 11px; padding: 6px 0; border-radius: 5px; cursor: pointer;
+            text-align: center; transition: all 0.18s;
+        }
+        .camera-control-panel .src-btn:hover { color: #00d4ff; border-color: rgba(0,212,255,0.3); }
+        .camera-control-panel .src-btn.active {
+            color: #00d4ff; background: rgba(0,212,255,0.08);
+            border-color: rgba(0,212,255,0.4); box-shadow: 0 0 8px rgba(0,212,255,0.18);
+        }
+        .camera-privacy-banner {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 11px; color: #ff4d6a; font-family: 'JetBrains Mono', monospace;
+            background: rgba(255,77,106,0.08); border: 1px solid rgba(255,77,106,0.25);
+            border-radius: 5px; padding: 6px 8px; margin-top: 8px;
+        }
+        .camera-privacy-banner .pulse {
+            width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
+            box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
+        }
+
         /* Discord footer */
         .discord-footer {
             position: fixed; bottom: 48px; left: 12px; z-index: 55;
@@ -2997,6 +3065,117 @@ function ContentWS(){
     </div>
   </div>);
 }
+// ═══ CAMERA MODE ═══
+// Source can be 'screen' | 'webcam' | 'both'. Captures a JPEG frame from each
+// active stream every `intervalSec` seconds and stashes it on window.fridayCamera
+// so chat sends and the Live-API bridge can pick it up.
+function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing,onChangeFacing}){
+  const screenVideoRef=useRef(null);
+  const webcamVideoRef=useRef(null);
+  const screenStreamRef=useRef(null);
+  const webcamStreamRef=useRef(null);
+  const captureCanvasRef=useRef(null);
+  const captureTimerRef=useRef(null);
+  const[screenErr,setScreenErr]=useState('');
+  const[webcamErr,setWebcamErr]=useState('');
+  const[pos,setPos]=useState({x:window.innerWidth-180,y:window.innerHeight-160});
+  const[dragging,setDragging]=useState(false);
+  const dragOff=useRef({x:0,y:0});
+
+  // Acquire / release streams whenever source or facing changes.
+  // Cleanup only flips a cancellation flag; the body itself stops streams we
+  // no longer want. Stopping all streams on every re-run would cause repeat
+  // permission prompts when the user flips the front/rear webcam toggle.
+  useEffect(()=>{
+    let cancelled=false;
+    const stopStream=(streamRef)=>{try{streamRef.current?.getTracks().forEach(t=>t.stop())}catch(e){};streamRef.current=null};
+    const wantScreen=source==='screen'||source==='both';
+    const wantWebcam=source==='webcam'||source==='both';
+    (async()=>{
+      if(wantScreen&&!screenStreamRef.current){
+        try{
+          const s=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:15},audio:false});
+          if(cancelled){s.getTracks().forEach(t=>t.stop());return}
+          screenStreamRef.current=s;
+          if(screenVideoRef.current){screenVideoRef.current.srcObject=s;screenVideoRef.current.play().catch(()=>{})}
+          s.getVideoTracks()[0]?.addEventListener('ended',()=>{stopStream(screenStreamRef);if(!cancelled)onClose()});
+          setScreenErr('');
+        }catch(e){setScreenErr(e.name||'denied');if(source==='screen')onClose()}
+      }
+      if(!wantScreen&&screenStreamRef.current)stopStream(screenStreamRef);
+      if(wantWebcam){
+        const cur=webcamStreamRef.current;
+        const curFacing=cur?.getVideoTracks?.()[0]?.getSettings?.()?.facingMode;
+        if(!cur||(facing&&curFacing&&curFacing!==facing)){
+          stopStream(webcamStreamRef);
+          try{
+            const constraints={video:facing?{facingMode:{ideal:facing}}:true,audio:false};
+            const w=await navigator.mediaDevices.getUserMedia(constraints);
+            if(cancelled){w.getTracks().forEach(t=>t.stop());return}
+            webcamStreamRef.current=w;
+            if(webcamVideoRef.current){webcamVideoRef.current.srcObject=w;webcamVideoRef.current.play().catch(()=>{})}
+            setWebcamErr('');
+          }catch(e){setWebcamErr(e.name||'denied');if(source==='webcam')onClose()}
+        }
+      }
+      if(!wantWebcam&&webcamStreamRef.current)stopStream(webcamStreamRef);
+    })();
+    return()=>{cancelled=true};
+  },[source,facing]);
+  // Stop all streams on unmount.
+  useEffect(()=>()=>{
+    try{screenStreamRef.current?.getTracks().forEach(t=>t.stop())}catch(e){}
+    try{webcamStreamRef.current?.getTracks().forEach(t=>t.stop())}catch(e){}
+  },[]);
+
+  // Frame capture loop.
+  useEffect(()=>{
+    if(!captureCanvasRef.current)captureCanvasRef.current=document.createElement('canvas');
+    const grab=(video)=>{
+      if(!video||video.readyState<2||!video.videoWidth)return null;
+      const c=captureCanvasRef.current;c.width=Math.min(640,video.videoWidth);c.height=Math.round(c.width*video.videoHeight/video.videoWidth);
+      const ctx=c.getContext('2d');ctx.drawImage(video,0,0,c.width,c.height);
+      try{return c.toDataURL('image/jpeg',0.7).split(',')[1]}catch(e){return null}
+    };
+    const tick=()=>{
+      const screen=grab(screenVideoRef.current);
+      const webcam=grab(webcamVideoRef.current);
+      const primary=screen||webcam;
+      if(primary){frameRef.current={screen,webcam,primary,ts:Date.now()};setSendIndicator(true);setTimeout(()=>setSendIndicator(false),400)}
+    };
+    const ms=Math.max(500,(intervalSec||3)*1000);
+    captureTimerRef.current=setInterval(tick,ms);
+    setTimeout(tick,400); // first frame quickly
+    return()=>{if(captureTimerRef.current)clearInterval(captureTimerRef.current)};
+  },[intervalSec,source,facing]);
+
+  // Drag handlers — keep PiP inside the viewport.
+  useEffect(()=>{if(!dragging)return;
+    const mv=e=>setPos(p=>{const x=Math.max(4,Math.min(window.innerWidth-164,e.clientX-dragOff.current.x));const y=Math.max(44,Math.min(window.innerHeight-124,e.clientY-dragOff.current.y));return{x,y}});
+    const up=()=>setDragging(false);
+    addEventListener('mousemove',mv);addEventListener('mouseup',up);
+    return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)};
+  },[dragging]);
+
+  const showScreen=source==='screen'||source==='both';
+  const showWebcam=source==='webcam'||source==='both';
+  const isBoth=source==='both';
+
+  const pip=(refKey,label,err,extraStyle)=>(<div className={`camera-pip ${dragging?'dragging':''}`}
+      style={{left:pos.x+extraStyle.dx,top:pos.y+extraStyle.dy,width:isBoth?120:160,height:isBoth?90:120}}
+      onMouseDown={e=>{setDragging(true);dragOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y}}}>
+    {refKey==='screen'?<video ref={screenVideoRef} muted playsInline/>:<video ref={webcamVideoRef} muted playsInline/>}
+    <span className="cam-label">{label}</span>
+    {refKey==='webcam'&&onChangeFacing&&<button className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
+      onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onChangeFacing()}}>⇄</button>}
+    <button className="cam-close" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onClose()}} title="Stop camera">×</button>
+    <span className="cam-active"><span className="pulse"/>LIVE</span>
+    {err&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.7)',color:'#ff4d6a',fontSize:11,fontFamily:'JetBrains Mono'}}>{err}</div>}
+  </div>);
+
+  return(<>{showScreen&&pip('screen','SCREEN',screenErr,{dx:0,dy:0})}{showWebcam&&pip('webcam','WEBCAM',webcamErr,{dx:isBoth?-130:0,dy:0})}</>);
+}
+
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -3012,7 +3191,7 @@ function App(){
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional'};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -3129,8 +3308,34 @@ function App(){
   const toggle=id=>{if(id==='vibe'){toggleVibe();return}setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
+
+  // ─── Camera Mode ────────────────────────────────────────────
+  const[cameraOn,setCameraOn]=useState(false);
+  const[cameraSource,setCameraSource]=useState('screen');     // 'screen' | 'webcam' | 'both'
+  const[cameraFacing,setCameraFacing]=useState('user');       // 'user' | 'environment'
+  const[cameraIntervalSec,setCameraIntervalSec]=useState(3);
+  const[cameraAutoDescribe,setCameraAutoDescribe]=useState(false);
+  const[cameraControlsOpen,setCameraControlsOpen]=useState(false);
+  const[cameraSendIndicator,setCameraSendIndicator]=useState(false);
+  const cameraFrameRef=useRef(null);
+  // Expose latest frame so external code (e.g. friday_live.html voice mode) can pull it.
+  useEffect(()=>{window.fridayCamera={latestFrame:()=>cameraFrameRef.current,isOn:()=>cameraOn,source:()=>cameraSource,intervalSec:()=>cameraIntervalSec}},[cameraOn,cameraSource,cameraIntervalSec]);
+  // Persist camera prefs through /api/settings (interval + auto-describe).
+  useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
+  const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};
+
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
-    try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}setChatLoad(false)};
+    try{
+      const body={message:m};
+      if(focusWin)body.workspace=focusWin;
+      const frame=cameraOn?cameraFrameRef.current?.primary:null;
+      if(frame)body.image=frame;
+      const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const d=await r.json();
+      setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}])
+    }catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Connection error]',time:new Date().toLocaleTimeString()}])}
+    setChatLoad(false)
+  };
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
@@ -3162,6 +3367,12 @@ function App(){
         <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:14}}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
+        <button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
+          onContextMenu={e=>{e.preventDefault();if(cameraOn){toggleCamera()}else{toggleCamera();}}}
+          style={{background:'none',border:'none',color:cameraOn?'#00d4ff':'#555',cursor:'pointer',fontSize:14,filter:cameraOn?'drop-shadow(0 0 6px rgba(0,212,255,0.6))':'none'}}
+          title={cameraOn?'Camera ON — click for controls (right-click to stop)':'Camera Mode'}>
+          <span>&#x1F4F7;</span>{cameraOn&&cameraSendIndicator&&<span style={{position:'relative',top:-6,marginLeft:-4,fontSize:10,color:'#00d4ff'}}>&#x1F441;</span>}
+        </button>
         <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#555',cursor:'pointer',fontSize:15}} title="Settings">
           <span>&#x2699;</span>
         </button>
@@ -3187,6 +3398,35 @@ function App(){
           placeholder="Ask Friday anything..."
           style={{width:360,background:'rgba(6,6,11,0.6)',backdropFilter:'blur(12px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:24,padding:'10px 20px',color:'#e0e0e8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s'}}/>
         <button onClick={sendPrompt} style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.15)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center'}}>&#x1F3A4;</button>
+      </div>
+    </div>}
+
+    {/* Camera Mode — PiP previews + control popover */}
+    {cameraOn&&<CameraMode source={cameraSource} intervalSec={cameraIntervalSec}
+      frameRef={cameraFrameRef} setSendIndicator={setCameraSendIndicator}
+      facing={cameraSource==='screen'?null:cameraFacing}
+      onChangeFacing={()=>setCameraFacing(f=>f==='user'?'environment':'user')}
+      onClose={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}/>}
+    {cameraOn&&cameraControlsOpen&&<div className="camera-control-panel">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>CAMERA MODE</span>
+        <button onClick={()=>setCameraControlsOpen(false)} style={{background:'none',border:'none',color:'#555',cursor:'pointer',fontSize:13}}>&#x2715;</button>
+      </div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:4}}>Source</div>
+      <div className="row">
+        {['screen','webcam','both'].map(s=>
+          <button key={s} className={`src-btn ${cameraSource===s?'active':''}`} onClick={()=>setCameraSource(s)}>{s}</button>
+        )}
+      </div>
+      {(cameraSource==='webcam'||cameraSource==='both')&&<div style={{marginTop:8,display:'flex',gap:6,alignItems:'center',fontSize:11,color:'rgba(255,255,255,0.6)'}}>
+        <span>Facing</span>
+        <button className={`src-btn ${cameraFacing==='user'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('user')}>front</button>
+        <button className={`src-btn ${cameraFacing==='environment'?'active':''}`} style={{flex:1}} onClick={()=>setCameraFacing('environment')}>rear</button>
+      </div>}
+      <div className="camera-privacy-banner"><span className="pulse"/>Camera is active</div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:8,fontSize:11,color:'rgba(255,255,255,0.5)',fontFamily:'JetBrains Mono'}}>
+        <span>Frame every {cameraIntervalSec}s</span>
+        <button className="src-btn" style={{padding:'4px 10px'}} onClick={()=>{setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}}>Stop</button>
       </div>
     </div>}
 
@@ -3247,6 +3487,29 @@ function App(){
           onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
           style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
         <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
+      </div>
+
+      {/* Camera Mode */}
+      <div className="settings-section">
+        <div className="settings-section-title">Camera Mode</div>
+        <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
+          <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
+          <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
+        </div>
+        {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:4,marginBottom:6}}>Frame capture interval</div>
+        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+          {[1,3,5].map(s=>
+            <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
+              style={{textAlign:'center'}}
+              onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
+          )}
+        </div>
+        <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
+          <span className="settings-toggle-label">Auto-describe what Friday sees</span>
+          <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
+        </div>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
       </div>
 
       {/* Agent Personality (editable) */}
