@@ -3746,6 +3746,99 @@ function App(){
   const[models]=useState([{name:'Claude Opus',active:true},{name:'Gemini',active:true}]);
   const chatEnd=useRef(null);
 
+  // ─── Voice Mode (Gemini Live via /ws/live) ───
+  // Mic button opens a bidirectional WebSocket to the server, which proxies
+  // PCM16 audio to Gemini Live and streams 24kHz audio back. Per-turn
+  // transcripts (`voice_turn_done`) are appended to the chat as 🎤 Voice
+  // bubbles so the chat panel mirrors what was actually said.
+  const[voiceOn,setVoiceOn]=useState(false);
+  const[voiceStatus,setVoiceStatus]=useState('');
+  const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0});
+  const voiceStartRef=useRef(null);
+  const voiceStopRef=useRef(null);
+  voiceStartRef.current=async()=>{
+    if(voiceOn)return;
+    const PCM_IN_RATE=16000,PCM_OUT_RATE=24000;
+    const v=voiceRef.current;
+    const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
+    const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
+    const b64ToI16=(b64)=>{const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Int16Array(bytes.buffer)};
+    try{
+      v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
+      v.playCursor=v.audioCtx.currentTime;
+      v.micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+      v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
+      const proc=v.audioCtx.createScriptProcessor(4096,1,1);
+      v.micNode=proc;
+      proc.onaudioprocess=ev=>{
+        const ws=v.ws;
+        if(!ws||ws.readyState!==WebSocket.OPEN)return;
+        const input=ev.inputBuffer.getChannelData(0);
+        const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
+        try{ws.send(JSON.stringify({type:'audio',data:i16ToB64(pcm16)}))}catch(_){}
+      };
+      v.micSource.connect(proc);proc.connect(v.audioCtx.destination);
+    }catch(e){
+      setVoiceStatus('mic denied: '+e.message);
+      try{voiceStopRef.current?.()}catch(_){}
+      return;
+    }
+    const proto=location.protocol==='https:'?'wss:':'ws:';
+    const ws=new WebSocket(proto+'//'+location.host+'/ws/live');
+    v.ws=ws;
+    setVoiceStatus('connecting…');
+    ws.onopen=()=>{setVoiceOn(true);setVoiceStatus('listening')};
+    ws.onmessage=ev=>{
+      let m;try{m=JSON.parse(ev.data)}catch(_){return}
+      if(m.type==='audio'){
+        const int16=b64ToI16(m.data);
+        const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
+        const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
+        const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
+        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);src.start(startAt);
+        v.playCursor=startAt+buf.duration;
+        setVoiceStatus('speaking');
+      }else if(m.type==='input_transcript'){
+        setVoiceStatus('you: '+(m.text||'').slice(-60));
+      }else if(m.type==='text'){
+        setVoiceStatus('Friday: '+(m.text||'').slice(-60));
+      }else if(m.type==='voice_turn_done'){
+        const stamp=new Date().toLocaleTimeString();
+        setChatMsgs(p=>{
+          const next=[...p];
+          if(m.user_text)next.push({role:'user',text:m.user_text,time:stamp,via:'voice'});
+          if(m.agent_text)next.push({role:'friday',text:m.agent_text,time:stamp,via:'voice'});
+          return next;
+        });
+      }else if(m.type==='turn_end'){
+        setVoiceStatus('listening');
+      }else if(m.type==='interrupted'){
+        v.playCursor=v.audioCtx?v.audioCtx.currentTime:0;
+        setVoiceStatus('listening');
+      }else if(m.type==='status'){
+        setVoiceStatus(m.text);
+      }else if(m.type==='error'){
+        setVoiceStatus('error: '+(m.error||'unknown'));
+      }
+    };
+    ws.onerror=()=>setVoiceStatus('socket error');
+    ws.onclose=()=>{setVoiceOn(false);setVoiceStatus('')};
+  };
+  voiceStopRef.current=()=>{
+    const v=voiceRef.current;
+    try{v.ws&&v.ws.send(JSON.stringify({type:'end'}))}catch(_){}
+    try{v.ws&&v.ws.close()}catch(_){}
+    try{v.micNode&&v.micNode.disconnect()}catch(_){}
+    try{v.micSource&&v.micSource.disconnect()}catch(_){}
+    try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+    try{v.audioCtx&&v.audioCtx.close()}catch(_){}
+    voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+    setVoiceOn(false);setVoiceStatus('');
+  };
+  const toggleVoice=()=>{voiceOn?voiceStopRef.current?.():voiceStartRef.current?.()};
+  useEffect(()=>()=>{voiceStopRef.current?.()},[]);
+
   // Poll scene state for settings panel
   const[sceneState,setSceneState]=useState({structIdx:0,mood:'LISTENING',holo:false,hands:false,timelapse:false});
 
@@ -4021,14 +4114,23 @@ function App(){
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>{m.text}</div>
             {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
           </div>
-          <div style={{fontSize:11,color:'#888',marginTop:1}}>{m.role==='user'?'You':'Friday'} · {m.time||''}</div>
+          <div style={{fontSize:11,color:'#888',marginTop:1}}>
+            {m.role==='user'?'You':'Friday'} · {m.time||''}
+            {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
+          </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
+        {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em'}}>● LIVE · {voiceStatus||'connecting…'}</div>}
+        {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
         <div style={{display:'flex',gap:6}}>
-          <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder="Talk to Friday..."/>
+          <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
+            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42}}>
+            {voiceOn?'■':'🎤'}
+          </button>
+          <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
           <button className="btn" onClick={()=>sendChat()}>Send</button>
         </div>
       </div>

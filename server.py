@@ -5071,6 +5071,82 @@ def _load_live_context() -> str:
     return "\n\n".join(parts)
 
 
+def _persist_voice_turn(user_text, agent_text):
+    """Log a completed voice turn to the context log and chat history.
+
+    Voice turns are saved as event types `voice_user` and `voice_agent` so
+    they show up in the context-log search alongside text chats, and as
+    role=user/friday entries in CHAT_HISTORY with `via:'voice'` so the chat
+    panel can render them when the user comes back.
+    """
+    settings = _load_settings()
+    off_record = bool(settings.get('off_record'))
+    if not off_record:
+        if user_text:
+            _log_context("voice_user", {"text": user_text})
+        if agent_text:
+            _log_context("voice_agent", {"text": agent_text})
+    now_iso = datetime.now().isoformat()
+    if user_text:
+        CHAT_HISTORY.append({
+            'id': str(uuid.uuid4()),
+            'timestamp': now_iso,
+            'role': 'user',
+            'text': user_text,
+            'pinned': False,
+            'via': 'voice',
+        })
+    if agent_text:
+        CHAT_HISTORY.append({
+            'id': str(uuid.uuid4()),
+            'timestamp': now_iso,
+            'role': 'friday',
+            'text': agent_text,
+            'pinned': False,
+            'via': 'voice',
+        })
+    try:
+        cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+        CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
+        _save_chat_history(CHAT_HISTORY)
+    except Exception as e:
+        print(f'  [voice] chat history save failed: {e}')
+
+
+def _spawn_voice_distill(turn_log):
+    """Ask Claude to review a voice session and propose any wiki updates.
+
+    Fire-and-forget — runs as a background task so the WS handler can return
+    immediately. Claude has access to the `propose_wiki_update` tool, so any
+    new fact it spots will land in the pending-approvals queue rather than
+    being applied immediately.
+    """
+    if not turn_log:
+        return
+    convo = []
+    for u, a in turn_log:
+        if u:
+            convo.append(f"Stephen (voice): {u}")
+        if a:
+            convo.append(f"Friday (voice): {a}")
+    transcript = "\n".join(convo)[:8000]
+    prompt = (
+        "Review the following voice conversation between Stephen and Friday. "
+        "If Stephen mentioned anything new and durable about himself, his work, "
+        "his family, his projects, or his preferences — something worth remembering "
+        "across sessions — call `propose_wiki_update` to queue it for his approval. "
+        "Pick a sensible file under ~/wiki/ (e.g. identity/core-profile.md, "
+        "professional/job-search.md, family/notes.md). If nothing new came up, "
+        "reply with a one-line note and do nothing.\n\n"
+        "=== TRANSCRIPT ===\n" + transcript
+    )
+    _spawn_task(
+        name='Voice session: distill to wiki',
+        prompt=prompt,
+        description='Looking for anything wiki-worthy in the voice session…',
+    )
+
+
 if sock is not None:
 
     @sock.route('/ws/live')
@@ -5218,6 +5294,33 @@ if sock is not None:
                             except Exception as e:
                                 print(f'[live] send-to-gemini error: {e}')
 
+                    # Per-turn transcript accumulators. Gemini Live streams
+                    # input/output transcription as small deltas; we glue them
+                    # back into whole utterances so the chat panel can render
+                    # one bubble per turn and the context log captures the full
+                    # text (not 30 fragments).
+                    in_buf = []
+                    out_buf = []
+                    turn_log = []  # [(user_text, agent_text), ...] for end-of-session distill
+
+                    def _flush_turn():
+                        user_text = ''.join(in_buf).strip()
+                        agent_text = ''.join(out_buf).strip()
+                        in_buf.clear()
+                        out_buf.clear()
+                        if not user_text and not agent_text:
+                            return
+                        try:
+                            _persist_voice_turn(user_text, agent_text)
+                        except Exception as e:
+                            print(f'[live] persist_voice_turn error: {e}')
+                        _safe_send({
+                            "type": "voice_turn_done",
+                            "user_text": user_text,
+                            "agent_text": agent_text,
+                        })
+                        turn_log.append((user_text, agent_text))
+
                     async def writer():
                         """Pump Gemini responses back to the browser WebSocket."""
                         try:
@@ -5238,10 +5341,12 @@ if sock is not None:
                                         # Output transcription (what Gemini said)
                                         out_tr = getattr(sc, 'output_transcription', None)
                                         if out_tr and getattr(out_tr, 'text', None):
+                                            out_buf.append(out_tr.text)
                                             _safe_send({"type": "text", "text": out_tr.text})
                                         # Input transcription (what user said)
                                         in_tr = getattr(sc, 'input_transcription', None)
                                         if in_tr and getattr(in_tr, 'text', None):
+                                            in_buf.append(in_tr.text)
                                             _safe_send({"type": "input_transcript", "text": in_tr.text})
                                         # Any text in model turn parts
                                         mt = getattr(sc, 'model_turn', None)
@@ -5249,8 +5354,10 @@ if sock is not None:
                                             for part in mt.parts:
                                                 pt = getattr(part, 'text', None)
                                                 if pt:
+                                                    out_buf.append(pt)
                                                     _safe_send({"type": "text", "text": pt})
                                         if getattr(sc, 'turn_complete', False):
+                                            _flush_turn()
                                             _safe_send({"type": "turn_end"})
                                         if getattr(sc, 'interrupted', False):
                                             _safe_send({"type": "interrupted"})
@@ -5262,6 +5369,18 @@ if sock is not None:
                             done.set()
 
                     await asyncio.gather(reader(), writer(), return_exceptions=True)
+                    # Final flush in case the session ended mid-turn.
+                    try:
+                        _flush_turn()
+                    except Exception:
+                        pass
+                    # Send the whole voice session to a background distill task
+                    # so Claude can extract anything wiki-worthy. Cheap fire-and-forget.
+                    if turn_log:
+                        try:
+                            _spawn_voice_distill(turn_log)
+                        except Exception as e:
+                            print(f'[live] voice distill spawn error: {e}')
             except Exception as e:
                 print(f'[live] session error: {e}')
                 traceback.print_exc()
