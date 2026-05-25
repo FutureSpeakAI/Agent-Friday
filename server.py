@@ -469,6 +469,224 @@ def _tool_get_briefing(_inp):
         return f"Briefing read error: {e}"
 
 
+# ═══ BACKGROUND TASK RUNNER ═══════════════════════════════════
+# In-process registry of long-running tasks spawned via /api/tasks or
+# the spawn_task tool. Each entry is a plain dict; mutation happens
+# from the worker thread, so callers should always copy before returning.
+TASKS = {}
+TASKS_LOCK = threading.Lock()
+
+
+def _task_log(task_id, line):
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if not t:
+            return
+        t.setdefault('log', []).append(str(line))
+        # Cap log length to keep payloads small
+        if len(t['log']) > 200:
+            t['log'] = t['log'][-200:]
+
+
+def _task_set(task_id, **fields):
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if not t:
+            return
+        t.update(fields)
+
+
+def _task_snapshot(task_id=None):
+    with TASKS_LOCK:
+        if task_id is not None:
+            t = TASKS.get(task_id)
+            if not t:
+                return None
+            t = dict(t)
+            if t.get('started'):
+                t['elapsed'] = int(_time.time() - t['started']) - (0 if t.get('status') == 'running' else 0)
+                if t.get('ended'):
+                    t['elapsed'] = int(t['ended'] - t['started'])
+            return t
+        out = []
+        for tid, t in TASKS.items():
+            row = dict(t)
+            if row.get('started'):
+                end = row.get('ended') or _time.time()
+                row['elapsed'] = int(end - row['started'])
+            out.append(row)
+        return out
+
+
+def _task_worker(task_id, name, prompt, description=''):
+    """Run a Claude agent prompt to completion and store results.
+
+    Heuristic log lines come from inspecting the tool_trace returned by
+    _call_claude_agent so the UI can show what the agent did step-by-step.
+    """
+    _task_set(task_id, status='running', started=_time.time())
+    _task_log(task_id, f'Spawning agent: {name}')
+    if description:
+        _task_log(task_id, description)
+    try:
+        # Each task gets its own fresh single-turn conversation.
+        messages = [{"role": "user", "content": prompt}]
+        settings = _load_settings()
+        personality = _load_agent_personality()
+        system = _settings_system_prefix(settings, personality) + (
+            "You are operating as an autonomous background task. Take initiative, "
+            "use available tools, and produce a concrete, useful result the user can read."
+        )
+        # Stream a couple of milestone lines so the UI feels alive.
+        _task_log(task_id, 'Calling Claude…')
+        reply, tool_trace = _call_claude_agent(messages, system=system, max_tokens=2048)
+        for step in tool_trace or []:
+            tn = step.get('name', '?')
+            ti = step.get('input') or {}
+            label = ti.get('query') or ti.get('path') or ti.get('command') or ti.get('url') or ''
+            line = f'{tn}({str(label)[:60]})' if label else tn
+            _task_log(task_id, '→ tool: ' + line)
+        _task_log(task_id, 'Finalizing response')
+        _task_set(task_id, status='complete', result=reply or '(no response)', ended=_time.time())
+        _task_log(task_id, 'Done.')
+    except Exception as e:
+        traceback.print_exc()
+        _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
+        _task_log(task_id, f'Error: {e}')
+
+
+def _spawn_task(name, prompt, description=''):
+    task_id = str(uuid.uuid4())
+    with TASKS_LOCK:
+        TASKS[task_id] = {
+            'task_id': task_id,
+            'name': name,
+            'description': description,
+            'prompt': prompt,
+            'status': 'queued',
+            'created': _time.time(),
+            'started': None,
+            'ended': None,
+            'log': [],
+            'result': '',
+        }
+    th = threading.Thread(target=_task_worker, args=(task_id, name, prompt, description), daemon=True)
+    th.start()
+    return task_id
+
+
+def _tool_spawn_task(inp):
+    """Claude-facing tool: spawn a background research/analysis task."""
+    name = ((inp or {}).get('name') or 'Background task').strip()[:120]
+    prompt = ((inp or {}).get('prompt') or '').strip()
+    desc = ((inp or {}).get('description') or '').strip()[:200]
+    if not prompt:
+        return "spawn_task error: 'prompt' is required."
+    tid = _spawn_task(name, prompt, desc)
+    return json.dumps({
+        'task_id': tid,
+        'status': 'running',
+        'message': f"Spawned background task '{name}'. The user can watch progress in the Task Tray (bottom-right) and you can tell them you've started working on it.",
+    })
+
+
+# Register the spawn_task tool
+CLAUDE_TOOLS.append({
+    "name": "spawn_task",
+    "description": "Start a background research or analysis task that runs while the user does other work. Use this when the user asks for something that will take a while (deep research, multi-step analysis, writing a long brief). The task runs autonomously and the result appears in the Task Tray in the UI.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Short, human-readable task title (e.g., 'Research Bobby Tahir')."},
+            "description": {"type": "string", "description": "Optional one-line subtitle shown in the Task Tray."},
+            "prompt": {"type": "string", "description": "The full instruction the background agent should execute."},
+        },
+        "required": ["name", "prompt"],
+    },
+})
+
+
+def _tool_propose_wiki_update(inp):
+    """Queue a wiki update as pending — the user approves it in the Wiki workspace."""
+    inp = inp or {}
+    file = (inp.get("file") or "").strip()
+    new_value = inp.get("new_value") or ""
+    if not file or not new_value:
+        return "propose_wiki_update error: 'file' and 'new_value' are required."
+    section = (inp.get("section") or "").strip()
+    reason = (inp.get("reason") or "Agent-proposed update.").strip()
+    if _safe_wiki_path(file) is None:
+        return f"propose_wiki_update error: invalid wiki path {file!r} (must stay inside ~/wiki/)."
+    pid = _propose_wiki_update(file=file, section=section, new_value=new_value, reason=reason)
+    return f"Wiki update proposed (id={pid}) — awaiting your approval in the Wiki workspace."
+
+
+def _tool_correct_wiki(inp):
+    """Replace old_text with new_text across every wiki file and ~/.friday JSONs."""
+    inp = inp or {}
+    old_text = inp.get("old_text") or ""
+    new_text = inp.get("new_text") or ""
+    if not old_text:
+        return "correct_wiki error: 'old_text' is required."
+    modified = []
+    if WIKI_DIR.exists():
+        for f in WIKI_DIR.rglob('*'):
+            if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            if old_text in text:
+                try:
+                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
+                    _mirror_wiki_file(rel, text.replace(old_text, new_text))
+                    modified.append(rel)
+                except Exception:
+                    pass
+    if FRIDAY_DIR.exists():
+        for f in FRIDAY_DIR.glob('*.json'):
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            if old_text in text:
+                try:
+                    f.write_text(text.replace(old_text, new_text), encoding='utf-8')
+                    modified.append(f".friday/{f.name}")
+                except Exception:
+                    pass
+    return json.dumps({"modified": modified, "count": len(modified)})
+
+
+CLAUDE_TOOLS.append({
+    "name": "propose_wiki_update",
+    "description": "Propose an update to the user's personal wiki when you learn new information about them. The update is queued as PENDING and the user approves it from the Wiki workspace — it is NOT applied immediately. Use this whenever you learn a new fact about the user, their work, family, preferences, or projects that should outlive the current conversation.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file": {"type": "string", "description": "Wiki file path relative to ~/wiki/, e.g., 'identity/core-profile.md'."},
+            "section": {"type": "string", "description": "Optional section name within the file (e.g., 'birthplace'). Used to append under a header if no existing text is matched."},
+            "new_value": {"type": "string", "description": "The new content to add or replace with."},
+            "reason": {"type": "string", "description": "Why this update is being proposed (e.g., 'User correction during chat')."},
+        },
+        "required": ["file", "new_value", "reason"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "correct_wiki",
+    "description": "Correct wrong information across the ENTIRE wiki at once. Use this when the user says you (or the wiki) got a fact wrong — replaces old_text with new_text in every wiki file plus ~/.friday JSONs. Applies immediately (no approval needed) because corrections are user-initiated.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "old_text": {"type": "string", "description": "Exact text to find and replace."},
+            "new_text": {"type": "string", "description": "Replacement text."},
+        },
+        "required": ["old_text", "new_text"],
+    },
+})
+
+
 CLAUDE_TOOL_HANDLERS = {
     "search_web": _tool_search_web,
     "read_file": _tool_read_file,
@@ -482,6 +700,9 @@ CLAUDE_TOOL_HANDLERS = {
     "draft_email": _tool_draft_email,
     "get_career_pipeline": _tool_get_career_pipeline,
     "get_briefing": _tool_get_briefing,
+    "spawn_task": _tool_spawn_task,
+    "propose_wiki_update": _tool_propose_wiki_update,
+    "correct_wiki": _tool_correct_wiki,
 }
 
 
@@ -1037,6 +1258,129 @@ def get_memory_stats():
 #  WIKI
 # ═══════════════════════════════════════════════════════════════
 
+# ── Wiki helpers ──────────────────────────────────────────────
+WIKI_PENDING_FILE = FRIDAY_DIR / "wiki-pending.json"
+WIKI_MIRROR_DIR = Path(r"G:\My Drive\Wiki")
+
+
+def _safe_wiki_path(rel):
+    """Resolve a wiki-relative path inside WIKI_DIR. Returns Path or None."""
+    if not rel or not isinstance(rel, str):
+        return None
+    rel = rel.replace('\\', '/').lstrip('/')
+    try:
+        p = (WIKI_DIR / rel).resolve()
+        wiki_root = WIKI_DIR.resolve()
+        try:
+            p.relative_to(wiki_root)
+        except ValueError:
+            return None
+        if p.suffix not in ('.md', '.txt', ''):
+            return None
+        if not p.suffix:
+            p = p.with_suffix('.md')
+        return p
+    except Exception:
+        return None
+
+
+def _mirror_wiki_file(rel, content):
+    """Write content to WIKI_DIR/rel and mirror to Google Drive if mounted."""
+    rel = rel.replace('\\', '/').lstrip('/')
+    primary = WIKI_DIR / rel
+    primary.parent.mkdir(parents=True, exist_ok=True)
+    primary.write_text(content, encoding='utf-8')
+    try:
+        if WIKI_MIRROR_DIR.exists():
+            mirror = WIKI_MIRROR_DIR / rel
+            mirror.parent.mkdir(parents=True, exist_ok=True)
+            mirror.write_text(content, encoding='utf-8')
+    except Exception as e:
+        print(f"  [WIKI] Mirror failed for {rel}: {e}")
+
+
+def _delete_wiki_file(rel):
+    """Delete primary + mirror if present."""
+    rel = rel.replace('\\', '/').lstrip('/')
+    primary = WIKI_DIR / rel
+    deleted = False
+    if primary.exists() and primary.is_file():
+        primary.unlink()
+        deleted = True
+    try:
+        if WIKI_MIRROR_DIR.exists():
+            mirror = WIKI_MIRROR_DIR / rel
+            if mirror.exists() and mirror.is_file():
+                mirror.unlink()
+    except Exception as e:
+        print(f"  [WIKI] Mirror delete failed for {rel}: {e}")
+    return deleted
+
+
+def _load_pending_wiki():
+    if not WIKI_PENDING_FILE.exists():
+        return []
+    try:
+        data = json.loads(WIKI_PENDING_FILE.read_text(encoding='utf-8'))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_pending_wiki(items):
+    WIKI_PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WIKI_PENDING_FILE.write_text(json.dumps(items, indent=2, default=str), encoding='utf-8')
+
+
+def _propose_wiki_update(file, section, new_value, reason, old_value=""):
+    """Stash a proposed update for user approval. Returns the new id."""
+    items = _load_pending_wiki()
+    item = {
+        "id": uuid.uuid4().hex[:12],
+        "file": (file or "").replace('\\', '/').lstrip('/'),
+        "section": section or "",
+        "old_value": old_value or "",
+        "new_value": new_value or "",
+        "reason": reason or "",
+        "created": datetime.utcnow().isoformat() + "Z",
+        "status": "pending",
+    }
+    items.append(item)
+    _save_pending_wiki(items)
+    return item["id"]
+
+
+def _apply_wiki_proposal(item):
+    """Apply a pending proposal to the actual file.
+
+    Logic:
+      - If old_value is present and found in current file: in-place replace.
+      - Else: append a section like "\n## {section}\n{new_value}\n" (or just the value).
+      - If the file does not exist yet, create it with a minimal header.
+    """
+    rel = item.get("file") or ""
+    path = _safe_wiki_path(rel)
+    if path is None:
+        return False, "Invalid wiki path."
+    existing = path.read_text(encoding='utf-8') if path.exists() else ""
+    old_val = item.get("old_value") or ""
+    new_val = item.get("new_value") or ""
+    section = item.get("section") or ""
+    if old_val and old_val in existing:
+        updated = existing.replace(old_val, new_val)
+    elif existing.strip():
+        header = f"\n\n## {section}\n" if section else "\n\n"
+        updated = existing.rstrip() + header + new_val + "\n"
+    else:
+        title = path.stem.replace('-', ' ').title()
+        header = f"# {title}\n\n"
+        if section:
+            header += f"## {section}\n"
+        updated = header + new_val + "\n"
+    _mirror_wiki_file(rel, updated)
+    return True, "Applied."
+
+
 @app.route('/api/wiki/<section>/<filename>')
 def wiki_page(section, filename):
     """Read a wiki markdown file."""
@@ -1050,18 +1394,274 @@ def wiki_page(section, filename):
 
 @app.route('/api/wiki/structure')
 def wiki_structure():
-    """Return full wiki directory structure."""
+    """Return full wiki directory structure, with modified times and recent list."""
     structure = {}
+    all_files = []
     if WIKI_DIR.exists():
         for section_dir in sorted(WIKI_DIR.iterdir()):
             if section_dir.is_dir() and not section_dir.name.startswith('.'):
                 files = []
                 for f in sorted(section_dir.iterdir()):
                     if f.suffix in ('.md', '.txt'):
-                        files.append({"name": f.stem, "filename": f.name, "size": f.stat().st_size})
+                        try:
+                            mtime = f.stat().st_mtime
+                            size = f.stat().st_size
+                        except Exception:
+                            mtime, size = 0, 0
+                        entry = {
+                            "name": f.stem,
+                            "filename": f.name,
+                            "size": size,
+                            "modified": mtime,
+                            "modified_iso": datetime.fromtimestamp(mtime).isoformat() if mtime else None,
+                        }
+                        files.append(entry)
+                        all_files.append({**entry, "section": section_dir.name, "path": f"{section_dir.name}/{f.name}"})
                 if files:
                     structure[section_dir.name] = files
-    return jsonify({"status": "ok", "structure": structure})
+    all_files.sort(key=lambda x: x.get("modified") or 0, reverse=True)
+    recent = all_files[:5]
+    pending_count = len([p for p in _load_pending_wiki() if p.get("status") == "pending"])
+    return jsonify({"status": "ok", "structure": structure, "recent": recent, "pending_count": pending_count})
+
+
+@app.route('/api/wiki/update', methods=['POST'])
+def wiki_update():
+    """Agent or user proposes a wiki update. If auto=true, stored as pending; else applied immediately."""
+    data = request.get_json(force=True, silent=True) or {}
+    file = data.get("file", "")
+    section = data.get("section", "")
+    old_value = data.get("old_value", "")
+    new_value = data.get("new_value", "")
+    reason = data.get("reason", "")
+    auto = bool(data.get("auto"))
+    if not file or new_value is None:
+        return jsonify({"status": "error", "message": "file and new_value required"}), 400
+    if _safe_wiki_path(file) is None:
+        return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    if auto:
+        pid = _propose_wiki_update(file, section, new_value, reason, old_value)
+        return jsonify({"status": "ok", "queued": True, "id": pid})
+    ok, msg = _apply_wiki_proposal({
+        "file": file, "section": section, "old_value": old_value, "new_value": new_value,
+    })
+    if not ok:
+        return jsonify({"status": "error", "message": msg}), 400
+    return jsonify({"status": "ok", "applied": True})
+
+
+@app.route('/api/wiki/pending', methods=['GET'])
+def wiki_pending():
+    items = [p for p in _load_pending_wiki() if p.get("status") == "pending"]
+    return jsonify({"status": "ok", "pending": items})
+
+
+@app.route('/api/wiki/pending/<pid>/approve', methods=['POST'])
+def wiki_pending_approve(pid):
+    items = _load_pending_wiki()
+    target = None
+    for it in items:
+        if it.get("id") == pid:
+            target = it
+            break
+    if target is None:
+        return jsonify({"status": "not_found"}), 404
+    ok, msg = _apply_wiki_proposal(target)
+    if not ok:
+        return jsonify({"status": "error", "message": msg}), 400
+    target["status"] = "approved"
+    target["resolved"] = datetime.utcnow().isoformat() + "Z"
+    _save_pending_wiki(items)
+    return jsonify({"status": "ok", "approved": pid})
+
+
+@app.route('/api/wiki/pending/<pid>/reject', methods=['POST'])
+def wiki_pending_reject(pid):
+    items = _load_pending_wiki()
+    found = False
+    for it in items:
+        if it.get("id") == pid:
+            it["status"] = "rejected"
+            it["resolved"] = datetime.utcnow().isoformat() + "Z"
+            found = True
+            break
+    if not found:
+        return jsonify({"status": "not_found"}), 404
+    _save_pending_wiki(items)
+    return jsonify({"status": "ok", "rejected": pid})
+
+
+@app.route('/api/wiki/edit', methods=['PUT'])
+def wiki_edit():
+    """Direct inline edit from the UI: full file content replacement."""
+    data = request.get_json(force=True, silent=True) or {}
+    file = data.get("file", "")
+    content = data.get("content")
+    if not file or content is None:
+        return jsonify({"status": "error", "message": "file and content required"}), 400
+    path = _safe_wiki_path(file)
+    if path is None:
+        return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    _mirror_wiki_file(file, content)
+    return jsonify({"status": "ok", "saved": file, "bytes": len(content)})
+
+
+@app.route('/api/wiki/file', methods=['DELETE'])
+def wiki_delete():
+    """Delete a wiki file. Requires confirm == 'DELETE'."""
+    data = request.get_json(force=True, silent=True) or {}
+    file = data.get("file", "")
+    confirm = data.get("confirm", "")
+    if confirm != "DELETE":
+        return jsonify({"status": "error", "message": "confirmation token required"}), 400
+    path = _safe_wiki_path(file)
+    if path is None:
+        return jsonify({"status": "error", "message": "invalid wiki path"}), 400
+    deleted = _delete_wiki_file(file)
+    return jsonify({"status": "ok" if deleted else "not_found", "deleted": deleted, "file": file})
+
+
+@app.route('/api/wiki/search', methods=['POST'])
+def wiki_search():
+    """Full-text search across wiki files. Returns matching files + line snippets."""
+    data = request.get_json(force=True, silent=True) or {}
+    query = (data.get("query") or "").strip()
+    results = []
+    if not query:
+        return jsonify({"status": "ok", "query": "", "results": []})
+    q_lower = query.lower()
+    if WIKI_DIR.exists():
+        for f in WIKI_DIR.rglob('*'):
+            if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            if q_lower not in text.lower():
+                continue
+            snippets = []
+            for i, line in enumerate(text.splitlines(), start=1):
+                if q_lower in line.lower():
+                    snippets.append({"line": i, "text": line.strip()[:220]})
+                    if len(snippets) >= 3:
+                        break
+            try:
+                rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
+            except Exception:
+                rel = f.name
+            results.append({"path": rel, "matches": len(snippets), "snippets": snippets})
+            if len(results) >= 50:
+                break
+    return jsonify({"status": "ok", "query": query, "results": results})
+
+
+@app.route('/api/wiki/correct', methods=['POST'])
+def wiki_correct():
+    """Replace old_text with new_text across every wiki file and ~/.friday JSONs."""
+    data = request.get_json(force=True, silent=True) or {}
+    old_text = data.get("old_text") or ""
+    new_text = data.get("new_text") or ""
+    if not old_text:
+        return jsonify({"status": "error", "message": "old_text required"}), 400
+    modified = []
+    if WIKI_DIR.exists():
+        for f in WIKI_DIR.rglob('*'):
+            if not f.is_file() or f.suffix not in ('.md', '.txt'):
+                continue
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            if old_text in text:
+                new_content = text.replace(old_text, new_text)
+                try:
+                    rel = str(f.relative_to(WIKI_DIR)).replace('\\', '/')
+                    _mirror_wiki_file(rel, new_content)
+                    modified.append({"scope": "wiki", "path": rel})
+                except Exception as e:
+                    print(f"  [WIKI] Correct failed for {f}: {e}")
+    if FRIDAY_DIR.exists():
+        for f in FRIDAY_DIR.glob('*.json'):
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            if old_text in text:
+                try:
+                    f.write_text(text.replace(old_text, new_text), encoding='utf-8')
+                    modified.append({"scope": "friday", "path": f.name})
+                except Exception as e:
+                    print(f"  [WIKI] Correct failed for {f}: {e}")
+    return jsonify({"status": "ok", "modified": modified, "count": len(modified)})
+
+
+@app.route('/api/wiki/setup-research', methods=['POST'])
+def wiki_setup_research():
+    """Build draft wiki files for a new user. Stores all as PENDING (auto=true).
+
+    If Anthropic is available, drafts the content via Claude; otherwise creates
+    minimal template files from profile fields.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    full_name = (data.get("full_name") or "").strip()
+    birthdate = (data.get("birthdate") or "").strip()
+    location = (data.get("location") or "").strip()
+
+    drafts = []
+    client = get_anthropic_client()
+    base_context = (
+        f"Name: {full_name or '[unknown]'}\n"
+        f"Birthdate: {birthdate or '[unknown]'}\n"
+        f"Location: {location or '[unknown]'}\n"
+    )
+    targets = [
+        ("identity/core-profile.md", "Core profile",
+         "A factual, third-person profile: full name, date of birth, current location, "
+         "short bio (3-5 sentences), and a 'Known facts' bullet list."),
+        ("identity/career-timeline.md", "Career timeline",
+         "A reverse-chronological career timeline. Each entry has bold company + role "
+         "and a one-line date range. If unknown, leave a [needs research] placeholder."),
+        ("identity/education.md", "Education",
+         "Schools attended, degrees, dates, and notable accomplishments. Mark unknowns "
+         "as [needs research]."),
+    ]
+    for rel, section, instr in targets:
+        try:
+            if client and full_name:
+                prompt = (
+                    f"Draft the following wiki file for the user described below. "
+                    f"Markdown. Concise. Mark anything you don't actually know as "
+                    f"`[needs research]` — do NOT invent facts.\n\n"
+                    f"User:\n{base_context}\n\n"
+                    f"Section: {section}\nInstructions: {instr}"
+                )
+                content = _call_claude(
+                    messages=[{"role": "user", "content": prompt}],
+                    system="You build draft personal-wiki entries. Be honest about gaps; never fabricate biographical details.",
+                    max_tokens=900,
+                    temperature=0.2,
+                )
+            else:
+                title = rel.split('/')[-1].replace('.md', '').replace('-', ' ').title()
+                content = (
+                    f"# {title}\n\n"
+                    f"- **Name:** {full_name or '[needs research]'}\n"
+                    f"- **Birthdate:** {birthdate or '[needs research]'}\n"
+                    f"- **Location:** {location or '[needs research]'}\n\n"
+                    f"_This file was auto-created from profile setup. Fill in details as you learn them._\n"
+                )
+        except Exception as e:
+            content = f"# Draft\n\n[Draft generation failed: {e}]\n\n{base_context}"
+        pid = _propose_wiki_update(
+            file=rel, section=section, new_value=content,
+            reason=f"New-user setup research for {full_name or 'unknown user'}",
+            old_value="",
+        )
+        drafts.append({"id": pid, "file": rel, "section": section, "preview": content[:400]})
+
+    return jsonify({"status": "ok", "drafts": drafts, "count": len(drafts),
+                    "message": "Drafts created as pending. Approve each in the Wiki workspace."})
 
 
 # ═══════════════════════════════════════════════════════════════
