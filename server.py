@@ -151,6 +151,50 @@ def get_genai_client():
     return _genai_client
 
 
+# ── Anthropic Claude (text reasoning + chat) ───────────────────
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL_DEFAULT = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+_anthropic_client = None
+
+
+def get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        if not ANTHROPIC_API_KEY:
+            return None
+        try:
+            from anthropic import Anthropic
+            _anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        except ImportError:
+            print("  [FRIDAY] WARNING: anthropic SDK not installed. Run: pip install anthropic")
+            return None
+    return _anthropic_client
+
+
+def _call_claude(messages, system=None, model=None, max_tokens=2048):
+    """Call Claude with structured messages. Returns the text response.
+
+    messages: list of {"role": "user"|"assistant", "content": "..."}
+    system: optional system prompt (string)
+    model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-7)
+    """
+    client = get_anthropic_client()
+    if client is None:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
+        )
+    kwargs = {
+        "model": model or ANTHROPIC_MODEL_DEFAULT,
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if system:
+        kwargs["system"] = system
+    resp = client.messages.create(**kwargs)
+    parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+    return "".join(parts).strip()
+
+
 @app.before_request
 def check_auth():
     if not FRIDAY_PASSWORD:
@@ -1380,9 +1424,12 @@ CHAT_HISTORY = _load_chat_history()  # Load persistent history on startup
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
+    """Text chat — powered by Anthropic Claude.
+
+    Vision (screenshot description) still routes through Gemini Flash, since vision
+    is a designer/perception task. Reasoning stays on Claude.
+    """
     try:
-        from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY)
         data = request.get_json(silent=True) or {}
         message = data.get('message', '')
         workspace = data.get('workspace', '')
@@ -1390,13 +1437,15 @@ def chat():
         include_vision = data.get('includeVision', False)
         vision_description = None
 
-        # Vision capture: if requested, describe a provided screenshot via Gemini
+        # Vision capture (Gemini, designer role)
         screenshot_b64 = data.get('screenshot', None)
         if include_vision and screenshot_b64:
             try:
+                from google import genai
                 from google.genai import types
+                gclient = genai.Client(api_key=GEMINI_API_KEY)
                 img_bytes = base64.b64decode(screenshot_b64)
-                vision_resp = client.models.generate_content(
+                vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
                         "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
@@ -1412,19 +1461,16 @@ def chat():
             message, workspace, workspace_context, vision_description
         )
 
-        # Build conversation with history (last 20 messages for context)
-        conversation = system_prompt + '\n\n'
+        # Build conversation history as Anthropic-format messages (last 20 turns)
+        messages = []
         for msg in CHAT_HISTORY[-20:]:
-            role_label = 'User' if msg.get('role') == 'user' else 'Friday'
-            conversation += f"{role_label}: {msg.get('text', '')}\n"
-        conversation += f'User: {message}'
+            role = 'user' if msg.get('role') == 'user' else 'assistant'
+            text = msg.get('text', '')
+            if text:
+                messages.append({"role": role, "content": text})
+        messages.append({"role": "user", "content": message})
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=conversation
-        )
-
-        reply = response.text
+        reply = _call_claude(messages, system=system_prompt)
 
         # Store in history with IDs, timestamps, and context metadata
         user_msg = {
@@ -1476,11 +1522,10 @@ def chat_history():
 @app.route('/api/chat/send', methods=['POST'])
 def chat_send():
     """Send a message, save to persistent history, return Friday's response.
-    Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}
+    Accepts context-aware payload: {message, workspace, workspaceContext, includeVision, screenshot}.
+    Text reasoning is Claude; vision (screenshot description) stays on Gemini.
     """
     try:
-        from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY)
         data = request.get_json(silent=True) or {}
         message = data.get('message', '')
         workspace = data.get('workspace', '')
@@ -1491,13 +1536,15 @@ def chat_send():
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
-        # Vision capture
+        # Vision capture (Gemini, designer role)
         screenshot_b64 = data.get('screenshot', None)
         if include_vision and screenshot_b64:
             try:
+                from google import genai
                 from google.genai import types
+                gclient = genai.Client(api_key=GEMINI_API_KEY)
                 img_bytes = base64.b64decode(screenshot_b64)
-                vision_resp = client.models.generate_content(
+                vision_resp = gclient.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
                         "Briefly describe what is visible on this screen. Focus on text, UI elements, and data shown. Be concise (2-3 sentences).",
@@ -1513,18 +1560,16 @@ def chat_send():
             message, workspace, workspace_context, vision_description
         )
 
-        # Build conversation with history
-        conversation = system_prompt + '\n\n'
+        # Anthropic-format message history
+        messages = []
         for msg in CHAT_HISTORY[-20:]:
-            role_label = 'User' if msg.get('role') == 'user' else 'Friday'
-            conversation += f"{role_label}: {msg['text']}\n"
-        conversation += f'User: {message}'
+            role = 'user' if msg.get('role') == 'user' else 'assistant'
+            text = msg.get('text', '')
+            if text:
+                messages.append({"role": role, "content": text})
+        messages.append({"role": "user", "content": message})
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=conversation
-        )
-        reply = response.text
+        reply = _call_claude(messages, system=system_prompt)
 
         # Create persistent message objects
         user_msg = {
@@ -2052,10 +2097,8 @@ def _load_ofw_context():
 
 @app.route('/api/draft', methods=['POST'])
 def draft_generate():
-    """Generate a draft using Gemini based on mode, context, and prompt."""
+    """Generate a draft via Claude based on mode, context, and prompt."""
     try:
-        from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY)
         data = request.get_json(silent=True) or {}
 
         mode = data.get('mode', 'freeform')
@@ -2065,28 +2108,23 @@ def draft_generate():
         if not prompt.strip():
             return jsonify({"status": "error", "message": "No prompt provided"}), 400
 
-        # Build the system prompt for this mode
+        # System prompt for this mode (writing voice / format guidance)
         system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
-
-        # For OFW mode, inject co-parenting context
         if mode == 'ofw_response':
             ofw_ctx = _load_ofw_context()
             if ofw_ctx:
                 system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
+        system += "\n\nOutput ONLY the draft text, no commentary or labels."
 
-        # Build the full prompt
-        parts = [system]
+        user_parts = []
         if context:
-            parts.append(f"\nCONTEXT (what the user is looking at / replying to):\n{context}")
-        parts.append(f"\nUSER INSTRUCTION:\n{prompt}")
-        parts.append("\nWrite the draft now. Output ONLY the draft text, no commentary or labels.")
+            user_parts.append(f"CONTEXT (what the user is looking at / replying to):\n{context}")
+        user_parts.append(f"USER INSTRUCTION:\n{prompt}")
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents='\n'.join(parts)
+        draft_text = _call_claude(
+            [{"role": "user", "content": '\n\n'.join(user_parts)}],
+            system=system,
         )
-
-        draft_text = response.text.strip()
 
         return jsonify({
             "status": "ok",
