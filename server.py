@@ -33,6 +33,9 @@ app = Flask(__name__, static_folder='.', static_url_path='')
 app.secret_key = os.environ.get("FRIDAY_SECRET_KEY", "friday-default-secret-change-me")
 sock = Sock(app) if _HAS_SOCK else None
 
+# Server start time for uptime reporting
+SERVER_START_TS = _time.time()
+
 # ── Authentication ───────────────────────────────────────────
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
 FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
@@ -422,9 +425,13 @@ def get_personality():
 def get_epistemic():
     """Return epistemic scoring data."""
     efile = FRIDAY_DIR / "epistemic_scores.json"
+    if not efile.exists():
+        efile = FRIDAY_DIR / "epistemic.json"
     if efile.exists():
         try:
             data = json.loads(efile.read_text(encoding='utf-8'))
+            if 'overall' in data and 'overall_score' not in data:
+                data['overall_score'] = data['overall']
             return jsonify({"status": "ok", **data})
         except Exception:
             pass
@@ -436,6 +443,32 @@ def get_epistemic():
             "uncertainty_acknowledgment": 0.80, "bias_awareness": 0.65,
             "correction_rate": 0.70
         }
+    })
+
+
+@app.route('/api/health')
+def friday_health():
+    """Return server uptime and system health snapshot for the demo UI."""
+    uptime_s = int(_time.time() - SERVER_START_TS)
+    creations_today = 0
+    if CREATIONS_DIR.exists():
+        today = date.today().isoformat()
+        for f in CREATIONS_DIR.iterdir():
+            try:
+                if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime).date().isoformat() == today:
+                    creations_today += 1
+            except Exception:
+                pass
+    models = [
+        {"name": "Claude Opus", "active": True},
+        {"name": "Gemini",     "active": bool(GEMINI_API_KEY)},
+    ]
+    return jsonify({
+        "status": "ok",
+        "uptime_seconds": uptime_s,
+        "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
+        "creations_today": creations_today,
+        "models": models,
     })
 
 
@@ -3085,7 +3118,7 @@ def fs_assets():
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest")
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.

@@ -515,6 +515,101 @@ window.addEventListener('DOMContentLoaded',function(){
           background: linear-gradient(180deg, transparent, rgba(0,212,255,0.15) 30%,
             rgba(123,97,255,0.2) 50%, rgba(255,0,255,0.15) 70%, transparent);
         }
+
+        /* ═══ MOBILE RESPONSIVE — Android Chrome via Cloudflare tunnel ═══ */
+        @media (max-width: 768px) {
+          /* No horizontal overflow */
+          html, body { max-width: 100vw; overflow-x: hidden; }
+
+          /* Hide decorative HUD corners — too large on small screens */
+          .hud-corner { display: none; }
+
+          /* Compact HUD header */
+          .hud-header {
+            top: 44px; left: 12px; right: 12px;
+            font-size: 9px; letter-spacing: 2px;
+          }
+          .hud-main-title { font-size: 10px; letter-spacing: 3px; }
+
+          /* Top bar — keep compact */
+          .top-bar { padding: 0 8px; height: 40px; }
+          .model-pill { font-size: 9px; padding: 1px 5px; }
+
+          /* Dock — horizontally scrollable strip */
+          .dock {
+            overflow-x: auto; overflow-y: hidden;
+            justify-content: flex-start;
+            padding: 4px 8px 6px;
+            gap: 0;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+          .dock::-webkit-scrollbar { display: none; }
+          .dock-group { flex-direction: row; align-items: center; gap: 0; padding: 0 4px; }
+          .dock-group-btns { flex-direction: row; align-items: center; gap: 2px; }
+          .dock-group-label { display: none; }
+          .dock-btn {
+            min-width: 52px; min-height: 44px;
+            padding: 4px 6px 4px;
+            font-size: 10px;
+          }
+          .dock-btn .ico { font-size: 20px; }
+          .dock-btn .ico img { width: 22px; height: 22px; }
+          .dock-sep { height: 28px; width: 1px; align-self: center; margin: 0 4px; }
+
+          /* Floating windows — full-width, stacked from top bar, no drag */
+          .fwin {
+            position: fixed !important;
+            left: 0 !important; right: 0 !important;
+            top: 40px !important;
+            width: 100vw !important;
+            height: calc(100vh - 40px - 52px) !important;
+            border-radius: 0;
+            border-left: none; border-right: none; border-top: none;
+          }
+          .fwin-bar { cursor: default; }
+          .resize-h { display: none; }
+
+          /* Chat panel — full-width slide up from bottom */
+          .chat-panel {
+            top: auto !important;
+            bottom: 52px !important;
+            right: 0 !important;
+            left: -100vw !important;
+            width: 100vw !important;
+            height: 65vh !important;
+            border-left: none;
+            border-top: 1px solid rgba(0,212,255,0.15);
+            border-radius: 12px 12px 0 0;
+            transition: left 0.3s ease;
+          }
+          .chat-panel.open { left: 0 !important; right: 0 !important; }
+
+          /* Settings panel — full-width */
+          .settings-panel {
+            top: 40px !important;
+            bottom: 52px !important;
+            width: 100vw !important;
+            right: -100vw !important;
+          }
+          .settings-panel.open { right: 0 !important; }
+
+          /* Command palette — full-width */
+          .cmd-palette { width: 96vw !important; }
+
+          /* Inputs and buttons — touch-friendly */
+          .btn { min-height: 36px; font-size: 12px; padding: 8px 14px; }
+          .input { font-size: 14px; padding: 9px 12px; }
+
+          /* Quick Draft — full-width */
+          .discord-footer { display: none; }
+        }
+
+        /* Extra-small screens (iPhone SE, etc.) */
+        @media (max-width: 390px) {
+          .dock-btn { min-width: 44px; font-size: 9px; }
+          .model-pill { display: none; }
+        }
     </style>
 </head>
 
@@ -1887,9 +1982,9 @@ function HomeWS(){
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={runMorningRoutines}>Run Morning Routines</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <div className="card"><div className="card-title">Upcoming Events</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span>{c.emoji||'📅'} {c.label||c.name}</span><span className="stat" style={{fontSize:16,color:'#00d4ff'}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#555'}}>No events</span>}</div>
-      <div className="card"><div className="card-title">Personality</div><div className="stat">{pers?.session_count||0}</div><div className="stat-label">sessions · {pers?.maturity_pct||'0%'} maturity</div><div style={{marginTop:6}}><span className="badge-green">ONLINE</span></div></div>
+      <div className="card"><div className="card-title">Personality</div>{(()=>{const sc=pers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));return(<><div className="stat">{sc}</div><div className="stat-label">sessions · {mp}% maturity</div><div className="progress-bar" style={{marginTop:6}}><div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/></div></>)})()}</div>
       <div className="card"><div className="card-title">Trust Network</div><div className="stat">{trust?.people?(Array.isArray(trust.people)?trust.people.length:Object.keys(trust.people).length):0}</div><div className="stat-label">entities tracked</div></div>
-      <div className="card"><div className="card-title">Epistemic Score</div><div className="stat" style={{color:(epi?.overall||0.5)>0.6?'#00ff80':(epi?.overall||0.5)>0.4?'#f59e0b':'#ff0080'}}>{(epi?.overall||0.5).toFixed(2)}</div><div className="stat-label">independence index</div></div>
+      <div className="card"><div className="card-title">Epistemic Score</div>{(()=>{const e=(epi?.overall_score??epi?.overall??0.72);return(<><div className="stat" style={{color:e>0.6?'#00ff80':e>0.4?'#f59e0b':'#ff0080'}}>{e.toFixed(2)}</div><div className="stat-label">{e>0.6?'making user smarter':e>0.4?'neutral':'dependency risk'}</div></>)})()}</div>
       <div className="card"><div className="card-title">Memory Banks</div><div style={{fontSize:12}}>{[['🔵','Short-term',mem?.short||0],['🟣','Medium-term',mem?.medium||0],['🟠','Long-term',mem?.long||0]].map(([e,l,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'2px 0'}}><span>{e} {l}</span><span style={{fontFamily:'JetBrains Mono'}}>{v}</span></div>)}</div></div>
       <div className="card"><div className="card-title">AI To-Do List</div>{todos.length===0?<div style={{color:'#555',fontSize:11}}>No tasks proposed yet</div>:todos.slice(0,5).map(t=><div key={t.id||Math.random()} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}><span style={{flex:1,color:t.status==='approved'?'#00ff80':'#ccc'}}>{t.title||t.task||'Task'}</span>{t.status==='proposed'&&<><button className="btn" style={{padding:'2px 6px',fontSize:11,marginLeft:4}} onClick={()=>approveTodo(t.id)}>✓</button><button className="btn btn-magenta" style={{padding:'2px 6px',fontSize:11,marginLeft:2}} onClick={()=>rejectTodo(t.id)}>✗</button></>}</div>)}</div>
     </div>
@@ -2888,6 +2983,28 @@ function App(){
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
+  const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
+  const refreshSettingsData=()=>{
+    fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
+    fetch('/api/epistemic').then(r=>r.json()).then(setStEpi).catch(()=>{});
+    fetch('/api/evolution').then(r=>r.json()).then(setStEvo).catch(()=>{});
+    fetch('/api/health').then(r=>r.json()).then(setStHealth).catch(()=>{});
+  };
+  useEffect(()=>{if(settingsOpen)refreshSettingsData()},[settingsOpen]);
+  const checkSycophancy=()=>{
+    fetch('/api/personality').then(r=>r.json()).then(d=>{
+      setStPers(d);
+      const s=d?.sycophancy||{};
+      const streak=s.agreement_streak||0;
+      const bias=s.positivity_bias??0.5;
+      const events=(s.circuit_breaker_events||[]).length;
+      let status='HEALTHY';
+      if(streak>=5||bias>0.75||events>3)status='SYCOPHANCY RISK';
+      else if(streak>=3||bias>0.65)status='LEAN POSITIVE';
+      setStSycoMsg(`${status} · streak ${streak} · bias ${bias.toFixed(2)} · ${events} breaker events`);
+    }).catch(()=>setStSycoMsg('Check failed'));
+  };
+  const formatUptime=(s)=>{if(!s&&s!==0)return'—';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return h>0?`${h}h ${m}m`:m>0?`${m}m ${sec}s`:`${sec}s`};
   const[paletteOpen,setPaletteOpen]=useState(false);
   const[quickDraft,setQuickDraft]=useState(false);const[qdMode,setQdMode]=useState('freeform');const[qdPrompt,setQdPrompt]=useState('');const[qdResult,setQdResult]=useState('');const[qdLoading,setQdLoading]=useState(false);const[qdCopied,setQdCopied]=useState(false);
   const qdGenerate=async()=>{if(!qdPrompt.trim()||qdLoading)return;setQdLoading(true);setQdCopied(false);try{const r=await fetch('/api/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:qdMode,prompt:qdPrompt})});const d=await r.json();setQdResult(d.status==='ok'?d.draft:'[Error] '+(d.message||'Failed'))}catch(e){setQdResult('[Error] '+e.message)}setQdLoading(false)};
@@ -3072,6 +3189,94 @@ function App(){
           <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
           <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
         </div>
+      </div>
+
+      {/* Personality Evolution */}
+      <div className="settings-section">
+        <div className="settings-section-title">Personality Evolution</div>
+        {(()=>{const sc=stPers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));const traits=stPers?.traits||{};const top=Object.entries(traits).sort((a,b)=>b[1]-a[1]).slice(0,6);return(<>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#aaa'}}>{sc} / 50 sessions</span>
+            <span style={{fontFamily:'Orbitron',fontSize:13,color:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}>{mp}%</span>
+          </div>
+          <div className="progress-bar" style={{marginBottom:10}}>
+            <div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/>
+          </div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
+          {top.length===0?<div style={{fontSize:11,color:'#555'}}>No trait data yet</div>:top.map(([k,v],i)=>(
+            <div key={i} style={{marginBottom:5}}>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
+                <span style={{color:'#bbb'}}>{k}</span>
+                <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{v.toFixed(2)}</span>
+              </div>
+              <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(v*100,2)+'%',background:'#00d4ff'}}/></div>
+            </div>
+          ))}
+          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,gridColumn:'1/-1'}} onClick={checkSycophancy}>Check Sycophancy</button>
+          {stSycoMsg&&<div style={{marginTop:6,fontSize:11,color:stSycoMsg.startsWith('SYCOPHANCY')?'#ff0080':stSycoMsg.startsWith('LEAN')?'#f59e0b':'#00ff80',fontFamily:'JetBrains Mono'}}>{stSycoMsg}</div>}
+        </>)})()}
+      </div>
+
+      {/* Epistemic Score */}
+      <div className="settings-section">
+        <div className="settings-section-title">Epistemic Independence</div>
+        {(()=>{const e=stEpi?(stEpi.overall_score??stEpi.overall??0.72):null;const dims=stEpi?.dimensions||{};const color=e==null?'#555':e>0.6?'#00ff80':e>=0.4?'#f59e0b':'#ff0080';const label=e==null?'—':e>0.6?'making user smarter':e>=0.4?'neutral':'creating dependency';return(<>
+          <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:6}}>
+            <span style={{fontFamily:'Orbitron',fontSize:24,color,fontWeight:700}}>{e==null?'—':e.toFixed(2)}</span>
+            <span style={{fontSize:11,color:'#aaa'}}>{label}</span>
+          </div>
+          <div className="progress-bar" style={{marginBottom:10}}>
+            <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
+          </div>
+          {Object.keys(dims).length>0&&<>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
+            {Object.entries(dims).map(([k,v],i)=>(
+              <div key={i} style={{marginBottom:5}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
+                  <span style={{color:'#bbb'}}>{k.replace(/_/g,' ')}</span>
+                  <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{Number(v).toFixed(2)}</span>
+                </div>
+                <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(Number(v)*100,2)+'%',background:Number(v)>0.6?'#00ff80':Number(v)>=0.4?'#f59e0b':'#ff0080'}}/></div>
+              </div>
+            ))}
+          </>}
+          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,gridColumn:'1/-1'}} onClick={refreshSettingsData}>Refresh Score</button>
+        </>)})()}
+      </div>
+
+      {/* Friday System Health */}
+      <div className="settings-section">
+        <div className="settings-section-title">Friday System Health</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11}}>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
+            <div style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{stEvo?.day??'—'}</div>
+          </div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
+            <div style={{fontFamily:'Orbitron',fontSize:13,color:'#7c3aed'}}>{sceneState.mood||'—'}</div>
+          </div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
+            <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00ff80'}}>{formatUptime(stHealth?.uptime_seconds)}</div>
+          </div>
+          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.02)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
+            <div style={{fontFamily:'Orbitron',fontSize:15,color:'#f59e0b'}}>{stHealth?.creations_today??'—'}</div>
+          </div>
+        </div>
+        <div style={{marginTop:8}}>
+          <div style={{color:'rgba(255,255,255,0.35)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+            {(stHealth?.models||models).map((m,i)=>(
+              <span key={i} className="model-pill" style={{fontSize:11}}>
+                <span className={`dot ${m.active?'active':'idle'}`}/>
+                {m.name}
+              </span>
+            ))}
+          </div>
+        </div>
+        {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
       </div>
     </div>
 
