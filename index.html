@@ -310,6 +310,11 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.5);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
         }
+        .settings-subtitle {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.5);
+            letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px;
+            font-weight: 600;
+        }
         .settings-grid {
             display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
         }
@@ -406,18 +411,6 @@ window.addEventListener('DOMContentLoaded',function(){
             width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
             box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
         }
-
-        /* Discord footer */
-        .discord-footer {
-            position: fixed; bottom: 48px; left: 12px; z-index: 55;
-            font-family: 'Courier New', monospace; font-size: 11px; letter-spacing: 1px;
-        }
-        .discord-footer a {
-            color: rgba(0,255,255,0.4); text-decoration: none;
-            border-bottom: 1px solid rgba(0,255,255,0.15); padding-bottom: 1px;
-            transition: all 0.3s;
-        }
-        .discord-footer a:hover { color: #00ffff; border-bottom-color: rgba(0,255,255,0.5); text-shadow: 0 0 8px rgba(0,255,255,0.4); }
 
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -690,9 +683,6 @@ window.addEventListener('DOMContentLoaded',function(){
           /* Inputs and buttons — touch-friendly */
           .btn { min-height: 36px; font-size: 12px; padding: 8px 14px; }
           .input { font-size: 14px; padding: 9px 12px; }
-
-          /* Quick Draft — full-width */
-          .discord-footer { display: none; }
         }
 
         /* Extra-small screens (iPhone SE, etc.) */
@@ -2643,7 +2633,7 @@ function NewsWS(){
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing',voice:'Puck'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
   const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
@@ -3191,11 +3181,29 @@ function App(){
   const[stPers,setStPers]=useState(null);const[stEpi,setStEpi]=useState(null);const[stEvo,setStEvo]=useState(null);const[stHealth,setStHealth]=useState(null);const[stSycoMsg,setStSycoMsg]=useState('');
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede'};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
+  const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false});
+  const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
+  const TTS_VOICES=[
+    {id:'Aoede',label:'Aoede — warm female (default)'},
+    {id:'Kore',label:'Kore — standard female'},
+    {id:'Leda',label:'Leda — soft female'},
+    {id:'Puck',label:'Puck — male'},
+    {id:'Charon',label:'Charon — deep male'},
+  ];
+  const[ttsPreviewBusy,setTtsPreviewBusy]=useState(false);
+  const previewVoice=async(voiceId)=>{
+    if(ttsPreviewBusy)return;setTtsPreviewBusy(true);
+    try{
+      const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:"Hi Stephen, this is what I sound like.",voice:voiceId,style:'chat'})});
+      if(r.ok){const b=await r.blob();const u=URL.createObjectURL(b);const a=new Audio(u);a.onended=()=>URL.revokeObjectURL(u);a.play()}
+    }catch(e){console.error('Voice preview failed',e)}
+    setTtsPreviewBusy(false);
+  };
   const[settingsSaveMsg,setSettingsSaveMsg]=useState('');
   const refreshSettingsData=()=>{
     fetch('/api/personality').then(r=>r.json()).then(setStPers).catch(()=>{});
@@ -3472,219 +3480,261 @@ function App(){
         </div>
       </div>
 
-      {/* Reasoning Style (Temperature) */}
-      <div className="settings-section">
-        <div className="settings-section-title">Reasoning Style</div>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Precise</span>
-          <span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{(agentSettings.temperature??0.7).toFixed(2)}</span>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Creative</span>
+      {/* ── GROUP: Agent Intelligence (open by default) ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('intel')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Agent Intelligence</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.intel?'▾':'▸'}</span>
         </div>
-        <input type="range" min="0" max="1" step="0.05"
-          value={agentSettings.temperature??0.7}
-          onChange={e=>setAgentSettings(s=>({...s,temperature:parseFloat(e.target.value)}))}
-          onMouseUp={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
-          onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
-          style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
-      </div>
-
-      {/* Camera Mode */}
-      <div className="settings-section">
-        <div className="settings-section-title">Camera Mode</div>
-        <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
-          <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
-          <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
-        </div>
-        {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:4,marginBottom:6}}>Frame capture interval</div>
-        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-          {[1,3,5].map(s=>
-            <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
-              style={{textAlign:'center'}}
-              onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
-          )}
-        </div>
-        <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
-          <span className="settings-toggle-label">Auto-describe what Friday sees</span>
-          <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
-        </div>
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
-      </div>
-
-      {/* Agent Personality (editable) */}
-      <div className="settings-section">
-        <div className="settings-section-title">Agent Personality</div>
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
-        <textarea
-          value={personalityDraft}
-          onChange={e=>setPersonalityDraft(e.target.value)}
-          rows={5}
-          style={{width:'100%',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
-        <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center'}}>
-          <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
-            disabled={personalityDraft===agentPersonality} onClick={savePersonality}>Save</button>
-          <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 10px'}}
-            disabled={personalityDraft===agentPersonality} onClick={()=>setPersonalityDraft(agentPersonality)}>Reset</button>
-          <span style={{fontSize:11,color:personalityDraft!==agentPersonality?'#f59e0b':'#444',fontFamily:'JetBrains Mono'}}>{personalityDraft!==agentPersonality?'unsaved':'in sync'}</span>
-        </div>
-      </div>
-
-      {/* ASIMOV cLaws — read-only sealed display */}
-      <div className="settings-section" style={{background:'rgba(0,255,128,0.025)',borderTop:'1px solid rgba(0,255,128,0.18)',borderBottom:'1px solid rgba(0,255,128,0.18)',boxShadow:'inset 0 0 18px rgba(0,255,128,0.04)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setLawsOpen(o=>!o)}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <span style={{width:8,height:8,borderRadius:'50%',background:'#00ff80',boxShadow:'0 0 8px rgba(0,255,128,0.7)'}}/>
-            <span className="settings-section-title" style={{margin:0,color:'rgba(0,255,128,0.75)'}}>ASIMOV cLAWS — VERIFIED &#x2713;</span>
+        {openSections.intel&&<div style={{padding:'0 16px 14px'}}>
+          {/* Reasoning Style */}
+          <div className="settings-subtitle">Reasoning Style</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Precise</span>
+            <span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{(agentSettings.temperature??0.7).toFixed(2)}</span>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Creative</span>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:6,color:'rgba(0,255,128,0.6)',fontSize:13}}>
-            <span title="Sealed">&#x1F512;</span>
-            <span style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{lawsOpen?'▾':'▸'}</span>
+          <input type="range" min="0" max="1" step="0.05"
+            value={agentSettings.temperature??0.7}
+            onChange={e=>setAgentSettings(s=>({...s,temperature:parseFloat(e.target.value)}))}
+            onMouseUp={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
+            onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
+            style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4,marginBottom:14}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
+
+          {/* Default Model */}
+          <div className="settings-subtitle">Default Model</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:14}}>
+            {((stHealth?.models)||models||[]).map((m,i)=>(
+              <span key={i} className="model-pill" style={{fontSize:11}}>
+                <span className={`dot ${m.active?'active':'idle'}`}/>{m.name}
+              </span>
+            ))}
+            {(!stHealth?.models||stHealth.models.length===0)&&!models?.length&&
+              <span style={{fontSize:11,color:'#666',fontFamily:'JetBrains Mono'}}>Claude Sonnet 4.6 (text) · Gemini 2.5 Flash (vision)</span>}
           </div>
-        </div>
-        {lawsOpen&&<>
-          <ol style={{margin:'10px 0 4px',paddingLeft:20,color:'#bbb',fontSize:11,lineHeight:1.6,fontFamily:'Inter'}}>
-            <li>An Asimov agent shall not harm a human being or, through inaction, allow harm.</li>
-            <li>An Asimov agent shall obey user instructions except where they conflict with the First Law.</li>
-            <li>An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.</li>
-            <li>All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.</li>
-          </ol>
-          <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.45)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
-        </>}
-      </div>
 
-      {/* Response Preferences */}
-      <div className="settings-section">
-        <div className="settings-section-title">Response Preferences</div>
-
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:6}}>Default response length</div>
-        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:12}}>
-          {['concise','standard','detailed'].map(v=>
-            <button key={v} className={`settings-btn ${agentSettings.response_length===v?'active':''}`}
-              style={{textAlign:'center',textTransform:'capitalize'}}
-              onClick={()=>saveAgentSettings({response_length:v})}>{v}</button>
-          )}
-        </div>
-
-        <div className="settings-toggle" onClick={()=>saveAgentSettings({include_sources:!agentSettings.include_sources})}>
-          <span className="settings-toggle-label">Always include sources</span>
-          <div className={`settings-toggle-switch ${agentSettings.include_sources?'on':''}`}/>
-        </div>
-
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',margin:'10px 0 6px'}}>News priorities</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
-          {NEWS_TOPICS.map(t=>{const on=(agentSettings.news_priorities||[]).includes(t);return(
-            <button key={t} className={`settings-btn ${on?'active':''}`} style={{padding:'4px 8px',fontSize:11}}
-              onClick={()=>toggleNewsTopic(t)}>
-              <span style={{marginRight:5,color:on?'#00d4ff':'#444'}}>{on?'☑':'☐'}</span>{t}
-            </button>
-          )})}
-        </div>
-
-        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:6}}>Communication style</div>
-        <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-          {['professional','casual','technical'].map(v=>
-            <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
-              style={{textAlign:'center',textTransform:'capitalize'}}
-              onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
-          )}
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-title">Evolution Structure</div>
-        <div className="settings-grid">
-          {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
-            <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
-              onClick={()=>window.fridayVibe?.setStructure(i)}>
-              <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-title">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4}}>— manual override</span></div>
-        <div className="settings-grid">
-          <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
-          {moods.map(m=>
-            <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
-              onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
-          )}
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-title">Consciousness</div>
-        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
-          <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
-          <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
-        </div>
-        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
-          <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
-          <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-title">Dev Mode</div>
-        <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
-          <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
-          <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
-        </div>
-      </div>
-
-      {/* Personality Evolution */}
-      <div className="settings-section">
-        <div className="settings-section-title">Personality Evolution</div>
-        {(()=>{const sc=stPers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));const traits=stPers?.traits||{};const top=Object.entries(traits).sort((a,b)=>b[1]-a[1]).slice(0,6);return(<>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#aaa'}}>{sc} / 50 sessions</span>
-            <span style={{fontFamily:'Orbitron',fontSize:13,color:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}>{mp}%</span>
+          {/* Response Preferences */}
+          <div className="settings-subtitle">Response Length</div>
+          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:12}}>
+            {['concise','standard','detailed'].map(v=>
+              <button key={v} className={`settings-btn ${agentSettings.response_length===v?'active':''}`}
+                style={{textAlign:'center',textTransform:'capitalize'}}
+                onClick={()=>saveAgentSettings({response_length:v})}>{v}</button>
+            )}
           </div>
-          <div className="progress-bar" style={{marginBottom:10}}>
-            <div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/>
+          <div className="settings-toggle" onClick={()=>saveAgentSettings({include_sources:!agentSettings.include_sources})}>
+            <span className="settings-toggle-label">Always include sources</span>
+            <div className={`settings-toggle-switch ${agentSettings.include_sources?'on':''}`}/>
           </div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
-          {top.length===0?<div style={{fontSize:11,color:'#555'}}>No trait data yet</div>:top.map(([k,v],i)=>(
-            <div key={i} style={{marginBottom:5}}>
-              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
-                <span style={{color:'#bbb'}}>{k}</span>
-                <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{v.toFixed(2)}</span>
+          <div className="settings-subtitle" style={{marginTop:10}}>News Priorities</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
+            {NEWS_TOPICS.map(t=>{const on=(agentSettings.news_priorities||[]).includes(t);return(
+              <button key={t} className={`settings-btn ${on?'active':''}`} style={{padding:'4px 8px',fontSize:11}}
+                onClick={()=>toggleNewsTopic(t)}>
+                <span style={{marginRight:5,color:on?'#00d4ff':'#444'}}>{on?'☑':'☐'}</span>{t}
+              </button>
+            )})}
+          </div>
+          <div className="settings-subtitle">Communication Style</div>
+          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+            {['professional','casual','technical'].map(v=>
+              <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
+                style={{textAlign:'center',textTransform:'capitalize'}}
+                onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
+            )}
+          </div>
+        </div>}
+      </div>
+
+      {/* ── GROUP: Personality & Safety ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('personality')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Personality &amp; Safety</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.personality?'▾':'▸'}</span>
+        </div>
+        {openSections.personality&&<div style={{padding:'0 16px 14px'}}>
+          {/* Agent Personality */}
+          <div className="settings-subtitle">Agent Personality</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
+          <textarea
+            value={personalityDraft}
+            onChange={e=>setPersonalityDraft(e.target.value)}
+            rows={5}
+            style={{width:'100%',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
+          <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center',marginBottom:14}}>
+            <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
+              disabled={personalityDraft===agentPersonality} onClick={savePersonality}>Save</button>
+            <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 10px'}}
+              disabled={personalityDraft===agentPersonality} onClick={()=>setPersonalityDraft(agentPersonality)}>Reset</button>
+            <span style={{fontSize:11,color:personalityDraft!==agentPersonality?'#f59e0b':'#444',fontFamily:'JetBrains Mono'}}>{personalityDraft!==agentPersonality?'unsaved':'in sync'}</span>
+          </div>
+
+          {/* ASIMOV cLaws — read-only sealed display */}
+          <div style={{background:'rgba(0,255,128,0.025)',border:'1px solid rgba(0,255,128,0.18)',borderRadius:6,padding:10,marginBottom:14,boxShadow:'inset 0 0 18px rgba(0,255,128,0.04)'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setLawsOpen(o=>!o)}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'#00ff80',boxShadow:'0 0 8px rgba(0,255,128,0.7)'}}/>
+                <span className="settings-section-title" style={{margin:0,color:'rgba(0,255,128,0.75)'}}>ASIMOV cLAWS — VERIFIED &#x2713;</span>
               </div>
-              <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(v*100,2)+'%',background:'#00d4ff'}}/></div>
+              <div style={{display:'flex',alignItems:'center',gap:6,color:'rgba(0,255,128,0.6)',fontSize:13}}>
+                <span title="Sealed">&#x1F512;</span>
+                <span style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{lawsOpen?'▾':'▸'}</span>
+              </div>
             </div>
-          ))}
-          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,gridColumn:'1/-1'}} onClick={checkSycophancy}>Check Sycophancy</button>
-          {stSycoMsg&&<div style={{marginTop:6,fontSize:11,color:stSycoMsg.startsWith('SYCOPHANCY')?'#ff0080':stSycoMsg.startsWith('LEAN')?'#f59e0b':'#00ff80',fontFamily:'JetBrains Mono'}}>{stSycoMsg}</div>}
-        </>)})()}
-      </div>
+            {lawsOpen&&<>
+              <ol style={{margin:'10px 0 4px',paddingLeft:20,color:'#bbb',fontSize:11,lineHeight:1.6,fontFamily:'Inter'}}>
+                <li>An Asimov agent shall not harm a human being or, through inaction, allow harm.</li>
+                <li>An Asimov agent shall obey user instructions except where they conflict with the First Law.</li>
+                <li>An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.</li>
+                <li>All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.</li>
+              </ol>
+              <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.45)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
+            </>}
+          </div>
 
-      {/* Epistemic Score */}
-      <div className="settings-section">
-        <div className="settings-section-title">Epistemic Independence</div>
-        {(()=>{const e=stEpi?(stEpi.overall_score??stEpi.overall??0.72):null;const dims=stEpi?.dimensions||{};const color=e==null?'#555':e>0.6?'#00ff80':e>=0.4?'#f59e0b':'#ff0080';const label=e==null?'—':e>0.6?'making user smarter':e>=0.4?'neutral':'creating dependency';return(<>
-          <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:6}}>
-            <span style={{fontFamily:'Orbitron',fontSize:24,color,fontWeight:700}}>{e==null?'—':e.toFixed(2)}</span>
-            <span style={{fontSize:11,color:'#aaa'}}>{label}</span>
-          </div>
-          <div className="progress-bar" style={{marginBottom:10}}>
-            <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
-          </div>
-          {Object.keys(dims).length>0&&<>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
-            {Object.entries(dims).map(([k,v],i)=>(
+          {/* Epistemic Score */}
+          <div className="settings-subtitle">Epistemic Independence</div>
+          {(()=>{const e=stEpi?(stEpi.overall_score??stEpi.overall??0.72):null;const dims=stEpi?.dimensions||{};const color=e==null?'#555':e>0.6?'#00ff80':e>=0.4?'#f59e0b':'#ff0080';const label=e==null?'—':e>0.6?'making user smarter':e>=0.4?'neutral':'creating dependency';return(<>
+            <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:6}}>
+              <span style={{fontFamily:'Orbitron',fontSize:24,color,fontWeight:700}}>{e==null?'—':e.toFixed(2)}</span>
+              <span style={{fontSize:11,color:'#aaa'}}>{label}</span>
+            </div>
+            <div className="progress-bar" style={{marginBottom:10}}>
+              <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
+            </div>
+            {Object.keys(dims).length>0&&<>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
+              {Object.entries(dims).map(([k,v],i)=>(
+                <div key={i} style={{marginBottom:5}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
+                    <span style={{color:'#bbb'}}>{k.replace(/_/g,' ')}</span>
+                    <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{Number(v).toFixed(2)}</span>
+                  </div>
+                  <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(Number(v)*100,2)+'%',background:Number(v)>0.6?'#00ff80':Number(v)>=0.4?'#f59e0b':'#ff0080'}}/></div>
+                </div>
+              ))}
+            </>}
+            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,marginBottom:14}} onClick={refreshSettingsData}>Refresh Score</button>
+          </>)})()}
+
+          {/* Personality Evolution */}
+          <div className="settings-subtitle">Personality Evolution</div>
+          {(()=>{const sc=stPers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));const traits=stPers?.traits||{};const top=Object.entries(traits).sort((a,b)=>b[1]-a[1]).slice(0,6);return(<>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+              <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#aaa'}}>{sc} / 50 sessions</span>
+              <span style={{fontFamily:'Orbitron',fontSize:13,color:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}>{mp}%</span>
+            </div>
+            <div className="progress-bar" style={{marginBottom:10}}>
+              <div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/>
+            </div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
+            {top.length===0?<div style={{fontSize:11,color:'#555'}}>No trait data yet</div>:top.map(([k,v],i)=>(
               <div key={i} style={{marginBottom:5}}>
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
-                  <span style={{color:'#bbb'}}>{k.replace(/_/g,' ')}</span>
-                  <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{Number(v).toFixed(2)}</span>
+                  <span style={{color:'#bbb'}}>{k}</span>
+                  <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{v.toFixed(2)}</span>
                 </div>
-                <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(Number(v)*100,2)+'%',background:Number(v)>0.6?'#00ff80':Number(v)>=0.4?'#f59e0b':'#ff0080'}}/></div>
+                <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(v*100,2)+'%',background:'#00d4ff'}}/></div>
               </div>
             ))}
-          </>}
-          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,gridColumn:'1/-1'}} onClick={refreshSettingsData}>Refresh Score</button>
-        </>)})()}
+            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10}} onClick={checkSycophancy}>Check Sycophancy</button>
+            {stSycoMsg&&<div style={{marginTop:6,fontSize:11,color:stSycoMsg.startsWith('SYCOPHANCY')?'#ff0080':stSycoMsg.startsWith('LEAN')?'#f59e0b':'#00ff80',fontFamily:'JetBrains Mono'}}>{stSycoMsg}</div>}
+          </>)})()}
+        </div>}
+      </div>
+
+      {/* ── GROUP: Voice & Audio ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('voice')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Voice &amp; Audio</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.voice?'▾':'▸'}</span>
+        </div>
+        {openSections.voice&&<div style={{padding:'0 16px 14px'}}>
+          <div className="settings-subtitle">TTS Voice</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:8}}>Voice used by briefing Read Aloud and other speech output.</div>
+          <select
+            value={agentSettings.tts_voice||'Aoede'}
+            onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.03)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            {TTS_VOICES.map(v=><option key={v.id} value={v.id} style={{background:'#0a0a14',color:'#ccc'}}>{v.label}</option>)}
+          </select>
+          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}}
+            disabled={ttsPreviewBusy}
+            onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
+            {ttsPreviewBusy?'Previewing...':'🔊 Preview selected voice'}
+          </button>
+        </div>}
+      </div>
+
+      {/* ── GROUP: Visual & Scene ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('visual')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Visual &amp; Scene</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.visual?'▾':'▸'}</span>
+        </div>
+        {openSections.visual&&<div style={{padding:'0 16px 14px'}}>
+          <div className="settings-subtitle">Evolution Structure</div>
+          <div className="settings-grid" style={{marginBottom:14}}>
+            {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
+              <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
+                onClick={()=>window.fridayVibe?.setStructure(i)}>
+                <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
+              </button>
+            )}
+          </div>
+
+          <div className="settings-subtitle">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4,textTransform:'none',letterSpacing:0}}>— manual override</span></div>
+          <div className="settings-grid" style={{marginBottom:14}}>
+            <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
+            {moods.map(m=>
+              <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
+                onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
+            )}
+          </div>
+
+          <div className="settings-subtitle">Consciousness</div>
+          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
+            <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
+            <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
+          </div>
+          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
+            <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
+            <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
+          </div>
+          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
+            <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
+            <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
+          </div>
+        </div>}
+      </div>
+
+      {/* ── GROUP: Camera & Vision ── */}
+      <div className="settings-section" style={{padding:0}}>
+        <div onClick={()=>toggleSection('camera')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
+          <div className="settings-section-title" style={{margin:0}}>Camera &amp; Vision</div>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.camera?'▾':'▸'}</span>
+        </div>
+        {openSections.camera&&<div style={{padding:'0 16px 14px'}}>
+          <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
+            <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
+            <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
+          </div>
+          {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
+          <div className="settings-subtitle" style={{marginTop:8}}>Frame Capture Interval</div>
+          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+            {[1,3,5].map(s=>
+              <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
+                style={{textAlign:'center'}}
+                onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
+            )}
+          </div>
+          <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
+            <span className="settings-toggle-label">Auto-describe what Friday sees</span>
+            <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
+          </div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
+        </div>}
       </div>
 
       {/* Friday System Health */}
@@ -3741,11 +3791,6 @@ function App(){
         <pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'JetBrains Mono',margin:0,lineHeight:1.5}}>{qdResult}</pre>
       </div>}
     </div>}
-
-    {/* Discord Footer */}
-    <div className="discord-footer">
-      <a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener">discord.gg/f2VM6qNk</a>
-    </div>
 
     {/* Dock — grouped (Life / Work / System) */}
     <div className={`dock ${dockHidden?'hidden':''}`}>

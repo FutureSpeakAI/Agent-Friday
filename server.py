@@ -603,6 +603,7 @@ DEFAULT_SETTINGS = {
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "camera_auto_describe": False,
+    "tts_voice": "Aoede",                  # Aoede | Kore | Leda | Puck | Charon
 }
 
 
@@ -2202,7 +2203,13 @@ def tts():
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         text = request.json.get('text', '')
-        voice = request.json.get('voice', 'Puck')
+        # Voice priority: explicit request param > user setting > Aoede (warm female).
+        voice = request.json.get('voice')
+        if not voice:
+            try:
+                voice = (_load_settings() or {}).get('tts_voice') or 'Aoede'
+            except Exception:
+                voice = 'Aoede'
         style = request.json.get('style', 'briefing')
 
         if not text:

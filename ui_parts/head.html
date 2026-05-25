@@ -310,6 +310,11 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.5);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
         }
+        .settings-subtitle {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.5);
+            letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 8px;
+            font-weight: 600;
+        }
         .settings-grid {
             display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
         }
@@ -406,18 +411,6 @@ window.addEventListener('DOMContentLoaded',function(){
             width: 6px; height: 6px; border-radius: 50%; background: #ff4d6a;
             box-shadow: 0 0 6px rgba(255,77,106,0.9); animation: pulse 1.4s infinite;
         }
-
-        /* Discord footer */
-        .discord-footer {
-            position: fixed; bottom: 48px; left: 12px; z-index: 55;
-            font-family: 'Courier New', monospace; font-size: 11px; letter-spacing: 1px;
-        }
-        .discord-footer a {
-            color: rgba(0,255,255,0.4); text-decoration: none;
-            border-bottom: 1px solid rgba(0,255,255,0.15); padding-bottom: 1px;
-            transition: all 0.3s;
-        }
-        .discord-footer a:hover { color: #00ffff; border-bottom-color: rgba(0,255,255,0.5); text-shadow: 0 0 8px rgba(0,255,255,0.4); }
 
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -690,9 +683,6 @@ window.addEventListener('DOMContentLoaded',function(){
           /* Inputs and buttons — touch-friendly */
           .btn { min-height: 36px; font-size: 12px; padding: 8px 14px; }
           .input { font-size: 14px; padding: 9px 12px; }
-
-          /* Quick Draft — full-width */
-          .discord-footer { display: none; }
         }
 
         /* Extra-small screens (iPhone SE, etc.) */
