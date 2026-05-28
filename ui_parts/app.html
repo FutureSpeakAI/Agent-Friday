@@ -2525,7 +2525,7 @@ function App(){
             {orchModel.short} · {creativeModel.short}
             <span style={{fontSize:8,opacity:0.6}}>▾</span>
           </button>
-          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(6,6,14,0.97)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.22)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',fontFamily:'Inter',fontSize:11}}>
+          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontFamily:'Inter',fontSize:11}}>
             {[
               {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:ORCHESTRATOR_MODELS},
               {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:SUBAGENT_MODELS},
@@ -2607,7 +2607,7 @@ function App(){
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
-          style={{width:360,background:'rgba(6,6,11,0.88)',backdropFilter:'blur(14px)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}/>
+          style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
         <button onClick={()=>{if(promptText.trim())sendPrompt();else{setChatOpen(true);toggleVoice()}}}
           title={promptText.trim()?'Send message':'Open chat and start voice mode'}
           style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.18)',border:'1px solid rgba(0,212,255,0.4)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}>&#x1F3A4;</button>
@@ -2687,7 +2687,7 @@ function App(){
             <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
-            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(6,6,14,0.97)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.22)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 8px 28px rgba(0,0,0,0.65)',fontSize:11,fontFamily:'Inter'}}>
+            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
               <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
               {[{deviceId:'',label:'System Default'},...audioInputDevices].map(d=>{const sel=agentSettings.audio_input_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Mic ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
                 onClick={()=>{saveAgentSettings({audio_input_device_id:d.deviceId});setAudioDevicePopup(false)}}
@@ -3183,7 +3183,7 @@ function App(){
     </div>
 
     {/* Quick Draft Popup */}
-    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>

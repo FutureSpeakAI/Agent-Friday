@@ -43,6 +43,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
         canvas { display: block; }
+        /* Three.js renderer canvas: pin to viewport behind every UI layer. */
+        body > canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
         
         /* --- ETHEREAL HUD OVERLAY --- */
         #hud-overlay {
@@ -255,15 +257,17 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Floating windows — solid enough that text is always readable */
+        /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
             position: fixed; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.92); backdrop-filter: blur(20px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.65), 0 0 1px rgba(0,212,255,0.25);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 10px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3), 0 0 1px rgba(0,212,255,0.25);
             overflow: hidden; transition: box-shadow 0.3s;
         }
-        .fwin:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 20px rgba(0,212,255,0.12); }
+        .fwin:hover { box-shadow: 0 4px 30px rgba(0,0,0,0.35), 0 0 20px rgba(0,212,255,0.18); }
         .fwin-bar {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 12px; cursor: grab; user-select: none;
@@ -285,12 +289,16 @@ window.addEventListener('DOMContentLoaded',function(){
             cursor: nwse-resize; opacity: 0;
         }
 
-        /* Cards */
+        /* Cards — frosted glass tiles */
         .card {
-            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px; padding: 12px; transition: border-color 0.2s;
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+            border-radius: 8px; padding: 12px; transition: border-color 0.2s, box-shadow 0.2s;
         }
-        .card:hover { border-color: rgba(255,255,255,0.18); }
+        .card:hover { border-color: rgba(0,212,255,0.3); box-shadow: 0 4px 30px rgba(0,0,0,0.35), 0 0 18px rgba(0,212,255,0.12); }
         .card-title {
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.92);
             letter-spacing: 0.08em; margin-bottom: 8px;
@@ -316,13 +324,15 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
-        /* Chat panel — solid enough to read against any scene */
+        /* Chat panel — frosted glass slide-in */
         .chat-panel {
             position: fixed; top: 36px; right: -340px; bottom: 90px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
-            border-left: 1px solid rgba(255,255,255,0.08);
-            box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            box-shadow: -4px 0 30px rgba(0,0,0,0.3);
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
@@ -346,13 +356,15 @@ window.addEventListener('DOMContentLoaded',function(){
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
 
-        /* Settings panel — solid enough to read against bright scene */
+        /* Settings panel — frosted glass slide-in */
         .settings-panel {
             position: fixed; top: 36px; right: -360px; bottom: 68px;
             width: 340px; z-index: 68; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
-            border-left: 1px solid rgba(0,212,255,0.18);
-            box-shadow: -4px 0 24px rgba(0,0,0,0.55);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            box-shadow: -4px 0 30px rgba(0,0,0,0.3);
             transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
             overflow-y: auto;
         }
@@ -439,9 +451,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .camera-control-panel {
             position: fixed; top: 42px; right: 12px; width: 240px; z-index: 71;
-            background: rgba(6,6,14,0.92); backdrop-filter: blur(16px);
-            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
-            padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 10px;
+            padding: 12px; box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'Inter', sans-serif;
         }
         .camera-control-panel .row {
@@ -472,9 +486,11 @@ window.addEventListener('DOMContentLoaded',function(){
         /* ─── Task Tray ─── */
         .task-tray {
             position: fixed; right: 16px; bottom: 96px; width: 320px; z-index: 72;
-            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
-            border: 1px solid rgba(0,212,255,0.12); border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'Inter', sans-serif;
             max-height: 60vh; overflow-y: auto;
             animation: taskTraySlide 0.3s ease-out;
@@ -484,13 +500,18 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 8px 12px; border-bottom: 1px solid rgba(0,212,255,0.08);
             font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.08em; position: sticky; top: 0;
-            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
+            background: rgba(10,14,26,0.85);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
         }
         .task-tray-pill {
             position: fixed; right: 16px; bottom: 96px; z-index: 72;
             padding: 5px 10px; border-radius: 999px;
-            background: rgba(6,6,11,0.85); backdrop-filter: blur(10px);
-            border: 1px solid rgba(0,212,255,0.18);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'JetBrains Mono', monospace; font-size: 11px;
             color: #00d4ff; cursor: pointer; user-select: none;
             transition: border-color 0.2s, transform 0.2s;
@@ -590,9 +611,11 @@ window.addEventListener('DOMContentLoaded',function(){
         .notif-dropdown {
             position: fixed; width: 360px; max-height: 400px;
             z-index: 80;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.22); border-radius: 12px;
-            box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             overflow-y: auto; overflow-x: hidden;
             animation: notifDropdownSlide 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
             font-family: 'Inter', sans-serif;
@@ -605,7 +628,9 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.1em; text-transform: uppercase;
             position: sticky; top: 0; z-index: 2;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
+            background: rgba(10,14,26,0.85);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
         }
         .notif-section-divider {
             height: 1px; background: rgba(0,212,255,0.12);
@@ -699,9 +724,11 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             width: min(560px, 90vw); max-height: 60vh;
-            background: rgba(8,8,16,0.92); backdrop-filter: blur(24px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.25);
-            border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(0,212,255,0.08);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 12px; box-shadow: 0 4px 30px rgba(0,0,0,0.3), 0 0 40px rgba(0,212,255,0.08);
             display: flex; flex-direction: column; overflow: hidden;
             animation: paletteIn 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
