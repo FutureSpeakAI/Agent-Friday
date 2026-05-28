@@ -326,6 +326,49 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+        /* Floating mode — overrides dock-style positioning */
+        .chat-panel.floating {
+            transition: none;
+            bottom: auto; right: auto;
+            border: 1px solid rgba(0,212,255,0.22);
+            border-radius: 10px;
+            box-shadow: 0 12px 36px rgba(0,0,0,0.65), 0 0 24px rgba(0,212,255,0.10);
+            z-index: 90;
+        }
+        .chat-panel.floating.dragging,
+        .chat-panel.floating.resizing { user-select: none; }
+        .chat-panel-header {
+            cursor: default;
+            -webkit-user-select: none; user-select: none;
+        }
+        .chat-panel.floating .chat-panel-header { cursor: move; }
+        .chat-panel-resize {
+            position: absolute; background: transparent; z-index: 5;
+        }
+        .chat-panel-resize-r { right: 0; top: 6px; bottom: 14px; width: 6px; cursor: ew-resize; }
+        .chat-panel-resize-b { bottom: 0; left: 6px; right: 14px; height: 6px; cursor: ns-resize; }
+        .chat-panel-resize-br {
+            right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 50%, rgba(0,212,255,0.45) 50%, rgba(0,212,255,0.7) 75%);
+            border-bottom-right-radius: 10px;
+        }
+        .chat-panel.floating .chat-panel-resize { display: block; }
+        .chat-panel:not(.floating) .chat-panel-resize { display: none; }
+        .chat-float-btn {
+            background: rgba(0,212,255,0.06); border: 1px solid rgba(0,212,255,0.2);
+            color: #00d4ff; cursor: pointer; font-size: 11px;
+            padding: 3px 7px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.04em;
+        }
+        .chat-float-btn:hover { background: rgba(0,212,255,0.14); }
+        .proactive-badge {
+            display: inline-block; margin-left: 6px; padding: 1px 6px;
+            font-family: 'JetBrains Mono', monospace; font-size: 9px;
+            letter-spacing: 0.08em; border-radius: 3px;
+            background: linear-gradient(135deg, rgba(255,138,0,0.22), rgba(255,51,102,0.18));
+            border: 1px solid rgba(255,138,0,0.45);
+            color: #ffb066;
+        }
 
         /* Greeting ticker */
         .greeting-ticker {
@@ -625,6 +668,82 @@ window.addEventListener('DOMContentLoaded',function(){
             50%      { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
         }
         .bell-badge-pulse { animation: bellBadgePulse 1.4s infinite ease-out; }
+
+        /* Critical-priority pulse — applied to the bell button itself */
+        @keyframes bellCriticalGlow {
+            0%, 100% { filter: drop-shadow(0 0 4px rgba(255,51,102,0.6)); transform: scale(1); }
+            50%      { filter: drop-shadow(0 0 14px rgba(255,51,102,1)); transform: scale(1.08); }
+        }
+        .bell-critical { animation: bellCriticalGlow 1.2s ease-in-out infinite; color: #ff3366 !important; }
+
+        /* Notification item */
+        .notif-item {
+            display: flex; gap: 10px; padding: 10px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            position: relative;
+        }
+        .notif-item:hover { background: rgba(0,212,255,0.04); }
+        .notif-item .pri-stripe {
+            width: 3px; flex-shrink: 0; border-radius: 2px;
+            align-self: stretch;
+        }
+        .notif-item.pri-critical .pri-stripe { background: #ff3366; box-shadow: 0 0 8px rgba(255,51,102,0.5); }
+        .notif-item.pri-high .pri-stripe { background: #ff8a00; box-shadow: 0 0 6px rgba(255,138,0,0.4); }
+        .notif-item.pri-medium .pri-stripe { background: #ffd23f; }
+        .notif-item.pri-low .pri-stripe { background: #00d4ff; }
+        .notif-item-body { flex: 1; min-width: 0; }
+        .notif-item-title {
+            font-family: 'Inter', sans-serif; font-size: 12px; line-height: 1.35;
+            font-weight: 500;
+        }
+        .notif-item-preview {
+            font-family: 'Inter', sans-serif; font-size: 11px;
+            color: rgba(255,255,255,0.55); line-height: 1.4;
+            margin-top: 3px;
+            display: -webkit-box; -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .notif-item-meta {
+            display: flex; gap: 8px; align-items: center;
+            margin-top: 4px;
+            font-family: 'JetBrains Mono', monospace; font-size: 9px;
+            color: rgba(255,255,255,0.4); letter-spacing: 0.04em;
+        }
+        .notif-item-pri-tag {
+            padding: 1px 5px; border-radius: 3px;
+            font-family: 'JetBrains Mono', monospace; font-size: 9px;
+            letter-spacing: 0.08em; text-transform: uppercase;
+        }
+        .notif-item.pri-critical .notif-item-pri-tag {
+            background: rgba(255,51,102,0.15); color: #ff3366; border: 1px solid rgba(255,51,102,0.4);
+        }
+        .notif-item.pri-high .notif-item-pri-tag {
+            background: rgba(255,138,0,0.12); color: #ff8a00; border: 1px solid rgba(255,138,0,0.35);
+        }
+        .notif-item.pri-medium .notif-item-pri-tag {
+            background: rgba(255,210,63,0.10); color: #ffd23f; border: 1px solid rgba(255,210,63,0.3);
+        }
+        .notif-item.pri-low .notif-item-pri-tag {
+            background: rgba(0,212,255,0.10); color: #00d4ff; border: 1px solid rgba(0,212,255,0.3);
+        }
+        .notif-item-actions {
+            display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
+        }
+        .notif-item-actions button {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            padding: 3px 7px; border-radius: 3px;
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.72); cursor: pointer;
+            letter-spacing: 0.04em;
+        }
+        .notif-item-actions button:hover {
+            background: rgba(0,212,255,0.10); border-color: rgba(0,212,255,0.35);
+            color: #00d4ff;
+        }
+        .notif-item-actions button.dismiss { color: rgba(255,255,255,0.45); }
+        .notif-item.unread { background: rgba(0,212,255,0.025); }
+        .notif-item.unread .notif-item-title { color: #fff; }
+        .notif-item.read .notif-item-title { color: rgba(255,255,255,0.55); }
 
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -4116,6 +4235,64 @@ function App(){
   const[focusWin,setFocusWin]=useState(null);
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
+  // ── Chat panel geometry (floating/draggable/resizable) ──
+  const CHAT_GEOM_KEY='friday.chat.geom.v1';
+  const CHAT_MIN_W=300,CHAT_MIN_H=400,CHAT_DEFAULT_W=360,CHAT_DEFAULT_H=520;
+  const _loadChatGeom=()=>{try{const s=localStorage.getItem(CHAT_GEOM_KEY);if(!s)return null;const g=JSON.parse(s);if(typeof g!=='object'||g===null)return null;return g}catch(e){return null}};
+  const _initialChatGeom=(()=>{const g=_loadChatGeom();if(g)return g;const w=Math.min(CHAT_DEFAULT_W,Math.max(CHAT_MIN_W,window.innerWidth-40));const h=Math.min(CHAT_DEFAULT_H,Math.max(CHAT_MIN_H,window.innerHeight-160));return{floating:false,x:Math.max(20,window.innerWidth-w-20),y:60,w,h}})();
+  const[chatGeom,setChatGeom]=useState(_initialChatGeom);
+  const chatPanelRef=useRef(null);
+  const chatDragRef=useRef(null);  // {kind:'drag'|'resize-r'|'resize-b'|'resize-br', sx, sy, gx, gy, gw, gh}
+  useEffect(()=>{try{localStorage.setItem(CHAT_GEOM_KEY,JSON.stringify(chatGeom))}catch(e){}},[chatGeom]);
+  // Clamp on window resize so panel never escapes viewport
+  useEffect(()=>{const onResize=()=>{setChatGeom(g=>{const maxW=Math.max(CHAT_MIN_W,window.innerWidth-10);const maxH=Math.max(CHAT_MIN_H,window.innerHeight-50);const w=Math.min(g.w,maxW);const h=Math.min(g.h,maxH);const x=Math.min(Math.max(0,g.x),Math.max(0,window.innerWidth-w));const y=Math.min(Math.max(36,g.y),Math.max(36,window.innerHeight-h));return{...g,w,h,x,y}})};window.addEventListener('resize',onResize);return()=>window.removeEventListener('resize',onResize)},[]);
+  const chatStartDrag=(e,kind)=>{
+    if(!chatGeom.floating)return;
+    e.preventDefault();
+    const t=e.touches?e.touches[0]:e;
+    chatDragRef.current={kind,sx:t.clientX,sy:t.clientY,gx:chatGeom.x,gy:chatGeom.y,gw:chatGeom.w,gh:chatGeom.h};
+    document.body.style.cursor=kind==='drag'?'move':(kind==='resize-r'?'ew-resize':kind==='resize-b'?'ns-resize':'nwse-resize');
+    const move=(ev)=>{
+      const d=chatDragRef.current;if(!d)return;
+      const tt=ev.touches?ev.touches[0]:ev;
+      const dx=tt.clientX-d.sx, dy=tt.clientY-d.sy;
+      setChatGeom(g=>{
+        let{x,y,w,h}=g;
+        const maxW=window.innerWidth, maxH=window.innerHeight;
+        if(d.kind==='drag'){
+          x=Math.max(0,Math.min(maxW-d.gw,d.gx+dx));
+          y=Math.max(36,Math.min(maxH-40,d.gy+dy));
+        }else if(d.kind==='resize-r'){
+          w=Math.max(CHAT_MIN_W,Math.min(maxW-d.gx,d.gw+dx));
+        }else if(d.kind==='resize-b'){
+          h=Math.max(CHAT_MIN_H,Math.min(maxH-d.gy,d.gh+dy));
+        }else if(d.kind==='resize-br'){
+          w=Math.max(CHAT_MIN_W,Math.min(maxW-d.gx,d.gw+dx));
+          h=Math.max(CHAT_MIN_H,Math.min(maxH-d.gy,d.gh+dy));
+        }
+        return{...g,x,y,w,h};
+      });
+    };
+    const up=()=>{
+      chatDragRef.current=null;
+      document.body.style.cursor='';
+      window.removeEventListener('mousemove',move);
+      window.removeEventListener('mouseup',up);
+      window.removeEventListener('touchmove',move);
+      window.removeEventListener('touchend',up);
+    };
+    window.addEventListener('mousemove',move);
+    window.addEventListener('mouseup',up);
+    window.addEventListener('touchmove',move,{passive:false});
+    window.addEventListener('touchend',up);
+  };
+  const toggleChatFloat=()=>setChatGeom(g=>{
+    if(g.floating)return{...g,floating:false};
+    // Switching to floating — clamp to viewport
+    const w=Math.min(g.w,window.innerWidth-20);
+    const h=Math.min(g.h,window.innerHeight-80);
+    return{...g,floating:true,w,h,x:Math.min(g.x,window.innerWidth-w-10),y:Math.min(Math.max(36,g.y),window.innerHeight-h-10)};
+  });
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[wikiPending,setWikiPending]=useState(0);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
@@ -4427,7 +4604,60 @@ function App(){
     if(moodEl)moodEl.innerText='STATE: '+sysMood;
   }},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
-  useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
+  const refreshNotifs=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||d.notifications||[])).catch(()=>{});
+  useEffect(()=>{refreshNotifs();const iv=setInterval(refreshNotifs,30000);return()=>clearInterval(iv)},[]);
+  // ── Proactive chat injection: Friday speaks unprompted ──
+  useEffect(()=>{
+    let cancelled=false;
+    const pullProactive=async()=>{
+      try{
+        const r=await fetch('/api/notifications/chat-injections');
+        if(!r.ok||cancelled)return;
+        const d=await r.json();
+        const items=d.items||[];
+        if(!items.length)return;
+        // Append as Friday messages, mark each one acknowledged so we don't double-inject
+        const now=new Date().toLocaleTimeString();
+        setChatMsgs(p=>{
+          const seen=new Set(p.map(m=>m.proactiveId).filter(Boolean));
+          const fresh=items.filter(it=>!seen.has(it.id));
+          if(!fresh.length)return p;
+          return[...p,...fresh.map(it=>({
+            role:'friday',
+            text:it.text||it.title||'',
+            time:now,
+            proactive:true,
+            proactiveId:it.id,
+            proactivePriority:it.priority||'medium',
+          }))];
+        });
+        // Auto-open chat if a critical/high message arrived
+        if(items.some(it=>it.priority==='critical'||it.priority==='high')){
+          setChatOpen(true);
+        }
+        // Acknowledge each so the engine stops surfacing it
+        for(const it of items){
+          try{await fetch('/api/notifications/chat-injections/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:it.id})})}catch(e){}
+        }
+      }catch(e){}
+    };
+    pullProactive();
+    const iv=setInterval(pullProactive,20000);
+    return()=>{cancelled=true;clearInterval(iv)};
+  },[]);
+  const markNotifRead=async(id)=>{if(!id)return;setNotifs(p=>p.map(n=>n.id===id?{...n,read:true}:n));try{await fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})}catch(e){}};
+  const dismissNotif=async(id)=>{if(!id)return;setNotifs(p=>p.map(n=>n.id===id?{...n,dismissed:true,read:true}:n));try{await fetch('/api/notifications/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})}catch(e){}};
+  const markAllNotifsRead=async()=>{setNotifs(p=>p.map(n=>({...n,read:true})));try{await fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true,id:'*'})})}catch(e){}};
+  const handleNotifAction=(n,a)=>{
+    if(!a)return;
+    if(a.kind==='open_url'&&a.payload?.url){window.open(a.payload.url,'_blank');return}
+    if(a.kind==='open_window'&&a.payload?.window){toggle(a.payload.window);setNotifOpen(false);return}
+    if(a.kind==='open_observatory'){toggle('system');setNotifOpen(false);return}
+    if(a.kind==='ofw_draft'){setChatOpen(true);setNotifOpen(false);sendChat&&sendChat('Draft an OFW response for the latest message');return}
+    if(a.kind==='generate_brief'&&a.payload?.company){setChatOpen(true);setNotifOpen(false);sendChat&&sendChat(`Generate a company brief for ${a.payload.company}`);return}
+    // Default: mark read on action
+    if(n?.id)markNotifRead(n.id);
+  };
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
@@ -4597,9 +4827,11 @@ function App(){
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
-  const unread=notifs.filter(n=>!n.read).length;
+  const unread=notifs.filter(n=>!n.read&&!n.dismissed).length;
+  const criticalCount=notifs.filter(n=>!n.read&&!n.dismissed&&n.priority==='critical').length;
+  const hasCritical=criticalCount>0;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
-  const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
+  const bellBadgeCount=hasCritical?criticalCount:(runningTaskCount>0?runningTaskCount:unread);
   const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
   const noWindows=openWins.size===0;
 
@@ -4670,11 +4902,12 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
-          style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#999',cursor:'pointer',fontSize:14,position:'relative'}}
-          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}>
+          className={hasCritical?'bell-critical':''}
+          style={{background:'none',border:'none',color:hasCritical?'#ff3366':(notifOpen?'#00d4ff':'#999'),cursor:'pointer',fontSize:14,position:'relative'}}
+          title={hasCritical?`${criticalCount} critical alert${criticalCount===1?'':'s'}`:(runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications')}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
-            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
+            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:hasCritical?'#ff3366':(runningTaskCount>0?'#f59e0b':'#ff0080'),fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#888',cursor:'pointer',fontSize:14}} title="Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
@@ -4763,19 +4996,31 @@ function App(){
     {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
 
     {/* Chat Panel */}
-    <div className={`chat-panel ${chatOpen?'open':''}`}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
+    <div ref={chatPanelRef}
+      className={`chat-panel ${chatOpen?'open':''} ${chatGeom.floating?'floating':''}`}
+      style={chatGeom.floating?{left:chatGeom.x,top:chatGeom.y,width:chatGeom.w,height:chatGeom.h,bottom:'auto',right:'auto'}:{}}>
+      <div className="chat-panel-header"
+        onMouseDown={e=>{if(chatGeom.floating&&e.target.closest('button')==null)chatStartDrag(e,'drag')}}
+        onTouchStart={e=>{if(chatGeom.floating&&e.target.closest('button')==null)chatStartDrag(e,'drag')}}
+        style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT{chatGeom.floating?' · ✥':''}</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
+          <button className="chat-float-btn" onClick={toggleChatFloat} title={chatGeom.floating?'Dock to side':'Pop out — drag and resize freely'}>{chatGeom.floating?'DOCK':'FLOAT'}</button>
           <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
+      <div className="chat-panel-resize chat-panel-resize-r" onMouseDown={e=>chatStartDrag(e,'resize-r')} onTouchStart={e=>chatStartDrag(e,'resize-r')}/>
+      <div className="chat-panel-resize chat-panel-resize-b" onMouseDown={e=>chatStartDrag(e,'resize-b')} onTouchStart={e=>chatStartDrag(e,'resize-b')}/>
+      <div className="chat-panel-resize chat-panel-resize-br" onMouseDown={e=>chatStartDrag(e,'resize-br')} onTouchStart={e=>chatStartDrag(e,'resize-br')}/>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,
+              background:m.role==='user'?'rgba(124,58,237,0.12)':(m.proactive?'rgba(255,138,0,0.06)':'rgba(255,255,255,0.03)'),
+              color:m.role==='user'?'#b794f6':'#bbb',
+              border:m.proactive?'1px solid rgba(255,138,0,0.25)':'none'}}>
               {m.role==='friday'&&m.via!=='voice'&&typeof marked!=='undefined'
                 ?<div className="md-body" dangerouslySetInnerHTML={{__html:marked.parse(m.text||'')}}/>
                 :m.text}
@@ -4785,6 +5030,7 @@ function App(){
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':'Friday'} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
+            {m.proactive&&<span className="proactive-badge">★ PROACTIVE{m.proactivePriority?(' · '+String(m.proactivePriority).toUpperCase()):''}</span>}
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
@@ -4850,14 +5096,38 @@ function App(){
       <div className="notif-section-divider"/>
       <div className="notif-section-header">
         <span>NOTIFICATIONS</span>
-        {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
+        <span style={{display:'flex',gap:6,alignItems:'center'}}>
+          {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
+          {notifs.length>0&&<button onClick={markAllNotifsRead} title="Mark all as read"
+            style={{background:'none',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',fontSize:9,padding:'2px 6px',borderRadius:3,cursor:'pointer',fontFamily:'JetBrains Mono',letterSpacing:'0.04em'}}>READ ALL</button>}
+        </span>
       </div>
-      {notifs.length===0
+      {notifs.filter(n=>!n.dismissed).length===0
         ?<div className="notif-empty">No notifications</div>
-        :notifs.slice(0,10).map((n,i)=><div key={n.id||i} style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.55)':'#fff'}}>
-          <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4}}>{n.title||n.message||n.text||'Notification'}</div>
-          {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888',marginTop:3}}>{n.time}</div>}
-        </div>)}
+        :notifs.filter(n=>!n.dismissed).slice(0,15).map((n,i)=>{
+          const pri=n.priority||'medium';
+          const cls=`notif-item pri-${pri} ${n.read?'read':'unread'}`;
+          const ts=n.created_at||n.time||'';
+          const title=n.title||n.message||n.text||'Notification';
+          const preview=n.body||n.summary||'';
+          return(<div key={n.id||i} className={cls}>
+            <div className="pri-stripe"/>
+            <div className="notif-item-body">
+              <div className="notif-item-title">{title}</div>
+              {preview&&<div className="notif-item-preview">{preview.replace(/[*#`]/g,'').slice(0,180)}</div>}
+              <div className="notif-item-meta">
+                <span className="notif-item-pri-tag">{pri}</span>
+                {n.source&&<span>{n.source}</span>}
+                {ts&&<span>{(typeof ts==='string'&&ts.length>10)?ts.slice(0,16).replace('T',' '):ts}</span>}
+              </div>
+              <div className="notif-item-actions">
+                {(n.actions||[]).slice(0,2).map((a,j)=><button key={j} onClick={()=>handleNotifAction(n,a)}>{a.label}</button>)}
+                {!n.derived&&!n.read&&<button onClick={()=>markNotifRead(n.id)}>Read</button>}
+                {!n.derived&&<button className="dismiss" onClick={()=>dismissNotif(n.id)}>Dismiss</button>}
+              </div>
+            </div>
+          </div>);
+        })}
     </div>}
 
     {/* Settings Panel */}

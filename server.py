@@ -181,7 +181,7 @@ def get_anthropic_client():
     return _anthropic_client
 
 
-def _call_claude(messages, system=None, model=None, max_tokens=32768, temperature=None):
+def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None):
     """Call Claude with structured messages. Returns the text response.
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
@@ -1018,7 +1018,7 @@ def _task_worker(task_id, name, prompt, description=''):
         _task_log(task_id, 'Calling Claude…')
         subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
         reply, tool_trace = _call_claude_agent(
-            messages, system=system, max_tokens=32768, model=subagent_model,
+            messages, system=system, max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True},
         )
         for step in tool_trace or []:
@@ -1044,7 +1044,7 @@ def _task_worker(task_id, name, prompt, description=''):
                 _task_log(task_id, f'[steer] {steer_msg[:80]}')
                 steer_reply, steer_trace = _call_claude_agent(
                     [{"role": "user", "content": steer_msg}],
-                    system=system, max_tokens=32768, model=subagent_model,
+                    system=system, max_tokens=16384, model=subagent_model,
                     session_ctx={"authenticated": True, "is_background_task": True},
                 )
                 combined_trace.extend(steer_trace or [])
@@ -1669,7 +1669,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         return f"Tool error ({name}): {e}"
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=32768, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -4611,61 +4611,157 @@ def serve_audio(filename):
 #  NOTIFICATIONS
 # ═══════════════════════════════════════════════════════════════
 
-@app.route('/api/notifications')
-def get_notifications():
-    """Compute pending notifications from various sources."""
-    notifs = []
-    notif_id = 0
+try:
+    import notifications_engine as _notif_engine
+except Exception as _e:
+    _notif_engine = None
+    print(f"  [FRIDAY] WARNING: notifications_engine unavailable: {_e}")
 
-    # Check wiki/meta for briefings
+
+def _compute_derived_notifications():
+    """One-off computed notifications (briefings, todos) — not queued, just merged."""
+    derived = []
+    # Daily briefing ready?
     meta_dir = os.path.join(WIKI_DIR, 'meta')
     if os.path.isdir(meta_dir):
         briefings = sorted(glob.glob(os.path.join(meta_dir, 'daily-briefing-*.md')), reverse=True)
         if briefings:
             latest = os.path.basename(briefings[0])
             date_str = latest.replace('daily-briefing-', '').replace('.md', '')
-            notif_id += 1
-            notifs.append({
-                "id": notif_id, "type": "briefing",
+            derived.append({
+                "id": f"derived-briefing-{date_str}",
+                "kind": "briefing",
                 "title": f"📰 Daily briefing ready: {date_str}",
-                "read": False, "time": date_str
+                "body": "",
+                "priority": "low",
+                "read": False, "dismissed": False,
+                "source": "briefing",
+                "created_at": date_str,
+                "derived": True,
             })
 
-    # Check for pending todos
+    # Proposed todos awaiting approval
     todos = _load_todos()
     proposed = [t for t in todos if t.get('status') == 'proposed']
     if proposed:
-        notif_id += 1
-        notifs.append({
-            "id": notif_id, "type": "todo",
+        derived.append({
+            "id": "derived-proposed-todos",
+            "kind": "todo",
             "title": f"📋 {len(proposed)} proposed task{'s' if len(proposed) > 1 else ''} awaiting approval",
-            "read": False, "time": datetime.now().strftime('%Y-%m-%d')
+            "body": "",
+            "priority": "medium",
+            "read": False, "dismissed": False,
+            "source": "tasks",
+            "created_at": datetime.now().strftime('%Y-%m-%d'),
+            "derived": True,
         })
 
-    # Check for overdue todos
-    overdue = [t for t in todos if t.get('deadline') and t.get('status') in ('approved', 'proposed')]
+    # Overdue todos
     overdue_count = 0
-    for t in overdue:
-        try:
-            if date.fromisoformat(t['deadline']) < date.today():
-                overdue_count += 1
-        except Exception:
-            pass
+    for t in todos:
+        if t.get('deadline') and t.get('status') in ('approved', 'proposed'):
+            try:
+                if date.fromisoformat(t['deadline']) < date.today():
+                    overdue_count += 1
+            except Exception:
+                pass
     if overdue_count:
-        notif_id += 1
-        notifs.append({
-            "id": notif_id, "type": "overdue",
+        derived.append({
+            "id": "derived-overdue-todos",
+            "kind": "overdue",
             "title": f"⚠️ {overdue_count} overdue task{'s' if overdue_count > 1 else ''}",
-            "read": False, "time": datetime.now().strftime('%Y-%m-%d')
+            "body": "",
+            "priority": "high",
+            "read": False, "dismissed": False,
+            "source": "tasks",
+            "created_at": datetime.now().strftime('%Y-%m-%d'),
+            "derived": True,
         })
+    return derived
 
-    return jsonify({"status": "ok", "notifications": notifs, "count": len(notifs)})
+
+@app.route('/api/notifications')
+def get_notifications():
+    """Return queued + computed notifications, newest first."""
+    queued = _notif_engine.list_notifications(limit=80) if _notif_engine else []
+    derived = _compute_derived_notifications()
+    # Normalize legacy keys: queued items already have id/title/body/priority/etc
+    items = queued + derived
+    unread = sum(1 for n in items if not n.get('read') and not n.get('dismissed'))
+    return jsonify({
+        "status": "ok",
+        "items": items,
+        "notifications": items,  # legacy alias
+        "count": len(items),
+        "unread": unread,
+    })
 
 
 @app.route('/api/notifications/read', methods=['POST'])
 def mark_notification_read():
     data = request.get_json(silent=True) or {}
-    return jsonify({"status": "ok", "id": data.get('id')})
+    nid = data.get('id')
+    if _notif_engine and nid:
+        if data.get('all'):
+            n = _notif_engine.mark_all_read()
+            return jsonify({"status": "ok", "marked": n})
+        ok = _notif_engine.mark_read(str(nid))
+        return jsonify({"status": "ok" if ok else "not_found", "id": nid})
+    return jsonify({"status": "ok", "id": nid})
+
+
+@app.route('/api/notifications/dismiss', methods=['POST'])
+def dismiss_notification():
+    data = request.get_json(silent=True) or {}
+    nid = data.get('id')
+    if not _notif_engine or not nid:
+        return jsonify({"status": "noop"})
+    ok = _notif_engine.dismiss(str(nid))
+    return jsonify({"status": "ok" if ok else "not_found", "id": nid})
+
+
+@app.route('/api/notifications/push', methods=['POST'])
+def push_notification_endpoint():
+    """Allow other processes / skills to enqueue a notification."""
+    if not _notif_engine:
+        return jsonify({"status": "engine_unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    title = (data.get('title') or '').strip()
+    if not title:
+        return jsonify({"status": "error", "message": "title required"}), 400
+    entry = _notif_engine.push(
+        title=title,
+        body=data.get('body', ''),
+        priority=data.get('priority', 'medium'),
+        source=data.get('source', 'external'),
+        kind=data.get('kind', 'info'),
+        actions=data.get('actions') or [],
+        proactive_chat=bool(data.get('proactive_chat')),
+        chat_message=data.get('chat_message'),
+        dedupe_key=data.get('dedupe_key'),
+        meta=data.get('meta') or {},
+    )
+    return jsonify({"status": "ok", "notification": entry})
+
+
+@app.route('/api/notifications/chat-injections')
+def get_chat_injections():
+    """Pending proactive messages that should appear in the chat stream."""
+    if not _notif_engine:
+        return jsonify({"items": []})
+    return jsonify({"items": _notif_engine.pending_chat_injections()})
+
+
+@app.route('/api/notifications/chat-injections/ack', methods=['POST'])
+def ack_chat_injection_endpoint():
+    if not _notif_engine:
+        return jsonify({"status": "noop"})
+    data = request.get_json(silent=True) or {}
+    nid = data.get('id')
+    if not nid:
+        return jsonify({"status": "error"}), 400
+    ok = _notif_engine.ack_chat_injection(str(nid))
+    return jsonify({"status": "ok" if ok else "not_found", "id": nid})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -6816,6 +6912,232 @@ def _start_kill_hotkey():
 
 
 threading.Thread(target=_start_kill_hotkey, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  NOTIFICATION TRIGGER LOOP
+# ═══════════════════════════════════════════════════════════════
+
+def _trigger_skill_promotions():
+    """Watch SkillOpt storage for newly-promoted best_skill.md artifacts."""
+    if not _notif_engine:
+        return
+    skills_dir = FRIDAY_DIR / "skillopt"
+    if not skills_dir.exists():
+        skills_dir = HOME / ".friday" / "skillopt"
+    if not skills_dir.exists():
+        return
+    state = _notif_engine.get_trigger_state("skill_best_mtimes", {}) or {}
+    changed = False
+    for skill_dir in skills_dir.iterdir():
+        if not skill_dir.is_dir():
+            continue
+        best = skill_dir / "best_skill.md"
+        if not best.exists():
+            continue
+        try:
+            mtime = best.stat().st_mtime
+        except OSError:
+            continue
+        prior = state.get(skill_dir.name)
+        if prior is None:
+            # First sight — record, don't notify
+            state[skill_dir.name] = mtime
+            changed = True
+            continue
+        if mtime > prior + 1.0:
+            state[skill_dir.name] = mtime
+            changed = True
+            _notif_engine.push(
+                title=f"🧠 Skill improved — {skill_dir.name}",
+                body=f"SkillOpt promoted a new best version of `{skill_dir.name}`.",
+                priority="low",
+                source="skillopt",
+                kind="skill_improvement",
+                meta={"skill_name": skill_dir.name, "mtime": mtime},
+                actions=[
+                    {"label": "Open in Observatory", "kind": "open_observatory",
+                     "payload": {"skill": skill_dir.name}},
+                ],
+                dedupe_key=f"skill_promoted:{skill_dir.name}:{int(mtime)}",
+            )
+    if changed:
+        _notif_engine.set_trigger_state("skill_best_mtimes", state)
+
+
+def _trigger_ofw_messages():
+    """Watch OFW monitor output for new messages."""
+    if not _notif_engine:
+        return
+    ofw_state_dir = FRIDAY_DIR / "ofw"
+    candidates = [
+        ofw_state_dir / "inbox.json",
+        ofw_state_dir / "messages.json",
+        ofw_state_dir / "new_messages.json",
+    ]
+    found = next((p for p in candidates if p.exists()), None)
+    if not found:
+        return
+    try:
+        mtime = found.stat().st_mtime
+    except OSError:
+        return
+    prior = _notif_engine.get_trigger_state("ofw_inbox_mtime", 0.0) or 0.0
+    if mtime <= prior + 1.0:
+        return
+    try:
+        data = json.loads(found.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    msgs = data if isinstance(data, list) else data.get("messages", [])
+    if not isinstance(msgs, list):
+        return
+    seen_ids = set(_notif_engine.get_trigger_state("ofw_seen_ids", []) or [])
+    new_msgs = []
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        mid = str(m.get("id") or m.get("message_id") or m.get("hash") or "")
+        if mid and mid not in seen_ids:
+            new_msgs.append(m)
+            seen_ids.add(mid)
+    if new_msgs:
+        for m in new_msgs[:5]:
+            sender = m.get("from") or m.get("sender") or "co-parent"
+            subj = m.get("subject") or "(no subject)"
+            preview = (m.get("body") or m.get("preview") or "")[:280]
+            _notif_engine.push(
+                title=f"📨 OFW message — {sender}",
+                body=f"**{subj}**\n\n{preview}",
+                priority="critical",
+                source="ofw_monitor",
+                kind="ofw_message",
+                proactive_chat=True,
+                chat_message=(
+                    f"New OFW message from **{sender}**: {subj}. "
+                    f"Want me to draft a response?"
+                ),
+                meta={"message_id": m.get("id"), "sender": sender, "subject": subj},
+                actions=[
+                    {"label": "Draft reply", "kind": "ofw_draft",
+                     "payload": {"message_id": m.get("id")}},
+                    {"label": "Open OFW", "kind": "open_window",
+                     "payload": {"window": "ofw"}},
+                ],
+                dedupe_key=f"ofw:{m.get('id') or subj}",
+            )
+        _notif_engine.set_trigger_state("ofw_seen_ids", list(seen_ids)[-200:])
+    _notif_engine.set_trigger_state("ofw_inbox_mtime", mtime)
+
+
+KEY_CONTACTS = {
+    "janet jay": {"label": "***REMOVED*** (wife)", "priority": "high", "stale_hours": 24},
+    "janet": {"label": "***REMOVED*** (wife)", "priority": "high", "stale_hours": 24},
+}
+
+
+def _trigger_gmail_signals():
+    """Watch a Gmail-export JSON for unanswered key-contact emails and job replies."""
+    if not _notif_engine:
+        return
+    candidates = [
+        FRIDAY_DIR / "gmail" / "inbox.json",
+        FRIDAY_DIR / "gmail-cache.json",
+        WIKI_DIR / "professional" / "applications" / "responses.json",
+    ]
+    inbox_path = next((p for p in candidates if p.exists()), None)
+    if not inbox_path:
+        return
+    try:
+        data = json.loads(inbox_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    messages = data if isinstance(data, list) else data.get("messages", [])
+    if not isinstance(messages, list):
+        return
+
+    now = datetime.utcnow()
+    for m in messages[-100:]:
+        if not isinstance(m, dict):
+            continue
+        sender = (m.get("from") or m.get("sender") or "").lower()
+        subj = m.get("subject") or ""
+        ts_raw = m.get("received_at") or m.get("date") or m.get("timestamp")
+        try:
+            ts = datetime.fromisoformat(str(ts_raw).replace("Z", ""))
+        except Exception:
+            ts = None
+        msg_id = str(m.get("id") or m.get("message_id") or (sender + subj))[:120]
+
+        # Job-application response
+        if (m.get("kind") == "job_response"
+                or "applied" in subj.lower()
+                or "application" in subj.lower()
+                or m.get("category") == "applications"):
+            _notif_engine.push(
+                title=f"💼 Job reply — {m.get('company') or sender}",
+                body=f"**{subj}**\n\n{(m.get('preview') or '')[:300]}",
+                priority="high",
+                source="gmail",
+                kind="job_response",
+                proactive_chat=True,
+                chat_message=(
+                    f"You have a job-application reply from "
+                    f"**{m.get('company') or sender}** about *{subj}*. "
+                    f"Want me to open it and draft a follow-up?"
+                ),
+                meta={"sender": sender, "subject": subj, "message_id": msg_id},
+                dedupe_key=f"job_reply:{msg_id}",
+            )
+            continue
+
+        # Stale message from a key contact
+        contact = next((v for k, v in KEY_CONTACTS.items() if k in sender), None)
+        if contact and ts:
+            age_h = (now - ts).total_seconds() / 3600.0
+            if age_h >= contact["stale_hours"] and not m.get("replied"):
+                _notif_engine.push(
+                    title=f"⏳ Unreplied — {contact['label']}",
+                    body=(f"**{subj}**\n\n"
+                          f"Sent {age_h:.0f} hours ago, no reply yet.\n\n"
+                          f"{(m.get('preview') or '')[:300]}"),
+                    priority=contact["priority"],
+                    source="gmail",
+                    kind="stale_email",
+                    proactive_chat=True,
+                    chat_message=(
+                        f"Hey Stephen — {contact['label']} sent you an email "
+                        f"{age_h:.0f} hours ago about *{subj}*. You haven't "
+                        f"replied yet. Want me to draft a response?"
+                    ),
+                    meta={"sender": sender, "subject": subj, "age_hours": age_h},
+                    dedupe_key=f"stale:{msg_id}",
+                )
+
+
+def _notification_trigger_loop():
+    """Single background tick that runs all triggers safely."""
+    if not _notif_engine:
+        return
+    triggers = [
+        ("skill_promotions", _trigger_skill_promotions),
+        ("ofw", _trigger_ofw_messages),
+        ("gmail", _trigger_gmail_signals),
+    ]
+    print("  [FRIDAY] Notification trigger loop started.")
+    # Wait a bit so the server can finish coming up
+    _time.sleep(8)
+    while True:
+        for name, fn in triggers:
+            try:
+                fn()
+            except Exception as e:
+                print(f"  [notif-trigger:{name}] {e}")
+        _time.sleep(60)  # poll every minute
+
+
+if _notif_engine:
+    threading.Thread(target=_notification_trigger_loop, daemon=True).start()
 
 
 # ═══════════════════════════════════════════════════════════════
