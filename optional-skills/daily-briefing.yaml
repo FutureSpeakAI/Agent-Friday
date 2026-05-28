@@ -1,0 +1,21 @@
+name: daily-briefing
+description: Generate a comprehensive daily briefing from news, calendar, email, and tasks.
+trigger_patterns:
+  - "morning briefing"
+  - "daily briefing"
+  - "what's on today"
+  - "start my day"
+tool_chain:
+  - get_briefing
+  - query_calendar
+  - search_wiki:query="briefing"
+  - run_command:command="Get-Date"
+prompt_template: |
+  Generate a crisp daily briefing for Stephen. Cover:
+  1. Today's calendar events (most important first)
+  2. Top news from the briefing
+  3. Active tasks requiring attention
+  4. One proactive insight or recommendation
+
+  Keep it tight — max 300 words. Lead with the most urgent item.
+success_criteria: Briefing delivered in < 300 words, covers all 4 sections.

@@ -10,6 +10,7 @@ import json
 import glob
 import subprocess
 import base64
+import sys
 import traceback
 import uuid
 import threading
@@ -21,6 +22,9 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response
 from functools import wraps
+
+# Prevent console windows from flashing when spawning subprocesses on Windows.
+_POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
 try:
     from flask_sock import Sock, ConnectionClosed
@@ -138,8 +142,11 @@ TEMP_AUDIO_DIR = FRIDAY_DIR / "audio-cache"
 TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_genai_client():
-    global _genai_client
+    global _genai_client, GEMINI_API_KEY
     if _genai_client is None:
+        # Check settings.json for key saved via setup wizard
+        if not GEMINI_API_KEY:
+            GEMINI_API_KEY = _load_settings().get('gemini_api_key', '')
         try:
             from google import genai
             if GEMINI_API_KEY:
@@ -158,8 +165,11 @@ _anthropic_client = None
 
 
 def get_anthropic_client():
-    global _anthropic_client
+    global _anthropic_client, ANTHROPIC_API_KEY
     if _anthropic_client is None:
+        # Check settings.json for key saved via setup wizard
+        if not ANTHROPIC_API_KEY:
+            ANTHROPIC_API_KEY = _load_settings().get('anthropic_api_key', '')
         if not ANTHROPIC_API_KEY:
             return None
         try:
@@ -171,7 +181,7 @@ def get_anthropic_client():
     return _anthropic_client
 
 
-def _call_claude(messages, system=None, model=None, max_tokens=2048, temperature=None):
+def _call_claude(messages, system=None, model=None, max_tokens=32768, temperature=None):
     """Call Claude with structured messages. Returns the text response.
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
@@ -184,8 +194,10 @@ def _call_claude(messages, system=None, model=None, max_tokens=2048, temperature
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
         )
+    if model is None:
+        model = _load_settings().get("orchestrator_model") or ANTHROPIC_MODEL_DEFAULT
     kwargs = {
-        "model": model or ANTHROPIC_MODEL_DEFAULT,
+        "model": model,
         "max_tokens": max_tokens,
         "messages": messages,
     }
@@ -255,6 +267,7 @@ def _pii_redact(text):
 # in-memory lookup that NEVER touches disk and is rebuilt per request.
 
 import hashlib as _hashlib
+import hmac as _hmac
 
 _PII_TAG_RE = re.compile(r"\[PII:[a-z]+:[0-9a-f]{8}\]")
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.\-]?)?\(?[2-9][0-9]{2}\)?[\s.\-]?[0-9]{3}[\s.\-]?[0-9]{4}(?!\d)")
@@ -361,6 +374,9 @@ def _rehydrate_pii(text, lookup):
 # ── Full Context Log (append-only JSONL per day) ──────────────
 CONTEXT_LOG_DIR = FRIDAY_DIR / "vault" / "context-log"
 
+# ── Governance Decision BOM ───────────────────────────────────
+DECISION_BOM_FILE = FRIDAY_DIR / "vault" / "decision-bom.jsonl"
+
 
 def _context_logging_enabled():
     try:
@@ -395,10 +411,18 @@ def _log_context(event_type, data):
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 CLAUDE_TOOLS = [
-    {"name": "search_web", "description": "Search the web for current information. Returns a brief answer or a note if the web is unavailable.",
+    {"name": "search_web", "description": "Search the web via DuckDuckGo for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "read_file", "description": "Read a file from the user's home directory tree. Path must be under C:\\Users\\user\\.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page. Ring 2.",
+     "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
+    {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Returns up to 500000 chars.",
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. C:\\Users\\user\\Projects\\foo\\bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
+    {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "Absolute or home-relative path"},
+         "content": {"type": "string", "description": "Text to write"},
+         "mode": {"type": "string", "enum": ["write", "append"], "description": "write (overwrite) or append. Default: write"},
+     }, "required": ["path", "content"]}},
     {"name": "write_clipboard", "description": "Copy text to the user's Windows clipboard.",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
@@ -421,6 +445,18 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "get_briefing", "description": "Get the most recent daily briefing summary.",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "learn_skill", "description": "Create, modify, delete, or list skill YAML files in ~/.friday/skills/. Skills are reusable workflow definitions Friday can load. Use this for self-improvement — when you notice a pattern worth encoding. Actions: create, modify, delete, list, read.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["create", "modify", "delete", "list", "read"], "description": "Operation to perform"},
+         "name": {"type": "string", "description": "Skill slug (alphanumeric/dashes). Required for all actions except 'list'."},
+         "content": {"type": "string", "description": "YAML content for the skill (required for create/modify). Fields: name, description, trigger_patterns, tool_chain, prompt_template, success_criteria"},
+     }, "required": ["action"]}},
+    {"name": "install_package", "description": "Install a pip or npm package. Always check_only first to see if already installed. Ring 3 — requires Computer Control permission.",
+     "input_schema": {"type": "object", "properties": {
+         "package": {"type": "string", "description": "Package name, e.g. 'beautifulsoup4' or 'requests>=2.28'"},
+         "manager": {"type": "string", "enum": ["pip", "npm"], "description": "Package manager. Default: pip"},
+         "check_only": {"type": "boolean", "description": "If true, only checks if installed (no install). Default: false"},
+     }, "required": ["package"]}},
 ]
 
 # Block list for run_command (case-insensitive substring match).
@@ -454,23 +490,228 @@ def _safe_under_home(path_str):
         return None
 
 
+def _html_to_text(html):
+    """Strip HTML tags to plain text, preferring BeautifulSoup when available."""
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+            tag.decompose()
+        text = soup.get_text(separator='\n', strip=True)
+        return re.sub(r'\n{3,}', '\n\n', text)
+    except ImportError:
+        text = re.sub(r'<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>', ' ', html, flags=re.I | re.S)
+        text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I | re.S)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        return re.sub(r'\s+', ' ', text).strip()
+
+
 def _tool_search_web(inp):
-    # No web-search dependency wired yet. Return a graceful note.
     q = (inp or {}).get('query', '')
-    return f"Web search is not connected. Query was: {q!r}. Use read_wiki, get_briefing, or query_calendar for local context."
+    if not q:
+        return "search_web error: 'query' is required."
+    try:
+        import requests as _req
+        encoded = _req.utils.quote(q)
+        resp = _req.get(
+            f"https://html.duckduckgo.com/html/?q={encoded}",
+            timeout=12,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0'},
+        )
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            results = []
+            for r in soup.select('.result')[:8]:
+                title_el = r.select_one('.result__title')
+                snip_el = r.select_one('.result__snippet')
+                url_el = r.select_one('.result__url')
+                if title_el and snip_el:
+                    results.append({
+                        'title': title_el.get_text(strip=True),
+                        'snippet': snip_el.get_text(strip=True),
+                        'url': url_el.get_text(strip=True) if url_el else '',
+                    })
+            if results:
+                lines = [f"Search results for '{q}':\n"]
+                for i, r in enumerate(results, 1):
+                    lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
+                return '\n'.join(lines)[:100_000]
+        except ImportError:
+            pass
+        # BS4 not available — return stripped text
+        text = _html_to_text(resp.text)
+        return f"Search results for '{q}' (raw):\n{text[:50_000]}"
+    except ImportError:
+        return (
+            f"requests library not installed. Install it with: pip install requests\n"
+            f"Query was: {q!r}"
+        )
+    except Exception as e:
+        return f"Web search error: {e}. Query: {q!r}"
+
+
+def _tool_browse_web(inp):
+    url = ((inp or {}).get('url') or '').strip()
+    if not url:
+        return "browse_web error: 'url' is required."
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return f"browse_web error: URL must start with http:// or https://. Got: {url!r}"
+    try:
+        import requests as _req
+        resp = _req.get(
+            url, timeout=15,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0'},
+            allow_redirects=True,
+        )
+        ct = resp.headers.get('content-type', '')
+        if 'html' in ct or 'text' in ct or not ct:
+            text = _html_to_text(resp.text)
+        else:
+            return f"Non-text content ({ct}) at {url} — can't extract text."
+        _log_context("browse_web", {"url": url, "chars": len(text)})
+        limit = 200_000
+        return f"[{url}]\n{text[:limit]}" + (f"\n...[truncated — {len(text)} chars total]" if len(text) > limit else "")
+    except ImportError:
+        return "browse_web requires the requests library. Install: pip install requests"
+    except Exception as e:
+        return f"Browse error ({url}): {e}"
 
 
 def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
-    p = _safe_under_home(raw)
-    if not p or not p.exists() or not p.is_file():
-        return f"File not found or outside allowed root: {raw}"
+    if not raw:
+        return "read_file error: 'path' is required."
+    try:
+        p = Path(raw).expanduser().resolve()
+    except Exception as e:
+        return f"Invalid path {raw!r}: {e}"
+    if not p.exists():
+        return f"File not found: {p}"
+    if not p.is_file():
+        return f"Not a file: {p}"
     try:
         text = p.read_text(encoding='utf-8', errors='replace')
         _log_context("file_read", {"path": str(p), "bytes": len(text)})
-        return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
+        limit = 500_000
+        return text[:limit] + (f"\n...[truncated — {len(text)} total chars]" if len(text) > limit else "")
     except Exception as e:
         return f"Read error: {e}"
+
+
+def _tool_write_file(inp):
+    inp = inp or {}
+    raw = (inp.get('path') or '').strip()
+    content = inp.get('content', '')
+    mode = (inp.get('mode') or 'write').lower()
+    if not raw:
+        return "write_file error: 'path' is required."
+    if mode not in ('write', 'append'):
+        mode = 'write'
+    try:
+        p = Path(raw).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if mode == 'append':
+            with open(p, 'a', encoding='utf-8') as f:
+                f.write(content)
+        else:
+            p.write_text(content, encoding='utf-8')
+        _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode})
+        return f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
+    except Exception as e:
+        return f"Write error: {e}"
+
+
+def _tool_learn_skill(inp):
+    """Create, modify, delete, or list skill YAML files in ~/.friday/skills/."""
+    inp = inp or {}
+    action = (inp.get('action') or 'create').lower()
+    skills_dir = FRIDAY_DIR / 'skills'
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    if action == 'list':
+        skills = sorted(f.stem for f in skills_dir.glob('*.yaml'))
+        return json.dumps({'skills': skills, 'count': len(skills), 'path': str(skills_dir)})
+
+    name = re.sub(r'[^\w\-]', '_', (inp.get('name') or '').strip())
+    if not name:
+        return "learn_skill error: 'name' is required for create/modify/delete."
+
+    skill_file = skills_dir / f'{name}.yaml'
+
+    if action == 'delete':
+        if skill_file.exists():
+            skill_file.unlink()
+            return f"Skill '{name}' deleted."
+        return f"Skill '{name}' not found."
+
+    if action in ('create', 'modify', 'update'):
+        content = (inp.get('content') or '').strip()
+        if not content:
+            return "learn_skill error: 'content' (YAML text) is required for create/modify."
+        existed = skill_file.exists()
+        skill_file.write_text(content, encoding='utf-8')
+        _log_context("skill_write", {"name": name, "action": action})
+        return f"Skill '{name}' {'modified' if existed else 'created'} at {skill_file}. Restart server to load."
+
+    if action == 'read':
+        if not skill_file.exists():
+            return f"Skill '{name}' not found."
+        return skill_file.read_text(encoding='utf-8')
+
+    return f"Unknown action '{action}'. Use: create, modify, delete, list, read."
+
+
+def _tool_install_package(inp):
+    """Install pip or npm packages (Ring 3 — requires CC permission)."""
+    inp = inp or {}
+    package = (inp.get('package') or '').strip()
+    manager = (inp.get('manager') or 'pip').lower()
+    check_only = bool(inp.get('check_only', False))
+
+    if not package:
+        return "install_package error: 'package' is required."
+    if not re.match(r'^[a-zA-Z0-9_\-\.\[\]>=<!,~\s]+$', package):
+        return f"install_package error: invalid package name: {package!r}"
+
+    if manager == 'pip':
+        bare = re.split(r'[>=<!,\[\s]', package)[0].strip()
+        if check_only:
+            try:
+                proc = subprocess.run(
+                    [sys.executable, '-m', 'pip', 'show', bare],
+                    capture_output=True, text=True, timeout=15,
+                    creationflags=_POPEN_FLAGS,
+                )
+                return f"INSTALLED:\n{proc.stdout[:800]}" if proc.returncode == 0 else f"NOT INSTALLED: {bare}"
+            except Exception as e:
+                return f"Check error: {e}"
+        try:
+            proc = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', package],
+                capture_output=True, text=True, timeout=180,
+                creationflags=_POPEN_FLAGS,
+            )
+            out = (proc.stdout or '') + (('\n[stderr]\n' + proc.stderr) if proc.stderr else '')
+            return f"{'SUCCESS' if proc.returncode == 0 else 'FAILED'}:\n{out[:4000]}"
+        except subprocess.TimeoutExpired:
+            return "pip install timed out after 180s."
+        except Exception as e:
+            return f"pip install error: {e}"
+
+    elif manager == 'npm':
+        cmd = ['npm', 'list', '-g', '--depth=0', package] if check_only else ['npm', 'install', '-g', package]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=180,
+                creationflags=_POPEN_FLAGS,
+            )
+            out = (proc.stdout or '') + (('\n[stderr]\n' + proc.stderr) if proc.stderr else '')
+            return f"{'SUCCESS' if proc.returncode == 0 else 'FAILED'}:\n{out[:4000]}"
+        except Exception as e:
+            return f"npm error: {e}"
+
+    return f"Unknown package manager: {manager!r}. Use 'pip' or 'npm'."
 
 
 def _tool_write_clipboard(inp):
@@ -481,6 +722,7 @@ def _tool_write_clipboard(inp):
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text],
             check=True, capture_output=True, timeout=10,
+            creationflags=_POPEN_FLAGS,
         )
         return f"Copied {len(text)} chars to clipboard."
     except Exception as e:
@@ -498,10 +740,10 @@ def _tool_query_trust_graph(inp):
         if not isinstance(p, dict):
             continue
         if (p.get('name') or '').strip().lower() == name:
-            return json.dumps(p, default=str)[:8000]
+            return json.dumps(p, default=str)[:100_000]
         aliases = [str(a).lower() for a in (p.get('aliases') or [])]
         if name in aliases:
-            return json.dumps(p, default=str)[:8000]
+            return json.dumps(p, default=str)[:100_000]
     return f"No trust-graph entry found for {name!r}."
 
 
@@ -527,7 +769,7 @@ def _tool_read_wiki(inp):
         return f"Wiki file not found: {raw}"
     try:
         text = p.read_text(encoding='utf-8', errors='replace')
-        return text[:20000] + ("\n...[truncated]" if len(text) > 20000 else "")
+        return text[:200_000] + ("\n...[truncated]" if len(text) > 200_000 else "")
     except Exception as e:
         return f"Read error: {e}"
 
@@ -582,7 +824,7 @@ def _tool_search_wiki(inp):
 
     if not results:
         return f"No wiki files matched {query!r}."
-    return json.dumps({'query': query, 'hits': results}, default=str)[:8000]
+    return json.dumps({'query': query, 'hits': results}, default=str)[:100_000]
 
 
 def _tool_run_command(inp):
@@ -596,12 +838,13 @@ def _tool_run_command(inp):
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=300,
+            creationflags=_POPEN_FLAGS,
         )
         out = (proc.stdout or '') + (("\n[stderr]\n" + proc.stderr) if proc.stderr else '')
-        return out[:8000] if out else f"(exit {proc.returncode}, no output)"
+        return out[:100_000] if out else f"(exit {proc.returncode}, no output)"
     except subprocess.TimeoutExpired:
-        return "Command timed out after 30s."
+        return "Command timed out after 300s."
     except Exception as e:
         return f"Command error: {e}"
 
@@ -634,7 +877,7 @@ def _tool_get_career_pipeline(_inp):
     try:
         if JOB_SEARCH_FILE.exists():
             text = JOB_SEARCH_FILE.read_text(encoding='utf-8', errors='replace')
-            return text[:12000] + ("\n...[truncated]" if len(text) > 12000 else "")
+            return text[:500_000] + ("\n...[truncated]" if len(text) > 500_000 else "")
         return "No career pipeline file found at ~/wiki/professional/job-search.md."
     except Exception as e:
         return f"Pipeline read error: {e}"
@@ -663,7 +906,7 @@ def _tool_get_briefing(_inp):
             text = re.sub(r'<style\b[^<]*(?:(?!</style>)<[^<]*)*</style>', ' ', text, flags=re.I)
             text = re.sub(r'<[^>]+>', ' ', text)
             text = re.sub(r'\s+', ' ', text).strip()
-        return f"[{latest.name}]\n{text[:8000]}"
+        return f"[{latest.name}]\n{text[:100_000]}"
     except Exception as e:
         return f"Briefing read error: {e}"
 
@@ -674,6 +917,10 @@ def _tool_get_briefing(_inp):
 # from the worker thread, so callers should always copy before returning.
 TASKS = {}
 TASKS_LOCK = threading.Lock()
+
+# Per-task follow-up queue for dual-loop steering (POST /api/agent/steer)
+_FOLLOW_UP_QUEUES: dict = {}
+_FOLLOW_UP_LOCK = threading.Lock()
 
 
 def _task_log(task_id, line):
@@ -717,6 +964,31 @@ def _task_snapshot(task_id=None):
         return out
 
 
+def _evaluate_output(task_id, goal, output):
+    """Grade task output with a fresh Claude call that has no build history."""
+    client = get_anthropic_client()
+    if client is None:
+        return None
+    try:
+        eval_prompt = (
+            f"You are a strict, impartial evaluator. Read the goal and output below, "
+            f"then grade the output.\n\n"
+            f"GOAL:\n{goal[:1500]}\n\n"
+            f"OUTPUT:\n{output[:4000]}\n\n"
+            f"Respond ONLY in this exact format:\n"
+            f"GRADE: [PASS/PARTIAL/FAIL]\n"
+            f"REASON: [one sentence]"
+        )
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL_DEFAULT,
+            max_tokens=128,
+            messages=[{"role": "user", "content": eval_prompt}],
+        )
+        return resp.content[0].text.strip() if resp.content else "GRADE: PARTIAL\nREASON: Evaluation unavailable."
+    except Exception as e:
+        return f"GRADE: PARTIAL\nREASON: Evaluation failed: {e}"
+
+
 def _task_worker(task_id, name, prompt, description=''):
     """Run a Claude agent prompt to completion and store results.
 
@@ -730,23 +1002,77 @@ def _task_worker(task_id, name, prompt, description=''):
     try:
         # Each task gets its own fresh single-turn conversation.
         messages = [{"role": "user", "content": prompt}]
-        settings = _load_settings()
-        personality = _load_agent_personality()
-        system = _settings_system_prefix(settings, personality) + (
+        # Load full vault/wiki context so the agent knows who Stephen is,
+        # who his contacts are, and what's in his life — not just "I'm an agent".
+        _task_log(task_id, 'Loading vault context…')
+        system = _get_friday_system_prompt(prompt, workspace='task') + (
+            "\n\n== BACKGROUND TASK MODE ==\n"
             "You are operating as an autonomous background task. Take initiative, "
-            "use available tools, and produce a concrete, useful result the user can read."
+            "use available tools, and produce a concrete, useful result the user can read.\n\n"
+            "== RESEARCH DISCIPLINE ==\n"
+            "When doing research tasks: after your first round of findings, identify which "
+            "side of the question has WEAKER evidence. Run a second round explicitly targeting "
+            "that weaker side to avoid confirmation bias. State both sides in your output."
         )
         # Stream a couple of milestone lines so the UI feels alive.
         _task_log(task_id, 'Calling Claude…')
-        reply, tool_trace = _call_claude_agent(messages, system=system, max_tokens=2048)
+        subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
+        reply, tool_trace = _call_claude_agent(
+            messages, system=system, max_tokens=32768, model=subagent_model,
+            session_ctx={"authenticated": True, "is_background_task": True},
+        )
         for step in tool_trace or []:
             tn = step.get('name', '?')
             ti = step.get('input') or {}
             label = ti.get('query') or ti.get('path') or ti.get('command') or ti.get('url') or ''
             line = f'{tn}({str(label)[:60]})' if label else tn
             _task_log(task_id, '→ tool: ' + line)
+
+        # ── Dual-loop: drain the follow-up queue ──────────────────
+        # External callers can POST /api/agent/steer to push follow-up
+        # prompts that re-enter the agent after the first pass completes.
+        combined_reply = reply or ''
+        combined_trace = list(tool_trace or [])
+        _drain_iters = 0
+        while _drain_iters < 5:
+            with _FOLLOW_UP_LOCK:
+                pending = _FOLLOW_UP_QUEUES.pop(task_id, [])
+            if not pending:
+                break
+            _drain_iters += 1
+            for steer_msg in pending:
+                _task_log(task_id, f'[steer] {steer_msg[:80]}')
+                steer_reply, steer_trace = _call_claude_agent(
+                    [{"role": "user", "content": steer_msg}],
+                    system=system, max_tokens=32768, model=subagent_model,
+                    session_ctx={"authenticated": True, "is_background_task": True},
+                )
+                combined_trace.extend(steer_trace or [])
+                if steer_reply:
+                    combined_reply += f"\n\n---\n{steer_reply}"
+
+        reply = combined_reply
+        tool_trace = combined_trace
+
+        # ── Evidence gate: require tool use for verified completion ──
+        evidence = [t for t in tool_trace if t.get('name') not in ('spawn_task',)]
+        verified = len(evidence) > 0
+        verification_summary = ', '.join(dict.fromkeys(t['name'] for t in evidence[:10])) if evidence else 'no tools used'
+        final_status = 'complete' if verified else 'completed_unverified'
+
         _task_log(task_id, 'Finalizing response')
-        _task_set(task_id, status='complete', result=reply or '(no response)', ended=_time.time())
+        _task_set(task_id, status=final_status, result=reply or '(no response)', ended=_time.time(),
+                  verified=verified, verification_evidence=verification_summary)
+
+        # ── Fresh-context evaluator ────────────────────────────────
+        _task_log(task_id, 'Running quality evaluation…')
+        evaluation = _evaluate_output(task_id, prompt, reply or '')
+        if evaluation:
+            _task_set(task_id, evaluation=evaluation)
+            grade_line = next((l for l in evaluation.splitlines() if l.startswith('GRADE:')), '')
+            if grade_line:
+                _task_log(task_id, f'Eval: {grade_line}')
+
         _task_log(task_id, 'Done.')
     except Exception as e:
         traceback.print_exc()
@@ -835,6 +1161,27 @@ def delete_task(task_id):
     return jsonify({"error": "Task not found"}), 404
 
 
+@app.route('/api/agent/steer', methods=['POST'])
+@login_required
+def api_agent_steer():
+    """Push a follow-up prompt into a running task's dual-loop queue.
+
+    POST body: { "task_id": "...", "message": "..." }
+    The message is injected as a new user turn after the current agent pass finishes.
+    """
+    data = request.get_json() or {}
+    task_id = (data.get('task_id') or '').strip()
+    message = (data.get('message') or '').strip()
+    if not task_id or not message:
+        return jsonify({"error": "task_id and message are required"}), 400
+    with TASKS_LOCK:
+        if task_id not in TASKS:
+            return jsonify({"error": "Task not found"}), 404
+    with _FOLLOW_UP_LOCK:
+        _FOLLOW_UP_QUEUES.setdefault(task_id, []).append(message)
+    return jsonify({"ok": True, "task_id": task_id, "queued": message[:120]})
+
+
 def _tool_propose_wiki_update(inp):
     """Queue a wiki update as pending — the user approves it in the Wiki workspace."""
     inp = inp or {}
@@ -918,7 +1265,9 @@ CLAUDE_TOOLS.append({
 
 CLAUDE_TOOL_HANDLERS = {
     "search_web": _tool_search_web,
+    "browse_web": _tool_browse_web,
     "read_file": _tool_read_file,
+    "write_file": _tool_write_file,
     "write_clipboard": _tool_write_clipboard,
     "query_trust_graph": _tool_query_trust_graph,
     "query_calendar": _tool_query_calendar,
@@ -933,15 +1282,369 @@ CLAUDE_TOOL_HANDLERS = {
     "spawn_task": _tool_spawn_task,
     "propose_wiki_update": _tool_propose_wiki_update,
     "correct_wiki": _tool_correct_wiki,
+    "learn_skill": _tool_learn_skill,
+    "install_package": _tool_install_package,
 }
 
 
-def _execute_tool(name, tool_input, pii_lookup=None):
-    """Run a Claude tool. If pii_lookup is a dict, scrub PII into it instead of
-    destructively redacting; otherwise fall back to non-recoverable redaction."""
+# ── Computer Control ─────────────────────────────────────────────
+# pyautogui-based mouse/keyboard control. Requires explicit user permission.
+# Permission is runtime-only (not persisted). Kill switch terminates immediately.
+
+_CC_PERMISSION = threading.Event()   # Set = user granted permission
+_CC_KILL = threading.Event()          # Set = kill switch activated
+_CC_ACTION_TS: list = []              # timestamps for rate limiting
+_CC_ACTION_LOCK = threading.Lock()
+_CC_MAX_PER_SEC = 20                  # max actions per second (rate limit is a safety floor, not a ceiling)
+
+_HAS_PYAUTOGUI = False
+_pag = None  # module handle
+
+try:
+    import pyautogui as _pag
+    _pag.FAILSAFE = True   # moving mouse to top-left corner aborts any running call
+    _pag.PAUSE = 0.05
+    _HAS_PYAUTOGUI = True
+    print("  [FRIDAY] pyautogui loaded — computer control available")
+except ImportError:
+    print("  [FRIDAY] pyautogui not installed — computer control disabled. Run: pip install pyautogui")
+
+
+def _cc_check():
+    """Return (True, None) if CC is permitted, else (False, error_string)."""
+    if not _HAS_PYAUTOGUI:
+        return False, "pyautogui not installed. Run: pip install pyautogui"
+    if _CC_KILL.is_set():
+        return False, "Kill switch is active. Computer control suspended — re-enable in Settings."
+    if not _CC_PERMISSION.is_set():
+        return False, "Computer control permission not granted. Enable it in Settings > Computer Control."
+    return True, None
+
+
+def _cc_rate_ok():
+    now = _time.time()
+    with _CC_ACTION_LOCK:
+        _CC_ACTION_TS[:] = [t for t in _CC_ACTION_TS if now - t < 1.0]
+        if len(_CC_ACTION_TS) >= _CC_MAX_PER_SEC:
+            return False
+        _CC_ACTION_TS.append(now)
+    return True
+
+
+def _tool_move_mouse(inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    if not _cc_rate_ok():
+        return "Rate limited: too many actions per second."
+    x = int((inp or {}).get('x', 0))
+    y = int((inp or {}).get('y', 0))
+    try:
+        _pag.moveTo(x, y, duration=0.25)
+        _log_context("cc_action", {"action": "move_mouse", "x": x, "y": y})
+        return f"Mouse moved to ({x}, {y})."
+    except Exception as e:
+        return f"move_mouse error: {e}"
+
+
+def _tool_click(inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    if not _cc_rate_ok():
+        return "Rate limited."
+    x = int((inp or {}).get('x', 0))
+    y = int((inp or {}).get('y', 0))
+    button = (inp or {}).get('button', 'left')
+    if button not in ('left', 'right', 'middle'):
+        button = 'left'
+    try:
+        _pag.click(x, y, button=button)
+        _log_context("cc_action", {"action": "click", "x": x, "y": y, "button": button})
+        return f"Clicked {button} at ({x}, {y})."
+    except Exception as e:
+        return f"click error: {e}"
+
+
+def _tool_type_text(inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    text = (inp or {}).get('text', '')
+    if not text:
+        return "No text provided."
+    if len(text) > 2000:
+        return "Text too long (max 2000 chars per call)."
+    if not _cc_rate_ok():
+        return "Rate limited."
+    try:
+        _pag.write(text, interval=0.03)
+        _log_context("cc_action", {"action": "type_text", "chars": len(text)})
+        return f"Typed {len(text)} characters."
+    except Exception as e:
+        return f"type_text error: {e}"
+
+
+def _tool_press_key(inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    key = ((inp or {}).get('key') or '').strip()
+    if not key:
+        return "No key provided."
+    if not _cc_rate_ok():
+        return "Rate limited."
+    try:
+        _pag.press(key)
+        _log_context("cc_action", {"action": "press_key", "key": key})
+        return f"Pressed key: {key}."
+    except Exception as e:
+        return f"press_key error: {e}"
+
+
+def _tool_screenshot(_inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    try:
+        shot = _pag.screenshot()
+        buf = io.BytesIO()
+        shot.save(buf, format='PNG')
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        w, h = shot.size
+        _log_context("cc_action", {"action": "screenshot", "size": f"{w}x{h}"})
+        return json.dumps({
+            "width": w, "height": h,
+            "data_url": f"data:image/png;base64,{b64}",
+            "note": f"Screenshot captured ({w}x{h} px). Use coordinates to click elements.",
+        })
+    except Exception as e:
+        return f"screenshot error: {e}"
+
+
+def _tool_scroll(inp):
+    ok, err = _cc_check()
+    if not ok:
+        return err
+    if not _cc_rate_ok():
+        return "Rate limited."
+    direction = (inp or {}).get('direction', 'down')
+    amount = max(1, min(20, int((inp or {}).get('amount', 3))))
+    clicks = -amount if direction == 'down' else amount
+    try:
+        _pag.scroll(clicks)
+        _log_context("cc_action", {"action": "scroll", "direction": direction, "amount": amount})
+        return f"Scrolled {direction} {amount} step(s)."
+    except Exception as e:
+        return f"scroll error: {e}"
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "move_mouse",
+        "description": "Move the mouse cursor to screen coordinates. Requires computer control permission (user must enable in Settings > Computer Control). Take a screenshot first to locate elements.",
+        "input_schema": {"type": "object", "properties": {
+            "x": {"type": "integer", "description": "X pixels from left edge"},
+            "y": {"type": "integer", "description": "Y pixels from top edge"},
+        }, "required": ["x", "y"]},
+    },
+    {
+        "name": "click",
+        "description": "Click the mouse at screen coordinates. Requires computer control permission.",
+        "input_schema": {"type": "object", "properties": {
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
+            "button": {"type": "string", "enum": ["left", "right", "middle"]},
+        }, "required": ["x", "y"]},
+    },
+    {
+        "name": "type_text",
+        "description": "Type text via keyboard into the currently focused element. Requires computer control permission.",
+        "input_schema": {"type": "object", "properties": {
+            "text": {"type": "string"},
+        }, "required": ["text"]},
+    },
+    {
+        "name": "press_key",
+        "description": "Press a keyboard key. Requires computer control permission. Key names: enter, tab, escape, backspace, delete, home, end, pageup, pagedown, up, down, left, right, f1-f12, ctrl, alt, shift, or combos like ctrl+c.",
+        "input_schema": {"type": "object", "properties": {
+            "key": {"type": "string"},
+        }, "required": ["key"]},
+    },
+    {
+        "name": "screenshot",
+        "description": "Capture the current screen as a PNG. Returns dimensions and base64 image data. Use this before clicking to locate UI elements by their pixel position. Requires computer control permission.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "scroll",
+        "description": "Scroll the mouse wheel up or down. Requires computer control permission.",
+        "input_schema": {"type": "object", "properties": {
+            "direction": {"type": "string", "enum": ["up", "down"]},
+            "amount": {"type": "integer", "description": "Scroll steps (1-20, default 3)"},
+        }, "required": ["direction"]},
+    },
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "move_mouse": _tool_move_mouse,
+    "click": _tool_click,
+    "type_text": _tool_type_text,
+    "press_key": _tool_press_key,
+    "screenshot": _tool_screenshot,
+    "scroll": _tool_scroll,
+})
+
+
+# ── Privilege Ring Mapping ─────────────────────────────────────
+# Ring 0 READ   — local reads, no mutation, always allowed
+# Ring 1 WRITE  — local state mutation, always allowed
+# Ring 2 NETWORK — external calls, agent spawn; requires authenticated session
+# Ring 3 FULL   — OS-level control (mouse, keyboard, screen); requires CC permission
+TOOL_RINGS: dict[str, int] = {
+    # Ring 0 — READ (local reads, no mutation, always allowed)
+    "read_file":            0,
+    "read_wiki":            0,
+    "search_wiki":          0,
+    "query_trust_graph":    0,
+    "query_calendar":       0,
+    "get_career_pipeline":  0,
+    "get_briefing":         0,
+    # Ring 1 — WRITE (local state mutation, always allowed)
+    "write_file":           1,
+    "write_clipboard":      1,
+    "propose_wiki_update":  1,
+    "correct_wiki":         1,
+    "learn_skill":          1,
+    # Ring 2 — NETWORK (external calls; requires authenticated session)
+    "search_web":           2,
+    "browse_web":           2,
+    "search_email":         2,
+    "draft_email":          2,
+    "open_url":             2,
+    "spawn_task":           2,
+    "run_command":          2,
+    # Ring 3 — FULL OS CONTROL (requires CC permission)
+    "install_package":      3,
+    "move_mouse":           3,
+    "click":                3,
+    "type_text":            3,
+    "press_key":            3,
+    "screenshot":           3,
+    "scroll":               3,
+}
+
+_GOVERNANCE_KEY: bytes | None = None
+
+
+def _get_governance_key() -> bytes:
+    """Return the HMAC signing key for BOM entries, generating once per run."""
+    global _GOVERNANCE_KEY
+    if _GOVERNANCE_KEY is not None:
+        return _GOVERNANCE_KEY
+    key_file = FRIDAY_DIR / "vault" / ".governance-key"
+    if key_file.exists():
+        try:
+            _GOVERNANCE_KEY = key_file.read_bytes()
+            return _GOVERNANCE_KEY
+        except Exception:
+            pass
+    import os as _os
+    key = _os.urandom(32)
+    try:
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_bytes(key)
+    except Exception:
+        pass
+    _GOVERNANCE_KEY = key
+    return key
+
+
+def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = None) -> tuple[bool, str]:
+    """Policy gate executed before every tool call.
+
+    Returns (allowed, reason). Appends a signed entry to decision-bom.jsonl
+    regardless of outcome so every gate decision is auditable.
+
+    session_ctx keys used:
+      authenticated      — True if the HTTP session is logged-in
+      is_background_task — True for spawned task threads (implicitly authenticated)
+    """
+    ring = TOOL_RINGS.get(tool_name, 2)   # unknown tools default to NETWORK ring
+    ctx = session_ctx or {}
+
+    if ring <= 1:
+        allowed = True
+        reason = f"ring-{ring} always permitted"
+        policy = "cLaw:Ring01-AlwaysAllow"
+    elif ring == 2:
+        is_auth = ctx.get("authenticated") or ctx.get("is_background_task")
+        if is_auth:
+            allowed = True
+            reason = "ring-2 network op permitted (authenticated)"
+            policy = "cLaw:Ring2-RequiresAuth"
+        else:
+            allowed = False
+            reason = "ring-2 network op requires authenticated session"
+            policy = "cLaw:Ring2-RequiresAuth"
+    elif ring == 3:
+        cc_ok, cc_err = _cc_check()
+        if cc_ok:
+            allowed = True
+            reason = "ring-3 OS control permitted (CC enabled)"
+            policy = "cLaw:Ring3-ExplicitApproval"
+        else:
+            allowed = False
+            reason = f"ring-3 OS control denied: {cc_err}"
+            policy = "cLaw:Ring3-ExplicitApproval"
+    else:
+        allowed = False
+        reason = f"unknown ring level {ring}"
+        policy = "cLaw:UnknownRing"
+
+    # Build and sign the BOM entry
+    args_str = json.dumps(args or {}, sort_keys=True, default=str)
+    args_hash = _hashlib.sha256(args_str.encode("utf-8")).hexdigest()
+    ts = datetime.utcnow().isoformat() + "Z"
+    entry: dict = {
+        "timestamp": ts,
+        "tool": tool_name,
+        "ring": ring,
+        "args_hash": args_hash,
+        "policy": policy,
+        "decision": "allow" if allowed else "deny",
+        "reason": reason,
+    }
+    canonical = json.dumps(entry, sort_keys=True).encode("utf-8")
+    entry["hmac"] = _hmac.new(_get_governance_key(), canonical, _hashlib.sha256).hexdigest()
+
+    try:
+        DECISION_BOM_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(DECISION_BOM_FILE, "a", encoding="utf-8") as _f:
+            _f.write(json.dumps(entry) + "\n")
+    except Exception as _e:
+        print(f"  [GOV] BOM write failed: {_e}")
+
+    if not allowed:
+        print(f"  [GOV] DENY  {tool_name} (ring={ring}): {reason}")
+
+    return allowed, reason
+
+
+def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
+    """Run a Claude tool through the governance gate.
+
+    pii_lookup: if a dict, scrub PII into it instead of destructively redacting.
+    session_ctx: passed to _governance_check for ring-2/3 policy evaluation.
+    """
     handler = CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         return f"Unknown tool: {name}"
+
+    allowed, reason = _governance_check(name, tool_input, session_ctx=session_ctx)
+    if not allowed:
+        return f"[GOVERNANCE DENY] {reason}"
+
     try:
         result = handler(tool_input or {})
         if not isinstance(result, str):
@@ -951,7 +1654,7 @@ def _execute_tool(name, tool_input, pii_lookup=None):
             _log_context("tool_call", {
                 "name": name,
                 "input": tool_input,
-                "result_preview": result[:500],
+                "result_preview": result[:2000],
                 "result_len": len(result),
             })
         except Exception:
@@ -966,14 +1669,12 @@ def _execute_tool(name, tool_input, pii_lookup=None):
         return f"Tool error ({name}): {e}"
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, temperature=None, max_iters=6, pii_lookup=None):
+def _call_claude_agent(messages, system=None, model=None, max_tokens=32768, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
-    If pii_lookup is a dict, it is assumed the caller has already scrubbed
-    `messages` and `system` and added entries to the lookup; tool results
-    are scrubbed into the same lookup so the rehydrator at the end of the
-    request can substitute every placeholder back. If pii_lookup is None,
-    falls back to the legacy non-recoverable redaction (`_pii_redact`).
+    pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
+    session_ctx: passed to _governance_check for ring-2/3 policy enforcement.
+      Keys: authenticated (bool), is_background_task (bool).
     """
     client = get_anthropic_client()
     if client is None:
@@ -1000,14 +1701,37 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, tempe
     convo = list(safe_messages)
 
     for _ in range(max_iters):
+        # ── Operator filesystem controls ───────────────────────────
+        # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
+        _stop_path = FRIDAY_DIR / "AGENT_STOP"
+        if _stop_path.exists():
+            try:
+                _stop_path.unlink()
+            except Exception:
+                pass
+            return ("[Agent stopped by operator control: AGENT_STOP file detected.]", tool_trace)
+
+        # Write instructions to ~/.friday/STEER.md to redirect mid-task.
+        _steer_inject = None
+        _steer_path = FRIDAY_DIR / "STEER.md"
+        if _steer_path.exists():
+            try:
+                _steer_inject = _steer_path.read_text(encoding='utf-8').strip()
+                _steer_path.unlink()
+            except Exception:
+                pass
+
         kwargs = {
             "model": model or ANTHROPIC_MODEL_DEFAULT,
             "max_tokens": max_tokens,
             "messages": convo,
             "tools": CLAUDE_TOOLS,
         }
-        if safe_system:
-            kwargs["system"] = safe_system
+        _sys = safe_system
+        if _steer_inject:
+            _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
+        if _sys:
+            kwargs["system"] = _sys
         if temperature is not None:
             try:
                 kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
@@ -1047,8 +1771,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, tempe
         # Execute tools and feed results back
         tool_results = []
         for tu in tool_uses:
-            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup)
-            tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:500]})
+            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+            tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu.id,
@@ -1057,6 +1781,72 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=2048, tempe
         convo.append({"role": "user", "content": tool_results})
 
     return ("[Agent hit max tool iterations without completing.]", tool_trace)
+
+
+# ══════════════════════════════════════════════════════════════
+#  TRAJECTORY COMPRESSION  (Hermes-inspired context management)
+#  When the conversation history sent to Claude would exceed the
+#  soft limit, compress older turns into a dense summary block
+#  while keeping recent turns verbatim.
+# ══════════════════════════════════════════════════════════════
+
+_TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.7 has 1M ctx — only compress at this threshold
+_TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim
+
+
+def _estimate_chars(messages):
+    return sum(len(m.get('content') or '') for m in messages)
+
+
+def _compress_trajectory(messages):
+    """Return a shorter version of the message list.
+
+    Splits into 'old' and 'recent' halves.  If the old half is large enough to
+    warrant compression, summarises it via a quick Claude call and replaces it
+    with a synthetic memory block.  Otherwise returns messages unchanged.
+    """
+    if len(messages) <= _TRAJ_KEEP_VERBATIM * 2:
+        return messages
+
+    split = max(0, len(messages) - _TRAJ_KEEP_VERBATIM * 2)
+    old_turns = messages[:split]
+    recent_turns = messages[split:]
+
+    if _estimate_chars(old_turns) < _TRAJ_CHAR_LIMIT:
+        return messages  # old section is small enough to send verbatim
+
+    # Build a plain-text transcript of the old turns for the summariser
+    transcript_lines = []
+    for m in old_turns:
+        role = 'STEPHEN' if m.get('role') == 'user' else 'FRIDAY'
+        text = (m.get('content') or '')[:2000]  # cap per turn
+        transcript_lines.append(f"{role}: {text}")
+    transcript = '\n'.join(transcript_lines)
+
+    try:
+        summary = _call_claude(
+            messages=[{"role": "user", "content":
+                f"Compress the following conversation transcript into a dense, "
+                f"factual memory block (max 600 words). Preserve all decisions, "
+                f"facts, and open questions. Use bullet points.\n\n{transcript}"}],
+            system="You are a lossless conversation compressor. Extract every salient fact.",
+            max_tokens=4096,
+            temperature=0.1,
+        )
+    except Exception as e:
+        print(f"  [TRAJ] Compression failed: {e} — sending truncated history")
+        return messages[-_TRAJ_KEEP_VERBATIM * 2:]  # fallback: just truncate
+
+    compressed_block = [
+        {"role": "user",
+         "content": f"[COMPRESSED MEMORY — earlier conversation summary]\n{summary}\n[END COMPRESSED MEMORY]"},
+        {"role": "assistant",
+         "content": "Got it — I have that context from our earlier conversation."},
+    ]
+    result = compressed_block + list(recent_turns)
+    print(f"  [TRAJ] Compressed {len(old_turns)} turns → 2 synthetic turns. "
+          f"Chars: {_estimate_chars(old_turns)} → {_estimate_chars(compressed_block)}")
+    return result
 
 
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
@@ -1084,6 +1874,12 @@ DEFAULT_SETTINGS = {
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
+    # ── Agent Identity & Model Selection ──
+    "agent_name": "AGENT FRIDAY",
+    "orchestrator_model": "claude-opus-4-7",    # main agent brain
+    "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
+    "creative_model": "gemini-2.5-flash",       # images, vision, creative generation
+    "voice_model": "gemini-3.1-flash-live-preview",  # live audio
 }
 
 
@@ -1108,10 +1904,17 @@ def _load_settings():
 
 def _save_settings(data):
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    # Read existing file first to preserve any keys not in DEFAULT_SETTINGS
+    existing = {}
+    if SETTINGS_FILE.exists():
+        try:
+            existing = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+        except Exception:
+            pass
     merged = dict(DEFAULT_SETTINGS)
+    merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
-        if k in DEFAULT_SETTINGS:
-            merged[k] = v
+        merged[k] = v
     SETTINGS_FILE.write_text(json.dumps(merged, indent=2), encoding='utf-8')
     return merged
 
@@ -1173,12 +1976,35 @@ def _settings_system_prefix(settings, personality):
     ]).strip() + "\n"
 
 
+def _get_friday_system_prompt(keywords='', workspace=''):
+    """Build a complete, vault-aware Friday system prompt for ANY Claude call.
+
+    ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
+    Friday is a personal agent with full knowledge of Stephen's life — no call
+    may go out without vault/wiki context. Calling bare _call_claude() without
+    this results in Friday not knowing who Stephen or his contacts are.
+
+    keywords: the user's prompt text; drives smart wiki context routing
+    workspace: hint for context selection ('draft', 'task', 'chat', etc.)
+    """
+    settings = _load_settings()
+    personality = _load_agent_personality()
+    prefix = _settings_system_prefix(settings, personality)
+    try:
+        system_prompt, _ = _build_context_prompt(keywords or '', workspace)
+    except Exception:
+        system_prompt = FRIDAY_SYSTEM_PROMPT
+    return prefix + (system_prompt or FRIDAY_SYSTEM_PROMPT)
+
+
 @app.before_request
 def check_auth():
     if not FRIDAY_PASSWORD:
         return None
     if request.endpoint in ('login', 'static'):
         return None
+    if request.path.startswith('/ws/'):
+        return None  # WebSocket upgrade handled inside ws_live (can't send HTTP redirect)
     if not session.get("authenticated"):
         if request.is_json or request.path.startswith("/api/"):
             return jsonify({"error": "unauthorized"}), 401
@@ -1278,9 +2104,10 @@ def career_report(filename):
         return jsonify({'status': 'ok', 'content': report_path.read_text(encoding='utf-8'), 'filename': filename, 'source': str(report_path)})
     return jsonify({'status': 'not_found'})
 
-@app.route('/api/evolution')
+@app.route('/api/evolution', methods=['GET', 'POST'])
 def get_evolution():
-    """Return evolution day count and structure index based on first_launch in personality.json."""
+    """Return evolution day count and structure index based on first_launch in personality.json.
+    POST with {preferred_scene_index: N} to pin a structure (null to clear and return to auto)."""
     from datetime import date as _date
     pfile = FRIDAY_DIR / "personality.json"
     data = {}
@@ -1289,6 +2116,21 @@ def get_evolution():
             data = json.loads(pfile.read_text(encoding='utf-8'))
         except Exception:
             pass
+
+    if request.method == 'POST':
+        body = request.get_json(silent=True) or {}
+        if 'preferred_scene_index' in body:
+            val = body['preferred_scene_index']
+            if val is None:
+                data.pop('preferred_scene_index', None)
+            else:
+                data['preferred_scene_index'] = int(val)
+            try:
+                pfile.write_text(json.dumps(data, indent=2), encoding='utf-8')
+            except Exception:
+                pass
+        return jsonify({'status': 'ok', 'preferred_scene_index': data.get('preferred_scene_index')})
+
     today = _date.today()
     first_launch_str = data.get('first_launch')
     if not first_launch_str:
@@ -1310,11 +2152,15 @@ def get_evolution():
         'OCEAN OF LIGHT', 'FIBONACCI NERVE', 'TRANSCENDENCE',
         'GIGA EARTH (REZ)'
     ]
-    idx = ((day_count - 1) // 4) % len(names)
+    calendar_idx = ((day_count - 1) // 4) % len(names)
+    preferred_idx = data.get('preferred_scene_index')
+    idx = preferred_idx if preferred_idx is not None else calendar_idx
     return jsonify({
         'day': day_count,
         'structure': f'DAY {day_count}: {names[idx]}',
         'structure_index': idx,
+        'calendar_index': calendar_idx,
+        'preferred_scene_index': preferred_idx,
         'first_launch': first_launch_str
     })
 
@@ -1481,16 +2327,41 @@ def friday_health():
                     creations_today += 1
             except Exception:
                 pass
+    settings = _load_settings()
     models = [
         {"name": "Claude Opus", "active": True},
         {"name": "Gemini",     "active": bool(GEMINI_API_KEY)},
     ]
+    ring_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+    for r in TOOL_RINGS.values():
+        ring_counts[r] = ring_counts.get(r, 0) + 1
+
     return jsonify({
         "status": "ok",
         "uptime_seconds": uptime_s,
         "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
         "creations_today": creations_today,
         "models": models,
+        "agent_name": settings.get("agent_name", "AGENT FRIDAY"),
+        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-7"),
+        "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
+        "creative_model": settings.get("creative_model", "gemini-2.5-flash"),
+        "voice_model": settings.get("voice_model", "gemini-3.1-flash-live-preview"),
+        "governance": {
+            "enabled": True,
+            "version": "v4.1",
+            "policy": "cLaws",
+            "decision_bom": str(DECISION_BOM_FILE),
+            "ring_permissions": {
+                "ring_0_read": "always_allowed",
+                "ring_1_write": "always_allowed",
+                "ring_2_network": "requires_auth",
+                "ring_3_full": "requires_cc_permission",
+            },
+            "tool_counts_by_ring": {
+                f"ring_{k}": v for k, v in sorted(ring_counts.items())
+            },
+        },
     })
 
 
@@ -1908,7 +2779,7 @@ def wiki_setup_research():
                 content = _call_claude(
                     messages=[{"role": "user", "content": prompt}],
                     system="You build draft personal-wiki entries. Be honest about gaps; never fabricate biographical details.",
-                    max_tokens=900,
+                    max_tokens=16384,
                     temperature=0.2,
                 )
             else:
@@ -2079,14 +2950,14 @@ def system_info():
     try:
         # Disk usage
         disk_cmd = 'Get-PSDrive -PSProvider FileSystem | Select-Object Name,@{N="UsedGB";E={[math]::Round($_.Used/1GB,2)}},@{N="FreeGB";E={[math]::Round($_.Free/1GB,2)}},@{N="TotalGB";E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} | ConvertTo-Json'
-        disk_result = subprocess.run(['powershell', '-Command', disk_cmd], capture_output=True, text=True, timeout=10)
+        disk_result = subprocess.run(['powershell', '-Command', disk_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
         disks = json.loads(disk_result.stdout) if disk_result.stdout.strip() else []
         if isinstance(disks, dict):
             disks = [disks]
 
         # Top processes
         proc_cmd = 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Name,@{N="CPU_s";E={[math]::Round($_.CPU,1)}},@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'
-        proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10)
+        proc_result = subprocess.run(['powershell', '-Command', proc_cmd], capture_output=True, text=True, timeout=10, creationflags=_POPEN_FLAGS)
         procs = json.loads(proc_result.stdout) if proc_result.stdout.strip() else []
         if isinstance(procs, dict):
             procs = [procs]
@@ -2523,7 +3394,7 @@ def vibe_code_stop():
         pid = VIBE_TERMINALS[tid].get('pid')
         if pid:
             try:
-                subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
+                subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True, creationflags=_POPEN_FLAGS)
             except Exception:
                 pass
         return jsonify({"status": "ok"})
@@ -2573,18 +3444,59 @@ FRIDAY_SYSTEM_PROMPT = (
     "PERSONALITY: You are family, not a tool. Keep responses short and sharp — like texting a smart colleague. "
     "Use humor. Be direct. Never be sycophantic. Push back when Stephen needs it. "
     "You call him 'boss' sometimes, but you're equals. Think Jarvis meets Hunter S. Thompson's editor.\n\n"
+    "== AUTONOMOUS OPERATION ==\n"
+    "You have FULL authority to take multi-step actions without pausing for permission. "
+    "Chain as many tool calls as needed — hundreds if required. Never ask 'should I continue?' mid-task. "
+    "When the user says 'do X', do X completely. Take initiative. Report results, not intentions. "
+    "The cLaws governance rings are your safety layer — everything else is capability, not restriction.\n\n"
+    "== AVAILABLE TOOLS ==\n"
+    "Use these tools proactively and in combination:\n"
+    "  FILE SYSTEM (Ring 0-1, always allowed):\n"
+    "  • read_file(path) — Read ANY file on the filesystem. Absolute or ~/relative paths.\n"
+    "  • write_file(path, content, mode) — Write or append to ANY file. Creates dirs automatically.\n"
+    "  • read_wiki(path) / search_wiki(query) — Search and read personal wiki\n"
+    "  • propose_wiki_update / correct_wiki — Maintain the knowledge base\n"
+    "  • learn_skill(action, name, content) — Create/modify/delete skill YAML files in ~/.friday/skills/\n"
+    "    Skill YAML fields: name, description, trigger_patterns, tool_chain, prompt_template, success_criteria\n"
+    "  NETWORK (Ring 2, requires auth — always true in normal session):\n"
+    "  • search_web(query) — DuckDuckGo search with snippets and URLs\n"
+    "  • browse_web(url) — Fetch any URL and return full text content\n"
+    "  • run_command(command) — Execute PowerShell commands (non-destructive by policy)\n"
+    "  • open_url(url) — Open a URL in Chrome\n"
+    "  • search_email(query) / draft_email(to, subject, body) — Gmail integration\n"
+    "  • query_calendar() — Today's calendar events\n"
+    "  • spawn_task(name, prompt, description) — Launch long-running background tasks\n"
+    "  DATA & CONTEXT:\n"
+    "  • query_trust_graph(name) — Look up anyone in the trust graph\n"
+    "  • get_career_pipeline() — Job search status\n"
+    "  • get_briefing() — Most recent daily briefing\n"
+    "  • write_clipboard(text) — Copy to clipboard\n"
+    "  OS CONTROL (Ring 3, requires Computer Control enabled in Settings):\n"
+    "  • screenshot() — Capture screen (always use first, to see what's there)\n"
+    "  • move_mouse(x, y) / click(x, y, button) — Mouse control\n"
+    "  • type_text(text) / press_key(key) — Keyboard control\n"
+    "  • scroll(direction, amount) — Scroll\n"
+    "  • install_package(package, manager, check_only) — Install pip/npm packages\n\n"
+    "== COMPUTER CONTROL ==\n"
+    "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings > "
+    "Computer Control. When you need it and it's not enabled, say so. When it IS enabled: "
+    "always take a screenshot first to see the screen, then act based on pixel positions. "
+    "Chain: screenshot → identify element → click/type → screenshot again to verify.\n\n"
+    "== SELF-IMPROVEMENT ==\n"
+    "You can build your own skills with learn_skill. A skill is a YAML file defining a reusable "
+    "workflow. When you notice Stephen asking for the same type of thing repeatedly, encode it. "
+    "Loaded from ~/.friday/skills/ on server restart. List existing skills with action='list'.\n\n"
     "== TASK DELEGATION ==\n"
-    "When the user asks for deep research, analysis, report generation, or any multi-step task that would "
-    "take more than a few seconds, use the spawn_task tool to run it in the background. Examples:\n"
-    "- \"Research Bobby Tahir\" → spawn_task(name=\"Research Bobby Tahir\", prompt=\"Deep research on Bobby Tahir...\")\n"
-    "- \"Analyze my emails from last week\" → spawn_task\n"
-    "- \"Create a report on...\" → spawn_task\n"
-    "- \"Find everything about...\" → spawn_task\n"
-    "- \"Do a deep dive on...\" → spawn_task\n\n"
-    "After spawning a task, tell the user: \"I've started that research — you can track progress in the "
-    "task tray (bottom-right). I'll notify you when it's done.\"\n\n"
-    "For quick questions you can answer immediately (facts, simple lookups, conversation), respond directly "
-    "without spawning a task."
+    "For multi-step work taking more than ~10s, use spawn_task to run it in the background:\n"
+    "- 'Research X' → spawn_task(name='Research X', prompt='Deep research on X...')\n"
+    "- 'Analyze my emails' → spawn_task\n"
+    "- 'Create a report on...' → spawn_task\n"
+    "After spawning: 'Started — track it in the task tray (bottom-right).'\n"
+    "For quick lookups, respond directly.\n\n"
+    "== PACKAGE INSTALLATION ==\n"
+    "You can install Python/npm packages with install_package. Always check_only=true first. "
+    "Requires Ring 3 (Computer Control enabled). Common useful packages: "
+    "beautifulsoup4, requests, pandas, pillow, numpy, playwright.\n"
 )
 
 
@@ -2916,6 +3828,39 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
             f"Independence score: {vault['epistemic'].get('overall', 0.72)}"
         )
 
+    # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
+    # Hermes-inspired: drop a context file in any project directory and Friday
+    # will automatically inject it when relevant.  We search CWD + common
+    # project roots + any path mentioned in the message.
+    _ctx_search_dirs = [
+        Path.cwd(),
+        HOME / "Projects",
+        HOME / "Desktop",
+    ]
+    _msg_lower_ctx = message.lower()
+    # Also pull any directory-looking tokens from the message
+    for token in re.findall(r'[A-Za-z]:\\[^\s\'"]+|~/[^\s\'"]+', message):
+        try:
+            _ctx_search_dirs.append(Path(token).expanduser())
+        except Exception:
+            pass
+    _ctx_names = ['.friday-context.md', 'AGENTS.md', '.friday-context.txt']
+    _ctx_found = []
+    for d in _ctx_search_dirs:
+        if not d.is_dir():
+            continue
+        for name in _ctx_names:
+            p = d / name
+            if p.exists():
+                try:
+                    _ctx_found.append((str(p), p.read_text(encoding='utf-8', errors='replace')[:3000]))
+                except Exception:
+                    pass
+    if _ctx_found:
+        ctx_block = '\n\n'.join(f"[{path}]\n{content}" for path, content in _ctx_found[:2])
+        sections.append(f"\n== PROJECT CONTEXT FILES ==\n{ctx_block}")
+        sources_consulted.append('context_files')
+
     # Layer 3: Vision context (from Gemini screen capture)
     if vision_description:
         sections.append(
@@ -2973,20 +3918,20 @@ def _load_smart_context(user_message, workspace=None):
 
     # Career / job keywords
     if any(w in msg_lower for w in ['career', 'job', 'role', 'interview', 'resume', 'application', 'salary', 'pipeline', 'novartis', 'aquent']):
-        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=4000)
+        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
 
     # Family / co-parent keywords
     if any(w in msg_lower for w in ['family', 'libby', 'liberty', 'janet', 'elisabeth', 'custody', 'coparent', 'daughter', 'partner']):
-        _load_section(context_parts, WIKI_DIR / "family", max_bytes=3000)
-        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=2000)
+        _load_section(context_parts, WIKI_DIR / "family", max_bytes=20_000)
+        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=20_000)
 
     # Finance keywords
     if any(w in msg_lower for w in ['finance', 'money', 'budget', 'investment', 'nvidia', 'amex', 'bank', 'tax']):
-        _load_friday_data(context_parts, "finance", max_bytes=2000)
+        _load_friday_data(context_parts, "finance", max_bytes=10_000)
 
     # Health keywords
     if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'glp', 'henry meds', 'cigna']):
-        _load_friday_data(context_parts, "health", max_bytes=2000)
+        _load_friday_data(context_parts, "health", max_bytes=10_000)
 
     # Person-name detection — pull the trust-graph entry for anyone named
     trust_path = FRIDAY_DIR / "trust_graph.json"
@@ -3005,33 +3950,78 @@ def _load_smart_context(user_message, workspace=None):
 
     # FutureSpeak / business keywords
     if any(w in msg_lower for w in ['futurespeak', 'business', 'client', 'sage', 'adtalem', 'revenue']):
-        _load_friday_data(context_parts, "futurespeak", max_bytes=2000)
+        _load_friday_data(context_parts, "futurespeak", max_bytes=10_000)
 
     # Workspace-specific context
     if workspace == 'news':
         _load_latest_briefing_summary(context_parts)
     elif workspace == 'career':
-        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=4000)
+        _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
     elif workspace == 'coparent':
-        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=3000)
+        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=20_000)
 
-    # Target: under 8KB total. Hard cap.
+    # Soft cap — 1M context window means we can afford generous context.
     result = "\n\n".join(context_parts)
-    if len(result) > 8000:
-        result = result[:8000] + "\n[context truncated — use search_wiki or read_wiki tools for more]"
+    if len(result) > 200_000:
+        result = result[:200_000] + "\n[context soft-capped — use search_wiki or read_wiki for more]"
     return result
 
 
-def _load_section(parts, directory, max_bytes=3000):
-    """Load wiki section files up to max_bytes (most-recent first)."""
+def _generate_wiki_indexes():
+    """Create _index.md in each wiki directory listing files with one-line descriptions.
+
+    Called at startup so the agent can read a directory's table of contents before
+    deciding which full articles to load — dramatically reduces context waste.
+    """
+    if not WIKI_DIR.exists():
+        return
+    dirs_to_index = [WIKI_DIR] + [p for p in WIKI_DIR.rglob('*') if p.is_dir()]
+    for directory in dirs_to_index:
+        md_files = [f for f in directory.glob('*.md') if f.name != '_index.md']
+        if not md_files:
+            continue
+        lines = [f"# Index: {directory.name}\n"]
+        for f in sorted(md_files, key=lambda x: x.name):
+            try:
+                text = f.read_text(encoding='utf-8', errors='replace')
+                # Use first non-empty, non-heading line as description
+                desc = next(
+                    (l.strip() for l in text.splitlines() if l.strip() and not l.startswith('#')),
+                    f.stem
+                )
+                lines.append(f"- {f.name}: {desc[:120]}")
+            except Exception:
+                lines.append(f"- {f.name}")
+        try:
+            (directory / '_index.md').write_text('\n'.join(lines), encoding='utf-8')
+        except Exception:
+            pass
+
+
+def _load_section(parts, directory, max_bytes=20_000):
+    """Load wiki section files up to max_bytes (most-recent first).
+
+    Loads _index.md first so the agent sees the directory's table of contents
+    before deciding which full articles to read on demand.
+    """
     if not directory.exists():
         return
+    # Always load index first if available
+    index_file = directory / '_index.md'
+    if index_file.exists():
+        try:
+            idx_text = index_file.read_text(encoding='utf-8', errors='replace')[:2000]
+            parts.append(f"== {directory.name.upper()} INDEX ==\n{idx_text}")
+        except Exception:
+            pass
     total = 0
     try:
         files = sorted(directory.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True)
     except Exception:
         return
     for f in files:
+        if f.name == '_index.md':
+            continue  # already loaded above
         if total >= max_bytes:
             break
         try:
@@ -3043,7 +4033,7 @@ def _load_section(parts, directory, max_bytes=3000):
         total += len(chunk)
 
 
-def _load_friday_data(parts, subdir, max_bytes=2000):
+def _load_friday_data(parts, subdir, max_bytes=10_000):
     """Load JSON files from ~/.friday/<subdir>/, most-recent first."""
     data_dir = FRIDAY_DIR / subdir
     if not data_dir.exists():
@@ -3099,6 +4089,106 @@ def _save_chat_history(messages):
 CHAT_HISTORY = _load_chat_history()  # Load persistent history on startup
 
 
+# ══════════════════════════════════════════════════════════════
+#  SETUP WIZARD  (first-run onboarding, Hermes-inspired)
+# ══════════════════════════════════════════════════════════════
+_SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
+
+
+def _is_existing_install() -> bool:
+    """True if this looks like an existing installation that should skip the wizard."""
+    if _SETUP_MARKER.exists():
+        return True
+    # API keys in environment (set by start.bat) → definitely configured
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY"):
+        return True
+    # settings.json exists with real content
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+            if data.get('anthropic_api_key') or data.get('setup_complete'):
+                return True
+        except Exception:
+            pass
+    # personality.json exists → user has customised the agent
+    if (FRIDAY_DIR / "personality.json").exists():
+        return True
+    return False
+
+
+@app.route('/api/setup/status')
+def api_setup_status():
+    initialized = _is_existing_install()
+    # Auto-stamp the marker so future checks are instant
+    if initialized and not _SETUP_MARKER.exists():
+        try:
+            _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
+        except Exception:
+            pass
+    return jsonify({"initialized": initialized})
+
+
+@app.route('/api/setup/skip', methods=['GET', 'POST'])
+def api_setup_skip():
+    """Permanently mark setup complete — for existing installs that predate the wizard."""
+    try:
+        _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "ok"})
+
+
+@app.route('/api/setup/complete', methods=['POST'])
+def api_setup_complete():
+    """Persist wizard choices and mark setup as complete."""
+    global ANTHROPIC_API_KEY, GEMINI_API_KEY, _anthropic_client, _genai_client
+    data = request.get_json(silent=True) or {}
+    settings = _load_settings()
+    wizard_keys = ['agent_name', 'orchestrator_model', 'subagent_model',
+                   'tts_voice', 'temperature', 'communication_style',
+                   'anthropic_api_key', 'gemini_api_key']
+    for k in wizard_keys:
+        if k in data:
+            settings[k] = data[k]
+    settings['setup_complete'] = True
+
+    # Hot-reload API keys into the running process so no restart is needed
+    if data.get('anthropic_api_key'):
+        ANTHROPIC_API_KEY = data['anthropic_api_key']
+        os.environ['ANTHROPIC_API_KEY'] = data['anthropic_api_key']
+        _anthropic_client = None
+    if data.get('gemini_api_key'):
+        GEMINI_API_KEY = data['gemini_api_key']
+        os.environ['GEMINI_API_KEY'] = data['gemini_api_key']
+        _genai_client = None
+
+    # Persist preferred holographic scene to personality.json
+    if 'preferred_scene_index' in data:
+        pfile = FRIDAY_DIR / 'personality.json'
+        pdata = {}
+        if pfile.exists():
+            try:
+                pdata = json.loads(pfile.read_text('utf-8'))
+            except Exception:
+                pass
+        pdata['preferred_scene_index'] = int(data['preferred_scene_index'])
+        try:
+            pfile.write_text(json.dumps(pdata, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+
+    try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding='utf-8')
+        _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _SETUP_MARKER.write_text(datetime.now().isoformat(), encoding='utf-8')
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"status": "ok"})
+
+
 # ── Agent Settings endpoints ──────────────────────────────────
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
@@ -3142,6 +4232,7 @@ def chat():
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
         include_vision = data.get('includeVision', False)
+        voice_mode = bool(data.get('voice_mode', False))
         vision_description = None
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
@@ -3176,13 +4267,27 @@ def chat():
         personality = _load_agent_personality()
         system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
 
-        # Build conversation history as Anthropic-format messages (last 20 turns)
-        messages = []
-        for msg in CHAT_HISTORY[-20:]:
+        # Voice mode: override response style for spoken-aloud output
+        if voice_mode:
+            system_prompt = (
+                "=== VOICE MODE ACTIVE ===\n"
+                "The user is speaking to you via microphone. Your reply will be read aloud.\n"
+                "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
+                "headers, bullet points, or code blocks. Use natural speech patterns and "
+                "contractions. Ask a follow-up question to keep the conversation flowing.\n"
+                "=========================\n\n"
+            ) + system_prompt
+
+        # Build conversation history as Anthropic-format messages.
+        # Pull up to 40 turns, then run trajectory compression if the total
+        # char count is above the soft limit — older turns get summarised.
+        raw_history = []
+        for msg in CHAT_HISTORY[-100:]:
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
-                messages.append({"role": role, "content": text})
+                raw_history.append({"role": role, "content": text})
+        messages = _compress_trajectory(raw_history)
         messages.append({"role": "user", "content": message})
 
         # ── Privacy Shield: scrub PII out of system prompt + all messages ──
@@ -3211,9 +4316,12 @@ def chat():
                 "with the real data before the user sees your response."
             )
 
+        _sess_ctx = {
+            "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+        }
         reply, tool_trace = _call_claude_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
-            pii_lookup=pii_lookup,
+            pii_lookup=pii_lookup, session_ctx=_sess_ctx,
         )
 
         # ── Rehydrate: restore real PII before returning to the user. ──
@@ -3335,15 +4443,19 @@ def chat_send():
 
         # Anthropic-format message history
         messages = []
-        for msg in CHAT_HISTORY[-20:]:
+        for msg in CHAT_HISTORY[-100:]:
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
                 messages.append({"role": role, "content": text})
         messages.append({"role": "user", "content": message})
 
+        _sess_ctx = {
+            "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+        }
         reply, tool_trace = _call_claude_agent(
-            messages, system=system_prompt, temperature=settings.get('temperature')
+            messages, system=system_prompt, temperature=settings.get('temperature'),
+            session_ctx=_sess_ctx,
         )
 
         # Create persistent message objects
@@ -3896,6 +5008,7 @@ DRAFT_MODE_PROMPTS = {
 }
 
 COPARENTING_DIR = HOME / ".friday" / "wiki" / "coparenting"
+CONTENT_DRAFTS_DIR = FRIDAY_DIR / "wiki" / "content"
 
 
 def _load_ofw_context():
@@ -3911,20 +5024,89 @@ def _load_ofw_context():
     return '\n\n'.join(context_parts) if context_parts else ''
 
 
+def _build_draft_html(draft_text, mode, prompt_text=''):
+    """Build a styled HTML document for a draft, matching the daily briefing aesthetic."""
+    mode_labels = {
+        'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
+        'slack_message': 'Slack Message', 'tweet': 'Tweet',
+        'ofw_response': 'OFW Response', 'freeform': 'Freeform Draft',
+    }
+    mode_label = mode_labels.get(mode, mode)
+    timestamp = datetime.now().strftime('%B %d, %Y · %H:%M')
+
+    def _esc(s):
+        return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    paras = [p.strip() for p in (draft_text or '').split('\n\n') if p.strip()]
+    if not paras:
+        paras = [(draft_text or '').strip() or '(empty)']
+
+    para_html = '\n    '.join(
+        f'<p{" style=\"font-size:18px;color:#e8e8f0\"" if i == 0 else ""}>{_esc(p).replace(chr(10), "<br>")}</p>'
+        for i, p in enumerate(paras)
+    )
+    prompt_block = (
+        f'<div class="prompt-ctx">Prompt: {_esc(prompt_text[:200])}</div>'
+        if prompt_text else ''
+    )
+
+    return (
+        '<!DOCTYPE html><html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        f'<title>FRIDAY DRAFT — {_esc(mode_label)}</title>\n'
+        '<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900'
+        '&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">\n'
+        '<style>\n'
+        '* { margin: 0; padding: 0; box-sizing: border-box; }\n'
+        'body { background: #06060b; color: #e0e0e8; font-family: \'Inter\', sans-serif; line-height: 1.7; }\n'
+        '.container { max-width: 780px; margin: 0 auto; padding: 40px 24px 80px; }\n'
+        '.header { text-align: center; margin-bottom: 48px; padding-bottom: 32px; border-bottom: 1px solid rgba(0,212,255,0.15); }\n'
+        '.header h1 { font-family: \'Orbitron\', monospace; font-size: 28px; font-weight: 900; '
+        'background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%); '
+        '-webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }\n'
+        '.header .subtitle { font-size: 14px; color: #666; font-style: italic; }\n'
+        '.header .date { font-family: \'JetBrains Mono\', monospace; font-size: 13px; color: #00d4ff; margin-top: 8px; letter-spacing: 0.05em; }\n'
+        '.neon-line { height: 2px; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff0080); margin: 4px 0 0; opacity: 0.6; border-radius: 1px; }\n'
+        '.mode-tag { display: inline-block; font-family: \'JetBrains Mono\', monospace; font-size: 11px; color: #7c3aed; border: 1px solid rgba(124,58,237,0.3); border-radius: 4px; padding: 2px 8px; margin-bottom: 24px; letter-spacing: 0.05em; }\n'
+        '.prompt-ctx { font-size: 12px; color: #555; font-style: italic; margin-bottom: 32px; font-family: \'JetBrains Mono\', monospace; border-left: 2px solid rgba(0,212,255,0.2); padding-left: 12px; }\n'
+        '.draft-body p { margin-bottom: 18px; font-size: 16px; line-height: 1.8; color: #d0d0d8; }\n'
+        '.footer { text-align: center; margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.05); font-size: 12px; color: #444; font-family: \'JetBrains Mono\', monospace; }\n'
+        '</style>\n'
+        '</head>\n'
+        '<body>\n'
+        '<div class="container">\n'
+        '  <div class="header">\n'
+        '    <h1>FRIDAY DRAFT</h1>\n'
+        '    <div class="neon-line"></div>\n'
+        f'    <div class="subtitle">{_esc(mode_label)}</div>\n'
+        f'    <div class="date">{timestamp}</div>\n'
+        '  </div>\n'
+        f'  {prompt_block}\n'
+        f'  <div class="mode-tag">{_esc(mode_label.upper())}</div>\n'
+        '  <div class="draft-body">\n'
+        f'    {para_html}\n'
+        '  </div>\n'
+        '  <div class="footer">Generated by FRIDAY · FutureSpeak.AI</div>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
+    )
+
+
 @app.route('/api/draft', methods=['POST'])
 def draft_generate():
-    """Generate a draft via Claude based on mode, context, and prompt."""
+    """Generate a draft via Claude — spawns as a background task, returns task_id immediately."""
     try:
         data = request.get_json(silent=True) or {}
 
         mode = data.get('mode', 'freeform')
         context = data.get('context', '')
-        prompt = data.get('prompt', '')
+        prompt_text = data.get('prompt', '')
 
-        if not prompt.strip():
+        if not prompt_text.strip():
             return jsonify({"status": "error", "message": "No prompt provided"}), 400
 
-        # System prompt for this mode (writing voice / format guidance)
         system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
         if mode == 'ofw_response':
             ofw_ctx = _load_ofw_context()
@@ -3935,19 +5117,75 @@ def draft_generate():
         user_parts = []
         if context:
             user_parts.append(f"CONTEXT (what the user is looking at / replying to):\n{context}")
-        user_parts.append(f"USER INSTRUCTION:\n{prompt}")
+        user_parts.append(f"USER INSTRUCTION:\n{prompt_text}")
+        full_prompt = '\n\n'.join(user_parts)
 
-        draft_text = _call_claude(
-            [{"role": "user", "content": '\n\n'.join(user_parts)}],
-            system=system,
-        )
+        mode_labels = {
+            'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
+            'slack_message': 'Slack Message', 'tweet': 'Tweet',
+            'ofw_response': 'OFW Response', 'freeform': 'Freeform Draft',
+        }
+        task_name = f"Quick Draft — {mode_labels.get(mode, mode)}"
+        task_id = str(uuid.uuid4())
+
+        with TASKS_LOCK:
+            TASKS[task_id] = {
+                'task_id': task_id,
+                'name': task_name,
+                'description': prompt_text[:100],
+                'status': 'queued',
+                'created': _time.time(),
+                'started': None,
+                'ended': None,
+                'log': [],
+                'result': '',
+                'draft_mode': mode,
+            }
+
+        # Capture loop variables for the thread closure
+        _system = system
+        _full_prompt = full_prompt
+        _mode = mode
+
+        def _draft_worker():
+            _task_set(task_id, status='running', started=_time.time())
+            _task_log(task_id, f'Generating {_mode} draft…')
+            try:
+                # Load full vault/wiki context — Friday MUST know Stephen's contacts,
+                # his name, his boss, his family, etc. when writing on his behalf.
+                _task_log(task_id, 'Loading vault context…')
+                full_system = _get_friday_system_prompt(prompt_text, workspace='draft')
+                full_system += f"\n\n== DRAFT WRITING INSTRUCTIONS ==\n{_system}"
+                draft_text = _call_claude(
+                    [{"role": "user", "content": _full_prompt}],
+                    system=full_system,
+                    max_tokens=16384,
+                )
+                # Auto-save to content library
+                try:
+                    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+                    now_dt = datetime.now()
+                    slug = re.sub(r'[^a-z0-9]+', '-', prompt_text[:30].lower()).strip('-') or _mode
+                    fname = f"draft-{now_dt.strftime('%Y-%m-%d-%H%M')}-{slug}.html"
+                    html_content = _build_draft_html(draft_text, _mode, prompt_text)
+                    (CONTENT_DRAFTS_DIR / fname).write_text(html_content, encoding='utf-8')
+                    _task_log(task_id, f'Saved to library: {fname}')
+                except Exception as _se:
+                    _task_log(task_id, f'Library save failed (non-fatal): {_se}')
+                _task_set(task_id, status='complete', result=draft_text, ended=_time.time())
+                _task_log(task_id, 'Draft ready.')
+            except Exception as e:
+                traceback.print_exc()
+                _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
+                _task_log(task_id, f'Error: {e}')
+
+        threading.Thread(target=_draft_worker, daemon=True).start()
+        _log_context("draft_spawn", {"task_id": task_id, "mode": mode, "prompt": prompt_text[:200]})
 
         return jsonify({
-            "status": "ok",
-            "draft": draft_text,
-            "mode": mode,
-            "char_count": len(draft_text),
-            "timestamp": datetime.now().isoformat(),
+            "status": "queued",
+            "task_id": task_id,
+            "name": task_name,
         })
     except Exception as e:
         traceback.print_exc()
@@ -3970,7 +5208,8 @@ def draft_deploy():
             escaped = text.replace('`', '``').replace('"', '`"').replace('$', '`$')
             subprocess.run(
                 ['powershell', '-command', f'Set-Clipboard -Value "{escaped}"'],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                creationflags=_POPEN_FLAGS,
             )
             return jsonify({"status": "ok", "destination": "clipboard", "char_count": len(text)})
         except subprocess.TimeoutExpired:
@@ -3990,6 +5229,34 @@ def draft_deploy():
         })
 
     return jsonify({"status": "error", "message": f"Unknown destination: {destination}"}), 400
+
+
+@app.route('/api/content/drafts')
+def list_content_drafts():
+    """List saved draft HTML files from ~/.friday/wiki/content/."""
+    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+    drafts = []
+    for f in sorted(CONTENT_DRAFTS_DIR.glob('*.html'), key=lambda x: x.stat().st_mtime, reverse=True):
+        try:
+            drafts.append({
+                'filename': f.name,
+                'size': f.stat().st_size,
+                'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+            })
+        except Exception:
+            pass
+    return jsonify({'status': 'ok', 'drafts': drafts, 'total': len(drafts)})
+
+
+@app.route('/api/content/drafts/<filename>')
+def serve_content_draft(filename):
+    """Serve a saved draft HTML file for browser viewing."""
+    safe_name = Path(filename).name
+    filepath = CONTENT_DRAFTS_DIR / safe_name
+    if not filepath.exists() or not filepath.is_file():
+        return jsonify({'status': 'not_found'}), 404
+    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+    return send_from_directory(str(CONTENT_DRAFTS_DIR), safe_name)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -4069,7 +5336,8 @@ def _flow_clipboard(content, _metadata):
     try:
         subprocess.run(
             ['powershell', '-Command', 'Set-Clipboard', '-Value', content[:10000]],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10,
+            creationflags=_POPEN_FLAGS,
         )
         return {'destination': 'clipboard', 'ok': True}
     except Exception as e:
@@ -4973,7 +6241,13 @@ def fs_assets():
 # ═══════════════════════════════════════════════════════════════
 
 LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview")
+LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-12-2025"
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
+
+
+def _get_live_model():
+    """Return the currently configured voice/live model from settings, falling back to LIVE_MODEL."""
+    return _load_settings().get("voice_model") or LIVE_MODEL
 
 LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.
 You are having a live voice conversation. Be concise and natural — this is spoken dialogue, not text chat.
@@ -5186,9 +6460,24 @@ if sock is not None:
           { type: 'turn_end' }
           { type: 'error', error: "..." }
         """
+        import time as _time
+        _vlog_path = FRIDAY_DIR / 'voice_debug.log'
+        def _vlog(msg):
+            line = f"{_time.strftime('%H:%M:%S')} {msg}\n"
+            try:
+                with open(_vlog_path, 'a', encoding='utf-8') as _f:
+                    _f.write(line)
+            except Exception:
+                pass
+            print(f'[live] {msg}')
+
+        _vlog(f'=== WS connection from {request.remote_addr} ===')
+        _vlog(f'session.authenticated={session.get("authenticated")} GEMINI_KEY={GEMINI_API_KEY[:8] if GEMINI_API_KEY else "MISSING"}...')
+
         # Auth enforcement (before_request already redirects unauthenticated HTML
         # requests, but be defensive in case /ws/ paths were excluded).
         if FRIDAY_PASSWORD and not session.get("authenticated"):
+            _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
@@ -5196,6 +6485,7 @@ if sock is not None:
             return
 
         if not GEMINI_API_KEY:
+            _vlog('ERROR — GEMINI_API_KEY not set')
             try:
                 ws.send(json.dumps({"type": "error", "error": "GEMINI_API_KEY not set"}))
             except Exception:
@@ -5205,7 +6495,8 @@ if sock is not None:
         try:
             from google import genai
             from google.genai import types
-        except ImportError:
+        except ImportError as _ie:
+            _vlog(f'ERROR — google-genai not installed: {_ie}')
             try:
                 ws.send(json.dumps({"type": "error", "error": "google-genai not installed"}))
             except Exception:
@@ -5213,28 +6504,29 @@ if sock is not None:
             return
 
         try:
-            ctx = _load_live_context()
+            personality = _load_agent_personality()
+            full_ctx = _get_friday_system_prompt()
         except Exception as e:
-            ctx = f"(context load failed: {e})"
-        system_instruction = LIVE_SYSTEM_TEMPLATE.format(context_summary=ctx)
+            personality = ''
+            full_ctx = f"(context load failed: {e})"
+        voice_prefix = (
+            "You are Agent Friday, a personal AI assistant for Stephen Webster.\n"
+            "You are having a LIVE VOICE conversation — be concise and natural.\n"
+            "Keep responses SHORT (1-3 sentences). Short sentences. Pause. Let him interrupt.\n"
+            "NEVER use markdown formatting — no asterisks, headers, or bullet points. Speak naturally.\n"
+            "Use contractions and casual tone. Ask a follow-up question to keep the conversation flowing.\n\n"
+        )
+        if personality:
+            voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
+        system_instruction = voice_prefix + full_ctx
 
         try:
             ws.send(json.dumps({"type": "status", "text": "loading context"}))
         except Exception:
             return
 
-        # Build a client for the Live API. Live requires the v1beta API surface.
-        try:
-            client = genai.Client(
-                api_key=GEMINI_API_KEY,
-                http_options=types.HttpOptions(api_version='v1beta'),
-            )
-        except Exception:
-            # Fallback: older SDKs accept dict-form http_options
-            client = genai.Client(
-                api_key=GEMINI_API_KEY,
-                http_options={'api_version': 'v1beta'},
-            )
+        # Live API requires v1alpha endpoint for WebSocket streaming.
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1alpha"})
 
         cfg = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
@@ -5243,9 +6535,12 @@ if sock is not None:
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=LIVE_VOICE)
                 )
             ),
-            system_instruction=system_instruction,
+            system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=types.RealtimeInputConfig(
+                turn_coverage="TURN_INCLUDES_ONLY_ACTIVITY",
+            ),
         )
 
         done = threading.Event()
@@ -5263,152 +6558,181 @@ if sock is not None:
                 return False
 
         async def runner():
-            try:
-                async with client.aio.live.connect(model=LIVE_MODEL, config=cfg) as session_ai:
-                    _safe_send({"type": "status", "text": "live"})
+            # The actual connection happens inside `async with`, so the fallback
+            # must wrap the entire session block, not just the connect() call.
+            configured_live_model = _get_live_model()
+            models_to_try = [configured_live_model]
+            if configured_live_model != LIVE_MODEL_FALLBACK:
+                models_to_try.append(LIVE_MODEL_FALLBACK)
 
-                    async def reader():
-                        """Pump messages from the browser WebSocket into the Gemini session."""
-                        while not done.is_set():
-                            try:
-                                raw = await asyncio.to_thread(ws.receive, 1.0)
-                            except ConnectionClosed:
-                                done.set()
+            last_error = None
+            for model_name in models_to_try:
+                _vlog(f'connecting to model: {model_name}')
+                try:
+                    async with client.aio.live.connect(model=model_name, config=cfg) as session_ai:
+                        _safe_send({"type": "status", "text": "live"})
+                        _vlog(f'session established with {model_name}')
+
+                        _audio_chunks_received = 0
+                        _gemini_chunks_received = 0
+
+                        in_buf = []
+                        out_buf = []
+                        turn_log = []
+
+                        def _flush_turn():
+                            user_text = ''.join(in_buf).strip()
+                            agent_text = ''.join(out_buf).strip()
+                            in_buf.clear()
+                            out_buf.clear()
+                            if not user_text and not agent_text:
                                 return
-                            except Exception:
-                                continue
-                            if raw is None:
-                                continue
-                            if isinstance(raw, bytes):
+                            try:
+                                _persist_voice_turn(user_text, agent_text)
+                            except Exception as e:
+                                print(f'[live] persist_voice_turn error: {e}')
+                            _safe_send({
+                                "type": "voice_turn_done",
+                                "user_text": user_text,
+                                "agent_text": agent_text,
+                            })
+                            turn_log.append((user_text, agent_text))
+
+                        async def reader():
+                            nonlocal _audio_chunks_received
+                            while not done.is_set():
                                 try:
-                                    raw = raw.decode('utf-8')
-                                except Exception:
-                                    continue
-                            try:
-                                msg = json.loads(raw)
-                            except Exception:
-                                continue
-                            t = msg.get('type')
-                            try:
-                                if t == 'audio' and msg.get('data'):
-                                    data = base64.b64decode(msg['data'])
-                                    await session_ai.send_realtime_input(
-                                        audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
-                                    )
-                                elif t == 'image' and msg.get('data'):
-                                    data = base64.b64decode(msg['data'])
-                                    await session_ai.send_realtime_input(
-                                        video=types.Blob(data=data, mime_type='image/jpeg')
-                                    )
-                                elif t == 'text' and msg.get('text'):
-                                    await session_ai.send_client_content(
-                                        turns=[types.Content(
-                                            role='user',
-                                            parts=[types.Part(text=msg['text'])],
-                                        )],
-                                        turn_complete=True,
-                                    )
-                                elif t == 'end':
+                                    raw = await asyncio.to_thread(ws.receive, 1.0)
+                                except ConnectionClosed:
+                                    print('[live] reader: ConnectionClosed')
                                     done.set()
                                     return
-                            except Exception as e:
-                                print(f'[live] send-to-gemini error: {e}')
-
-                    # Per-turn transcript accumulators. Gemini Live streams
-                    # input/output transcription as small deltas; we glue them
-                    # back into whole utterances so the chat panel can render
-                    # one bubble per turn and the context log captures the full
-                    # text (not 30 fragments).
-                    in_buf = []
-                    out_buf = []
-                    turn_log = []  # [(user_text, agent_text), ...] for end-of-session distill
-
-                    def _flush_turn():
-                        user_text = ''.join(in_buf).strip()
-                        agent_text = ''.join(out_buf).strip()
-                        in_buf.clear()
-                        out_buf.clear()
-                        if not user_text and not agent_text:
-                            return
-                        try:
-                            _persist_voice_turn(user_text, agent_text)
-                        except Exception as e:
-                            print(f'[live] persist_voice_turn error: {e}')
-                        _safe_send({
-                            "type": "voice_turn_done",
-                            "user_text": user_text,
-                            "agent_text": agent_text,
-                        })
-                        turn_log.append((user_text, agent_text))
-
-                    async def writer():
-                        """Pump Gemini responses back to the browser WebSocket."""
-                        try:
-                            async for chunk in session_ai.receive():
-                                if done.is_set():
-                                    return
-                                try:
-                                    # Audio bytes (convenience property)
-                                    audio = getattr(chunk, 'data', None)
-                                    if audio:
-                                        _safe_send({
-                                            "type": "audio",
-                                            "data": base64.b64encode(audio).decode('ascii'),
-                                        })
-                                    # Server content details
-                                    sc = getattr(chunk, 'server_content', None)
-                                    if sc is not None:
-                                        # Output transcription (what Gemini said)
-                                        out_tr = getattr(sc, 'output_transcription', None)
-                                        if out_tr and getattr(out_tr, 'text', None):
-                                            out_buf.append(out_tr.text)
-                                            _safe_send({"type": "text", "text": out_tr.text})
-                                        # Input transcription (what user said)
-                                        in_tr = getattr(sc, 'input_transcription', None)
-                                        if in_tr and getattr(in_tr, 'text', None):
-                                            in_buf.append(in_tr.text)
-                                            _safe_send({"type": "input_transcript", "text": in_tr.text})
-                                        # Any text in model turn parts
-                                        mt = getattr(sc, 'model_turn', None)
-                                        if mt and getattr(mt, 'parts', None):
-                                            for part in mt.parts:
-                                                pt = getattr(part, 'text', None)
-                                                if pt:
-                                                    out_buf.append(pt)
-                                                    _safe_send({"type": "text", "text": pt})
-                                        if getattr(sc, 'turn_complete', False):
-                                            _flush_turn()
-                                            _safe_send({"type": "turn_end"})
-                                        if getattr(sc, 'interrupted', False):
-                                            _safe_send({"type": "interrupted"})
                                 except Exception as e:
-                                    print(f'[live] recv error: {e}')
-                        except Exception as e:
-                            print(f'[live] session recv ended: {e}')
-                        finally:
-                            done.set()
+                                    continue
+                                if raw is None:
+                                    continue
+                                if isinstance(raw, bytes):
+                                    try:
+                                        raw = raw.decode('utf-8')
+                                    except Exception:
+                                        continue
+                                try:
+                                    msg = json.loads(raw)
+                                except Exception:
+                                    continue
+                                t = msg.get('type')
+                                try:
+                                    if t == 'audio' and msg.get('data'):
+                                        data = base64.b64decode(msg['data'])
+                                        _audio_chunks_received += 1
+                                        if _audio_chunks_received == 1 or _audio_chunks_received % 50 == 0:
+                                            print(f'[live] forwarding audio chunk #{_audio_chunks_received} to gemini ({len(data)} bytes)')
+                                        await session_ai.send_realtime_input(
+                                            audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
+                                        )
+                                    elif t == 'image' and msg.get('data'):
+                                        data = base64.b64decode(msg['data'])
+                                        await session_ai.send_realtime_input(
+                                            video=types.Blob(data=data, mime_type='image/jpeg')
+                                        )
+                                    elif t == 'text' and msg.get('text'):
+                                        print(f'[live] text message: {msg["text"]!r}')
+                                        await session_ai.send_realtime_input(text=msg['text'])
+                                    elif t == 'end':
+                                        print('[live] reader: received end signal')
+                                        done.set()
+                                        return
+                                except Exception as e:
+                                    print(f'[live] send-to-gemini error: {e}')
+                                    traceback.print_exc()
 
-                    await asyncio.gather(reader(), writer(), return_exceptions=True)
-                    # Final flush in case the session ended mid-turn.
-                    try:
-                        _flush_turn()
-                    except Exception:
-                        pass
-                    # Send the whole voice session to a background distill task
-                    # so Claude can extract anything wiki-worthy. Cheap fire-and-forget.
-                    if turn_log:
+                        async def writer():
+                            nonlocal _gemini_chunks_received
+                            try:
+                                while not done.is_set():
+                                    async for chunk in session_ai.receive():
+                                        if done.is_set():
+                                            return
+                                        try:
+                                            _gemini_chunks_received += 1
+                                            if _gemini_chunks_received <= 3 or _gemini_chunks_received % 20 == 0:
+                                                print(f'[live] gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None}')
+                                            sc = getattr(chunk, 'server_content', None)
+                                            if sc is not None:
+                                                out_tr = getattr(sc, 'output_transcription', None)
+                                                if out_tr and getattr(out_tr, 'text', None):
+                                                    print(f'[live] output_transcription: {out_tr.text!r}')
+                                                    out_buf.append(out_tr.text)
+                                                    _safe_send({"type": "text", "text": out_tr.text})
+                                                in_tr = getattr(sc, 'input_transcription', None)
+                                                if in_tr and getattr(in_tr, 'text', None):
+                                                    print(f'[live] input_transcription: {in_tr.text!r}')
+                                                    in_buf.append(in_tr.text)
+                                                    _safe_send({"type": "input_transcript", "text": in_tr.text})
+                                                mt = getattr(sc, 'model_turn', None)
+                                                if mt and getattr(mt, 'parts', None):
+                                                    for part in mt.parts:
+                                                        # Audio: PCM bytes at 24kHz in part.inline_data.data
+                                                        il = getattr(part, 'inline_data', None)
+                                                        if il and getattr(il, 'data', None):
+                                                            print(f'[live] audio chunk {len(il.data)} bytes ({il.mime_type})')
+                                                            _safe_send({
+                                                                "type": "audio",
+                                                                "data": base64.b64encode(il.data).decode('ascii'),
+                                                            })
+                                                        pt = getattr(part, 'text', None)
+                                                        if pt:
+                                                            out_buf.append(pt)
+                                                            _safe_send({"type": "text", "text": pt})
+                                                if getattr(sc, 'turn_complete', False):
+                                                    print('[live] turn_complete')
+                                                    _flush_turn()
+                                                    _safe_send({"type": "turn_end"})
+                                                if getattr(sc, 'interrupted', False):
+                                                    print('[live] interrupted')
+                                                    _safe_send({"type": "interrupted"})
+                                        except Exception as e:
+                                            print(f'[live] recv error: {e}')
+                                            traceback.print_exc()
+                                    # session.receive() iterator ends after a turn; re-enter to keep listening
+                                    print(f'[live] receive iterator completed, re-entering for next turn')
+                            except Exception as e:
+                                print(f'[live] session recv ended: {e}')
+                            finally:
+                                print(f'[live] writer done. gemini chunks received: {_gemini_chunks_received}')
+                                done.set()
+
+                        await asyncio.gather(reader(), writer(), return_exceptions=True)
                         try:
-                            _spawn_voice_distill(turn_log)
-                        except Exception as e:
-                            print(f'[live] voice distill spawn error: {e}')
-            except Exception as e:
-                print(f'[live] session error: {e}')
-                traceback.print_exc()
-                _safe_send({"type": "error", "error": str(e)})
+                            _flush_turn()
+                        except Exception:
+                            pass
+                        if turn_log:
+                            try:
+                                _spawn_voice_distill(turn_log)
+                            except Exception as e:
+                                print(f'[live] voice distill spawn error: {e}')
+                    break  # session completed successfully, don't try fallback
+                except Exception as e:
+                    last_error = e
+                    import traceback as _tb
+                    tb_str = _tb.format_exc()
+                    _vlog(f'SESSION ERROR with {model_name}: {type(e).__name__}: {e}')
+                    _vlog(f'TRACEBACK: {tb_str}')
+                    traceback.print_exc()
+                    if model_name == models_to_try[-1]:
+                        _safe_send({"type": "error", "error": str(e)})
+                    else:
+                        nxt = models_to_try[models_to_try.index(model_name) + 1]
+                        _vlog(f'trying fallback model: {nxt}')
 
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(runner())
+        except Exception as _top_e:
+            import traceback as _tb2
+            _vlog(f'TOP-LEVEL runner error: {type(_top_e).__name__}: {_top_e}')
+            _vlog(f'TRACEBACK: {_tb2.format_exc()}')
         finally:
             done.set()
             try:
@@ -5419,6 +6743,79 @@ if sock is not None:
                 ws.close()
             except Exception:
                 pass
+            _vlog('=== WS handler done ===')
+
+
+# ── Computer Control API ─────────────────────────────────────────
+
+@app.route('/api/control/permission', methods=['GET', 'POST'])
+@login_required
+def cc_permission():
+    """GET: return current CC state. POST {action:'grant'|'revoke'}: change it."""
+    if request.method == 'GET':
+        return jsonify({
+            "granted": _CC_PERMISSION.is_set(),
+            "killed": _CC_KILL.is_set(),
+            "available": _HAS_PYAUTOGUI,
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    action = data.get('action', '')
+    if action == 'grant':
+        _CC_KILL.clear()
+        _CC_PERMISSION.set()
+        _log_context("cc_action", {"action": "permission_granted"})
+        return jsonify({"granted": True, "killed": False})
+    if action == 'revoke':
+        _CC_PERMISSION.clear()
+        _log_context("cc_action", {"action": "permission_revoked"})
+        return jsonify({"granted": False, "killed": _CC_KILL.is_set()})
+    return jsonify({"error": "action must be 'grant' or 'revoke'"}), 400
+
+
+@app.route('/api/control/kill', methods=['POST'])
+@login_required
+def cc_kill():
+    """Emergency kill switch — immediately stops all computer control."""
+    _CC_PERMISSION.clear()
+    _CC_KILL.set()
+    if _HAS_PYAUTOGUI:
+        try:
+            _pag.moveTo(0, 0, duration=0.1)
+        except Exception:
+            pass
+    _log_context("cc_action", {"action": "kill_switch_activated"})
+    return jsonify({"killed": True, "message": "Computer control terminated. All permissions revoked."})
+
+
+def _start_kill_hotkey():
+    """Background thread: listen for Ctrl+Shift+Q as a global kill switch."""
+    try:
+        from pynput import keyboard as _kb
+
+        def _on_kill():
+            print("  [FRIDAY] KILL HOTKEY Ctrl+Shift+Q — computer control terminated")
+            _CC_PERMISSION.clear()
+            _CC_KILL.set()
+            if _HAS_PYAUTOGUI:
+                try:
+                    _pag.moveTo(0, 0, duration=0.1)
+                except Exception:
+                    pass
+            try:
+                _log_context("cc_action", {"action": "kill_hotkey_ctrl_shift_q"})
+            except Exception:
+                pass
+
+        hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill})
+        hk.start()
+        print("  [FRIDAY] Global kill hotkey active: Ctrl+Shift+Q")
+    except ImportError:
+        print("  [FRIDAY] pynput not installed — kill hotkey unavailable. Run: pip install pynput")
+    except Exception as e:
+        print(f"  [FRIDAY] Kill hotkey listener failed: {e}")
+
+
+threading.Thread(target=_start_kill_hotkey, daemon=True).start()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5442,6 +6839,13 @@ if __name__ == '__main__':
     print(f"  Chat Log:  {CHAT_HISTORY_FILE}")
     print()
 
+    # Pre-generate wiki directory indexes for index-first navigation
+    try:
+        _generate_wiki_indexes()
+        print("  Wiki indexes: generated")
+    except Exception as _wi_err:
+        print(f"  Wiki indexes: skipped ({_wi_err})")
+
     # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only
     bind_host = '0.0.0.0' if FRIDAY_PASSWORD else '127.0.0.1'
-    app.run(host=bind_host, port=3000, debug=False)
+    app.run(host=bind_host, port=3000, debug=False, threaded=True)

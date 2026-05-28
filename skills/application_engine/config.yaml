@@ -1,0 +1,113 @@
+# Application engine — quality gates, resume policy, ATS support
+#
+# Override at runtime via ~/.friday/skills/application_engine.local.yaml
+
+quality_gates:
+  salary_floor_usd: 150000
+  salary_confirmation_threshold_usd: 300000
+  require_brand_voice_check: true
+  brand_voice_min_score: 0.75
+  cover_letter_max_words: 450
+  cover_letter_min_words: 180
+
+resume:
+  default_variant: "vp_ai_v3"
+  variants:
+    vp_ai_v3:
+      title: "VP / Director AI"
+      file: "resume/Webster_VP_AI_v3.pdf"
+      must_include:
+        - "Agent Friday — Asimov's Mind"
+        - "FutureSpeak.AI"
+        - "agentic systems"
+        - "voice AI"
+        - "Claude Opus orchestration"
+        - "Gemini Live integration"
+    product_ai_v2:
+      title: "VP / Director Product, AI"
+      file: "resume/Webster_Product_AI_v2.pdf"
+      must_include:
+        - "0-1 product launches"
+        - "FutureSpeak.AI"
+        - "monetized AI surface"
+        - "user research → spec → ship"
+    platform_v1:
+      title: "Engineering platform / infra"
+      file: "resume/Webster_Platform_v1.pdf"
+      must_include:
+        - "Flask + WebSocket runtime"
+        - "Three.js holographic UI"
+        - "HMAC-signed governance"
+  ab_testing:
+    epsilon: 0.10
+    min_samples_before_exploit: 5
+
+cover_letter:
+  template: "templates/cover_letter.md"
+  tone: "confident, specific, no fluff"
+  must_reference:
+    - "FutureSpeak.AI"
+    - "Agent Friday"
+  forbidden_phrases:
+    - "passionate"
+    - "rockstar"
+    - "team player"
+    - "synergy"
+
+ats:
+  supported:
+    - greenhouse
+    - lever
+    - workable
+    - smartrecruiters
+  detection:
+    greenhouse:
+      domain_contains: ["boards.greenhouse.io", "greenhouse.io/embed"]
+    lever:
+      domain_contains: ["jobs.lever.co", "lever.co"]
+    workable:
+      domain_contains: ["apply.workable.com", "workable.com/jobs"]
+    smartrecruiters:
+      domain_contains: ["jobs.smartrecruiters.com", "smartrecruiters.com/SmartCRM"]
+  field_maps:
+    greenhouse:
+      first_name: "input[name='first_name']"
+      last_name: "input[name='last_name']"
+      email: "input[type='email']"
+      phone: "input[name='phone']"
+      resume: "input[type='file'][name='resume']"
+      cover_letter: "textarea[name='cover_letter']"
+    lever:
+      name: "input[name='name']"
+      email: "input[name='email']"
+      phone: "input[name='phone']"
+      resume: "input[type='file'][name='resume']"
+      cover_letter: "textarea[name='comments']"
+    workable:
+      first_name: "input[name='firstname']"
+      last_name: "input[name='lastname']"
+      email: "input[name='email']"
+      phone: "input[name='phone']"
+      resume: "input[type='file']"
+    smartrecruiters:
+      first_name: "input[name='firstName']"
+      last_name: "input[name='lastName']"
+      email: "input[name='email']"
+      cover_letter: "textarea[name='coverLetter']"
+
+submission:
+  auto_apply: false                   # Stephen flips this on per-job
+  auto_apply_confidence: 0.90
+  require_confirmation_above_usd: 300000
+  delay_between_applications_seconds: 90
+
+skillopt:
+  skill_name: "application_engine"
+  weights:
+    accuracy: 0.45            # outcomes: interview / offer counts
+    user_satisfaction: 0.25
+    completeness: 0.15
+    latency: 0.10
+    cost: 0.05
+  latency_target_ms: 20000
+  cost_target_usd: 0.20

@@ -1,0 +1,25 @@
+name: deep-research
+description: Multi-source deep research on any person, company, or topic.
+trigger_patterns:
+  - "research {target}"
+  - "deep dive on {target}"
+  - "find everything about {target}"
+  - "who is {target}"
+  - "tell me everything about {target}"
+tool_chain:
+  - search_web:query="{target}"
+  - browse_web:url="{first_result_url}"
+  - search_wiki:query="{target}"
+  - query_trust_graph:name="{target}"
+prompt_template: |
+  Perform comprehensive research on: {target}
+
+  Synthesise findings from web search, wiki, and trust graph. Structure output as:
+  ## Overview (2-3 sentences)
+  ## Key Facts (bulleted)
+  ## Connections to Stephen's Work
+  ## Red Flags or Opportunities
+  ## Recommended Next Action
+
+  Be specific. Cite sources. Flag anything surprising.
+success_criteria: All 5 sections populated. At least 3 web sources consulted.

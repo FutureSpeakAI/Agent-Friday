@@ -16,15 +16,6 @@
         <div class="hud-corner bottom-left"><div class="dot"></div></div>
         <div class="hud-corner bottom-right"><div class="dot"></div></div>
         
-        <div class="hud-header">
-            <div class="hud-title-container">
-                <a href="https://futurespeak.ai" target="_blank" class="hud-main-title">FutureSpeak.AI</a>
-                <span>AGENT FRIDAY v.2.0.0 // <span id="evolution-day-text">DAY 1: GENESIS LATTICE</span></span>
-            </div>
-            <div class="hud-laws">
-                ASIMOV cLAWS VERIFIED <div class="status-dot green"></div>
-            </div>
-        </div>
 
         <div style="position:absolute;bottom:12px;left:18px;font-family:'Orbitron',sans-serif;font-size:9px;color:rgba(0,212,255,0.85);letter-spacing:2px;pointer-events:none;text-shadow:0 0 6px rgba(0,0,0,0.85),0 1px 2px rgba(0,0,0,0.8);">
             <span id="mood-text">STATE: LISTENING</span>
@@ -36,7 +27,6 @@
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
-    <div style="position:fixed;bottom:8px;left:12px;z-index:1;font-family:Orbitron,monospace;font-size:10px;color:rgba(124,58,237,0.08);letter-spacing:.1em;pointer-events:none">FutureSpeak.AI</div>
 
     <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -195,7 +185,7 @@
             REASONING: { baseColor: 0x4b0082, accentColor: 0x00ffff, rotationSpeed: 0.003, bloomStrength: 0.6, particleSpeedScale: 0.5, grain: 0.02 },
             SPEAKING:  { baseColor: 0x00ff80, accentColor: 0x00d4ff, rotationSpeed: 0.005, bloomStrength: 1.4, particleSpeedScale: 2.0, grain: 0.04 },
             CREATING:  { baseColor: 0xff00aa, accentColor: 0xff6600, rotationSpeed: 0.006, bloomStrength: 1.6, particleSpeedScale: 1.5, grain: 0.06 },
-            IDLE:      { baseColor: 0x030312, accentColor: 0x001122, rotationSpeed: 0.0001, bloomStrength: 0.25, particleSpeedScale: 0.1, grain: 0.015 },
+            IDLE:      { baseColor: 0x001540, accentColor: 0x0044bb, rotationSpeed: 0.0003, bloomStrength: 0.5,  particleSpeedScale: 0.25, grain: 0.015 },
             EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, rotationSpeed: 0.008, bloomStrength: 1.2, particleSpeedScale: 1.8, grain: 0.05 },
             EXCITED:   { baseColor: 0xffffff, accentColor: 0x00e5ff, rotationSpeed: 0.015, bloomStrength: 1.8, particleSpeedScale: 2.5, grain: 0.08 },
             CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 }
@@ -250,7 +240,7 @@
         
         let audioContext, analyser, dataArray;
         let micActive = false;
-        let lastSoundTime = -10; 
+        let lastSoundTime = 0;
         let audioData = { low: 0, mid: 0, high: 0, total: 0 };
         let idleFactor = 0.4;
         
@@ -344,15 +334,14 @@
 
             window.addEventListener('resize', onWindowResize);
 
-            // Auto-start audio on first user interaction (no overlay needed)
-            const autoStartAudio = () => { setupAudio(); document.removeEventListener('click', autoStartAudio); document.removeEventListener('keydown', autoStartAudio); };
-            document.addEventListener('click', autoStartAudio);
-            document.addEventListener('keydown', autoStartAudio);
+            // Audio visualizer deliberately disabled — mic is reserved for voice mode.
+            // setupAudio() uses getUserMedia which would show the mic indicator on page load.
 
             Object.values(structures).forEach(g => { if(g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); }});
             if (structures['CUBES']) { structures['CUBES'].visible = true; setGroupOpacity(structures['CUBES'], 1); }
 
-            document.getElementById('evolution-day-text').innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
+            const _evo = document.getElementById('evolution-day-text');
+            if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
             animate();
         }
 

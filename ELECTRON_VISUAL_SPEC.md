@@ -1,2 +1,0 @@
-# Test write
-This works.

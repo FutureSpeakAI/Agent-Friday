@@ -19,6 +19,7 @@ window.addEventListener('error',function(e){
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js" crossorigin="anonymous"></script>
 <script>
 // Hard fail-fast if any critical CDN didn't load — show a visible banner on mobile.
 window.addEventListener('DOMContentLoaded',function(){
@@ -161,6 +162,52 @@ window.addEventListener('DOMContentLoaded',function(){
             pointer-events: auto; background: transparent;
         }
 
+        /* Kill Switch — floating always-visible emergency stop */
+        .kill-switch {
+            position: fixed; top: 44px; right: 16px; z-index: 9999;
+            display: flex; align-items: center; gap: 7px;
+            padding: 7px 14px; border-radius: 6px; cursor: pointer;
+            font-family: 'Orbitron', monospace; font-size: 12px; font-weight: 700;
+            letter-spacing: 0.12em; border: none; pointer-events: auto;
+            background: linear-gradient(135deg, #cc0000, #ff2222);
+            color: #fff;
+            box-shadow: 0 0 18px rgba(255,0,0,0.65), 0 2px 8px rgba(0,0,0,0.6);
+            animation: kill-pulse 1.8s ease-in-out infinite;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .kill-switch:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 28px rgba(255,0,0,0.9), 0 4px 12px rgba(0,0,0,0.7);
+        }
+        .kill-switch:active { transform: scale(0.97); }
+        .kill-switch .ks-icon { font-size: 15px; line-height: 1; }
+        @keyframes kill-pulse {
+            0%, 100% { box-shadow: 0 0 18px rgba(255,0,0,0.65), 0 2px 8px rgba(0,0,0,0.6); }
+            50% { box-shadow: 0 0 32px rgba(255,0,0,1), 0 2px 8px rgba(0,0,0,0.6); }
+        }
+
+        /* CC indicator pill in top bar */
+        .cc-indicator {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 2px 8px; border-radius: 10px; font-size: 10px;
+            font-family: 'Orbitron', monospace; letter-spacing: 0.06em;
+            background: rgba(255,0,0,0.15); border: 1px solid rgba(255,80,80,0.5);
+            color: #ff6060; animation: cc-blink 2s ease-in-out infinite;
+        }
+        .cc-indicator .cc-dot {
+            width: 5px; height: 5px; border-radius: 50%;
+            background: #ff3333; box-shadow: 0 0 6px #ff3333;
+            animation: cc-dot-blink 1s ease-in-out infinite;
+        }
+        @keyframes cc-blink {
+            0%, 100% { border-color: rgba(255,80,80,0.5); }
+            50% { border-color: rgba(255,80,80,0.9); }
+        }
+        @keyframes cc-dot-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
         /* Model status pills */
         .model-pill {
             display: inline-flex; align-items: center; gap: 5px;
@@ -271,7 +318,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* Chat panel — solid enough to read against any scene */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 68px;
+            position: fixed; top: 36px; right: -340px; bottom: 90px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
             border-left: 1px solid rgba(255,255,255,0.08);
@@ -814,7 +861,7 @@ window.addEventListener('DOMContentLoaded',function(){
             left: 0 !important; right: 0 !important;
             top: 40px !important;
             width: 100vw !important;
-            height: calc(100vh - 40px - 52px) !important;
+            height: calc(100vh - 40px - 58px) !important;
             border-radius: 0;
             border-left: none; border-right: none; border-top: none;
           }
@@ -824,7 +871,7 @@ window.addEventListener('DOMContentLoaded',function(){
           /* Chat panel — full-width slide up from bottom */
           .chat-panel {
             top: auto !important;
-            bottom: 52px !important;
+            bottom: 58px !important;
             right: 0 !important;
             left: -100vw !important;
             width: 100vw !important;
@@ -858,5 +905,46 @@ window.addEventListener('DOMContentLoaded',function(){
           .dock-btn { min-width: 44px; font-size: 9px; }
           .model-pill { display: none; }
         }
+
+        /* Markdown-rendered Friday responses */
+        .md-body { line-height: 1.55; color: #bbb; }
+        .md-body p { margin: 0 0 8px; }
+        .md-body p:last-child { margin-bottom: 0; }
+        .md-body h1,.md-body h2,.md-body h3,.md-body h4 {
+            font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: 0.04em;
+            color: #00d4ff; margin: 10px 0 5px;
+        }
+        .md-body h1 { font-size: 13px; }
+        .md-body h2 { font-size: 12px; }
+        .md-body h3,.md-body h4 { font-size: 11px; color: #7c9cbf; }
+        .md-body ul,.md-body ol { margin: 0 0 8px 16px; padding: 0; }
+        .md-body li { margin-bottom: 3px; }
+        .md-body strong { color: #e0e0e0; font-weight: 600; }
+        .md-body em { color: #a0c4d8; font-style: italic; }
+        .md-body a { color: #00d4ff; text-decoration: none; background: linear-gradient(90deg,#00d4ff,#7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .md-body a:hover { opacity: 0.8; }
+        .md-body code {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            background: rgba(0,212,255,0.07); border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 3px; padding: 1px 4px; color: #7dd3fc;
+        }
+        .md-body pre {
+            background: rgba(0,0,0,0.45); border: 1px solid rgba(0,212,255,0.18);
+            border-radius: 6px; padding: 10px 12px; margin: 6px 0 10px;
+            overflow-x: auto; backdrop-filter: blur(8px);
+            box-shadow: inset 0 1px 0 rgba(0,212,255,0.08);
+        }
+        .md-body pre code {
+            background: none; border: none; padding: 0;
+            font-size: 10px; color: #a5f3fc; white-space: pre;
+        }
+        .md-body blockquote {
+            border-left: 2px solid rgba(0,212,255,0.35); margin: 6px 0;
+            padding: 4px 10px; color: #88a; font-style: italic;
+        }
+        .md-body hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 8px 0; }
+        .md-body table { border-collapse: collapse; font-size: 11px; width: 100%; margin: 6px 0; }
+        .md-body th { color: #00d4ff; border-bottom: 1px solid rgba(0,212,255,0.25); padding: 4px 8px; text-align: left; }
+        .md-body td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 8px; }
     </style>
 </head>

@@ -1,0 +1,9 @@
+flask>=3.0
+anthropic>=0.40
+google-genai>=1.0
+rich>=13.0
+colorama>=0.4
+pyautogui>=0.9
+beautifulsoup4>=4.12
+requests>=2.31
+pyyaml>=6.0

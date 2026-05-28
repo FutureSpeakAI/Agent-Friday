@@ -1,0 +1,27 @@
+name: job-eval
+description: Evaluate a job posting using the career-ops A-F scoring system.
+trigger_patterns:
+  - "evaluate this job"
+  - "score this role"
+  - "is this job worth it"
+  - "job evaluation"
+tool_chain:
+  - browse_web:url="{url}"
+  - get_career_pipeline
+  - read_wiki:path="professional/job-search.md"
+prompt_template: |
+  Evaluate this job posting for Stephen C. Webster using A-F scoring across 10 dimensions:
+  1. Compensation alignment ($500K target)
+  2. Remote/hybrid flexibility
+  3. Technical scope (AI, agentic systems)
+  4. Seniority match (VP/Director/Principal)
+  5. Company stage and stability
+  6. Mission alignment (ethical AI, press freedom)
+  7. Growth trajectory
+  8. Culture signals
+  9. Speed to hire signals
+  10. Stephen's network leverage at this company
+
+  Output: Overall grade, per-dimension scores, recommendation, and a 3-bullet "why" summary.
+  Job URL: {url}
+success_criteria: Grade A-F assigned with rationale. Recommendation is actionable.

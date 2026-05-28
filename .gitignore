@@ -1,45 +1,88 @@
-# Startup scripts contain API keys + passwords — never commit
+# ─── Secrets — startup scripts contain API keys + passwords ──────────────
 start.bat
 friday_startup.bat
 friday_startup.vbs
 launch_now.bat
+.env
+*.env
+.env.*
 
-# Python
+# ─── Python ──────────────────────────────────────────────────────────────
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 venv/
+.venv/
 
-# Friday runtime artifacts
+# ─── Friday runtime artifacts ────────────────────────────────────────────
 server_out.log
 server_err.log
+server.out.log
+server.err.log
 cloudflared.log
 commit_log.txt
 test_tts*.wav
 verify_tts.wav
+.setup_complete
 
-# Editor backups
+# Per-user generated config — stays out of source
+# (NOTE: ~/.friday/settings.json holds API keys, never commit project copies)
+# Match only at project root — skill default configs under skills/*/config.yaml ship.
+/settings.json
+/config.yaml
+secrets.json
+credentials.json
+
+# Friday skill state (bandit, counters, rotator)
+.friday-state.json
+*.bandit.json
+*.daily.json
+*.state.json
+
+# ─── Editor / IDE backups ────────────────────────────────────────────────
 *.bak
+*.backup
+*.orig
+*.swp
+*.swo
 index.html.*.bak
 ui_parts/*.bak
 
-# OS / IDE
+# ─── OS / IDE ────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.sublime-*
 
-# Asimov's Mind ephemeral state
+# ─── Asimov's Mind ephemeral state ───────────────────────────────────────
 .asimovs-mind/vault/bridge-token
 .asimovs-mind/vault/port
 asimovs-mind/
 
-# Node
+# ─── Claude Code worktrees / artifacts ───────────────────────────────────
+.claude/
+.claude/worktrees/
+
+# ─── Node ────────────────────────────────────────────────────────────────
 node_modules/
 npm-install.log
+npm-debug.log*
+yarn-debug.log*
 pw-install.log
+package-lock.json.bak
+
+# ─── Test artifacts ──────────────────────────────────────────────────────
 test-results/
 test-results.log
+playwright-report/
 
-# Build outputs the user wanted excluded
+# ─── Build outputs the user wanted excluded ──────────────────────────────
 assets/palette/
 assets/splash/

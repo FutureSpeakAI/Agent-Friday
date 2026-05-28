@@ -1,0 +1,118 @@
+# Job scanner — search parameters, scoring weights, and schedule
+#
+# Override at runtime via ~/.friday/skills/job_scanner.local.yaml
+# or by passing kwargs into scanner.scan().
+
+profile:
+  candidate: "Stephen C. Webster"
+  target_title_keywords:
+    - "VP AI"
+    - "VP, Artificial Intelligence"
+    - "Head of AI"
+    - "Director of AI"
+    - "Principal AI"
+    - "Chief AI Officer"
+    - "Director, Applied AI"
+    - "VP Product, AI"
+    - "VP Engineering, AI Platform"
+  exclude_title_keywords:
+    - "intern"
+    - "junior"
+    - "associate"
+    - "contract recruiter"
+    - "sales engineer"
+  target_skills:
+    - "agentic systems"
+    - "LLM orchestration"
+    - "applied AI"
+    - "product strategy"
+    - "platform engineering"
+    - "voice AI"
+    - "multimodal AI"
+    - "RAG"
+    - "evals"
+    - "skill optimization"
+  preferred_companies:
+    - "anthropic"
+    - "openai"
+    - "perplexity"
+    - "scale ai"
+    - "hugging face"
+    - "harvey"
+    - "glean"
+    - "writer"
+    - "decagon"
+    - "sierra"
+  blocked_companies:
+    - "meta"      # personal preference
+  seniority_targets:
+    - "vp"
+    - "director"
+    - "principal"
+    - "head"
+    - "chief"
+
+search:
+  sources:
+    - linkedin
+  base_url: "https://www.linkedin.com/jobs/search/"
+  location: "United States"
+  remote: true                       # filter to remote-friendly when possible
+  posted_within_hours: 24            # only postings <24h old per run
+  per_keyword_set_limit: 25          # max results pulled per query
+  max_total_per_run: 100
+
+salary:
+  floor_usd: 250000
+  target_usd: 400000
+  stretch_usd: 600000
+  weight_below_floor: 0.0
+  weight_at_target: 1.0
+
+scoring:
+  weights:
+    title_match: 3.0
+    salary_match: 2.0
+    remote_match: 2.0
+    skills_overlap: 2.0
+    seniority_match: 1.5
+    company_signal: 1.0
+  priority_threshold: 0.80
+  digest_threshold: 0.55
+
+dedup:
+  keys:
+    - "source:external_id"
+    - "company:title:location"
+  window_days: 60
+
+schedule:
+  active_hours:
+    start: "07:00"
+    end: "22:00"
+  interval_minutes: 240       # every 4 hours during active hours
+  timezone: "America/New_York"
+  keyword_rotation:
+    strategy: "round_robin"
+    sets:
+      - ["VP AI", "Head of AI"]
+      - ["Director of AI", "Principal AI"]
+      - ["Chief AI Officer", "VP Product, AI"]
+      - ["Applied AI", "AI Platform"]
+
+notifications:
+  priority_alert_max_per_day: 6     # cap so Stephen isn't spammed
+  digest_at_local_time: "18:00"
+  weekly_report_local_day: "sun"
+  weekly_report_local_time: "17:00"
+
+skillopt:
+  skill_name: "job_scanner"
+  weights:
+    accuracy: 0.40
+    user_satisfaction: 0.30
+    completeness: 0.15
+    latency: 0.10
+    cost: 0.05
+  latency_target_ms: 30000
+  cost_target_usd: 0.10
