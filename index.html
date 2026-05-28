@@ -3357,14 +3357,14 @@ const DRAFT_MODES=[
   {id:'freeform',label:'Freeform',ico:'📝'},
 ];
 const ORCHESTRATOR_MODELS=[
-  {id:'claude-opus-4-7',label:'Claude Opus 4',short:'Opus 4'},
-  {id:'claude-sonnet-4-6',label:'Claude Sonnet 4',short:'Sonnet 4'},
-  {id:'claude-haiku-4-5-20251001',label:'Claude Haiku',short:'Haiku'},
+  {id:'claude-opus-4-7',label:'Claude Opus 4.7',short:'Opus 4.7'},
+  {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',short:'Sonnet 4.6'},
+  {id:'claude-haiku-4-5-20251001',label:'Claude Haiku 4.5',short:'Haiku 4.5'},
 ];
 const SUBAGENT_MODELS=[
-  {id:'claude-sonnet-4-6',label:'Claude Sonnet 4',short:'Sonnet 4'},
-  {id:'claude-haiku-4-5-20251001',label:'Claude Haiku',short:'Haiku'},
-  {id:'claude-opus-4-7',label:'Claude Opus 4',short:'Opus 4'},
+  {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',short:'Sonnet 4.6'},
+  {id:'claude-haiku-4-5-20251001',label:'Claude Haiku 4.5',short:'Haiku 4.5'},
+  {id:'claude-opus-4-7',label:'Claude Opus 4.7',short:'Opus 4.7'},
 ];
 const CREATIVE_MODELS=[
   {id:'gemini-2.5-flash',label:'Gemini 3.1 Flash Live',short:'Gemini 3.1'},
@@ -4853,11 +4853,11 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         <div style={{display:'flex',alignItems:'baseline',gap:5,lineHeight:1}}>
           <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#00d4ff',cursor:'pointer',userSelect:'none',letterSpacing:'0.06em',textShadow:'0 0 14px rgba(0,212,255,0.45)',transition:'text-shadow .2s'}} title="Open System workspace">{agentSettings.agent_name||'AGENT FRIDAY'}</span>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:8,color:'rgba(255,255,255,0.28)',letterSpacing:'0.04em',marginLeft:2}}>by</span>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,255,255,0.45)',letterSpacing:'0.04em',marginLeft:4}}>by</span>
           <a href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer"
-            style={{fontFamily:'Orbitron',fontSize:8,color:'rgba(147,90,255,0.75)',textDecoration:'none',letterSpacing:'0.07em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 8px rgba(147,90,255,0.25)'}}
-            onMouseEnter={e=>{e.currentTarget.style.color='rgba(167,110,255,1)';e.currentTarget.style.textShadow='0 0 12px rgba(147,90,255,0.6)'}}
-            onMouseLeave={e=>{e.currentTarget.style.color='rgba(147,90,255,0.75)';e.currentTarget.style.textShadow='0 0 8px rgba(147,90,255,0.25)'}}>
+            style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#f59e0b',textDecoration:'none',letterSpacing:'0.06em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 14px rgba(245,158,11,0.55)'}}
+            onMouseEnter={e=>{e.currentTarget.style.color='#fbbf24';e.currentTarget.style.textShadow='0 0 18px rgba(245,158,11,0.85)'}}
+            onMouseLeave={e=>{e.currentTarget.style.color='#f59e0b';e.currentTarget.style.textShadow='0 0 14px rgba(245,158,11,0.55)'}}>
             FutureSpeak.AI
           </a>
         </div>
