@@ -293,6 +293,12 @@ error spikes and latency regressions.
   tailor → cover letter → ATS form plan → submission → tracker log. Resume
   variants picked via epsilon-greedy bandit. Quality gates: salary floor
   ($150K), confirmation above $300K, dedup-apply, brand-voice ≥ 0.75.
+- **`skills/ofw_monitor/`** — daily Our Family Wizard scan via Claude in
+  Chrome. Messages, custody calendar, expense submissions; **local-only**
+  lexicon-based sentiment (no LLM by default); response-deadline tracker;
+  HMAC-SHA256 chained archive in the Sovereign Vault. Notification
+  priorities: new_message (high), calendar_change (high),
+  expense_submitted (medium), response_overdue (critical), tone_shift (low).
 
 ### Skills Observatory
 
@@ -318,12 +324,159 @@ python skillopt_engine.py export        # JSON snapshot for the Observatory
 
 ---
 
+## Liquid UI — The Self-Evolving Interface
+
+Friday's UI literally reshapes itself around each user. Anything you wish
+the desktop did, you can ask for — and the interface grows that capability
+in place.
+
+### How it works
+
+1. **Intent capture.** `LiquidUIRequest` records the signal — either an
+   explicit "I wish I could…" sent from chat / the ✨ Suggest button, or a
+   behavioral observation from the `SuggestEngine` (repeated context
+   switching, dead clicks, error loops, dwell-time collapse).
+2. **Spec generation.** `FeatureSpecGenerator` turns intent into a
+   structured `FeatureSpec`: title, description, complexity tier, data
+   model, React components, backend routes, integrations, success
+   metrics, open questions.
+3. **Tier classification.** Each spec lands in one of five buckets, with
+   different review behavior:
+
+   | Tier      | Time budget | Review              |
+   |-----------|-------------|---------------------|
+   | trivial   | < 1 min     | auto-approved, hot-reloaded |
+   | simple    | 1–5 min     | quick-confirm modal |
+   | medium    | 5–30 min    | spec review with edits |
+   | complex   | 30–120 min  | detailed review, may spawn a background task |
+   | epic      | 2+ hours    | full spec + delivery roadmap |
+
+4. **Build.** `LiquidUIBuilder` generates React + backend artifacts into
+   `~/.friday/liquid_ui/features/<id>/`, takes a snapshot, emits a hot-reload
+   token. Source tree stays clean.
+5. **Track.** Every feature is also a SkillOpt skill — usage events feed
+   accuracy / satisfaction / completeness back into the same versioning
+   and evolution loop that powers the skills fleet.
+
+### Rollback
+
+Every Liquid UI change creates a snapshot. **Ctrl+Z within 30 seconds**
+reverts in one click; beyond that, Settings → Liquid UI History shows the
+full chain with one-click revert and per-snapshot file inspection.
+Snapshots are retained for 60 days.
+
+### Surfaces
+
+- ✨ **Suggest button** on every workspace — "What would make this better?"
+  with context-aware proposed specs.
+- **Right-click → "Improve this workspace"** anywhere.
+- **Liquid UI Panel** (`/liquid` route, also embeddable as a floating
+  window) — active feature requests, build queue, usage metrics,
+  snapshot history. See `ui_parts/liquid_ui_panel.html`.
+
+### CLI
+
+```bash
+python liquid_ui.py wish "I wish my dashboard showed today's OFW priority"
+python liquid_ui.py status              # fleet status JSON
+python liquid_ui.py list --status live
+python liquid_ui.py revert <snapshot_id>
+python liquid_ui.py scan                # run SuggestEngine pass
+```
+
+---
+
+## Workspace Architecture — Seeds & Gardens
+
+Friday isn't a fixed set of tabs. It's a **garden** — workspaces are seeds
+you plant when you want them, and they rearrange themselves around how
+you actually work.
+
+### Stock workspaces (the starter seeds)
+
+**Personal**
+- **Messages** — unified inbox across Gmail, SMS, Signal, WhatsApp, social DMs, and outbound drafts (the old "Draft" feature folds in here)
+- **Family** — household calendar, kid logistics, OFW summary card
+- **Health** — vitals, providers, prescriptions, fitness tracking
+
+**Professional**
+- **Career** — job tracker, application pipeline, interview prep
+- **Finances** — accounts, budgets, statements, tax docs
+- **Business** — FutureSpeak.AI ops, deals, investor pipeline
+- **News** — daily briefing, watched topics, source management
+
+**Creative**
+- **Studio** — content library + generation tools (replaces "Content"; the
+  old Draft surface for outbound messaging now lives in Messages)
+
+**Infrastructure**
+- **Wiki** — personal knowledge base, full-text search, proposal workflow
+- **Trust** — trust graph, people, relationships
+- **Code** — repos, CI, local environments
+- **Skills Observatory** — the SkillOpt fleet view
+
+### Dashboard home
+
+The default landing surface. Shows:
+- **KPI cards** — your top metrics, rearranged by frequency of use
+- **Today's agenda** — calendar, priorities, due-soon items
+- **Recent activity feed** — fresh signals across all gardens
+- **Alerts** — priority notifications (🔴 priority jobs, ⏰ OFW overdue,
+  📅 calendar changes, etc.)
+
+### Navigation hierarchy
+
+```
+Dashboard ▸ Personal ▸ Professional ▸ Creative ▸ Infrastructure ▸ ➕ Add Garden ▸ Settings
+```
+
+The order isn't fixed. Workspaces reorder based on how often you actually
+visit them — the ones you use most float left.
+
+### ➕ Add Garden
+
+Opens a gallery of additional workspace seeds you can plant with one
+click. Current catalog includes:
+
+- Smart Home (Home Assistant, presence, automations)
+- Travel (trips, bookings, itineraries)
+- Education (courses, study, certifications)
+- Legal (case files, contracts, court calendar)
+- Fitness (training plans, recovery, performance)
+- Entertainment (watch / read / play queue)
+- Real Estate (properties, comps, mortgages)
+- Pets (vet, food, schedules)
+- (and more — each seed is just a starter spec the Liquid UI engine grows)
+
+### Design principles
+
+1. **Don't overwhelm.** The setup wizard asks you to pick **4–5 workspaces
+   to start**. Everything else is a seed in the gallery.
+2. **Reorder by usage.** The garden remembers what you actually do.
+3. **Auto-minimize the unused.** Workspaces untouched for 30 days collapse
+   into a "compost" tray; one click to restore.
+4. **Every menu has ✨ Suggest** + a right-click "Improve this workspace"
+   that opens the Liquid UI request flow with context pre-filled.
+5. **Complete rollback.** Every Liquid UI change creates a snapshot.
+   Ctrl+Z within 30 seconds; full history in Settings.
+
+### Why this matters
+
+Most apps add features by accretion — you get more buttons every release,
+relevant or not. Friday goes the other way: you start with a small,
+familiar surface, and the system grows what's useful to *you* while
+hiding what isn't. The result is a desktop that, over time, looks less
+like everyone else's and more like yours.
+
+---
+
 ## Roadmap
 
 | Version | Status | Summary |
 |---------|--------|---------|
 | **v4.1** | ✅ Current | 30-tool agent, governance gate, voice mode, holographic UI, privacy shield |
-| **v4.2** | ✅ Current | SkillOpt-inspired skills system, Skills Observatory, job pipeline (scanner + application_engine) |
+| **v4.2** | ✅ | SkillOpt-inspired skills system, Skills Observatory, job pipeline (scanner + application_engine) |
+| **v4.3** | ✅ Current | Liquid UI (self-evolving interface), OFW Monitor skill, Seeds & Gardens workspace architecture, rollback system |
 | **v5.0** | 🚧 Next | Standalone Electron app (`asimov init` CLI, auto-updater, tray icon) |
 | **v6.0** | 📋 Planned | Federation — multiple Friday instances communicate as a mesh |
 | **v7.0** | 📋 Planned | Native apps for iOS/Android, OS-level integration |

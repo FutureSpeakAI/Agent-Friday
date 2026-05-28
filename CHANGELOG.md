@@ -5,6 +5,69 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [v4.3] — 2026-05-28
+
+The self-evolving interface release. Adds Liquid UI, OFW Monitor, and the
+Seeds & Gardens workspace architecture.
+
+### Liquid UI
+
+- **`liquid_ui.py`** — Friday's self-evolving interface engine.
+  - `LiquidUIRequest` captures intent — explicit ("I wish I could…") or
+    behavioral (workspace ping-pong, repeated filters, error loops,
+    dwell-time collapse).
+  - `FeatureSpecGenerator` produces structured specs with complexity
+    tier classification: trivial (<1m, auto), simple (1–5m), medium
+    (5–30m), complex (30–120m), epic (2h+).
+  - `LiquidUIBuilder` writes React + backend artifacts to
+    `~/.friday/liquid_ui/features/<id>/`, snapshots state, emits a
+    hot-reload token. Source tree stays pristine.
+  - `SuggestEngine` runs four behavioral detectors and surfaces
+    proactive `Suggestion` objects with confidence scores.
+  - `SnapshotManager` — HMAC-irrelevant but path-stable rollback. Every
+    change snapshots touched files; Ctrl+Z eligibility = within 30s.
+    60-day retention; Settings exposes the full chain.
+  - Every Liquid UI feature is also a SkillOpt skill — usage events
+    update accuracy / satisfaction / completeness.
+- **`ui_parts/liquid_ui_panel.html`** — React management panel with
+  build queue, feature cards, proactive suggestions, snapshot history,
+  ✨ Wish modal.
+
+### OFW Monitor
+
+- **`skills/ofw_monitor/`** — daily Our Family Wizard scan via Claude in
+  Chrome. Messages / custody calendar / expense submissions.
+  - Local lexicon-based sentiment (`cooperative` / `neutral` /
+    `passive-aggressive` / `hostile`). LLM summarization OFF by default;
+    a hard `_assert_local_only()` guard fails loud if disabled.
+  - Tone-shift detection over a 14-day window.
+  - 72-hour response-deadline tracker.
+  - HMAC-SHA256 chained archive at `~/.friday/vault/ofw-archive.jsonl`
+    — every record signs the previous one, tamper-evident on the entire
+    stream. `monitor.py verify` walks the chain.
+  - Phone / address / minor's name redacted via the privacy_shield
+    before any notification fires.
+  - Pluggable browser `Session` — `LocalSession` stub for tests / CLI,
+    real session injected by server.py via the Claude-in-Chrome MCP.
+
+### Workspace architecture
+
+- README documents the **Seeds & Gardens** model and the new stock
+  workspace layout:
+  - Personal: Messages (unified inbox + outbound drafts), Family, Health
+  - Professional: Career, Finances, Business, News
+  - Creative: Studio (was "Content"; "Draft" rolls into Messages)
+  - Infrastructure: Wiki, Trust, Code, Skills Observatory
+  - Dashboard home with KPI cards, today's agenda, activity feed, alerts
+  - ➕ Add Garden gallery: Smart Home, Travel, Education, Legal,
+    Fitness, Entertainment, Real Estate, Pets …
+- Design principles: pick 4–5 workspaces at setup; reorder by frequency;
+  auto-minimize after 30 days unused; every menu has ✨ Suggest +
+  right-click "Improve this workspace"; complete rollback via Liquid UI
+  snapshots.
+
+---
+
 ## [v4.2] — 2026-05-28
 
 Self-improving skills release. Adds a SkillOpt-inspired engine, two

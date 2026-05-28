@@ -1,0 +1,104 @@
+# OFW monitor — schedule, sentiment rules, privacy guards
+#
+# Override at runtime via ~/.friday/skills/ofw_monitor.local.yaml
+
+schedule:
+  timezone: "America/Chicago"
+  daily_scan_local_time: "08:00"
+  deadline_check_interval_hours: 12
+  weekly_summary_local_day: "sun"
+  weekly_summary_local_time: "19:00"
+
+session:
+  platform: "claude_in_chrome"
+  url: "https://www.ourfamilywizard.com"
+  login_url: "https://www.ourfamilywizard.com/login"
+  selectors:
+    inbox: "[data-test='inbox-list']"
+    message_row: "[data-test='message-row']"
+    unread_pill: "[data-test='unread-pill']"
+    calendar_view: "[data-test='calendar-view']"
+    calendar_event: "[data-test='calendar-event']"
+    expenses_view: "[data-test='expenses-view']"
+    expense_row: "[data-test='expense-row']"
+  consent_required_indicators:
+    - "Login"
+    - "Sign in"
+    - "Your session has expired"
+
+deadlines:
+  response_overdue_hours: 72
+  expense_decision_hours: 168     # 7 days
+  calendar_swap_response_hours: 48
+
+sentiment:
+  engine: "lexicon_local"          # never "llm_remote"
+  llm_summarization_allowed: false # explicit opt-in elsewhere
+  thresholds:
+    cooperative_min: 0.30
+    hostile_min: -0.30
+    passive_aggressive_signal_min: 2  # # of trigger phrases
+  passive_aggressive_triggers:
+    - "as you know"
+    - "as i mentioned"
+    - "for the record"
+    - "going forward"
+    - "to be clear"
+    - "again"
+    - "as previously stated"
+  hostile_triggers:
+    - "ridiculous"
+    - "unacceptable"
+    - "court"
+    - "lawyer"
+    - "violation"
+    - "neglect"
+  cooperative_triggers:
+    - "thanks"
+    - "appreciate"
+    - "no problem"
+    - "happy to"
+    - "let me know"
+  tone_shift_window_days: 14
+
+pattern_detection:
+  rolling_window_days: 30
+  alert_volume_spike_pct: 2.0       # 2x baseline
+  alert_response_latency_hours: 24  # median response latency rising
+
+archive:
+  vault_path: "~/.friday/vault/ofw-archive.jsonl"
+  screenshots_dir: "~/.friday/vault/ofw-screenshots"
+  encrypt_screenshots: true
+  hmac_chain: true
+  retention_days: 730               # 2 years — court-discoverable
+
+privacy:
+  redact_minor_full_name: true
+  redact_phone_numbers: true
+  redact_street_addresses: true
+  whitelist_emails:
+    - "user@example.com"
+  never_send_to_remote: true        # hard guard — any caller bypassing this is logged
+
+notifications:
+  rules:
+    new_message:        { priority: "high",     channel: "chat", icon: "📬" }
+    calendar_change:    { priority: "high",     channel: "chat", icon: "📅" }
+    expense_submitted:  { priority: "medium",   channel: "chat", icon: "💵" }
+    response_overdue:   { priority: "critical", channel: "chat", icon: "⏰" }
+    tone_shift:         { priority: "low",      channel: "chat", icon: "🌡️" }
+    extractor_degraded: { priority: "low",      channel: "chat", icon: "🛠" }
+    consent_required:   { priority: "high",     channel: "chat", icon: "🔑" }
+  daily_digest_local_time: "20:00"
+
+skillopt:
+  skill_name: "ofw_monitor"
+  weights:
+    accuracy: 0.40
+    user_satisfaction: 0.30
+    completeness: 0.20
+    latency: 0.05
+    cost: 0.05
+  latency_target_ms: 90000
+  cost_target_usd: 0.0              # local-only by default
