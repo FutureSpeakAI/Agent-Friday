@@ -2137,8 +2137,14 @@ function App(){
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false,privacy:false,computer_control:false});
+  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
+  // Mic / Speaker test state (used by the Audio & Voice section).
+  const[micTestActive,setMicTestActive]=useState(false);
+  const[micTestLevel,setMicTestLevel]=useState(0);
+  const[micTestMsg,setMicTestMsg]=useState('');
+  const[speakerTestActive,setSpeakerTestActive]=useState(false);
+  const[speakerTestMsg,setSpeakerTestMsg]=useState('');
   // Full Gemini-TTS voice catalogue (30 voices). Source:
   // https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#voice_options
   // Style descriptors sourced from the AI Studio voice picker — used for both
@@ -2534,6 +2540,111 @@ function App(){
   };
   const toggleVoice=()=>{voiceOn?voiceStopRef.current?.():voiceStartRef.current?.()};
   useEffect(()=>()=>{voiceStopRef.current?.()},[]);
+
+  // ─── Test Microphone ─────────────────────────────────────────
+  // Opens a short getUserMedia stream with the currently selected input
+  // device, drives a live volume bar for ~5 s, and reports whether audio
+  // actually came through. Critical for diagnosing AirPods-on-Windows where
+  // the device is selected in settings but delivers all-zero PCM frames.
+  const micTestRef=useRef({stream:null,ctx:null,raf:null,timer:null,peak:0});
+  const testMicrophone=async()=>{
+    if(micTestActive)return;
+    setMicTestActive(true);setMicTestLevel(0);setMicTestMsg('Opening mic…');
+    const t=micTestRef.current;t.peak=0;
+    const _inputId=agentSettings.audio_input_device_id;
+    const constraints={audio:_inputId?{deviceId:{ideal:_inputId},echoCancellation:true,noiseSuppression:true,channelCount:1}:{echoCancellation:true,noiseSuppression:true,channelCount:1}};
+    try{
+      t.stream=await navigator.mediaDevices.getUserMedia(constraints);
+      const trackLabel=t.stream.getAudioTracks()[0]?.label||'unknown';
+      setMicTestMsg('Listening: '+trackLabel.split('(')[0].trim().slice(0,32));
+      t.ctx=new (window.AudioContext||window.webkitAudioContext)();
+      if(t.ctx.state==='suspended')await t.ctx.resume();
+      const src=t.ctx.createMediaStreamSource(t.stream);
+      const analyser=t.ctx.createAnalyser();analyser.fftSize=512;
+      const buf=new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      const _loop=()=>{
+        analyser.getByteFrequencyData(buf);
+        let s=0;for(let i=0;i<buf.length;i++)s+=buf[i];
+        const lvl=Math.min(1,(s/buf.length)/128);
+        if(lvl>t.peak)t.peak=lvl;
+        setMicTestLevel(lvl);
+        t.raf=requestAnimationFrame(_loop);
+      };
+      _loop();
+      t.timer=setTimeout(()=>{
+        const ok=t.peak>0.015;
+        setMicTestMsg(ok?'✅ Mic working — peak '+t.peak.toFixed(3):'❌ No audio detected — try a different device');
+        _stopMicTest();
+      },5000);
+    }catch(e){
+      setMicTestMsg('⚠ '+(e.message||'mic access denied'));
+      _stopMicTest();
+    }
+  };
+  const _stopMicTest=()=>{
+    const t=micTestRef.current;
+    try{t.raf&&cancelAnimationFrame(t.raf)}catch(_){}
+    try{t.timer&&clearTimeout(t.timer)}catch(_){}
+    try{t.stream&&t.stream.getTracks().forEach(tr=>tr.stop())}catch(_){}
+    try{t.ctx&&t.ctx.close()}catch(_){}
+    micTestRef.current={stream:null,ctx:null,raf:null,timer:null,peak:0};
+    setMicTestLevel(0);setMicTestActive(false);
+  };
+
+  // ─── Test Speaker ────────────────────────────────────────────
+  // Plays a short tone via an HTMLAudioElement (which always supports
+  // setSinkId, unlike AudioContext.setSinkId which is Chrome 110+ only)
+  // so the user can confirm output is actually routed to the selected
+  // output device.
+  const testSpeaker=async()=>{
+    if(speakerTestActive)return;
+    setSpeakerTestActive(true);setSpeakerTestMsg('Playing tone…');
+    try{
+      // Build a 0.8s 440-Hz beep into a data: URL so a vanilla <audio>
+      // element can play it. WAV PCM16 mono 44.1 kHz.
+      const sampleRate=44100,duration=0.8,freq=440;
+      const frames=Math.floor(sampleRate*duration);
+      const headerSize=44,dataSize=frames*2,total=headerSize+dataSize;
+      const ab=new ArrayBuffer(total),dv=new DataView(ab);
+      const wstr=(o,s)=>{for(let i=0;i<s.length;i++)dv.setUint8(o+i,s.charCodeAt(i))};
+      wstr(0,'RIFF');dv.setUint32(4,total-8,true);wstr(8,'WAVE');wstr(12,'fmt ');
+      dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+      dv.setUint32(24,sampleRate,true);dv.setUint32(28,sampleRate*2,true);
+      dv.setUint16(32,2,true);dv.setUint16(34,16,true);wstr(36,'data');dv.setUint32(40,dataSize,true);
+      for(let i=0;i<frames;i++){
+        // Soft fade-in/out to avoid clicks
+        const t=i/sampleRate;
+        const env=Math.min(1,t*8,(duration-t)*8);
+        const v=Math.sin(2*Math.PI*freq*t)*0.35*env;
+        dv.setInt16(headerSize+i*2,Math.round(v*32767),true);
+      }
+      const blob=new Blob([ab],{type:'audio/wav'});
+      const url=URL.createObjectURL(blob);
+      const audio=new Audio(url);
+      const _outId=agentSettings.audio_output_device_id;
+      let sinkApplied=false;
+      if(_outId&&typeof audio.setSinkId==='function'){
+        try{await audio.setSinkId(_outId);sinkApplied=true}
+        catch(e){console.warn('[speaker-test] setSinkId failed:',e.message)}
+      }
+      audio.onended=()=>{
+        const _outName=audioOutputDevices.find(d=>d.deviceId===_outId)?.label?.split('(')[0].trim();
+        setSpeakerTestMsg(sinkApplied?'✅ Played to: '+(_outName||'selected device'):(_outId?'⚠ Played via system default (setSinkId unsupported)':'✅ Played via system default'));
+        URL.revokeObjectURL(url);
+        setSpeakerTestActive(false);
+      };
+      audio.onerror=(e)=>{
+        setSpeakerTestMsg('❌ Playback failed');
+        URL.revokeObjectURL(url);
+        setSpeakerTestActive(false);
+      };
+      await audio.play();
+    }catch(e){
+      setSpeakerTestMsg('⚠ '+(e.message||'tone failed'));
+      setSpeakerTestActive(false);
+    }
+  };
 
   // ─── Audio Device Enumeration ────────────────────────────────
   refreshAudioDevicesRef.current=async()=>{
@@ -3108,7 +3219,9 @@ function App(){
         })}
     </div>}
 
-    {/* Settings Panel */}
+    {/* Settings Panel — reorganized into 5 top-level collapsible groups
+        (Audio & Voice / AI Model / Appearance / Account & Security / About)
+        with smooth max-height slide animation via .settings-coll-body. */}
     <div className={`settings-panel ${settingsOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>SETTINGS</span>
@@ -3118,50 +3231,228 @@ function App(){
         </div>
       </div>
 
-      {/* ── GROUP: Agent Identity ── */}
-      <div className="settings-section">
-        <div className="settings-section-title">Agent Identity</div>
-        <div className="settings-subtitle">Agent Name</div>
+      {/* ── 1) AUDIO & VOICE ── default open. Mic + speaker + Test buttons live here. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.audio?'open':''}`} onClick={()=>toggleSection('audio')}>
+          <div className="settings-section-title" style={{margin:0,color:'#f59e0b'}}>Audio &amp; Voice</div>
+          <span className="chev">{openSections.audio?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.audio?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div className="settings-subtitle">Microphone (Input)</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>
+            <select value={agentSettings.audio_input_device_id||''} onChange={e=>saveAgentSettings({audio_input_device_id:e.target.value})}
+              style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
+              <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
+              {audioInputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
+            </select>
+            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:6,color:'#f59e0b',borderColor:'rgba(245,158,11,0.3)'}}
+              disabled={micTestActive}
+              onClick={testMicrophone}>
+              {micTestActive?'🎙 Listening — speak into mic…':'🎙 Test Microphone (5s)'}
+            </button>
+            {(micTestActive||micTestMsg)&&<>
+              <div className="miclevel-bar"><div className="miclevel-fill" style={{width:Math.min(100,Math.max(2,micTestLevel*180))+'%'}}/></div>
+              {micTestMsg&&<div style={{fontSize:11,color:micTestMsg.startsWith('✅')?'#00ff80':micTestMsg.startsWith('❌')||micTestMsg.startsWith('⚠')?'#ff5588':'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginTop:6}}>{micTestMsg}</div>}
+            </>}
+
+            {audioOutputDevices.filter(d=>d.label).length>0&&<>
+              <div className="settings-subtitle" style={{marginTop:14}}>Speaker (Output)</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Test routes through &lt;audio&gt;.setSinkId — the reliable cross-browser path. Live voice uses AudioContext.setSinkId (Chrome 110+).</div>
+              <select value={agentSettings.audio_output_device_id||''} onChange={e=>saveAgentSettings({audio_output_device_id:e.target.value})}
+                style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
+                <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
+                {audioOutputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
+              </select>
+              <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:6,color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
+                disabled={speakerTestActive}
+                onClick={testSpeaker}>
+                {speakerTestActive?'🔊 Playing tone…':'🔊 Test Speaker (440 Hz beep)'}
+              </button>
+              {speakerTestMsg&&<div style={{fontSize:11,color:speakerTestMsg.startsWith('✅')?'#00ff80':speakerTestMsg.startsWith('❌')||speakerTestMsg.startsWith('⚠')?'#f59e0b':'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>{speakerTestMsg}</div>}
+            </>}
+            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:14}} onClick={()=>refreshAudioDevicesRef.current?.()}>↺ Refresh Device List</button>
+
+            <div className="settings-subtitle">Voice Model (Live)</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Underlying Gemini Live model used for the mic conversation.</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:14}}>
+              {VOICE_MODELS.map(m=>(
+                <button key={m.id}
+                  className={`settings-btn ${agentSettings.voice_model===m.id?'active':''}`}
+                  style={{fontSize:11,padding:'4px 8px'}}
+                  onClick={()=>saveAgentSettings({voice_model:m.id})}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="settings-subtitle">TTS Voice</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8,lineHeight:1.5}}>
+              Voice used by briefing Read Aloud <span style={{color:'rgba(255,255,255,0.55)'}}>and</span> live voice mode.
+            </div>
+            <select
+              value={agentSettings.tts_voice||'Aoede'}
+              onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
+              style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+              {TTS_VOICES.map(v=><option key={v.id} value={v.id} style={{background:'#0a0a14',color:'#ccc'}}>{v.label}</option>)}
+            </select>
+            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}}
+              disabled={ttsPreviewBusy}
+              onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
+              {ttsPreviewBusy?'Previewing...':'🔊 Preview selected voice'}
+            </button>
+
+            {/* Nested collapsible — Advanced Voice Tuning. */}
+            <div className="settings-subcoll-header" style={{marginTop:14}} onClick={()=>toggleSection('voice_advanced')}>
+              <span>Advanced Voice Tuning</span>
+              <span style={{color:'rgba(0,212,255,0.6)'}}>{openSections.voice_advanced?'▾':'▸'}</span>
+            </div>
+            <div className={`settings-coll-body ${openSections.voice_advanced?'open':''}`}>
+              <div style={{paddingTop:4}}>
+                <div className="settings-subtitle">Language</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6}}>BCP-47 region code passed to Gemini-TTS &amp; the Live API.</div>
+                <select
+                  value={agentSettings.voice_language||''}
+                  onChange={e=>saveAgentSettings({voice_language:e.target.value})}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+                  {VOICE_LANGUAGES.map(l=><option key={l.id||'default'} value={l.id} style={{background:'#0a0a14',color:'#ccc'}}>{l.label}</option>)}
+                </select>
+
+                <div className="settings-subtitle" style={{marginTop:14}}>Speaking style prompt</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
+                  Free-text instruction shaping delivery. Leave blank for the built-in conversational style.
+                </div>
+                <select
+                  value={''}
+                  onChange={e=>{ if(e.target.value!==undefined){ saveAgentSettings({voice_style_prompt:e.target.value}); } }}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
+                  <option value="" style={{background:'#0a0a14',color:'#888'}}>— Insert preset… —</option>
+                  {VOICE_STYLE_PRESETS.filter(p=>p.id).map((p,i)=><option key={i} value={p.id} style={{background:'#0a0a14',color:'#ccc'}}>{p.label}</option>)}
+                </select>
+                <textarea
+                  value={agentSettings.voice_style_prompt||''}
+                  onChange={e=>saveAgentSettings({voice_style_prompt:e.target.value})}
+                  placeholder="e.g. Speak warmly and slowly, like a calm storyteller…"
+                  rows={3}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
+                {agentSettings.voice_style_prompt&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}}
+                  onClick={()=>saveAgentSettings({voice_style_prompt:''})}>Clear style prompt</button>}
+
+                <div className="settings-subtitle" style={{marginTop:14}}>Inline markup tags</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>Click a chip to copy it.</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {VOICE_MARKUP_TAGS.map(t=>(
+                    <span key={t.tag} title={t.desc}
+                      onClick={()=>{try{navigator.clipboard.writeText(t.tag);setSettingsSaveMsg('Copied '+t.tag);setTimeout(()=>setSettingsSaveMsg(''),1200);}catch(e){}}}
+                      style={{padding:'4px 9px',borderRadius:12,background:'rgba(124,58,237,0.10)',border:'1px solid rgba(124,58,237,0.30)',color:'#cbb6ff',fontFamily:'JetBrains Mono',fontSize:11,cursor:'pointer',userSelect:'none'}}>{t.tag}</span>
+                  ))}
+                </div>
+
+                <div className="settings-subtitle" style={{marginTop:18}}>Live response tuning</div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Temperature</span>
+                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>
+                    {agentSettings.voice_temperature==null?'default':Number(agentSettings.voice_temperature).toFixed(2)}
+                  </span>
+                </div>
+                <input type="range" min="0" max="2" step="0.05"
+                  value={agentSettings.voice_temperature==null?1.0:Number(agentSettings.voice_temperature)}
+                  onChange={e=>saveAgentSettings({voice_temperature:parseFloat(e.target.value)})}
+                  style={{width:'100%',accentColor:'#7c3aed'}}/>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
+                  <span>focused</span><span>balanced</span><span>playful</span>
+                </div>
+                {agentSettings.voice_temperature!=null&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:8,fontSize:11}}
+                  onClick={()=>saveAgentSettings({voice_temperature:null})}>Reset temperature to model default</button>}
+
+                <div className="settings-subtitle" style={{marginTop:10}}>Max response length</div>
+                <select
+                  value={String(agentSettings.voice_max_tokens||0)}
+                  onChange={e=>saveAgentSettings({voice_max_tokens:parseInt(e.target.value,10)||0})}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+                  <option value="0"   style={{background:'#0a0a14',color:'#ccc'}}>Unlimited (model default)</option>
+                  <option value="100" style={{background:'#0a0a14',color:'#ccc'}}>~15 sec  ·  100 tokens (very brief)</option>
+                  <option value="200" style={{background:'#0a0a14',color:'#ccc'}}>~30 sec  ·  200 tokens (brief)</option>
+                  <option value="400" style={{background:'#0a0a14',color:'#ccc'}}>~60 sec  ·  400 tokens (standard)</option>
+                  <option value="800" style={{background:'#0a0a14',color:'#ccc'}}>~2 min   ·  800 tokens (longform)</option>
+                </select>
+
+                <div className="settings-subtitle" style={{marginTop:14}}>Behaviour</div>
+                <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:4}}>
+                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+                    <input type="checkbox" checked={!!agentSettings.voice_affective}
+                      onChange={e=>saveAgentSettings({voice_affective:e.target.checked})}
+                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
+                    <div>
+                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Affective dialog</div>
+                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Detect emotional tone in speech, adapt delivery. <span style={{color:'rgba(245,158,11,0.85)'}}>Requires native-audio Live model.</span></div>
+                    </div>
+                  </label>
+                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+                    <input type="checkbox" checked={!!agentSettings.voice_proactive}
+                      onChange={e=>saveAgentSettings({voice_proactive:e.target.checked})}
+                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
+                    <div>
+                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Proactive audio</div>
+                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Stay silent on background talk. Recommended for always-on mic.</div>
+                    </div>
+                  </label>
+                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+                    <input type="checkbox" checked={!!agentSettings.voice_context_compression}
+                      onChange={e=>saveAgentSettings({voice_context_compression:e.target.checked})}
+                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
+                    <div>
+                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Sliding-window context compression</div>
+                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Keep long voice sessions alive past the context cap.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 2) AI MODEL ── chat models, reasoning, prompt-style, personality. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.ai_model?'open':''}`} onClick={()=>toggleSection('ai_model')}>
+          <div className="settings-section-title" style={{margin:0}}>AI Model</div>
+          <span className="chev">{openSections.ai_model?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.ai_model?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div className="settings-subtitle">Agent Name</div>
         <div style={{display:'flex',gap:6,marginBottom:14,alignItems:'center'}}>
           <input value={agentSettings.agent_name||''} onChange={e=>setAgentSettings(s=>({...s,agent_name:e.target.value}))} onBlur={e=>saveAgentSettings({agent_name:e.target.value})}
             placeholder="AGENT FRIDAY"
             style={{flex:1,background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'Orbitron',fontSize:12,letterSpacing:'0.06em',outline:'none'}}/>
         </div>
-        {[
-          {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:ORCHESTRATOR_MODELS},
-          {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:SUBAGENT_MODELS},
-          {label:'Creative',subtitle:'Images, voice, vision',key:'creative_model',models:CREATIVE_MODELS},
-          {label:'Voice',subtitle:'Live audio',key:'voice_model',models:VOICE_MODELS},
-        ].map(cat=>(
-          <div key={cat.key} style={{marginBottom:12}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
-              <span className="settings-subtitle" style={{margin:0}}>{cat.label}</span>
-              <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{cat.subtitle}</span>
-            </div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-              {cat.models.map(m=>(
-                <button key={m.id}
-                  className={`settings-btn ${agentSettings[cat.key]===m.id?'active':''}`}
-                  style={{fontSize:11,padding:'4px 8px'}}
-                  onClick={()=>saveAgentSettings({[cat.key]:m.id})}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+            {/* Chat model selectors — voice_model lives in the Audio & Voice section instead. */}
+            {[
+              {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:ORCHESTRATOR_MODELS},
+              {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:SUBAGENT_MODELS},
+              {label:'Creative',subtitle:'Images & vision',key:'creative_model',models:CREATIVE_MODELS},
+            ].map(cat=>(
+              <div key={cat.key} style={{marginBottom:12}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
+                  <span className="settings-subtitle" style={{margin:0}}>{cat.label}</span>
+                  <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{cat.subtitle}</span>
+                </div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {cat.models.map(m=>(
+                    <button key={m.id}
+                      className={`settings-btn ${agentSettings[cat.key]===m.id?'active':''}`}
+                      style={{fontSize:11,padding:'4px 8px'}}
+                      onClick={()=>saveAgentSettings({[cat.key]:m.id})}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
 
-      {/* ── GROUP: Agent Intelligence (open by default) ── */}
-      <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('intel')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Agent Intelligence</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.intel?'▾':'▸'}</span>
-        </div>
-        {openSections.intel&&<div style={{padding:'0 16px 14px'}}>
-          {/* Reasoning Style */}
-          <div className="settings-subtitle">Reasoning Style</div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+            <div className="settings-subtitle" style={{marginTop:6}}>Reasoning Style</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
             <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Precise</span>
             <span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{(agentSettings.temperature??0.7).toFixed(2)}</span>
             <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Creative</span>
@@ -3211,26 +3502,17 @@ function App(){
               </button>
             )})}
           </div>
-          <div className="settings-subtitle">Communication Style</div>
-          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-            {['professional','casual','technical'].map(v=>
-              <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
-                style={{textAlign:'center',textTransform:'capitalize'}}
-                onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
-            )}
-          </div>
-        </div>}
-      </div>
+            <div className="settings-subtitle">Communication Style</div>
+            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:14}}>
+              {['professional','casual','technical'].map(v=>
+                <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
+                  style={{textAlign:'center',textTransform:'capitalize'}}
+                  onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
+              )}
+            </div>
 
-      {/* ── GROUP: Personality & Safety ── */}
-      <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('personality')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Personality &amp; Safety</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.personality?'▾':'▸'}</span>
-        </div>
-        {openSections.personality&&<div style={{padding:'0 16px 14px'}}>
-          {/* Agent Personality */}
-          <div className="settings-subtitle">Agent Personality</div>
+            {/* Personality + ASIMOV cLaws + Epistemic + Evolution — all folded into AI Model. */}
+            <div className="settings-subtitle">Agent Personality</div>
           <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
           <textarea
             value={personalityDraft}
@@ -3316,349 +3598,212 @@ function App(){
             <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10}} onClick={checkSycophancy}>Check Sycophancy</button>
             {stSycoMsg&&<div style={{marginTop:6,fontSize:11,color:stSycoMsg.startsWith('SYCOPHANCY')?'#ff0080':stSycoMsg.startsWith('LEAN')?'#f59e0b':'#00ff80',fontFamily:'JetBrains Mono'}}>{stSycoMsg}</div>}
           </>)})()}
-        </div>}
+          </div>
+        </div>
       </div>
 
-      {/* ── GROUP: Voice & Audio ── */}
+      {/* ── 3) APPEARANCE ── visual scene, mood, holographic toggles. */}
       <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('voice')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Voice &amp; Audio</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.voice?'▾':'▸'}</span>
+        <div className={`settings-coll-header ${openSections.appearance?'open':''}`} onClick={()=>toggleSection('appearance')}>
+          <div className="settings-section-title" style={{margin:0}}>Appearance</div>
+          <span className="chev">{openSections.appearance?'▾':'▸'}</span>
         </div>
-        {openSections.voice&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-subtitle">Voice</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8,lineHeight:1.5}}>
-            Voice used by briefing Read Aloud <span style={{color:'rgba(255,255,255,0.55)'}}>and</span> live voice mode.
-            <span style={{color:'rgba(255,255,255,0.45)'}}> TTS changes apply instantly; live voice changes apply on the next mic session.</span>
-          </div>
-          <select
-            value={agentSettings.tts_voice||'Aoede'}
-            onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-            {TTS_VOICES.map(v=><option key={v.id} value={v.id} style={{background:'#0a0a14',color:'#ccc'}}>{v.label}</option>)}
-          </select>
-          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}}
-            disabled={ttsPreviewBusy}
-            onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
-            {ttsPreviewBusy?'Previewing...':'🔊 Preview selected voice'}
-          </button>
+        <div className={`settings-coll-body ${openSections.appearance?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div className="settings-subtitle">Evolution Structure</div>
+            <div className="settings-grid" style={{marginBottom:14}}>
+              {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
+                <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
+                  onClick={()=>{
+                    window.fridayVibe?.setStructure(i);
+                    fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});
+                  }}>
+                  <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
+                </button>
+              )}
+            </div>
+            <div style={{marginTop:-8,marginBottom:14,fontSize:11,color:'rgba(255,255,255,0.35)',display:'flex',justifyContent:'flex-end'}}>
+              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(0,212,255,0.4)',fontSize:11,padding:0}} onClick={()=>{window.fridayVibe?.setStructure&&fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:null})}).catch(()=>{})}}>reset to auto (evolution)</button>
+            </div>
 
-          {/* ── Language ─────────────────────────────────────── */}
-          <div className="settings-subtitle" style={{marginTop:14}}>Language</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6}}>BCP-47 region code passed to Gemini-TTS &amp; the Live API. Affects accent and pronunciation.</div>
-          <select
-            value={agentSettings.voice_language||''}
-            onChange={e=>saveAgentSettings({voice_language:e.target.value})}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-            {VOICE_LANGUAGES.map(l=><option key={l.id||'default'} value={l.id} style={{background:'#0a0a14',color:'#ccc'}}>{l.label}</option>)}
-          </select>
+            <div className="settings-subtitle">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4,textTransform:'none',letterSpacing:0}}>— manual override</span></div>
+            <div className="settings-grid" style={{marginBottom:14}}>
+              <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
+              {moods.map(m=>
+                <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
+                  onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
+              )}
+            </div>
 
-          {/* ── Style prompt ─────────────────────────────────── */}
-          <div className="settings-subtitle" style={{marginTop:14}}>Speaking style prompt</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
-            Free-text instruction shaping delivery. Briefing readback uses it as a prompt prefix; live voice mode prepends it to the system instruction. Leave blank for the built-in conversational style.
+            <div className="settings-subtitle">Holographic Consciousness</div>
+            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
+              <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
+              <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
+            </div>
+            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
+              <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
+              <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
+            </div>
+            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
+              <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
+              <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
+            </div>
           </div>
-          <select
-            value={''}
-            onChange={e=>{ if(e.target.value!==undefined){ saveAgentSettings({voice_style_prompt:e.target.value}); } }}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
-            <option value="" style={{background:'#0a0a14',color:'#888'}}>— Insert preset… —</option>
-            {VOICE_STYLE_PRESETS.filter(p=>p.id).map((p,i)=><option key={i} value={p.id} style={{background:'#0a0a14',color:'#ccc'}}>{p.label}</option>)}
-          </select>
-          <textarea
-            value={agentSettings.voice_style_prompt||''}
-            onChange={e=>saveAgentSettings({voice_style_prompt:e.target.value})}
-            placeholder="e.g. Speak warmly and slowly, like a calm storyteller…"
-            rows={3}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
-          {agentSettings.voice_style_prompt&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}}
-            onClick={()=>saveAgentSettings({voice_style_prompt:''})}>Clear style prompt</button>}
+        </div>
+      </div>
 
-          {/* ── Markup tags reference ────────────────────────── */}
-          <div className="settings-subtitle" style={{marginTop:14}}>Inline markup tags</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
-            Type any of these inside the text you want spoken (or inside the style prompt above) to add non-speech cues. Click a chip to copy it.
-          </div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-            {VOICE_MARKUP_TAGS.map(t=>(
-              <span key={t.tag} title={t.desc}
-                onClick={()=>{try{navigator.clipboard.writeText(t.tag);setSettingsSaveMsg('Copied '+t.tag);setTimeout(()=>setSettingsSaveMsg(''),1200);}catch(e){}}}
-                style={{padding:'4px 9px',borderRadius:12,background:'rgba(124,58,237,0.10)',border:'1px solid rgba(124,58,237,0.30)',color:'#cbb6ff',fontFamily:'JetBrains Mono',fontSize:11,cursor:'pointer',userSelect:'none'}}>{t.tag}</span>
-            ))}
-          </div>
+      {/* ── 4) ACCOUNT & SECURITY ── email, API keys, logging, camera, computer control. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.security?'open':''}`} onClick={()=>toggleSection('security')}>
+          <div className="settings-section-title" style={{margin:0}}>Account &amp; Security</div>
+          <span className="chev">{openSections.security?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.security?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div className="settings-subtitle">Your Email</div>
+            <input value={agentSettings.user_email||''} onChange={e=>setAgentSettings(s=>({...s,user_email:e.target.value}))} onBlur={e=>saveAgentSettings({user_email:e.target.value})}
+              placeholder="you@example.com"
+              style={{width:'100%',background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',marginBottom:6}}/>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:14}}>Yours stays plain. Other emails are replaced with <code style={{color:'#00d4ff'}}>[PII:email:hash]</code> before being sent to the Claude API and rehydrated on the way back.</div>
 
-          {/* ── Generation controls (Live API) ─────────────────── */}
-          <div className="settings-subtitle" style={{marginTop:18}}>Live response tuning</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.5}}>
-            Applied to the Live API only. Changes take effect on the next mic session.
-          </div>
+            <div className="settings-subtitle">API Key Status</div>
+            <div style={{marginBottom:14}}>
+              {(()=>{
+                const rows=[
+                  {label:'Anthropic (Claude)',ok:!!(agentSettings.anthropic_api_key&&agentSettings.anthropic_api_key.length>8)},
+                  {label:'Google (Gemini)',ok:!!(agentSettings.gemini_api_key&&agentSettings.gemini_api_key.length>8)},
+                ];
+                return rows.map((r,i)=>(
+                  <div key={i} className="keystatus-row">
+                    <span>{r.label}</span>
+                    {r.ok?<span className="ok">✓ configured</span>:<span className="missing">✗ missing</span>}
+                  </div>
+                ));
+              })()}
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:6,lineHeight:1.5}}>Keys are stored in <code style={{color:'#00d4ff'}}>~/.friday/settings.json</code> on this machine only.</div>
+              <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}} onClick={()=>setSetupDone(false)}>Re-open Setup Wizard</button>
+            </div>
 
-          {/* Temperature */}
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Temperature</span>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>
-              {agentSettings.voice_temperature==null?'default':Number(agentSettings.voice_temperature).toFixed(2)}
-            </span>
-          </div>
-          <input type="range" min="0" max="2" step="0.05"
-            value={agentSettings.voice_temperature==null?1.0:Number(agentSettings.voice_temperature)}
-            onChange={e=>saveAgentSettings({voice_temperature:parseFloat(e.target.value)})}
-            style={{width:'100%',accentColor:'#7c3aed'}}/>
-          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
-            <span>focused</span><span>balanced</span><span>playful</span>
-          </div>
-          {agentSettings.voice_temperature!=null&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:8,fontSize:11}}
-            onClick={()=>saveAgentSettings({voice_temperature:null})}>Reset temperature to model default</button>}
+            <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
+              <span className="settings-toggle-label">Full Context Logging</span>
+              <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
+            </div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Append-only event log of chats, tool calls, wiki edits, and file reads. Stored locally in <code style={{color:'#00d4ff'}}>~/.friday/vault/context-log/</code>.</div>
 
-          {/* Max output tokens */}
-          <div className="settings-subtitle" style={{marginTop:10}}>Max response length</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Caps each spoken reply. Most useful for ambient mode.</div>
-          <select
-            value={String(agentSettings.voice_max_tokens||0)}
-            onChange={e=>saveAgentSettings({voice_max_tokens:parseInt(e.target.value,10)||0})}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-            <option value="0"   style={{background:'#0a0a14',color:'#ccc'}}>Unlimited (model default)</option>
-            <option value="100" style={{background:'#0a0a14',color:'#ccc'}}>~15 sec  ·  100 tokens (very brief)</option>
-            <option value="200" style={{background:'#0a0a14',color:'#ccc'}}>~30 sec  ·  200 tokens (brief)</option>
-            <option value="400" style={{background:'#0a0a14',color:'#ccc'}}>~60 sec  ·  400 tokens (standard)</option>
-            <option value="800" style={{background:'#0a0a14',color:'#ccc'}}>~2 min   ·  800 tokens (longform)</option>
-          </select>
+            <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
+              <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record (quick toggle)</span>
+              <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
+            </div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>When on, chat messages are not written to the context log even if logging is enabled.</div>
 
-          {/* Toggles */}
-          <div className="settings-subtitle" style={{marginTop:14}}>Behaviour</div>
-          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:4}}>
-            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-              <input type="checkbox" checked={!!agentSettings.voice_affective}
-                onChange={e=>saveAgentSettings({voice_affective:e.target.checked})}
-                style={{marginTop:3,accentColor:'#7c3aed'}}/>
-              <div>
-                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Affective dialog</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Detect emotional tone in your speech and adapt delivery to match. <span style={{color:'rgba(245,158,11,0.85)'}}>Requires a native-audio Live model</span> — silently ignored on other voice models.</div>
+            <div className="settings-subtitle">Retention Period</div>
+            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',marginBottom:12}}>
+              {[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=>
+                <button key={o.v} className={`settings-btn ${(agentSettings.context_retention_days??0)===o.v?'active':''}`}
+                  style={{textAlign:'center',fontSize:11}}
+                  onClick={()=>saveAgentSettings({context_retention_days:o.v})}>{o.l}</button>
+              )}
+            </div>
+            <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:14}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
+
+            <div className="settings-subtitle">Camera &amp; Vision</div>
+            <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
+              <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
+              <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
+            </div>
+            {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginTop:6,marginBottom:4}}>Frame Capture Interval</div>
+            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:6}}>
+              {[1,3,5].map(s=>
+                <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
+                  style={{textAlign:'center'}}
+                  onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
+              )}
+            </div>
+            <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
+              <span className="settings-toggle-label">Auto-describe what Friday sees</span>
+              <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
+            </div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:14}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
+
+            {/* Computer Control — kept inside Account & Security as it's a high-trust permission. */}
+            <div style={{border:'1px solid rgba(255,50,50,0.2)',borderRadius:6,padding:10,background:'rgba(255,50,50,0.02)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                <div className="settings-section-title" style={{margin:0,color:'rgba(255,100,100,0.85)'}}>Computer Control</div>
+                {ccGranted&&<span style={{fontSize:10,fontFamily:'Orbitron',color:'#ff3333',padding:'1px 6px',borderRadius:4,background:'rgba(255,0,0,0.12)',border:'1px solid rgba(255,0,0,0.3)'}}>ACTIVE</span>}
               </div>
-            </label>
-            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-              <input type="checkbox" checked={!!agentSettings.voice_proactive}
-                onChange={e=>saveAgentSettings({voice_proactive:e.target.checked})}
-                style={{marginTop:3,accentColor:'#7c3aed'}}/>
-              <div>
-                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Proactive audio</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Let Friday stay silent when background talk isn't directed at her. Recommended for always-on mic.</div>
+              {!ccAvailable&&<div style={{fontSize:11,color:'#f59e0b',padding:'6px 8px',background:'rgba(245,158,11,0.08)',borderRadius:4,marginBottom:10}}>pyautogui not installed. Run <code style={{color:'#00d4ff'}}>pip install pyautogui</code> in the venv and restart the server.</div>}
+              <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
+                When enabled, Friday can move your mouse, click, type, and take screenshots.<br/>
+                <strong style={{color:'#ff6060'}}>Permission is revoked on every server restart.</strong>
               </div>
-            </label>
-            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-              <input type="checkbox" checked={!!agentSettings.voice_context_compression}
-                onChange={e=>saveAgentSettings({voice_context_compression:e.target.checked})}
-                style={{marginTop:3,accentColor:'#7c3aed'}}/>
-              <div>
-                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Sliding-window context compression</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Keep long voice sessions alive past the context cap by auto-pruning older turns.</div>
+              <div className="settings-toggle" onClick={()=>{
+                if(ccGranted){
+                  fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'revoke'})}).then(()=>setCcGranted(false)).catch(()=>{});
+                }else{
+                  fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'grant'})}).then(r=>r.json()).then(d=>setCcGranted(!!d.granted)).catch(()=>{});
+                }
+              }} style={{borderColor:ccGranted?'rgba(255,50,50,0.4)':'undefined'}}>
+                <span className="settings-toggle-label" style={{color:ccGranted?'#ff6060':undefined}}>{ccGranted?'🔴 Computer Control ACTIVE':'🟢 Computer Control OFF'}</span>
+                <div className={`settings-toggle-switch ${ccGranted?'on':''}`} style={ccGranted?{background:'linear-gradient(90deg,#cc0000,#ff2222)'}:{}}/>
               </div>
-            </label>
+              {ccGranted&&<div style={{marginTop:10,padding:'10px 12px',background:'rgba(255,0,0,0.06)',border:'1px solid rgba(255,0,0,0.2)',borderRadius:6}}>
+                <div style={{fontFamily:'Orbitron',fontSize:11,color:'#ff4444',marginBottom:6,letterSpacing:'.05em'}}>&#x26D4; KILL SWITCH</div>
+                <div style={{fontSize:11,color:'rgba(255,200,200,0.8)',marginBottom:8}}>Immediately stop all computer control. Also available via <code style={{color:'#ff9999'}}>Ctrl+Shift+Q</code>.</div>
+                <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
+              </div>}
+            </div>
           </div>
-
-          <div className="settings-subtitle" style={{marginTop:14}}>Microphone (Input)</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>
-          <select value={agentSettings.audio_input_device_id||''} onChange={e=>saveAgentSettings({audio_input_device_id:e.target.value})}
-            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:4}}>
-            <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
-            {audioInputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
-          </select>
-
-          {audioOutputDevices.filter(d=>d.label).length>0&&<>
-            <div className="settings-subtitle" style={{marginTop:12}}>Speaker (Output)</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Applied to voice mode audio playback via AudioContext.setSinkId (Chrome 110+).</div>
-            <select value={agentSettings.audio_output_device_id||''} onChange={e=>saveAgentSettings({audio_output_device_id:e.target.value})}
-              style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:4}}>
-              <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
-              {audioOutputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
-            </select>
-          </>}
-
-          <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}} onClick={()=>refreshAudioDevicesRef.current?.()}>↺ Refresh Device List</button>
-        </div>}
+        </div>
       </div>
 
-      {/* ── GROUP: Visual & Scene ── */}
+      {/* ── 5) ABOUT ── branding + system health snapshot. */}
       <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('visual')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Visual &amp; Scene</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.visual?'▾':'▸'}</span>
+        <div className={`settings-coll-header ${openSections.about?'open':''}`} onClick={()=>toggleSection('about')}>
+          <div className="settings-section-title" style={{margin:0}}>About</div>
+          <span className="chev">{openSections.about?'▾':'▸'}</span>
         </div>
-        {openSections.visual&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-subtitle">Evolution Structure</div>
-          <div className="settings-grid" style={{marginBottom:14}}>
-            {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
-              <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
-                onClick={()=>{
-                  window.fridayVibe?.setStructure(i);
-                  fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});
-                }}>
-                <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
-              </button>
-            )}
-          </div>
-          <div style={{marginTop:-8,marginBottom:14,fontSize:11,color:'rgba(255,255,255,0.35)',display:'flex',justifyContent:'flex-end'}}>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(0,212,255,0.4)',fontSize:11,padding:0}} onClick={()=>{window.fridayVibe?.setStructure&&fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:null})}).catch(()=>{})}}>reset to auto (evolution)</button>
-          </div>
+        <div className={`settings-coll-body ${openSections.about?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{textAlign:'center',marginBottom:14,padding:'14px 8px',background:'linear-gradient(135deg,rgba(245,158,11,0.06),rgba(0,212,255,0.04))',borderRadius:8,border:'1px solid rgba(245,158,11,0.15)'}}>
+              <div style={{fontFamily:'Orbitron',fontSize:18,color:'#f59e0b',letterSpacing:'0.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 14px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
+              <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:8}}>v1.0 · Desktop OS</div>
+              <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.18em'}}>BY FUTURESPEAK.AI</div>
+            </div>
 
-          <div className="settings-subtitle">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4,textTransform:'none',letterSpacing:0}}>— manual override</span></div>
-          <div className="settings-grid" style={{marginBottom:14}}>
-            <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
-            {moods.map(m=>
-              <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
-                onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
-            )}
-          </div>
-
-          <div className="settings-subtitle">Consciousness</div>
-          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
-            <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
-            <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
-          </div>
-          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
-            <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
-            <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
-          </div>
-          <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
-            <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
-            <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
-          </div>
-        </div>}
-      </div>
-
-      {/* ── GROUP: Camera & Vision ── */}
-      <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('camera')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Camera &amp; Vision</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.camera?'▾':'▸'}</span>
-        </div>
-        {openSections.camera&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
-            <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
-            <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
-          </div>
-          {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
-          <div className="settings-subtitle" style={{marginTop:8}}>Frame Capture Interval</div>
-          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
-            {[1,3,5].map(s=>
-              <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
-                style={{textAlign:'center'}}
-                onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
-            )}
-          </div>
-          <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
-            <span className="settings-toggle-label">Auto-describe what Friday sees</span>
-            <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
-          </div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)'}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
-        </div>}
-      </div>
-
-      {/* ── GROUP: Privacy ── */}
-      <div className="settings-section" style={{padding:0}}>
-        <div onClick={()=>toggleSection('privacy')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div className="settings-section-title" style={{margin:0}}>Privacy</div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.privacy?'▾':'▸'}</span>
-        </div>
-        {openSections.privacy&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
-            <span className="settings-toggle-label">Full Context Logging</span>
-            <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
-          </div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Append-only event log of chats, tool calls, wiki edits, and file reads. Stored locally in <code style={{color:'#00d4ff'}}>~/.friday/vault/context-log/</code>.</div>
-
-          <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
-            <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record (quick toggle)</span>
-            <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
-          </div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>When on, chat messages are not written to the context log even if logging is enabled.</div>
-
-          <div className="settings-subtitle">Retention Period</div>
-          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',marginBottom:12}}>
-            {[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=>
-              <button key={o.v} className={`settings-btn ${(agentSettings.context_retention_days??0)===o.v?'active':''}`}
-                style={{textAlign:'center',fontSize:11}}
-                onClick={()=>saveAgentSettings({context_retention_days:o.v})}>{o.l}</button>
-            )}
-          </div>
-
-          <div className="settings-subtitle">Your Email (passes through unscrubbed)</div>
-          <input value={agentSettings.user_email||''} onChange={e=>setAgentSettings(s=>({...s,user_email:e.target.value}))} onBlur={e=>saveAgentSettings({user_email:e.target.value})}
-            placeholder="you@example.com"
-            style={{width:'100%',background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',marginBottom:6}}/>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Other emails are replaced with <code style={{color:'#00d4ff'}}>[PII:email:hash]</code> before being sent to the Claude API and rehydrated on the way back. Yours stays plain.</div>
-
-          <button className="settings-btn" style={{width:'100%',fontSize:12}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
-        </div>}
-      </div>
-
-      {/* ── GROUP: Computer Control ── */}
-      <div className="settings-section" style={{padding:0,border:'1px solid rgba(255,50,50,0.2)'}}>
-        <div onClick={()=>toggleSection('computer_control')} style={{cursor:'pointer',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',userSelect:'none'}}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div className="settings-section-title" style={{margin:0}}>Computer Control</div>
-            {ccGranted&&<span style={{fontSize:10,fontFamily:'Orbitron',color:'#ff3333',padding:'1px 6px',borderRadius:4,background:'rgba(255,0,0,0.12)',border:'1px solid rgba(255,0,0,0.3)'}}>ACTIVE</span>}
-          </div>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,100,100,0.6)'}}>{openSections.computer_control?'▾':'▸'}</span>
-        </div>
-        {openSections.computer_control&&<div style={{padding:'0 16px 16px'}}>
-          {!ccAvailable&&<div style={{fontSize:11,color:'#f59e0b',padding:'6px 8px',background:'rgba(245,158,11,0.08)',borderRadius:4,marginBottom:10}}>pyautogui not installed. Run <code style={{color:'#00d4ff'}}>pip install pyautogui</code> in the venv and restart the server.</div>}
-          <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
-            When enabled, Friday can move your mouse, click, type, and take screenshots to complete tasks on your behalf.<br/>
-            <strong style={{color:'#ff6060'}}>Permission is revoked on every server restart</strong> — you must re-enable it each session.
-          </div>
-          <div className="settings-toggle" onClick={()=>{
-            if(ccGranted){
-              fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'revoke'})}).then(()=>setCcGranted(false)).catch(()=>{});
-            }else{
-              fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'grant'})}).then(r=>r.json()).then(d=>setCcGranted(!!d.granted)).catch(()=>{});
-            }
-          }} style={{borderColor:ccGranted?'rgba(255,50,50,0.4)':'undefined'}}>
-            <span className="settings-toggle-label" style={{color:ccGranted?'#ff6060':undefined}}>{ccGranted?'🔴 Computer Control ACTIVE — Friday CAN move your mouse':'🟢 Computer Control OFF — Friday cannot touch your input'}</span>
-            <div className={`settings-toggle-switch ${ccGranted?'on':''}`} style={ccGranted?{background:'linear-gradient(90deg,#cc0000,#ff2222)'}:{}}/>
-          </div>
-          {ccGranted&&<div style={{marginTop:10,padding:'10px 12px',background:'rgba(255,0,0,0.06)',border:'1px solid rgba(255,0,0,0.2)',borderRadius:6}}>
-            <div style={{fontFamily:'Orbitron',fontSize:11,color:'#ff4444',marginBottom:6,letterSpacing:'.05em'}}>&#x26D4; KILL SWITCH</div>
-            <div style={{fontSize:11,color:'rgba(255,200,200,0.8)',marginBottom:8}}>Immediately stop all computer control. Also available via <code style={{color:'#ff9999'}}>Ctrl+Shift+Q</code> at any time, even when Friday has focus elsewhere.</div>
-            <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
-          </div>}
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:10}}>All actions are logged to the context log. Rate limited to {ccGranted?'3':'3'} actions/second. Moving the mouse to the top-left corner of the screen also aborts any running action (pyautogui failsafe).</div>
-        </div>}
-      </div>
-
-      {/* Friday System Health */}
-      <div className="settings-section">
-        <div className="settings-section-title">Friday System Health</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11}}>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
-            <div style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{stEvo?.day??'—'}</div>
-          </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
-            <div style={{fontFamily:'Orbitron',fontSize:13,color:'#7c3aed'}}>{sceneState.mood||'—'}</div>
-          </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
-            <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00ff80'}}>{formatUptime(stHealth?.uptime_seconds)}</div>
-          </div>
-          <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-            <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
-            <div style={{fontFamily:'Orbitron',fontSize:15,color:'#f59e0b'}}>{stHealth?.creations_today??'—'}</div>
+            <div className="settings-subtitle">System Health</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,marginBottom:8}}>
+              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
+                <div style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{stEvo?.day??'—'}</div>
+              </div>
+              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
+                <div style={{fontFamily:'Orbitron',fontSize:13,color:'#7c3aed'}}>{sceneState.mood||'—'}</div>
+              </div>
+              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
+                <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00ff80'}}>{formatUptime(stHealth?.uptime_seconds)}</div>
+              </div>
+              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
+                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
+                <div style={{fontFamily:'Orbitron',fontSize:15,color:'#f59e0b'}}>{stHealth?.creations_today??'—'}</div>
+              </div>
+            </div>
+            <div style={{marginTop:8}}>
+              <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                {(stHealth?.models||[{name:'Claude',active:true},{name:'Gemini',active:true}]).map((m,i)=>(
+                  <span key={i} className="model-pill" style={{fontSize:11}}>
+                    <span className={`dot ${m.active?'active':'idle'}`}/>
+                    {m.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
           </div>
         </div>
-        <div style={{marginTop:8}}>
-          <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-            {(stHealth?.models||[{name:'Claude',active:true},{name:'Gemini',active:true}]).map((m,i)=>(
-              <span key={i} className="model-pill" style={{fontSize:11}}>
-                <span className={`dot ${m.active?'active':'idle'}`}/>
-                {m.name}
-              </span>
-            ))}
-          </div>
-        </div>
-        {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
       </div>
     </div>
 

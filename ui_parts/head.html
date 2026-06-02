@@ -418,6 +418,51 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .settings-toggle-switch.on { background: rgba(0,212,255,0.2); border-color: rgba(0,212,255,0.4); }
         .settings-toggle-switch.on::after { left: 16px; background: #00d4ff; box-shadow: 0 0 6px rgba(0,212,255,0.5); }
+        /* Collapsible body with smooth slide animation */
+        .settings-coll-body {
+            max-height: 0; overflow: hidden;
+            transition: max-height 0.34s cubic-bezier(0.4,0,0.2,1), opacity 0.22s ease-out;
+            opacity: 0;
+        }
+        .settings-coll-body.open { max-height: 6000px; opacity: 1; }
+        .settings-coll-header {
+            cursor: pointer; padding: 12px 16px;
+            display: flex; justify-content: space-between; align-items: center;
+            user-select: none;
+        }
+        .settings-coll-header:hover { background: rgba(255,255,255,0.025); }
+        .settings-coll-header .chev {
+            font-family: 'JetBrains Mono', monospace; font-size: 13px;
+            color: rgba(0,212,255,0.6); transition: transform 0.25s;
+        }
+        .settings-coll-header.open .chev { color: rgba(0,212,255,0.95); }
+        /* Subsection — used inside Audio & Voice for the "advanced voice tuning" block */
+        .settings-subcoll-header {
+            cursor: pointer; padding: 8px 0;
+            display: flex; justify-content: space-between; align-items: center;
+            user-select: none; font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.78); letter-spacing: 0.1em; text-transform: uppercase;
+            font-weight: 600;
+        }
+        /* Mic-test level bar */
+        .miclevel-bar {
+            height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.08); overflow: hidden; margin-top: 6px;
+        }
+        .miclevel-fill {
+            height: 100%; background: linear-gradient(90deg, #00ff80 0%, #f59e0b 70%, #ff0080 100%);
+            transition: width 0.08s linear; box-shadow: 0 0 8px rgba(0,255,128,0.4);
+        }
+        /* API-key status pill */
+        .keystatus-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 8px; background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06); border-radius: 5px;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.78); margin-bottom: 4px;
+        }
+        .keystatus-row .ok { color: #00ff80; font-weight: 700; }
+        .keystatus-row .missing { color: #ff5588; font-weight: 700; }
 
         /* Camera Mode */
         .camera-pip {
