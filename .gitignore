@@ -82,6 +82,10 @@ package-lock.json.bak
 test-results/
 test-results.log
 playwright-report/
+tests/screenshots/
+tests/report.html
+tests/last_run.log
+tests/console_errors.log
 
 # ─── Build outputs the user wanted excluded ──────────────────────────────
 assets/palette/
