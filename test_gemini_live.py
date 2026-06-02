@@ -24,7 +24,7 @@ if not GEMINI_API_KEY:
     sys.exit(1)
 
 print(f"[test] API key: {GEMINI_API_KEY[:8]}... (present)")
-MODEL = "gemini-3.1-flash-live-preview"
+MODEL = "gemini-live-2.5-flash-preview"
 print(f"[test] Model: {MODEL}")
 
 

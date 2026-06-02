@@ -43,6 +43,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; cursor: default; }
         canvas { display: block; }
+        /* Three.js renderer canvas: pin to viewport behind every UI layer. */
+        body > canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
         
         /* --- ETHEREAL HUD OVERLAY --- */
         #hud-overlay {
@@ -255,15 +257,17 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .dock-btn.active .dot { background: #00d4ff; box-shadow: 0 0 6px #00d4ff; }
 
-        /* Floating windows — solid enough that text is always readable */
+        /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
             position: fixed; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.92); backdrop-filter: blur(20px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.65), 0 0 1px rgba(0,212,255,0.25);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 10px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3), 0 0 1px rgba(0,212,255,0.25);
             overflow: hidden; transition: box-shadow 0.3s;
         }
-        .fwin:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.7), 0 0 20px rgba(0,212,255,0.12); }
+        .fwin:hover { box-shadow: 0 4px 30px rgba(0,0,0,0.35), 0 0 20px rgba(0,212,255,0.18); }
         .fwin-bar {
             display: flex; justify-content: space-between; align-items: center;
             padding: 8px 12px; cursor: grab; user-select: none;
@@ -285,12 +289,16 @@ window.addEventListener('DOMContentLoaded',function(){
             cursor: nwse-resize; opacity: 0;
         }
 
-        /* Cards */
+        /* Cards — frosted glass tiles */
         .card {
-            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px; padding: 12px; transition: border-color 0.2s;
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+            border-radius: 8px; padding: 12px; transition: border-color 0.2s, box-shadow 0.2s;
         }
-        .card:hover { border-color: rgba(255,255,255,0.18); }
+        .card:hover { border-color: rgba(0,212,255,0.3); box-shadow: 0 4px 30px rgba(0,0,0,0.35), 0 0 18px rgba(0,212,255,0.12); }
         .card-title {
             font-family: 'Orbitron', monospace; font-size: 11px; color: rgba(0,212,255,0.92);
             letter-spacing: 0.08em; margin-bottom: 8px;
@@ -316,59 +324,18 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
-        /* Chat panel — solid enough to read against any scene */
+        /* Chat panel — frosted glass slide-in */
         .chat-panel {
             position: fixed; top: 36px; right: -340px; bottom: 90px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
-            border-left: 1px solid rgba(255,255,255,0.08);
-            box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            box-shadow: -4px 0 30px rgba(0,0,0,0.3);
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
-        /* Floating mode — overrides dock-style positioning */
-        .chat-panel.floating {
-            transition: none;
-            bottom: auto; right: auto;
-            border: 1px solid rgba(0,212,255,0.22);
-            border-radius: 10px;
-            box-shadow: 0 12px 36px rgba(0,0,0,0.65), 0 0 24px rgba(0,212,255,0.10);
-            z-index: 90;
-        }
-        .chat-panel.floating.dragging,
-        .chat-panel.floating.resizing { user-select: none; }
-        .chat-panel-header {
-            cursor: default;
-            -webkit-user-select: none; user-select: none;
-        }
-        .chat-panel.floating .chat-panel-header { cursor: move; }
-        .chat-panel-resize {
-            position: absolute; background: transparent; z-index: 5;
-        }
-        .chat-panel-resize-r { right: 0; top: 6px; bottom: 14px; width: 6px; cursor: ew-resize; }
-        .chat-panel-resize-b { bottom: 0; left: 6px; right: 14px; height: 6px; cursor: ns-resize; }
-        .chat-panel-resize-br {
-            right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
-            background: linear-gradient(135deg, transparent 50%, rgba(0,212,255,0.45) 50%, rgba(0,212,255,0.7) 75%);
-            border-bottom-right-radius: 10px;
-        }
-        .chat-panel.floating .chat-panel-resize { display: block; }
-        .chat-panel:not(.floating) .chat-panel-resize { display: none; }
-        .chat-float-btn {
-            background: rgba(0,212,255,0.06); border: 1px solid rgba(0,212,255,0.2);
-            color: #00d4ff; cursor: pointer; font-size: 11px;
-            padding: 3px 7px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;
-            letter-spacing: 0.04em;
-        }
-        .chat-float-btn:hover { background: rgba(0,212,255,0.14); }
-        .proactive-badge {
-            display: inline-block; margin-left: 6px; padding: 1px 6px;
-            font-family: 'JetBrains Mono', monospace; font-size: 9px;
-            letter-spacing: 0.08em; border-radius: 3px;
-            background: linear-gradient(135deg, rgba(255,138,0,0.22), rgba(255,51,102,0.18));
-            border: 1px solid rgba(255,138,0,0.45);
-            color: #ffb066;
-        }
 
         /* Greeting ticker */
         .greeting-ticker {
@@ -389,13 +356,15 @@ window.addEventListener('DOMContentLoaded',function(){
             width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.45);
         }
 
-        /* Settings panel — solid enough to read against bright scene */
+        /* Settings panel — frosted glass slide-in */
         .settings-panel {
             position: fixed; top: 36px; right: -360px; bottom: 68px;
             width: 340px; z-index: 68; display: flex; flex-direction: column;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
-            border-left: 1px solid rgba(0,212,255,0.18);
-            box-shadow: -4px 0 24px rgba(0,0,0,0.55);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            box-shadow: -4px 0 30px rgba(0,0,0,0.3);
             transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
             overflow-y: auto;
         }
@@ -482,9 +451,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .camera-control-panel {
             position: fixed; top: 42px; right: 12px; width: 240px; z-index: 71;
-            background: rgba(6,6,14,0.92); backdrop-filter: blur(16px);
-            border: 1px solid rgba(0,212,255,0.18); border-radius: 10px;
-            padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 10px;
+            padding: 12px; box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'Inter', sans-serif;
         }
         .camera-control-panel .row {
@@ -515,9 +486,11 @@ window.addEventListener('DOMContentLoaded',function(){
         /* ─── Task Tray ─── */
         .task-tray {
             position: fixed; right: 16px; bottom: 96px; width: 320px; z-index: 72;
-            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
-            border: 1px solid rgba(0,212,255,0.12); border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'Inter', sans-serif;
             max-height: 60vh; overflow-y: auto;
             animation: taskTraySlide 0.3s ease-out;
@@ -527,13 +500,18 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 8px 12px; border-bottom: 1px solid rgba(0,212,255,0.08);
             font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.08em; position: sticky; top: 0;
-            background: rgba(6,6,11,0.94); backdrop-filter: blur(12px);
+            background: rgba(10,14,26,0.85);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
         }
         .task-tray-pill {
             position: fixed; right: 16px; bottom: 96px; z-index: 72;
             padding: 5px 10px; border-radius: 999px;
-            background: rgba(6,6,11,0.85); backdrop-filter: blur(10px);
-            border: 1px solid rgba(0,212,255,0.18);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             font-family: 'JetBrains Mono', monospace; font-size: 11px;
             color: #00d4ff; cursor: pointer; user-select: none;
             transition: border-color 0.2s, transform 0.2s;
@@ -633,9 +611,11 @@ window.addEventListener('DOMContentLoaded',function(){
         .notif-dropdown {
             position: fixed; width: 360px; max-height: 400px;
             z-index: 80;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.22); border-radius: 12px;
-            box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15); border-radius: 12px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
             overflow-y: auto; overflow-x: hidden;
             animation: notifDropdownSlide 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
             font-family: 'Inter', sans-serif;
@@ -648,7 +628,9 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'Orbitron', monospace; font-size: 11px; color: #00d4ff;
             letter-spacing: 0.1em; text-transform: uppercase;
             position: sticky; top: 0; z-index: 2;
-            background: rgba(6,6,11,0.96); backdrop-filter: blur(20px);
+            background: rgba(10,14,26,0.85);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
         }
         .notif-section-divider {
             height: 1px; background: rgba(0,212,255,0.12);
@@ -668,82 +650,6 @@ window.addEventListener('DOMContentLoaded',function(){
             50%      { box-shadow: 0 0 0 5px rgba(245,158,11,0); }
         }
         .bell-badge-pulse { animation: bellBadgePulse 1.4s infinite ease-out; }
-
-        /* Critical-priority pulse — applied to the bell button itself */
-        @keyframes bellCriticalGlow {
-            0%, 100% { filter: drop-shadow(0 0 4px rgba(255,51,102,0.6)); transform: scale(1); }
-            50%      { filter: drop-shadow(0 0 14px rgba(255,51,102,1)); transform: scale(1.08); }
-        }
-        .bell-critical { animation: bellCriticalGlow 1.2s ease-in-out infinite; color: #ff3366 !important; }
-
-        /* Notification item */
-        .notif-item {
-            display: flex; gap: 10px; padding: 10px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-            position: relative;
-        }
-        .notif-item:hover { background: rgba(0,212,255,0.04); }
-        .notif-item .pri-stripe {
-            width: 3px; flex-shrink: 0; border-radius: 2px;
-            align-self: stretch;
-        }
-        .notif-item.pri-critical .pri-stripe { background: #ff3366; box-shadow: 0 0 8px rgba(255,51,102,0.5); }
-        .notif-item.pri-high .pri-stripe { background: #ff8a00; box-shadow: 0 0 6px rgba(255,138,0,0.4); }
-        .notif-item.pri-medium .pri-stripe { background: #ffd23f; }
-        .notif-item.pri-low .pri-stripe { background: #00d4ff; }
-        .notif-item-body { flex: 1; min-width: 0; }
-        .notif-item-title {
-            font-family: 'Inter', sans-serif; font-size: 12px; line-height: 1.35;
-            font-weight: 500;
-        }
-        .notif-item-preview {
-            font-family: 'Inter', sans-serif; font-size: 11px;
-            color: rgba(255,255,255,0.55); line-height: 1.4;
-            margin-top: 3px;
-            display: -webkit-box; -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical; overflow: hidden;
-        }
-        .notif-item-meta {
-            display: flex; gap: 8px; align-items: center;
-            margin-top: 4px;
-            font-family: 'JetBrains Mono', monospace; font-size: 9px;
-            color: rgba(255,255,255,0.4); letter-spacing: 0.04em;
-        }
-        .notif-item-pri-tag {
-            padding: 1px 5px; border-radius: 3px;
-            font-family: 'JetBrains Mono', monospace; font-size: 9px;
-            letter-spacing: 0.08em; text-transform: uppercase;
-        }
-        .notif-item.pri-critical .notif-item-pri-tag {
-            background: rgba(255,51,102,0.15); color: #ff3366; border: 1px solid rgba(255,51,102,0.4);
-        }
-        .notif-item.pri-high .notif-item-pri-tag {
-            background: rgba(255,138,0,0.12); color: #ff8a00; border: 1px solid rgba(255,138,0,0.35);
-        }
-        .notif-item.pri-medium .notif-item-pri-tag {
-            background: rgba(255,210,63,0.10); color: #ffd23f; border: 1px solid rgba(255,210,63,0.3);
-        }
-        .notif-item.pri-low .notif-item-pri-tag {
-            background: rgba(0,212,255,0.10); color: #00d4ff; border: 1px solid rgba(0,212,255,0.3);
-        }
-        .notif-item-actions {
-            display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap;
-        }
-        .notif-item-actions button {
-            font-family: 'JetBrains Mono', monospace; font-size: 10px;
-            padding: 3px 7px; border-radius: 3px;
-            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10);
-            color: rgba(255,255,255,0.72); cursor: pointer;
-            letter-spacing: 0.04em;
-        }
-        .notif-item-actions button:hover {
-            background: rgba(0,212,255,0.10); border-color: rgba(0,212,255,0.35);
-            color: #00d4ff;
-        }
-        .notif-item-actions button.dismiss { color: rgba(255,255,255,0.45); }
-        .notif-item.unread { background: rgba(0,212,255,0.025); }
-        .notif-item.unread .notif-item-title { color: #fff; }
-        .notif-item.read .notif-item-title { color: rgba(255,255,255,0.55); }
 
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -818,9 +724,11 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             width: min(560px, 90vw); max-height: 60vh;
-            background: rgba(8,8,16,0.92); backdrop-filter: blur(24px) saturate(1.2);
-            border: 1px solid rgba(0,212,255,0.25);
-            border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 40px rgba(0,212,255,0.08);
+            background: rgba(10,14,26,0.75);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 12px; box-shadow: 0 4px 30px rgba(0,0,0,0.3), 0 0 40px rgba(0,212,255,0.08);
             display: flex; flex-direction: column; overflow: hidden;
             animation: paletteIn 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
         }
@@ -1255,7 +1163,7 @@ window.addEventListener('DOMContentLoaded',function(){
             REASONING: { baseColor: 0x4b0082, accentColor: 0x00ffff, rotationSpeed: 0.003, bloomStrength: 0.6, particleSpeedScale: 0.5, grain: 0.02 },
             SPEAKING:  { baseColor: 0x00ff80, accentColor: 0x00d4ff, rotationSpeed: 0.005, bloomStrength: 1.4, particleSpeedScale: 2.0, grain: 0.04 },
             CREATING:  { baseColor: 0xff00aa, accentColor: 0xff6600, rotationSpeed: 0.006, bloomStrength: 1.6, particleSpeedScale: 1.5, grain: 0.06 },
-            IDLE:      { baseColor: 0x001540, accentColor: 0x0044bb, rotationSpeed: 0.0003, bloomStrength: 0.5,  particleSpeedScale: 0.25, grain: 0.015 },
+            IDLE:      { baseColor: 0x1e54c7, accentColor: 0x5fa8ff, rotationSpeed: 0.0003, bloomStrength: 1.3,  particleSpeedScale: 0.25, grain: 0.015 },
             EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, rotationSpeed: 0.008, bloomStrength: 1.2, particleSpeedScale: 1.8, grain: 0.05 },
             EXCITED:   { baseColor: 0xffffff, accentColor: 0x00e5ff, rotationSpeed: 0.015, bloomStrength: 1.8, particleSpeedScale: 2.5, grain: 0.08 },
             CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 }
@@ -1397,7 +1305,9 @@ window.addEventListener('DOMContentLoaded',function(){
             buildBackgroundEnvironment(); buildAllStructures();
 
             const renderScene = new THREE.RenderPass(scene, camera);
-            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.6, 0.15);
+            // Bloom: wider radius + lower threshold so the holographic geometry visibly
+            // glows at rest, not just the rare bright pixels. Strength is modulated below.
+            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.55, 0.25);
             holoPass = new THREE.ShaderPass(HolographicShader);
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(renderScene); composer.addPass(bloomPass); composer.addPass(holoPass);
@@ -1819,7 +1729,8 @@ window.addEventListener('DOMContentLoaded',function(){
             }
 
             const isQuiet = (elapsed - lastSoundTime > 6.0);
-            const targetIdle = isQuiet ? 0.2 : 1.0;
+            // Floor at 0.6 (was 0.2): quiet idle should still feel luminous, not dead.
+            const targetIdle = isQuiet ? 0.6 : 1.0;
             idleFactor = THREE.MathUtils.lerp(idleFactor, targetIdle, delta * (isQuiet ? 0.3 : 2.0));
 
             // --- MOOD LERPING ---
@@ -2144,8 +2055,11 @@ window.addEventListener('DOMContentLoaded',function(){
 
             // --- POST PROCESSING ---
             if (bloomPass && holoPass && holoPass.uniforms) {
-                const currentBloom = moodLerpValues.bloomStrength * (0.8 + audioData.low * 2.5) * idleFactor;
-                bloomPass.strength = currentBloom + (metamorphosisFlash * 4.0);
+                // Floor on idleFactor so bloom never collapses to near-zero — keeps the
+                // scene luminous behind the frosted-glass panels even during long silences.
+                const bloomIdle = 0.75 + idleFactor * 0.25;
+                const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5) * bloomIdle;
+                bloomPass.strength = Math.max(0.7, currentBloom) + (metamorphosisFlash * 4.0);
                 if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
@@ -4235,64 +4149,6 @@ function App(){
   const[focusWin,setFocusWin]=useState(null);
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
-  // ── Chat panel geometry (floating/draggable/resizable) ──
-  const CHAT_GEOM_KEY='friday.chat.geom.v1';
-  const CHAT_MIN_W=300,CHAT_MIN_H=400,CHAT_DEFAULT_W=360,CHAT_DEFAULT_H=520;
-  const _loadChatGeom=()=>{try{const s=localStorage.getItem(CHAT_GEOM_KEY);if(!s)return null;const g=JSON.parse(s);if(typeof g!=='object'||g===null)return null;return g}catch(e){return null}};
-  const _initialChatGeom=(()=>{const g=_loadChatGeom();if(g)return g;const w=Math.min(CHAT_DEFAULT_W,Math.max(CHAT_MIN_W,window.innerWidth-40));const h=Math.min(CHAT_DEFAULT_H,Math.max(CHAT_MIN_H,window.innerHeight-160));return{floating:false,x:Math.max(20,window.innerWidth-w-20),y:60,w,h}})();
-  const[chatGeom,setChatGeom]=useState(_initialChatGeom);
-  const chatPanelRef=useRef(null);
-  const chatDragRef=useRef(null);  // {kind:'drag'|'resize-r'|'resize-b'|'resize-br', sx, sy, gx, gy, gw, gh}
-  useEffect(()=>{try{localStorage.setItem(CHAT_GEOM_KEY,JSON.stringify(chatGeom))}catch(e){}},[chatGeom]);
-  // Clamp on window resize so panel never escapes viewport
-  useEffect(()=>{const onResize=()=>{setChatGeom(g=>{const maxW=Math.max(CHAT_MIN_W,window.innerWidth-10);const maxH=Math.max(CHAT_MIN_H,window.innerHeight-50);const w=Math.min(g.w,maxW);const h=Math.min(g.h,maxH);const x=Math.min(Math.max(0,g.x),Math.max(0,window.innerWidth-w));const y=Math.min(Math.max(36,g.y),Math.max(36,window.innerHeight-h));return{...g,w,h,x,y}})};window.addEventListener('resize',onResize);return()=>window.removeEventListener('resize',onResize)},[]);
-  const chatStartDrag=(e,kind)=>{
-    if(!chatGeom.floating)return;
-    e.preventDefault();
-    const t=e.touches?e.touches[0]:e;
-    chatDragRef.current={kind,sx:t.clientX,sy:t.clientY,gx:chatGeom.x,gy:chatGeom.y,gw:chatGeom.w,gh:chatGeom.h};
-    document.body.style.cursor=kind==='drag'?'move':(kind==='resize-r'?'ew-resize':kind==='resize-b'?'ns-resize':'nwse-resize');
-    const move=(ev)=>{
-      const d=chatDragRef.current;if(!d)return;
-      const tt=ev.touches?ev.touches[0]:ev;
-      const dx=tt.clientX-d.sx, dy=tt.clientY-d.sy;
-      setChatGeom(g=>{
-        let{x,y,w,h}=g;
-        const maxW=window.innerWidth, maxH=window.innerHeight;
-        if(d.kind==='drag'){
-          x=Math.max(0,Math.min(maxW-d.gw,d.gx+dx));
-          y=Math.max(36,Math.min(maxH-40,d.gy+dy));
-        }else if(d.kind==='resize-r'){
-          w=Math.max(CHAT_MIN_W,Math.min(maxW-d.gx,d.gw+dx));
-        }else if(d.kind==='resize-b'){
-          h=Math.max(CHAT_MIN_H,Math.min(maxH-d.gy,d.gh+dy));
-        }else if(d.kind==='resize-br'){
-          w=Math.max(CHAT_MIN_W,Math.min(maxW-d.gx,d.gw+dx));
-          h=Math.max(CHAT_MIN_H,Math.min(maxH-d.gy,d.gh+dy));
-        }
-        return{...g,x,y,w,h};
-      });
-    };
-    const up=()=>{
-      chatDragRef.current=null;
-      document.body.style.cursor='';
-      window.removeEventListener('mousemove',move);
-      window.removeEventListener('mouseup',up);
-      window.removeEventListener('touchmove',move);
-      window.removeEventListener('touchend',up);
-    };
-    window.addEventListener('mousemove',move);
-    window.addEventListener('mouseup',up);
-    window.addEventListener('touchmove',move,{passive:false});
-    window.addEventListener('touchend',up);
-  };
-  const toggleChatFloat=()=>setChatGeom(g=>{
-    if(g.floating)return{...g,floating:false};
-    // Switching to floating — clamp to viewport
-    const w=Math.min(g.w,window.innerWidth-20);
-    const h=Math.min(g.h,window.innerHeight-80);
-    return{...g,floating:true,w,h,x:Math.min(g.x,window.innerWidth-w-10),y:Math.min(Math.max(36,g.y),window.innerHeight-h-10)};
-  });
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[wikiPending,setWikiPending]=useState(0);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
@@ -4353,19 +4209,100 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
   const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false,privacy:false,computer_control:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
+  // Full Gemini-TTS voice catalogue (30 voices). Source:
+  // https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#voice_options
+  // Style descriptors sourced from the AI Studio voice picker — used for both
+  // briefing TTS readback and Live API voice. Sorted female, then male.
   const TTS_VOICES=[
-    {id:'Aoede',label:'Aoede — warm female (default)'},
-    {id:'Kore',label:'Kore — standard female'},
-    {id:'Leda',label:'Leda — soft female'},
-    {id:'Puck',label:'Puck — male'},
-    {id:'Charon',label:'Charon — deep male'},
+    {id:'Achernar',     label:'Achernar — soft female'},
+    {id:'Aoede',        label:'Aoede — breezy female (default)'},
+    {id:'Autonoe',      label:'Autonoe — bright female'},
+    {id:'Callirrhoe',   label:'Callirrhoe — easy-going female'},
+    {id:'Despina',      label:'Despina — smooth female'},
+    {id:'Erinome',      label:'Erinome — clear female'},
+    {id:'Gacrux',       label:'Gacrux — mature female'},
+    {id:'Kore',         label:'Kore — firm female'},
+    {id:'Laomedeia',    label:'Laomedeia — upbeat female'},
+    {id:'Leda',         label:'Leda — youthful female'},
+    {id:'Pulcherrima',  label:'Pulcherrima — forward female'},
+    {id:'Sulafat',      label:'Sulafat — warm female'},
+    {id:'Vindemiatrix', label:'Vindemiatrix — gentle female'},
+    {id:'Zephyr',       label:'Zephyr — bright female'},
+    {id:'Achird',       label:'Achird — friendly male'},
+    {id:'Algenib',      label:'Algenib — gravelly male'},
+    {id:'Algieba',      label:'Algieba — smooth male'},
+    {id:'Alnilam',      label:'Alnilam — firm male'},
+    {id:'Charon',       label:'Charon — informative male'},
+    {id:'Enceladus',    label:'Enceladus — breathy male'},
+    {id:'Fenrir',       label:'Fenrir — excitable male'},
+    {id:'Iapetus',      label:'Iapetus — clear male'},
+    {id:'Orus',         label:'Orus — firm male'},
+    {id:'Puck',         label:'Puck — upbeat male'},
+    {id:'Rasalgethi',   label:'Rasalgethi — informative male'},
+    {id:'Sadachbia',    label:'Sadachbia — lively male'},
+    {id:'Sadaltager',   label:'Sadaltager — knowledgeable male'},
+    {id:'Schedar',      label:'Schedar — even male'},
+    {id:'Umbriel',      label:'Umbriel — easy-going male'},
+    {id:'Zubenelgenubi',label:'Zubenelgenubi — casual male'},
+  ];
+  // BCP-47 language codes Gemini-TTS supports. Blank = server default (en-US).
+  const VOICE_LANGUAGES=[
+    {id:'',     label:'Default (en-US)'},
+    {id:'en-US',label:'English (United States)'},
+    {id:'en-GB',label:'English (United Kingdom)'},
+    {id:'en-AU',label:'English (Australia)'},
+    {id:'en-IN',label:'English (India)'},
+    {id:'es-US',label:'Spanish (United States)'},
+    {id:'es-ES',label:'Spanish (Spain)'},
+    {id:'fr-FR',label:'French (France)'},
+    {id:'fr-CA',label:'French (Canada)'},
+    {id:'de-DE',label:'German (Germany)'},
+    {id:'it-IT',label:'Italian (Italy)'},
+    {id:'pt-BR',label:'Portuguese (Brazil)'},
+    {id:'ja-JP',label:'Japanese (Japan)'},
+    {id:'ko-KR',label:'Korean (Korea)'},
+    {id:'zh-CN',label:'Chinese (Mandarin, Simplified)'},
+    {id:'hi-IN',label:'Hindi (India)'},
+    {id:'ar-XA',label:'Arabic'},
+    {id:'nl-NL',label:'Dutch (Netherlands)'},
+    {id:'pl-PL',label:'Polish (Poland)'},
+    {id:'ru-RU',label:'Russian (Russia)'},
+    {id:'tr-TR',label:'Turkish (Turkey)'},
+    {id:'vi-VN',label:'Vietnamese (Vietnam)'},
+    {id:'th-TH',label:'Thai (Thailand)'},
+    {id:'id-ID',label:'Indonesian (Indonesia)'},
+  ];
+  // Gemini-TTS bracketed markup tags — inserted inline in text (briefing/TTS
+  // path) or appended to the style prompt to bias delivery.
+  const VOICE_MARKUP_TAGS=[
+    {tag:'[whispering]', desc:'whispered delivery'},
+    {tag:'[shouting]',   desc:'shouted / loud'},
+    {tag:'[laughing]',   desc:'inject laughter'},
+    {tag:'[sigh]',       desc:'audible sigh'},
+    {tag:'[uhm]',        desc:'natural hesitation'},
+    {tag:'[sarcasm]',    desc:'sarcastic tone'},
+    {tag:'[robotic]',    desc:'flat / robotic'},
+    {tag:'[extremely fast]', desc:'rushed pacing'},
+    {tag:'[short pause]', desc:'brief pause'},
+    {tag:'[medium pause]',desc:'medium pause'},
+    {tag:'[long pause]', desc:'long pause'},
+  ];
+  // Style-prompt presets — quick starting points the user can edit.
+  const VOICE_STYLE_PRESETS=[
+    {id:'',         label:'Off (use defaults)'},
+    {id:'Speak warmly and conversationally, like a trusted colleague — natural pacing, no robotic flatness', label:'Warm & conversational'},
+    {id:'Speak with calm authority and clear diction, like a seasoned news anchor delivering an evening briefing', label:'News anchor'},
+    {id:'Speak briskly and energetically, like an upbeat host introducing a topic with enthusiasm', label:'Upbeat host'},
+    {id:'Speak softly and slowly, with measured pauses and a contemplative tone, like reading a bedtime story', label:'Soft & measured'},
+    {id:'Speak with dry wit and understated humor, occasional well-placed pauses for effect',                 label:'Dry & witty'},
+    {id:'Speak with technical precision and even pacing — no fluff, no filler, no emotional inflection',     label:'Technical & precise'},
   ];
   const[ttsPreviewBusy,setTtsPreviewBusy]=useState(false);
   const previewVoice=async(voiceId)=>{
@@ -4490,8 +4427,9 @@ function App(){
     const proto=location.protocol==='https:'?'wss:':'ws:';
     const ws=new WebSocket(proto+'//'+location.host+'/ws/live');
     v.ws=ws;
+    let wsOpened=false;
     setVoiceStatus('connecting…');
-    ws.onopen=()=>{setVoiceOn(true);setVoiceStatus('listening')};
+    ws.onopen=()=>{wsOpened=true;setVoiceOn(true);setVoiceStatus('listening')};
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
@@ -4522,10 +4460,25 @@ function App(){
       }else if(m.type==='status'){
         setVoiceStatus(m.text);
       }else if(m.type==='error'){
-        setVoiceStatus('error: '+(m.error||'unknown'));
+        if(m.error==='unauthorized'){
+          // Session is stale — on localhost the server will auto-auth on
+          // reload, so just refresh the page rather than showing a misleading
+          // "socket error".
+          setVoiceStatus('Session expired — refreshing…');
+          setTimeout(()=>{try{window.location.reload()}catch(_){}},600);
+        }else{
+          setVoiceStatus('error: '+(m.error||'unknown'));
+        }
       }
     };
-    ws.onerror=(e)=>{console.warn('[voice] WebSocket error',e);setVoiceStatus('socket error — is the server running?')};
+    ws.onerror=(e)=>{
+      console.warn('[voice] WebSocket error',e);
+      // Only surface "socket error" when the WS never managed to open. Once
+      // the connection is established, any subsequent failure is reported via
+      // a structured {type:'error'} message that we handle in onmessage — do
+      // not overwrite that with a generic "is the server running?".
+      if(!wsOpened)setVoiceStatus('socket error — is the server running?');
+    };
     ws.onclose=(e)=>{
       console.log('[voice] WebSocket closed, code='+e.code+' reason='+e.reason);
       // Stop mic tracks so Chrome clears the recording indicator
@@ -4604,60 +4557,7 @@ function App(){
     if(moodEl)moodEl.innerText='STATE: '+sysMood;
   }},1000);return()=>clearInterval(t)},[]);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
-  const refreshNotifs=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||d.notifications||[])).catch(()=>{});
-  useEffect(()=>{refreshNotifs();const iv=setInterval(refreshNotifs,30000);return()=>clearInterval(iv)},[]);
-  // ── Proactive chat injection: Friday speaks unprompted ──
-  useEffect(()=>{
-    let cancelled=false;
-    const pullProactive=async()=>{
-      try{
-        const r=await fetch('/api/notifications/chat-injections');
-        if(!r.ok||cancelled)return;
-        const d=await r.json();
-        const items=d.items||[];
-        if(!items.length)return;
-        // Append as Friday messages, mark each one acknowledged so we don't double-inject
-        const now=new Date().toLocaleTimeString();
-        setChatMsgs(p=>{
-          const seen=new Set(p.map(m=>m.proactiveId).filter(Boolean));
-          const fresh=items.filter(it=>!seen.has(it.id));
-          if(!fresh.length)return p;
-          return[...p,...fresh.map(it=>({
-            role:'friday',
-            text:it.text||it.title||'',
-            time:now,
-            proactive:true,
-            proactiveId:it.id,
-            proactivePriority:it.priority||'medium',
-          }))];
-        });
-        // Auto-open chat if a critical/high message arrived
-        if(items.some(it=>it.priority==='critical'||it.priority==='high')){
-          setChatOpen(true);
-        }
-        // Acknowledge each so the engine stops surfacing it
-        for(const it of items){
-          try{await fetch('/api/notifications/chat-injections/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:it.id})})}catch(e){}
-        }
-      }catch(e){}
-    };
-    pullProactive();
-    const iv=setInterval(pullProactive,20000);
-    return()=>{cancelled=true;clearInterval(iv)};
-  },[]);
-  const markNotifRead=async(id)=>{if(!id)return;setNotifs(p=>p.map(n=>n.id===id?{...n,read:true}:n));try{await fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})}catch(e){}};
-  const dismissNotif=async(id)=>{if(!id)return;setNotifs(p=>p.map(n=>n.id===id?{...n,dismissed:true,read:true}:n));try{await fetch('/api/notifications/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})}catch(e){}};
-  const markAllNotifsRead=async()=>{setNotifs(p=>p.map(n=>({...n,read:true})));try{await fetch('/api/notifications/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true,id:'*'})})}catch(e){}};
-  const handleNotifAction=(n,a)=>{
-    if(!a)return;
-    if(a.kind==='open_url'&&a.payload?.url){window.open(a.payload.url,'_blank');return}
-    if(a.kind==='open_window'&&a.payload?.window){toggle(a.payload.window);setNotifOpen(false);return}
-    if(a.kind==='open_observatory'){toggle('system');setNotifOpen(false);return}
-    if(a.kind==='ofw_draft'){setChatOpen(true);setNotifOpen(false);sendChat&&sendChat('Draft an OFW response for the latest message');return}
-    if(a.kind==='generate_brief'&&a.payload?.company){setChatOpen(true);setNotifOpen(false);sendChat&&sendChat(`Generate a company brief for ${a.payload.company}`);return}
-    // Default: mark read on action
-    if(n?.id)markNotifRead(n.id);
-  };
+  useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
@@ -4827,11 +4727,9 @@ function App(){
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
-  const unread=notifs.filter(n=>!n.read&&!n.dismissed).length;
-  const criticalCount=notifs.filter(n=>!n.read&&!n.dismissed&&n.priority==='critical').length;
-  const hasCritical=criticalCount>0;
+  const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
-  const bellBadgeCount=hasCritical?criticalCount:(runningTaskCount>0?runningTaskCount:unread);
+  const bellBadgeCount=runningTaskCount>0?runningTaskCount:unread;
   const sortedBgTasks=[...bgTasks].sort((a,b)=>(b.created||0)-(a.created||0));
   const noWindows=openWins.size===0;
 
@@ -4873,7 +4771,7 @@ function App(){
             {orchModel.short} · {creativeModel.short}
             <span style={{fontSize:8,opacity:0.6}}>▾</span>
           </button>
-          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(6,6,14,0.97)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.22)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',fontFamily:'Inter',fontSize:11}}>
+          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontFamily:'Inter',fontSize:11}}>
             {[
               {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:ORCHESTRATOR_MODELS},
               {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:SUBAGENT_MODELS},
@@ -4902,12 +4800,11 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
-          className={hasCritical?'bell-critical':''}
-          style={{background:'none',border:'none',color:hasCritical?'#ff3366':(notifOpen?'#00d4ff':'#999'),cursor:'pointer',fontSize:14,position:'relative'}}
-          title={hasCritical?`${criticalCount} critical alert${criticalCount===1?'':'s'}`:(runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications')}>
+          style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#999',cursor:'pointer',fontSize:14,position:'relative'}}
+          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
-            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:hasCritical?'#ff3366':(runningTaskCount>0?'#f59e0b':'#ff0080'),fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
+            style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
         </button>
         <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#888',cursor:'pointer',fontSize:14}} title="Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
@@ -4956,7 +4853,7 @@ function App(){
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
-          style={{width:360,background:'rgba(6,6,11,0.88)',backdropFilter:'blur(14px)',border:'1px solid rgba(0,212,255,0.28)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}/>
+          style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
         <button onClick={()=>{if(promptText.trim())sendPrompt();else{setChatOpen(true);toggleVoice()}}}
           title={promptText.trim()?'Send message':'Open chat and start voice mode'}
           style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.18)',border:'1px solid rgba(0,212,255,0.4)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}>&#x1F3A4;</button>
@@ -4996,31 +4893,19 @@ function App(){
     {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
 
     {/* Chat Panel */}
-    <div ref={chatPanelRef}
-      className={`chat-panel ${chatOpen?'open':''} ${chatGeom.floating?'floating':''}`}
-      style={chatGeom.floating?{left:chatGeom.x,top:chatGeom.y,width:chatGeom.w,height:chatGeom.h,bottom:'auto',right:'auto'}:{}}>
-      <div className="chat-panel-header"
-        onMouseDown={e=>{if(chatGeom.floating&&e.target.closest('button')==null)chatStartDrag(e,'drag')}}
-        onTouchStart={e=>{if(chatGeom.floating&&e.target.closest('button')==null)chatStartDrag(e,'drag')}}
-        style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT{chatGeom.floating?' · ✥':''}</span>
+    <div className={`chat-panel ${chatOpen?'open':''}`}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
-          <button className="chat-float-btn" onClick={toggleChatFloat} title={chatGeom.floating?'Dock to side':'Pop out — drag and resize freely'}>{chatGeom.floating?'DOCK':'FLOAT'}</button>
           <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
-      <div className="chat-panel-resize chat-panel-resize-r" onMouseDown={e=>chatStartDrag(e,'resize-r')} onTouchStart={e=>chatStartDrag(e,'resize-r')}/>
-      <div className="chat-panel-resize chat-panel-resize-b" onMouseDown={e=>chatStartDrag(e,'resize-b')} onTouchStart={e=>chatStartDrag(e,'resize-b')}/>
-      <div className="chat-panel-resize chat-panel-resize-br" onMouseDown={e=>chatStartDrag(e,'resize-br')} onTouchStart={e=>chatStartDrag(e,'resize-br')}/>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,
-              background:m.role==='user'?'rgba(124,58,237,0.12)':(m.proactive?'rgba(255,138,0,0.06)':'rgba(255,255,255,0.03)'),
-              color:m.role==='user'?'#b794f6':'#bbb',
-              border:m.proactive?'1px solid rgba(255,138,0,0.25)':'none'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>
               {m.role==='friday'&&m.via!=='voice'&&typeof marked!=='undefined'
                 ?<div className="md-body" dangerouslySetInnerHTML={{__html:marked.parse(m.text||'')}}/>
                 :m.text}
@@ -5030,7 +4915,6 @@ function App(){
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':'Friday'} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
-            {m.proactive&&<span className="proactive-badge">★ PROACTIVE{m.proactivePriority?(' · '+String(m.proactivePriority).toUpperCase()):''}</span>}
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
@@ -5049,7 +4933,7 @@ function App(){
             <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
-            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(6,6,14,0.97)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.22)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 8px 28px rgba(0,0,0,0.65)',fontSize:11,fontFamily:'Inter'}}>
+            {audioDevicePopup&&<div ref={audioDevicePopupRef} style={{position:'absolute',bottom:'calc(100% + 8px)',left:0,width:226,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 0',zIndex:200,boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontSize:11,fontFamily:'Inter'}}>
               <div style={{padding:'4px 10px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.75)',letterSpacing:'.14em'}}>MIC INPUT</div>
               {[{deviceId:'',label:'System Default'},...audioInputDevices].map(d=>{const sel=agentSettings.audio_input_device_id===d.deviceId;const lbl=d.label||(d.deviceId?'Mic ('+d.deviceId.slice(0,8)+'...)':'System Default');return(<div key={d.deviceId}
                 onClick={()=>{saveAgentSettings({audio_input_device_id:d.deviceId});setAudioDevicePopup(false)}}
@@ -5096,38 +4980,14 @@ function App(){
       <div className="notif-section-divider"/>
       <div className="notif-section-header">
         <span>NOTIFICATIONS</span>
-        <span style={{display:'flex',gap:6,alignItems:'center'}}>
-          {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
-          {notifs.length>0&&<button onClick={markAllNotifsRead} title="Mark all as read"
-            style={{background:'none',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',fontSize:9,padding:'2px 6px',borderRadius:3,cursor:'pointer',fontFamily:'JetBrains Mono',letterSpacing:'0.04em'}}>READ ALL</button>}
-        </span>
+        {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
       </div>
-      {notifs.filter(n=>!n.dismissed).length===0
+      {notifs.length===0
         ?<div className="notif-empty">No notifications</div>
-        :notifs.filter(n=>!n.dismissed).slice(0,15).map((n,i)=>{
-          const pri=n.priority||'medium';
-          const cls=`notif-item pri-${pri} ${n.read?'read':'unread'}`;
-          const ts=n.created_at||n.time||'';
-          const title=n.title||n.message||n.text||'Notification';
-          const preview=n.body||n.summary||'';
-          return(<div key={n.id||i} className={cls}>
-            <div className="pri-stripe"/>
-            <div className="notif-item-body">
-              <div className="notif-item-title">{title}</div>
-              {preview&&<div className="notif-item-preview">{preview.replace(/[*#`]/g,'').slice(0,180)}</div>}
-              <div className="notif-item-meta">
-                <span className="notif-item-pri-tag">{pri}</span>
-                {n.source&&<span>{n.source}</span>}
-                {ts&&<span>{(typeof ts==='string'&&ts.length>10)?ts.slice(0,16).replace('T',' '):ts}</span>}
-              </div>
-              <div className="notif-item-actions">
-                {(n.actions||[]).slice(0,2).map((a,j)=><button key={j} onClick={()=>handleNotifAction(n,a)}>{a.label}</button>)}
-                {!n.derived&&!n.read&&<button onClick={()=>markNotifRead(n.id)}>Read</button>}
-                {!n.derived&&<button className="dismiss" onClick={()=>dismissNotif(n.id)}>Dismiss</button>}
-              </div>
-            </div>
-          </div>);
-        })}
+        :notifs.slice(0,10).map((n,i)=><div key={n.id||i} style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.55)':'#fff'}}>
+          <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4}}>{n.title||n.message||n.text||'Notification'}</div>
+          {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888',marginTop:3}}>{n.time}</div>}
+        </div>)}
     </div>}
 
     {/* Settings Panel */}
@@ -5348,8 +5208,11 @@ function App(){
           <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.voice?'▾':'▸'}</span>
         </div>
         {openSections.voice&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-subtitle">TTS Voice</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8}}>Voice used by briefing Read Aloud and other speech output.</div>
+          <div className="settings-subtitle">Voice</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8,lineHeight:1.5}}>
+            Voice used by briefing Read Aloud <span style={{color:'rgba(255,255,255,0.55)'}}>and</span> live voice mode.
+            <span style={{color:'rgba(255,255,255,0.45)'}}> TTS changes apply instantly; live voice changes apply on the next mic session.</span>
+          </div>
           <select
             value={agentSettings.tts_voice||'Aoede'}
             onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
@@ -5361,6 +5224,119 @@ function App(){
             onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
             {ttsPreviewBusy?'Previewing...':'🔊 Preview selected voice'}
           </button>
+
+          {/* ── Language ─────────────────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Language</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6}}>BCP-47 region code passed to Gemini-TTS &amp; the Live API. Affects accent and pronunciation.</div>
+          <select
+            value={agentSettings.voice_language||''}
+            onChange={e=>saveAgentSettings({voice_language:e.target.value})}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            {VOICE_LANGUAGES.map(l=><option key={l.id||'default'} value={l.id} style={{background:'#0a0a14',color:'#ccc'}}>{l.label}</option>)}
+          </select>
+
+          {/* ── Style prompt ─────────────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Speaking style prompt</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
+            Free-text instruction shaping delivery. Briefing readback uses it as a prompt prefix; live voice mode prepends it to the system instruction. Leave blank for the built-in conversational style.
+          </div>
+          <select
+            value={''}
+            onChange={e=>{ if(e.target.value!==undefined){ saveAgentSettings({voice_style_prompt:e.target.value}); } }}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
+            <option value="" style={{background:'#0a0a14',color:'#888'}}>— Insert preset… —</option>
+            {VOICE_STYLE_PRESETS.filter(p=>p.id).map((p,i)=><option key={i} value={p.id} style={{background:'#0a0a14',color:'#ccc'}}>{p.label}</option>)}
+          </select>
+          <textarea
+            value={agentSettings.voice_style_prompt||''}
+            onChange={e=>saveAgentSettings({voice_style_prompt:e.target.value})}
+            placeholder="e.g. Speak warmly and slowly, like a calm storyteller…"
+            rows={3}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
+          {agentSettings.voice_style_prompt&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}}
+            onClick={()=>saveAgentSettings({voice_style_prompt:''})}>Clear style prompt</button>}
+
+          {/* ── Markup tags reference ────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Inline markup tags</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
+            Type any of these inside the text you want spoken (or inside the style prompt above) to add non-speech cues. Click a chip to copy it.
+          </div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {VOICE_MARKUP_TAGS.map(t=>(
+              <span key={t.tag} title={t.desc}
+                onClick={()=>{try{navigator.clipboard.writeText(t.tag);setSettingsSaveMsg('Copied '+t.tag);setTimeout(()=>setSettingsSaveMsg(''),1200);}catch(e){}}}
+                style={{padding:'4px 9px',borderRadius:12,background:'rgba(124,58,237,0.10)',border:'1px solid rgba(124,58,237,0.30)',color:'#cbb6ff',fontFamily:'JetBrains Mono',fontSize:11,cursor:'pointer',userSelect:'none'}}>{t.tag}</span>
+            ))}
+          </div>
+
+          {/* ── Generation controls (Live API) ─────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:18}}>Live response tuning</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.5}}>
+            Applied to the Live API only. Changes take effect on the next mic session.
+          </div>
+
+          {/* Temperature */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Temperature</span>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>
+              {agentSettings.voice_temperature==null?'default':Number(agentSettings.voice_temperature).toFixed(2)}
+            </span>
+          </div>
+          <input type="range" min="0" max="2" step="0.05"
+            value={agentSettings.voice_temperature==null?1.0:Number(agentSettings.voice_temperature)}
+            onChange={e=>saveAgentSettings({voice_temperature:parseFloat(e.target.value)})}
+            style={{width:'100%',accentColor:'#7c3aed'}}/>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
+            <span>focused</span><span>balanced</span><span>playful</span>
+          </div>
+          {agentSettings.voice_temperature!=null&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:8,fontSize:11}}
+            onClick={()=>saveAgentSettings({voice_temperature:null})}>Reset temperature to model default</button>}
+
+          {/* Max output tokens */}
+          <div className="settings-subtitle" style={{marginTop:10}}>Max response length</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Caps each spoken reply. Most useful for ambient mode.</div>
+          <select
+            value={String(agentSettings.voice_max_tokens||0)}
+            onChange={e=>saveAgentSettings({voice_max_tokens:parseInt(e.target.value,10)||0})}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            <option value="0"   style={{background:'#0a0a14',color:'#ccc'}}>Unlimited (model default)</option>
+            <option value="100" style={{background:'#0a0a14',color:'#ccc'}}>~15 sec  ·  100 tokens (very brief)</option>
+            <option value="200" style={{background:'#0a0a14',color:'#ccc'}}>~30 sec  ·  200 tokens (brief)</option>
+            <option value="400" style={{background:'#0a0a14',color:'#ccc'}}>~60 sec  ·  400 tokens (standard)</option>
+            <option value="800" style={{background:'#0a0a14',color:'#ccc'}}>~2 min   ·  800 tokens (longform)</option>
+          </select>
+
+          {/* Toggles */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Behaviour</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:4}}>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_affective}
+                onChange={e=>saveAgentSettings({voice_affective:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Affective dialog</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Detect emotional tone in your speech and adapt delivery to match. <span style={{color:'rgba(245,158,11,0.85)'}}>Requires a native-audio Live model</span> — silently ignored on other voice models.</div>
+              </div>
+            </label>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_proactive}
+                onChange={e=>saveAgentSettings({voice_proactive:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Proactive audio</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Let Friday stay silent when background talk isn't directed at her. Recommended for always-on mic.</div>
+              </div>
+            </label>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_context_compression}
+                onChange={e=>saveAgentSettings({voice_context_compression:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Sliding-window context compression</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Keep long voice sessions alive past the context cap by auto-pruning older turns.</div>
+              </div>
+            </label>
+          </div>
 
           <div className="settings-subtitle" style={{marginTop:14}}>Microphone (Input)</div>
           <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>
@@ -5569,7 +5545,7 @@ function App(){
     </div>
 
     {/* Quick Draft Popup */}
-    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(6,6,11,0.95)',backdropFilter:'blur(20px)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 8px 32px rgba(0,0,0,0.6)'}}>
+    {quickDraft&&<div ref={quickDraftRef} style={{position:'fixed',top:42,right:120,width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,zIndex:9999,padding:14,boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK DRAFT</span>
         <button onClick={()=>setQuickDraft(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>

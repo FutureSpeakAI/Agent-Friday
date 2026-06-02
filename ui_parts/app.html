@@ -2060,19 +2060,100 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
   const[openSections,setOpenSections]=useState({intel:true,personality:false,voice:false,visual:false,camera:false,privacy:false,computer_control:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
+  // Full Gemini-TTS voice catalogue (30 voices). Source:
+  // https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#voice_options
+  // Style descriptors sourced from the AI Studio voice picker — used for both
+  // briefing TTS readback and Live API voice. Sorted female, then male.
   const TTS_VOICES=[
-    {id:'Aoede',label:'Aoede — warm female (default)'},
-    {id:'Kore',label:'Kore — standard female'},
-    {id:'Leda',label:'Leda — soft female'},
-    {id:'Puck',label:'Puck — male'},
-    {id:'Charon',label:'Charon — deep male'},
+    {id:'Achernar',     label:'Achernar — soft female'},
+    {id:'Aoede',        label:'Aoede — breezy female (default)'},
+    {id:'Autonoe',      label:'Autonoe — bright female'},
+    {id:'Callirrhoe',   label:'Callirrhoe — easy-going female'},
+    {id:'Despina',      label:'Despina — smooth female'},
+    {id:'Erinome',      label:'Erinome — clear female'},
+    {id:'Gacrux',       label:'Gacrux — mature female'},
+    {id:'Kore',         label:'Kore — firm female'},
+    {id:'Laomedeia',    label:'Laomedeia — upbeat female'},
+    {id:'Leda',         label:'Leda — youthful female'},
+    {id:'Pulcherrima',  label:'Pulcherrima — forward female'},
+    {id:'Sulafat',      label:'Sulafat — warm female'},
+    {id:'Vindemiatrix', label:'Vindemiatrix — gentle female'},
+    {id:'Zephyr',       label:'Zephyr — bright female'},
+    {id:'Achird',       label:'Achird — friendly male'},
+    {id:'Algenib',      label:'Algenib — gravelly male'},
+    {id:'Algieba',      label:'Algieba — smooth male'},
+    {id:'Alnilam',      label:'Alnilam — firm male'},
+    {id:'Charon',       label:'Charon — informative male'},
+    {id:'Enceladus',    label:'Enceladus — breathy male'},
+    {id:'Fenrir',       label:'Fenrir — excitable male'},
+    {id:'Iapetus',      label:'Iapetus — clear male'},
+    {id:'Orus',         label:'Orus — firm male'},
+    {id:'Puck',         label:'Puck — upbeat male'},
+    {id:'Rasalgethi',   label:'Rasalgethi — informative male'},
+    {id:'Sadachbia',    label:'Sadachbia — lively male'},
+    {id:'Sadaltager',   label:'Sadaltager — knowledgeable male'},
+    {id:'Schedar',      label:'Schedar — even male'},
+    {id:'Umbriel',      label:'Umbriel — easy-going male'},
+    {id:'Zubenelgenubi',label:'Zubenelgenubi — casual male'},
+  ];
+  // BCP-47 language codes Gemini-TTS supports. Blank = server default (en-US).
+  const VOICE_LANGUAGES=[
+    {id:'',     label:'Default (en-US)'},
+    {id:'en-US',label:'English (United States)'},
+    {id:'en-GB',label:'English (United Kingdom)'},
+    {id:'en-AU',label:'English (Australia)'},
+    {id:'en-IN',label:'English (India)'},
+    {id:'es-US',label:'Spanish (United States)'},
+    {id:'es-ES',label:'Spanish (Spain)'},
+    {id:'fr-FR',label:'French (France)'},
+    {id:'fr-CA',label:'French (Canada)'},
+    {id:'de-DE',label:'German (Germany)'},
+    {id:'it-IT',label:'Italian (Italy)'},
+    {id:'pt-BR',label:'Portuguese (Brazil)'},
+    {id:'ja-JP',label:'Japanese (Japan)'},
+    {id:'ko-KR',label:'Korean (Korea)'},
+    {id:'zh-CN',label:'Chinese (Mandarin, Simplified)'},
+    {id:'hi-IN',label:'Hindi (India)'},
+    {id:'ar-XA',label:'Arabic'},
+    {id:'nl-NL',label:'Dutch (Netherlands)'},
+    {id:'pl-PL',label:'Polish (Poland)'},
+    {id:'ru-RU',label:'Russian (Russia)'},
+    {id:'tr-TR',label:'Turkish (Turkey)'},
+    {id:'vi-VN',label:'Vietnamese (Vietnam)'},
+    {id:'th-TH',label:'Thai (Thailand)'},
+    {id:'id-ID',label:'Indonesian (Indonesia)'},
+  ];
+  // Gemini-TTS bracketed markup tags — inserted inline in text (briefing/TTS
+  // path) or appended to the style prompt to bias delivery.
+  const VOICE_MARKUP_TAGS=[
+    {tag:'[whispering]', desc:'whispered delivery'},
+    {tag:'[shouting]',   desc:'shouted / loud'},
+    {tag:'[laughing]',   desc:'inject laughter'},
+    {tag:'[sigh]',       desc:'audible sigh'},
+    {tag:'[uhm]',        desc:'natural hesitation'},
+    {tag:'[sarcasm]',    desc:'sarcastic tone'},
+    {tag:'[robotic]',    desc:'flat / robotic'},
+    {tag:'[extremely fast]', desc:'rushed pacing'},
+    {tag:'[short pause]', desc:'brief pause'},
+    {tag:'[medium pause]',desc:'medium pause'},
+    {tag:'[long pause]', desc:'long pause'},
+  ];
+  // Style-prompt presets — quick starting points the user can edit.
+  const VOICE_STYLE_PRESETS=[
+    {id:'',         label:'Off (use defaults)'},
+    {id:'Speak warmly and conversationally, like a trusted colleague — natural pacing, no robotic flatness', label:'Warm & conversational'},
+    {id:'Speak with calm authority and clear diction, like a seasoned news anchor delivering an evening briefing', label:'News anchor'},
+    {id:'Speak briskly and energetically, like an upbeat host introducing a topic with enthusiasm', label:'Upbeat host'},
+    {id:'Speak softly and slowly, with measured pauses and a contemplative tone, like reading a bedtime story', label:'Soft & measured'},
+    {id:'Speak with dry wit and understated humor, occasional well-placed pauses for effect',                 label:'Dry & witty'},
+    {id:'Speak with technical precision and even pacing — no fluff, no filler, no emotional inflection',     label:'Technical & precise'},
   ];
   const[ttsPreviewBusy,setTtsPreviewBusy]=useState(false);
   const previewVoice=async(voiceId)=>{
@@ -2197,8 +2278,9 @@ function App(){
     const proto=location.protocol==='https:'?'wss:':'ws:';
     const ws=new WebSocket(proto+'//'+location.host+'/ws/live');
     v.ws=ws;
+    let wsOpened=false;
     setVoiceStatus('connecting…');
-    ws.onopen=()=>{setVoiceOn(true);setVoiceStatus('listening')};
+    ws.onopen=()=>{wsOpened=true;setVoiceOn(true);setVoiceStatus('listening')};
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
@@ -2229,10 +2311,25 @@ function App(){
       }else if(m.type==='status'){
         setVoiceStatus(m.text);
       }else if(m.type==='error'){
-        setVoiceStatus('error: '+(m.error||'unknown'));
+        if(m.error==='unauthorized'){
+          // Session is stale — on localhost the server will auto-auth on
+          // reload, so just refresh the page rather than showing a misleading
+          // "socket error".
+          setVoiceStatus('Session expired — refreshing…');
+          setTimeout(()=>{try{window.location.reload()}catch(_){}},600);
+        }else{
+          setVoiceStatus('error: '+(m.error||'unknown'));
+        }
       }
     };
-    ws.onerror=(e)=>{console.warn('[voice] WebSocket error',e);setVoiceStatus('socket error — is the server running?')};
+    ws.onerror=(e)=>{
+      console.warn('[voice] WebSocket error',e);
+      // Only surface "socket error" when the WS never managed to open. Once
+      // the connection is established, any subsequent failure is reported via
+      // a structured {type:'error'} message that we handle in onmessage — do
+      // not overwrite that with a generic "is the server running?".
+      if(!wsOpened)setVoiceStatus('socket error — is the server running?');
+    };
     ws.onclose=(e)=>{
       console.log('[voice] WebSocket closed, code='+e.code+' reason='+e.reason);
       // Stop mic tracks so Chrome clears the recording indicator
@@ -2962,8 +3059,11 @@ function App(){
           <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(0,212,255,0.6)'}}>{openSections.voice?'▾':'▸'}</span>
         </div>
         {openSections.voice&&<div style={{padding:'0 16px 14px'}}>
-          <div className="settings-subtitle">TTS Voice</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8}}>Voice used by briefing Read Aloud and other speech output.</div>
+          <div className="settings-subtitle">Voice</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8,lineHeight:1.5}}>
+            Voice used by briefing Read Aloud <span style={{color:'rgba(255,255,255,0.55)'}}>and</span> live voice mode.
+            <span style={{color:'rgba(255,255,255,0.45)'}}> TTS changes apply instantly; live voice changes apply on the next mic session.</span>
+          </div>
           <select
             value={agentSettings.tts_voice||'Aoede'}
             onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
@@ -2975,6 +3075,119 @@ function App(){
             onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
             {ttsPreviewBusy?'Previewing...':'🔊 Preview selected voice'}
           </button>
+
+          {/* ── Language ─────────────────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Language</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6}}>BCP-47 region code passed to Gemini-TTS &amp; the Live API. Affects accent and pronunciation.</div>
+          <select
+            value={agentSettings.voice_language||''}
+            onChange={e=>saveAgentSettings({voice_language:e.target.value})}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            {VOICE_LANGUAGES.map(l=><option key={l.id||'default'} value={l.id} style={{background:'#0a0a14',color:'#ccc'}}>{l.label}</option>)}
+          </select>
+
+          {/* ── Style prompt ─────────────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Speaking style prompt</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
+            Free-text instruction shaping delivery. Briefing readback uses it as a prompt prefix; live voice mode prepends it to the system instruction. Leave blank for the built-in conversational style.
+          </div>
+          <select
+            value={''}
+            onChange={e=>{ if(e.target.value!==undefined){ saveAgentSettings({voice_style_prompt:e.target.value}); } }}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
+            <option value="" style={{background:'#0a0a14',color:'#888'}}>— Insert preset… —</option>
+            {VOICE_STYLE_PRESETS.filter(p=>p.id).map((p,i)=><option key={i} value={p.id} style={{background:'#0a0a14',color:'#ccc'}}>{p.label}</option>)}
+          </select>
+          <textarea
+            value={agentSettings.voice_style_prompt||''}
+            onChange={e=>saveAgentSettings({voice_style_prompt:e.target.value})}
+            placeholder="e.g. Speak warmly and slowly, like a calm storyteller…"
+            rows={3}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
+          {agentSettings.voice_style_prompt&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}}
+            onClick={()=>saveAgentSettings({voice_style_prompt:''})}>Clear style prompt</button>}
+
+          {/* ── Markup tags reference ────────────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Inline markup tags</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
+            Type any of these inside the text you want spoken (or inside the style prompt above) to add non-speech cues. Click a chip to copy it.
+          </div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {VOICE_MARKUP_TAGS.map(t=>(
+              <span key={t.tag} title={t.desc}
+                onClick={()=>{try{navigator.clipboard.writeText(t.tag);setSettingsSaveMsg('Copied '+t.tag);setTimeout(()=>setSettingsSaveMsg(''),1200);}catch(e){}}}
+                style={{padding:'4px 9px',borderRadius:12,background:'rgba(124,58,237,0.10)',border:'1px solid rgba(124,58,237,0.30)',color:'#cbb6ff',fontFamily:'JetBrains Mono',fontSize:11,cursor:'pointer',userSelect:'none'}}>{t.tag}</span>
+            ))}
+          </div>
+
+          {/* ── Generation controls (Live API) ─────────────────── */}
+          <div className="settings-subtitle" style={{marginTop:18}}>Live response tuning</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.5}}>
+            Applied to the Live API only. Changes take effect on the next mic session.
+          </div>
+
+          {/* Temperature */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Temperature</span>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>
+              {agentSettings.voice_temperature==null?'default':Number(agentSettings.voice_temperature).toFixed(2)}
+            </span>
+          </div>
+          <input type="range" min="0" max="2" step="0.05"
+            value={agentSettings.voice_temperature==null?1.0:Number(agentSettings.voice_temperature)}
+            onChange={e=>saveAgentSettings({voice_temperature:parseFloat(e.target.value)})}
+            style={{width:'100%',accentColor:'#7c3aed'}}/>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
+            <span>focused</span><span>balanced</span><span>playful</span>
+          </div>
+          {agentSettings.voice_temperature!=null&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:8,fontSize:11}}
+            onClick={()=>saveAgentSettings({voice_temperature:null})}>Reset temperature to model default</button>}
+
+          {/* Max output tokens */}
+          <div className="settings-subtitle" style={{marginTop:10}}>Max response length</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Caps each spoken reply. Most useful for ambient mode.</div>
+          <select
+            value={String(agentSettings.voice_max_tokens||0)}
+            onChange={e=>saveAgentSettings({voice_max_tokens:parseInt(e.target.value,10)||0})}
+            style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
+            <option value="0"   style={{background:'#0a0a14',color:'#ccc'}}>Unlimited (model default)</option>
+            <option value="100" style={{background:'#0a0a14',color:'#ccc'}}>~15 sec  ·  100 tokens (very brief)</option>
+            <option value="200" style={{background:'#0a0a14',color:'#ccc'}}>~30 sec  ·  200 tokens (brief)</option>
+            <option value="400" style={{background:'#0a0a14',color:'#ccc'}}>~60 sec  ·  400 tokens (standard)</option>
+            <option value="800" style={{background:'#0a0a14',color:'#ccc'}}>~2 min   ·  800 tokens (longform)</option>
+          </select>
+
+          {/* Toggles */}
+          <div className="settings-subtitle" style={{marginTop:14}}>Behaviour</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:4}}>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_affective}
+                onChange={e=>saveAgentSettings({voice_affective:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Affective dialog</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Detect emotional tone in your speech and adapt delivery to match. <span style={{color:'rgba(245,158,11,0.85)'}}>Requires a native-audio Live model</span> — silently ignored on other voice models.</div>
+              </div>
+            </label>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_proactive}
+                onChange={e=>saveAgentSettings({voice_proactive:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Proactive audio</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Let Friday stay silent when background talk isn't directed at her. Recommended for always-on mic.</div>
+              </div>
+            </label>
+            <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
+              <input type="checkbox" checked={!!agentSettings.voice_context_compression}
+                onChange={e=>saveAgentSettings({voice_context_compression:e.target.checked})}
+                style={{marginTop:3,accentColor:'#7c3aed'}}/>
+              <div>
+                <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Sliding-window context compression</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Keep long voice sessions alive past the context cap by auto-pruning older turns.</div>
+              </div>
+            </label>
+          </div>
 
           <div className="settings-subtitle" style={{marginTop:14}}>Microphone (Input)</div>
           <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>

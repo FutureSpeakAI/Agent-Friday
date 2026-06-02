@@ -44,10 +44,31 @@ SERVER_START_TS = _time.time()
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
 FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
 
+# Loopback addresses that are always auto-authenticated. Requests from the
+# user's own machine (direct HTTP or WebSocket) skip the login screen; only
+# remote connections (e.g. via Cloudflare Tunnel) ever see it.
+_LOOPBACK_ADDRS = {'127.0.0.1', '::1', 'localhost'}
+
+def _is_local_request():
+    """True if the current request originates from this machine (loopback)."""
+    try:
+        addr = (request.remote_addr or '').strip()
+    except Exception:
+        return False
+    if not addr:
+        return False
+    # Normalize IPv6-mapped IPv4 like ::ffff:127.0.0.1
+    if addr.startswith('::ffff:'):
+        addr = addr[7:]
+    return addr in _LOOPBACK_ADDRS
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not FRIDAY_PASSWORD:
+            return f(*args, **kwargs)
+        if _is_local_request():
+            session['authenticated'] = True
             return f(*args, **kwargs)
         if not session.get("authenticated"):
             if request.is_json or request.path.startswith("/api/"):
@@ -98,6 +119,12 @@ button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    # Loopback users are auto-authenticated — never show the form locally.
+    if _is_local_request():
+        session['authenticated'] = True
+        session.permanent = True
+        app.permanent_session_lifetime = timedelta(days=30)
+        return redirect('/')
     if not FRIDAY_PASSWORD:
         return redirect('/')
     error = ""
@@ -1868,7 +1895,14 @@ DEFAULT_SETTINGS = {
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "camera_auto_describe": False,
-    "tts_voice": "Aoede",                  # Aoede | Kore | Leda | Puck | Charon
+    "tts_voice": "Aoede",                  # any of the 30 Gemini-TTS voices
+    "voice_language": "",                  # BCP-47 (e.g. "en-US"); blank = server default
+    "voice_style_prompt": "",              # free-text styling instruction passed to Gemini
+    "voice_temperature": None,             # 0.0 – 2.0; null = SDK default
+    "voice_max_tokens": 0,                 # cap response length in tokens; 0 = unlimited
+    "voice_affective": False,              # Live API enable_affective_dialog
+    "voice_proactive": False,              # Live API proactivity.proactive_audio
+    "voice_context_compression": False,    # Live API sliding-window compression (set-and-forget)
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
@@ -1879,7 +1913,7 @@ DEFAULT_SETTINGS = {
     "orchestrator_model": "claude-opus-4-7",    # main agent brain
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-2.5-flash",       # images, vision, creative generation
-    "voice_model": "gemini-3.1-flash-live-preview",  # live audio
+    "voice_model": "gemini-live-2.5-flash-preview",  # live audio
 }
 
 
@@ -1999,6 +2033,16 @@ def _get_friday_system_prompt(keywords='', workspace=''):
 
 @app.before_request
 def check_auth():
+    # Loopback / same-machine access is always trusted — auto-authenticate the
+    # session so the user never sees a login screen on their own device.
+    # Remote access (e.g. via Cloudflare Tunnel) still goes through the
+    # password gate below.
+    if _is_local_request():
+        if not session.get("authenticated"):
+            session['authenticated'] = True
+            session.permanent = True
+            app.permanent_session_lifetime = timedelta(days=30)
+        return None
     if not FRIDAY_PASSWORD:
         return None
     if request.endpoint in ('login', 'static'):
@@ -2346,7 +2390,7 @@ def friday_health():
         "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-7"),
         "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
         "creative_model": settings.get("creative_model", "gemini-2.5-flash"),
-        "voice_model": settings.get("voice_model", "gemini-3.1-flash-live-preview"),
+        "voice_model": settings.get("voice_model", "gemini-live-2.5-flash-preview"),
         "governance": {
             "enabled": True,
             "version": "v4.1",
@@ -4563,26 +4607,35 @@ def tts():
         if not text:
             return jsonify({"status": "error", "message": "No text provided"}), 400
 
-        # Conversational prefix — Gemini TTS responds to natural-language
-        # delivery cues in the prompt. "Briefing" gives a warm news-anchor read.
-        style_prefix = {
-            'briefing': "Read this aloud in a warm, conversational news-anchor voice — natural pacing, light intonation, no robotic flatness: ",
-            'chat': "Say this aloud in a calm, friendly tone, like a trusted assistant talking to a colleague: ",
-            'plain': "Say this aloud: ",
-        }.get(style, "Read this aloud in a warm, conversational voice: ")
+        # Custom user-defined style prompt takes priority over the built-in styles.
+        custom_style = _get_voice_style_prompt()
+        if custom_style:
+            style_prefix = f"{custom_style}: "
+        else:
+            # Conversational prefix — Gemini TTS responds to natural-language
+            # delivery cues in the prompt. "Briefing" gives a warm news-anchor read.
+            style_prefix = {
+                'briefing': "Read this aloud in a warm, conversational news-anchor voice — natural pacing, light intonation, no robotic flatness: ",
+                'chat': "Say this aloud in a calm, friendly tone, like a trusted assistant talking to a colleague: ",
+                'plain': "Say this aloud: ",
+            }.get(style, "Read this aloud in a warm, conversational voice: ")
+
+        # Build speech config with optional language code.
+        speech_kwargs = {
+            "voice_config": types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+            )
+        }
+        language = _get_voice_language()
+        if language:
+            speech_kwargs["language_code"] = language
 
         response = client.models.generate_content(
             model="gemini-2.5-flash-preview-tts",
             contents=f"{style_prefix}{text}",
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=voice
-                        )
-                    )
-                )
+                speech_config=types.SpeechConfig(**speech_kwargs),
             )
         )
 
@@ -6336,14 +6389,44 @@ def fs_assets():
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview")
-LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-live-2.5-flash-preview")
+LIVE_MODEL_FALLBACK = "gemini-2.0-flash-live-001"
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 
 def _get_live_model():
     """Return the currently configured voice/live model from settings, falling back to LIVE_MODEL."""
     return _load_settings().get("voice_model") or LIVE_MODEL
+
+
+def _get_live_voice():
+    """Return the currently configured Live API voice from settings.
+
+    Resolution order: settings.tts_voice → FRIDAY_LIVE_VOICE env var → "Aoede".
+    The Live API binds voice at session-config time, so changes take effect on
+    the next WebSocket connection — not mid-stream.
+    """
+    return (_load_settings() or {}).get("tts_voice") or LIVE_VOICE
+
+
+def _get_voice_language():
+    """Return the configured BCP-47 language code, or '' to use the server default."""
+    return ((_load_settings() or {}).get("voice_language") or "").strip()
+
+
+def _get_voice_style_prompt():
+    """Return the user's custom speaking-style instruction, or '' for built-in styles."""
+    return ((_load_settings() or {}).get("voice_style_prompt") or "").strip()
+
+
+def _model_supports_affective_dialog(model_name: str) -> bool:
+    """Affective dialog is only available on Gemini's native-audio Live models.
+
+    Standard Live models (e.g. gemini-3.1-flash-live-preview) return 1011 if
+    enable_affective_dialog is sent. The native-audio variants are the only
+    ones that support emotion-adaptive delivery.
+    """
+    return "native-audio" in (model_name or "").lower()
 
 LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.
 You are having a live voice conversation. Be concise and natural — this is spoken dialogue, not text chat.
@@ -6568,11 +6651,13 @@ if sock is not None:
             print(f'[live] {msg}')
 
         _vlog(f'=== WS connection from {request.remote_addr} ===')
-        _vlog(f'session.authenticated={session.get("authenticated")} GEMINI_KEY={GEMINI_API_KEY[:8] if GEMINI_API_KEY else "MISSING"}...')
+        _vlog(f'session.authenticated={session.get("authenticated")} local={_is_local_request()} GEMINI_KEY={GEMINI_API_KEY[:8] if GEMINI_API_KEY else "MISSING"}...')
 
         # Auth enforcement (before_request already redirects unauthenticated HTML
         # requests, but be defensive in case /ws/ paths were excluded).
-        if FRIDAY_PASSWORD and not session.get("authenticated"):
+        # Loopback connections are always trusted — same-machine usage skips
+        # auth so the user never hits an "unauthorized" voice error locally.
+        if FRIDAY_PASSWORD and not session.get("authenticated") and not _is_local_request():
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
@@ -6624,20 +6709,65 @@ if sock is not None:
         # Live API requires v1alpha endpoint for WebSocket streaming.
         client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1alpha"})
 
-        cfg = types.LiveConnectConfig(
+        live_voice = _get_live_voice()
+        live_language = _get_voice_language()
+        live_style = _get_voice_style_prompt()
+        live_settings = _load_settings() or {}
+
+        live_temperature = live_settings.get("voice_temperature")
+        try:
+            live_temperature = float(live_temperature) if live_temperature is not None else None
+        except (TypeError, ValueError):
+            live_temperature = None
+        try:
+            live_max_tokens = int(live_settings.get("voice_max_tokens") or 0)
+        except (TypeError, ValueError):
+            live_max_tokens = 0
+        live_affective = bool(live_settings.get("voice_affective"))
+        live_proactive = bool(live_settings.get("voice_proactive"))
+        live_context_compression = bool(live_settings.get("voice_context_compression"))
+
+        _vlog(
+            f'voice cfg: voice={live_voice}; lang={live_language or "default"}; '
+            f'temp={live_temperature}; max_tokens={live_max_tokens or "inf"}; '
+            f'affective={live_affective}; proactive={live_proactive}; '
+            f'ctx_compress={live_context_compression}; '
+            f'style={(live_style[:60] + "...") if len(live_style) > 60 else (live_style or "default")}'
+        )
+
+        speech_kwargs = {
+            "voice_config": types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=live_voice)
+            )
+        }
+        if live_language:
+            speech_kwargs["language_code"] = live_language
+
+        sys_text = system_instruction
+        if live_style:
+            sys_text = f"Speaking style: {live_style}\n\n{sys_text}"
+
+        live_cfg_kwargs = dict(
             response_modalities=[types.Modality.AUDIO],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=LIVE_VOICE)
-                )
-            ),
-            system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
+            speech_config=types.SpeechConfig(**speech_kwargs),
+            system_instruction=types.Content(parts=[types.Part(text=sys_text)]),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            realtime_input_config=types.RealtimeInputConfig(
-                turn_coverage="TURN_INCLUDES_ONLY_ACTIVITY",
-            ),
         )
+        if live_temperature is not None:
+            live_cfg_kwargs["temperature"] = live_temperature
+        if live_max_tokens > 0:
+            live_cfg_kwargs["max_output_tokens"] = live_max_tokens
+        if live_affective:
+            live_cfg_kwargs["enable_affective_dialog"] = True
+        if live_proactive:
+            live_cfg_kwargs["proactivity"] = types.ProactivityConfig(proactive_audio=True)
+        if live_context_compression:
+            live_cfg_kwargs["context_window_compression"] = types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow(),
+            )
+
+        cfg = types.LiveConnectConfig(**live_cfg_kwargs)
 
         done = threading.Event()
 
@@ -6664,8 +6794,19 @@ if sock is not None:
             last_error = None
             for model_name in models_to_try:
                 _vlog(f'connecting to model: {model_name}')
+
+                # enable_affective_dialog is only valid on native-audio models.
+                # Build a per-model cfg with that field stripped when the model
+                # doesn't support it, so a user who has the toggle on doesn't
+                # see the standard model fail with 1011.
+                if live_affective and not _model_supports_affective_dialog(model_name):
+                    per_model_kwargs = {k: v for k, v in live_cfg_kwargs.items() if k != "enable_affective_dialog"}
+                    per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
+                    _vlog(f'  (affective dialog skipped — {model_name} does not support it)')
+                else:
+                    per_model_cfg = cfg
                 try:
-                    async with client.aio.live.connect(model=model_name, config=cfg) as session_ai:
+                    async with client.aio.live.connect(model=model_name, config=per_model_cfg) as session_ai:
                         _safe_send({"type": "status", "text": "live"})
                         _vlog(f'session established with {model_name}')
 
@@ -6694,13 +6835,17 @@ if sock is not None:
                             })
                             turn_log.append((user_text, agent_text))
 
+                        _audio_bytes_to_gemini = 0
+                        _audio_bytes_from_gemini = 0
+                        _safe_send_failures = 0
+
                         async def reader():
-                            nonlocal _audio_chunks_received
+                            nonlocal _audio_chunks_received, _audio_bytes_to_gemini
                             while not done.is_set():
                                 try:
                                     raw = await asyncio.to_thread(ws.receive, 1.0)
                                 except ConnectionClosed:
-                                    print('[live] reader: ConnectionClosed')
+                                    _vlog('reader: ConnectionClosed from browser')
                                     done.set()
                                     return
                                 except Exception as e:
@@ -6721,8 +6866,9 @@ if sock is not None:
                                     if t == 'audio' and msg.get('data'):
                                         data = base64.b64decode(msg['data'])
                                         _audio_chunks_received += 1
-                                        if _audio_chunks_received == 1 or _audio_chunks_received % 50 == 0:
-                                            print(f'[live] forwarding audio chunk #{_audio_chunks_received} to gemini ({len(data)} bytes)')
+                                        _audio_bytes_to_gemini += len(data)
+                                        if _audio_chunks_received in (1, 5, 25) or _audio_chunks_received % 50 == 0:
+                                            _vlog(f'browser->gemini: chunk #{_audio_chunks_received} ({len(data)} bytes, total {_audio_bytes_to_gemini})')
                                         await session_ai.send_realtime_input(
                                             audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
                                         )
@@ -6732,18 +6878,18 @@ if sock is not None:
                                             video=types.Blob(data=data, mime_type='image/jpeg')
                                         )
                                     elif t == 'text' and msg.get('text'):
-                                        print(f'[live] text message: {msg["text"]!r}')
+                                        _vlog(f'browser->gemini: text {msg["text"]!r}')
                                         await session_ai.send_realtime_input(text=msg['text'])
                                     elif t == 'end':
-                                        print('[live] reader: received end signal')
+                                        _vlog('reader: browser sent end signal')
                                         done.set()
                                         return
                                 except Exception as e:
-                                    print(f'[live] send-to-gemini error: {e}')
+                                    _vlog(f'send-to-gemini ERROR: {type(e).__name__}: {e}')
                                     traceback.print_exc()
 
                         async def writer():
-                            nonlocal _gemini_chunks_received
+                            nonlocal _gemini_chunks_received, _audio_bytes_from_gemini, _safe_send_failures
                             try:
                                 while not done.is_set():
                                     async for chunk in session_ai.receive():
@@ -6752,17 +6898,17 @@ if sock is not None:
                                         try:
                                             _gemini_chunks_received += 1
                                             if _gemini_chunks_received <= 3 or _gemini_chunks_received % 20 == 0:
-                                                print(f'[live] gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None}')
+                                                _vlog(f'gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None}')
                                             sc = getattr(chunk, 'server_content', None)
                                             if sc is not None:
                                                 out_tr = getattr(sc, 'output_transcription', None)
                                                 if out_tr and getattr(out_tr, 'text', None):
-                                                    print(f'[live] output_transcription: {out_tr.text!r}')
+                                                    _vlog(f'output_transcription: {out_tr.text!r}')
                                                     out_buf.append(out_tr.text)
                                                     _safe_send({"type": "text", "text": out_tr.text})
                                                 in_tr = getattr(sc, 'input_transcription', None)
                                                 if in_tr and getattr(in_tr, 'text', None):
-                                                    print(f'[live] input_transcription: {in_tr.text!r}')
+                                                    _vlog(f'input_transcription: {in_tr.text!r}')
                                                     in_buf.append(in_tr.text)
                                                     _safe_send({"type": "input_transcript", "text": in_tr.text})
                                                 mt = getattr(sc, 'model_turn', None)
@@ -6771,31 +6917,36 @@ if sock is not None:
                                                         # Audio: PCM bytes at 24kHz in part.inline_data.data
                                                         il = getattr(part, 'inline_data', None)
                                                         if il and getattr(il, 'data', None):
-                                                            print(f'[live] audio chunk {len(il.data)} bytes ({il.mime_type})')
-                                                            _safe_send({
+                                                            _audio_bytes_from_gemini += len(il.data)
+                                                            if _audio_bytes_from_gemini <= 50000 or _gemini_chunks_received % 20 == 0:
+                                                                _vlog(f'gemini->browser: audio {len(il.data)} bytes ({il.mime_type}); total {_audio_bytes_from_gemini}')
+                                                            ok = _safe_send({
                                                                 "type": "audio",
                                                                 "data": base64.b64encode(il.data).decode('ascii'),
                                                             })
+                                                            if not ok:
+                                                                _safe_send_failures += 1
+                                                                _vlog(f'ws.send FAILED for audio chunk (cumulative failures: {_safe_send_failures})')
                                                         pt = getattr(part, 'text', None)
                                                         if pt:
                                                             out_buf.append(pt)
                                                             _safe_send({"type": "text", "text": pt})
                                                 if getattr(sc, 'turn_complete', False):
-                                                    print('[live] turn_complete')
+                                                    _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                     _flush_turn()
                                                     _safe_send({"type": "turn_end"})
                                                 if getattr(sc, 'interrupted', False):
-                                                    print('[live] interrupted')
+                                                    _vlog('interrupted')
                                                     _safe_send({"type": "interrupted"})
                                         except Exception as e:
-                                            print(f'[live] recv error: {e}')
+                                            _vlog(f'recv processing ERROR: {type(e).__name__}: {e}')
                                             traceback.print_exc()
                                     # session.receive() iterator ends after a turn; re-enter to keep listening
-                                    print(f'[live] receive iterator completed, re-entering for next turn')
+                                    _vlog(f'receive iterator completed (after {_gemini_chunks_received} chunks), re-entering for next turn')
                             except Exception as e:
-                                print(f'[live] session recv ended: {e}')
+                                _vlog(f'writer EXCEPTION: {type(e).__name__}: {e}')
                             finally:
-                                print(f'[live] writer done. gemini chunks received: {_gemini_chunks_received}')
+                                _vlog(f'writer done. stats: gemini_chunks={_gemini_chunks_received}, audio_in_bytes={_audio_bytes_to_gemini}, audio_out_bytes={_audio_bytes_from_gemini}, send_fails={_safe_send_failures}')
                                 done.set()
 
                         await asyncio.gather(reader(), writer(), return_exceptions=True)
