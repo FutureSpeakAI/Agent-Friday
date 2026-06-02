@@ -1044,9 +1044,11 @@ def _task_worker(task_id, name, prompt, description=''):
         # Stream a couple of milestone lines so the UI feels alive.
         _task_log(task_id, 'Calling Claude…')
         subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
+        _bg_label = (name or prompt or 'Task')[:24]
         reply, tool_trace = _call_claude_agent(
             messages, system=system, max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True},
+            orb_label=_bg_label, orb_category='monitoring', orb_icon='🛰',
         )
         for step in tool_trace or []:
             tn = step.get('name', '?')
@@ -1073,6 +1075,7 @@ def _task_worker(task_id, name, prompt, description=''):
                     [{"role": "user", "content": steer_msg}],
                     system=system, max_tokens=16384, model=subagent_model,
                     session_ctx={"authenticated": True, "is_background_task": True},
+                    orb_label=f"steer: {steer_msg[:18]}", orb_category='monitoring', orb_icon='🎯',
                 )
                 combined_trace.extend(steer_trace or [])
                 if steer_reply:
@@ -1766,7 +1769,25 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         return f"Tool error ({name}): {e}"
 
 
-def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None):
+def _tool_orb_meta(name):
+    """Map a tool name to (category, icon, friendly_label) for the process orb."""
+    n = (name or '').lower()
+    if 'search_web' in n or 'browse_web' in n or n == 'search':
+        return ('search', '🔍', name)
+    if 'email' in n or 'draft_email' in n or 'slack' in n or 'message' in n or 'notif' in n:
+        return ('communication', '✉', name)
+    if 'wiki' in n or 'read_file' in n or 'write_file' in n or 'list_directory' in n:
+        return ('monitoring', '📁', name)
+    if 'command' in n or 'install_package' in n:
+        return ('monitoring', '⚙', name)
+    if 'calendar' in n or 'briefing' in n or 'pipeline' in n:
+        return ('monitoring', '📅', name)
+    if 'trust' in n:
+        return ('monitoring', '🛡', name)
+    return ('default', '⚡', name)
+
+
+def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠'):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
     pii_lookup: if a dict, tool results are scrubbed into it for rehydration.
@@ -1797,87 +1818,143 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     tool_trace = []
     convo = list(safe_messages)
 
-    for _ in range(max_iters):
-        # ── Operator filesystem controls ───────────────────────────
-        # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
-        _stop_path = FRIDAY_DIR / "AGENT_STOP"
-        if _stop_path.exists():
+    # ── Process orb registration — frontend renders an orb per active agent. ──
+    orb_id = f"agent-{uuid.uuid4().hex[:8]}"
+    try:
+        process_register(
+            orb_id,
+            name="Friday",
+            label=orb_label or "Thinking…",
+            category=orb_category,
+            icon=orb_icon,
+            steps=[],
+        )
+    except Exception:
+        orb_id = None
+
+    def _orb_safe(fn, *a, **kw):
+        if not orb_id:
+            return
+        try:
+            fn(*a, **kw)
+        except Exception:
+            pass
+
+    try:
+        iter_count = 0
+        for _ in range(max_iters):
+            iter_count += 1
+            # ── Operator filesystem controls ───────────────────────────
+            # Drop ~/.friday/AGENT_STOP to kill a runaway agent immediately.
+            _stop_path = FRIDAY_DIR / "AGENT_STOP"
+            if _stop_path.exists():
+                try:
+                    _stop_path.unlink()
+                except Exception:
+                    pass
+                _orb_safe(process_update, orb_id, status='error', label='Stopped', progress=1.0)
+                return ("[Agent stopped by operator control: AGENT_STOP file detected.]", tool_trace)
+
+            # Write instructions to ~/.friday/STEER.md to redirect mid-task.
+            _steer_inject = None
+            _steer_path = FRIDAY_DIR / "STEER.md"
+            if _steer_path.exists():
+                try:
+                    _steer_inject = _steer_path.read_text(encoding='utf-8').strip()
+                    _steer_path.unlink()
+                except Exception:
+                    pass
+
+            # Update orb: reasoning step
+            _orb_safe(process_update, orb_id,
+                      label="Reasoning…" if iter_count == 1 else f"Reasoning (step {iter_count})",
+                      progress=min(0.05 + (iter_count - 1) * 0.1, 0.9),
+                      step={"type": "reason", "iter": iter_count, "ts": _time.time()})
+
+            kwargs = {
+                "model": model or ANTHROPIC_MODEL_DEFAULT,
+                "max_tokens": max_tokens,
+                "messages": convo,
+                "tools": CLAUDE_TOOLS,
+            }
+            _sys = safe_system
+            if _steer_inject:
+                _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
+            if _sys:
+                kwargs["system"] = _sys
+            if temperature is not None:
+                try:
+                    kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
+                except (TypeError, ValueError):
+                    pass
+
+            resp = client.messages.create(**kwargs)
+
+            # Collect text and tool_use blocks
+            text_parts = []
+            tool_uses = []
+            for b in resp.content:
+                btype = getattr(b, 'type', None)
+                if btype == 'text':
+                    text_parts.append(b.text)
+                elif btype == 'tool_use':
+                    tool_uses.append(b)
+
+            if resp.stop_reason != 'tool_use' or not tool_uses:
+                _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
+                return ("".join(text_parts).strip(), tool_trace)
+
+            # Promote orb category to whatever tool family is most active this round.
             try:
-                _stop_path.unlink()
+                cat, icon, _ = _tool_orb_meta(tool_uses[0].name)
+                _orb_safe(process_update, orb_id, label=f"{tool_uses[0].name}…")
             except Exception:
                 pass
-            return ("[Agent stopped by operator control: AGENT_STOP file detected.]", tool_trace)
 
-        # Write instructions to ~/.friday/STEER.md to redirect mid-task.
-        _steer_inject = None
-        _steer_path = FRIDAY_DIR / "STEER.md"
-        if _steer_path.exists():
-            try:
-                _steer_inject = _steer_path.read_text(encoding='utf-8').strip()
-                _steer_path.unlink()
-            except Exception:
-                pass
+            # Echo assistant turn (text + tool_use blocks) into the convo
+            assistant_content = []
+            for b in resp.content:
+                btype = getattr(b, 'type', None)
+                if btype == 'text':
+                    assistant_content.append({"type": "text", "text": b.text})
+                elif btype == 'tool_use':
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": b.id,
+                        "name": b.name,
+                        "input": b.input,
+                    })
+            convo.append({"role": "assistant", "content": assistant_content})
 
-        kwargs = {
-            "model": model or ANTHROPIC_MODEL_DEFAULT,
-            "max_tokens": max_tokens,
-            "messages": convo,
-            "tools": CLAUDE_TOOLS,
-        }
-        _sys = safe_system
-        if _steer_inject:
-            _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
-        if _sys:
-            kwargs["system"] = _sys
-        if temperature is not None:
-            try:
-                kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
-            except (TypeError, ValueError):
-                pass
-
-        resp = client.messages.create(**kwargs)
-
-        # Collect text and tool_use blocks
-        text_parts = []
-        tool_uses = []
-        for b in resp.content:
-            btype = getattr(b, 'type', None)
-            if btype == 'text':
-                text_parts.append(b.text)
-            elif btype == 'tool_use':
-                tool_uses.append(b)
-
-        if resp.stop_reason != 'tool_use' or not tool_uses:
-            return ("".join(text_parts).strip(), tool_trace)
-
-        # Echo assistant turn (text + tool_use blocks) into the convo
-        assistant_content = []
-        for b in resp.content:
-            btype = getattr(b, 'type', None)
-            if btype == 'text':
-                assistant_content.append({"type": "text", "text": b.text})
-            elif btype == 'tool_use':
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": b.id,
-                    "name": b.name,
-                    "input": b.input,
+            # Execute tools and feed results back
+            tool_results = []
+            for tu in tool_uses:
+                _orb_safe(process_update, orb_id, label=f"{tu.name}…",
+                          step={"type": "tool", "name": tu.name, "input": tu.input, "ts": _time.time()})
+                result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": result,
                 })
-        convo.append({"role": "assistant", "content": assistant_content})
+            convo.append({"role": "user", "content": tool_results})
 
-        # Execute tools and feed results back
-        tool_results = []
-        for tu in tool_uses:
-            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
-            tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tu.id,
-                "content": result,
-            })
-        convo.append({"role": "user", "content": tool_results})
-
-    return ("[Agent hit max tool iterations without completing.]", tool_trace)
+        _orb_safe(process_update, orb_id, status='error', label='Max iters', progress=1.0)
+        return ("[Agent hit max tool iterations without completing.]", tool_trace)
+    except Exception:
+        _orb_safe(process_update, orb_id, status='error', label='Error', progress=1.0)
+        raise
+    finally:
+        # The frontend keeps a "completing" orb for ~2s, then auto-purges via
+        # /api/processes server-side TTL once status is completed/error.
+        if orb_id:
+            try:
+                p = PROCESSES.get(orb_id)
+                if p and p.get('status') == 'running':
+                    process_update(orb_id, status='completed', progress=1.0)
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════
@@ -4433,9 +4510,12 @@ def chat():
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
         }
+        # Build a short label for the process orb — first ~24 chars of the user's message.
+        _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
         reply, tool_trace = _call_claude_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
             pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+            orb_label=_orb_label, orb_category='default', orb_icon='💬',
         )
 
         # ── Rehydrate: restore real PII before returning to the user. ──
