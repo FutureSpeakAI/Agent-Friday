@@ -2023,6 +2023,32 @@ def _compress_trajectory(messages):
     return result
 
 
+# ── Semantic context pruner (lazy singleton) ──────────────────────
+# RAG over our own conversation history: when chat grows past the configured
+# threshold we keep the most relevant past turns instead of truncating the
+# oldest. The sentence-transformer model is loaded on first prune(), never at
+# import, so server startup stays fast.
+_CONTEXT_PRUNER = None
+_CONTEXT_PRUNER_LOCK = threading.Lock()
+
+
+def _get_context_pruner(cfg):
+    """Return the process-wide ContextPruner, building it lazily on first use.
+
+    cfg is the `context_pruning` block from settings.json. Thresholds are
+    refreshed on every call (cheap) so live settings edits take effect without
+    a restart; the loaded model + embedding cache are preserved.
+    """
+    global _CONTEXT_PRUNER
+    with _CONTEXT_PRUNER_LOCK:
+        if _CONTEXT_PRUNER is None:
+            from context_pruner import ContextPruner
+            _CONTEXT_PRUNER = ContextPruner.from_settings(cfg)
+        else:
+            _CONTEXT_PRUNER.configure(cfg)
+        return _CONTEXT_PRUNER
+
+
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
@@ -2061,6 +2087,16 @@ DEFAULT_SETTINGS = {
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-2.5-flash",       # images, vision, creative generation
     "voice_model": "gemini-live-2.5-flash-preview",  # live audio
+    # ── Semantic Context Pruning (RAG over our own conversation history) ──
+    # When chat history exceeds max_turns, embedding-based retrieval keeps the
+    # most relevant past turns instead of truncating from the oldest.
+    "context_pruning": {
+        "enabled": True,
+        "max_turns": 50,        # threshold (in turn pairs) before pruning kicks in
+        "keep_recent": 4,       # always keep this many recent turn pairs verbatim
+        "top_k": 10,            # semantically relevant archived turns to retrieve
+        "model": "all-MiniLM-L6-v2",
+    },
 }
 
 
@@ -4490,6 +4526,37 @@ def chat():
                 raw_history.append({"role": role, "content": text})
         messages = _compress_trajectory(raw_history)
         messages.append({"role": "user", "content": message})
+
+        # ── Semantic context pruning (RAG over our own history) ──
+        # When the conversation is long, keep the turns most relevant to the
+        # current prompt instead of letting the oldest ones fall off. Only the
+        # messages SENT to the API are pruned — CHAT_HISTORY (the session
+        # archive) is untouched, so future turns can still retrieve everything.
+        _prune_cfg = settings.get('context_pruning') or {}
+        if _prune_cfg.get('enabled', True):
+            try:
+                pruner = _get_context_pruner(_prune_cfg)
+                if pruner.should_prune(messages):
+                    _orig_count = len(messages)
+                    messages = pruner.prune(messages, message)
+                    _pruned_count = len(messages)
+                    _topk = _prune_cfg.get('top_k', 10)
+                    print(f"Context pruned: {_orig_count} turns → "
+                          f"{_pruned_count} turns ({_topk} semantic matches)")
+                    # Brief process orb so the user can see pruning happen.
+                    _prune_pid = f"prune-{uuid.uuid4().hex[:8]}"
+                    try:
+                        process_register(
+                            _prune_pid, name="Context Pruning",
+                            label="Context Pruning", category="monitoring",
+                            icon="🧠",
+                        )
+                        threading.Timer(2.0, process_remove, args=(_prune_pid,)).start()
+                    except Exception:
+                        pass
+            except Exception as _pe:
+                # Pruning is best-effort — never block a chat on it.
+                print(f"  [PRUNE] skipped: {_pe}")
 
         # ── Privacy Shield: scrub PII out of system prompt + all messages ──
         # All real PII is replaced with [PII:type:hash] tags before any byte
