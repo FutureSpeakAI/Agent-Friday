@@ -636,9 +636,16 @@ window.addEventListener('DOMContentLoaded',function(){
             margin: 0;
         }
         .notif-empty {
-            padding: 14px; font-size: 11px; color: rgba(255,255,255,0.45);
+            padding: 18px 14px; font-size: 11px; color: rgba(255,255,255,0.62);
             font-family: 'JetBrains Mono', monospace; text-align: center;
             letter-spacing: 0.04em;
+        }
+        .notif-row.clickable:hover {
+            background: rgba(0,212,255,0.08);
+        }
+        .notif-row.clickable:focus-visible {
+            outline: 2px solid rgba(0,212,255,0.55);
+            outline-offset: -2px;
         }
         @keyframes notifDropdownSlide {
             from { opacity: 0; transform: translateY(-8px); }

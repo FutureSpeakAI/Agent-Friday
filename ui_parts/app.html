@@ -861,7 +861,14 @@ function SystemWS(){
   const showCtxToast=(m)=>{setCtxToast(m);setTimeout(()=>setCtxToast(''),2200)};
   const refreshCtxStats=()=>fetch('/api/context/stats').then(r=>r.json()).then(setCtxStats).catch(()=>{});
 
-  useEffect(()=>{fetch('/api/system').then(r=>r.json()).then(d=>{setSys(d);setLoading(false)}).catch(()=>setLoading(false));refreshCtxStats()},[]);
+  useEffect(()=>{
+    let done=false;
+    const finish=(data)=>{if(done)return;done=true;setSys(data);setLoading(false)};
+    fetch('/api/system').then(r=>r.json()).then(finish).catch(()=>finish(null));
+    // Hard fallback so the UI never gets stuck on the loading state if the endpoint hangs.
+    setTimeout(()=>finish(null),6000);
+    refreshCtxStats();
+  },[]);
 
   const runCtxSearch=async()=>{setCtxSearching(true);
     try{const r=await fetch('/api/context/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:ctxQuery.trim(),date_from:ctxFrom||null,date_to:ctxTo||null,type:ctxType||null,limit:200})});
@@ -883,12 +890,18 @@ function SystemWS(){
   const fmtTs=(s)=>{try{return new Date(s).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch{return s}};
   const typeColor=(t)=>({chat_user:'#7c3aed',chat_agent:'#00d4ff',tool_call:'#f59e0b',wiki_edit:'#00ff80',wiki_delete:'#ff0080',file_read:'#a8a8b4',task_spawn:'#ff6dd9'}[t]||'#888');
 
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Scanning system...</div>;
+  if(loading)return <div style={{color:'#bbb',textAlign:'center',padding:40,fontFamily:'JetBrains Mono',fontSize:12}}>Scanning system...</div>;
+  const disks=(sys?.disk||sys?.disks||[]);
+  const procs=(sys?.processes||[]);
   return(<div>
     <div className="card-title">Disk Space</div>
-    {((sys?.disk||sys?.disks||[])).map((d,i)=>{const used=(d.total_gb||d.TotalGB||1)>0?(1-(d.free_gb||d.FreeGB||0)/(d.total_gb||d.TotalGB||1))*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{(d.drive||d.Name||d.name||'?')}</span><span style={{color:'#00d4ff'}}>{(d.free_gb||d.FreeGB||0)?.toFixed(1)} GB free / {(d.total_gb||d.TotalGB||1)?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
+    {disks.length===0
+      ?<div className="card" style={{padding:10,fontSize:11,color:'#aaa',textAlign:'center'}}>Disk telemetry unavailable on this host.</div>
+      :disks.map((d,i)=>{const used=(d.total_gb||d.TotalGB||1)>0?(1-(d.free_gb||d.FreeGB||0)/(d.total_gb||d.TotalGB||1))*100:0;return <div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontFamily:'JetBrains Mono'}}>{(d.drive||d.Name||d.name||'?')}</span><span style={{color:'#00d4ff'}}>{(d.free_gb||d.FreeGB||0)?.toFixed(1)} GB free / {(d.total_gb||d.TotalGB||1)?.toFixed(1)} GB</span></div><div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:used+'%',background:used>90?'#ff0080':'#00d4ff'}}/></div></div>})}
     <div className="card-title" style={{marginTop:10}}>Top Processes</div>
-    {((sys?.processes||[])).slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#aaa'}}>{(p.name||p.Name||'unknown')}</span><span style={{color:'#f59e0b'}}>{((p.memory_mb||p.MemMB||p.mem_mb||0)).toFixed(0)} MB</span></div>)}
+    {procs.length===0
+      ?<div className="card" style={{padding:10,fontSize:11,color:'#aaa',textAlign:'center'}}>Process list unavailable.</div>
+      :procs.slice(0,10).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:11,padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.02)',fontFamily:'JetBrains Mono'}}><span style={{color:'#ccc'}}>{(p.name||p.Name||'unknown')}</span><span style={{color:'#f59e0b'}}>{((p.memory_mb||p.MemMB||p.mem_mb||0)).toFixed(0)} MB</span></div>)}
 
     {/* ─── Context Log ─── */}
     <div className="card-title" style={{marginTop:14,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -1689,13 +1702,18 @@ function TaskCard({task,expanded,onToggle,onCancel,onView}){
   return(<div className={'task-card '+status}>
     <div className="task-card-edge"/>
     <div className="task-card-row">
-      <div style={{flex:1,minWidth:0}}>
+      <div style={{flex:1,minWidth:0,cursor:'pointer'}}
+        role="button" tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onToggle()}}}
+        title={expanded?'Click to collapse':'Click to expand log'}
+        aria-expanded={expanded}>
         <div className="task-card-title">{task.name||'Task'}</div>
         {task.description&&<div className="task-card-sub">{task.description}</div>}
       </div>
       <div className="task-card-actions">
-        <button className="task-card-btn" onClick={onToggle} title={expanded?'Collapse':'Expand'}>{expanded?'▾':'▸'}</button>
-        {status==='running'&&<button className="task-card-btn cancel" onClick={onCancel} title="Cancel">✕</button>}
+        <button className="task-card-btn" onClick={e=>{e.stopPropagation();onToggle()}} title={expanded?'Collapse':'Expand'} aria-label={expanded?'Collapse task log':'Expand task log'}>{expanded?'▾':'▸'}</button>
+        {status==='running'&&<button className="task-card-btn cancel" onClick={e=>{e.stopPropagation();onCancel()}} title="Cancel" aria-label="Cancel task">✕</button>}
       </div>
     </div>
     <div className="task-card-meta">
@@ -2252,7 +2270,18 @@ function App(){
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
       v.playCursor=v.audioCtx.currentTime;
       const _inputId=agentSettings.audio_input_device_id;
-      v.micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1,...(_inputId?{deviceId:{exact:_inputId}}:{})}});
+      // Use non-exact deviceId so a stale/silent device ID falls back to the system default
+      // instead of returning a silent stream. `exact` succeeds even when the underlying device
+      // is muted at the OS level — `ideal` lets the browser pick a working mic.
+      v.micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1,...(_inputId?{deviceId:{ideal:_inputId}}:{})}});
+      // Verify the stream has live audio tracks; if the chosen device is silent we still
+      // proceed but log it so the diagnostic surface shows what happened.
+      try{
+        const tracks=v.micStream.getAudioTracks();
+        const settings=tracks[0]?.getSettings?.()||{};
+        console.log('[voice] mic acquired:',tracks.map(t=>({label:t.label,enabled:t.enabled,muted:t.muted,readyState:t.readyState})),'settings:',settings);
+        if(tracks[0]?.muted){console.warn('[voice] mic track is MUTED at OS level — audio will be silent')}
+      }catch(_){}
       refreshAudioDevicesRef.current?.();
       v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
       const proc=v.audioCtx.createScriptProcessor(4096,1,1);
@@ -2466,21 +2495,20 @@ function App(){
     return()=>window.removeEventListener('keydown',h);
   },[]);
 
-  // Top bar + dock auto-hide on idle, show on hover near respective edge
+  // Top bar always visible (keeps branding + bell/settings in reach). Dock auto-hides
+  // after long idle so the immersive scene can breathe; re-shows on bottom-edge hover.
   useEffect(()=>{
-    const armTop=()=>{if(topBarTimer.current)clearTimeout(topBarTimer.current);topBarTimer.current=setTimeout(()=>setTopBarHidden(true),3000);};
-    const armDock=()=>{if(dockTimer.current)clearTimeout(dockTimer.current);dockTimer.current=setTimeout(()=>setDockHidden(true),3000);};
+    setTopBarHidden(false);
+    const armDock=()=>{if(dockTimer.current)clearTimeout(dockTimer.current);dockTimer.current=setTimeout(()=>setDockHidden(true),30000);};
     const onMove=(e)=>{
       const y=e.clientY||0;
       const h=window.innerHeight||0;
-      if(y<60){setTopBarHidden(false);if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}}
-      else{armTop();}
-      if(y>h-80){setDockHidden(false);if(dockTimer.current){clearTimeout(dockTimer.current);dockTimer.current=null;}}
+      if(y>h-100){setDockHidden(false);if(dockTimer.current){clearTimeout(dockTimer.current);dockTimer.current=null;}}
       else{armDock();}
     };
     window.addEventListener('mousemove',onMove);
-    armTop();armDock();
-    return()=>{window.removeEventListener('mousemove',onMove);if(topBarTimer.current)clearTimeout(topBarTimer.current);if(dockTimer.current)clearTimeout(dockTimer.current);};
+    armDock();
+    return()=>{window.removeEventListener('mousemove',onMove);if(dockTimer.current)clearTimeout(dockTimer.current);};
   },[]);
   // Always show top bar when any overlay panel is open; close model menu when overlays open
   useEffect(()=>{
@@ -2602,7 +2630,7 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:8}}>
         <div style={{display:'flex',alignItems:'baseline',gap:5,lineHeight:1}}>
           <span onClick={()=>toggle('system')} style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#00d4ff',cursor:'pointer',userSelect:'none',letterSpacing:'0.06em',textShadow:'0 0 14px rgba(0,212,255,0.45)',transition:'text-shadow .2s'}} title="Open System workspace">{agentSettings.agent_name||'AGENT FRIDAY'}</span>
-          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,255,255,0.45)',letterSpacing:'0.04em',marginLeft:4}}>by</span>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:13,color:'rgba(255,255,255,0.72)',letterSpacing:'0.04em',marginLeft:4,textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>by</span>
           <a href="https://futurespeak.ai/agent-friday-live" target="_blank" rel="noopener noreferrer"
             style={{fontFamily:'Orbitron',fontWeight:900,fontSize:15,color:'#f59e0b',textDecoration:'none',letterSpacing:'0.06em',transition:'color .2s,text-shadow .2s',textShadow:'0 0 14px rgba(245,158,11,0.55)'}}
             onMouseEnter={e=>{e.currentTarget.style.color='#fbbf24';e.currentTarget.style.textShadow='0 0 18px rgba(245,158,11,0.85)'}}
@@ -2610,17 +2638,18 @@ function App(){
             FutureSpeak.AI
           </a>
         </div>
-        <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.55)',letterSpacing:'.05em'}}>{structureName}</span>
-        <span style={{color:'rgba(255,255,255,0.08)'}}>|</span>
+        <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
+        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.72)',letterSpacing:'.05em',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>{structureName}</span>
+        <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Model selector pill — click to open dropdown */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
           <button onClick={()=>setModelMenuOpen(o=>!o)}
-            style={{background:'none',border:'1px solid rgba(255,255,255,0.1)',borderRadius:10,padding:'2px 8px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.75)',display:'flex',alignItems:'center',gap:5,transition:'border-color .2s'}}
-            title="Model selection">
-            <span className="dot active" style={{width:5,height:5}}/>
+            style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(255,255,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
+            title="Model selection — click to swap orchestrator / subagent / creative / voice models"
+            aria-label="Model selection">
+            <span className="dot active" style={{width:6,height:6}}/>
             {orchModel.short} · {creativeModel.short}
-            <span style={{fontSize:8,opacity:0.6}}>▾</span>
+            <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
           {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontFamily:'Inter',fontSize:11}}>
             {[
@@ -2651,30 +2680,39 @@ function App(){
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>
         <button ref={bellRef} onClick={()=>{setNotifOpen(o=>!o);if(!notifOpen){setSettingsOpen(false);setChatOpen(false);setQuickDraft(false)}}}
-          style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#999',cursor:'pointer',fontSize:14,position:'relative'}}
-          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}>
+          style={{background:'none',border:'none',color:notifOpen?'#00d4ff':'#ddd',cursor:'pointer',fontSize:14,position:'relative'}}
+          title={runningTaskCount>0?`${runningTaskCount} task${runningTaskCount===1?'':'s'} running`:'Notifications'}
+          aria-label={runningTaskCount>0?`${runningTaskCount} tasks running, open notifications`:'Open notifications'}>
           <span style={{fontSize:13}}>&#x1F514;</span>
           {bellBadgeCount>0&&<span className={runningTaskCount>0?'bell-badge-pulse':''}
             style={{position:'absolute',top:-4,right:-4,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:runningTaskCount>0?'#f59e0b':'#ff0080',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',color:'#0a0a0f',fontWeight:700,fontFamily:'Orbitron'}}>{bellBadgeCount}</span>}
         </button>
-        <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}} style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#888',cursor:'pointer',fontSize:14}} title="Quick Draft">
+        <button onClick={()=>{setQuickDraft(!quickDraft);if(!quickDraft){setChatOpen(false);setSettingsOpen(false)}}}
+          style={{background:'none',border:'none',color:quickDraft?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
+          title="Quick Draft" aria-label="Open Quick Draft">
           <span style={{fontSize:13}}>&#x270D;&#xFE0F;</span>
         </button>
-        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}} style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#888',cursor:'pointer',fontSize:14}}>
+        <button onClick={()=>{setChatOpen(!chatOpen);if(!chatOpen){setSettingsOpen(false);setQuickDraft(false)}}}
+          style={{background:'none',border:'none',color:chatOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
+          title={chatOpen?'Close chat':'Open chat with Friday'}
+          aria-label={chatOpen?'Close chat':'Open chat with Friday'}>
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>
         <button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
           onContextMenu={e=>{e.preventDefault();if(cameraOn){toggleCamera()}else{toggleCamera();}}}
-          style={{background:'none',border:'none',color:cameraOn?'#00d4ff':'#888',cursor:'pointer',fontSize:14,filter:cameraOn?'drop-shadow(0 0 6px rgba(0,212,255,0.6))':'none'}}
-          title={cameraOn?'Camera ON — click for controls (right-click to stop)':'Camera Mode'}>
+          style={{background:'none',border:'none',color:cameraOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14,filter:cameraOn?'drop-shadow(0 0 6px rgba(0,212,255,0.6))':'none'}}
+          title={cameraOn?'Camera ON — click for controls (right-click to stop)':'Camera Mode'}
+          aria-label={cameraOn?'Camera on, open controls':'Enable camera mode'}>
           <span>&#x1F4F7;</span>{cameraOn&&cameraSendIndicator&&<span style={{position:'relative',top:-6,marginLeft:-4,fontSize:10,color:'#00d4ff'}}>&#x1F441;</span>}
         </button>
         {ccGranted&&<span className="cc-indicator" title="Computer control ACTIVE — Friday can move your mouse and type. Press Ctrl+Shift+Q or click STOP to terminate."><span className="cc-dot"/><span>CC LIVE</span></span>}
-        <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}} style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#888',cursor:'pointer',fontSize:15}} title="Settings">
+        <button onClick={()=>{setSettingsOpen(!settingsOpen);if(!settingsOpen)setChatOpen(false)}}
+          style={{background:'none',border:'none',color:settingsOpen?'#00d4ff':'#bbb',cursor:'pointer',fontSize:15}}
+          title="Settings" aria-label="Open settings">
           <span>&#x2699;</span>
         </button>
         {/* Connection status text indicator (top-right) */}
-        <span style={{fontFamily:'JetBrains Mono',fontSize:9,letterSpacing:'0.05em',color:connHealth==='ok'?'#00ff80':connHealth==='degraded'?'#f59e0b':connHealth==='down'?'#ff0080':'#555',transition:'color .3s'}}
+        <span style={{fontFamily:'JetBrains Mono',fontSize:11,fontWeight:600,letterSpacing:'0.06em',color:connHealth==='ok'?'#00ff80':connHealth==='degraded'?'#f59e0b':connHealth==='down'?'#ff0080':'#888',transition:'color .3s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
           title={connHealth==='ok'?'Connected':connHealth==='degraded'?'Degraded — server returned a non-OK status':connHealth==='down'?'Disconnected — cannot reach /api/health':'Checking…'}>
           {connHealth==='ok'?'● LIVE':connHealth==='degraded'?'● DEGRADED':connHealth==='down'?'○ DOWN':'○ —'}
         </span>
@@ -2834,11 +2872,39 @@ function App(){
         {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
       </div>
       {notifs.length===0
-        ?<div className="notif-empty">No notifications</div>
-        :notifs.slice(0,10).map((n,i)=><div key={n.id||i} style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.55)':'#fff'}}>
-          <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4}}>{n.title||n.message||n.text||'Notification'}</div>
-          {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888',marginTop:3}}>{n.time}</div>}
-        </div>)}
+        ?<div className="notif-empty">No new notifications</div>
+        :notifs.slice(0,10).map((n,i)=>{
+          const key=n.id||`n_${i}`;
+          const isExpanded=!!notifCardExpanded[`notif_${key}`];
+          const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));
+          const onClickRow=()=>{
+            if(hasDetail){
+              setNotifCardExpanded(e=>({...e,[`notif_${key}`]:!e[`notif_${key}`]}));
+            } else if(n.url){
+              window.open(n.url,'_blank');
+            } else if(n.workspace){
+              toggle(n.workspace);setNotifOpen(false);
+            }
+          };
+          const clickable=hasDetail||!!n.url||!!n.workspace;
+          return(<div key={key}
+            role={clickable?'button':undefined}
+            tabIndex={clickable?0:undefined}
+            onClick={clickable?onClickRow:undefined}
+            onKeyDown={clickable?(e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onClickRow()}}):undefined}
+            className={clickable?'notif-row clickable':'notif-row'}
+            style={{padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:12,color:n.read?'rgba(255,255,255,0.72)':'#fff',cursor:clickable?'pointer':'default',transition:'background .15s'}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:'Inter',fontSize:12,lineHeight:1.4,fontWeight:n.read?400:500}}>{n.title||n.message||n.text||'Notification'}</div>
+                {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#aaa',marginTop:3}}>{n.time}</div>}
+              </div>
+              {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
+              {!hasDetail&&n.url&&<span aria-hidden="true" style={{fontSize:11,color:'#00d4ff'}}>↗</span>}
+            </div>
+            {isExpanded&&hasDetail&&<div style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)',fontSize:11,color:'rgba(220,220,235,0.85)',lineHeight:1.5,fontFamily:'Inter',whiteSpace:'pre-wrap'}}>{n.detail||n.body||n.message}</div>}
+          </div>);
+        })}
     </div>}
 
     {/* Settings Panel */}

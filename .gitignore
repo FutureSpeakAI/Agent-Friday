@@ -83,6 +83,7 @@ test-results/
 test-results.log
 playwright-report/
 tests/screenshots/
+tests/audit_screenshots/
 tests/report.html
 tests/last_run.log
 tests/console_errors.log
