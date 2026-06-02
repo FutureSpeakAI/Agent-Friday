@@ -323,9 +323,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
-        /* Chat panel — frosted glass slide-in */
+        /* Chat panel — frosted glass slide-in.
+           bottom must clear the dock (with group labels) + its box-shadow. */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 90px;
+            position: fixed; top: 36px; right: -340px; bottom: 116px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
@@ -901,10 +902,12 @@ window.addEventListener('DOMContentLoaded',function(){
           .fwin-bar { cursor: default; }
           .resize-h { display: none; }
 
-          /* Chat panel — full-width slide up from bottom */
+          /* Chat panel — full-width slide up from bottom.
+             bottom must clear the mobile dock height (no labels, ~58px) plus
+             a few px of buffer so the send button is fully clickable. */
           .chat-panel {
             top: auto !important;
-            bottom: 58px !important;
+            bottom: 68px !important;
             right: 0 !important;
             left: -100vw !important;
             width: 100vw !important;

@@ -6753,6 +6753,15 @@ if sock is not None:
             system_instruction=types.Content(parts=[types.Part(text=sys_text)]),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
+            # Explicit VAD config: fire faster so Friday actually responds when the user pauses.
+            # Default silence_duration is ~1500ms; 500ms makes turn-end detection snappier.
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    silence_duration_ms=500,
+                    prefix_padding_ms=200,
+                ),
+            ),
         )
         if live_temperature is not None:
             live_cfg_kwargs["temperature"] = live_temperature
@@ -6809,6 +6818,18 @@ if sock is not None:
                     async with client.aio.live.connect(model=model_name, config=per_model_cfg) as session_ai:
                         _safe_send({"type": "status", "text": "live"})
                         _vlog(f'session established with {model_name}')
+
+                        # Kick off an initial greeting so the user immediately hears Friday
+                        # and we can confirm the audio-out path works without needing to
+                        # rely on the user's mic / VAD.
+                        try:
+                            await session_ai.send_client_content(
+                                turns={"role": "user", "parts": [{"text": "Greet me in one short sentence."}]},
+                                turn_complete=True,
+                            )
+                            _vlog('sent initial greeting prompt')
+                        except Exception as _e:
+                            _vlog(f'greeting send failed: {_e}')
 
                         _audio_chunks_received = 0
                         _gemini_chunks_received = 0
@@ -6868,7 +6889,20 @@ if sock is not None:
                                         _audio_chunks_received += 1
                                         _audio_bytes_to_gemini += len(data)
                                         if _audio_chunks_received in (1, 5, 25) or _audio_chunks_received % 50 == 0:
-                                            _vlog(f'browser->gemini: chunk #{_audio_chunks_received} ({len(data)} bytes, total {_audio_bytes_to_gemini})')
+                                            # Log RMS amplitude so we can tell speech from silence.
+                                            try:
+                                                import struct as _st
+                                                _n = len(data) // 2
+                                                if _n > 0:
+                                                    _samples = _st.unpack(f'<{_n}h', data)
+                                                    _peak = max(abs(s) for s in _samples)
+                                                    _sumsq = sum(s * s for s in _samples)
+                                                    _rms = int((_sumsq / _n) ** 0.5)
+                                                else:
+                                                    _peak = _rms = 0
+                                            except Exception:
+                                                _peak = _rms = -1
+                                            _vlog(f'browser->gemini: chunk #{_audio_chunks_received} ({len(data)} bytes, total {_audio_bytes_to_gemini}, rms={_rms}, peak={_peak})')
                                         await session_ai.send_realtime_input(
                                             audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
                                         )
@@ -6882,6 +6916,12 @@ if sock is not None:
                                         await session_ai.send_realtime_input(text=msg['text'])
                                     elif t == 'end':
                                         _vlog('reader: browser sent end signal')
+                                        # Explicitly flush audio stream so Gemini stops waiting for VAD.
+                                        try:
+                                            await session_ai.send_realtime_input(audio_stream_end=True)
+                                            _vlog('sent audio_stream_end=True to gemini')
+                                        except Exception as _e:
+                                            _vlog(f'audio_stream_end send failed: {_e}')
                                         done.set()
                                         return
                                 except Exception as e:
@@ -6897,8 +6937,10 @@ if sock is not None:
                                             return
                                         try:
                                             _gemini_chunks_received += 1
-                                            if _gemini_chunks_received <= 3 or _gemini_chunks_received % 20 == 0:
-                                                _vlog(f'gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None}')
+                                            if _gemini_chunks_received <= 5 or _gemini_chunks_received % 20 == 0:
+                                                _resume = getattr(chunk, 'session_resumption_update', None)
+                                                _va = getattr(chunk, 'voice_activity', None) or getattr(chunk, 'voice_activity_detection_signal', None)
+                                                _vlog(f'gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None} resume={_resume is not None} va={_va is not None}')
                                             sc = getattr(chunk, 'server_content', None)
                                             if sc is not None:
                                                 out_tr = getattr(sc, 'output_transcription', None)

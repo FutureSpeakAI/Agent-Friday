@@ -323,9 +323,10 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .input:focus { border-color: rgba(0,212,255,0.3); }
 
-        /* Chat panel — frosted glass slide-in */
+        /* Chat panel — frosted glass slide-in.
+           bottom must clear the dock (with group labels) + its box-shadow. */
         .chat-panel {
-            position: fixed; top: 36px; right: -340px; bottom: 90px;
+            position: fixed; top: 36px; right: -340px; bottom: 116px;
             width: 320px; z-index: 65; display: flex; flex-direction: column;
             background: rgba(10,14,26,0.75);
             backdrop-filter: blur(16px) saturate(1.2);
@@ -901,10 +902,12 @@ window.addEventListener('DOMContentLoaded',function(){
           .fwin-bar { cursor: default; }
           .resize-h { display: none; }
 
-          /* Chat panel — full-width slide up from bottom */
+          /* Chat panel — full-width slide up from bottom.
+             bottom must clear the mobile dock height (no labels, ~58px) plus
+             a few px of buffer so the send button is fully clickable. */
           .chat-panel {
             top: auto !important;
-            bottom: 58px !important;
+            bottom: 68px !important;
             right: 0 !important;
             left: -100vw !important;
             width: 100vw !important;
@@ -4428,32 +4431,64 @@ function App(){
       // Use non-exact deviceId so a stale/silent device ID falls back to the system default
       // instead of returning a silent stream. `exact` succeeds even when the underlying device
       // is muted at the OS level — `ideal` lets the browser pick a working mic.
-      v.micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1,...(_inputId?{deviceId:{ideal:_inputId}}:{})}});
-      // Verify the stream has live audio tracks; if the chosen device is silent we still
-      // proceed but log it so the diagnostic surface shows what happened.
+      // Acquire mic. If a stored deviceId is selected, try it first; if that
+      // returns a muted/silent track (common with Bluetooth profile flips on
+      // AirPods etc.), fall back to the system default device.
+      const _baseAudio={echoCancellation:true,noiseSuppression:true,channelCount:1};
+      const _tryAcquire=async(withId)=>{
+        const c={audio:withId&&_inputId?{..._baseAudio,deviceId:{ideal:_inputId}}:_baseAudio};
+        return await navigator.mediaDevices.getUserMedia(c);
+      };
+      v.micStream=await _tryAcquire(true);
       try{
         const tracks=v.micStream.getAudioTracks();
         const settings=tracks[0]?.getSettings?.()||{};
-        console.log('[voice] mic acquired:',tracks.map(t=>({label:t.label,enabled:t.enabled,muted:t.muted,readyState:t.readyState})),'settings:',settings);
-        if(tracks[0]?.muted){console.warn('[voice] mic track is MUTED at OS level — audio will be silent')}
+        console.log('[voice] mic acquired:',tracks.map(t=>({label:t.label,enabled:t.enabled,muted:t.muted,readyState:t.readyState})),'settings:',settings,'audioCtx.sampleRate=',v.audioCtx.sampleRate);
+        if(tracks[0]?.muted&&_inputId){
+          console.warn('[voice] selected mic is MUTED — retrying with system default');
+          try{v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+          v.micStream=await _tryAcquire(false);
+          const t2=v.micStream.getAudioTracks()[0];
+          console.log('[voice] default mic acquired:',{label:t2?.label,muted:t2?.muted,readyState:t2?.readyState});
+        }
+        // Watch for tracks ending (Bluetooth profile flip) so we surface it.
+        v.micStream.getAudioTracks().forEach(t=>{
+          t.onmute=()=>{console.warn('[voice] track muted:',t.label);setVoiceStatus('⚠ Mic muted — check input device')};
+          t.onended=()=>{console.warn('[voice] track ended:',t.label);setVoiceStatus('⚠ Mic disconnected')};
+        });
       }catch(_){}
       refreshAudioDevicesRef.current?.();
       v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
       const proc=v.audioCtx.createScriptProcessor(4096,1,1);
       v.micNode=proc;
       let _audioChunkCount=0;
+      v.micPeak=0;
       proc.onaudioprocess=ev=>{
         const ws=v.ws;
         if(!ws||ws.readyState!==WebSocket.OPEN)return;
         const input=ev.inputBuffer.getChannelData(0);
+        // Track peak so we can detect "Bluetooth mic is silent" within a few seconds.
+        let _peak=0;for(let i=0;i<input.length;i++){const a=input[i]<0?-input[i]:input[i];if(a>_peak)_peak=a}
+        if(_peak>v.micPeak)v.micPeak=_peak;
         const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
         try{
           ws.send(JSON.stringify({type:'audio',data:i16ToB64(pcm16)}));
           _audioChunkCount++;
-          if(_audioChunkCount===1||_audioChunkCount%50===0)console.log('[voice] sent audio chunk #'+_audioChunkCount+', ws state='+ws.readyState);
+          if(_audioChunkCount===1||_audioChunkCount%50===0)console.log('[voice] sent audio chunk #'+_audioChunkCount+', ws state='+ws.readyState+', peak='+v.micPeak.toFixed(4));
         }catch(e){console.warn('[voice] audio send failed:',e)}
       };
       v.micSource.connect(proc);proc.connect(v.audioCtx.destination);
+      // Silence guard: if no mic energy is captured within 4s, the selected
+      // input is likely a Bluetooth device stuck on A2DP (output-only) or muted
+      // at the OS level. Surface this in chat instead of failing silently.
+      v.silenceTimer=setTimeout(()=>{
+        if(v.micPeak<0.005){
+          const tracks=v.micStream?.getAudioTracks?.()||[];
+          const label=tracks[0]?.label||'unknown';
+          console.warn('[voice] no mic audio after 4s. tracks:',tracks.map(t=>({label:t.label,muted:t.muted,readyState:t.readyState})));
+          setVoiceStatus('⚠ No audio from "'+label.slice(0,28)+'" — pick another mic via the 🎙 button');
+        }
+      },4000);
     }catch(e){
       setVoiceStatus('mic denied: '+e.message);
       try{voiceStopRef.current?.()}catch(_){}
@@ -4464,7 +4499,23 @@ function App(){
     v.ws=ws;
     let wsOpened=false;
     setVoiceStatus('connecting…');
-    ws.onopen=()=>{wsOpened=true;setVoiceOn(true);setVoiceStatus('listening')};
+    ws.onopen=()=>{
+      wsOpened=true;setVoiceOn(true);setVoiceStatus('listening');
+      // If Camera Mode is on (screen-share / webcam), forward the latest
+      // captured frame to Gemini Live as inline_data. Server route already
+      // accepts {type:'image', data:<base64 JPEG>} on /ws/live.
+      let _lastFrameTs=0;
+      v.frameTimer=setInterval(()=>{
+        if(!v.ws||v.ws.readyState!==WebSocket.OPEN)return;
+        const cam=window.fridayCamera;
+        if(!cam||!cam.isOn?.())return;
+        const f=cam.latestFrame?.();
+        if(!f||!f.primary||f.ts===_lastFrameTs)return;
+        _lastFrameTs=f.ts;
+        try{v.ws.send(JSON.stringify({type:'image',data:f.primary}))}
+        catch(e){console.warn('[voice] image send failed:',e)}
+      },1000);
+    };
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
@@ -4529,6 +4580,8 @@ function App(){
   };
   voiceStopRef.current=()=>{
     const v=voiceRef.current;
+    try{v.silenceTimer&&clearTimeout(v.silenceTimer)}catch(_){}
+    try{v.frameTimer&&clearInterval(v.frameTimer)}catch(_){}
     try{v.ws&&v.ws.send(JSON.stringify({type:'end'}))}catch(_){}
     try{v.ws&&v.ws.close()}catch(_){}
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
