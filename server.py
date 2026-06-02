@@ -2192,7 +2192,7 @@ def check_auth():
         return None
     if not FRIDAY_PASSWORD:
         return None
-    if request.endpoint in ('login', 'static'):
+    if request.endpoint in ('login', 'static', 'serve_static_asset', 'serve_favicon'):
         return None
     if request.path.startswith('/ws/'):
         return None  # WebSocket upgrade handled inside ws_live (can't send HTTP redirect)
@@ -2209,6 +2209,16 @@ def check_auth():
 @app.route('/')
 def serve_ui():
     return send_from_directory('.', 'index.html')
+
+
+@app.route('/static/<path:filename>')
+def serve_static_asset(filename):
+    return send_from_directory('static', filename)
+
+
+@app.route('/favicon.ico')
+def serve_favicon():
+    return send_from_directory('static', 'favicon.ico', mimetype='image/x-icon')
 
 
 @app.route('/friday-live')
