@@ -7151,7 +7151,22 @@ if sock is not None:
                                 _vlog(f'writer done. stats: gemini_chunks={_gemini_chunks_received}, audio_in_bytes={_audio_bytes_to_gemini}, audio_out_bytes={_audio_bytes_from_gemini}, send_fails={_safe_send_failures}')
                                 done.set()
 
-                        await asyncio.gather(reader(), writer(), return_exceptions=True)
+                        async def no_audio_watchdog():
+                            # If the browser sends zero audio chunks within 5s of the
+                            # session opening, log a clear warning. This catches "WS
+                            # connected but mic never streams" cases that otherwise
+                            # look identical to "user just isn't talking yet".
+                            try:
+                                await asyncio.sleep(5.0)
+                            except asyncio.CancelledError:
+                                return
+                            if done.is_set():
+                                return
+                            if _audio_chunks_received == 0:
+                                _vlog('WARNING: no audio chunks received from browser after 5s — mic likely silent or WS not flowing')
+                                _safe_send({"type": "status", "text": "no mic audio reaching server"})
+
+                        await asyncio.gather(reader(), writer(), no_audio_watchdog(), return_exceptions=True)
                         try:
                             _flush_turn()
                         except Exception:
