@@ -1097,5 +1097,198 @@ window.addEventListener('DOMContentLoaded',function(){
         .md-body table { border-collapse: collapse; font-size: 11px; width: 100%; margin: 6px 0; }
         .md-body th { color: #00d4ff; border-bottom: 1px solid rgba(0,212,255,0.25); padding: 4px 8px; text-align: left; }
         .md-body td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 8px; }
+
+        /* ═══ FRIDAY-DOC — branded markdown renderer (briefing-grade) ═══
+           Used by chat responses, notification details, wiki viewer, research
+           reports, and any other long-form content surface inside the app. */
+        .friday-doc {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            line-height: 1.75;
+            color: #d6d6de;
+            letter-spacing: 0.005em;
+        }
+        .friday-doc > *:first-child { margin-top: 0; }
+        .friday-doc > *:last-child { margin-bottom: 0; }
+
+        .friday-doc h1, .friday-doc h2, .friday-doc h3,
+        .friday-doc h4, .friday-doc h5, .friday-doc h6 {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            margin: 22px 0 10px;
+        }
+        .friday-doc h1 {
+            font-size: 18px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(0,212,255,0.18);
+            letter-spacing: 0.04em;
+            text-transform: none;
+            margin-top: 0;
+        }
+        .friday-doc h2 {
+            font-size: 14px;
+            color: #00d4ff;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(0,212,255,0.12);
+        }
+        .friday-doc h3 {
+            font-size: 13px;
+            color: #7c3aed;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .friday-doc h4 { font-size: 12px; color: #f59e0b; letter-spacing: 0.08em; text-transform: uppercase; }
+        .friday-doc h5, .friday-doc h6 { font-size: 11px; color: #a0c4d8; }
+
+        .friday-doc p { margin: 0 0 12px; color: #d6d6de; }
+        .friday-doc p strong { color: #f0f0f5; font-weight: 600; }
+        .friday-doc strong { color: #f59e0b; font-weight: 600; }
+        .friday-doc em { color: #b794f6; font-style: italic; }
+        .friday-doc del { color: #777; text-decoration: line-through; }
+
+        .friday-doc a {
+            color: #f59e0b;
+            text-decoration: none;
+            border-bottom: 1px dotted rgba(245,158,11,0.35);
+            transition: color 0.15s ease, border-color 0.15s ease, text-shadow 0.15s ease;
+        }
+        .friday-doc a:hover {
+            color: #fbbf24;
+            border-bottom-color: rgba(251,191,36,0.85);
+            text-shadow: 0 0 8px rgba(245,158,11,0.5);
+        }
+
+        .friday-doc ul, .friday-doc ol { margin: 0 0 14px 22px; padding: 0; }
+        .friday-doc li { margin-bottom: 6px; color: #d6d6de; }
+        .friday-doc li > p { margin-bottom: 4px; }
+        .friday-doc ul li::marker { color: #00d4ff; }
+        .friday-doc ol li::marker { color: #7c3aed; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+        .friday-doc li > ul, .friday-doc li > ol { margin-top: 4px; margin-bottom: 0; }
+
+        .friday-doc code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            background: rgba(0,212,255,0.08);
+            border: 1px solid rgba(0,212,255,0.18);
+            border-radius: 4px;
+            padding: 1px 6px;
+            color: #7dd3fc;
+        }
+        .friday-doc pre {
+            background: rgba(0,0,0,0.55);
+            border: 1px solid rgba(0,212,255,0.18);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin: 12px 0 16px;
+            overflow-x: auto;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: inset 0 1px 0 rgba(0,212,255,0.08), 0 2px 12px rgba(0,0,0,0.35);
+            position: relative;
+        }
+        .friday-doc pre::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.4), rgba(124,58,237,0.4), transparent);
+            border-radius: 8px 8px 0 0;
+            opacity: 0.6;
+        }
+        .friday-doc pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 12px;
+            color: #a5f3fc;
+            white-space: pre;
+            line-height: 1.6;
+        }
+
+        .friday-doc blockquote {
+            margin: 14px 0;
+            padding: 12px 18px;
+            background: rgba(124,58,237,0.06);
+            border-left: 3px solid rgba(124,58,237,0.5);
+            border-radius: 0 8px 8px 0;
+            color: #c0b3d8;
+            font-style: italic;
+        }
+        .friday-doc blockquote p { margin-bottom: 6px; color: #c0b3d8; }
+        .friday-doc blockquote p:last-child { margin-bottom: 0; }
+
+        .friday-doc hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.25), rgba(255,0,128,0.18), transparent);
+            margin: 28px 0;
+        }
+
+        .friday-doc table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 14px 0;
+            font-size: 12px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(0,212,255,0.12);
+            border-radius: 8px;
+            overflow: hidden;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+        }
+        .friday-doc thead { background: rgba(0,212,255,0.06); }
+        .friday-doc th {
+            color: #00d4ff;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 1px solid rgba(0,212,255,0.2);
+        }
+        .friday-doc td {
+            padding: 9px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            color: #d6d6de;
+            vertical-align: top;
+        }
+        .friday-doc tr:last-child td { border-bottom: none; }
+        .friday-doc tr:hover td { background: rgba(0,212,255,0.03); }
+
+        .friday-doc img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+
+        /* Compact variant for tight spaces (chat bubbles, notification details) */
+        .friday-doc.compact { font-size: 12px; line-height: 1.6; }
+        .friday-doc.compact h1 { font-size: 14px; margin: 8px 0 6px; padding-bottom: 4px; }
+        .friday-doc.compact h2 { font-size: 12px; margin: 10px 0 5px; padding-bottom: 3px; }
+        .friday-doc.compact h3 { font-size: 11px; margin: 8px 0 4px; }
+        .friday-doc.compact h4, .friday-doc.compact h5, .friday-doc.compact h6 { font-size: 11px; margin: 6px 0 3px; }
+        .friday-doc.compact p { margin-bottom: 6px; }
+        .friday-doc.compact ul, .friday-doc.compact ol { margin: 0 0 6px 18px; }
+        .friday-doc.compact li { margin-bottom: 2px; }
+        .friday-doc.compact pre { padding: 10px 12px; margin: 6px 0 8px; }
+        .friday-doc.compact code { font-size: 11px; }
+        .friday-doc.compact pre code { font-size: 11px; }
+        .friday-doc.compact blockquote { padding: 6px 12px; margin: 6px 0; }
+        .friday-doc.compact table { font-size: 11px; margin: 8px 0; }
+        .friday-doc.compact th { padding: 6px 10px; font-size: 10px; }
+        .friday-doc.compact td { padding: 5px 10px; }
+        .friday-doc.compact hr { margin: 14px 0; }
     </style>
 </head>

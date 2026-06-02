@@ -1097,6 +1097,199 @@ window.addEventListener('DOMContentLoaded',function(){
         .md-body table { border-collapse: collapse; font-size: 11px; width: 100%; margin: 6px 0; }
         .md-body th { color: #00d4ff; border-bottom: 1px solid rgba(0,212,255,0.25); padding: 4px 8px; text-align: left; }
         .md-body td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 4px 8px; }
+
+        /* ═══ FRIDAY-DOC — branded markdown renderer (briefing-grade) ═══
+           Used by chat responses, notification details, wiki viewer, research
+           reports, and any other long-form content surface inside the app. */
+        .friday-doc {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            line-height: 1.75;
+            color: #d6d6de;
+            letter-spacing: 0.005em;
+        }
+        .friday-doc > *:first-child { margin-top: 0; }
+        .friday-doc > *:last-child { margin-bottom: 0; }
+
+        .friday-doc h1, .friday-doc h2, .friday-doc h3,
+        .friday-doc h4, .friday-doc h5, .friday-doc h6 {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            margin: 22px 0 10px;
+        }
+        .friday-doc h1 {
+            font-size: 18px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #00d4ff 0%, #7c3aed 50%, #ff0080 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(0,212,255,0.18);
+            letter-spacing: 0.04em;
+            text-transform: none;
+            margin-top: 0;
+        }
+        .friday-doc h2 {
+            font-size: 14px;
+            color: #00d4ff;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(0,212,255,0.12);
+        }
+        .friday-doc h3 {
+            font-size: 13px;
+            color: #7c3aed;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .friday-doc h4 { font-size: 12px; color: #f59e0b; letter-spacing: 0.08em; text-transform: uppercase; }
+        .friday-doc h5, .friday-doc h6 { font-size: 11px; color: #a0c4d8; }
+
+        .friday-doc p { margin: 0 0 12px; color: #d6d6de; }
+        .friday-doc p strong { color: #f0f0f5; font-weight: 600; }
+        .friday-doc strong { color: #f59e0b; font-weight: 600; }
+        .friday-doc em { color: #b794f6; font-style: italic; }
+        .friday-doc del { color: #777; text-decoration: line-through; }
+
+        .friday-doc a {
+            color: #f59e0b;
+            text-decoration: none;
+            border-bottom: 1px dotted rgba(245,158,11,0.35);
+            transition: color 0.15s ease, border-color 0.15s ease, text-shadow 0.15s ease;
+        }
+        .friday-doc a:hover {
+            color: #fbbf24;
+            border-bottom-color: rgba(251,191,36,0.85);
+            text-shadow: 0 0 8px rgba(245,158,11,0.5);
+        }
+
+        .friday-doc ul, .friday-doc ol { margin: 0 0 14px 22px; padding: 0; }
+        .friday-doc li { margin-bottom: 6px; color: #d6d6de; }
+        .friday-doc li > p { margin-bottom: 4px; }
+        .friday-doc ul li::marker { color: #00d4ff; }
+        .friday-doc ol li::marker { color: #7c3aed; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+        .friday-doc li > ul, .friday-doc li > ol { margin-top: 4px; margin-bottom: 0; }
+
+        .friday-doc code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            background: rgba(0,212,255,0.08);
+            border: 1px solid rgba(0,212,255,0.18);
+            border-radius: 4px;
+            padding: 1px 6px;
+            color: #7dd3fc;
+        }
+        .friday-doc pre {
+            background: rgba(0,0,0,0.55);
+            border: 1px solid rgba(0,212,255,0.18);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin: 12px 0 16px;
+            overflow-x: auto;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: inset 0 1px 0 rgba(0,212,255,0.08), 0 2px 12px rgba(0,0,0,0.35);
+            position: relative;
+        }
+        .friday-doc pre::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.4), rgba(124,58,237,0.4), transparent);
+            border-radius: 8px 8px 0 0;
+            opacity: 0.6;
+        }
+        .friday-doc pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            font-size: 12px;
+            color: #a5f3fc;
+            white-space: pre;
+            line-height: 1.6;
+        }
+
+        .friday-doc blockquote {
+            margin: 14px 0;
+            padding: 12px 18px;
+            background: rgba(124,58,237,0.06);
+            border-left: 3px solid rgba(124,58,237,0.5);
+            border-radius: 0 8px 8px 0;
+            color: #c0b3d8;
+            font-style: italic;
+        }
+        .friday-doc blockquote p { margin-bottom: 6px; color: #c0b3d8; }
+        .friday-doc blockquote p:last-child { margin-bottom: 0; }
+
+        .friday-doc hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0,212,255,0.25), rgba(255,0,128,0.18), transparent);
+            margin: 28px 0;
+        }
+
+        .friday-doc table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 14px 0;
+            font-size: 12px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(0,212,255,0.12);
+            border-radius: 8px;
+            overflow: hidden;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+        }
+        .friday-doc thead { background: rgba(0,212,255,0.06); }
+        .friday-doc th {
+            color: #00d4ff;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 1px solid rgba(0,212,255,0.2);
+        }
+        .friday-doc td {
+            padding: 9px 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            color: #d6d6de;
+            vertical-align: top;
+        }
+        .friday-doc tr:last-child td { border-bottom: none; }
+        .friday-doc tr:hover td { background: rgba(0,212,255,0.03); }
+
+        .friday-doc img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+
+        /* Compact variant for tight spaces (chat bubbles, notification details) */
+        .friday-doc.compact { font-size: 12px; line-height: 1.6; }
+        .friday-doc.compact h1 { font-size: 14px; margin: 8px 0 6px; padding-bottom: 4px; }
+        .friday-doc.compact h2 { font-size: 12px; margin: 10px 0 5px; padding-bottom: 3px; }
+        .friday-doc.compact h3 { font-size: 11px; margin: 8px 0 4px; }
+        .friday-doc.compact h4, .friday-doc.compact h5, .friday-doc.compact h6 { font-size: 11px; margin: 6px 0 3px; }
+        .friday-doc.compact p { margin-bottom: 6px; }
+        .friday-doc.compact ul, .friday-doc.compact ol { margin: 0 0 6px 18px; }
+        .friday-doc.compact li { margin-bottom: 2px; }
+        .friday-doc.compact pre { padding: 10px 12px; margin: 6px 0 8px; }
+        .friday-doc.compact code { font-size: 11px; }
+        .friday-doc.compact pre code { font-size: 11px; }
+        .friday-doc.compact blockquote { padding: 6px 12px; margin: 6px 0; }
+        .friday-doc.compact table { font-size: 11px; margin: 8px 0; }
+        .friday-doc.compact th { padding: 6px 10px; font-size: 10px; }
+        .friday-doc.compact td { padding: 5px 10px; }
+        .friday-doc.compact hr { margin: 14px 0; }
     </style>
 </head>
 
@@ -2472,6 +2665,60 @@ const DOCK_GROUPS=[
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
+// ═══ FRIDAY-DOC — branded markdown renderer ═══
+// Single source of truth for rendering any markdown/plain-text content inside
+// Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
+// to a tiny regex parser if marked isn't ready yet. Output is always wrapped
+// in .friday-doc so the holographic CSS in head.html takes over.
+function fridayEscapeHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function fridayFallbackMd(md){
+  const lines=String(md||'').replace(/\r\n/g,'\n').split('\n');
+  let html='',inCode=false,codeBuf=[],inList=null,listBuf=[];
+  const flushList=()=>{if(inList){html+='<'+inList+'>'+listBuf.join('')+'</'+inList+'>';listBuf=[];inList=null}};
+  const inline=(t)=>fridayEscapeHtml(t)
+    .replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g,'<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  for(const raw of lines){
+    if(/^```/.test(raw)){if(inCode){html+='<pre><code>'+fridayEscapeHtml(codeBuf.join('\n'))+'</code></pre>';codeBuf=[];inCode=false}else{flushList();inCode=true}continue;}
+    if(inCode){codeBuf.push(raw);continue;}
+    const h=raw.match(/^(#{1,6})\s+(.*)$/);
+    if(h){flushList();html+='<h'+h[1].length+'>'+inline(h[2])+'</h'+h[1].length+'>';continue;}
+    if(/^\s*[-*]\s+/.test(raw)){if(inList!=='ul'){flushList();inList='ul'}listBuf.push('<li>'+inline(raw.replace(/^\s*[-*]\s+/,''))+'</li>');continue;}
+    if(/^\s*\d+\.\s+/.test(raw)){if(inList!=='ol'){flushList();inList='ol'}listBuf.push('<li>'+inline(raw.replace(/^\s*\d+\.\s+/,''))+'</li>');continue;}
+    if(/^>\s?/.test(raw)){flushList();html+='<blockquote>'+inline(raw.replace(/^>\s?/,''))+'</blockquote>';continue;}
+    if(/^\s*---+\s*$/.test(raw)){flushList();html+='<hr/>';continue;}
+    if(raw.trim()===''){flushList();continue;}
+    flushList();html+='<p>'+inline(raw)+'</p>';
+  }
+  flushList();
+  if(inCode)html+='<pre><code>'+fridayEscapeHtml(codeBuf.join('\n'))+'</code></pre>';
+  return html;
+}
+function renderFridayMarkdown(mdText,opts){
+  const compact=!!(opts&&opts.compact);
+  const src=mdText==null?'':String(mdText);
+  if(!src.trim())return'<div class="friday-doc'+(compact?' compact':'')+'"></div>';
+  if(/^\s*<(?:!DOCTYPE|html|head|body)\b/i.test(src))return src;
+  let body;
+  try{
+    if(typeof marked!=='undefined'&&marked&&typeof marked.parse==='function'){
+      body=marked.parse(src,{breaks:true,gfm:true});
+    }else{
+      body=fridayFallbackMd(src);
+    }
+  }catch(e){body=fridayFallbackMd(src);}
+  body=body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi,'<a target="_blank" rel="noopener" $1>');
+  return'<div class="friday-doc'+(compact?' compact':'')+'">'+body+'</div>';
+}
+if(typeof window!=='undefined'){window.renderFridayMarkdown=renderFridayMarkdown;}
+
+function FridayDoc({text,compact,style,className}){
+  const html=renderFridayMarkdown(text||'',{compact:!!compact});
+  return <div className={className} style={style} dangerouslySetInnerHTML={{__html:html}}/>;
+}
+
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
   const[pos,setPos]=useState({x:60+Math.random()*300,y:40+Math.random()*80});
   const[size,setSize]=useState({w:660,h:460});
@@ -2704,8 +2951,8 @@ function CareerWS(){
     {view==='tracker'&&(entries.length>0?entries.map((e,i)=>{const score=parseFloat(e.score)||0;const color=score>=4?'#00ff80':score>=3?'#f59e0b':'#ff0080';return(<div key={i} className="card" style={{marginBottom:4}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:12}}>{e.company}</span><span style={{fontFamily:'Orbitron',fontSize:13,color}}>{e.score}</span></div><div className="progress-bar" style={{marginTop:3}}><div className="progress-fill" style={{width:Math.min(score*20,100)+'%',background:color}}/></div>{e.status&&<span className="badge-cyan" style={{fontSize:11,marginTop:4,display:'inline-block'}}>{e.status}</span>}</div>)}):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No evaluated roles yet. Paste a job URL above.</div>)}
     {view==='reports'&&(reports.length>0?reports.map((r,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer'}} onClick={()=>loadReport(r.name)}><div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:12}}>{r.name}</span><span style={{fontSize:11,color:'#999'}}>{(r.size/1024).toFixed(1)}KB</span></div></div>):<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No reports yet</div>)}
     {view==='report'&&<div><div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}><button className="btn" style={{fontSize:11}} onClick={()=>setView('reports')}>Back</button><SendTo content={()=>reportContent} dataType="job_research" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Application Email',dest:'gmail_draft',ico:'✉️'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6}}>{reportContent}</pre></div>}
-    {view==='pipeline'&&<div>{pipeline?<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{pipeline}</pre>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
-    {view==='curated'&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono'}}>{jobs.substring(0,4000)||'No curated roles. Daily job intelligence runs at 8 AM.'}</pre>}
+    {view==='pipeline'&&<div>{pipeline?<FridayDoc compact text={pipeline}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>Pipeline empty. Add job URLs to career-ops/data/pipeline.md</div>}</div>}
+    {view==='curated'&&(jobs?<FridayDoc compact text={jobs.substring(0,4000)}/>:<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No curated roles. Daily job intelligence runs at 8 AM.</div>)}
     {view==='interview'&&<div><div className="card-title">Interview Prep</div><div style={{fontSize:11,color:'#a8a8b4',marginBottom:8}}>STAR+R stories from evaluations. Your story bank builds as you evaluate more roles.</div>{reports.length===0?<div style={{fontSize:12,color:'#999',textAlign:'center',padding:20}}>No evaluations yet — story bank is empty.</div>:<div style={{fontSize:12,color:'#bbb',padding:10,background:'rgba(255,255,255,0.03)',borderRadius:6,lineHeight:1.6}}>{reports.length} evaluation{reports.length===1?'':'s'} available. Open one from the <button className="btn" style={{fontSize:11,padding:'2px 8px',marginLeft:4}} onClick={()=>setView('reports')}>Reports</button> tab to read the embedded STAR stories — bulk extraction is on the roadmap.</div>}</div>}
     {view==='outreach'&&<OutreachPanel/>}
   </div>);
@@ -2941,7 +3188,7 @@ function WikiWS(){
         {editing
           ?<textarea value={draft} onChange={e=>setDraft(e.target.value)} spellCheck={false}
             style={{flex:1,minHeight:300,width:'100%',background:'rgba(0,0,0,0.35)',color:'#ddd',border:'1px solid rgba(0,212,255,0.22)',borderRadius:6,padding:10,fontFamily:'JetBrains Mono',fontSize:12,lineHeight:1.6,resize:'vertical',outline:'none'}}/>
-          :<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7,margin:0}}>{content}</pre>}
+          :<FridayDoc text={content} style={{margin:0}}/>}
       </div>
     </div>
 
@@ -3222,7 +3469,7 @@ function StudioWS(){
       {ext==='html'&&<iframe src={url} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
       {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
       {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
-      {ext==='md'&&<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{preview||'Loading...'}</pre>}
+      {ext==='md'&&(preview?<FridayDoc text={preview} style={{padding:'4px 8px'}}/>:<div style={{color:'#888',fontSize:12,textAlign:'center',padding:20}}>Loading…</div>)}
       {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
     </div>);
   }
@@ -3502,7 +3749,7 @@ function NewsWS(){
     <div style={{display:'flex',gap:12}}>
       <div style={{flex:1,overflowY:'auto'}}>
         {selected.isHtml?<iframe srcDoc={htmlContent} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
-        <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#bbb',fontFamily:'Inter',lineHeight:1.7}}>{htmlContent}</pre>}
+        <FridayDoc text={htmlContent} style={{padding:'4px 8px'}}/>}
       </div>
       {chatOpen&&<div style={{width:280,borderLeft:'1px solid rgba(255,255,255,0.04)',paddingLeft:10,display:'flex',flexDirection:'column'}}>
         <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',marginBottom:8}}>DISCUSS BRIEFING</div>
@@ -3899,7 +4146,7 @@ function ContactsWS(){
             {e.notes&&<div style={{color:'#aaa',marginTop:2}}>{e.notes}</div>}
           </div>)}
         </div>}
-        {detail.research&&<div className="card"><div className="card-title">Research Notes</div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#bbb',fontFamily:'Inter',lineHeight:1.6,margin:0}}>{detail.research}</pre></div>}
+        {detail.research&&<div className="card"><div className="card-title">Research Notes</div><FridayDoc compact text={detail.research} style={{margin:0}}/></div>}
       </>:<div style={{color:'#ff0080',fontSize:11,textAlign:'center',padding:20}}>Could not load contact detail.</div>}
     </div>);
   }
@@ -4693,6 +4940,7 @@ function App(){
   // bubbles so the chat panel mirrors what was actually said.
   const[voiceOn,setVoiceOn]=useState(false);
   const[voiceStatus,setVoiceStatus]=useState('');
+  const[micLevel,setMicLevel]=useState(0);
   const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0});
   const[audioInputDevices,setAudioInputDevices]=useState([]);
   const[audioOutputDevices,setAudioOutputDevices]=useState([]);
@@ -4717,67 +4965,95 @@ function App(){
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
       v.playCursor=v.audioCtx.currentTime;
       const _inputId=agentSettings.audio_input_device_id;
-      // Use non-exact deviceId so a stale/silent device ID falls back to the system default
-      // instead of returning a silent stream. `exact` succeeds even when the underlying device
-      // is muted at the OS level — `ideal` lets the browser pick a working mic.
-      // Acquire mic. If a stored deviceId is selected, try it first; if that
-      // returns a muted/silent track (common with Bluetooth profile flips on
-      // AirPods etc.), fall back to the system default device.
+      // Mic acquisition with active silence detection. Bluetooth headsets
+      // (AirPods etc.) can deliver ALL-ZERO PCM frames while reporting
+      // track.muted === false — the SCO/HFP profile never actually engages.
+      // We measure peak amplitude for ~1.5s; if it stays at zero, we drop
+      // the stream and re-acquire with NO deviceId so the browser falls
+      // back to the system-default mic (usually the built-in laptop mic).
       const _baseAudio={echoCancellation:true,noiseSuppression:true,channelCount:1};
-      const _tryAcquire=async(withId)=>{
+      const _acquire=async(withId)=>{
         const c={audio:withId&&_inputId?{..._baseAudio,deviceId:{ideal:_inputId}}:_baseAudio};
         return await navigator.mediaDevices.getUserMedia(c);
       };
-      v.micStream=await _tryAcquire(true);
-      try{
-        const tracks=v.micStream.getAudioTracks();
-        const settings=tracks[0]?.getSettings?.()||{};
-        console.log('[voice] mic acquired:',tracks.map(t=>({label:t.label,enabled:t.enabled,muted:t.muted,readyState:t.readyState})),'settings:',settings,'audioCtx.sampleRate=',v.audioCtx.sampleRate);
-        if(tracks[0]?.muted&&_inputId){
-          console.warn('[voice] selected mic is MUTED — retrying with system default');
-          try{v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
-          v.micStream=await _tryAcquire(false);
-          const t2=v.micStream.getAudioTracks()[0];
-          console.log('[voice] default mic acquired:',{label:t2?.label,muted:t2?.muted,readyState:t2?.readyState});
-        }
-        // Watch for tracks ending (Bluetooth profile flip) so we surface it.
+      const _wireTrackHandlers=()=>{
         v.micStream.getAudioTracks().forEach(t=>{
           t.onmute=()=>{console.warn('[voice] track muted:',t.label);setVoiceStatus('⚠ Mic muted — check input device')};
           t.onended=()=>{console.warn('[voice] track ended:',t.label);setVoiceStatus('⚠ Mic disconnected')};
         });
-      }catch(_){}
-      refreshAudioDevicesRef.current?.();
-      v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
-      const proc=v.audioCtx.createScriptProcessor(4096,1,1);
-      v.micNode=proc;
-      let _audioChunkCount=0;
-      v.micPeak=0;
-      proc.onaudioprocess=ev=>{
-        const ws=v.ws;
-        if(!ws||ws.readyState!==WebSocket.OPEN)return;
-        const input=ev.inputBuffer.getChannelData(0);
-        // Track peak so we can detect "Bluetooth mic is silent" within a few seconds.
-        let _peak=0;for(let i=0;i<input.length;i++){const a=input[i]<0?-input[i]:input[i];if(a>_peak)_peak=a}
-        if(_peak>v.micPeak)v.micPeak=_peak;
-        const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
-        try{
-          ws.send(JSON.stringify({type:'audio',data:i16ToB64(pcm16)}));
-          _audioChunkCount++;
-          if(_audioChunkCount===1||_audioChunkCount%50===0)console.log('[voice] sent audio chunk #'+_audioChunkCount+', ws state='+ws.readyState+', peak='+v.micPeak.toFixed(4));
-        }catch(e){console.warn('[voice] audio send failed:',e)}
       };
-      v.micSource.connect(proc);proc.connect(v.audioCtx.destination);
-      // Silence guard: if no mic energy is captured within 4s, the selected
-      // input is likely a Bluetooth device stuck on A2DP (output-only) or muted
-      // at the OS level. Surface this in chat instead of failing silently.
-      v.silenceTimer=setTimeout(()=>{
-        if(v.micPeak<0.005){
-          const tracks=v.micStream?.getAudioTracks?.()||[];
-          const label=tracks[0]?.label||'unknown';
-          console.warn('[voice] no mic audio after 4s. tracks:',tracks.map(t=>({label:t.label,muted:t.muted,readyState:t.readyState})));
-          setVoiceStatus('⚠ No audio from "'+label.slice(0,28)+'" — pick another mic via the 🎙 button');
+      v.micStream=await _acquire(true);
+      v.micLabel=v.micStream.getAudioTracks()[0]?.label||'unknown';
+      console.log('[voice] mic acquired:',v.micLabel,'sampleRate=',v.audioCtx.sampleRate);
+      _wireTrackHandlers();
+      refreshAudioDevicesRef.current?.();
+
+      // Build (or rebuild) the AudioContext -> processor -> WS pipeline.
+      // Pulled into a helper so the silence guard can swap the mic stream
+      // and re-wire without leaking nodes.
+      v.chunksSent=0;v.bytesSent=0;v.micPeak=0;v.micPeakRecent=0;
+      const _wireProcessor=()=>{
+        try{v.micSource&&v.micSource.disconnect()}catch(_){}
+        try{v.micNode&&v.micNode.disconnect()}catch(_){}
+        v.micSource=v.audioCtx.createMediaStreamSource(v.micStream);
+        const proc=v.audioCtx.createScriptProcessor(4096,1,1);
+        v.micNode=proc;
+        proc.onaudioprocess=ev=>{
+          const input=ev.inputBuffer.getChannelData(0);
+          // Always measure peak so silence detection works even before WS opens.
+          let _peak=0;for(let i=0;i<input.length;i++){const a=input[i]<0?-input[i]:input[i];if(a>_peak)_peak=a}
+          if(_peak>v.micPeak)v.micPeak=_peak;
+          v.micPeakRecent=_peak;
+          const ws=v.ws;
+          if(!ws||ws.readyState!==WebSocket.OPEN)return;
+          const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
+          try{
+            ws.send(JSON.stringify({type:'audio',data:i16ToB64(pcm16)}));
+            v.chunksSent++;
+            v.bytesSent+=pcm16.length*2;
+          }catch(e){console.warn('[voice] audio send failed:',e)}
+        };
+        v.micSource.connect(proc);proc.connect(v.audioCtx.destination);
+      };
+      _wireProcessor();
+
+      // Diagnostic: log mic stats every second so you can spot a silent
+      // mic from the browser console without digging through the WS frames.
+      v.diagTimer=setInterval(()=>{
+        console.log('[voice] mic="'+(v.micLabel||'?').slice(0,30)+'" peak='+v.micPeak.toFixed(4)+' recent='+v.micPeakRecent.toFixed(4)+' chunks='+v.chunksSent+' bytes='+v.bytesSent);
+      },1000);
+      // UI level-meter sampler — pumps the green pulse-dot next to the mic button.
+      v.meterTimer=setInterval(()=>{setMicLevel(v.micPeakRecent||0)},120);
+
+      // Silence guard #1 (~1.5s): if peak is still zero, the selected device
+      // is silent. Drop it and re-acquire with the system-default mic.
+      v.silenceTimer=setTimeout(async()=>{
+        if(v.micPeak>0.002)return;
+        const wasLabel=v.micLabel;
+        console.warn('[voice] mic peak is zero after 1.5s — swapping to system default. was:',wasLabel);
+        setVoiceStatus('⚠ "'+wasLabel.slice(0,24)+'" silent — switching mic…');
+        try{
+          try{v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+          v.micStream=await _acquire(false);
+          v.micLabel=v.micStream.getAudioTracks()[0]?.label||'unknown';
+          v.micPeak=0;v.micPeakRecent=0;
+          console.log('[voice] system-default mic acquired:',v.micLabel);
+          _wireTrackHandlers();
+          _wireProcessor();
+          setVoiceStatus('listening · '+v.micLabel.split('(')[0].trim().slice(0,28));
+          // Silence guard #2 (~2.5s after retry): if the default mic is also
+          // silent, surface a clear "pick another mic" message.
+          v.silenceTimer2=setTimeout(()=>{
+            if(v.micPeak<0.002){
+              console.warn('[voice] default mic is also silent. label=',v.micLabel);
+              setVoiceStatus('⚠ No audio from "'+v.micLabel.slice(0,28)+'" — pick another mic via 🎙');
+            }
+          },2500);
+        }catch(e){
+          console.warn('[voice] system-default re-acquire failed:',e);
+          setVoiceStatus('⚠ Mic switch failed: '+e.message);
         }
-      },4000);
+      },1500);
     }catch(e){
       setVoiceStatus('mic denied: '+e.message);
       try{voiceStopRef.current?.()}catch(_){}
@@ -4858,6 +5134,11 @@ function App(){
       console.log('[voice] WebSocket closed, code='+e.code+' reason='+e.reason);
       // Stop mic tracks so Chrome clears the recording indicator
       const v2=voiceRef.current;
+      try{v2.silenceTimer&&clearTimeout(v2.silenceTimer)}catch(_){}
+      try{v2.silenceTimer2&&clearTimeout(v2.silenceTimer2)}catch(_){}
+      try{v2.diagTimer&&clearInterval(v2.diagTimer)}catch(_){}
+      try{v2.meterTimer&&clearInterval(v2.meterTimer)}catch(_){}
+      try{v2.frameTimer&&clearInterval(v2.frameTimer)}catch(_){}
       try{v2.micNode&&v2.micNode.disconnect()}catch(_){}
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
@@ -4865,6 +5146,7 @@ function App(){
       try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
       window._fridayHoloAmplitude=0;
       voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+      setMicLevel(0);
       setVoiceOn(false);
       setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
     };
@@ -4872,6 +5154,9 @@ function App(){
   voiceStopRef.current=()=>{
     const v=voiceRef.current;
     try{v.silenceTimer&&clearTimeout(v.silenceTimer)}catch(_){}
+    try{v.silenceTimer2&&clearTimeout(v.silenceTimer2)}catch(_){}
+    try{v.diagTimer&&clearInterval(v.diagTimer)}catch(_){}
+    try{v.meterTimer&&clearInterval(v.meterTimer)}catch(_){}
     try{v.frameTimer&&clearInterval(v.frameTimer)}catch(_){}
     try{v.ws&&v.ws.send(JSON.stringify({type:'end'}))}catch(_){}
     try{v.ws&&v.ws.close()}catch(_){}
@@ -4882,6 +5167,7 @@ function App(){
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
     window._fridayHoloAmplitude=0;
     voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+    setMicLevel(0);
     setVoiceOn(false);setVoiceStatus('');
   };
   const toggleVoice=()=>{voiceOn?voiceStopRef.current?.():voiceStartRef.current?.()};
@@ -5314,8 +5600,8 @@ function App(){
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>
-              {m.role==='friday'&&m.via!=='voice'&&typeof marked!=='undefined'
-                ?<div className="md-body" dangerouslySetInnerHTML={{__html:marked.parse(m.text||'')}}/>
+              {m.role==='friday'&&m.via!=='voice'
+                ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
                 :m.text}
             </div>
             {m.role!=='user'&&<SendTo content={m.text} dataType="general" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'}]}/>}
@@ -5329,7 +5615,11 @@ function App(){
         <div ref={chatEnd}/>
       </div>
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-        {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em'}}>● LIVE · {voiceStatus||'connecting…'}</div>}
+        {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em',display:'flex',alignItems:'center',gap:6}}>
+          {/* Level meter — green pulse when the mic is hearing sound, grey when silent. */}
+          <span title={'Mic level: '+(micLevel||0).toFixed(3)} style={{display:'inline-block',width:9,height:9,borderRadius:5,background:micLevel>0.005?'#3effa1':'#4a5364',boxShadow:micLevel>0.005?'0 0 '+Math.min(14,Math.round(micLevel*70))+'px #3effa1':'none',transform:'scale('+(1+Math.min(0.6,micLevel*4)).toFixed(2)+')',transition:'background .12s, box-shadow .12s, transform .12s'}}/>
+          <span>LIVE · {voiceStatus||'connecting…'}</span>
+        </div>}
         {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
         <div style={{display:'flex',gap:6,minWidth:0}}>
           <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
@@ -5451,7 +5741,7 @@ function App(){
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&n.url&&<span aria-hidden="true" style={{fontSize:11,color:'#00d4ff'}}>↗</span>}
             </div>
-            {isExpanded&&hasDetail&&<div style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)',fontSize:11,color:'rgba(220,220,235,0.85)',lineHeight:1.5,fontFamily:'Inter',whiteSpace:'pre-wrap'}}>{n.detail||n.body||n.message}</div>}
+            {isExpanded&&hasDetail&&<FridayDoc compact text={n.detail||n.body||n.message} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
           </div>);
         })}
     </div>}
@@ -6061,7 +6351,9 @@ function App(){
           <button className="btn" onClick={()=>setTaskResultModal(null)}>Close</button>
         </div>
         {taskResultModal.description&&<div style={{fontSize:11,color:'#888',marginBottom:10,fontStyle:'italic'}}>{taskResultModal.description}</div>}
-        <pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ddd',fontFamily:'Inter',lineHeight:1.6,background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>{taskResultModal.result||'(no result text)'}</pre>
+        {taskResultModal.result
+          ?<FridayDoc compact text={taskResultModal.result} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
+          :<div style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)',color:'#888',fontSize:12,fontStyle:'italic'}}>(no result text)</div>}
         {(taskResultModal.log||[]).length>0&&<div style={{marginTop:12}}>
           <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>
           <div style={{background:'rgba(0,0,0,0.4)',padding:8,borderRadius:6,maxHeight:180,overflowY:'auto'}}>
