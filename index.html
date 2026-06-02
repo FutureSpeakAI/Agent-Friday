@@ -942,6 +942,115 @@ window.addEventListener('DOMContentLoaded',function(){
           .model-pill { display: none; }
         }
 
+        /* ─── Process Orb Labels (Layer 2) ─── */
+        .orb-label {
+            position: fixed; top: 0; left: 0;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.7); white-space: nowrap;
+            pointer-events: none; user-select: none;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7);
+            transition: opacity 0.3s;
+        }
+        .orb-label .orb-icon { font-size: 12px; }
+        .orb-label .orb-text { letter-spacing: 0.04em; }
+
+        /* ─── Reasoning Thread Panel (Layer 3) ─── */
+        .thread-panel {
+            position: fixed; top: 36px; right: -370px; bottom: 116px;
+            width: 350px; max-height: 60vh; z-index: 66;
+            display: flex; flex-direction: column;
+            background: rgba(10,14,26,0.8);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            border-radius: 10px 0 0 10px;
+            box-shadow: -4px 0 30px rgba(0,0,0,0.35), 0 0 1px rgba(0,212,255,0.25);
+            transition: right 0.3s cubic-bezier(0.2, 0.8, 0.3, 1);
+            overflow: hidden;
+        }
+        .thread-panel.open { right: 0; }
+        .thread-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.03);
+        }
+        .thread-header-left {
+            display: flex; align-items: center; gap: 8px;
+            font-family: 'Inter', sans-serif; font-size: 13px;
+            color: #fff; font-weight: 600; overflow: hidden;
+        }
+        .thread-header-left .thread-icon { font-size: 16px; flex-shrink: 0; }
+        .thread-header-left .thread-name {
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .thread-status-badge {
+            display: inline-block; padding: 2px 7px; border-radius: 4px;
+            font-family: 'Orbitron', monospace; font-size: 9px;
+            letter-spacing: 0.1em; text-transform: uppercase; flex-shrink: 0;
+        }
+        .thread-status-badge.running { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+        .thread-status-badge.completed { background: rgba(0,255,128,0.1); color: #00ff80; border: 1px solid rgba(0,255,128,0.2); }
+        .thread-status-badge.error { background: rgba(255,0,128,0.1); color: #ff0080; border: 1px solid rgba(255,0,128,0.2); }
+        .thread-elapsed {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.5); margin-left: auto; padding: 0 8px; flex-shrink: 0;
+        }
+        .thread-close {
+            background: none; border: none; color: rgba(255,255,255,0.5);
+            cursor: pointer; font-size: 16px; padding: 0 4px; transition: color 0.2s;
+        }
+        .thread-close:hover { color: #ff0080; }
+        .thread-body {
+            flex: 1; overflow-y: auto; padding: 12px 14px;
+        }
+        .thread-body::-webkit-scrollbar { width: 4px; }
+        .thread-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+        .thread-step {
+            display: flex; gap: 10px; padding: 6px 0;
+            position: relative;
+        }
+        .thread-step::before {
+            content: ''; position: absolute; left: 5px; top: 18px;
+            bottom: -6px; width: 1px;
+            background: rgba(255,255,255,0.06);
+        }
+        .thread-step:last-child::before { display: none; }
+        .thread-dot {
+            width: 11px; height: 11px; border-radius: 50%;
+            flex-shrink: 0; margin-top: 2px;
+            box-shadow: 0 0 6px currentColor;
+        }
+        .thread-dot.done { background: #22c55e; color: #22c55e; }
+        .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
+        .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
+        .thread-dot.error { background: #ff0080; color: #ff0080; }
+        .thread-step-content { flex: 1; min-width: 0; }
+        .thread-step-text {
+            font-family: 'Inter', sans-serif; font-size: 12px;
+            color: rgba(255,255,255,0.85); line-height: 1.4;
+        }
+        .thread-step-detail {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.45); margin-top: 3px;
+            cursor: pointer; overflow: hidden;
+            max-height: 0; transition: max-height 0.25s ease;
+        }
+        .thread-step-detail.expanded { max-height: 200px; }
+        .thread-step-time {
+            font-family: 'JetBrains Mono', monospace; font-size: 9px;
+            color: rgba(255,255,255,0.3); margin-top: 2px;
+        }
+        @media (max-width: 768px) {
+            .thread-panel {
+                top: auto !important; bottom: 68px !important;
+                right: -100vw !important; left: auto;
+                width: 100vw !important; max-height: 55vh;
+                border-radius: 12px 12px 0 0; border-left: none;
+                border-top: 1px solid rgba(0,212,255,0.15);
+            }
+            .thread-panel.open { right: 0 !important; }
+        }
+
         /* Markdown-rendered Friday responses */
         .md-body { line-height: 1.55; color: #bbb; }
         .md-body p { margin: 0 0 8px; }
@@ -1237,7 +1346,138 @@ window.addEventListener('DOMContentLoaded',function(){
 
         let targetCamPos = new THREE.Vector3(0, 5, 15);
         let targetCamLook = new THREE.Vector3(0, 0, 0);
-        let baseCamPos = new THREE.Vector3(0, 5, 15); 
+        let baseCamPos = new THREE.Vector3(0, 5, 15);
+
+        // --- HOLOGRAPHIC REACTIVITY (Layer 1) ---
+        let holoAmplitude = 0;
+        let holoTargetAmplitude = 0;
+        let holoState = 'idle';
+        let holoStateIntensity = 0;
+        let processOrbManager = null;
+
+        // --- PROCESS ORB MANAGER (Layer 2) ---
+        class ProcessOrbManager {
+            constructor(scn, cam, rend) {
+                this.scene = scn; this.camera = cam; this.renderer = rend;
+                this.orbs = new Map();
+                this.maxOrbs = 8;
+                this.labelContainer = document.createElement('div');
+                this.labelContainer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:55;';
+                document.body.appendChild(this.labelContainer);
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+                rend.domElement.addEventListener('click', (e) => this._onClick(e));
+            }
+            _catColor(cat) {
+                return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
+            }
+            addOrb({id, label, category, icon}) {
+                if (this.orbs.has(id)) return;
+                if (this.orbs.size >= this.maxOrbs) {
+                    let oldest = null;
+                    for (const [oid, o] of this.orbs) {
+                        if (o.status === 'completed' && (!oldest || o.createdAt < oldest.t)) oldest = {id: oid, t: o.createdAt};
+                    }
+                    if (oldest) this._cleanup(oldest.id); else return;
+                }
+                const color = this._catColor(category);
+                const group = new THREE.Group();
+                const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
+                const sphereMat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false});
+                const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+                group.add(sphere);
+                const glowMat = new THREE.SpriteMaterial({map:glowTexture, color, transparent:true, opacity:0.4, blending:THREE.AdditiveBlending, depthWrite:false});
+                const glow = new THREE.Sprite(glowMat); glow.scale.set(1.8,1.8,1); group.add(glow);
+                const ringSegs = 64;
+                const ringPos = new Float32Array(ringSegs * 3);
+                const ringGeo = new THREE.BufferGeometry(); ringGeo.setAttribute('position', new THREE.BufferAttribute(ringPos, 3));
+                const ringMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false});
+                const ring = new THREE.Line(ringGeo, ringMat); group.add(ring);
+                const oAngle = Math.random()*Math.PI*2, oRadius = 3.5+Math.random(), oHeight = (Math.random()-0.5)*4, oSpeed = 0.3+Math.random()*0.3;
+                group.position.set(Math.cos(oAngle)*oRadius, oHeight, Math.sin(oAngle)*oRadius);
+                group.scale.set(0.01,0.01,0.01);
+                this.scene.add(group);
+                const labelEl = document.createElement('div');
+                labelEl.className = 'orb-label';
+                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>';
+                this.labelContainer.appendChild(labelEl);
+                this.orbs.set(id, {id,label,category,icon,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,
+                    oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
+                    birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[]});
+            }
+            updateOrb(id, upd) {
+                const o = this.orbs.get(id); if (!o) return;
+                if (upd.progress !== undefined) o.progress = Math.max(0,Math.min(1,upd.progress));
+                if (upd.status !== undefined) o.status = upd.status;
+                if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
+                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e); }
+                else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
+            }
+            removeOrb(id) {
+                const o = this.orbs.get(id); if (!o || o.dying) return;
+                o.dying = true; o.deathTime = 0;
+                o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e);
+            }
+            getOrbs() {
+                const out = [];
+                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,progress:o.progress,status:o.status,steps:o.steps});
+                return out;
+            }
+            _onClick(ev) {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                this.mouse.x = ((ev.clientX-rect.left)/rect.width)*2-1;
+                this.mouse.y = -((ev.clientY-rect.top)/rect.height)*2+1;
+                this.raycaster.setFromCamera(this.mouse, this.camera);
+                for (const [id, o] of this.orbs) {
+                    if (this.raycaster.intersectObject(o.sphere).length > 0) {
+                        window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id,label:o.label,category:o.category,icon:o.icon,progress:o.progress,status:o.status,steps:o.steps}}));
+                        return;
+                    }
+                }
+            }
+            _cleanup(id) {
+                const o = this.orbs.get(id); if (!o) return;
+                this.scene.remove(o.group); o.labelEl.remove();
+                o.sphere.geometry.dispose(); o.sphere.material.dispose(); o.glow.material.dispose(); o.ringGeo.dispose(); o.ring.material.dispose();
+                this.orbs.delete(id);
+            }
+            update(dt, elapsed) {
+                const amp = holoAmplitude;
+                const dead = [];
+                for (const [id, o] of this.orbs) {
+                    if (!o.birthDone) {
+                        o.birthTime += dt;
+                        const t = Math.min(1, o.birthTime/0.6);
+                        o.group.scale.setScalar(1-Math.pow(1-t,3));
+                        if (t>=1) o.birthDone = true;
+                    }
+                    if (o.dying) {
+                        o.deathTime += dt;
+                        const t = Math.min(1, o.deathTime/0.5);
+                        o.group.scale.setScalar(1-t);
+                        o.labelEl.style.opacity = String(1-t);
+                        if (t>=1) { dead.push(id); continue; }
+                    }
+                    o.oAngle += o.oSpeed*dt*(1+amp*1.5);
+                    o.group.position.set(Math.cos(o.oAngle)*o.oRadius, o.oHeight+Math.sin(elapsed*1.5+o.oAngle)*0.5, Math.sin(o.oAngle)*o.oRadius);
+                    o.glow.material.opacity = 0.3+amp*0.3+Math.sin(elapsed*3+o.oAngle)*0.1;
+                    const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    const pos = o.ringGeo.attributes.position.array;
+                    for (let i=0;i<o.ringSegs;i++) {
+                        const th = (i/o.ringSegs)*Math.PI*2, r=0.55;
+                        if (i<segs) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
+                        else { const lt=((segs-1)/o.ringSegs)*Math.PI*2; pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0; }
+                    }
+                    o.ringGeo.attributes.position.needsUpdate = true;
+                    o.ring.lookAt(this.camera.position);
+                    const p3 = o.group.position.clone().project(this.camera);
+                    const sx = (p3.x*0.5+0.5)*window.innerWidth, sy = (-p3.y*0.5+0.5)*window.innerHeight;
+                    if (p3.z < 1) { o.labelEl.style.display='block'; o.labelEl.style.transform='translate(-50%,-50%) translate('+sx+'px,'+(sy-28)+'px)'; }
+                    else o.labelEl.style.display='none';
+                }
+                for (const id of dead) this._cleanup(id);
+            }
+        }
 
         function createGlowTexture() {
             const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
@@ -1331,6 +1571,8 @@ window.addEventListener('DOMContentLoaded',function(){
 
             const _evo = document.getElementById('evolution-day-text');
             if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
+
+            processOrbManager = new ProcessOrbManager(scene, camera, renderer);
             animate();
         }
 
@@ -2026,7 +2268,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (pData) {
                     for (let i = 0; i < pData.length; i++) {
                         const p = pData[i];
-                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * idleFactor;
+                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * idleFactor;
                         if (scatterIntensity > 0) { 
                             speed += scatterIntensity * 3.0; 
                             p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
@@ -2037,7 +2279,7 @@ window.addEventListener('DOMContentLoaded',function(){
                             p.phi = THREE.MathUtils.lerp(p.phi, targetPhi, delta * 1.0);
                         }
                         const moodRadialForce = tMood && tMood.radialForce !== undefined ? tMood.radialForce : 0;
-                        let radTarget = p.baseRadius + (moodRadialForce * 5.0) + (scatterIntensity * 10.0); 
+                        let radTarget = p.baseRadius + (moodRadialForce * 5.0) + (scatterIntensity * 10.0) + (holoAmplitude * 2.0);
                         if (targetStructure === 'GRID') radTarget += 8.0;
                         p.radius = THREE.MathUtils.lerp(p.radius, radTarget, delta * 1.5);
                         positions[i*3] = p.radius * Math.sin(p.phi) * Math.cos(p.theta); positions[i*3+1] = p.radius * Math.sin(p.phi) * Math.sin(p.theta); positions[i*3+2] = p.radius * Math.cos(p.phi);
@@ -2062,12 +2304,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
             });
 
+            // --- HOLOGRAPHIC REACTIVITY UPDATE ---
+            holoTargetAmplitude = window._fridayHoloAmplitude || 0;
+            holoAmplitude += (holoTargetAmplitude - holoAmplitude) * 0.15;
+            if (processOrbManager) processOrbManager.update(delta, elapsed);
+
             // --- POST PROCESSING ---
             if (bloomPass && holoPass && holoPass.uniforms) {
-                // Floor on idleFactor so bloom never collapses to near-zero — keeps the
-                // scene luminous behind the frosted-glass panels even during long silences.
                 const bloomIdle = 0.75 + idleFactor * 0.25;
-                const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5) * bloomIdle;
+                const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5 + holoAmplitude * 0.8) * bloomIdle;
                 bloomPass.strength = Math.max(0.7, currentBloom) + (metamorphosisFlash * 4.0);
                 if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
@@ -2146,6 +2391,42 @@ window.fridayVibe = {
     isTimeLapseOn: function() {
         return typeof timeLapseActive !== 'undefined' ? timeLapseActive : false;
     }
+};
+
+// === HOLOGRAPHIC REACTIVITY API (Layer 1) ===
+window.fridaySetHoloState = function(state, intensity) {
+    if (typeof holoState !== 'undefined') holoState = state || 'idle';
+    if (typeof holoStateIntensity !== 'undefined') holoStateIntensity = intensity || 0;
+    var moodMap = {idle:'IDLE', speaking:'SPEAKING', executing:'EXECUTING', listening:'LISTENING'};
+    var m = moodMap[state] || 'LISTENING';
+    if (typeof setSystemMood === 'function') setSystemMood(m);
+};
+
+// === PROCESS ORB API (Layer 2) ===
+window.fridayAddOrb = function(opts) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.addOrb(opts);
+};
+window.fridayUpdateOrb = function(id, upd) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.updateOrb(id, upd);
+};
+window.fridayRemoveOrb = function(id) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.removeOrb(id);
+};
+window.fridayGetOrbs = function() {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
+    return [];
+};
+
+// === REASONING THREAD API (Layer 3) ===
+window._fridayThreads = {};
+window.fridayUpdateThread = function(orbId, steps) {
+    window._fridayThreads[orbId] = steps || [];
+    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:steps||[]}}));
+};
+window.fridayAddThreadStep = function(orbId, step) {
+    if (!window._fridayThreads[orbId]) window._fridayThreads[orbId] = [];
+    window._fridayThreads[orbId].push(step);
+    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:window._fridayThreads[orbId]}}));
 };
 
 // === KEYBOARD CONTROLS ===
@@ -3195,8 +3476,8 @@ function NewsWS(){
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
-  const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsAn);_ttsAn.connect(_ttsCtx.destination);const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
+  const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
   const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
@@ -4424,6 +4705,8 @@ function App(){
     try{
       v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
+      v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAnalyser.connect(v.audioCtx.destination);v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
+      const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();
       const _outputId=agentSettings.audio_output_device_id;
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
       v.playCursor=v.audioCtx.currentTime;
@@ -4523,7 +4806,7 @@ function App(){
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);src.start(startAt);
+        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.holoAnalyser||v.audioCtx.destination);src.start(startAt);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -4573,6 +4856,8 @@ function App(){
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
       try{v2.audioCtx&&v2.audioCtx.close()}catch(_){}
+      try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
+      window._fridayHoloAmplitude=0;
       voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
       setVoiceOn(false);
       setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
@@ -4587,7 +4872,9 @@ function App(){
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
     try{v.micSource&&v.micSource.disconnect()}catch(_){}
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+    try{if(v._holoFrame)cancelAnimationFrame(v._holoFrame)}catch(_){}
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
+    window._fridayHoloAmplitude=0;
     voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
     setVoiceOn(false);setVoiceStatus('');
   };
@@ -4640,10 +4927,28 @@ function App(){
     else if(micOn)sysMood='LISTENING';
     else sysMood='IDLE';
     window.fridayVibe.setSystemMood?.(sysMood);
+    const holoMap={SPEAKING:'speaking',REASONING:'executing',EXECUTING:'executing',LISTENING:'listening',IDLE:'idle'};
+    window.fridaySetHoloState?.(holoMap[sysMood]||'idle',sig.ttsActive?1:0);
     // Belt-and-suspenders: always update the HUD text so the indicator never appears stuck
     const moodEl=document.getElementById('mood-text');
     if(moodEl)moodEl.innerText='STATE: '+sysMood;
   }},1000);return()=>clearInterval(t)},[]);
+  // --- Reasoning Thread Panel (Layer 3) ---
+  const[threadOrb,setThreadOrb]=useState(null);
+  const[threadSteps,setThreadSteps]=useState([]);
+  const threadBodyRef=useRef(null);
+  useEffect(()=>{
+    const onOrbClick=(e)=>{const d=e.detail;setThreadOrb(d);setThreadSteps(window._fridayThreads?.[d.id]||d.steps||[])};
+    const onThreadUpdate=(e)=>{const d=e.detail;setThreadOrb(prev=>{if(prev&&prev.id===d.orbId){setThreadSteps([...(d.steps||[])]);return prev}return prev})};
+    window.addEventListener('fridayOrbClicked',onOrbClick);window.addEventListener('fridayThreadUpdate',onThreadUpdate);
+    return()=>{window.removeEventListener('fridayOrbClicked',onOrbClick);window.removeEventListener('fridayThreadUpdate',onThreadUpdate)};
+  },[]);
+  useEffect(()=>{if(threadBodyRef.current)threadBodyRef.current.scrollTop=threadBodyRef.current.scrollHeight},[threadSteps]);
+  useEffect(()=>{if(!threadOrb)return;const h=(e)=>{const p=document.querySelector('.thread-panel');if(p&&!p.contains(e.target))setThreadOrb(null)};const t=setTimeout(()=>document.addEventListener('click',h),100);return()=>{clearTimeout(t);document.removeEventListener('click',h)}},[threadOrb]);
+
+  // --- Process Polling (Layer 2→3 integration) ---
+  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡'});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
@@ -5020,13 +5325,13 @@ function App(){
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
         {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em'}}>● LIVE · {voiceStatus||'connecting…'}</div>}
         {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
-        <div style={{display:'flex',gap:6}}>
+        <div style={{display:'flex',gap:6,minWidth:0}}>
           <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
-            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42}}>
+            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
             {voiceOn?'■':'🎤'}
           </button>
           {/* Audio device quick-switcher */}
-          <div style={{position:'relative',flexShrink:0}}>
+          <div style={{position:'relative',flexShrink:0,zIndex:1}}>
             <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
@@ -5055,10 +5360,40 @@ function App(){
                 onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>↺ refresh list</div>
             </div>}
           </div>
-          <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
-          <button className="btn" onClick={()=>sendChat()}>Send</button>
+          <input className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
+          <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
+    </div>
+
+    {/* Reasoning Thread Panel (Layer 3) */}
+    <div className={`thread-panel ${threadOrb?'open':''}`} onClick={e=>e.stopPropagation()}>
+      {threadOrb&&<React.Fragment>
+        <div className="thread-header">
+          <div className="thread-header-left">
+            <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
+            <span className="thread-name">{threadOrb.label||'Process'}</span>
+          </div>
+          <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
+          <span className="thread-elapsed"></span>
+          <button className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
+        </div>
+        <div className="thread-body" ref={threadBodyRef}>
+          {threadSteps.length===0&&<div style={{textAlign:'center',color:'#666',fontSize:11,padding:20,fontFamily:'JetBrains Mono'}}>No reasoning steps yet</div>}
+          {threadSteps.map((step,i)=><div key={i} className="thread-step">
+            <div className={`thread-dot ${step.status||'pending'}`}/>
+            <div className="thread-step-content">
+              <div className="thread-step-text">{step.text||''}</div>
+              {step.detail&&<div className={`thread-step-detail ${step._expanded?'expanded':''}`}
+                style={{cursor:'pointer'}}
+                onClick={()=>{const ns=[...threadSteps];ns[i]={...ns[i],_expanded:!ns[i]._expanded};setThreadSteps(ns)}}>
+                {step._expanded?'▾ ':'▸ '}{step.detail}
+              </div>}
+              {step.timestamp&&<div className="thread-step-time">{step.timestamp}</div>}
+            </div>
+          </div>)}
+        </div>
+      </React.Fragment>}
     </div>
 
     {/* Notifications + Tasks dropdown (anchored under bell icon) */}

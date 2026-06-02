@@ -942,6 +942,115 @@ window.addEventListener('DOMContentLoaded',function(){
           .model-pill { display: none; }
         }
 
+        /* ─── Process Orb Labels (Layer 2) ─── */
+        .orb-label {
+            position: fixed; top: 0; left: 0;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.7); white-space: nowrap;
+            pointer-events: none; user-select: none;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7);
+            transition: opacity 0.3s;
+        }
+        .orb-label .orb-icon { font-size: 12px; }
+        .orb-label .orb-text { letter-spacing: 0.04em; }
+
+        /* ─── Reasoning Thread Panel (Layer 3) ─── */
+        .thread-panel {
+            position: fixed; top: 36px; right: -370px; bottom: 116px;
+            width: 350px; max-height: 60vh; z-index: 66;
+            display: flex; flex-direction: column;
+            background: rgba(10,14,26,0.8);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
+            border-left: 1px solid rgba(0,212,255,0.15);
+            border-radius: 10px 0 0 10px;
+            box-shadow: -4px 0 30px rgba(0,0,0,0.35), 0 0 1px rgba(0,212,255,0.25);
+            transition: right 0.3s cubic-bezier(0.2, 0.8, 0.3, 1);
+            overflow: hidden;
+        }
+        .thread-panel.open { right: 0; }
+        .thread-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.03);
+        }
+        .thread-header-left {
+            display: flex; align-items: center; gap: 8px;
+            font-family: 'Inter', sans-serif; font-size: 13px;
+            color: #fff; font-weight: 600; overflow: hidden;
+        }
+        .thread-header-left .thread-icon { font-size: 16px; flex-shrink: 0; }
+        .thread-header-left .thread-name {
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .thread-status-badge {
+            display: inline-block; padding: 2px 7px; border-radius: 4px;
+            font-family: 'Orbitron', monospace; font-size: 9px;
+            letter-spacing: 0.1em; text-transform: uppercase; flex-shrink: 0;
+        }
+        .thread-status-badge.running { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+        .thread-status-badge.completed { background: rgba(0,255,128,0.1); color: #00ff80; border: 1px solid rgba(0,255,128,0.2); }
+        .thread-status-badge.error { background: rgba(255,0,128,0.1); color: #ff0080; border: 1px solid rgba(255,0,128,0.2); }
+        .thread-elapsed {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.5); margin-left: auto; padding: 0 8px; flex-shrink: 0;
+        }
+        .thread-close {
+            background: none; border: none; color: rgba(255,255,255,0.5);
+            cursor: pointer; font-size: 16px; padding: 0 4px; transition: color 0.2s;
+        }
+        .thread-close:hover { color: #ff0080; }
+        .thread-body {
+            flex: 1; overflow-y: auto; padding: 12px 14px;
+        }
+        .thread-body::-webkit-scrollbar { width: 4px; }
+        .thread-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+        .thread-step {
+            display: flex; gap: 10px; padding: 6px 0;
+            position: relative;
+        }
+        .thread-step::before {
+            content: ''; position: absolute; left: 5px; top: 18px;
+            bottom: -6px; width: 1px;
+            background: rgba(255,255,255,0.06);
+        }
+        .thread-step:last-child::before { display: none; }
+        .thread-dot {
+            width: 11px; height: 11px; border-radius: 50%;
+            flex-shrink: 0; margin-top: 2px;
+            box-shadow: 0 0 6px currentColor;
+        }
+        .thread-dot.done { background: #22c55e; color: #22c55e; }
+        .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
+        .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
+        .thread-dot.error { background: #ff0080; color: #ff0080; }
+        .thread-step-content { flex: 1; min-width: 0; }
+        .thread-step-text {
+            font-family: 'Inter', sans-serif; font-size: 12px;
+            color: rgba(255,255,255,0.85); line-height: 1.4;
+        }
+        .thread-step-detail {
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(255,255,255,0.45); margin-top: 3px;
+            cursor: pointer; overflow: hidden;
+            max-height: 0; transition: max-height 0.25s ease;
+        }
+        .thread-step-detail.expanded { max-height: 200px; }
+        .thread-step-time {
+            font-family: 'JetBrains Mono', monospace; font-size: 9px;
+            color: rgba(255,255,255,0.3); margin-top: 2px;
+        }
+        @media (max-width: 768px) {
+            .thread-panel {
+                top: auto !important; bottom: 68px !important;
+                right: -100vw !important; left: auto;
+                width: 100vw !important; max-height: 55vh;
+                border-radius: 12px 12px 0 0; border-left: none;
+                border-top: 1px solid rgba(0,212,255,0.15);
+            }
+            .thread-panel.open { right: 0 !important; }
+        }
+
         /* Markdown-rendered Friday responses */
         .md-body { line-height: 1.55; color: #bbb; }
         .md-body p { margin: 0 0 8px; }

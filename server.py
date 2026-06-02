@@ -1209,6 +1209,76 @@ def api_agent_steer():
     return jsonify({"ok": True, "task_id": task_id, "queued": message[:120]})
 
 
+# ═══ PROCESS ORB REGISTRY (holographic Layer 2) ══════════════════
+# Lightweight in-memory registry for active processes that the frontend
+# renders as floating holographic orbs.  Skills/tasks register here via
+# process_register() / process_update() and the frontend polls GET /api/processes.
+PROCESSES = {}
+PROCESSES_LOCK = threading.Lock()
+
+
+def process_register(pid, *, name="Task", label=None, category="default",
+                     icon="⚡", steps=None):
+    """Register a new process for the holographic orb display."""
+    with PROCESSES_LOCK:
+        PROCESSES[pid] = {
+            "id": pid,
+            "name": name,
+            "label": label or name,
+            "category": category,
+            "icon": icon,
+            "status": "running",
+            "progress": 0,
+            "steps": steps or [],
+            "started": _time.time(),
+        }
+
+
+def process_update(pid, *, status=None, progress=None, label=None,
+                   step=None, steps=None):
+    """Update an existing process entry."""
+    with PROCESSES_LOCK:
+        p = PROCESSES.get(pid)
+        if not p:
+            return
+        if status is not None:
+            p["status"] = status
+        if progress is not None:
+            p["progress"] = max(0.0, min(1.0, progress))
+        if label is not None:
+            p["label"] = label
+        if step is not None:
+            p["steps"].append(step)
+        if steps is not None:
+            p["steps"] = steps
+        if status in ("completed", "error"):
+            p["ended"] = _time.time()
+
+
+def process_remove(pid):
+    """Remove a process from the registry."""
+    with PROCESSES_LOCK:
+        PROCESSES.pop(pid, None)
+
+
+@app.route('/api/processes')
+def list_processes():
+    with PROCESSES_LOCK:
+        out = []
+        now = _time.time()
+        for pid, p in list(PROCESSES.items()):
+            row = dict(p)
+            row["elapsed"] = int(now - row.get("started", now))
+            if row.get("ended"):
+                row["elapsed"] = int(row["ended"] - row["started"])
+            out.append(row)
+            # Auto-purge completed processes older than 30s
+            if row.get("status") in ("completed", "error") and row.get("ended"):
+                if now - row["ended"] > 30:
+                    del PROCESSES[pid]
+    return jsonify({"processes": out})
+
+
 def _tool_propose_wiki_update(inp):
     """Queue a wiki update as pending — the user approves it in the Wiki workspace."""
     inp = inp or {}

@@ -1037,8 +1037,8 @@ function NewsWS(){
   useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
-  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
-  const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null}};
+  const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsAn);_ttsAn.connect(_ttsCtx.destination);const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
+  const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
   const launchBriefing=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run daily news briefing'],cwd:'C:\\Users\\user\\Projects\\friday-desktop'})}).then(()=>alert('Briefing generation launched')).catch(()=>{})};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
@@ -2266,6 +2266,8 @@ function App(){
     try{
       v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
+      v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAnalyser.connect(v.audioCtx.destination);v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
+      const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();
       const _outputId=agentSettings.audio_output_device_id;
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
       v.playCursor=v.audioCtx.currentTime;
@@ -2365,7 +2367,7 @@ function App(){
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);src.start(startAt);
+        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.holoAnalyser||v.audioCtx.destination);src.start(startAt);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -2415,6 +2417,8 @@ function App(){
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
       try{v2.audioCtx&&v2.audioCtx.close()}catch(_){}
+      try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
+      window._fridayHoloAmplitude=0;
       voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
       setVoiceOn(false);
       setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
@@ -2429,7 +2433,9 @@ function App(){
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
     try{v.micSource&&v.micSource.disconnect()}catch(_){}
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+    try{if(v._holoFrame)cancelAnimationFrame(v._holoFrame)}catch(_){}
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
+    window._fridayHoloAmplitude=0;
     voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
     setVoiceOn(false);setVoiceStatus('');
   };
@@ -2482,10 +2488,28 @@ function App(){
     else if(micOn)sysMood='LISTENING';
     else sysMood='IDLE';
     window.fridayVibe.setSystemMood?.(sysMood);
+    const holoMap={SPEAKING:'speaking',REASONING:'executing',EXECUTING:'executing',LISTENING:'listening',IDLE:'idle'};
+    window.fridaySetHoloState?.(holoMap[sysMood]||'idle',sig.ttsActive?1:0);
     // Belt-and-suspenders: always update the HUD text so the indicator never appears stuck
     const moodEl=document.getElementById('mood-text');
     if(moodEl)moodEl.innerText='STATE: '+sysMood;
   }},1000);return()=>clearInterval(t)},[]);
+  // --- Reasoning Thread Panel (Layer 3) ---
+  const[threadOrb,setThreadOrb]=useState(null);
+  const[threadSteps,setThreadSteps]=useState([]);
+  const threadBodyRef=useRef(null);
+  useEffect(()=>{
+    const onOrbClick=(e)=>{const d=e.detail;setThreadOrb(d);setThreadSteps(window._fridayThreads?.[d.id]||d.steps||[])};
+    const onThreadUpdate=(e)=>{const d=e.detail;setThreadOrb(prev=>{if(prev&&prev.id===d.orbId){setThreadSteps([...(d.steps||[])]);return prev}return prev})};
+    window.addEventListener('fridayOrbClicked',onOrbClick);window.addEventListener('fridayThreadUpdate',onThreadUpdate);
+    return()=>{window.removeEventListener('fridayOrbClicked',onOrbClick);window.removeEventListener('fridayThreadUpdate',onThreadUpdate)};
+  },[]);
+  useEffect(()=>{if(threadBodyRef.current)threadBodyRef.current.scrollTop=threadBodyRef.current.scrollHeight},[threadSteps]);
+  useEffect(()=>{if(!threadOrb)return;const h=(e)=>{const p=document.querySelector('.thread-panel');if(p&&!p.contains(e.target))setThreadOrb(null)};const t=setTimeout(()=>document.addEventListener('click',h),100);return()=>{clearTimeout(t);document.removeEventListener('click',h)}},[threadOrb]);
+
+  // --- Process Polling (Layer 2→3 integration) ---
+  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡'});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
@@ -2862,13 +2886,13 @@ function App(){
       <div style={{padding:10,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
         {voiceOn&&<div style={{fontSize:10,color:'#00d4ff',marginBottom:4,fontFamily:'JetBrains Mono',letterSpacing:'0.05em'}}>● LIVE · {voiceStatus||'connecting…'}</div>}
         {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
-        <div style={{display:'flex',gap:6}}>
+        <div style={{display:'flex',gap:6,minWidth:0}}>
           <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
-            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42}}>
+            style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>
             {voiceOn?'■':'🎤'}
           </button>
           {/* Audio device quick-switcher */}
-          <div style={{position:'relative',flexShrink:0}}>
+          <div style={{position:'relative',flexShrink:0,zIndex:1}}>
             <button data-audio-device-toggle="" className="btn" onClick={()=>setAudioDevicePopup(o=>!o)}
               title={(()=>{const inp=audioInputDevices.find(d=>d.deviceId===agentSettings.audio_input_device_id);return inp?inp.label.split('(')[0].trim():'Audio device'})()}
               style={{padding:'4px 7px',fontSize:13,color:audioDevicePopup?'#00d4ff':'#666',border:'1px solid '+(audioDevicePopup?'rgba(0,212,255,0.4)':'rgba(255,255,255,0.1)'),background:audioDevicePopup?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.03)'}}>🎙</button>
@@ -2897,10 +2921,40 @@ function App(){
                 onMouseOver={e=>e.currentTarget.style.color='#00d4ff'} onMouseOut={e=>e.currentTarget.style.color='rgba(255,255,255,0.45)'}>↺ refresh list</div>
             </div>}
           </div>
-          <input className="input" style={{flex:1}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
-          <button className="btn" onClick={()=>sendChat()}>Send</button>
+          <input className="input" style={{flex:1,minWidth:0}} value={chatIn} onChange={e=>setChatIn(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendChat()} placeholder={voiceOn?'Voice mode active — just speak…':'Talk to Friday...'}/>
+          <button className="btn" style={{flexShrink:0}} onClick={()=>sendChat()}>Send</button>
         </div>
       </div>
+    </div>
+
+    {/* Reasoning Thread Panel (Layer 3) */}
+    <div className={`thread-panel ${threadOrb?'open':''}`} onClick={e=>e.stopPropagation()}>
+      {threadOrb&&<React.Fragment>
+        <div className="thread-header">
+          <div className="thread-header-left">
+            <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
+            <span className="thread-name">{threadOrb.label||'Process'}</span>
+          </div>
+          <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
+          <span className="thread-elapsed"></span>
+          <button className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
+        </div>
+        <div className="thread-body" ref={threadBodyRef}>
+          {threadSteps.length===0&&<div style={{textAlign:'center',color:'#666',fontSize:11,padding:20,fontFamily:'JetBrains Mono'}}>No reasoning steps yet</div>}
+          {threadSteps.map((step,i)=><div key={i} className="thread-step">
+            <div className={`thread-dot ${step.status||'pending'}`}/>
+            <div className="thread-step-content">
+              <div className="thread-step-text">{step.text||''}</div>
+              {step.detail&&<div className={`thread-step-detail ${step._expanded?'expanded':''}`}
+                style={{cursor:'pointer'}}
+                onClick={()=>{const ns=[...threadSteps];ns[i]={...ns[i],_expanded:!ns[i]._expanded};setThreadSteps(ns)}}>
+                {step._expanded?'▾ ':'▸ '}{step.detail}
+              </div>}
+              {step.timestamp&&<div className="thread-step-time">{step.timestamp}</div>}
+            </div>
+          </div>)}
+        </div>
+      </React.Fragment>}
     </div>
 
     {/* Notifications + Tasks dropdown (anchored under bell icon) */}
