@@ -1565,7 +1565,17 @@ window.addEventListener('DOMContentLoaded',function(){
                 document.body.appendChild(this.labelContainer);
                 this.raycaster = new THREE.Raycaster();
                 this.mouse = new THREE.Vector2();
+                this.mouseScreen = { x: -10000, y: -10000 };
+                this.hoveredOrbId = null;
                 rend.domElement.addEventListener('click', (e) => this._onClick(e));
+                rend.domElement.addEventListener('mousemove', (e) => {
+                    const rect = rend.domElement.getBoundingClientRect();
+                    this.mouseScreen.x = e.clientX - rect.left;
+                    this.mouseScreen.y = e.clientY - rect.top;
+                });
+                rend.domElement.addEventListener('mouseleave', () => {
+                    this.mouseScreen.x = -10000; this.mouseScreen.y = -10000;
+                });
             }
             _catColor(cat) {
                 return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
@@ -1592,7 +1602,12 @@ window.addEventListener('DOMContentLoaded',function(){
                 const ringGeo = new THREE.BufferGeometry(); ringGeo.setAttribute('position', new THREE.BufferAttribute(ringPos, 3));
                 const ringMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false});
                 const ring = new THREE.Line(ringGeo, ringMat); group.add(ring);
-                const oAngle = Math.random()*Math.PI*2, oRadius = 3.5+Math.random(), oHeight = (Math.random()-0.5)*4, oSpeed = 0.3+Math.random()*0.3;
+                // Outer-ring orbit so orbs stay clear of the centre UI (greeting, Ask Friday bar, chat panel).
+                // Slow drift: ~30–60s per revolution. Vertical scatter so orbs form a cloud, not a flat ring.
+                const oAngle = Math.random()*Math.PI*2;
+                const oRadius = 10 + Math.random()*2.5;
+                const oHeight = (Math.random()-0.5)*6;
+                const oSpeed = 0.10 + Math.random()*0.10;
                 group.position.set(Math.cos(oAngle)*oRadius, oHeight, Math.sin(oAngle)*oRadius);
                 group.scale.set(0.01,0.01,0.01);
                 this.scene.add(group);
@@ -1602,7 +1617,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,
                     oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
-                    birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[]});
+                    birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
+                    hoverScale:1.0, baseGlowOpacity:0.4});
             }
             updateOrb(id, upd) {
                 const o = this.orbs.get(id); if (!o) return;
@@ -1643,23 +1659,64 @@ window.addEventListener('DOMContentLoaded',function(){
             update(dt, elapsed) {
                 const amp = holoAmplitude;
                 const dead = [];
+
+                // Pre-pass: project every live orb to screen so we can both clamp the label
+                // and run a screen-space hit test for hover. Screen-space hover is much more
+                // forgiving than raycasting against the 0.35-unit sphere — at orbit distance
+                // the sphere is only ~12px wide, which is finicky to point at.
+                const projected = new Map();
                 for (const [id, o] of this.orbs) {
+                    const p3 = o.group.position.clone().project(this.camera);
+                    projected.set(id, {
+                        p3,
+                        sx: (p3.x*0.5+0.5)*window.innerWidth,
+                        sy: (-p3.y*0.5+0.5)*window.innerHeight,
+                        onScreen: p3.z < 1
+                    });
+                }
+
+                let hoveredId = null;
+                if (this.mouseScreen.x > -1000) {
+                    let bestDist = 40; // px hit-radius, generous so labelled orbs are easy to grab
+                    for (const [id, o] of this.orbs) {
+                        if (o.dying) continue;
+                        const pr = projected.get(id);
+                        if (!pr.onScreen) continue;
+                        const d = Math.hypot(pr.sx - this.mouseScreen.x, pr.sy - this.mouseScreen.y);
+                        if (d < bestDist) { bestDist = d; hoveredId = id; }
+                    }
+                }
+                this.hoveredOrbId = hoveredId;
+                this.renderer.domElement.style.cursor = hoveredId ? 'pointer' : '';
+
+                for (const [id, o] of this.orbs) {
+                    const isHovered = (id === hoveredId);
+
+                    // Scale: birth > death > hover. Use mutually exclusive branches so they don't fight.
                     if (!o.birthDone) {
                         o.birthTime += dt;
                         const t = Math.min(1, o.birthTime/0.6);
                         o.group.scale.setScalar(1-Math.pow(1-t,3));
                         if (t>=1) o.birthDone = true;
-                    }
-                    if (o.dying) {
+                    } else if (o.dying) {
                         o.deathTime += dt;
                         const t = Math.min(1, o.deathTime/0.5);
                         o.group.scale.setScalar(1-t);
                         o.labelEl.style.opacity = String(1-t);
                         if (t>=1) { dead.push(id); continue; }
+                    } else {
+                        const target = isHovered ? 1.2 : 1.0;
+                        o.hoverScale += (target - o.hoverScale) * Math.min(1, dt*8);
+                        o.group.scale.setScalar(o.hoverScale);
                     }
-                    o.oAngle += o.oSpeed*dt*(1+amp*1.5);
+
+                    // Freeze orbit angle when hovered so the orb stays under the cursor.
+                    if (!isHovered) {
+                        o.oAngle += o.oSpeed*dt*(1+amp*0.5);
+                    }
                     o.group.position.set(Math.cos(o.oAngle)*o.oRadius, o.oHeight+Math.sin(elapsed*1.5+o.oAngle)*0.5, Math.sin(o.oAngle)*o.oRadius);
-                    o.glow.material.opacity = 0.3+amp*0.3+Math.sin(elapsed*3+o.oAngle)*0.1;
+                    o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + (isHovered ? 0.45 : 0);
+
                     const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
                     const pos = o.ringGeo.attributes.position.array;
                     for (let i=0;i<o.ringSegs;i++) {
@@ -1669,10 +1726,24 @@ window.addEventListener('DOMContentLoaded',function(){
                     }
                     o.ringGeo.attributes.position.needsUpdate = true;
                     o.ring.lookAt(this.camera.position);
+
+                    // Re-project after we moved the orb (position changed above).
                     const p3 = o.group.position.clone().project(this.camera);
-                    const sx = (p3.x*0.5+0.5)*window.innerWidth, sy = (-p3.y*0.5+0.5)*window.innerHeight;
-                    if (p3.z < 1) { o.labelEl.style.display='block'; o.labelEl.style.transform='translate(-50%,-50%) translate('+sx+'px,'+(sy-28)+'px)'; }
-                    else o.labelEl.style.display='none';
+                    const sx = (p3.x*0.5+0.5)*window.innerWidth;
+                    const sy = (-p3.y*0.5+0.5)*window.innerHeight;
+                    if (p3.z < 1) {
+                        o.labelEl.style.display='block';
+                        // Clamp label inside viewport so perimeter orbs don't push their text off-screen.
+                        const lw = o.labelEl.offsetWidth || 80;
+                        const lh = o.labelEl.offsetHeight || 18;
+                        const margin = 8;
+                        const halfW = lw/2;
+                        const clampedX = Math.max(halfW + margin, Math.min(window.innerWidth - halfW - margin, sx));
+                        const clampedY = Math.max(lh/2 + margin, Math.min(window.innerHeight - lh/2 - margin, sy - 28));
+                        o.labelEl.style.transform = 'translate(-50%,-50%) translate('+clampedX+'px,'+clampedY+'px)';
+                    } else {
+                        o.labelEl.style.display='none';
+                    }
                 }
                 for (const id of dead) this._cleanup(id);
             }
