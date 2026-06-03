@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -557,12 +558,14 @@ def _record_outcome_to_skillopt(rec: ApplicationRecord, reward: float,
 # ════════════════════════════════════════════════════════════════════════
 
 def _default_candidate_info() -> Dict[str, str]:
+    # Sourced from environment so personal identity is never hardcoded in source.
+    # Set FRIDAY_CANDIDATE_* in ~/.friday/settings or the environment.
     return {
-        "first_name": "Stephen",
-        "last_name": "Webster",
-        "name": "Stephen C. Webster",
-        "email": "user@example.com",
-        "phone": "",   # user fills in or comes from config
+        "first_name": os.environ.get("FRIDAY_CANDIDATE_FIRST_NAME", ""),
+        "last_name": os.environ.get("FRIDAY_CANDIDATE_LAST_NAME", ""),
+        "name": os.environ.get("FRIDAY_CANDIDATE_NAME", ""),
+        "email": os.environ.get("FRIDAY_CANDIDATE_EMAIL", ""),
+        "phone": os.environ.get("FRIDAY_CANDIDATE_PHONE", ""),
     }
 
 

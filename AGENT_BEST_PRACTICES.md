@@ -87,8 +87,8 @@ COMMIT POINTS (mandatory):
 **Implementation:**
 ```powershell
 # After every milestone:
-git -C "C:\Users\user\Projects\friday-desktop" add -A
-git -C "C:\Users\user\Projects\friday-desktop" commit -m "checkpoint: [description]"
+git -C "%USERPROFILE%\Projects\friday-desktop" add -A
+git -C "%USERPROFILE%\Projects\friday-desktop" commit -m "checkpoint: [description]"
 ```
 
 ### RULE 5: PowerShell Commands Must Be Atomic (Prevents: PowerShell timeout issues)
@@ -305,7 +305,7 @@ Mandatory commit points:
 - After completing any task
 - End of every work session
 
-Format: git -C "C:\Users\user\Projects\friday-desktop" commit -m "type: description"
+Format: git -C "%USERPROFILE%\Projects\friday-desktop" commit -m "type: description"
 ```
 
 ---

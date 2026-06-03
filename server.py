@@ -454,7 +454,7 @@ CLAUDE_TOOLS = [
     {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
     {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Returns up to 500000 chars.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. C:\\Users\\user\\Projects\\foo\\bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
+     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
     {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically.",
      "input_schema": {"type": "object", "properties": {
          "path": {"type": "string", "description": "Absolute or home-relative path"},
@@ -2486,7 +2486,7 @@ def serve_friday_live_sw():
 def career_tracker():
     candidates = [
         WIKI_PROFESSIONAL_DIR / 'application-log.md',
-        Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'applications.md',
+        HOME / 'Projects' / 'career-ops' / 'data' / 'applications.md',
     ]
     tracker_path = next((p for p in candidates if p.is_file()), None)
     if tracker_path:
@@ -2505,7 +2505,7 @@ def career_tracker():
 def career_pipeline():
     candidates = [
         WIKI_PROFESSIONAL_DIR / 'job-search.md',
-        Path('C:\\Users\\user\\Projects\\career-ops\\data') / 'pipeline.md',
+        HOME / 'Projects' / 'career-ops' / 'data' / 'pipeline.md',
     ]
     pipe_path = next((p for p in candidates if p.is_file()), None)
     if pipe_path:
@@ -2523,7 +2523,7 @@ def career_reports():
                 reports.append({'name': f.name, 'size': f.stat().st_size, 'source': 'wiki'})
                 seen.add(f.name)
     # career-ops/reports/ is fallback — add any files not already in wiki
-    fallback_dir = Path('C:\\Users\\user\\Projects\\career-ops\\reports')
+    fallback_dir = HOME / 'Projects' / 'career-ops' / 'reports'
     if fallback_dir.is_dir():
         for f in sorted(fallback_dir.iterdir(), reverse=True):
             if f.suffix == '.md' and f.name not in seen:
@@ -2536,7 +2536,7 @@ def career_reports():
 def career_report(filename):
     candidates = [
         WIKI_PROFESSIONAL_DIR / filename,
-        Path('C:\\Users\\user\\Projects\\career-ops\\reports') / filename,
+        HOME / 'Projects' / 'career-ops' / 'reports' / filename,
     ]
     report_path = next((p for p in candidates if p.is_file()), None)
     if report_path:
@@ -3540,7 +3540,7 @@ def health_appointments():
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
-    template = {"appointments": [{"provider": "Rachel Hodgdon", "type": "***REMOVED*** play therapy", "email": "user@example.com", "next": "", "frequency": ""}]}
+    template = {"appointments": [{"provider": "", "type": "", "email": "", "next": "", "frequency": ""}]}
     path.write_text(json.dumps(template, indent=2), encoding='utf-8')
     return jsonify({"status": "ok", **template})
 
@@ -3807,7 +3807,7 @@ def vibe_code_launch():
     """Launch Claude Code terminals with tasks."""
     data = request.get_json(silent=True) or {}
     tasks = data.get('tasks', [])
-    cwd = data.get('cwd', str(HOME / 'Projects'))
+    cwd = os.path.normpath(os.path.expanduser(data.get('cwd', str(HOME / 'Projects'))))
 
     if not tasks:
         return jsonify({"status": "error", "message": "No tasks provided"}), 400
@@ -3969,7 +3969,7 @@ FRIDAY_SYSTEM_PROMPT = (
 #  CONTEXT AWARENESS ENGINE
 # ═══════════════════════════════════════════════════════════════
 
-CAREER_OPS_DIR = Path('C:\\Users\\user\\Projects\\career-ops\\data')
+CAREER_OPS_DIR = HOME / 'Projects' / 'career-ops' / 'data'
 WIKI_DIR_FRIDAY = HOME / ".friday" / "wiki"
 
 def _load_vault_summary():

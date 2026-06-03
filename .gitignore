@@ -3,6 +3,9 @@ start.bat
 friday_startup.bat
 friday_startup.vbs
 launch_now.bat
+do_commit.bat
+*.bat
+*.vbs
 .env
 *.env
 .env.*
@@ -91,3 +94,13 @@ tests/console_errors.log
 # ─── Build outputs the user wanted excluded ──────────────────────────────
 assets/palette/
 assets/splash/
+
+# ─── Private user data — NEVER commit (PII / minors / family-court) ───────
+data/coparenting-intel.json
+data/*-intel.json
+data/ofw-*.json
+voice_debug.log
+*voice_debug*.log
+# Runtime health/appointment caches if ever generated in-repo
+appointments.json
+insurance.json

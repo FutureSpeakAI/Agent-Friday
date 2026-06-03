@@ -1,7 +1,7 @@
 # Pixel Office — Agent Visualization Layer
 
 ## Source
-`C:\Users\user\Projects\agent-fridays-pixel-office` (fork of pablodelucca/pixel-agents)
+`%USERPROFILE%\Projects\agent-fridays-pixel-office` (fork of pablodelucca/pixel-agents)
 
 ## What It Is
 A pixel art office environment where AI agents are visualized as animated characters.

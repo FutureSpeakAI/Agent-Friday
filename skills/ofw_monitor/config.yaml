@@ -77,8 +77,9 @@ privacy:
   redact_minor_full_name: true
   redact_phone_numbers: true
   redact_street_addresses: true
-  whitelist_emails:
-    - "user@example.com"
+  # Add your own address(es). Override at runtime via
+  # ~/.friday/skills/ofw_monitor.local.yaml — keep personal emails out of source.
+  whitelist_emails: []
   never_send_to_remote: true        # hard guard — any caller bypassing this is logged
 
 notifications:
