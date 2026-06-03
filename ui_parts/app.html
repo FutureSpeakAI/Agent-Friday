@@ -2332,7 +2332,7 @@ function App(){
   const[voiceOn,setVoiceOn]=useState(false);
   const[voiceStatus,setVoiceStatus]=useState('');
   const[micLevel,setMicLevel]=useState(0);
-  const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0});
+  const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false});
   const[audioInputDevices,setAudioInputDevices]=useState([]);
   const[audioOutputDevices,setAudioOutputDevices]=useState([]);
   const[audioDevicePopup,setAudioDevicePopup]=useState(false);
@@ -2340,6 +2340,23 @@ function App(){
   const refreshAudioDevicesRef=useRef(null);
   const voiceStartRef=useRef(null);
   const voiceStopRef=useRef(null);
+  // Flush ALL voice output: stop every scheduled/playing source node, drop the
+  // pending queue, and raise the "cancelled" gate so any in-flight chunks from
+  // the old turn are discarded on arrival. Used by both the stop button
+  // (disengage) and barge-in (user talks over Friday). A safety timer re-opens
+  // the gate so a false barge-in can never permanently mute playback.
+  const flushPlaybackRef=useRef(null);
+  flushPlaybackRef.current=()=>{
+    const v=voiceRef.current;
+    v.playbackCancelled=true;
+    if(v.activeSources){
+      v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});
+      v.activeSources=[];
+    }
+    if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
+    try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv)vv.playbackCancelled=false},2000);
+  };
   voiceStartRef.current=async()=>{
     if(voiceOn)return;
     const PCM_IN_RATE=16000,PCM_OUT_RATE=24000;
@@ -2391,10 +2408,22 @@ function App(){
         v.micNode=proc;
         proc.onaudioprocess=ev=>{
           const input=ev.inputBuffer.getChannelData(0);
-          // Always measure peak so silence detection works even before WS opens.
-          let _peak=0;for(let i=0;i<input.length;i++){const a=input[i]<0?-input[i]:input[i];if(a>_peak)_peak=a}
+          // Always measure peak (and RMS) so silence detection works even
+          // before WS opens. RMS drives barge-in; peak drives silence guards.
+          let _peak=0,_sumSq=0;for(let i=0;i<input.length;i++){const x=input[i];const a=x<0?-x:x;if(a>_peak)_peak=a;_sumSq+=x*x}
+          const _rms=Math.sqrt(_sumSq/input.length);
           if(_peak>v.micPeak)v.micPeak=_peak;
           v.micPeakRecent=_peak;
+          // Barge-in: if Friday is currently speaking (audio still queued ahead
+          // of the play cursor) and the user starts talking, cut playback now
+          // and flush the queue so the old response doesn't keep playing over
+          // them. Gemini's server-side VAD picks up the new speech and opens a
+          // fresh turn — we only silence the local output here.
+          const _speaking=v.audioCtx&&v.audioCtx.state!=='closed'&&v.activeSources&&v.activeSources.length>0&&v.playCursor>v.audioCtx.currentTime;
+          if(_speaking&&_rms>0.045){
+            flushPlaybackRef.current?.();
+            setVoiceStatus('listening');
+          }
           const ws=v.ws;
           if(!ws||ws.readyState!==WebSocket.OPEN)return;
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
@@ -2475,11 +2504,21 @@ function App(){
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
+        // Drop chunks that arrive after a barge-in / disconnect flushed the
+        // queue — these are trailing audio from the turn the user interrupted.
+        if(v.playbackCancelled)return;
+        if(!v.audioCtx||v.audioCtx.state==='closed')return;
         const int16=b64ToI16(m.data);
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}src.start(startAt);
+        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}
+        // Track the node so a barge-in / disconnect can stop it mid-playback;
+        // self-evict from the queue when it finishes cleanly.
+        if(!v.activeSources)v.activeSources=[];
+        v.activeSources.push(src);
+        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1)};
+        src.start(startAt);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -2495,9 +2534,17 @@ function App(){
           return next;
         });
       }else if(m.type==='turn_end'){
+        // Old turn is over — re-open the playback gate for the next response.
+        try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+        v.playbackCancelled=false;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
-        v.playCursor=v.audioCtx?v.audioCtx.currentTime:0;
+        // Gemini acknowledged the interruption: stop any in-flight old audio,
+        // then re-open the gate so the fresh turn's audio plays.
+        flushPlaybackRef.current?.();
+        try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+        v.playbackCancelled=false;
+        v.playCursor=v.audioCtx&&v.audioCtx.state!=='closed'?v.audioCtx.currentTime:0;
         setVoiceStatus('listening');
       }else if(m.type==='status'){
         setVoiceStatus(m.text);
@@ -2527,16 +2574,19 @@ function App(){
       const v2=voiceRef.current;
       try{v2.silenceTimer&&clearTimeout(v2.silenceTimer)}catch(_){}
       try{v2.silenceTimer2&&clearTimeout(v2.silenceTimer2)}catch(_){}
+      try{v2.cancelResetTimer&&clearTimeout(v2.cancelResetTimer)}catch(_){}
       try{v2.diagTimer&&clearInterval(v2.diagTimer)}catch(_){}
       try{v2.meterTimer&&clearInterval(v2.meterTimer)}catch(_){}
       try{v2.frameTimer&&clearInterval(v2.frameTimer)}catch(_){}
+      // Stop any audio still scheduled/playing before tearing down the context.
+      try{(v2.activeSources||[]).forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}})}catch(_){}
       try{v2.micNode&&v2.micNode.disconnect()}catch(_){}
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
       try{v2.audioCtx&&v2.audioCtx.close()}catch(_){}
       try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
       window._fridayHoloAmplitude=0;
-      voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+      voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
       setMicLevel(0);
       setVoiceOn(false);
       setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
@@ -2544,20 +2594,26 @@ function App(){
   };
   voiceStopRef.current=()=>{
     const v=voiceRef.current;
+    // 1) Kill audio output FIRST — stop every scheduled/playing source and
+    //    flush the queue so nothing keeps speaking as we tear down.
+    try{flushPlaybackRef.current?.()}catch(_){}
+    try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+    // 2) Drop the connection immediately. Do NOT send {type:'end'} /
+    //    audio_stream_end first — that makes Gemini treat the click as "user
+    //    done speaking" and generate one last response that overlaps teardown.
+    try{v.ws&&v.ws.close()}catch(_){}
     try{v.silenceTimer&&clearTimeout(v.silenceTimer)}catch(_){}
     try{v.silenceTimer2&&clearTimeout(v.silenceTimer2)}catch(_){}
     try{v.diagTimer&&clearInterval(v.diagTimer)}catch(_){}
     try{v.meterTimer&&clearInterval(v.meterTimer)}catch(_){}
     try{v.frameTimer&&clearInterval(v.frameTimer)}catch(_){}
-    try{v.ws&&v.ws.send(JSON.stringify({type:'end'}))}catch(_){}
-    try{v.ws&&v.ws.close()}catch(_){}
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
     try{v.micSource&&v.micSource.disconnect()}catch(_){}
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
     try{if(v._holoFrame)cancelAnimationFrame(v._holoFrame)}catch(_){}
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
     window._fridayHoloAmplitude=0;
-    voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+    voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
     setMicLevel(0);
     setVoiceOn(false);setVoiceStatus('');
   };

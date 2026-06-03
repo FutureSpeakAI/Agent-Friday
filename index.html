@@ -1336,7 +1336,57 @@ window.addEventListener('DOMContentLoaded',function(){
         .friday-doc.compact td { padding: 5px 10px; }
         .friday-doc.compact hr { margin: 14px 0; }
 
-        /* ─── 
+        /* ─── Model Routing: Selector Tiers ─── */
+        .model-selector-tier {
+            font-family: 'Orbitron', monospace; font-size: 9px;
+            color: rgba(0,212,255,0.75); letter-spacing: 0.12em;
+            text-transform: uppercase; padding: 8px 12px 3px;
+            user-select: none;
+        }
+        .model-option-local {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-local:hover { background: rgba(245,158,11,0.1); }
+        .model-option-cloud {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-cloud:hover { background: rgba(0,212,255,0.08); }
+        .model-badge-local {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(245,158,11,0.12); color: #f59e0b;
+            border: 1px solid rgba(245,158,11,0.25);
+        }
+        .model-badge-cloud {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,212,255,0.1); color: #00d4ff;
+            border: 1px solid rgba(0,212,255,0.2);
+        }
+        .ollama-status-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            display: inline-block; flex-shrink: 0;
+        }
+        .ollama-status-dot.online { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
+        .ollama-status-dot.offline { background: #555; }
+        .inference-slots {
+            display: inline-flex; align-items: center; gap: 4px;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(245,158,11,0.85); padding: 2px 7px;
+            border-radius: 8px; background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.18);
+        }
+    </style>
+</head>
+
 <body>
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
@@ -2742,7 +2792,19 @@ window.fridayUpdateThread = function(orbId, steps) {
     window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:steps||[]}}));
 };
 window.fridayAddThreadStep = function(orbId, step) {
-    if (!window._fridayThreads[orbId]) window._fridayThread
+    if (!window._fridayThreads[orbId]) window._fridayThreads[orbId] = [];
+    window._fridayThreads[orbId].push(step);
+    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:window._fridayThreads[orbId]}}));
+};
+
+// === KEYBOARD CONTROLS ===
+document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
+    if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+</script>
+
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 const DOCK_GROUPS=[
@@ -5077,7 +5139,7 @@ function App(){
   const[voiceOn,setVoiceOn]=useState(false);
   const[voiceStatus,setVoiceStatus]=useState('');
   const[micLevel,setMicLevel]=useState(0);
-  const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0});
+  const voiceRef=useRef({ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false});
   const[audioInputDevices,setAudioInputDevices]=useState([]);
   const[audioOutputDevices,setAudioOutputDevices]=useState([]);
   const[audioDevicePopup,setAudioDevicePopup]=useState(false);
@@ -5085,6 +5147,23 @@ function App(){
   const refreshAudioDevicesRef=useRef(null);
   const voiceStartRef=useRef(null);
   const voiceStopRef=useRef(null);
+  // Flush ALL voice output: stop every scheduled/playing source node, drop the
+  // pending queue, and raise the "cancelled" gate so any in-flight chunks from
+  // the old turn are discarded on arrival. Used by both the stop button
+  // (disengage) and barge-in (user talks over Friday). A safety timer re-opens
+  // the gate so a false barge-in can never permanently mute playback.
+  const flushPlaybackRef=useRef(null);
+  flushPlaybackRef.current=()=>{
+    const v=voiceRef.current;
+    v.playbackCancelled=true;
+    if(v.activeSources){
+      v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});
+      v.activeSources=[];
+    }
+    if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
+    try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv)vv.playbackCancelled=false},2000);
+  };
   voiceStartRef.current=async()=>{
     if(voiceOn)return;
     const PCM_IN_RATE=16000,PCM_OUT_RATE=24000;
@@ -5136,10 +5215,22 @@ function App(){
         v.micNode=proc;
         proc.onaudioprocess=ev=>{
           const input=ev.inputBuffer.getChannelData(0);
-          // Always measure peak so silence detection works even before WS opens.
-          let _peak=0;for(let i=0;i<input.length;i++){const a=input[i]<0?-input[i]:input[i];if(a>_peak)_peak=a}
+          // Always measure peak (and RMS) so silence detection works even
+          // before WS opens. RMS drives barge-in; peak drives silence guards.
+          let _peak=0,_sumSq=0;for(let i=0;i<input.length;i++){const x=input[i];const a=x<0?-x:x;if(a>_peak)_peak=a;_sumSq+=x*x}
+          const _rms=Math.sqrt(_sumSq/input.length);
           if(_peak>v.micPeak)v.micPeak=_peak;
           v.micPeakRecent=_peak;
+          // Barge-in: if Friday is currently speaking (audio still queued ahead
+          // of the play cursor) and the user starts talking, cut playback now
+          // and flush the queue so the old response doesn't keep playing over
+          // them. Gemini's server-side VAD picks up the new speech and opens a
+          // fresh turn — we only silence the local output here.
+          const _speaking=v.audioCtx&&v.audioCtx.state!=='closed'&&v.activeSources&&v.activeSources.length>0&&v.playCursor>v.audioCtx.currentTime;
+          if(_speaking&&_rms>0.045){
+            flushPlaybackRef.current?.();
+            setVoiceStatus('listening');
+          }
           const ws=v.ws;
           if(!ws||ws.readyState!==WebSocket.OPEN)return;
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
@@ -5220,11 +5311,21 @@ function App(){
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
+        // Drop chunks that arrive after a barge-in / disconnect flushed the
+        // queue — these are trailing audio from the turn the user interrupted.
+        if(v.playbackCancelled)return;
+        if(!v.audioCtx||v.audioCtx.state==='closed')return;
         const int16=b64ToI16(m.data);
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}src.start(startAt);
+        const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}
+        // Track the node so a barge-in / disconnect can stop it mid-playback;
+        // self-evict from the queue when it finishes cleanly.
+        if(!v.activeSources)v.activeSources=[];
+        v.activeSources.push(src);
+        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1)};
+        src.start(startAt);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -5240,9 +5341,17 @@ function App(){
           return next;
         });
       }else if(m.type==='turn_end'){
+        // Old turn is over — re-open the playback gate for the next response.
+        try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+        v.playbackCancelled=false;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
-        v.playCursor=v.audioCtx?v.audioCtx.currentTime:0;
+        // Gemini acknowledged the interruption: stop any in-flight old audio,
+        // then re-open the gate so the fresh turn's audio plays.
+        flushPlaybackRef.current?.();
+        try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+        v.playbackCancelled=false;
+        v.playCursor=v.audioCtx&&v.audioCtx.state!=='closed'?v.audioCtx.currentTime:0;
         setVoiceStatus('listening');
       }else if(m.type==='status'){
         setVoiceStatus(m.text);
@@ -5272,16 +5381,19 @@ function App(){
       const v2=voiceRef.current;
       try{v2.silenceTimer&&clearTimeout(v2.silenceTimer)}catch(_){}
       try{v2.silenceTimer2&&clearTimeout(v2.silenceTimer2)}catch(_){}
+      try{v2.cancelResetTimer&&clearTimeout(v2.cancelResetTimer)}catch(_){}
       try{v2.diagTimer&&clearInterval(v2.diagTimer)}catch(_){}
       try{v2.meterTimer&&clearInterval(v2.meterTimer)}catch(_){}
       try{v2.frameTimer&&clearInterval(v2.frameTimer)}catch(_){}
+      // Stop any audio still scheduled/playing before tearing down the context.
+      try{(v2.activeSources||[]).forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}})}catch(_){}
       try{v2.micNode&&v2.micNode.disconnect()}catch(_){}
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
       try{v2.audioCtx&&v2.audioCtx.close()}catch(_){}
       try{if(v2._holoFrame)cancelAnimationFrame(v2._holoFrame)}catch(_){}
       window._fridayHoloAmplitude=0;
-      voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+      voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
       setMicLevel(0);
       setVoiceOn(false);
       setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
@@ -5289,20 +5401,26 @@ function App(){
   };
   voiceStopRef.current=()=>{
     const v=voiceRef.current;
+    // 1) Kill audio output FIRST — stop every scheduled/playing source and
+    //    flush the queue so nothing keeps speaking as we tear down.
+    try{flushPlaybackRef.current?.()}catch(_){}
+    try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
+    // 2) Drop the connection immediately. Do NOT send {type:'end'} /
+    //    audio_stream_end first — that makes Gemini treat the click as "user
+    //    done speaking" and generate one last response that overlaps teardown.
+    try{v.ws&&v.ws.close()}catch(_){}
     try{v.silenceTimer&&clearTimeout(v.silenceTimer)}catch(_){}
     try{v.silenceTimer2&&clearTimeout(v.silenceTimer2)}catch(_){}
     try{v.diagTimer&&clearInterval(v.diagTimer)}catch(_){}
     try{v.meterTimer&&clearInterval(v.meterTimer)}catch(_){}
     try{v.frameTimer&&clearInterval(v.frameTimer)}catch(_){}
-    try{v.ws&&v.ws.send(JSON.stringify({type:'end'}))}catch(_){}
-    try{v.ws&&v.ws.close()}catch(_){}
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
     try{v.micSource&&v.micSource.disconnect()}catch(_){}
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
     try{if(v._holoFrame)cancelAnimationFrame(v._holoFrame)}catch(_){}
     try{v.audioCtx&&v.audioCtx.close()}catch(_){}
     window._fridayHoloAmplitude=0;
-    voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0};
+    voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
     setMicLevel(0);
     setVoiceOn(false);setVoiceStatus('');
   };
@@ -6642,4 +6760,64 @@ function App(){
     </div>}
 
     {/* Dock — grouped (Life / Work / System) */}
-    <div className={`dock ${dockHidden?'hidden':''
+    <div className={`dock ${dockHidden?'hidden':''}`}>
+      {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
+        {gi>0&&<div className="dock-sep"/>}
+        <div className="dock-group">
+          <div className="dock-group-btns">
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)} style={{position:'relative'}}>
+              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
+              {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
+            </button>)}
+          </div>
+          <div className="dock-group-label">{g.name}</div>
+        </div>
+      </React.Fragment>))}
+    </div>
+    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
+
+    {/* Background tasks now live in the bell-icon dropdown above */}
+
+    {/* Task Result Modal */}
+    {taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:'min(720px, 90vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.96)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:18,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <div>
+            <div style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>TASK RESULT · {(taskResultModal.status||'').toUpperCase()}</div>
+            <div style={{fontSize:14,color:'#fff',marginTop:3}}>{taskResultModal.name}</div>
+          </div>
+          <button className="btn" onClick={()=>setTaskResultModal(null)}>Close</button>
+        </div>
+        {taskResultModal.description&&<div style={{fontSize:11,color:'#888',marginBottom:10,fontStyle:'italic'}}>{taskResultModal.description}</div>}
+        {taskResultModal.result
+          ?<FridayDoc compact text={taskResultModal.result} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
+          :<div style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)',color:'#888',fontSize:12,fontStyle:'italic'}}>(no result text)</div>}
+        {(taskResultModal.log||[]).length>0&&<div style={{marginTop:12}}>
+          <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>
+          <div style={{background:'rgba(0,0,0,0.4)',padding:8,borderRadius:6,maxHeight:180,overflowY:'auto'}}>
+            {(taskResultModal.log||[]).map((l,i)=><div key={i} style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(200,200,220,0.7)',padding:'1px 0'}}>→ {l}</div>)}
+          </div>
+        </div>}
+      </div>
+    </div>}
+  </>);
+}
+
+// Mount with error surface so mobile failures are visible instead of a blank dock.
+(function mountFriday(){
+  try{
+    var target=document.getElementById('ui-inner')||document.getElementById('ui-root');
+    if(!target){throw new Error('Mount target #ui-inner/#ui-root not found');}
+    ReactDOM.createRoot(target).render(<App/>);
+  }catch(err){
+    console.error('[FRIDAY] React mount failed:',err);
+    var host=document.getElementById('ui-inner')||document.getElementById('ui-root')||document.body;
+    var box=document.createElement('div');
+    box.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:rgba(20,0,10,.92);border:1px solid #ff0080;border-radius:10px;padding:12px 14px;color:#ffdbe8;font:12px/1.4 monospace;pointer-events:auto;max-height:45vh;overflow:auto';
+    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY UI failed to mount</div><pre style="white-space:pre-wrap;margin:0">'+(err&&err.stack?err.stack:String(err))+'</pre>';
+    host.appendChild(box);
+  }
+})();
+</script>
+</body>
+</html>

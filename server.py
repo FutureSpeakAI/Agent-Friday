@@ -2375,7 +2375,8 @@ def _settings_system_prefix(settings, personality):
     ]).strip() + "\n"
 
 
-def _get_friday_system_prompt(keywords='', workspace=''):
+def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
+                              vault_control=None, vault_fallback='redact'):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
@@ -2385,6 +2386,11 @@ def _get_friday_system_prompt(keywords='', workspace=''):
 
     keywords: the user's prompt text; drives smart wiki context routing
     workspace: hint for context selection ('draft', 'task', 'chat', etc.)
+    provider/vault_control/vault_fallback: when a VaultAccessControl is passed,
+        the context (and self-knowledge) is gated for `provider` — a local
+        provider sees everything, a cloud provider (e.g. 'gemini' for the Live
+        voice session) gets TIER_1 in full, TIER_2 redacted, TIER_3 dropped.
+        Defaults keep the legacy ungated behavior for existing callers.
     """
     settings = _load_settings()
     personality = _load_agent_personality()
@@ -2394,10 +2400,17 @@ def _get_friday_system_prompt(keywords='', workspace=''):
     # This gives Friday a persistent self-model across cold starts.
     self_knowledge = _load_self_knowledge()
     if self_knowledge:
-        prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
+        if vault_control is not None:
+            self_knowledge = vault_control.gate_content(
+                self_knowledge, provider, fallback=vault_fallback,
+                detail='self-knowledge')
+        if self_knowledge:
+            prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
 
     try:
-        system_prompt, _ = _build_context_prompt(keywords or '', workspace)
+        system_prompt, _ = _build_context_prompt(
+            keywords or '', workspace, provider=provider,
+            vault_control=vault_control, vault_fallback=vault_fallback)
     except Exception:
         system_prompt = FRIDAY_SYSTEM_PROMPT
     return prefix + (system_prompt or FRIDAY_SYSTEM_PROMPT)
@@ -7462,18 +7475,34 @@ if sock is not None:
                 pass
             return
 
+        # Vault gating: the Live voice system instruction is sent to Google's
+        # cloud servers, so it must be gated as a CLOUD provider. TIER_1 passes
+        # through; TIER_2 is redacted; TIER_3 is dropped. This extends the
+        # local-only vault policy to voice without breaking the experience.
+        _vault_control = _get_vault_control() if _vault_local_only() else None
+        _vault_fallback = _vault_cloud_fallback()
         try:
             personality = _load_agent_personality()
-            full_ctx = _get_friday_system_prompt()
+            full_ctx = _get_friday_system_prompt(
+                provider='gemini',
+                vault_control=_vault_control,
+                vault_fallback=_vault_fallback,
+            )
         except Exception as e:
             personality = ''
             full_ctx = f"(context load failed: {e})"
+        if _vault_control is not None:
+            _vlog('voice system prompt gated for cloud provider=gemini (vault local-only)')
         voice_prefix = (
             "You are Agent Friday, a personal AI assistant for Stephen Webster.\n"
             "You are having a LIVE VOICE conversation — be concise and natural.\n"
             "Keep responses SHORT (1-3 sentences). Short sentences. Pause. Let him interrupt.\n"
             "NEVER use markdown formatting — no asterisks, headers, or bullet points. Speak naturally.\n"
-            "Use contractions and casual tone. Ask a follow-up question to keep the conversation flowing.\n\n"
+            "Use contractions and casual tone. Ask a follow-up question to keep the conversation flowing.\n"
+            "For questions about personal financial data, health records, family legal "
+            "matters, or other sensitive vault content, tell the user: 'That information "
+            "is in my Sovereign Vault. I can only access it through local processing — "
+            "try asking me in text chat with local routing enabled.'\n\n"
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
