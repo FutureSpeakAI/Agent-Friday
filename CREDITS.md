@@ -55,6 +55,9 @@ In Friday's chat pipeline, Headroom is the compression layer beneath the semanti
 | [Requests](https://requests.readthedocs.io/) | Apache 2.0 | HTTP client |
 | [PyYAML](https://pyyaml.org/) | MIT | Skill file parsing |
 | [NumPy](https://numpy.org/) | BSD-3 | Embedding similarity computation |
+| [pystray](https://github.com/moses-palmer/pystray) | GPL-3.0/LGPL-3.0 | Windows system tray (`friday_tray.py`) |
+| [Pillow](https://python-pillow.org/) | HPND | Image handling for tray icon |
+| [flask-sock](https://github.com/miguelgrinberg/flask-sock) | MIT | WebSocket support for voice mode |
 
 ---
 
@@ -76,3 +79,22 @@ In Friday's chat pipeline, Headroom is the compression layer beneath the semanti
 - The **Microsoft Research** team behind SkillOpt for the skill evolution framework
 - **Andrej Karpathy** for articulating the auto-research loop concept
 - The open-source community behind Flask, sentence-transformers, Three.js, and every dependency listed above
+
+---
+
+## Fonts
+
+| Font | Usage | License |
+|------|-------|---------|
+| [Orbitron](https://fonts.google.com/specimen/Orbitron) | Headings and HUD elements | OFL |
+| [Inter](https://fonts.google.com/specimen/Inter) | Body text | OFL |
+| [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) | Code and monospace elements | OFL |
+
+---
+
+## Design Influences
+
+- **Isaac Asimov's Three Laws of Robotics** — the ethical framework (Asimov's cLaws) that governs all agent behavior
+- **Jarvis (Iron Man)** — the personal AI assistant archetype: contextual, loyal, capable
+- **Cyberpunk / Vaporwave aesthetics** — the holographic UI design language
+- **Hermes protocol** — context file injection from project directories

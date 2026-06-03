@@ -1,0 +1,25 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2024-2026 Stephen C. Webster / FutureSpeak.AI
+All rights reserved.
+
+This software and associated documentation files (the "Software") are the
+proprietary property of Stephen C. Webster and FutureSpeak.AI.
+
+NOTICE: A formal open-source or proprietary license has not yet been selected
+for this project. Until a license is chosen and this file is updated:
+
+1. The source code is published for transparency and portfolio purposes.
+2. No permission is granted to use, copy, modify, merge, publish, distribute,
+   sublicense, or sell copies of the Software without explicit written
+   permission from the copyright holder.
+3. Contributions submitted via pull request are assumed to be offered under
+   the same terms as the eventual license chosen by the copyright holder.
+
+For licensing inquiries, contact: stephen@futurespeak.ai
+
+---
+
+Third-party components included in or used by this project retain their
+original licenses. See CREDITS.md for a full list of dependencies and
+their respective licenses.
