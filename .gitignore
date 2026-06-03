@@ -99,8 +99,15 @@ assets/splash/
 data/coparenting-intel.json
 data/*-intel.json
 data/ofw-*.json
+data/*.json
 voice_debug.log
 *voice_debug*.log
 # Runtime health/appointment caches if ever generated in-repo
 appointments.json
 insurance.json
+# Vault / federation secrets anywhere in the tree
+**/bridge-token
+**/node-identity.json
+*.key
+*.pem
+*.pfx

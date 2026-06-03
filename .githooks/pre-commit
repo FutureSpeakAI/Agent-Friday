@@ -1,0 +1,27 @@
+#!/bin/sh
+# Agent Friday pre-commit hook — runs the secret/PII scanner before every commit.
+#
+# Activate (once, per clone):
+#     git config core.hooksPath .githooks
+#
+# Bypass for a single line:  append  "# pragma: allowlist secret"
+# Emergency bypass (discouraged):  git commit --no-verify
+#
+# Resolves a Python 3 interpreter across Windows (py launcher) and *nix.
+set -e
+
+HERE="$(dirname "$0")"
+SCANNER="$HERE/security_scan.py"
+
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v py >/dev/null 2>&1; then
+    PY="py -3"
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+else
+    echo "[pre-commit] no Python interpreter found; skipping security scan." >&2
+    exit 0
+fi
+
+exec $PY "$SCANNER"
