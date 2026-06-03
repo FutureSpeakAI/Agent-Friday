@@ -2049,6 +2049,32 @@ def _get_context_pruner(cfg):
         return _CONTEXT_PRUNER
 
 
+# ── Headroom context compressor (lazy singleton) ──────────────────────
+# The next layer below the pruner: the pruner selects WHICH turns survive, then
+# Headroom (https://github.com/chopratejas/headroom, by Tejas Chopra, Apache 2.0)
+# compresses the CONTENT of those turns — JSON tool outputs, code, prose — before
+# they hit the Anthropic API. The two compound: prune selects, Headroom squeezes.
+# The Headroom library is imported lazily on first compress(), never at startup.
+_CONTEXT_COMPRESSOR = None
+_CONTEXT_COMPRESSOR_LOCK = threading.Lock()
+
+
+def _get_context_compressor(cfg):
+    """Return the process-wide ContextCompressor, building it lazily on first use.
+
+    cfg is the `context_compression` block from settings.json. Thresholds are
+    refreshed on every call so live settings edits take effect without a restart.
+    """
+    global _CONTEXT_COMPRESSOR
+    with _CONTEXT_COMPRESSOR_LOCK:
+        if _CONTEXT_COMPRESSOR is None:
+            from context_compressor import ContextCompressor
+            _CONTEXT_COMPRESSOR = ContextCompressor.from_settings(cfg)
+        else:
+            _CONTEXT_COMPRESSOR.configure(cfg)
+        return _CONTEXT_COMPRESSOR
+
+
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
@@ -2096,6 +2122,14 @@ DEFAULT_SETTINGS = {
         "keep_recent": 4,       # always keep this many recent turn pairs verbatim
         "top_k": 10,            # semantically relevant archived turns to retrieve
         "model": "all-MiniLM-L6-v2",
+    },
+    # ── Headroom Context Compression (compresses the CONTENT of kept turns) ──
+    # Runs right after pruning: Headroom squeezes JSON tool outputs, code, and
+    # prose in the messages before they reach the API. 60-95% fewer tokens, same
+    # answers. https://github.com/chopratejas/headroom — Tejas Chopra, Apache 2.0.
+    "context_compression": {
+        "enabled": True,
+        "min_tokens_to_compress": 1000,  # skip compression below this payload size
     },
 }
 
@@ -3125,6 +3159,32 @@ def context_stats():
         "total_bytes": total_bytes,
         "avg_entries_per_day": avg_per_day,
         "log_dir": str(CONTEXT_LOG_DIR),
+    })
+
+
+@app.route('/api/compression-stats', methods=['GET'])
+def compression_stats():
+    """Headroom context-compression savings for this server process.
+
+    Compression powered by Headroom (https://github.com/chopratejas/headroom,
+    Tejas Chopra, Apache 2.0). Stats are cumulative since the last restart.
+    """
+    settings = _load_settings()
+    cfg = settings.get('context_compression') or {}
+    try:
+        compressor = _get_context_compressor(cfg)
+        stats = compressor.get_stats()
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "message": str(exc),
+            "enabled": bool(cfg.get('enabled', True)),
+            "available": False,
+        }), 200
+    return jsonify({
+        "status": "ok",
+        "powered_by": "Headroom (https://github.com/chopratejas/headroom)",
+        **stats,
     })
 
 
@@ -4557,6 +4617,33 @@ def chat():
             except Exception as _pe:
                 # Pruning is best-effort — never block a chat on it.
                 print(f"  [PRUNE] skipped: {_pe}")
+
+        # ── Headroom compression (compress the CONTENT of the kept turns) ──
+        # The pruner just chose WHICH turns survive; Headroom now squeezes the
+        # JSON tool outputs, code, and prose INSIDE them before they hit the API.
+        # Runs before PII scrubbing so the [PII:...] tags it inserts stay intact.
+        # Best-effort: any failure falls back to the uncompressed messages.
+        _compress_cfg = settings.get('context_compression') or {}
+        if _compress_cfg.get('enabled', True):
+            try:
+                compressor = _get_context_compressor(_compress_cfg)
+                if compressor.should_compress(messages):
+                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-4-7'
+                    # Brief process orb so the user can see compression happen.
+                    _comp_pid = f"compress-{uuid.uuid4().hex[:8]}"
+                    try:
+                        process_register(
+                            _comp_pid, name="Compressing Context",
+                            label="Compressing Context", category="monitoring",
+                            icon="📦",
+                        )
+                        threading.Timer(2.0, process_remove, args=(_comp_pid,)).start()
+                    except Exception:
+                        pass
+                    messages = compressor.compress(messages, model=_selected_model)
+            except Exception as _ce:
+                # Compression is best-effort — never block a chat on it.
+                print(f"  [HEADROOM] skipped: {_ce}")
 
         # ── Privacy Shield: scrub PII out of system prompt + all messages ──
         # All real PII is replaced with [PII:type:hash] tags before any byte
