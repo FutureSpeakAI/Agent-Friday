@@ -7501,8 +7501,11 @@ if sock is not None:
             "Use contractions and casual tone. Ask a follow-up question to keep the conversation flowing.\n"
             "For questions about personal financial data, health records, family legal "
             "matters, or other sensitive vault content, tell the user: 'That information "
-            "is in my Sovereign Vault. I can only access it through local processing — "
-            "try asking me in text chat with local routing enabled.'\n\n"
+            "is in my Sovereign Vault, which I can only access through local processing. "
+            "If you'd like, I can set up a fully local voice mode using Whisper and a "
+            "local TTS engine — that way we can have voice conversations about anything, "
+            "including your private data, without any of it leaving this machine. Want me "
+            "to check if your hardware can handle it?'\n\n"
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
