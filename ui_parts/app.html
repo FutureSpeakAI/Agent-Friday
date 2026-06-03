@@ -3802,6 +3802,13 @@ function App(){
               </div>
             </div>
             {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
+
+            <div className="settings-subtitle" style={{marginTop:14}}>Acknowledgments</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',lineHeight:1.6,fontFamily:'JetBrains Mono'}}>
+              Context compression powered by{' '}
+              <a href="https://github.com/chopratejas/headroom" target="_blank" rel="noopener noreferrer" style={{color:'#00d4ff',textDecoration:'none'}}>Headroom</a>
+              {' '}by Tejas Chopra — Apache 2.0. Compresses tool outputs, JSON, code, and prose before they reach the LLM (60-95% fewer tokens, same answers).
+            </div>
           </div>
         </div>
       </div>
