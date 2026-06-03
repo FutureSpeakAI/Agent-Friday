@@ -1335,6 +1335,55 @@ window.addEventListener('DOMContentLoaded',function(){
         .friday-doc.compact th { padding: 6px 10px; font-size: 10px; }
         .friday-doc.compact td { padding: 5px 10px; }
         .friday-doc.compact hr { margin: 14px 0; }
+
+        /* ─── Model Routing: Selector Tiers ─── */
+        .model-selector-tier {
+            font-family: 'Orbitron', monospace; font-size: 9px;
+            color: rgba(0,212,255,0.75); letter-spacing: 0.12em;
+            text-transform: uppercase; padding: 8px 12px 3px;
+            user-select: none;
+        }
+        .model-option-local {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-local:hover { background: rgba(245,158,11,0.1); }
+        .model-option-cloud {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-cloud:hover { background: rgba(0,212,255,0.08); }
+        .model-badge-local {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(245,158,11,0.12); color: #f59e0b;
+            border: 1px solid rgba(245,158,11,0.25);
+        }
+        .model-badge-cloud {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,212,255,0.1); color: #00d4ff;
+            border: 1px solid rgba(0,212,255,0.2);
+        }
+        .ollama-status-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            display: inline-block; flex-shrink: 0;
+        }
+        .ollama-status-dot.online { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
+        .ollama-status-dot.offline { background: #555; }
+        .inference-slots {
+            display: inline-flex; align-items: center; gap: 4px;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(245,158,11,0.85); padding: 2px 7px;
+            border-radius: 8px; background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.18);
+        }
     </style>
 </head>
 
@@ -1625,7 +1674,7 @@ window.addEventListener('DOMContentLoaded',function(){
             _catColor(cat) {
                 return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
             }
-            addOrb({id, label, category, icon}) {
+            addOrb({id, label, category, icon, model}) {
                 if (this.orbs.has(id)) return;
                 if (this.orbs.size >= this.maxOrbs) {
                     let oldest = null;
@@ -1634,7 +1683,8 @@ window.addEventListener('DOMContentLoaded',function(){
                     }
                     if (oldest) this._cleanup(oldest.id); else return;
                 }
-                const color = this._catColor(category);
+                const isLocal = !!(model && (id.startsWith('local-') || model.indexOf('claude') === -1));
+                const color = isLocal ? 0xf59e0b : this._catColor(category);
                 const group = new THREE.Group();
                 const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
                 const sphereMat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -1658,9 +1708,10 @@ window.addEventListener('DOMContentLoaded',function(){
                 this.scene.add(group);
                 const labelEl = document.createElement('div');
                 labelEl.className = 'orb-label';
-                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>';
+                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+(isLocal?'🏠 ':'☁️ ')+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
+                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
-                this.orbs.set(id, {id,label,category,icon,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,
+                this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
                     oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
                     birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
                     hoverScale:1.0, baseGlowOpacity:0.4});
@@ -1680,7 +1731,7 @@ window.addEventListener('DOMContentLoaded',function(){
             }
             getOrbs() {
                 const out = [];
-                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,progress:o.progress,status:o.status,steps:o.steps});
+                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,model:o.model,progress:o.progress,status:o.status,steps:o.steps});
                 return out;
             }
             _onClick(ev) {
@@ -5053,6 +5104,29 @@ function App(){
   },[modelMenuOpen]);
   const orchModel=ORCHESTRATOR_MODELS.find(m=>m.id===agentSettings.orchestrator_model)||ORCHESTRATOR_MODELS[0];
   const creativeModel=CREATIVE_MODELS.find(m=>m.id===agentSettings.creative_model)||CREATIVE_MODELS[0];
+
+  // ── Ollama / Model Routing state ──
+  const[ollamaStatus,setOllamaStatus]=useState({available:false,models:[],model_count:0});
+  const[routingStats,setRoutingStats]=useState({local_requests:0,cloud_requests:0,estimated_savings:0,mode:'cloud_only'});
+  const routingMode=(agentSettings.model_routing||{}).mode||'cloud_only';
+  useEffect(()=>{
+    const poll=()=>{
+      fetch('/api/ollama/status').then(r=>r.json()).then(setOllamaStatus).catch(()=>{});
+      fetch('/api/model-stats').then(r=>r.json()).then(setRoutingStats).catch(()=>{});
+    };
+    poll();
+    const iv=setInterval(poll,30000);
+    return()=>clearInterval(iv);
+  },[]);
+  const pullModel=(name)=>{
+    fetch('/api/ollama/pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:name})}).then(r=>r.json()).then(()=>{
+      setTimeout(()=>fetch('/api/ollama/status').then(r=>r.json()).then(setOllamaStatus).catch(()=>{}),5000);
+    }).catch(()=>{});
+  };
+  const setRoutingMode=(mode)=>{
+    const cur=agentSettings.model_routing||{};
+    saveAgentSettings({model_routing:{...cur,mode}});
+  };
   const chatEnd=useRef(null);
 
   // ─── Voice Mode (Gemini Live via /ws/live) ───
@@ -5466,7 +5540,7 @@ function App(){
   useEffect(()=>{if(!threadOrb)return;const h=(e)=>{const p=document.querySelector('.thread-panel');if(p&&!p.contains(e.target))setThreadOrb(null)};const t=setTimeout(()=>document.addEventListener('click',h),100);return()=>{clearTimeout(t);document.removeEventListener('click',h)}},[threadOrb]);
 
   // --- Process Polling (Layer 2→3 integration) ---
-  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡'});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡',model:p.model||null});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
@@ -5673,41 +5747,79 @@ function App(){
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.72)',letterSpacing:'.05em',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>{structureName}</span>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
-        {/* Model selector pill — click to open dropdown */}
+        {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
           <button onClick={()=>setModelMenuOpen(o=>!o)}
-            style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(255,255,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
-            title="Model selection — click to swap orchestrator / subagent / creative / voice models"
+            style={{background:'rgba(0,0,0,0.35)',border:'1px solid '+(routingMode!=='cloud_only'?'rgba(245,158,11,0.35)':'rgba(255,255,255,0.18)'),borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
+            title="Model selection & routing"
             aria-label="Model selection">
-            <span className="dot active" style={{width:6,height:6}}/>
-            {orchModel.short} · {creativeModel.short}
+            <span style={{fontSize:11}}>{routingMode!=='cloud_only'?(ollamaStatus.available?'🏠':'☁️'):'☁️'}</span>
+            {orchModel.short}{routingMode!=='cloud_only'&&ollamaStatus.available?' + Local':''}
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
-          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'10px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.3)',fontFamily:'Inter',fontSize:11}}>
+          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:360,background:'rgba(10,14,26,0.85)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+            {/* Routing Mode */}
+            <div className="model-selector-tier">Routing Mode</div>
+            <div style={{padding:'2px 12px 8px',display:'flex',gap:4}}>
+              {[{id:'cloud_only',label:'Cloud Only'},{id:'smart',label:'Smart'},{id:'local_preferred',label:'Local Preferred'},{id:'local_only',label:'Local Only'}].map(rm=>(
+                <button key={rm.id} onClick={()=>setRoutingMode(rm.id)}
+                  style={{background:routingMode===rm.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(routingMode===rm.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),borderRadius:5,padding:'3px 8px',cursor:'pointer',color:routingMode===rm.id?'#00d4ff':'rgba(255,255,255,0.65)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s'}}>
+                  {rm.label}
+                </button>
+              ))}
+            </div>
+            {/* Stats summary */}
+            {routingMode!=='cloud_only'&&<div style={{padding:'4px 12px 8px',fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+              Today: {routingStats.local_requests} local, {routingStats.cloud_requests} cloud{routingStats.estimated_savings>0?`, ~$${routingStats.estimated_savings.toFixed(2)} saved`:''}
+            </div>}
+            {/* Cloud Models */}
+            <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6}}>
+              <span>☁️ Cloud Models</span>
+            </div>
             {[
               {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:ORCHESTRATOR_MODELS},
               {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:SUBAGENT_MODELS},
               {label:'Creative',subtitle:'Images, voice, vision',key:'creative_model',models:CREATIVE_MODELS},
               {label:'Voice',subtitle:'Live audio',key:'voice_model',models:VOICE_MODELS},
             ].map(cat=>(
-              <div key={cat.key} style={{padding:'6px 12px 8px'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
-                  <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>{cat.label}</span>
-                  <span style={{fontSize:9,color:'rgba(255,255,255,0.4)'}}>{cat.subtitle}</span>
+              <div key={cat.key} style={{padding:'4px 12px 6px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+                  <span style={{fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.8)',letterSpacing:'0.06em'}}>{cat.label}</span>
+                  <span style={{fontSize:9,color:'rgba(255,255,255,0.35)'}}>{cat.subtitle}</span>
                 </div>
-                <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
                   {cat.models.map(m=>(
                     <button key={m.id}
                       onClick={()=>{saveAgentSettings({[cat.key]:m.id})}}
-                      style={{background:agentSettings[cat.key]===m.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(agentSettings[cat.key]===m.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),borderRadius:5,padding:'3px 8px',cursor:'pointer',color:agentSettings[cat.key]===m.id?'#00d4ff':'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',transition:'all .15s'}}>
+                      className="model-option-cloud"
+                      style={{background:agentSettings[cat.key]===m.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(agentSettings[cat.key]===m.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),borderRadius:5,padding:'3px 7px',cursor:'pointer',color:agentSettings[cat.key]===m.id?'#00d4ff':'rgba(255,255,255,0.7)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s'}}>
                       {m.label}
                     </button>
                   ))}
                 </div>
               </div>
             ))}
+            {/* Local Models */}
+            <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6,borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:10}}>
+              <span>🏠 Local Models</span>
+              <span className={'ollama-status-dot '+(ollamaStatus.available?'online':'offline')} title={ollamaStatus.available?'Ollama running':'Ollama offline'}/>
+              {!ollamaStatus.available&&<span style={{fontSize:9,color:'rgba(255,255,255,0.4)'}}>Ollama not running</span>}
+            </div>
+            {ollamaStatus.available&&ollamaStatus.models&&ollamaStatus.models.length>0?(
+              <div style={{padding:'2px 12px 6px'}}>
+                {ollamaStatus.models.map(m=>(
+                  <div key={m.name} className="model-option-local" style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
+                    <span className="ollama-status-dot online"/>
+                    <span style={{flex:1}}>{m.name}</span>
+                    <span className="model-badge-local">{m.size_gb}GB{m.parameter_size?' · '+m.parameter_size:''}</span>
+                  </div>
+                ))}
+              </div>
+            ):(ollamaStatus.available?<div style={{padding:'6px 12px',fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>No models installed</div>:null)}
           </div>}
         </div>
+        {/* Local inference slots indicator */}
+        {routingMode!=='cloud_only'&&ollamaStatus.available&&<span className="inference-slots" title="Local inference slots">🏠 {routingStats.local_requests>0?'●':'○'}/{(agentSettings.model_routing||{}).local_inference_slots||3}</span>}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10}}>
         <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{clock.toLocaleTimeString('en-US',{hour12:false})}</span>

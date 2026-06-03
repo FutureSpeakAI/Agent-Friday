@@ -1221,7 +1221,7 @@ PROCESSES_LOCK = threading.Lock()
 
 
 def process_register(pid, *, name="Task", label=None, category="default",
-                     icon="⚡", steps=None):
+                     icon="⚡", steps=None, model=None):
     """Register a new process for the holographic orb display."""
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
@@ -1230,6 +1230,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "label": label or name,
             "category": category,
             "icon": icon,
+            "model": model,
             "status": "running",
             "progress": 0,
             "steps": steps or [],
@@ -1828,6 +1829,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             category=orb_category,
             icon=orb_icon,
             steps=[],
+            model=model or ANTHROPIC_MODEL_DEFAULT,
         )
     except Exception:
         orb_id = None
@@ -1948,6 +1950,87 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     finally:
         # The frontend keeps a "completing" orb for ~2s, then auto-purges via
         # /api/processes server-side TTL once status is completed/error.
+        if orb_id:
+            try:
+                p = PROCESSES.get(orb_id)
+                if p and p.get('status') == 'running':
+                    process_update(orb_id, status='completed', progress=1.0)
+            except Exception:
+                pass
+
+
+# ══════════════════════════════════════════════════════════════
+#  LOCAL MODEL INFERENCE (Ollama)
+#  Mirror of _call_claude_agent's interface but routes through
+#  Ollama. Only called when the model router selects a local model.
+# ══════════════════════════════════════════════════════════════
+
+def _call_ollama(messages, system=None, model=None, max_tokens=4096,
+                 temperature=None, orb_label=None, orb_icon='🏠'):
+    """Call a local Ollama model. Returns (text, tool_trace=[])."""
+    from ollama_manager import get_manager
+
+    settings = _load_settings()
+    routing_cfg = settings.get('model_routing') or {}
+    ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
+
+    if not ollama.is_available():
+        raise RuntimeError("Ollama is not running at " + ollama.base_url)
+
+    orb_id = f"local-{uuid.uuid4().hex[:8]}"
+    try:
+        process_register(
+            orb_id, name="Local Inference",
+            label=orb_label or "Local inference…",
+            category="monitoring", icon=orb_icon, steps=[],
+            model=model,
+        )
+    except Exception:
+        orb_id = None
+
+    try:
+        oai_messages = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if isinstance(content, str):
+                oai_messages.append({"role": role, "content": content})
+
+        resp = ollama.chat_completion(
+            oai_messages, model=model,
+            temperature=temperature or 0.7,
+            max_tokens=max_tokens,
+        )
+
+        from model_router import openai_response_to_friday
+        text, trace = openai_response_to_friday(resp, model)
+
+        usage = resp.get("usage", {})
+        from model_router import get_router
+        router = get_router()
+        router.cost_tracker.record(
+            "local", model,
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+        )
+
+        if orb_id:
+            try:
+                process_update(orb_id, status='completed', progress=1.0,
+                               label=f'Done ({model})')
+            except Exception:
+                pass
+        return text, trace
+    except Exception:
+        if orb_id:
+            try:
+                process_update(orb_id, status='error', label='Error', progress=1.0)
+            except Exception:
+                pass
+        raise
+    finally:
         if orb_id:
             try:
                 p = PROCESSES.get(orb_id)
@@ -2130,6 +2213,17 @@ DEFAULT_SETTINGS = {
     "context_compression": {
         "enabled": True,
         "min_tokens_to_compress": 1000,  # skip compression below this payload size
+    },
+    # ── Model Routing (Ollama local inference) ──
+    # mode: cloud_only (default, no change), smart, local_preferred, local_only
+    "model_routing": {
+        "mode": "cloud_only",
+        "default_cloud_model": "claude-opus-4-7",
+        "task_overrides": {},
+        "ollama_url": "http://localhost:11434",
+        "local_inference_slots": 3,
+        "fallback_to_cloud": True,
+        "cost_tracking": True,
     },
 }
 
@@ -4676,11 +4770,58 @@ def chat():
         }
         # Build a short label for the process orb — first ~24 chars of the user's message.
         _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
-        reply, tool_trace = _call_claude_agent(
-            messages, system=system_prompt, temperature=settings.get('temperature'),
-            pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-            orb_label=_orb_label, orb_category='default', orb_icon='💬',
-        )
+
+        # ── Model Routing: decide local vs cloud BEFORE calling either. ──
+        _routing_cfg = settings.get('model_routing') or {}
+        _routing_mode = _routing_cfg.get('mode', 'cloud_only')
+        _route_info = None
+        _routed_local = False
+
+        if _routing_mode != 'cloud_only':
+            try:
+                from model_router import get_router
+                _router = get_router(_routing_cfg)
+                _route_info = _router.route(messages, task_context={
+                    "has_tools": True,
+                    "workspace": workspace,
+                    "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-7',
+                })
+                if _route_info.get('provider') == 'local':
+                    _routed_local = True
+            except Exception as _re:
+                print(f"  [ROUTER] routing failed, falling back to cloud: {_re}")
+
+        if _routed_local and _route_info:
+            try:
+                reply, tool_trace = _call_ollama(
+                    messages, system=system_prompt,
+                    model=_route_info['model'],
+                    temperature=settings.get('temperature'),
+                    orb_label=f"🏠 {_orb_label}",
+                    orb_icon='🏠',
+                )
+            except Exception as _ole:
+                print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
+                _routed_local = False
+
+        if not _routed_local:
+            reply, tool_trace = _call_claude_agent(
+                messages, system=system_prompt, temperature=settings.get('temperature'),
+                pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                orb_label=_orb_label, orb_category='default', orb_icon='💬',
+            )
+            if _route_info and _routing_cfg.get('cost_tracking', True):
+                try:
+                    from model_router import get_router
+                    _router = get_router()
+                    _est_tokens = len(str(messages)) // 4 + len(reply) // 4
+                    _router.cost_tracker.record(
+                        "cloud",
+                        settings.get('orchestrator_model') or 'claude-opus-4-7',
+                        prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
+                    )
+                except Exception:
+                    pass
 
         # ── Rehydrate: restore real PII before returning to the user. ──
         if pii_lookup:
@@ -4887,6 +5028,113 @@ def chat_clear():
         CHAT_HISTORY.clear()
     _save_chat_history(CHAT_HISTORY)
     return jsonify({"status": "ok", "removed": before - len(CHAT_HISTORY), "remaining": len(CHAT_HISTORY)})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  MODEL ROUTING & OLLAMA STATUS ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/model-stats')
+def model_stats():
+    """Return model routing statistics (requests per model, estimated savings)."""
+    try:
+        from model_router import get_router
+        router = get_router()
+        stats = router.get_stats()
+        settings = _load_settings()
+        routing_cfg = settings.get('model_routing') or {}
+        stats['mode'] = routing_cfg.get('mode', 'cloud_only')
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e), "mode": "cloud_only",
+                        "local_requests": 0, "cloud_requests": 0,
+                        "estimated_savings": 0})
+
+
+@app.route('/api/ollama/status')
+def ollama_status():
+    """Return Ollama availability + installed models."""
+    try:
+        from ollama_manager import get_manager
+        settings = _load_settings()
+        routing_cfg = settings.get('model_routing') or {}
+        ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
+        available = ollama.is_available()
+        models = ollama.list_models() if available else []
+        hw = ollama.detect_hardware() if available else {}
+        return jsonify({
+            "available": available,
+            "url": ollama.base_url,
+            "models": models,
+            "hardware": hw,
+            "model_count": len(models),
+        })
+    except Exception as e:
+        return jsonify({"available": False, "error": str(e), "models": [],
+                        "model_count": 0})
+
+
+@app.route('/api/ollama/models')
+def ollama_models():
+    """List available Ollama models with capabilities and recommendations."""
+    try:
+        from ollama_manager import get_manager
+        settings = _load_settings()
+        routing_cfg = settings.get('model_routing') or {}
+        ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
+        if not ollama.is_available():
+            return jsonify({"installed": [], "recommended": [], "available": False})
+        installed = ollama.list_models()
+        hw = ollama.detect_hardware()
+        recommended = ollama.recommend_models(hw)
+        installed_names = {m['name'] for m in installed}
+        for rec in recommended:
+            rec['installed'] = rec['name'] in installed_names
+        return jsonify({
+            "installed": installed,
+            "recommended": recommended,
+            "hardware": hw,
+            "available": True,
+        })
+    except Exception as e:
+        return jsonify({"installed": [], "recommended": [], "available": False,
+                        "error": str(e)})
+
+
+@app.route('/api/ollama/pull', methods=['POST'])
+def ollama_pull():
+    """Pull/download an Ollama model. Returns immediately; poll /api/ollama/status."""
+    try:
+        data = request.get_json(silent=True) or {}
+        model_name = data.get('model', '').strip()
+        if not model_name:
+            return jsonify({"error": "model name required"}), 400
+        from ollama_manager import get_manager
+        settings = _load_settings()
+        routing_cfg = settings.get('model_routing') or {}
+        ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
+        pid = f"pull-{uuid.uuid4().hex[:8]}"
+        process_register(pid, name="Pulling Model", label=f"Pulling {model_name}…",
+                         category="monitoring", icon="⬇️")
+
+        def _do_pull():
+            try:
+                def _progress(status, pct):
+                    try:
+                        process_update(pid, label=f"{model_name}: {status} ({pct:.0f}%)",
+                                       progress=min(0.99, pct / 100))
+                    except Exception:
+                        pass
+                ok = ollama.pull_model(model_name, progress_callback=_progress)
+                process_update(pid, status='completed' if ok else 'error',
+                               progress=1.0, label=f"{model_name} {'ready' if ok else 'failed'}")
+            except Exception as e:
+                process_update(pid, status='error', progress=1.0, label=str(e)[:40])
+
+        threading.Thread(target=_do_pull, daemon=True).start()
+        return jsonify({"status": "pulling", "task_id": pid, "model": model_name})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -1335,5 +1335,54 @@ window.addEventListener('DOMContentLoaded',function(){
         .friday-doc.compact th { padding: 6px 10px; font-size: 10px; }
         .friday-doc.compact td { padding: 5px 10px; }
         .friday-doc.compact hr { margin: 14px 0; }
+
+        /* ─── Model Routing: Selector Tiers ─── */
+        .model-selector-tier {
+            font-family: 'Orbitron', monospace; font-size: 9px;
+            color: rgba(0,212,255,0.75); letter-spacing: 0.12em;
+            text-transform: uppercase; padding: 8px 12px 3px;
+            user-select: none;
+        }
+        .model-option-local {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-local:hover { background: rgba(245,158,11,0.1); }
+        .model-option-cloud {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
+            font-family: 'JetBrains Mono', monospace; font-size: 11px;
+            color: rgba(255,255,255,0.85);
+        }
+        .model-option-cloud:hover { background: rgba(0,212,255,0.08); }
+        .model-badge-local {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(245,158,11,0.12); color: #f59e0b;
+            border: 1px solid rgba(245,158,11,0.25);
+        }
+        .model-badge-cloud {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 1px 6px; border-radius: 4px; font-size: 9px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,212,255,0.1); color: #00d4ff;
+            border: 1px solid rgba(0,212,255,0.2);
+        }
+        .ollama-status-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            display: inline-block; flex-shrink: 0;
+        }
+        .ollama-status-dot.online { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
+        .ollama-status-dot.offline { background: #555; }
+        .inference-slots {
+            display: inline-flex; align-items: center; gap: 4px;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            color: rgba(245,158,11,0.85); padding: 2px 7px;
+            border-radius: 8px; background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.18);
+        }
     </style>
 </head>

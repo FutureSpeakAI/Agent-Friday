@@ -285,7 +285,7 @@
             _catColor(cat) {
                 return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
             }
-            addOrb({id, label, category, icon}) {
+            addOrb({id, label, category, icon, model}) {
                 if (this.orbs.has(id)) return;
                 if (this.orbs.size >= this.maxOrbs) {
                     let oldest = null;
@@ -294,7 +294,8 @@
                     }
                     if (oldest) this._cleanup(oldest.id); else return;
                 }
-                const color = this._catColor(category);
+                const isLocal = !!(model && (id.startsWith('local-') || model.indexOf('claude') === -1));
+                const color = isLocal ? 0xf59e0b : this._catColor(category);
                 const group = new THREE.Group();
                 const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
                 const sphereMat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -318,9 +319,10 @@
                 this.scene.add(group);
                 const labelEl = document.createElement('div');
                 labelEl.className = 'orb-label';
-                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>';
+                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+(isLocal?'🏠 ':'☁️ ')+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
+                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
-                this.orbs.set(id, {id,label,category,icon,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,
+                this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
                     oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
                     birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
                     hoverScale:1.0, baseGlowOpacity:0.4});
@@ -340,7 +342,7 @@
             }
             getOrbs() {
                 const out = [];
-                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,progress:o.progress,status:o.status,steps:o.steps});
+                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,model:o.model,progress:o.progress,status:o.status,steps:o.steps});
                 return out;
             }
             _onClick(ev) {
