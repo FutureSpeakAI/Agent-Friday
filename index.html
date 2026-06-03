@@ -1336,57 +1336,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .friday-doc.compact td { padding: 5px 10px; }
         .friday-doc.compact hr { margin: 14px 0; }
 
-        /* ─── Model Routing: Selector Tiers ─── */
-        .model-selector-tier {
-            font-family: 'Orbitron', monospace; font-size: 9px;
-            color: rgba(0,212,255,0.75); letter-spacing: 0.12em;
-            text-transform: uppercase; padding: 8px 12px 3px;
-            user-select: none;
-        }
-        .model-option-local {
-            display: flex; align-items: center; gap: 8px;
-            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
-            font-family: 'JetBrains Mono', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.85);
-        }
-        .model-option-local:hover { background: rgba(245,158,11,0.1); }
-        .model-option-cloud {
-            display: flex; align-items: center; gap: 8px;
-            padding: 5px 12px; cursor: pointer; transition: background 0.15s;
-            font-family: 'JetBrains Mono', monospace; font-size: 11px;
-            color: rgba(255,255,255,0.85);
-        }
-        .model-option-cloud:hover { background: rgba(0,212,255,0.08); }
-        .model-badge-local {
-            display: inline-flex; align-items: center; gap: 4px;
-            padding: 1px 6px; border-radius: 4px; font-size: 9px;
-            font-family: 'JetBrains Mono', monospace;
-            background: rgba(245,158,11,0.12); color: #f59e0b;
-            border: 1px solid rgba(245,158,11,0.25);
-        }
-        .model-badge-cloud {
-            display: inline-flex; align-items: center; gap: 4px;
-            padding: 1px 6px; border-radius: 4px; font-size: 9px;
-            font-family: 'JetBrains Mono', monospace;
-            background: rgba(0,212,255,0.1); color: #00d4ff;
-            border: 1px solid rgba(0,212,255,0.2);
-        }
-        .ollama-status-dot {
-            width: 6px; height: 6px; border-radius: 50%;
-            display: inline-block; flex-shrink: 0;
-        }
-        .ollama-status-dot.online { background: #00ff80; box-shadow: 0 0 6px #00ff80; }
-        .ollama-status-dot.offline { background: #555; }
-        .inference-slots {
-            display: inline-flex; align-items: center; gap: 4px;
-            font-family: 'JetBrains Mono', monospace; font-size: 10px;
-            color: rgba(245,158,11,0.85); padding: 2px 7px;
-            border-radius: 8px; background: rgba(245,158,11,0.08);
-            border: 1px solid rgba(245,158,11,0.18);
-        }
-    </style>
-</head>
-
+        /* ─── 
 <body>
     <!-- Hand Cursor -->
     <div id="hand-cursor" class="hidden">
@@ -2792,19 +2742,7 @@ window.fridayUpdateThread = function(orbId, steps) {
     window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:steps||[]}}));
 };
 window.fridayAddThreadStep = function(orbId, step) {
-    if (!window._fridayThreads[orbId]) window._fridayThreads[orbId] = [];
-    window._fridayThreads[orbId].push(step);
-    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:window._fridayThreads[orbId]}}));
-};
-
-// === KEYBOARD CONTROLS ===
-document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-    if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
-    if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
-});
-</script>
-
+    if (!window._fridayThreads[orbId]) window._fridayThread
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
 const DOCK_GROUPS=[
@@ -6704,64 +6642,4 @@ function App(){
     </div>}
 
     {/* Dock — grouped (Life / Work / System) */}
-    <div className={`dock ${dockHidden?'hidden':''}`}>
-      {DOCK_GROUPS.map((g,gi)=>(<React.Fragment key={g.name}>
-        {gi>0&&<div className="dock-sep"/>}
-        <div className="dock-group">
-          <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)} style={{position:'relative'}}>
-              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
-              {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
-            </button>)}
-          </div>
-          <div className="dock-group-label">{g.name}</div>
-        </div>
-      </React.Fragment>))}
-    </div>
-    {paletteOpen&&<CommandPalette onClose={()=>setPaletteOpen(false)} onOpenWs={id=>{toggle(id);setPaletteOpen(false)}} openWins={openWins}/>}
-
-    {/* Background tasks now live in the bell-icon dropdown above */}
-
-    {/* Task Result Modal */}
-    {taskResultModal&&<div onClick={()=>setTaskResultModal(null)} style={{position:'fixed',inset:0,zIndex:200,background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div onClick={e=>e.stopPropagation()} style={{width:'min(720px, 90vw)',maxHeight:'85vh',overflowY:'auto',background:'rgba(10,10,18,0.96)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:12,padding:18,boxShadow:'0 12px 40px rgba(0,0,0,0.8)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-          <div>
-            <div style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff',letterSpacing:'.08em'}}>TASK RESULT · {(taskResultModal.status||'').toUpperCase()}</div>
-            <div style={{fontSize:14,color:'#fff',marginTop:3}}>{taskResultModal.name}</div>
-          </div>
-          <button className="btn" onClick={()=>setTaskResultModal(null)}>Close</button>
-        </div>
-        {taskResultModal.description&&<div style={{fontSize:11,color:'#888',marginBottom:10,fontStyle:'italic'}}>{taskResultModal.description}</div>}
-        {taskResultModal.result
-          ?<FridayDoc compact text={taskResultModal.result} style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}/>
-          :<div style={{background:'rgba(0,0,0,0.4)',padding:12,borderRadius:8,border:'1px solid rgba(255,255,255,0.04)',color:'#888',fontSize:12,fontStyle:'italic'}}>(no result text)</div>}
-        {(taskResultModal.log||[]).length>0&&<div style={{marginTop:12}}>
-          <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff',letterSpacing:'.08em',marginBottom:6}}>ACTIVITY LOG</div>
-          <div style={{background:'rgba(0,0,0,0.4)',padding:8,borderRadius:6,maxHeight:180,overflowY:'auto'}}>
-            {(taskResultModal.log||[]).map((l,i)=><div key={i} style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(200,200,220,0.7)',padding:'1px 0'}}>→ {l}</div>)}
-          </div>
-        </div>}
-      </div>
-    </div>}
-  </>);
-}
-
-// Mount with error surface so mobile failures are visible instead of a blank dock.
-(function mountFriday(){
-  try{
-    var target=document.getElementById('ui-inner')||document.getElementById('ui-root');
-    if(!target){throw new Error('Mount target #ui-inner/#ui-root not found');}
-    ReactDOM.createRoot(target).render(<App/>);
-  }catch(err){
-    console.error('[FRIDAY] React mount failed:',err);
-    var host=document.getElementById('ui-inner')||document.getElementById('ui-root')||document.body;
-    var box=document.createElement('div');
-    box.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:rgba(20,0,10,.92);border:1px solid #ff0080;border-radius:10px;padding:12px 14px;color:#ffdbe8;font:12px/1.4 monospace;pointer-events:auto;max-height:45vh;overflow:auto';
-    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY UI failed to mount</div><pre style="white-space:pre-wrap;margin:0">'+(err&&err.stack?err.stack:String(err))+'</pre>';
-    host.appendChild(box);
-  }
-})();
-</script>
-</body>
-</html>
+    <div className={`dock ${dockHidden?'hidden':''

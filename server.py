@@ -2305,6 +2305,36 @@ def _save_agent_personality(text):
     AGENT_PERSONALITY_FILE.write_text((text or '').strip(), encoding='utf-8')
 
 
+# ── Self-knowledge (SELF.md) ─────────────────────────────────
+_self_knowledge_cache = None
+_self_knowledge_mtime = 0.0
+SELF_MD_PATH = Path(__file__).resolve().parent / "SELF.md"
+
+
+def _load_self_knowledge():
+    """Lazily load SELF.md — Friday's self-knowledge document.
+
+    Cached in memory and invalidated only when the file's mtime changes, so
+    the disk hit happens at most once per file edit (not once per chat turn).
+    Returns the full text or an empty string if the file is missing.
+    """
+    global _self_knowledge_cache, _self_knowledge_mtime
+    try:
+        mtime = SELF_MD_PATH.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        _self_knowledge_cache = ""
+        return ""
+    if _self_knowledge_cache is not None and mtime == _self_knowledge_mtime:
+        return _self_knowledge_cache
+    try:
+        text = SELF_MD_PATH.read_text(encoding='utf-8').strip()
+    except Exception:
+        text = ""
+    _self_knowledge_cache = text
+    _self_knowledge_mtime = mtime
+    return text
+
+
 def _settings_system_prefix(settings, personality):
     """Build the prefix that gets prepended to every chat system prompt."""
     length_hint = {
@@ -2359,6 +2389,13 @@ def _get_friday_system_prompt(keywords='', workspace=''):
     settings = _load_settings()
     personality = _load_agent_personality()
     prefix = _settings_system_prefix(settings, personality)
+
+    # Self-knowledge: inject SELF.md after personality, before workspace context.
+    # This gives Friday a persistent self-model across cold starts.
+    self_knowledge = _load_self_knowledge()
+    if self_knowledge:
+        prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
+
     try:
         system_prompt, _ = _build_context_prompt(keywords or '', workspace)
     except Exception:
