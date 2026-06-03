@@ -8,5 +8,4 @@ beautifulsoup4>=4.12
 requests>=2.31
 pyyaml>=6.0
 sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2)
-headroom-ai[all]>=0.22       # Headroom context compression (Tejas Chopra, Apache 2.0) — https://github.com/chopratejas/headroom
-headroom-ai[all]>=0.22       # Headroom context compression (Tejas Chopra, Apache 2.0) — https://github.com/chopratejas/headroom
+headroom-ai[all]>=0.22       # Headroom context compression (Tejas Chopra, Apache 2.0) — https://github.com/chopratejas/headroom. Needs the compiled Rust core `headroom._core` for real savings; builds from sdist (Rust + MSVC on Windows). Friday's wrapper (context_compressor.py) degrades gracefully to passthrough if it's missing. See CREDITS.md.
