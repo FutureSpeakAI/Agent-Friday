@@ -1674,7 +1674,7 @@ window.addEventListener('DOMContentLoaded',function(){
             _catColor(cat) {
                 return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
             }
-            addOrb({id, label, category, icon, model}) {
+            addOrb({id, label, category, icon, model, color: explicitColor}) {
                 if (this.orbs.has(id)) return;
                 if (this.orbs.size >= this.maxOrbs) {
                     let oldest = null;
@@ -1684,7 +1684,9 @@ window.addEventListener('DOMContentLoaded',function(){
                     if (oldest) this._cleanup(oldest.id); else return;
                 }
                 const isLocal = !!(model && (id.startsWith('local-') || model.indexOf('claude') === -1));
-                const color = isLocal ? 0xf59e0b : this._catColor(category);
+                // An explicit color (e.g. the green vault-access orb) wins over the
+                // local/category default.
+                const color = (explicitColor != null) ? explicitColor : (isLocal ? 0xf59e0b : this._catColor(category));
                 const group = new THREE.Group();
                 const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
                 const sphereMat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false});
@@ -5540,7 +5542,7 @@ function App(){
   useEffect(()=>{if(!threadOrb)return;const h=(e)=>{const p=document.querySelector('.thread-panel');if(p&&!p.contains(e.target))setThreadOrb(null)};const t=setTimeout(()=>document.addEventListener('click',h),100);return()=>{clearTimeout(t);document.removeEventListener('click',h)}},[threadOrb]);
 
   // --- Process Polling (Layer 2→3 integration) ---
-  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡',model:p.model||null});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
+  useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡',model:p.model||null,color:(p.color!=null?p.color:null)});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);

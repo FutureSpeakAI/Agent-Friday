@@ -23,6 +23,17 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response
 from functools import wraps
 
+# Vault access control — gates Sovereign Vault content so it reaches local
+# models only. Imported defensively so a missing module never blocks startup.
+try:
+    from vault_access import Tier as _VaultTier, VaultAccessControl, VaultAccessDenied
+except Exception as _vac_err:  # pragma: no cover
+    _VaultTier = None
+    VaultAccessControl = None
+    class VaultAccessDenied(Exception):
+        pass
+    print(f"  [FRIDAY] WARNING: vault_access unavailable ({_vac_err}); vault gating disabled.")
+
 # Prevent console windows from flashing when spawning subprocesses on Windows.
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -1221,8 +1232,12 @@ PROCESSES_LOCK = threading.Lock()
 
 
 def process_register(pid, *, name="Task", label=None, category="default",
-                     icon="⚡", steps=None, model=None):
-    """Register a new process for the holographic orb display."""
+                     icon="⚡", steps=None, model=None, color=None):
+    """Register a new process for the holographic orb display.
+
+    `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
+    in the 3-D scene — used for the green vault-access orb.
+    """
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,
@@ -1231,6 +1246,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "category": category,
             "icon": icon,
             "model": model,
+            "color": color,
             "status": "running",
             "progress": 0,
             "steps": steps or [],
@@ -2224,6 +2240,14 @@ DEFAULT_SETTINGS = {
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
+        # ── Sovereign Vault access control ──
+        # vault_local_only: when true, vault TIER_2/TIER_3 content reaches local
+        #   models only; vault-touching requests are force-routed to Ollama.
+        # vault_cloud_fallback: what to do when a vault request can't run locally
+        #   "redact" = send a placeholder to cloud, "deny" = refuse entirely,
+        #   "warn"   = refuse and ask the user to enable a local model.
+        "vault_local_only": True,
+        "vault_cloud_fallback": "redact",
     },
 }
 
@@ -4107,13 +4131,75 @@ def _detect_context_needs(message, workspace):
     return needs
 
 
-def _build_context_prompt(message, workspace='', workspace_context=None, vision_description=None):
-    """Build an enriched system prompt with all relevant context layers."""
+_VAULT_AC = None
+_VAULT_AC_LOCK = threading.Lock()
+
+
+def _get_vault_control():
+    """Lazy singleton VaultAccessControl, logging to the vault access log."""
+    global _VAULT_AC
+    if VaultAccessControl is None:
+        return None
+    if _VAULT_AC is None:
+        with _VAULT_AC_LOCK:
+            if _VAULT_AC is None:
+                _VAULT_AC = VaultAccessControl(
+                    log_path=FRIDAY_DIR / "vault" / "access-log.jsonl"
+                )
+    return _VAULT_AC
+
+
+def _vault_local_only():
+    """Whether vault gating is active (settings.model_routing.vault_local_only)."""
+    try:
+        cfg = (_load_settings().get('model_routing') or {})
+        return bool(cfg.get('vault_local_only', True))
+    except Exception:
+        return True
+
+
+def _vault_cloud_fallback():
+    try:
+        cfg = (_load_settings().get('model_routing') or {})
+        return cfg.get('vault_cloud_fallback', 'redact')
+    except Exception:
+        return 'redact'
+
+
+def _build_context_prompt(message, workspace='', workspace_context=None,
+                          vision_description=None, provider='cloud',
+                          vault_control=None, vault_fallback='redact'):
+    """Build an enriched system prompt with all relevant context layers.
+
+    When `vault_control` is provided, each context section is tagged with a
+    sensitivity tier and gated for `provider`: a local model sees everything,
+    while a cloud model receives TIER_1 only (TIER_2 redacted, TIER_3 dropped).
+    With `vault_control=None` the prompt is assembled ungated (legacy behavior).
+    """
     vault = _load_vault_summary()
     needs = _detect_context_needs(message, workspace)
     sources_consulted = []
 
-    sections = [FRIDAY_SYSTEM_PROMPT]
+    # Tier helpers. Default to PUBLIC; sensitive sections opt up. When the
+    # vault_access module is unavailable, tiers are inert integers.
+    _T1 = getattr(_VaultTier, 'PUBLIC', 1)
+    _T2 = getattr(_VaultTier, 'PRIVATE', 2)
+    _T3 = getattr(_VaultTier, 'SENSITIVE', 3)
+
+    sections = []  # list of (tier, text)
+
+    def add(text, tier=_T1):
+        sections.append((tier, text))
+
+    def classify(text, fallback_tier=_T2):
+        if vault_control is not None:
+            try:
+                return vault_control.classify(text, default=fallback_tier)
+            except Exception:
+                return fallback_tier
+        return fallback_tier
+
+    add(FRIDAY_SYSTEM_PROMPT, _T1)
 
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
@@ -4121,29 +4207,34 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
     try:
         live_ctx = _load_live_context()
         if live_ctx:
-            sections.append(f"\n== TODAY'S CONTEXT ==\n{live_ctx}")
+            # Today's context names the trust circle / family countdowns → private.
+            add(f"\n== TODAY'S CONTEXT ==\n{live_ctx}", _T2)
             sources_consulted.append('daily_context')
     except Exception as _e:
-        sections.append(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})")
+        add(f"\n== TODAY'S CONTEXT ==\n(load failed: {_e})", _T1)
 
-    # Layer 1: Active workspace context (from frontend)
+    # Layer 1: Active workspace context (from frontend) — may show finance/health
+    # data, so classify by what's actually in the payload.
     if workspace_context:
-        sections.append(
+        _ws_text = (
             f"\n== ACTIVE WORKSPACE: {workspace_context.get('name', workspace)} ==\n"
             f"What Stephen is looking at right now:\n"
             f"{json.dumps(workspace_context.get('data', {}), indent=2, default=str)[:2000]}"
         )
+        add(_ws_text, classify(_ws_text, _T2))
         if workspace_context.get('focus'):
-            sections.append(f"Current focus: {workspace_context['focus']}")
+            add(f"Current focus: {workspace_context['focus']}", _T2)
         sources_consulted.append('workspace')
 
-    # Layer 2: Vault data (personality always included)
+    # Layer 2: Vault data (personality always included). Friday's own state is
+    # not personal data about Stephen, so it stays public.
     if 'personality' in needs and 'personality' in vault:
         p = vault['personality']
-        sections.append(
+        add(
             f"\n== FRIDAY STATE ==\n"
             f"Maturity: {p.get('maturity', 0.5):.0%} · Sessions: {p.get('session_count', 0)} · "
-            f"Temperature: {p.get('temperature', 0.7)}"
+            f"Temperature: {p.get('temperature', 0.7)}",
+            _T1,
         )
         sources_consulted.append('personality')
 
@@ -4166,9 +4257,11 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
                     break
 
         if person_match:
-            sections.append(
+            # Contacts / family details → private (local only).
+            add(
                 f"\n== TRUST DATA (specific person) ==\n"
-                f"{json.dumps(person_match, indent=2, default=str)[:1500]}"
+                f"{json.dumps(person_match, indent=2, default=str)[:1500]}",
+                _T2,
             )
         else:
             # General trust summary
@@ -4176,17 +4269,18 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
                 f"{n} ({d.get('relationship', '?')}: {d.get('overall', '?')})"
                 for n, d in list(vault['trust_people'].items())[:8]
             )
-            sections.append(f"\n== TRUST NETWORK ==\n{summary}")
+            add(f"\n== TRUST NETWORK ==\n{summary}", _T2)
         sources_consulted.append('trust_graph')
 
     if 'career' in needs:
         career = _get_career_context()
         if career:
-            sections.append(
+            add(
                 f"\n== CAREER OPS ==\n"
                 f"Applications tracked: {career.get('applications_count', 0)}\n"
                 f"Recent: {career.get('recent_applications', [])}\n"
-                f"Pipeline: {career.get('pipeline_summary', 'N/A')[:500]}"
+                f"Pipeline: {career.get('pipeline_summary', 'N/A')[:500]}",
+                _T2,
             )
             sources_consulted.append('career_ops')
 
@@ -4194,12 +4288,12 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
         todo_list = '\n'.join(
             f"- [{t['status']}] {t['task']}" for t in vault['active_todos']
         )
-        sections.append(f"\n== ACTIVE TASKS ==\n{todo_list or 'No pending tasks.'}")
+        add(f"\n== ACTIVE TASKS ==\n{todo_list or 'No pending tasks.'}", _T2)
         sources_consulted.append('todos')
 
     if 'memory' in needs and 'recent_memories' in vault:
         mem_text = '\n'.join(f"- {m}" for m in vault['recent_memories'])
-        sections.append(f"\n== RECENT MEMORIES ==\n{mem_text}")
+        add(f"\n== RECENT MEMORIES ==\n{mem_text}", _T2)
         sources_consulted.append('memory')
 
     if 'wiki' in needs:
@@ -4210,13 +4304,15 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
             wiki_text = '\n'.join(
                 f"[{r['file']}]: {r['excerpt'][:300]}" for r in wiki_results
             )
-            sections.append(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}")
+            # Wiki is generally public docs, but may surface family/health → classify.
+            add(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}", classify(wiki_text, _T1))
             sources_consulted.append('wiki')
 
     if 'epistemic' in needs and 'epistemic' in vault:
-        sections.append(
+        add(
             f"\n== EPISTEMIC STATE ==\n"
-            f"Independence score: {vault['epistemic'].get('overall', 0.72)}"
+            f"Independence score: {vault['epistemic'].get('overall', 0.72)}",
+            _T1,
         )
 
     # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
@@ -4249,14 +4345,17 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
                     pass
     if _ctx_found:
         ctx_block = '\n\n'.join(f"[{path}]\n{content}" for path, content in _ctx_found[:2])
-        sections.append(f"\n== PROJECT CONTEXT FILES ==\n{ctx_block}")
+        # Project/code context — public unless the file itself carries PII.
+        add(f"\n== PROJECT CONTEXT FILES ==\n{ctx_block}", classify(ctx_block, _T1))
         sources_consulted.append('context_files')
 
-    # Layer 3: Vision context (from Gemini screen capture)
+    # Layer 3: Vision context (from Gemini screen capture) — the screen could
+    # show anything private, so treat it as private by default.
     if vision_description:
-        sections.append(
+        add(
             f"\n== SCREEN VISION (what Stephen's screen shows) ==\n"
-            f"{vision_description[:1500]}"
+            f"{vision_description[:1500]}",
+            classify(vision_description, _T2),
         )
         sources_consulted.append('vision')
 
@@ -4267,17 +4366,32 @@ def _build_context_prompt(message, workspace='', workspace_context=None, vision_
     try:
         wiki_smart = _load_smart_context(message, workspace)
         if wiki_smart:
-            sections.append(
+            _smart_text = (
                 "\n== PERSONAL CONTEXT (smart-loaded for this turn) ==\n"
                 "If you need a fact not present here, call search_wiki "
                 "(keyword search) or read_wiki (specific file).\n\n"
                 f"{wiki_smart}"
             )
+            # Smart context mixes family/professional (private) with finance/
+            # health/legal (sensitive) — classify so cloud drops the sensitive bits.
+            add(_smart_text, classify(_smart_text, _T2))
             sources_consulted.append('wiki_smart')
     except Exception as _e:
-        sections.append(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})")
+        add(f"\n== PERSONAL CONTEXT ==\n(smart-context load failed: {_e})", _T1)
 
-    return '\n'.join(sections), sources_consulted
+    # Assemble. With a vault_control + cloud provider this gates by tier
+    # (TIER_1 in full, TIER_2 redacted, TIER_3 dropped). Otherwise it's a
+    # plain join — identical to the legacy ungated behavior.
+    if vault_control is not None:
+        try:
+            return vault_control.assemble_prompt(
+                sections, provider, fallback=vault_fallback
+            ), sources_consulted
+        except VaultAccessDenied:
+            raise
+        except Exception as _ae:
+            print(f"  [VAULT] assemble failed, falling back to ungated: {_ae}")
+    return '\n'.join(t for _, t in sections), sources_consulted
 
 
 def _load_smart_context(user_message, workspace=None):
@@ -4648,26 +4762,8 @@ def chat():
             except Exception as ve:
                 vision_description = f"[Vision unavailable: {ve}]"
 
-        # Build context-enriched system prompt
-        system_prompt, sources = _build_context_prompt(
-            message, workspace, workspace_context, vision_description
-        )
-
-        # Prepend user-configured agent personality + response prefs + cLaws
         settings = _load_settings()
         personality = _load_agent_personality()
-        system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
-
-        # Voice mode: override response style for spoken-aloud output
-        if voice_mode:
-            system_prompt = (
-                "=== VOICE MODE ACTIVE ===\n"
-                "The user is speaking to you via microphone. Your reply will be read aloud.\n"
-                "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
-                "headers, bullet points, or code blocks. Use natural speech patterns and "
-                "contractions. Ask a follow-up question to keep the conversation flowing.\n"
-                "=========================\n\n"
-            ) + system_prompt
 
         # Build conversation history as Anthropic-format messages.
         # Pull up to 40 turns, then run trajectory compression if the total
@@ -4739,59 +4835,130 @@ def chat():
                 # Compression is best-effort — never block a chat on it.
                 print(f"  [HEADROOM] skipped: {_ce}")
 
-        # ── Privacy Shield: scrub PII out of system prompt + all messages ──
-        # All real PII is replaced with [PII:type:hash] tags before any byte
-        # leaves the machine. The lookup table lives only in this request.
-        pii_lookup = {}
-        if system_prompt:
-            system_prompt, sub = _scrub_pii(system_prompt)
-            pii_lookup.update(sub)
-        for m in messages:
-            c = m.get('content')
-            if isinstance(c, str) and c:
-                m['content'], sub = _scrub_pii(c)
-                pii_lookup.update(sub)
+        # ── Model Routing: decide local vs cloud BEFORE building the prompt. ──
+        # The routing decision drives the whole privacy posture downstream:
+        #   • route.is_local       → True for Ollama (on-device)
+        #   • route.vault_allowed  → raw vault content may be sent (local only)
+        #   • route.scrub_pii      → PII scrubber must run (cloud only)
+        # We ALWAYS consult the router now — even in cloud_only mode — so a
+        # vault-touching request is force-routed local (or refused) and vault
+        # data never reaches the cloud.
+        _routing_cfg = settings.get('model_routing') or {}
+        _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
+        try:
+            from model_router import get_router
+            _router = get_router(_routing_cfg)
+            _route_info = _router.route(messages, task_context={
+                "has_tools": True,
+                "workspace": workspace,
+                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-7',
+            })
+        except Exception as _re:
+            print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
+            _route_info = {
+                "provider": "cloud",
+                "model": settings.get('orchestrator_model') or 'claude-opus-4-7',
+                "is_local": False, "vault_allowed": False, "scrub_pii": True,
+                "vault_access": False, "refuse": False, "warning": None,
+            }
 
-        # Tell the agent how to handle the placeholders — Claude has to know
-        # they refer to real values that will be substituted before display.
-        if pii_lookup:
-            system_prompt += (
-                "\n\n== PRIVACY PLACEHOLDERS ==\n"
-                "Some private values in your context appear as tags like "
-                "[PII:type:hash] (types: addr, phone, email, ssn, cc, name). "
-                "These are stable references to real data on the user's device. "
-                "Use them in your reply EXACTLY as written when you need to "
-                "reference the underlying value — they will be substituted "
-                "with the real data before the user sees your response."
+        _provider = _route_info.get('provider', 'cloud')
+        _routed_local = bool(_route_info.get('is_local'))
+        _vault_access = bool(_route_info.get('vault_access'))
+
+        def _vault_orb(label):
+            """Show the green 🔒 vault orb (monitoring) for ~3s."""
+            _vpid = f"vault-{uuid.uuid4().hex[:8]}"
+            try:
+                process_register(_vpid, name="Vault Access", label=label,
+                                 category="monitoring", icon="🔒", color=0x22c55e)
+                threading.Timer(3.0, process_remove, args=(_vpid,)).start()
+            except Exception:
+                pass
+
+        # ── Refuse: a vault request that cannot be served locally (deny/warn). ──
+        # Never send vault data to the cloud — return the warning instead.
+        if _route_info.get('refuse'):
+            _warn = _route_info.get('warning') or (
+                "This request needs vault access which requires a local model. "
+                "Please install Ollama or switch to local routing mode."
             )
+            _vault_orb("Vault Access — Blocked")
+            user_msg = {
+                'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                'role': 'user', 'text': message, 'pinned': False, 'workspace': workspace,
+            }
+            friday_msg = {
+                'id': str(uuid.uuid4()), 'timestamp': datetime.now().isoformat(),
+                'role': 'friday', 'text': _warn, 'pinned': False, 'sources': [],
+            }
+            CHAT_HISTORY.append(user_msg)
+            CHAT_HISTORY.append(friday_msg)
+            _save_chat_history(CHAT_HISTORY)
+            return jsonify({
+                "response": _warn, "user_msg": user_msg, "friday_msg": friday_msg,
+                "sources": [], "tool_trace": [], "vault_blocked": True,
+            })
+
+        if _vault_access and _routed_local:
+            _vault_orb("Vault Access — Local Only")
+
+        # ── Build the (vault-gated) system prompt + scrub PII for the provider. ──
+        # Cloud: vault TIER_2/TIER_3 content is gated out and PII is scrubbed.
+        # Local: raw vault content flows and the PII scrubber is SKIPPED entirely
+        # (the data never leaves the device). Returns the per-request lookup used
+        # to rehydrate PII tags out of the cloud model's reply.
+        def _prep_for(provider):
+            vc = _get_vault_control() if _vault_local_only() else None
+            sp, src = _build_context_prompt(
+                message, workspace, workspace_context, vision_description,
+                provider=provider, vault_control=vc,
+                vault_fallback=_vault_cloud_fallback(),
+            )
+            sp = _settings_system_prefix(settings, personality) + (sp or '')
+            if voice_mode:
+                sp = (
+                    "=== VOICE MODE ACTIVE ===\n"
+                    "The user is speaking to you via microphone. Your reply will be read aloud.\n"
+                    "Rules: Keep it SHORT (1-3 sentences). Never use markdown — no asterisks, "
+                    "headers, bullet points, or code blocks. Use natural speech patterns and "
+                    "contractions. Ask a follow-up question to keep the conversation flowing.\n"
+                    "=========================\n\n"
+                ) + sp
+            lookup = {}
+            # Scrub only when the turn is cloud-bound. Scrubbing every message
+            # (not just the new one) means a cached LOCAL reply retrieved by the
+            # pruner is scrubbed at retrieval time before it can reach the cloud.
+            if provider != 'local':
+                if sp:
+                    sp, sub = _scrub_pii(sp)
+                    lookup.update(sub)
+                for m in messages:
+                    c = m.get('content')
+                    if isinstance(c, str) and c:
+                        m['content'], sub = _scrub_pii(c)
+                        lookup.update(sub)
+                if lookup:
+                    sp += (
+                        "\n\n== PRIVACY PLACEHOLDERS ==\n"
+                        "Some private values in your context appear as tags like "
+                        "[PII:type:hash] (types: addr, phone, email, ssn, cc, name). "
+                        "These are stable references to real data on the user's device. "
+                        "Use them in your reply EXACTLY as written when you need to "
+                        "reference the underlying value — they will be substituted "
+                        "with the real data before the user sees your response."
+                    )
+            return sp, src, lookup
+
+        system_prompt, sources, pii_lookup = _prep_for(_provider)
 
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
         }
-        # Build a short label for the process orb — first ~24 chars of the user's message.
-        _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
 
-        # ── Model Routing: decide local vs cloud BEFORE calling either. ──
-        _routing_cfg = settings.get('model_routing') or {}
-        _routing_mode = _routing_cfg.get('mode', 'cloud_only')
-        _route_info = None
-        _routed_local = False
-
-        if _routing_mode != 'cloud_only':
-            try:
-                from model_router import get_router
-                _router = get_router(_routing_cfg)
-                _route_info = _router.route(messages, task_context={
-                    "has_tools": True,
-                    "workspace": workspace,
-                    "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-7',
-                })
-                if _route_info.get('provider') == 'local':
-                    _routed_local = True
-            except Exception as _re:
-                print(f"  [ROUTER] routing failed, falling back to cloud: {_re}")
-
-        if _routed_local and _route_info:
+        # ── Dispatch. ──
+        reply, tool_trace = None, []
+        if _routed_local:
             try:
                 reply, tool_trace = _call_ollama(
                     messages, system=system_prompt,
@@ -4801,8 +4968,16 @@ def chat():
                     orb_icon='🏠',
                 )
             except Exception as _ole:
+                # A vault request must NEVER silently fall back to cloud with raw
+                # vault data — fail loudly instead.
+                if _vault_access:
+                    print(f"  [ROUTER] local vault inference failed; refusing cloud fallback: {_ole}")
+                    raise
                 print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
                 _routed_local = False
+                _provider = 'cloud'
+                # Rebuild the prompt for cloud (gated) and scrub before sending.
+                system_prompt, sources, pii_lookup = _prep_for('cloud')
 
         if not _routed_local:
             reply, tool_trace = _call_claude_agent(
@@ -4810,7 +4985,7 @@ def chat():
                 pii_lookup=pii_lookup, session_ctx=_sess_ctx,
                 orb_label=_orb_label, orb_category='default', orb_icon='💬',
             )
-            if _route_info and _routing_cfg.get('cost_tracking', True):
+            if _routing_cfg.get('cost_tracking', True):
                 try:
                     from model_router import get_router
                     _router = get_router()
@@ -4930,13 +5105,17 @@ def chat_send():
             except Exception as ve:
                 vision_description = f"[Vision unavailable: {ve}]"
 
-        # Build context-enriched system prompt
+        # Build context-enriched system prompt. This endpoint always goes to
+        # Anthropic (cloud), so vault TIER_2/TIER_3 content is gated out here.
+        settings = _load_settings()
         system_prompt, sources = _build_context_prompt(
-            message, workspace, workspace_context, vision_description
+            message, workspace, workspace_context, vision_description,
+            provider='cloud',
+            vault_control=(_get_vault_control() if _vault_local_only() else None),
+            vault_fallback=_vault_cloud_fallback(),
         )
 
         # Prepend user-configured agent personality + response prefs + cLaws
-        settings = _load_settings()
         personality = _load_agent_personality()
         system_prompt = _settings_system_prefix(settings, personality) + (system_prompt or '')
 

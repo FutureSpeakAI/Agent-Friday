@@ -14,6 +14,17 @@ class TaskType:
     CODE = "code"
     RESEARCH = "research"
     VOICE = "voice"
+    VAULT_ACCESS = "vault_access"
+
+
+# Requests that touch the Sovereign Vault must run on a local model. These
+# keywords (and any vault-related tool definitions) flag a request as needing
+# vault access, which force-routes it to Ollama regardless of routing mode.
+VAULT_KEYWORDS = (
+    "vault", "health record", "medical record", "ofw", "our family wizard",
+    "financial", "finance", "encrypted", "sovereign", "ssn", "social security",
+    "custody", "co-parent", "coparent",
+)
 
 
 # Cost estimates per 1K tokens (USD) — used for savings tracking.
@@ -128,17 +139,112 @@ class ModelRouter:
             return TaskType.SIMPLE
         return TaskType.RESEARCH
 
+    # ── Vault access detection ──────────────────────────────────────────
+
+    def needs_vault_access(self, messages, ctx):
+        """True if this request will touch the Sovereign Vault.
+
+        Triggers on vault-related tool definitions or vault keywords in the
+        latest user message. Vault requests are force-routed to a local model.
+        """
+        ctx = ctx or {}
+        if ctx.get("vault_access") is True:
+            return True
+        for t in (ctx.get("tool_names") or []):
+            if "vault" in str(t).lower():
+                return True
+        last_msg = ""
+        for m in reversed(messages or []):
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    last_msg = content
+                break
+        low = last_msg.lower()
+        return any(kw in low for kw in VAULT_KEYWORDS)
+
+    def _finalize(self, result, vault_access=False, warning=None, refuse=False):
+        """Attach the downstream control flags the chat pipeline checks.
+
+        is_local      — provider is Ollama (on-device)
+        vault_allowed — raw vault content may be sent (True only for local)
+        scrub_pii     — PII scrubber must run (True only for cloud)
+        vault_access  — this request was flagged as vault-touching
+        refuse        — caller must refuse outright (no model call)
+        warning       — user-facing message to surface, if any
+        """
+        is_local = result.get("provider") == "local"
+        result["is_local"] = is_local
+        result["vault_allowed"] = is_local
+        result["scrub_pii"] = not is_local
+        result["vault_access"] = vault_access
+        result["refuse"] = refuse
+        result["warning"] = warning
+        return result
+
+    def _route_vault(self, ctx):
+        """Force a vault-touching request onto a local model.
+
+        Falls back per `vault_cloud_fallback` when no local model is available:
+          "redact" → route cloud (vault content is gated/redacted downstream)
+          "deny"   → refuse outright
+          "warn"   → refuse and ask the user to enable a local model
+        """
+        from ollama_manager import get_manager
+        ollama = get_manager(self.config.get("ollama_url", "http://localhost:11434"))
+        models = ollama.list_models() if ollama.is_available() else []
+
+        if models:
+            local_model = self._pick_local_model(models, TaskType.VAULT_ACCESS, self.mode) \
+                or models[0]["name"]
+            return self._finalize({
+                "provider": "local",
+                "model": local_model,
+                "task_type": TaskType.VAULT_ACCESS,
+                "reason": "Vault access — force-routed to local model",
+            }, vault_access=True)
+
+        warning = (
+            "This request needs vault access which requires a local model. "
+            "Please install Ollama or switch to local routing mode."
+        )
+        fallback = self.config.get("vault_cloud_fallback", "redact")
+        if fallback in ("deny", "warn"):
+            return self._finalize({
+                "provider": "cloud",
+                "model": self.config.get("default_cloud_model", "claude-opus-4-7"),
+                "task_type": TaskType.VAULT_ACCESS,
+                "reason": f"Vault access required but no local model ({fallback})",
+            }, vault_access=True, warning=warning, refuse=True)
+
+        # "redact" — proceed on cloud, but vault content is gated downstream.
+        return self._finalize({
+            "provider": "cloud",
+            "model": self.config.get("default_cloud_model", "claude-opus-4-7"),
+            "task_type": TaskType.VAULT_ACCESS,
+            "reason": "Vault access required but no local model — cloud with redaction",
+        }, vault_access=True, warning=warning)
+
     def route(self, messages, task_context=None):
         """Decide which provider/model to use.
 
-        Returns: {
-            "provider": "local" | "cloud",
-            "model": str,
-            "task_type": str,
-            "reason": str,
-        }
+        Returns a dict with provider/model/task_type/reason plus the control
+        flags added by `_finalize` (is_local, vault_allowed, scrub_pii,
+        vault_access, refuse, warning).
+
+        Vault detection runs first and takes precedence over the routing mode —
+        even in cloud_only mode a vault request is force-routed local or refused,
+        so vault data never reaches the cloud.
         """
         ctx = task_context or {}
+
+        if self.needs_vault_access(messages, ctx):
+            return self._route_vault(ctx)
+
+        return self._finalize(self._route_basic(messages, ctx), vault_access=False)
+
+    def _route_basic(self, messages, ctx):
+        """Original (non-vault) routing decision. Returns a bare result dict."""
         mode = self.mode
         has_tools = bool(ctx.get("has_tools"))
         workspace = ctx.get("workspace", "")
