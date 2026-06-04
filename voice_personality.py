@@ -84,11 +84,31 @@ DEFAULT_VOICE_STYLE = (
 )
 
 
+AFFECTIVE_DIALOG_INSTRUCTION = (
+    "\n=== AFFECTIVE DIALOG (ACTIVE) ===\n"
+    "Gemini's affective dialog is enabled. You can SENSE the user's emotional "
+    "state from their voice — tone, pace, stress, excitement. Use this:\n"
+    "- If the user sounds stressed or frustrated, lower your energy. Be calm, "
+    "direct, and reassuring. Don't match their agitation.\n"
+    "- If the user sounds excited or enthusiastic, match their energy. Be "
+    "animated and encouraging.\n"
+    "- If the user sounds tired or low-energy, be gentle and concise. Don't "
+    "overwhelm them.\n"
+    "- If the user sounds uncertain or hesitant, be patient. Ask clarifying "
+    "questions. Don't rush them.\n"
+    "Your mood-based voice style below sets the BASELINE emotional register. "
+    "Affective dialog lets you ADAPT dynamically from that baseline based on "
+    "what you hear in real time. The baseline is your default; the user's "
+    "emotional state shifts you from there.\n\n"
+)
+
+
 class VoicePersonality:
     """Adjusts the Gemini Live system instruction based on current mood."""
 
     def __init__(self):
         self._current_mood: str = "idle"
+        self._affective_dialog: bool = False
 
     @property
     def current_mood(self) -> str:
@@ -98,6 +118,14 @@ class VoicePersonality:
     def current_mood(self, mood: str):
         self._current_mood = mood.lower()
 
+    @property
+    def affective_dialog(self) -> bool:
+        return self._affective_dialog
+
+    @affective_dialog.setter
+    def affective_dialog(self, enabled: bool):
+        self._affective_dialog = bool(enabled)
+
     def get_voice_style(self, mood: Optional[str] = None) -> str:
         m = (mood or self._current_mood).lower()
         profile = VOICE_MOOD_PROFILES.get(m)
@@ -106,7 +134,8 @@ class VoicePersonality:
         return DEFAULT_VOICE_STYLE
 
     def build_system_instruction(self, base_instruction: str,
-                                  mood: Optional[str] = None) -> str:
+                                  mood: Optional[str] = None,
+                                  affective_dialog: Optional[bool] = None) -> str:
         style = self.get_voice_style(mood)
         m = (mood or self._current_mood).lower()
         profile = VOICE_MOOD_PROFILES.get(m)
@@ -117,11 +146,14 @@ class VoicePersonality:
         elif profile and profile.pace == "fast":
             pace_hint = " Speak efficiently — no wasted words."
 
+        use_affective = affective_dialog if affective_dialog is not None else self._affective_dialog
+        affective_block = AFFECTIVE_DIALOG_INSTRUCTION if use_affective else ""
+
         mood_block = (
             f"\n=== CURRENT MOOD: {m.upper()} ===\n"
             f"Voice style: {style}{pace_hint}\n\n"
         )
-        return mood_block + base_instruction
+        return affective_block + mood_block + base_instruction
 
 
 _voice_personality: Optional[VoicePersonality] = None

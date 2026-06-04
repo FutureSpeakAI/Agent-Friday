@@ -7256,13 +7256,19 @@ def _get_voice_style_prompt():
 
 
 def _model_supports_affective_dialog(model_name: str) -> bool:
-    """Affective dialog is only available on Gemini's native-audio Live models.
+    """Affective dialog is only available on Gemini 2.5 Flash Live models.
 
-    Standard Live models (e.g. gemini-3.1-flash-live-preview) return 1011 if
-    enable_affective_dialog is sent. The native-audio variants are the only
-    ones that support emotion-adaptive delivery.
+    Supported: gemini-2.5-flash-native-audio-preview, gemini-live-2.5-flash-preview,
+    and any model with 'native-audio' in the name. Standard Live models
+    (e.g. gemini-3.1-flash-live-preview, gemini-2.0-flash-live-001) return
+    1011 if enable_affective_dialog is sent.
     """
-    return "native-audio" in (model_name or "").lower()
+    mn = (model_name or "").lower()
+    if "native-audio" in mn:
+        return True
+    if "2.5-flash" in mn and ("live" in mn or "preview" in mn):
+        return True
+    return False
 
 LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.
 You are having a live voice conversation. Be concise and natural — this is spoken dialogue, not text chat.
@@ -7554,12 +7560,6 @@ if sock is not None:
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
-        try:
-            from voice_personality import get_voice_personality
-            _vp = get_voice_personality()
-            system_instruction = _vp.build_system_instruction(voice_prefix + full_ctx)
-        except Exception:
-            system_instruction = voice_prefix + full_ctx
 
         try:
             ws.send(json.dumps({"type": "status", "text": "loading context"}))
@@ -7583,8 +7583,26 @@ if sock is not None:
             live_max_tokens = int(live_settings.get("voice_max_tokens") or 0)
         except (TypeError, ValueError):
             live_max_tokens = 0
-        live_affective = bool(live_settings.get("voice_affective"))
-        live_proactive = bool(live_settings.get("voice_proactive"))
+        _configured_live_model = _get_live_model()
+        _model_is_25 = _model_supports_affective_dialog(_configured_live_model)
+        live_affective = live_settings.get("voice_affective", _model_is_25)
+        if live_affective is None:
+            live_affective = _model_is_25
+        live_affective = bool(live_affective)
+        live_proactive = live_settings.get("voice_proactive", _model_is_25)
+
+        # Build system instruction with mood + affective dialog awareness
+        try:
+            from voice_personality import get_voice_personality
+            _vp = get_voice_personality()
+            _vp.affective_dialog = live_affective
+            system_instruction = _vp.build_system_instruction(
+                voice_prefix + full_ctx, affective_dialog=live_affective)
+        except Exception:
+            system_instruction = voice_prefix + full_ctx
+        if live_proactive is None:
+            live_proactive = _model_is_25
+        live_proactive = bool(live_proactive)
         live_context_compression = bool(live_settings.get("voice_context_compression"))
 
         _vlog(
