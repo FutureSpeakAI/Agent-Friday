@@ -2231,7 +2231,7 @@ DEFAULT_SETTINGS = {
     "orchestrator_model": "claude-opus-4-7",    # main agent brain
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-2.5-flash",       # images, vision, creative generation
-    "voice_model": "gemini-live-2.5-flash-preview",  # live audio
+    "voice_model": "gemini-2.5-flash-native-audio-preview-12-2025",  # live audio (native-audio: affective + proactive)
     # ── Semantic Context Pruning (RAG over our own conversation history) ──
     # When chat history exceeds max_turns, embedding-based retrieval keeps the
     # most relevant past turns instead of truncating from the oldest.
@@ -7225,8 +7225,11 @@ def fs_assets():
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-live-2.5-flash-preview")
-LIVE_MODEL_FALLBACK = "gemini-2.0-flash-live-001"
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+# Graceful-degradation chain if the primary (native-audio) model is unavailable.
+# half-cascade 2.5 still supports affective dialog; 2.0 is the GA safety net.
+LIVE_MODEL_FALLBACK = "gemini-live-2.5-flash-preview"
+LIVE_MODEL_FALLBACK2 = "gemini-2.0-flash-live-001"
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 
@@ -7675,8 +7678,9 @@ if sock is not None:
             # must wrap the entire session block, not just the connect() call.
             configured_live_model = _get_live_model()
             models_to_try = [configured_live_model]
-            if configured_live_model != LIVE_MODEL_FALLBACK:
-                models_to_try.append(LIVE_MODEL_FALLBACK)
+            for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2):
+                if _fallback not in models_to_try:
+                    models_to_try.append(_fallback)
 
             last_error = None
             for model_name in models_to_try:
