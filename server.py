@@ -7227,9 +7227,11 @@ def fs_assets():
 
 LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 # Graceful-degradation chain if the primary (native-audio) model is unavailable.
-# half-cascade 2.5 still supports affective dialog; 2.0 is the GA safety net.
+# half-cascade 2.5 still supports affective dialog; 3.1 is the known-working
+# safety net (the 2.5/2.0 Live models have 1008'd on the AI Studio AQ. key tier,
+# so 3.1 must stay last in the chain to guarantee voice still connects).
 LIVE_MODEL_FALLBACK = "gemini-live-2.5-flash-preview"
-LIVE_MODEL_FALLBACK2 = "gemini-2.0-flash-live-001"
+LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 
