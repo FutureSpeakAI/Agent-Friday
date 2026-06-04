@@ -1,6 +1,7 @@
 flask>=3.0
 anthropic>=0.40
 google-genai>=1.0
+cryptography>=44              # Sovereign Vault AES-256-GCM + Argon2id (vault_crypto.py)
 rich>=13.0
 colorama>=0.4
 pyautogui>=0.9
