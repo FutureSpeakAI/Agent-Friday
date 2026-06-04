@@ -11,7 +11,7 @@ tool_chain:
   - search_wiki:query="briefing"
   - run_command:command="Get-Date"
 prompt_template: |
-  Generate a crisp daily briefing for Stephen. Cover:
+  Generate a crisp daily briefing. Cover:
   1. Today's calendar events (most important first)
   2. Top news from the briefing
   3. Active tasks requiring attention

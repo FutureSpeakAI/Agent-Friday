@@ -576,7 +576,7 @@ def _detect_overdue(messages: List[OFWMessage], state: Dict[str, Any],
     for m in messages:
         recv = _parse_iso(m.received_at)
         age_h = (datetime.utcnow() - recv).total_seconds() / 3600.0
-        # We can't tell from the inbox alone if Stephen replied — caller
+        # We can't tell from the inbox alone if the user replied — caller
         # may provide that. For now, treat any unread + age > cutoff as overdue.
         if m.unread and recv < cutoff:
             out.append({"msg_id": m.msg_id,

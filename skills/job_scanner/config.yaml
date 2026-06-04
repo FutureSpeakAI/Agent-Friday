@@ -4,7 +4,7 @@
 # or by passing kwargs into scanner.scan().
 
 profile:
-  candidate: "Stephen C. Webster"
+  candidate: ""
   target_title_keywords:
     - "VP AI"
     - "VP, Artificial Intelligence"
@@ -32,19 +32,8 @@ profile:
     - "RAG"
     - "evals"
     - "skill optimization"
-  preferred_companies:
-    - "anthropic"
-    - "openai"
-    - "perplexity"
-    - "scale ai"
-    - "hugging face"
-    - "harvey"
-    - "glean"
-    - "writer"
-    - "decagon"
-    - "sierra"
-  blocked_companies:
-    - "meta"      # personal preference
+  preferred_companies: []
+  blocked_companies: []
   seniority_targets:
     - "vp"
     - "director"
@@ -63,9 +52,9 @@ search:
   max_total_per_run: 100
 
 salary:
-  floor_usd: 250000
-  target_usd: 400000
-  stretch_usd: 600000
+  floor_usd: 150000
+  target_usd: 300000
+  stretch_usd: 500000
   weight_below_floor: 0.0
   weight_at_target: 1.0
 
@@ -101,7 +90,7 @@ schedule:
       - ["Applied AI", "AI Platform"]
 
 notifications:
-  priority_alert_max_per_day: 6     # cap so Stephen isn't spammed
+  priority_alert_max_per_day: 6
   digest_at_local_time: "18:00"
   weekly_report_local_day: "sun"
   weekly_report_local_time: "17:00"

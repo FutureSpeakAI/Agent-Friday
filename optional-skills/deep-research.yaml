@@ -17,7 +17,7 @@ prompt_template: |
   Synthesise findings from web search, wiki, and trust graph. Structure output as:
   ## Overview (2-3 sentences)
   ## Key Facts (bulleted)
-  ## Connections to Stephen's Work
+  ## Connections to Current Work
   ## Red Flags or Opportunities
   ## Recommended Next Action
 

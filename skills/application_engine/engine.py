@@ -203,7 +203,7 @@ def _default_cover_drafter(listing: JobListing, resume_pack: Dict[str, Any],
         f"HMAC-SHA256.\n\n"
         f"I'd like to bring this builder's track record to "
         f"{listing.company} and would welcome a conversation.\n\n"
-        f"— Stephen C. Webster\n"
+        f"— [Your Name]\n"
     )
 
 

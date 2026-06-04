@@ -18,7 +18,7 @@ on a high-confidence priority job.
 
 ## When this skill fires
 
-- Stephen says "apply to that one" / "submit application" / "tailor for X".
+- The user says "apply to that one" / "submit application" / "tailor for X".
 - Auto-apply queue hits a job with `confidence ≥ auto_apply_threshold`.
 - Re-application: an old listing reposts with substantially changed
   details and `quality_gates_passed` includes `relevance`.
@@ -34,8 +34,8 @@ on a high-confidence priority job.
 4. **Form completion.** Detect ATS platform (Greenhouse, Lever, Workable,
    SmartRecruiters, other) and emit a field-by-field plan.
 5. **Submission.**
-   - Below salary floor → block and notify Stephen.
-   - Above confirmation threshold → require Stephen to OK before submit.
+   - Below salary floor → block and notify the user.
+   - Above confirmation threshold → require the user to OK before submit.
    - Otherwise → submit and log.
 6. **Tracker log.** Persist an `ApplicationRecord` with the resume +
    cover letter variants used and which quality gates passed.
@@ -43,7 +43,7 @@ on a high-confidence priority job.
 ## Inputs
 
 - `job_id` — the `JobListing` to apply to
-- `force_confirm` (optional) — request Stephen's explicit OK even when
+- `force_confirm` (optional) — request the user's explicit OK even when
    under the confirmation threshold
 - `resume_variant` (optional) — override A/B selection
 - `dry_run` (optional) — produce all artifacts but skip submission
@@ -99,7 +99,7 @@ We support the common four major ATSes with platform-specific field maps:
 | Workable        | `apply.workable.com` in URL            | Often gates by domain whitelist    |
 | SmartRecruiters | `jobs.smartrecruiters.com` in URL      | Heavy on cover letter parsing      |
 
-Anything else is `unknown` — we emit the field plan and ask Stephen to
+Anything else is `unknown` — we emit the field plan and ask the user to
 finish manually.
 
 ## Quality bar
@@ -115,7 +115,7 @@ Each application is recorded to SkillOpt. When response data lands
 the application and folds them into:
 
 - `accuracy` — was the application a real fit? (response_kind score)
-- `user_satisfaction` — explicit Stephen feedback
+- `user_satisfaction` — explicit user feedback
 - `completeness` — did we fill every required field?
 - `cost_usd` — token spend on tailoring
 
@@ -131,4 +131,4 @@ A run is successful if it:
 
 1. Surfaces a complete artifact bundle (resume + cover + field plan),
 2. Passes all configured quality gates,
-3. Either submits or hands off with all information ready for Stephen.
+3. Either submits or hands off with all information ready for the user.

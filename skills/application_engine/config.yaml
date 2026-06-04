@@ -96,7 +96,7 @@ ats:
       cover_letter: "textarea[name='coverLetter']"
 
 submission:
-  auto_apply: false                   # Stephen flips this on per-job
+  auto_apply: false                   # user flips this on per-job
   auto_apply_confidence: 0.90
   require_confirmation_above_usd: 300000
   delay_between_applications_seconds: 90

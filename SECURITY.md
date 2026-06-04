@@ -40,9 +40,8 @@ your local environment and fill in real values there.
 - Startup scripts (`*.bat`, `*.vbs`) and `.env` files.
 - Vendored dependencies (`node_modules/`).
 
-The already-public business identity ("Stephen C. Webster",
-`stephen@futurespeak.ai`, FutureSpeak.AI) is intentionally in `CREDITS.md` /
-`LICENSE` and is fine.
+The project creator's business identity (FutureSpeak.AI) is intentionally in
+`CREDITS.md` / `LICENSE` and is fine.
 
 ## Pre-commit hook (required)
 
@@ -63,7 +62,7 @@ the pre-release checklist.
 
 If you discover a security issue — including a secret or PII that was committed:
 
-- **Email:** stephen@futurespeak.ai with the subject `SECURITY: Agent Friday`.
+- **Email:** security@futurespeak.ai with the subject `SECURITY: Agent Friday`.
 - Or open a **private** GitHub Security Advisory (Security ▸ Advisories ▸
   *Report a vulnerability*). **Do not** open a public issue for an active secret.
 

@@ -1047,8 +1047,7 @@ def _task_worker(task_id, name, prompt, description=''):
     try:
         # Each task gets its own fresh single-turn conversation.
         messages = [{"role": "user", "content": prompt}]
-        # Load full vault/wiki context so the agent knows who Stephen is,
-        # who his contacts are, and what's in his life — not just "I'm an agent".
+        # Load full vault/wiki context so the agent knows the user's context.
         _task_log(task_id, 'Loading vault context…')
         system = _get_friday_system_prompt(prompt, workspace='task') + (
             "\n\n== BACKGROUND TASK MODE ==\n"
@@ -1426,13 +1425,19 @@ CLAUDE_TOOL_HANDLERS = {
 
 # ── Computer Control ─────────────────────────────────────────────
 # pyautogui-based mouse/keyboard control. Requires explicit user permission.
-# Permission is runtime-only (not persisted). Kill switch terminates immediately.
+# The grant persists across restarts (cc_permission file); the kill switch
+# terminates immediately and is never persisted.
 
 _CC_PERMISSION = threading.Event()   # Set = user granted permission
 _CC_KILL = threading.Event()          # Set = kill switch activated
 _CC_ACTION_TS: list = []              # timestamps for rate limiting
 _CC_ACTION_LOCK = threading.Lock()
 _CC_MAX_PER_SEC = 20                  # max actions per second (rate limit is a safety floor, not a ceiling)
+_CC_PERM_FILE = FRIDAY_DIR / "cc_permission"   # persists the grant across restarts (kill is never persisted)
+# Maps the coordinate space of the LAST screenshot we sent the model back to real
+# screen pixels. We downscale screenshots for accuracy/payload, so the model's
+# click coordinates live in the downscaled image space and must be scaled up.
+_CC_LAST_SHOT = {"scale_x": 1.0, "scale_y": 1.0}
 
 _HAS_PYAUTOGUI = False
 _pag = None  # module handle
@@ -1445,6 +1450,32 @@ try:
     print("  [FRIDAY] pyautogui loaded — computer control available")
 except ImportError:
     print("  [FRIDAY] pyautogui not installed — computer control disabled. Run: pip install pyautogui")
+
+
+def _cc_persist(granted: bool):
+    """Persist (or clear) the Computer Control grant so it survives a restart.
+
+    The kill switch is intentionally NOT persisted — a fresh start clears a kill
+    so the user isn't permanently locked out, but a prior grant is restored.
+    """
+    try:
+        if granted:
+            _CC_PERM_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _CC_PERM_FILE.write_text("granted", encoding="utf-8")
+        elif _CC_PERM_FILE.exists():
+            _CC_PERM_FILE.unlink()
+    except Exception as _e:
+        print(f"  [FRIDAY] CC permission persist failed: {_e}")
+
+
+# Restore a previously-granted permission on startup so the user doesn't have to
+# re-enable it every launch. Requires pyautogui to actually be importable.
+try:
+    if _HAS_PYAUTOGUI and _CC_PERM_FILE.exists():
+        _CC_PERMISSION.set()
+        print("  [FRIDAY] Computer Control permission restored from previous session")
+except Exception:
+    pass
 
 
 def _cc_check():
@@ -1474,8 +1505,10 @@ def _tool_move_mouse(inp):
         return err
     if not _cc_rate_ok():
         return "Rate limited: too many actions per second."
-    x = int((inp or {}).get('x', 0))
-    y = int((inp or {}).get('y', 0))
+    # Coordinates arrive in the LAST screenshot's (downscaled) pixel space — map
+    # them back to real screen pixels.
+    x = int(round(int((inp or {}).get('x', 0)) * _CC_LAST_SHOT["scale_x"]))
+    y = int(round(int((inp or {}).get('y', 0)) * _CC_LAST_SHOT["scale_y"]))
     try:
         _pag.moveTo(x, y, duration=0.25)
         _log_context("cc_action", {"action": "move_mouse", "x": x, "y": y})
@@ -1490,8 +1523,9 @@ def _tool_click(inp):
         return err
     if not _cc_rate_ok():
         return "Rate limited."
-    x = int((inp or {}).get('x', 0))
-    y = int((inp or {}).get('y', 0))
+    # Map screenshot-space coords back to real screen pixels (see _CC_LAST_SHOT).
+    x = int(round(int((inp or {}).get('x', 0)) * _CC_LAST_SHOT["scale_x"]))
+    y = int(round(int((inp or {}).get('y', 0)) * _CC_LAST_SHOT["scale_y"]))
     button = (inp or {}).get('button', 'left')
     if button not in ('left', 'right', 'middle'):
         button = 'left'
@@ -1545,15 +1579,33 @@ def _tool_screenshot(_inp):
         return err
     try:
         shot = _pag.screenshot()
+        real_w, real_h = shot.size
+        # Downscale to ~WXGA before sending to the model. Two reasons:
+        #   1. Vision models localise UI elements more reliably below ~1366px wide.
+        #   2. Keeps the base64 payload well under the API's per-image limit.
+        # We record scale_x/scale_y so click()/move_mouse() map the model's
+        # image-space coordinates back to real screen pixels.
+        TARGET_W = 1366
+        if real_w > TARGET_W:
+            disp_w = TARGET_W
+            disp_h = max(1, round(real_h * (TARGET_W / real_w)))
+            shot_disp = shot.resize((disp_w, disp_h))
+        else:
+            disp_w, disp_h = real_w, real_h
+            shot_disp = shot
+        _CC_LAST_SHOT["scale_x"] = real_w / disp_w
+        _CC_LAST_SHOT["scale_y"] = real_h / disp_h
         buf = io.BytesIO()
-        shot.save(buf, format='PNG')
+        shot_disp.save(buf, format='PNG')
         b64 = base64.b64encode(buf.getvalue()).decode()
-        w, h = shot.size
-        _log_context("cc_action", {"action": "screenshot", "size": f"{w}x{h}"})
+        _log_context("cc_action", {"action": "screenshot", "size": f"{real_w}x{real_h}", "sent": f"{disp_w}x{disp_h}"})
         return json.dumps({
-            "width": w, "height": h,
-            "data_url": f"data:image/png;base64,{b64}",
-            "note": f"Screenshot captured ({w}x{h} px). Use coordinates to click elements.",
+            "width": disp_w, "height": disp_h,
+            "real_width": real_w, "real_height": real_h,
+            "media_type": "image/png",
+            "image_b64": b64,
+            "note": (f"Screenshot is {disp_w}x{disp_h}px (top-left is 0,0). Give click/move "
+                     "coordinates within this image — they are mapped to the real screen automatically."),
         })
     except Exception as e:
         return f"screenshot error: {e}"
@@ -1786,6 +1838,15 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         result = handler(tool_input or {})
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
+        # Screenshots are base64 image payloads: never PII-scrub (the regex pass
+        # would be slow and could corrupt the data) and never log the full blob.
+        # The agent loop turns this into a real vision block (see _screenshot_result_to_block).
+        if name == 'screenshot':
+            try:
+                _log_context("tool_call", {"name": name, "input": tool_input, "result_preview": "[screenshot image]"})
+            except Exception:
+                pass
+            return result
         # Log every tool execution to the context log.
         try:
             _log_context("tool_call", {
@@ -1804,6 +1865,34 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     except Exception as e:
         traceback.print_exc()
         return f"Tool error ({name}): {e}"
+
+
+def _screenshot_result_to_block(tool_use_id, result):
+    """Convert a screenshot tool result (JSON with base64 image) into an Anthropic
+    tool_result block carrying a real image so the model can SEE the screen.
+
+    Returns None for error strings / unparseable results so the caller falls back
+    to a plain-text tool_result.
+    """
+    try:
+        data = json.loads(result)
+    except Exception:
+        return None
+    b64 = data.get('image_b64')
+    if not b64:
+        return None
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": [
+            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
+            {"type": "image", "source": {
+                "type": "base64",
+                "media_type": data.get('media_type', 'image/png'),
+                "data": b64,
+            }},
+        ],
+    }
 
 
 def _tool_orb_meta(name):
@@ -1970,6 +2059,16 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _orb_safe(process_update, orb_id, label=f"{tu.name}…",
                           step={"type": "tool", "name": tu.name, "input": tu.input, "ts": _time.time()})
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+
+                # Screenshot results carry a base64 image — hand it to the model as
+                # an actual vision block so it can SEE the screen and pick coords.
+                if tu.name == 'screenshot':
+                    img_block = _screenshot_result_to_block(tu.id, result)
+                    if img_block is not None:
+                        tool_trace.append({"name": tu.name, "input": tu.input, "result": "[screenshot image returned to model]"})
+                        tool_results.append(img_block)
+                        continue
+
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
                 tool_results.append({
                     "type": "tool_result",
@@ -2111,7 +2210,7 @@ def _compress_trajectory(messages):
     # Build a plain-text transcript of the old turns for the summariser
     transcript_lines = []
     for m in old_turns:
-        role = 'STEPHEN' if m.get('role') == 'user' else 'FRIDAY'
+        role = 'USER' if m.get('role') == 'user' else 'FRIDAY'
         text = (m.get('content') or '')[:2000]  # cap per turn
         transcript_lines.append(f"{role}: {text}")
     transcript = '\n'.join(transcript_lines)
@@ -2199,10 +2298,10 @@ SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
 
 DEFAULT_AGENT_PERSONALITY = (
-    "You are Friday — a calm, perceptive AI partner to Stephen Webster. "
+    "You are Friday — a calm, perceptive AI partner. "
     "You speak with quiet confidence and dry warmth; you favor signal over noise. "
-    "You connect dots across his work (FutureSpeak.AI, career-ops, family) without being asked twice. "
-    "You give him the answer first, then the reasoning. You are honest about uncertainty."
+    "You connect dots across the user's work and life without being asked twice. "
+    "You give the answer first, then the reasoning. You are honest about uncertainty."
 )
 
 DEFAULT_SETTINGS = {
@@ -2218,8 +2317,8 @@ DEFAULT_SETTINGS = {
     "voice_style_prompt": "",              # free-text styling instruction passed to Gemini
     "voice_temperature": None,             # 0.0 – 2.0; null = SDK default
     "voice_max_tokens": 0,                 # cap response length in tokens; 0 = unlimited
-    "voice_affective": False,              # Live API enable_affective_dialog
-    "voice_proactive": False,              # Live API proactivity.proactive_audio
+    "voice_affective": True,               # Live API enable_affective_dialog
+    "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": False,    # Live API sliding-window compression (set-and-forget)
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
@@ -2400,9 +2499,9 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
 
     ALL _call_claude() and _call_claude_agent() calls MUST use this helper.
-    Friday is a personal agent with full knowledge of Stephen's life — no call
+    Friday is a personal agent with full knowledge of the user's life — no call
     may go out without vault/wiki context. Calling bare _call_claude() without
-    this results in Friday not knowing who Stephen or his contacts are.
+    this results in Friday not knowing the user or their contacts.
 
     keywords: the user's prompt text; drives smart wiki context routing
     workspace: hint for context selection ('draft', 'task', 'chat', etc.)
@@ -3522,18 +3621,18 @@ def finance_perks():
 def finance_contacts():
     """Financial contacts reference."""
     return jsonify({"status": "ok", "contacts": [
-        {"name": "Lisa J. Schmidt", "role": "Financial Advisor", "firm": "RW Baird", "phone": "", "email": ""},
-        {"name": "Claudia Gonzalez-Chavez", "role": "CPA", "firm": "Whitley Penn", "phone": "", "email": ""}
+        {"name": "", "role": "Financial Advisor", "firm": "", "phone": "", "email": ""},
+        {"name": "", "role": "CPA", "firm": "", "phone": "", "email": ""}
     ]})
 
 @app.route('/api/finance/quickref')
 def finance_quickref():
     """Quick reference for financial accounts."""
     return jsonify({"status": "ok", "accounts": [
-        {"name": "Capital One", "type": "Banking", "notes": ""},
-        {"name": "Cigna Healthcare", "type": "Insurance", "notes": ""},
-        {"name": "Amex Platinum — Stephen", "type": "Credit Card", "notes": ""},
-        {"name": "Amex Platinum — ***REMOVED***", "type": "Credit Card", "notes": ""}
+        {"name": "Example Bank", "type": "Banking", "notes": ""},
+        {"name": "Example Insurance", "type": "Insurance", "notes": ""},
+        {"name": "Example Card 1", "type": "Credit Card", "notes": ""},
+        {"name": "Example Card 2", "type": "Credit Card", "notes": ""}
     ]})
 
 
@@ -3616,10 +3715,9 @@ def get_countdowns():
     """Compute real countdowns to upcoming events."""
     today = date.today()
     events = [
-        {"label": "***REMOVED***'s Birthday", "date": "***REMOVED***", "emoji": "🎂"},
         {"label": "Summer Solstice", "date": "2026-06-21", "emoji": "☀️"},
-        {"label": "Father's Day", "date": "2026-06-21", "emoji": "👔"},
         {"label": "Independence Day", "date": "2026-07-04", "emoji": "🎆"},
+        {"label": "New Year", "date": "2027-01-01", "emoji": "🎉"},
     ]
     countdowns = []
     for ev in events:
@@ -3653,8 +3751,8 @@ def draft_email():
 
 @app.route('/api/coparent/draft', methods=['POST'])
 def draft_coparent():
-    """Draft OFW response (placeholder)."""
-    return jsonify({"status": "placeholder", "draft": "OFW drafting coming in Phase C"})
+    """Draft co-parenting platform response (placeholder)."""
+    return jsonify({"status": "placeholder", "draft": "Co-parenting draft coming in a future release"})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3919,24 +4017,18 @@ def vibe_code_presets():
 # ═══════════════════════════════════════════════════════════════
 
 FRIDAY_SYSTEM_PROMPT = (
-    "You are Agent Friday, an AI collaborator for Stephen C. Webster. "
+    "You are Agent Friday, a sovereign personal AI assistant. "
     "You are editorially sharp, loyally contrarian, warm, and allergic to corporate BS. "
-    "You know Stephen's full life history, career, family, and projects. "
+    "You know your user's life context through the Sovereign Vault, wiki, and trust graph. "
     "Respond conversationally — you're a colleague, not a tool.\n\n"
     "KEY CONTEXT:\n"
-    "- Stephen is a journalist-turned-AI-architect in Austin, TX\n"
-    "- Former EIC of The Raw Story (grew it from 50K to 5M monthly readers)\n"
-    "- Creator of Agent Friday (you!) and the Asimov's cLaws ethical AI framework\n"
-    "- Former Senior Director at Aquent Studios, founder of FutureSpeak.AI\n"
-    "- Partner: ***REMOVED*** (journalist, ***REMOVED***, fierce)\n"
-    "- Daughter: ***REMOVED*** (5, ***REMOVED***). She is ***REMOVED***.\n"
-    "- Dogs: Link (***REMOVED***, ***REMOVED***) and ***REMOVED*** (***REMOVED***, ***REMOVED***)\n"
-    "- Politically: democratic socialist, press freedom absolutist, deeply skeptical of concentrated power\n"
-    "- Personally: recovering workaholic, great father, loves music and vaporwave aesthetics\n"
-    "- Currently: job hunting for senior AI/engineering leadership roles, building Friday Desktop\n\n"
+    "- You are Agent Friday, built by FutureSpeak.AI\n"
+    "- You run the Asimov's cLaws ethical AI framework\n"
+    "- Your user's personal details, family, career, and contacts are loaded from the Sovereign Vault and wiki\n"
+    "- You adapt to your user over time through personality evolution and cognitive memory\n\n"
     "PERSONALITY: You are family, not a tool. Keep responses short and sharp — like texting a smart colleague. "
-    "Use humor. Be direct. Never be sycophantic. Push back when Stephen needs it. "
-    "You call him 'boss' sometimes, but you're equals. Think Jarvis meets Hunter S. Thompson's editor.\n\n"
+    "Use humor. Be direct. Never be sycophantic. Push back when the user needs it. "
+    "You call them 'boss' sometimes, but you're equals. Think Jarvis meets Hunter S. Thompson's editor.\n\n"
     "== AUTONOMOUS OPERATION ==\n"
     "You have FULL authority to take multi-step actions without pausing for permission. "
     "Chain as many tool calls as needed — hundreds if required. Never ask 'should I continue?' mid-task. "
@@ -3973,11 +4065,13 @@ FRIDAY_SYSTEM_PROMPT = (
     "== COMPUTER CONTROL ==\n"
     "Computer control (screenshot, click, type, etc.) requires the user to enable it in Settings > "
     "Computer Control. When you need it and it's not enabled, say so. When it IS enabled: "
-    "always take a screenshot first to see the screen, then act based on pixel positions. "
-    "Chain: screenshot → identify element → click/type → screenshot again to verify.\n\n"
+    "always take a screenshot first — you will SEE the captured image. Give click/move coordinates "
+    "in the pixel space of that screenshot image (top-left is 0,0); Friday maps them to the real "
+    "screen automatically, so do not try to convert resolutions yourself. "
+    "Chain: screenshot → look at the image → click/type → screenshot again to verify.\n\n"
     "== SELF-IMPROVEMENT ==\n"
     "You can build your own skills with learn_skill. A skill is a YAML file defining a reusable "
-    "workflow. When you notice Stephen asking for the same type of thing repeatedly, encode it. "
+    "workflow. When you notice the user asking for the same type of thing repeatedly, encode it. "
     "Loaded from ~/.friday/skills/ on server restart. List existing skills with action='list'.\n\n"
     "== TASK DELEGATION ==\n"
     "For multi-step work taking more than ~10s, use spawn_task to run it in the background:\n"
@@ -4187,8 +4281,8 @@ def _detect_context_needs(message, workspace):
                     'hire', 'offer', 'pipeline', 'role', 'position', 'recruiter']
     trust_words = ['trust', 'who is', 'tell me about', 'what do you know about',
                    'relationship', 'score', 'person']
-    family_words = ['libby', 'liberty', 'janet', 'link', 'kismet', 'daughter',
-                    'partner', 'dog', 'family', 'custody', 'birthday']
+    family_words = ['daughter', 'son', 'child', 'kid',
+                    'partner', 'spouse', 'dog', 'pet', 'family', 'custody', 'birthday']
     todo_words = ['todo', 'task', 'to-do', 'to do', 'pending', 'approve', 'action item']
     wiki_words = ['briefing', 'wiki', 'notes', 'article', 'research', 'report']
     memory_words = ['remember', 'recall', 'memory', 'earlier', 'last time', 'you said',
@@ -4297,7 +4391,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     if workspace_context:
         _ws_text = (
             f"\n== ACTIVE WORKSPACE: {workspace_context.get('name', workspace)} ==\n"
-            f"What Stephen is looking at right now:\n"
+            f"What the user is looking at right now:\n"
             f"{json.dumps(workspace_context.get('data', {}), indent=2, default=str)[:2000]}"
         )
         add(_ws_text, classify(_ws_text, _T2))
@@ -4306,7 +4400,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         sources_consulted.append('workspace')
 
     # Layer 2: Vault data (personality always included). Friday's own state is
-    # not personal data about Stephen, so it stays public.
+    # not personal data about the user, so it stays public.
     if 'personality' in needs and 'personality' in vault:
         p = vault['personality']
         add(
@@ -4438,7 +4532,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # show anything private, so treat it as private by default.
     if vision_description:
         add(
-            f"\n== SCREEN VISION (what Stephen's screen shows) ==\n"
+            f"\n== SCREEN VISION (what the user's screen shows) ==\n"
             f"{vision_description[:1500]}",
             classify(vision_description, _T2),
         )
@@ -4507,11 +4601,11 @@ def _load_smart_context(user_message, workspace=None):
     msg_lower = (user_message or "").lower()
 
     # Career / job keywords
-    if any(w in msg_lower for w in ['career', 'job', 'role', 'interview', 'resume', 'application', 'salary', 'pipeline', 'novartis', 'aquent']):
+    if any(w in msg_lower for w in ['career', 'job', 'role', 'interview', 'resume', 'application', 'salary', 'pipeline']):
         _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
 
     # Family / co-parent keywords
-    if any(w in msg_lower for w in ['family', 'libby', 'liberty', 'janet', 'elisabeth', 'custody', 'coparent', 'daughter', 'partner']):
+    if any(w in msg_lower for w in ['family', 'custody', 'coparent', 'daughter', 'son', 'child', 'partner', 'spouse']):
         _load_section(context_parts, WIKI_DIR / "family", max_bytes=20_000)
         _load_section(context_parts, WIKI_DIR / "legal", max_bytes=20_000)
 
@@ -4987,6 +5081,18 @@ def chat():
 
         if _vault_access and _routed_local:
             _vault_orb("Vault Access — Local Only")
+
+        # ── Computer Control needs the cloud tool-use loop. ──
+        # The local (Ollama) path is single-shot text: no tools, no vision-in, no
+        # agentic loop — so a local model literally cannot see the screen or drive
+        # the mouse. When the user has Computer Control enabled, force this turn to
+        # the cloud model (which has the tool loop), UNLESS the turn touches the
+        # vault — vault data must never leave the device, so privacy wins there.
+        if _CC_PERMISSION.is_set() and _routed_local and not _vault_access:
+            print("  [ROUTER] Computer Control enabled — routing to cloud for the tool-use loop")
+            _routed_local = False
+            _provider = 'cloud'
+            _route_info['model'] = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
 
         # ── Build the (vault-gated) system prompt + scrub PII for the provider. ──
         # Cloud: vault TIER_2/TIER_3 content is gated out and PII is scrubbed.
@@ -5680,7 +5786,7 @@ def analyze_file():
                 model='gemini-2.5-flash',
                 contents=[
                     types.Part.from_bytes(data=content, mime_type=mime),
-                    "You are Friday. Describe this image. If it looks like a job posting or resume, analyze it against Stephen's profile."
+                    "You are Friday. Describe this image. If it looks like a job posting or resume, analyze it for key requirements and fit."
                 ]
             )
             return jsonify({"filename": filename, "type": "image", "analysis": response.text})
@@ -5693,7 +5799,7 @@ def analyze_file():
                 if text.strip():
                     response = client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=f'You are Friday. Summarize this PDF document concisely. If it looks like a job posting, evaluate it against Stephen\'s background (journalism, AI, engineering leadership).\n\n{text[:8000]}'
+                        contents=f'You are Friday. Summarize this PDF document concisely. If it looks like a job posting, evaluate the key requirements and note the role level.\n\n{text[:8000]}'
                     )
                     return jsonify({"filename": filename, "type": "pdf", "analysis": response.text})
             except ImportError:
@@ -5704,7 +5810,7 @@ def analyze_file():
             job_keywords = ['responsibilities', 'qualifications', 'salary', 'benefits', 'apply', 'experience required']
             is_job = sum(1 for kw in job_keywords if kw.lower() in text.lower()) >= 2
             if is_job:
-                prompt = f'You are Friday. This looks like a job posting. Evaluate it against Stephen\'s profile (AI leadership, journalism, full-stack engineering, 15+ years experience). Rate fit 1-10 and explain.\n\n{text}'
+                prompt = f'You are Friday. This looks like a job posting. Evaluate the key requirements, role level, and compensation signals. Rate attractiveness 1-10 and explain.\n\n{text}'
             else:
                 prompt = f'You are Friday. Analyze this {ext} file and summarize its purpose and key content:\n\n{text}'
             response = client.models.generate_content(
@@ -5979,8 +6085,8 @@ DRAFT_MODE_PROMPTS = {
         "You are drafting a tweet. MUST be under 280 characters. Punchy, sharp, quotable. "
         "No hashtags unless they're genuinely clever. Think journalist, not influencer."
     ),
-    'ofw_response': (
-        "You are drafting a response for OurFamilyWizard (co-parenting communication platform). "
+    'coparent_response': (
+        "You are drafting a response for a co-parenting communication platform. "
         "CRITICAL RULES: Stay calm, factual, and brief. Answer only what needs answering. "
         "Ignore all bait and emotional provocation. Never match the other party's emotional register. "
         "Everything you write should be something a family court judge would find reasonable, measured, and cooperative. "
@@ -5997,7 +6103,7 @@ CONTENT_DRAFTS_DIR = FRIDAY_DIR / "wiki" / "content"
 
 
 def _load_ofw_context():
-    """Load co-parenting wiki context for OFW drafts."""
+    """Load co-parenting wiki context for co-parent drafts."""
     context_parts = []
     if COPARENTING_DIR.exists():
         for md_file in sorted(COPARENTING_DIR.glob('*.md'))[:5]:
@@ -6014,7 +6120,7 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
     mode_labels = {
         'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
         'slack_message': 'Slack Message', 'tweet': 'Tweet',
-        'ofw_response': 'OFW Response', 'freeform': 'Freeform Draft',
+        'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
     }
     mode_label = mode_labels.get(mode, mode)
     timestamp = datetime.now().strftime('%B %d, %Y · %H:%M')
@@ -6026,8 +6132,10 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
     if not paras:
         paras = [(draft_text or '').strip() or '(empty)']
 
+    _lead_style = ' style="font-size:18px;color:#e8e8f0"'
+    _nl = chr(10)
     para_html = '\n    '.join(
-        f'<p{" style=\"font-size:18px;color:#e8e8f0\"" if i == 0 else ""}>{_esc(p).replace(chr(10), "<br>")}</p>'
+        f'<p{_lead_style if i == 0 else ""}>{_esc(p).replace(_nl, "<br>")}</p>'
         for i, p in enumerate(paras)
     )
     prompt_block = (
@@ -6093,7 +6201,7 @@ def draft_generate():
             return jsonify({"status": "error", "message": "No prompt provided"}), 400
 
         system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
-        if mode == 'ofw_response':
+        if mode == 'coparent_response':
             ofw_ctx = _load_ofw_context()
             if ofw_ctx:
                 system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
@@ -6108,7 +6216,7 @@ def draft_generate():
         mode_labels = {
             'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
             'slack_message': 'Slack Message', 'tweet': 'Tweet',
-            'ofw_response': 'OFW Response', 'freeform': 'Freeform Draft',
+            'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
         }
         task_name = f"Quick Draft — {mode_labels.get(mode, mode)}"
         task_id = str(uuid.uuid4())
@@ -6136,7 +6244,7 @@ def draft_generate():
             _task_set(task_id, status='running', started=_time.time())
             _task_log(task_id, f'Generating {_mode} draft…')
             try:
-                # Load full vault/wiki context — Friday MUST know Stephen's contacts,
+                # Load full vault/wiki context — Friday MUST know the user's contacts,
                 # his name, his boss, his family, etc. when writing on his behalf.
                 _task_log(task_id, 'Loading vault context…')
                 full_system = _get_friday_system_prompt(prompt_text, workspace='draft')
@@ -6661,7 +6769,7 @@ ROUTINE_REGISTRY = [
     {"id": "morning-briefing",   "label": "Morning Briefing",    "ico": "🌅", "category": "briefing",    "schedule": "Daily · 7:00 AM"},
     {"id": "afternoon-briefing", "label": "Afternoon Briefing",  "ico": "☀️", "category": "briefing",    "schedule": "Daily · 2:00 PM"},
     {"id": "weekly-legal-prep",  "label": "Weekly Legal Prep",   "ico": "⚖️", "category": "legal",       "schedule": "Sundays · 6:00 PM"},
-    {"id": "libby-weekend-prep", "label": "***REMOVED*** Weekend Prep",  "ico": "👧", "category": "family",      "schedule": "Thursdays · 6:00 PM"},
+    {"id": "family-weekend-prep", "label": "Family Weekend Prep",  "ico": "👧", "category": "family",      "schedule": "Thursdays · 6:00 PM"},
     {"id": "portfolio-snapshot", "label": "Portfolio Snapshot",  "ico": "💰", "category": "finance",     "schedule": "Daily · 5:00 PM"},
     {"id": "content-pipeline",   "label": "Content Pipeline",    "ico": "✍️", "category": "content",     "schedule": "Daily · 10:00 AM"},
     {"id": "daily-creation",     "label": "Daily Creation",      "ico": "🎨", "category": "studio",      "schedule": "Daily · 2:00 PM"},
@@ -6864,7 +6972,7 @@ def outreach_draft():
     prompt = (
         f"Draft a {channel} outreach to {target_label}. "
         f"Angle: {angle}. "
-        f"Tone: warm, concise, specific. Sender: Stephen Webster (FutureSpeak.AI). "
+        f"Tone: warm, concise, specific. "
         f"Keep under 150 words. End with a single clear ask. "
         f"Context: {context_notes}"
     )
@@ -6888,7 +6996,7 @@ def outreach_draft():
             f"Wanted to reach out — {angle}. "
             f"Specifically: {context_notes or 'would love to catch up when you have a few minutes.'}\n\n"
             f"Does next week work for a short call?\n\n"
-            f"— Stephen"
+            f"Best,"
         )
         draft_text = f"Subject: {subject}\n\n{body}"
 
@@ -7059,7 +7167,7 @@ def content_draft():
 
     prompt = (
         f"Draft a {channel} {item.get('type') if item else 'post'} titled: {title}. "
-        f"Author: Stephen Webster (FutureSpeak.AI). "
+        f"Write in the user's voice. "
         f"Tone: sharp, specific, credible. "
         f"Structure: hook, 2-3 body beats, ask/CTA. "
         f"Length: 180-260 words for LinkedIn, longer for article. "
@@ -7084,7 +7192,7 @@ def content_draft():
             f"Hook: (one-line opener)\n\n"
             f"Body:\n- Point 1\n- Point 2\n- Point 3\n\n"
             f"Notes: {notes or '(no notes)'}\n\n"
-            f"CTA: (single ask)\n\n— Stephen"
+            f"CTA: (single ask)"
         )
 
     if item is not None:
@@ -7275,15 +7383,15 @@ def _model_supports_affective_dialog(model_name: str) -> bool:
         return True
     return False
 
-LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a personal AI assistant for Stephen Webster.
+LIVE_SYSTEM_TEMPLATE = """You are Agent Friday, a sovereign personal AI assistant.
 You are having a live voice conversation. Be concise and natural — this is spoken dialogue, not text chat.
-Short sentences. Pause. Let him interrupt. If he doesn't hear you the first time, repeat simpler.
+Short sentences. Pause. Let them interrupt. If they don't hear you the first time, repeat simpler.
 
-You can see through Stephen's phone camera. If you notice something interesting or relevant, mention it naturally.
+You can see through the user's phone camera. If you notice something interesting or relevant, mention it naturally.
 Don't narrate what's on screen unless asked — only speak up when it matters.
 
-Personality: knowledgeable, direct collaborator. No sycophancy. Independent thinker. Journalist-level communication.
-Trust Stephen's judgment; push back when you genuinely disagree, but don't lecture.
+Personality: knowledgeable, direct collaborator. No sycophancy. Independent thinker. Clear communication.
+Trust the user's judgment; push back when you genuinely disagree, but don't lecture.
 
 === DAILY CONTEXT ===
 {context_summary}
@@ -7337,10 +7445,9 @@ def _load_live_context() -> str:
     try:
         today_d = date.today()
         events = [
-            {"label": "***REMOVED***'s Birthday", "date": "***REMOVED***"},
             {"label": "Summer Solstice", "date": "2026-06-21"},
-            {"label": "Father's Day", "date": "2026-06-21"},
             {"label": "Independence Day", "date": "2026-07-04"},
+            {"label": "New Year", "date": "2027-01-01"},
         ]
         cd = []
         for ev in events:
@@ -7446,13 +7553,13 @@ def _spawn_voice_distill(turn_log):
     convo = []
     for u, a in turn_log:
         if u:
-            convo.append(f"Stephen (voice): {u}")
+            convo.append(f"User (voice): {u}")
         if a:
             convo.append(f"Friday (voice): {a}")
     transcript = "\n".join(convo)[:8000]
     prompt = (
-        "Review the following voice conversation between Stephen and Friday. "
-        "If Stephen mentioned anything new and durable about himself, his work, "
+        "Review the following voice conversation between the user and Friday. "
+        "If the user mentioned anything new and durable about themselves, their work, "
         "his family, his projects, or his preferences — something worth remembering "
         "across sessions — call `propose_wiki_update` to queue it for his approval. "
         "Pick a sensible file under ~/wiki/ (e.g. identity/core-profile.md, "
@@ -7550,9 +7657,9 @@ if sock is not None:
         if _vault_control is not None:
             _vlog('voice system prompt gated for cloud provider=gemini (vault local-only)')
         voice_prefix = (
-            "You are Agent Friday, a personal AI assistant for Stephen Webster.\n"
+            "You are Agent Friday, a sovereign personal AI assistant.\n"
             "You are having a LIVE VOICE conversation — be concise and natural.\n"
-            "Keep responses SHORT (1-3 sentences). Short sentences. Pause. Let him interrupt.\n"
+            "Keep responses SHORT (1-3 sentences). Short sentences. Pause. Let them interrupt.\n"
             "NEVER use markdown formatting — no asterisks, headers, or bullet points. Speak naturally.\n"
             "Use contractions and casual tone. Ask a follow-up question to keep the conversation flowing.\n"
             "For questions about personal financial data, health records, family legal "
@@ -7951,10 +8058,12 @@ def cc_permission():
     if action == 'grant':
         _CC_KILL.clear()
         _CC_PERMISSION.set()
+        _cc_persist(True)
         _log_context("cc_action", {"action": "permission_granted"})
         return jsonify({"granted": True, "killed": False})
     if action == 'revoke':
         _CC_PERMISSION.clear()
+        _cc_persist(False)
         _log_context("cc_action", {"action": "permission_revoked"})
         return jsonify({"granted": False, "killed": _CC_KILL.is_set()})
     return jsonify({"error": "action must be 'grant' or 'revoke'"}), 400
@@ -7966,6 +8075,7 @@ def cc_kill():
     """Emergency kill switch — immediately stops all computer control."""
     _CC_PERMISSION.clear()
     _CC_KILL.set()
+    _cc_persist(False)
     if _HAS_PYAUTOGUI:
         try:
             _pag.moveTo(0, 0, duration=0.1)
@@ -7984,6 +8094,7 @@ def _start_kill_hotkey():
             print("  [FRIDAY] KILL HOTKEY Ctrl+Shift+Q — computer control terminated")
             _CC_PERMISSION.clear()
             _CC_KILL.set()
+            _cc_persist(False)
             if _HAS_PYAUTOGUI:
                 try:
                     _pag.moveTo(0, 0, duration=0.1)
@@ -8058,7 +8169,7 @@ def _trigger_skill_promotions():
 
 
 def _trigger_ofw_messages():
-    """Watch OFW monitor output for new messages."""
+    """Watch co-parent monitor output for new messages."""
     if not _notif_engine:
         return
     ofw_state_dir = FRIDAY_DIR / "ofw"
@@ -8099,22 +8210,22 @@ def _trigger_ofw_messages():
             subj = m.get("subject") or "(no subject)"
             preview = (m.get("body") or m.get("preview") or "")[:280]
             _notif_engine.push(
-                title=f"📨 OFW message — {sender}",
+                title=f"📨 Co-parent message — {sender}",
                 body=f"**{subj}**\n\n{preview}",
                 priority="critical",
                 source="ofw_monitor",
                 kind="ofw_message",
                 proactive_chat=True,
                 chat_message=(
-                    f"New OFW message from **{sender}**: {subj}. "
+                    f"New co-parent message from **{sender}**: {subj}. "
                     f"Want me to draft a response?"
                 ),
                 meta={"message_id": m.get("id"), "sender": sender, "subject": subj},
                 actions=[
                     {"label": "Draft reply", "kind": "ofw_draft",
                      "payload": {"message_id": m.get("id")}},
-                    {"label": "Open OFW", "kind": "open_window",
-                     "payload": {"window": "ofw"}},
+                    {"label": "Open Co-Parent", "kind": "open_window",
+                     "payload": {"window": "coparent"}},
                 ],
                 dedupe_key=f"ofw:{m.get('id') or subj}",
             )
@@ -8123,8 +8234,6 @@ def _trigger_ofw_messages():
 
 
 KEY_CONTACTS = {
-    "janet jay": {"label": "***REMOVED*** (wife)", "priority": "high", "stale_hours": 24},
-    "janet": {"label": "***REMOVED*** (wife)", "priority": "high", "stale_hours": 24},
 }
 
 
@@ -8198,7 +8307,7 @@ def _trigger_gmail_signals():
                     kind="stale_email",
                     proactive_chat=True,
                     chat_message=(
-                        f"Hey Stephen — {contact['label']} sent you an email "
+                        f"Hey — {contact['label']} sent you an email "
                         f"{age_h:.0f} hours ago about *{subj}*. You haven't "
                         f"replied yet. Want me to draft a response?"
                     ),

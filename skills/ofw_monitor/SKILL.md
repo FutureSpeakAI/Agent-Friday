@@ -19,8 +19,8 @@ sentiment analysis, and surfaces priority notifications.
 - **Daily message scan** — 08:00 CT every day.
 - **Deadline check** — every 12 hours, even outside active hours.
 - **Weekly summary** — Sunday 19:00 CT.
-- **Ad-hoc** — Stephen says "any new OFW", "anything from co-parent",
-  "check the OFW calendar".
+- **Ad-hoc** — the user says "any new messages", "anything from co-parent",
+  "check the co-parent calendar".
 
 ## What this skill does
 
@@ -105,7 +105,7 @@ sentiment analysis, and surfaces priority notifications.
 ## How this skill improves itself
 
 Every run is recorded to SkillOpt with:
-- `accuracy` — fraction of priority alerts Stephen marked relevant
+- `accuracy` — fraction of priority alerts the user marked relevant
 - `user_satisfaction` — explicit feedback ("good catch" / "noise")
 - `completeness` — did we capture all three streams (messages, calendar, expenses)?
 - `latency_ms` — total scan time including browser automation

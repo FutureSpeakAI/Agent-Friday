@@ -217,5 +217,5 @@ const implicit = detectImplicitSignals(userText, responseTimeMs);
 
 ---
 
-Built by Stephen C. Webster at [FutureSpeak.AI](https://futurespeak.ai).
+Built by [FutureSpeak.AI](https://futurespeak.ai).
 Extracted by Claude Opus 4.6, April 2026.

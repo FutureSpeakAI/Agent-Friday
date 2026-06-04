@@ -8,6 +8,41 @@ Agent Friday is a privacy-first, self-improving AI assistant that runs as a loca
 
 ---
 
+## Quick Start
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.ps1 | iex
+```
+Or clone and run manually:
+```powershell
+git clone https://github.com/FutureSpeakAI/Agent-Friday.git
+cd Agent-Friday
+.\install.ps1
+```
+
+### Linux / macOS
+```bash
+curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.sh | bash
+```
+Or clone and run manually:
+```bash
+git clone https://github.com/FutureSpeakAI/Agent-Friday.git
+cd Agent-Friday
+chmod +x install.sh && ./install.sh
+```
+
+### Requirements
+- **Python 3.10+**
+- **Anthropic API key** — required ([get one here](https://console.anthropic.com/settings/keys))
+- **Google Gemini API key** — required for voice mode and creative features ([get one here](https://aistudio.google.com/apikey))
+- **Ollama** — optional, for local models and vault privacy ([ollama.com](https://ollama.com))
+- **GPU** — optional, for local model acceleration
+
+The installer handles cloning, virtual environment setup, dependency installation, API key configuration, GPU detection, and optional Ollama setup. After installation, open **http://localhost:3000** to launch Friday.
+
+---
+
 ## Architecture at a Glance
 
 ```
@@ -203,4 +238,4 @@ See [CREDITS.md](CREDITS.md) for the full list of third-party libraries and insp
 
 ## License
 
-Proprietary. Copyright FutureSpeak.AI. All rights reserved.
+MIT License. Copyright 2026 FutureSpeak.AI — Stephen C. Webster. See [LICENSE](LICENSE).

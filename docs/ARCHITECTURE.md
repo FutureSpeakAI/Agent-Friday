@@ -205,7 +205,7 @@ flowchart TD
 ```
 
 ### TIER 3 Keywords (Sensitive)
-Financial, bank account, routing number, investment, portfolio, tax return, salary, income, health record, medical, medication, prescription, diagnosis, insurance, legal, custody, court, OFW, Our Family Wizard, SSN, social security, passport, driver's license, encrypted, sovereign vault.
+Financial, bank account, routing number, investment, portfolio, tax return, salary, income, health record, medical, medication, prescription, diagnosis, insurance, legal, custody, court, co-parenting, SSN, social security, passport, driver's license, encrypted, sovereign vault.
 
 ### TIER 2 Keywords (Private)
 Contact, phone number, home address, family, daughter, partner, personal note, memory, trust graph, relationship, todo, co-parenting schedule.

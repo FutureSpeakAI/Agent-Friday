@@ -577,10 +577,10 @@ function CoparentWS(){
   const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
   const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate co-parent weekly summary'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Weekly summary generation launched')).catch(()=>{})};
   return(<div>
-    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. OFW stats below are placeholders — wire an /api/coparent/stats endpoint to make them live.`}/>
+    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. Stats below are placeholders — wire an /api/coparent/stats endpoint to make them live.`}/>
     <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-      <div className="card"><div className="card-title">OFW Communication <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat">852</div><div className="stat-label">total messages · 4.5 years</div><div style={{marginTop:4,fontSize:11,color:'#a8a8b4'}}>First-view asymmetry: <span style={{color:'#ff6699'}}>25h</span> vs <span style={{color:'#00ff80'}}>3.3h</span></div></div>
+      <div className="card"><div className="card-title">Co-Parent Communication <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat">0</div><div className="stat-label">total messages</div><div style={{marginTop:4,fontSize:11,color:'#a8a8b4'}}>Connect your co-parenting platform to populate stats</div></div>
       <div className="card"><div className="card-title">Unanswered <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
     </div>
     <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
@@ -590,8 +590,8 @@ function CoparentWS(){
       </div>
       <div style={{fontSize:11,color:'#999',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
     </div>
-    <div className="card"><div className="card-title">***REMOVED***'s Weekly Schedule</div>
-      {['🥋 Kung Fu','💃 Dance','♟️ Chess (school)','🧠 Play Therapy — Rachel Hodgdon','🏫 ***REMOVED*** · Pickup 4 PM'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
+    <div className="card"><div className="card-title">Child's Weekly Schedule</div>
+      {['Add activities in your co-parenting platform settings'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
   </div>);
 }
 function FuturespeakWS(){
@@ -794,15 +794,15 @@ function FuturespeakWS(){
 function FamilyWS(){
   const[cd,setCd]=useState(null);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
-  const libbyDays=cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days||(cd?.countdowns?.find(c=>(c.label||c.name||'').toLowerCase().includes('libby'))?.days_until);
+  const familyCountdown=cd?.countdowns?.[0];
   return(<div>
-    <FridaySays text={libbyDays?`***REMOVED*** turns 6 in ${libbyDays} days! (May 6)`:'Family dashboard loaded.'}/>
+    <FridaySays text={familyCountdown?`Next family event in ${familyCountdown.days||familyCountdown.days_until} days`:'Family dashboard loaded.'}/>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">🎂 ***REMOVED***</div><div style={{fontSize:13}}>Age 5, ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🥋 ***REMOVED*** · 💃 Dance · ♟️ Chess<br/>🏫 ***REMOVED***</div>{libbyDays&&<div style={{marginTop:6}}><span className="badge-cyan">{libbyDays} days until birthday</span></div>}</div>
-      <div className="card"><div className="card-title">❤️ ***REMOVED***</div><div style={{fontSize:13}}>Journalist · ***REMOVED*** · ***REMOVED***</div><div style={{fontSize:11,color:'#888',marginTop:4}}>🎂 Jan 4 · 💍 Anniversary Feb 13</div><div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>Popular Science · VICE · MAKE · US Pain Foundation</div></div>
-      <div className="card"><div className="card-title">🐾 Dogs</div><div style={{fontSize:12,lineHeight:1.8}}><strong style={{color:'#f59e0b'}}>Link</strong> — 8yr ***REMOVED***, ***REMOVED*** <span className="badge-green" style={{fontSize:11}}>healthy</span><br/><strong style={{color:'#f59e0b'}}>***REMOVED***</strong> — ***REMOVED*** <span className="badge-magenta" style={{fontSize:11}}>monitoring</span><br/><span style={{color:'#a8a8b4',fontSize:11}}>Sight/hearing loss, ***REMOVED***, possible dementia</span></div></div>
-      <div className="card"><div className="card-title">👨‍👩‍👧 Jay Family</div>{['Jere Jay — INNEX Energy CEO','Bonnie Jay — INNEX Ops Director','Julia Jay — Seattle, hydrology, Peace Corps','Griff Jay'].map((p,i)=><div key={i} style={{fontSize:12,padding:'2px 0',color:'#aaa'}}>{p}</div>)}</div>
-      <div className="card"><div className="card-title">🚗 Vehicles</div>{['🔵 2015 Golf TSI SEL — Unitronic Stage 1, ~60K mi','🔴 2023 GLI — stock, ~20K mi','🚐 Transit 350 — camper (shower, kitchen, king bed)'].map((v,i)=><div key={i} style={{fontSize:11,padding:'2px 0',color:'#aaa'}}>{v}</div>)}</div>
+      <div className="card"><div className="card-title">🎂 Family Member</div><div style={{fontSize:13}}>Add family members in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
+      <div className="card"><div className="card-title">❤️ Partner</div><div style={{fontSize:13}}>Add partner details in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
+      <div className="card"><div className="card-title">🐾 Pets</div><div style={{fontSize:12,lineHeight:1.8}}>Add pet info in your family wiki</div></div>
+      <div className="card"><div className="card-title">👨‍👩‍👧 Extended Family</div><div style={{fontSize:12,color:'#aaa'}}>Add family members in ~/.friday/wiki/family/</div></div>
+      <div className="card"><div className="card-title">🚗 Vehicles</div><div style={{fontSize:11,color:'#aaa'}}>Add vehicles in your wiki</div></div>
       <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#999'}}>Loading...</span>}</div>
     </div>
   </div>);
@@ -1133,7 +1133,7 @@ function NewsWS(){
 
 // ═══ DRAFT PREVIEW HELPERS ═══
 function buildDraftHtml(text,mode,promptText){
-  const ML={linkedin_post:'LinkedIn Post',email_reply:'Email Reply',slack_message:'Slack Message',tweet:'Tweet',ofw_response:'OFW Response',freeform:'Freeform Draft'};
+  const ML={linkedin_post:'LinkedIn Post',email_reply:'Email Reply',slack_message:'Slack Message',tweet:'Tweet',coparent_response:'Co-Parent Response',freeform:'Freeform Draft'};
   const label=ML[mode]||mode;
   const now=new Date().toLocaleString('en-US',{month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
   const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1185,7 +1185,7 @@ const DRAFT_MODES=[
   {id:'email_reply',label:'Email',ico:'📧'},
   {id:'slack_message',label:'Slack',ico:'💬'},
   {id:'tweet',label:'Tweet',ico:'🐦'},
-  {id:'ofw_response',label:'OFW',ico:'⚖️'},
+  {id:'coparent_response',label:'Co-Parent',ico:'⚖️'},
   {id:'freeform',label:'Freeform',ico:'📝'},
 ];
 const ORCHESTRATOR_MODELS=[
@@ -1284,7 +1284,7 @@ function DraftWS(){
     <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:8,fontFamily:'JetBrains Mono',fontSize:12}}
       value={prompt} onChange={e=>setPrompt(e.target.value)}
       onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)generate()}}
-      placeholder={mode==='linkedin_post'?'Write a LinkedIn post about...':mode==='email_reply'?'Reply to this email saying...':mode==='tweet'?'Tweet about...':mode==='ofw_response'?'Respond to this OFW message...':'Describe what to write...'}/>
+      placeholder={mode==='linkedin_post'?'Write a LinkedIn post about...':mode==='email_reply'?'Reply to this email saying...':mode==='tweet'?'Tweet about...':mode==='coparent_response'?'Respond to this co-parent message...':'Describe what to write...'}/>
 
     {/* Context toggle */}
     <div style={{marginBottom:8}}>
@@ -1362,14 +1362,14 @@ function FinanceWS(){
   const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
   const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
   const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
-  const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused Amex perks · $${totalPerkValue} total perk value`;
+  const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
     <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
-        <div className="card"><div className="card-title">Amex Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
+        <div className="card"><div className="card-title">Card Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
       </div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#999',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
       <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
@@ -1381,7 +1381,7 @@ function FinanceWS(){
       <div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
     </div>}
     {view==='perks'&&<div>
-      <div className="card-title">Amex Platinum Perks</div>
+      <div className="card-title">Credit Card Perks</div>
       {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
         {p.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:3}}>{p.notes}</div>}
@@ -1390,12 +1390,12 @@ function FinanceWS(){
     </div>}
     {view==='contacts'&&<div>
       <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Lisa J. Schmidt</div><div style={{fontSize:11,color:'#888'}}>Financial Advisor · RW Baird</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Lisa J. Schmidt - RW Baird')}>Copy</button></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Claudia Gonzalez-Chavez</div><div style={{fontSize:11,color:'#888'}}>CPA · Whitley Penn</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText('Claudia Gonzalez-Chavez - Whitley Penn CPA')}>Copy</button></div></div>
+      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
+      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
     </div>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
-      {[{name:'Capital One',type:'Banking',ico:'🏦'},{name:'Cigna Healthcare',type:'Insurance',ico:'🏥'},{name:'Amex Platinum — Stephen',type:'Credit Card',ico:'💳'},{name:'Amex Platinum — ***REMOVED***',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
+      {[{name:'Your Bank',type:'Banking',ico:'🏦'},{name:'Your Insurance Provider',type:'Insurance',ico:'🏥'},{name:'Primary Card',type:'Credit Card',ico:'💳'},{name:'Secondary Card',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
     </div>}
   </div>);
 }
@@ -1440,7 +1440,7 @@ function HealthWS(){
     {view==='insurance'&&<div>
       <div className="card-title">Insurance</div>
       <div className="card" style={{marginBottom:8}}>
-        <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Cigna Healthcare'}</div>
+        <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Your Insurance Provider'}</div>
         {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:11,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
         {ins.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:6}}>{ins.notes}</div>}
       </div>
@@ -2237,7 +2237,7 @@ function App(){
   const previewVoice=async(voiceId)=>{
     if(ttsPreviewBusy)return;setTtsPreviewBusy(true);
     try{
-      const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:"Hi Stephen, this is what I sound like.",voice:voiceId,style:'chat'})});
+      const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:"Hey boss, this is what I sound like.",voice:voiceId,style:'chat'})});
       if(r.ok){const b=await r.blob();const u=URL.createObjectURL(b);const a=new Audio(u);a.onended=()=>URL.revokeObjectURL(u);a.play()}
     }catch(e){console.error('Voice preview failed',e)}
     setTtsPreviewBusy(false);
@@ -3126,7 +3126,7 @@ function App(){
     {/* Calm Default State — greeting with ticker, anchored above the dock */}
     {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:80,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
       <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
-      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, Stephen.</div>
+      <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, boss.</div>
       <div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:9,color:'rgba(0,212,255,0.45)',marginBottom:10,letterSpacing:'0.15em',textTransform:'uppercase'}}>by FutureSpeak.AI</div>
       {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
         {countdowns.map((c,i)=><React.Fragment key={i}>

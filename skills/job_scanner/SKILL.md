@@ -4,13 +4,13 @@
 
 Autonomous job discovery skill for Agent Friday. Scans LinkedIn (and other
 configured sources) on a recurring schedule, scores every posting against
-Stephen's career profile, deduplicates against the tracker, and pushes
+the user's career profile, deduplicates against the tracker, and pushes
 priority notifications when high-match opportunities surface.
 
 ## When this skill fires
 
 - Scheduled every **4 hours during active hours** (07:00–22:00 local).
-- On demand, when Stephen asks "scan jobs", "what's new on LinkedIn",
+- On demand, when the user asks "scan jobs", "what's new on LinkedIn",
   "any priority jobs today", or similar.
 - After a profile / preferences update — re-rescore the existing tracker
   with the new weights.
@@ -58,7 +58,7 @@ priority notifications when high-match opportunities surface.
 
 ## Quality bar
 
-- No duplicates ever surface to Stephen.
+- No duplicates ever surface to the user.
 - Priority filter catches at most ~5 jobs per day on average — if it's
   firing more, recalibrate weights.
 - Scanner survives transient LinkedIn errors (timeout, 429) by backing
@@ -74,7 +74,7 @@ priority notifications when high-match opportunities surface.
 
 Every execution is logged to SkillOpt as:
 
-- `accuracy` — fraction of priority alerts Stephen accepted (didn't snooze).
+- `accuracy` — fraction of priority alerts the user accepted (didn't snooze).
 - `user_satisfaction` — explicit feedback from the chat ("good find",
   "irrelevant", etc.).
 - `completeness` — did we capture salary, location, and skills, or are
@@ -91,4 +91,4 @@ A run is successful if it:
 1. Returns within 30 seconds per keyword set,
 2. Inserts at least one new listing on a typical day,
 3. Maintains the **priority precision ≥ 75%** quality bar (3 out of 4
-   priority alerts should be ones Stephen would actually apply to).
+   priority alerts should be ones the user would actually apply to).

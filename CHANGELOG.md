@@ -7,7 +7,7 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ## [v4.3] — 2026-05-28
 
-The self-evolving interface release. Adds Liquid UI, OFW Monitor, and the
+The self-evolving interface release. Adds Liquid UI, Co-Parent Monitor, and the
 Seeds & Gardens workspace architecture.
 
 ### Liquid UI
@@ -33,9 +33,9 @@ Seeds & Gardens workspace architecture.
   build queue, feature cards, proactive suggestions, snapshot history,
   ✨ Wish modal.
 
-### OFW Monitor
+### Co-Parent Monitor
 
-- **`skills/ofw_monitor/`** — daily Our Family Wizard scan via Claude in
+- **`skills/ofw_monitor/`** — daily co-parenting platform scan via Claude in
   Chrome. Messages / custody calendar / expense submissions.
   - Local lexicon-based sentiment (`cooperative` / `neutral` /
     `passive-aggressive` / `hostile`). LLM summarization OFF by default;

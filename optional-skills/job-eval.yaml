@@ -10,17 +10,17 @@ tool_chain:
   - get_career_pipeline
   - read_wiki:path="professional/job-search.md"
 prompt_template: |
-  Evaluate this job posting for Stephen C. Webster using A-F scoring across 10 dimensions:
-  1. Compensation alignment ($500K target)
+  Evaluate this job posting against the user's profile (loaded from wiki) using A-F scoring across 10 dimensions:
+  1. Compensation alignment (vs. user's target range)
   2. Remote/hybrid flexibility
-  3. Technical scope (AI, agentic systems)
-  4. Seniority match (VP/Director/Principal)
+  3. Technical scope match
+  4. Seniority match
   5. Company stage and stability
-  6. Mission alignment (ethical AI, press freedom)
+  6. Mission alignment
   7. Growth trajectory
   8. Culture signals
   9. Speed to hire signals
-  10. Stephen's network leverage at this company
+  10. Network leverage at this company
 
   Output: Overall grade, per-dimension scores, recommendation, and a 3-bullet "why" summary.
   Job URL: {url}

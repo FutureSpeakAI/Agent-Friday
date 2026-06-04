@@ -230,7 +230,7 @@ def interview_detected(*, company: str, title: str, when: Optional[str] = None,
         f"**Recommended prep:**\n"
         f"  - Re-read the original posting\n"
         f"  - Review prior application notes\n"
-        f"  - Check Stephen's network for warm intros at this company\n"
+        f"  - Check your network for warm intros at this company\n"
         f"  - Generate company intel briefing (`brief {company}`)\n"
     )
     actions = [

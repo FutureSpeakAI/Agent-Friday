@@ -24,7 +24,7 @@ controls below exist so it never happens again.
 | **Startup scripts** | `start.bat`, `friday_startup.bat`, `*.bat`, `*.vbs` (they hold keys) | Gitignored; generated locally by the setup wizard |
 
 The **business** identity that is already public is fine to keep: the name
-"Stephen C. Webster", `stephen@futurespeak.ai`, and the FutureSpeak.AI brand
+The FutureSpeak.AI brand identity
 (see `CREDITS.md` / `LICENSE`).
 
 ---

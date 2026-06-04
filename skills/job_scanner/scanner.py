@@ -269,7 +269,7 @@ def default_fetcher(url: str) -> List[Dict[str, Any]]:
     Default fetch — returns an empty list and logs the URL.
 
     Real scraping requires either:
-      - the LinkedIn API (if Stephen has credentials), or
+      - the LinkedIn API (if the user has credentials), or
       - a browser-driven extractor (Selenium / playwright) which is too heavy
         to ship by default.
 
