@@ -188,7 +188,13 @@
             IDLE:      { baseColor: 0x1e54c7, accentColor: 0x5fa8ff, rotationSpeed: 0.0003, bloomStrength: 1.3,  particleSpeedScale: 0.25, grain: 0.015 },
             EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, rotationSpeed: 0.008, bloomStrength: 1.2, particleSpeedScale: 1.8, grain: 0.05 },
             EXCITED:   { baseColor: 0xffffff, accentColor: 0x00e5ff, rotationSpeed: 0.015, bloomStrength: 1.8, particleSpeedScale: 2.5, grain: 0.08 },
-            CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 }
+            CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 },
+            CURIOUS:   { baseColor: 0x00b3b3, accentColor: 0x00ffff, rotationSpeed: 0.003, bloomStrength: 1.0, particleSpeedScale: 1.2, grain: 0.03 },
+            CREATIVE:  { baseColor: 0x9b30ff, accentColor: 0xff00ff, rotationSpeed: 0.005, bloomStrength: 1.5, particleSpeedScale: 1.6, grain: 0.055 },
+            PROTECTIVE:{ baseColor: 0x228b22, accentColor: 0x00ff80, rotationSpeed: 0.001, bloomStrength: 0.7, particleSpeedScale: 0.6, grain: 0.025 },
+            FOCUSED:   { baseColor: 0x0a1e6e, accentColor: 0x1e90ff, rotationSpeed: 0.002, bloomStrength: 0.6, particleSpeedScale: 0.4, grain: 0.02 },
+            SOCIAL:    { baseColor: 0xd4910a, accentColor: 0xffbf00, rotationSpeed: 0.004, bloomStrength: 1.2, particleSpeedScale: 1.3, grain: 0.04 },
+            REFLECTIVE:{ baseColor: 0x8888aa, accentColor: 0xddeeff, rotationSpeed: 0.0005, bloomStrength: 0.5, particleSpeedScale: 0.3, grain: 0.015 }
         };
 
         const EVOLUTION_PATH = [
@@ -479,9 +485,29 @@
             return new THREE.CanvasTexture(canvas);
         }
 
+        const MOOD_META = {
+            LISTENING:  {emoji:'👂', color:'#00d2ff'},
+            REASONING:  {emoji:'🧠', color:'#7b68ee'},
+            SPEAKING:   {emoji:'🗣️', color:'#00ff80'},
+            CREATING:   {emoji:'🎨', color:'#ff00aa'},
+            IDLE:       {emoji:'💤', color:'#5fa8ff'},
+            EXECUTING:  {emoji:'⚡', color:'#ffaa00'},
+            EXCITED:    {emoji:'✨', color:'#ffffff'},
+            CALM:       {emoji:'🌊', color:'#0055aa'},
+            CURIOUS:    {emoji:'🔍', color:'#00e5cc'},
+            CREATIVE:   {emoji:'💡', color:'#bf5fff'},
+            PROTECTIVE: {emoji:'🛡️', color:'#00cc55'},
+            FOCUSED:    {emoji:'🎯', color:'#1e90ff'},
+            SOCIAL:     {emoji:'🤝', color:'#ffbf00'},
+            REFLECTIVE: {emoji:'🪞', color:'#c0c8e0'},
+        };
+
         function _applyMoodText(m) {
             const el = document.getElementById('mood-text');
-            if (el) el.innerText = 'STATE: ' + m;
+            if (!el) return;
+            const meta = MOOD_META[m] || {emoji:'', color:'#00d2ff'};
+            el.innerText = meta.emoji + ' STATE: ' + m;
+            el.style.color = meta.color;
         }
 
         function setMood(m, isManualOverride) {
@@ -1048,19 +1074,33 @@
             if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
                 if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
+                // Voice-reactive scale breathing for all structures without custom vertex displacement
+                if (!['CUBES','DOME','ASTROLABE'].includes(targetStructure) && activeGroup.scale) {
+                    const breathScale = 1.0 + holoAmplitude * 0.15 + idlePulse * 0.2;
+                    activeGroup.scale.setScalar(breathScale);
+                }
             }
+
+            // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward
+            const voiceBreathRaw = holoAmplitude * 3.0 + audioData.low * 2.0;
+            const isExecutingMood = currentMood === 'EXECUTING';
+            const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
+            const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
 
             if (structures['CUBES'] && structures['CUBES'].visible && coreCubes.length > 0) {
                 coreCubes.forEach(c => {
                     if (c && c.rotation && c.position && c.userData) {
                         c.rotation.x += 0.01 * c.userData.speed * idleFactor; c.rotation.y += 0.012 * c.userData.speed * idleFactor;
                         const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
-                        const expansion = organicBreathe + (audioData.low * 1.5) + (interactionForce * 1.5);
+                        const expansion = organicBreathe + (audioData.low * 1.5) + (interactionForce * 1.5) + voiceBreath + idlePulse;
                         c.position.set(
-                            c.userData.baseX + c.userData.dir.x * expansion, 
-                            c.userData.baseY + c.userData.dir.y * expansion, 
+                            c.userData.baseX + c.userData.dir.x * expansion,
+                            c.userData.baseY + c.userData.dir.y * expansion,
                             c.userData.baseZ + c.userData.dir.z * expansion
                         );
+                        // Vertex displacement: scale cubes with voice amplitude
+                        const vScale = 1.0 + holoAmplitude * 0.3 + audioData.mid * 0.15;
+                        c.scale.setScalar(vScale);
                     }
                 });
             }
@@ -1068,12 +1108,12 @@
             if (structures['DOME'] && structures['DOME'].visible) {
                 if(abyssParticles && abyssParticles.rotation && abyssParticles.scale) {
                     abyssParticles.rotation.y -= 0.005 * idleFactor;
-                    abyssParticles.scale.setScalar(1.0 + audioData.low * 0.3 * idleFactor);
+                    abyssParticles.scale.setScalar(1.0 + audioData.low * 0.3 * idleFactor + voiceBreath * 0.2);
                 }
                 cathedralRings.forEach((c, i) => {
                     if(c && c.rotation && c.scale) {
                         c.rotation.y += 0.002 * (i%2==0?1:-1) * idleFactor;
-                        c.scale.setScalar(1.0 + audioData.mid * 0.1);
+                        c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5);
                     }
                 });
             }
@@ -1081,7 +1121,7 @@
             if (structures['GRID'] && structures['GRID'].visible && gridOcean && gridOcean.geometry && gridOcean.geometry.attributes.position && gridOcean.userData) {
                 const positions = gridOcean.geometry.attributes.position.array; const baseYs = gridOcean.userData.baseY;
                 for(let i=0; i<gridOcean.geometry.attributes.position.count; i++) {
-                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor);
+                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6;
                 }
                 gridOcean.geometry.attributes.position.needsUpdate = true;
             }
@@ -1092,7 +1132,7 @@
                 const colors = mandelbrotSystem.geometry.attributes.color.array;
                 for(let i=0; i<mData.length; i++) {
                     const wave = Math.sin(mData[i].baseX*0.5 + elapsed) * Math.cos(mData[i].baseZ*0.5 + elapsed) * (audioData.low * 3.0);
-                    positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave;
+                    positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave + voiceBreath * mData[i].iterRatio;
                     const c = new THREE.Color().copy(moodLerpValues.baseColor).lerp(moodLerpValues.accentColor, mData[i].iterRatio + audioData.mid);
                     colors[i*3] = c.r; colors[i*3+1] = c.g; colors[i*3+2] = c.b;
                 }
@@ -1105,6 +1145,7 @@
                     if (ring && ring.rotation && ring.userData) {
                         ring.rotation.x += ring.userData.rxSpeed * (1 + audioData.mid*3);
                         ring.rotation.y += ring.userData.rySpeed * (1 + audioData.mid*3);
+                        if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3);
                     }
                 });
             }
@@ -1155,8 +1196,9 @@
                     for(let i=0; i<120; i++) {
                         if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
-                        p.add(v); if(p.length() > 20) v.multiplyScalar(-1); 
-                        nodePos[i*3] = p.x; nodePos[i*3+1] = p.y; nodePos[i*3+2] = p.z;
+                        p.add(v); if(p.length() > 20) v.multiplyScalar(-1);
+                        const nDir = p.clone().normalize();
+                        nodePos[i*3] = p.x + nDir.x * voiceBreath * 0.5; nodePos[i*3+1] = p.y + nDir.y * voiceBreath * 0.5; nodePos[i*3+2] = p.z + nDir.z * voiceBreath * 0.5;
                         let connected = 0;
                         for(let j=i+1; j<120; j++) {
                             if(connected > 3 || !shannonNodes[j] || !shannonNodes[j].pos) break;
@@ -1177,8 +1219,9 @@
                 if (mData) {
                     for(let i=0; i<mData.length; i++) {
                         const u = mData[i].u + flowOffset; const v = mData[i].v; const R = 3.0, r = 1.5;
-                        positions[i*3] = (R + r * v * Math.cos(u/2)) * Math.cos(u);
-                        positions[i*3+1] = (R + r * v * Math.cos(u/2)) * Math.sin(u);
+                        const breathR = R + voiceBreath * 0.3;
+                        positions[i*3] = (breathR + r * v * Math.cos(u/2)) * Math.cos(u);
+                        positions[i*3+1] = (breathR + r * v * Math.cos(u/2)) * Math.sin(u);
                         positions[i*3+2] = r * v * Math.sin(u/2);
                     }
                 }
@@ -1192,7 +1235,7 @@
                         for(let i=0; i<300; i++) {
                             const theta = (i/300) * Math.PI * 2;
                             const wave = Math.sin(theta * 10 + elapsed * qLine.userData.waveSpeed) * (audioData.high * 4.0);
-                            const r = qLine.userData.radius + wave;
+                            const r = qLine.userData.radius + wave + voiceBreath * 0.4;
                             positions[i*3] = Math.cos(theta) * r; positions[i*3+1] = Math.sin(theta) * r; positions[i*3+2] = 0;
                         }
                         qLine.geometry.attributes.position.needsUpdate = true;
@@ -1206,7 +1249,7 @@
             if (structures['EDEN'] && structures['EDEN'].visible) {
                 if (edenLady) {
                     edenLady.rotation.y += moodLerpValues.rotationSpeed * 5.0 * idleFactor;
-                    edenLady.scale.setScalar(1.0 + audioData.low * 0.5 * moodLerpValues.bloomStrength);
+                    edenLady.scale.setScalar(1.0 + audioData.low * 0.5 * moodLerpValues.bloomStrength + holoAmplitude * 0.2);
                 }
                 if (edenPlayer) {
                     const r = 8 + audioData.mid * 5 * moodLerpValues.particleSpeedScale;
@@ -1372,11 +1415,18 @@ window.fridayVibe = {
     }
 };
 
+// === GLOBAL MOOD SETTER (exposed for server/task-type mapping) ===
+window.fridaySetMood = function(mood) {
+    if (typeof setMood === 'function') setMood(mood.toUpperCase(), true);
+};
+
 // === HOLOGRAPHIC REACTIVITY API (Layer 1) ===
 window.fridaySetHoloState = function(state, intensity) {
     if (typeof holoState !== 'undefined') holoState = state || 'idle';
     if (typeof holoStateIntensity !== 'undefined') holoStateIntensity = intensity || 0;
-    var moodMap = {idle:'IDLE', speaking:'SPEAKING', executing:'EXECUTING', listening:'LISTENING'};
+    var moodMap = {idle:'IDLE', speaking:'SPEAKING', executing:'EXECUTING', listening:'LISTENING',
+                   curious:'CURIOUS', creative:'CREATIVE', protective:'PROTECTIVE',
+                   focused:'FOCUSED', social:'SOCIAL', reflective:'REFLECTIVE'};
     var m = moodMap[state] || 'LISTENING';
     if (typeof setSystemMood === 'function') setSystemMood(m);
 };

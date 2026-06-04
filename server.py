@@ -1027,14 +1027,21 @@ def _evaluate_output(task_id, goal, output):
         return f"GRADE: PARTIAL\nREASON: Evaluation failed: {e}"
 
 
+TASK_TIMEOUT_SECONDS = int(os.environ.get('FRIDAY_TASK_TIMEOUT', 1800))  # 30 min default
+
+
 def _task_worker(task_id, name, prompt, description=''):
     """Run a Claude agent prompt to completion and store results.
 
     Heuristic log lines come from inspecting the tool_trace returned by
     _call_claude_agent so the UI can show what the agent did step-by-step.
+    Timeout guard: if the task runs longer than TASK_TIMEOUT_SECONDS (default
+    30 min, configurable via FRIDAY_TASK_TIMEOUT env var or settings), it is
+    terminated gracefully.
     """
+    timeout = _load_settings().get('task_timeout_seconds', TASK_TIMEOUT_SECONDS)
     _task_set(task_id, status='running', started=_time.time())
-    _task_log(task_id, f'Spawning agent: {name}')
+    _task_log(task_id, f'Spawning agent: {name} (timeout: {timeout}s)')
     if description:
         _task_log(task_id, description)
     try:
@@ -1068,6 +1075,13 @@ def _task_worker(task_id, name, prompt, description=''):
             line = f'{tn}({str(label)[:60]})' if label else tn
             _task_log(task_id, '→ tool: ' + line)
 
+        # ── Timeout check ──
+        _task_elapsed = _time.time() - (TASKS.get(task_id, {}).get('started') or _time.time())
+        if _task_elapsed > timeout:
+            _task_log(task_id, f'TIMEOUT after {int(_task_elapsed)}s — terminating gracefully')
+            _task_set(task_id, status='timeout', result=reply or '(timed out before completion)', ended=_time.time())
+            return
+
         # ── Dual-loop: drain the follow-up queue ──────────────────
         # External callers can POST /api/agent/steer to push follow-up
         # prompts that re-enter the agent after the first pass completes.
@@ -1075,6 +1089,12 @@ def _task_worker(task_id, name, prompt, description=''):
         combined_trace = list(tool_trace or [])
         _drain_iters = 0
         while _drain_iters < 5:
+            # Check timeout before each steer iteration
+            _task_elapsed = _time.time() - (TASKS.get(task_id, {}).get('started') or _time.time())
+            if _task_elapsed > timeout:
+                _task_log(task_id, f'TIMEOUT during steer loop after {int(_task_elapsed)}s')
+                _task_set(task_id, status='timeout', result=combined_reply or '(timed out)', ended=_time.time())
+                return
             with _FOLLOW_UP_LOCK:
                 pending = _FOLLOW_UP_QUEUES.pop(task_id, [])
             if not pending:
@@ -2731,6 +2751,14 @@ def get_personality():
 @app.route('/api/epistemic')
 def get_epistemic():
     """Return epistemic scoring data."""
+    try:
+        from epistemic_engine import get_epistemic_engine
+        data = get_epistemic_engine().get_scores()
+        if 'overall' in data and 'overall_score' not in data:
+            data['overall_score'] = data['overall']
+        return jsonify({"status": "ok", **data})
+    except Exception:
+        pass
     efile = FRIDAY_DIR / "epistemic_scores.json"
     if not efile.exists():
         efile = FRIDAY_DIR / "epistemic.json"
@@ -2744,11 +2772,11 @@ def get_epistemic():
             pass
     return jsonify({
         "status": "ok",
-        "overall_score": 0.72,
+        "overall_score": 0.0,
+        "total_turns_scored": 0,
         "dimensions": {
-            "calibration": 0.68, "sourcing": 0.75,
-            "uncertainty_acknowledgment": 0.80, "bias_awareness": 0.65,
-            "correction_rate": 0.70
+            "information_gain": 0.0, "pushback_rate": 0.0,
+            "socratic_ratio": 0.0, "independence_fostering": 0.0
         }
     })
 
@@ -4134,6 +4162,7 @@ def _detect_context_needs(message, workspace):
 
     # Always include personality for tone calibration
     needs.add('personality')
+    needs.add('epistemic')
 
     # Workspace-driven context
     ws_map = {
@@ -4358,12 +4387,18 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
             add(f"\n== WIKI/BRIEFING DATA ==\n{wiki_text}", classify(wiki_text, _T1))
             sources_consulted.append('wiki')
 
-    if 'epistemic' in needs and 'epistemic' in vault:
-        add(
-            f"\n== EPISTEMIC STATE ==\n"
-            f"Independence score: {vault['epistemic'].get('overall', 0.72)}",
-            _T1,
-        )
+    if 'epistemic' in needs:
+        try:
+            from epistemic_engine import get_epistemic_engine
+            _ee = get_epistemic_engine()
+            add(f"\n== EPISTEMIC STATE ==\n{_ee.get_prompt_injection()}", _T1)
+        except Exception:
+            if 'epistemic' in vault:
+                add(
+                    f"\n== EPISTEMIC STATE ==\n"
+                    f"Independence score: {vault['epistemic'].get('overall', 0.72)}",
+                    _T1,
+                )
 
     # Layer 2.5: Project context files (.friday-context.md / AGENTS.md)
     # Hermes-inspired: drop a context file in any project directory and Friday
@@ -5088,6 +5123,16 @@ def chat():
                 "sources": sources,
                 "tool_count": len(tool_trace or []),
             })
+
+        # Epistemic scoring — score this turn in background
+        try:
+            from epistemic_engine import get_epistemic_engine
+            threading.Thread(
+                target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
 
         # Prune: keep pinned forever, others for 30 days, cap at 500 messages
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
@@ -7509,7 +7554,12 @@ if sock is not None:
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
-        system_instruction = voice_prefix + full_ctx
+        try:
+            from voice_personality import get_voice_personality
+            _vp = get_voice_personality()
+            system_instruction = _vp.build_system_instruction(voice_prefix + full_ctx)
+        except Exception:
+            system_instruction = voice_prefix + full_ctx
 
         try:
             ws.send(json.dumps({"type": "status", "text": "loading context"}))

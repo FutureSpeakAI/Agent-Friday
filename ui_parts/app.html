@@ -2794,7 +2794,11 @@ function App(){
   useEffect(()=>{let active=true;const poll=async()=>{if(!active||document.hidden)return;try{const r=await fetch('/api/processes');if(!r.ok)return;const d=await r.json();const procs=d.processes||[];const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡',model:p.model||null,color:(p.color!=null?p.color:null)});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
-  useEffect(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{});const iv=setInterval(()=>{fetch('/api/notifications').then(r=>r.json()).then(d=>setNotifs(d.items||[])).catch(()=>{})},30000);return()=>clearInterval(iv)},[]);
+  const dismissedNotifIds=useRef(new Set());
+  const clearNotif=(id)=>{if(id)dismissedNotifIds.current.add(id);setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
+  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id)dismissedNotifIds.current.add(n.id)});setNotifs([])};
+  const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n))};
+  useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
@@ -3119,12 +3123,12 @@ function App(){
       <span className="ks-icon">&#x26D4;</span>STOP
     </button>}
 
-    {/* Calm Default State — greeting with ticker */}
-    {noWindows&&<div style={{position:'fixed',inset:0,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-      {/* Radial dark backdrop — wider + more opaque so greeting reads against any scene state */}
-      <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-52%)',width:720,height:360,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
+    {/* Calm Default State — greeting with ticker, anchored above the dock */}
+    {noWindows&&<div style={{position:'fixed',left:0,right:0,bottom:80,zIndex:5,display:'flex',flexDirection:'column',alignItems:'center',pointerEvents:'none'}}>
+      <div style={{position:'absolute',bottom:0,left:'50%',transform:'translateX(-50%)',width:720,height:280,borderRadius:'50%',background:'radial-gradient(ellipse at center, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.65) 40%, rgba(0,0,0,0.28) 65%, transparent 100%)',pointerEvents:'none',zIndex:0}}/>
       <div style={{position:'relative',zIndex:1,fontFamily:'Orbitron',fontSize:26,color:'rgba(0,212,255,0.98)',marginBottom:12,animation:'fadeIn 1s ease',letterSpacing:'0.06em',textShadow:'0 0 12px rgba(0,0,0,0.95), 0 0 32px rgba(0,212,255,0.35), 0 2px 4px rgba(0,0,0,0.85)'}}>{getGreeting()}, Stephen.</div>
-      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:28,position:'relative',zIndex:1}}>
+      <div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:9,color:'rgba(0,212,255,0.45)',marginBottom:10,letterSpacing:'0.15em',textTransform:'uppercase'}}>by FutureSpeak.AI</div>
+      {countdowns.length>0&&<div className="greeting-ticker" style={{marginBottom:16,position:'relative',zIndex:1}}>
         {countdowns.map((c,i)=><React.Fragment key={i}>
           {i>0&&<span className="greeting-ticker-sep"/>}
           <span className="greeting-ticker-item">
@@ -3133,7 +3137,7 @@ function App(){
           </span>
         </React.Fragment>)}
       </div>}
-      {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:28,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
+      {countdowns.length===0&&<div style={{position:'relative',zIndex:1,fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.78)',marginBottom:16,textShadow:'0 1px 3px rgba(0,0,0,0.85)'}}>All systems nominal.</div>}
       <div style={{position:'relative',zIndex:1,pointerEvents:'auto',display:'flex',gap:8,alignItems:'center'}}>
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
@@ -3298,7 +3302,10 @@ function App(){
       <div className="notif-section-divider"/>
       <div className="notif-section-header">
         <span>NOTIFICATIONS</span>
-        {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {unread>0&&<span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#ff0080',letterSpacing:'0.04em'}}>{unread} NEW</span>}
+          {notifs.length>0&&<button onClick={clearAllNotifs} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>}
+        </div>
       </div>
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
@@ -3307,6 +3314,7 @@ function App(){
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));
           const onClickRow=()=>{
+            if(n.id&&!n.read)markNotifRead(n.id);
             if(hasDetail){
               setNotifCardExpanded(e=>({...e,[`notif_${key}`]:!e[`notif_${key}`]}));
             } else if(n.url){
@@ -3330,6 +3338,7 @@ function App(){
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
               {!hasDetail&&n.url&&<span aria-hidden="true" style={{fontSize:11,color:'#00d4ff'}}>↗</span>}
+              {n.id&&<button onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
             {isExpanded&&hasDetail&&<FridayDoc compact text={n.detail||n.body||n.message} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
           </div>);
@@ -3673,6 +3682,7 @@ function App(){
             <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:6}}>
               <span style={{fontFamily:'Orbitron',fontSize:24,color,fontWeight:700}}>{e==null?'—':e.toFixed(2)}</span>
               <span style={{fontSize:11,color:'#aaa'}}>{label}</span>
+              {stEpi?.total_turns_scored>0&&<span style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginLeft:'auto'}}>{stEpi.total_turns_scored} turns</span>}
             </div>
             <div className="progress-bar" style={{marginBottom:10}}>
               <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
