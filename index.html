@@ -5351,6 +5351,17 @@ function App(){
           v.micPeakRecent=_peak;
           const ws=v.ws;
           if(!ws||ws.readyState!==WebSocket.OPEN)return;
+          // Mute the mic while Friday is speaking. Gemini's server-side VAD would
+          // otherwise hear her own speaker output bleed back through the mic,
+          // transcribe it as noise, and fire a spurious {type:'interrupted'} —
+          // cutting her off mid-sentence. While activeSources is non-empty we
+          // simply don't forward mic audio; once playback drains (length===0) the
+          // user can speak and Gemini's VAD detects them normally.
+          if(v.activeSources&&v.activeSources.length>0){
+            v.micMuteLogN=(v.micMuteLogN||0)+1;
+            if(v.micMuteLogN%20===1)console.log('VOICE_DEBUG: mic MUTED (Friday speaking, activeSources='+v.activeSources.length+')');
+            return;
+          }
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
           try{
             ws.send(JSON.stringify({type:'audio',data:i16ToB64(pcm16)}));
