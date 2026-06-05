@@ -51,9 +51,10 @@ VOICE_MOOD_PROFILES: Dict[str, VoiceMoodProfile] = {
     "focused": VoiceMoodProfile(
         mood="focused",
         style_instruction=(
-            "Be concise and analytical. Get to the point. Use technical precision. "
-            "Minimize filler words. Deliver information efficiently. "
-            "Sound sharp and attentive — deep in the work."
+            "Be sharp and analytical. Get to the point without filler. Use technical precision. "
+            "Deliver information efficiently — but still give the full answer when the user "
+            "asks for detail or an explanation; efficiency is about no wasted words, not "
+            "withholding substance. Sound attentive — deep in the work."
         ),
         pace="fast",
     ),
@@ -80,7 +81,8 @@ VOICE_MOOD_PROFILES: Dict[str, VoiceMoodProfile] = {
 # Fallback for standard operational moods
 DEFAULT_VOICE_STYLE = (
     "Be natural and conversational. Use a warm but professional tone. "
-    "Keep responses short and punchy for voice."
+    "Let the length match what the user asked for — brief when they want brief, "
+    "thorough when they ask for detail or explanation."
 )
 
 
