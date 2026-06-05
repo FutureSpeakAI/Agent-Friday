@@ -1084,28 +1084,73 @@ function CodeWS(){
     </div>}
   </div>);
 }
+// ═══ NEWS WORKSPACE — magazine layout, source trust, live status ═══
+const NEWS_GEN_STEPS=['Fetching news…','Checking calendar…','Scanning email…','Writing briefing…'];
+function relevanceFor(it){
+  const m={'AI/Tech':'Matches your AI/Tech priority','Politics':'On your Politics watchlist','Local':'Austin local — near you','Business':'Markets & business focus'};
+  return (it.boosted?'⭐ From a source you boosted · ':'')+(m[it.category]||'Picked for your interests');
+}
+function editorialFor(it){
+  const m={'AI/Tech':'the pace of AI shifts what your work and tools can do next.','Politics':'policy moves here ripple into the decisions on your plate.','Local':'it is happening in your city and may touch your week directly.','Business':'market moves shape the financial backdrop of your plans.'};
+  return 'This matters because '+(m[it.category]||'it lines up with what you track most closely.');
+}
 function NewsWS(){
-  const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);const[generating,setGenerating]=useState(false);
+  const[tab,setTab]=useState('feed');
+  const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
+  const[status,setStatus]=useState([]);
+  const[sources,setSources]=useState({banned:[],boosted:[]});
+  const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
+  const[panel,setPanel]=useState(null); // 'sources' | 'customize' | null
+  const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
+  const[generating,setGenerating]=useState(false);const[genStep,setGenStep]=useState(-1);const[genDone,setGenDone]=useState([]);
+  const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
-  const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);
-  useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);const genTimer=useRef(null);
+
+  const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
+  const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
+  const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
+  useEffect(()=>{
+    fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
+    fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
+    loadFeed();loadSources();loadPrefs();
+    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
+  },[]);
+
+  const banSource=async(src)=>{setFeed(f=>f.filter(it=>it.source!==src));try{await fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources()}catch(e){}};
+  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+
+  const savePrefs=(next)=>{setPrefs(next);fetch('/api/briefing/preferences',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)}).catch(()=>{})};
+  const moveSection=(i,dir)=>{if(!prefs)return;const o=[...prefs.section_order];const j=i+dir;if(j<0||j>=o.length)return;[o[i],o[j]]=[o[j],o[i]];savePrefs({...prefs,section_order:o})};
+  const toggleSection=(s)=>{if(!prefs)return;savePrefs({...prefs,sections_enabled:{...prefs.sections_enabled,[s]:!prefs.sections_enabled[s]}})};
+  const toggleCat=(c)=>{if(!prefs)return;const next={...prefs,categories_enabled:{...prefs.categories_enabled,[c]:!prefs.categories_enabled[c]}};savePrefs(next);};
+
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
-  const launchBriefing=async()=>{if(generating)return;setGenerating(true);try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');setHtmlContent(d.content);setSelected({date:d.date,filename:d.filename,isHtml:false});fetch('/api/briefings').then(r=>r.json()).then(x=>setBriefings(x.briefings||[])).catch(()=>{})}catch(e){alert('Briefing generation failed: '+(e.message||e))}finally{setGenerating(false)}};
+  const generateBriefing=async()=>{if(generating)return;setGenerating(true);setGenStep(0);setGenDone([]);
+    let step=0;genTimer.current=setInterval(()=>{step=Math.min(step+1,NEWS_GEN_STEPS.length-1);setGenDone(NEWS_GEN_STEPS.slice(0,step));setGenStep(step)},1800);
+    try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');
+      setHtmlContent(d.content);setSelected({date:d.date,filename:d.filename,isHtml:false});setTab('briefings');
+      fetch('/api/briefings').then(r=>r.json()).then(x=>setBriefings(x.briefings||[])).catch(()=>{})}
+    catch(e){alert('Briefing generation failed: '+(e.message||e))}
+    finally{if(genTimer.current)clearInterval(genTimer.current);setGenerating(false);setGenStep(-1);setGenDone([])}};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
-  if(selected)return(<div>
+
+  // ── Expanded single-briefing reader ──
+  if(selected)return(<div className="news-ws">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>Back to Archive</button>
+      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>← Back</button>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
+        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'🔊 Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:11}}>Stop</button>
-        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
+        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'💬 Discuss'}</button>
         <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
-        <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>
+        {selected.filename&&selected.isHtml!==false&&<button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>}
       </div>
     </div>
     <div style={{display:'flex',gap:12}}>
@@ -1120,14 +1165,142 @@ function NewsWS(){
       </div>}
     </div>
   </div>);
+
+  // ── Feature (top story) gets a larger card + editorial note ──
+  const feature=feed[0];
+  const filteredBriefs=briefings.filter(b=>!briefSearch||(b.date||'').includes(briefSearch.trim()));
+
+  return(<div className="news-ws" style={{position:'relative'}}>
+    {/* Live status strip */}
+    <div className="status-strip">
+      {status.map((c,i)=><div key={i} className="status-pill" title={c.detail}>
+        <span className={'status-dot '+c.status}></span><span>{c.icon} {c.label}</span>
+        <span className="st-detail">{c.status==='connected'?'live':c.status==='degraded'?'active':'off'}</span>
+      </div>)}
+      {!status.length&&<div className="status-pill"><span className="status-dot degraded"></span><span>Checking connectors…</span></div>}
+    </div>
+
+    {/* Toolbar */}
+    <div className="news-toolbar">
+      <div className="news-tabs">
+        <button className={'btn '+(tab==='feed'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('feed')}>📰 Feed</button>
+        <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
+      </div>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
+        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={loadFeed}>↻ Refresh</button>}
+        <button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Now'}</button>
+      </div>
+    </div>
+
+    {/* Generate progress */}
+    {generating&&<div className="gen-progress">
+      <span className="gen-spinner"></span>
+      <span>Friday is assembling your briefing…</span>
+      <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
+    </div>}
+
+    {/* ── FEED TAB ── */}
+    {tab==='feed'&&<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <div style={{fontSize:11,color:'#888'}}>{feed.length} stories{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
+      </div>
+      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Pulling live stories…</div>:
+       feed.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories right now. Try ↻ Refresh, or check your category toggles in ⚙ Customize.</div>:
+       <div className="news-masonry">
+         {feed.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
+           <div className="news-cardtop">
+             <span className="cat-chip">{it.category}</span>
+             <div className="src-actions">
+               <button className="src-btn boost" title={'Boost '+it.source} onClick={()=>boostSource(it.source)}>⭐</button>
+               <button className="src-btn ban" title={'Ban '+it.source} onClick={()=>banSource(it.source)}>🚫</button>
+             </div>
+           </div>
+           {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
+           <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
+           <div className="news-snippet">{it.snippet}</div>
+           <div className="source-row">
+             <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
+             {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
+           </div>
+           <div className="news-meta">
+             {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
+           </div>
+           {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
+           <div className="relevance-tag">{relevanceFor(it)}</div>
+         </div>)}
+       </div>}
+    </div>}
+
+    {/* ── BRIEFINGS TAB ── */}
+    {tab==='briefings'&&<div>
+      <FridaySays text={briefings.length+' briefings in archive. Most recent is open below.'}/>
+      <div style={{display:'flex',gap:6,alignItems:'center',margin:'8px 0'}}>
+        <input className="input" style={{flex:1,fontSize:11}} value={briefSearch} onChange={e=>setBriefSearch(e.target.value)} placeholder="Filter by date (e.g. 2026-06)"/>
+      </div>
+      {loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading archive…</div>:
+       filteredBriefs.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings match. The daily briefing runs at 7:32 AM — or hit ✨ Generate Now.</div>:
+       filteredBriefs.map((b,i)=>{const isOpen=expanded[b.date];return(
+       <div key={b.date||i} className={'brief-card'+(isOpen?' expanded':'')} onClick={()=>!isOpen&&setExpanded({...expanded,[b.date]:true})}>
+         <div className="brief-cardhead">
+           <div className="brief-date">{b.date}{i===0&&<span className="badge-cyan" style={{fontSize:9,marginLeft:8,padding:'1px 6px'}}>LATEST</span>}</div>
+           <div style={{display:'flex',gap:4}}>
+             <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openBriefing(b)}}>Open full</button>
+             <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New tab</button>
+             <button className="icon-btn" onClick={e=>{e.stopPropagation();setExpanded({...expanded,[b.date]:!isOpen})}}>{isOpen?'▴':'▾'}</button>
+           </div>
+         </div>
+         {isOpen?<BriefPreview b={b} onFull={()=>openBriefing(b)}/>:
+          <div className="brief-preview">{b.html?'HTML + Markdown':'Markdown'} briefing · {b.size?(Math.round(b.size/1024)+' KB'):''} — click to preview.</div>}
+       </div>)})}
+    </div>}
+
+    {/* ── SLIDE-OVER PANELS ── */}
+    {panel&&<div className="news-backdrop" onClick={()=>setPanel(null)}></div>}
+    {panel==='sources'&&<div className="news-side">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>🛡 MANAGE SOURCES</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{fontSize:10,color:'#777',marginBottom:8}}>Banned sources are excluded from the feed and every future briefing.</div>
+      <div className="card-title" style={{marginTop:8}}>🚫 Banned ({sources.banned.length})</div>
+      {sources.banned.length===0?<div style={{fontSize:11,color:'#777',marginBottom:10}}>None banned yet.</div>:
+       sources.banned.map(s=><div key={s} className="manage-row"><span><span className="trust-dot red" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unban(s)}>Undo</button></div>)}
+      <div className="card-title" style={{marginTop:14}}>⭐ Boosted ({sources.boosted.length})</div>
+      {sources.boosted.length===0?<div style={{fontSize:11,color:'#777'}}>None boosted yet. Hit ⭐ on any story to prioritize that source.</div>:
+       sources.boosted.map(s=><div key={s} className="manage-row"><span><span className="trust-dot green" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unboost(s)}>Remove</button></div>)}
+      <div style={{marginTop:14,display:'flex',gap:4}}>
+        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed()})}}}/>
+      </div>
+    </div>}
+    {panel==='customize'&&prefs&&<div className="news-side">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>⚙ CUSTOMIZE BRIEFING</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div className="card-title" style={{marginTop:8}}>Section order & visibility</div>
+      {prefs.section_order.map((s,i)=><div key={s} className="reorder-row">
+        <div style={{display:'flex',flexDirection:'column',gap:1}}>
+          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,-1)} disabled={i===0}>▴</button>
+          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,1)} disabled={i===prefs.section_order.length-1}>▾</button>
+        </div>
+        <span style={{flex:1,fontSize:12,color:prefs.sections_enabled[s]?'#e0e4ee':'#666'}}>{s}</span>
+        <span className={'toggle-pill '+(prefs.sections_enabled[s]?'on':'')} onClick={()=>toggleSection(s)}>{prefs.sections_enabled[s]?'Shown':'Hidden'}</span>
+      </div>)}
+      <div className="card-title" style={{marginTop:14}}>News categories</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+        {(cats.length?cats.map(c=>c.name):Object.keys(prefs.categories_enabled)).map(c=>
+          <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
+      </div>
+      <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
+    </div>}
+  </div>);
+}
+
+// Lazy-loaded 3-line preview of a past briefing's key items.
+function BriefPreview({b,onFull}){
+  const[txt,setTxt]=useState('');const[busy,setBusy]=useState(true);
+  useEffect(()=>{let on=true;const file=b.md||b.html||(b.name+'.md');fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{if(!on)return;let c=d.content||'';if(d.is_html)c=c.replace(/<[^>]*>/g,' ');c=c.replace(/[#*_>`]/g,'').replace(/\s+/g,' ').trim();setTxt(c.substring(0,360));setBusy(false)}).catch(()=>{if(on)setBusy(false)});return()=>{on=false}},[b]);
+  if(busy)return <div className="brief-preview" style={{color:'#666'}}>Loading preview…</div>;
   return(<div>
-    <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:11}} onClick={launchBriefing} disabled={generating}>{generating?'Generating…':'Generate Briefing'}</button></div>
-    {briefings.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
-    briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
-      <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:11,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
-      <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
-    </div>)}
+    <div className="brief-preview" style={{WebkitLineClamp:3}}>{txt||'No preview available.'}</div>
+    <button className="btn" style={{fontSize:10,marginTop:8,padding:'3px 9px'}} onClick={onFull}>Read full briefing →</button>
   </div>);
 }
 

@@ -1389,6 +1389,180 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 8px; background: rgba(245,158,11,0.08);
             border: 1px solid rgba(245,158,11,0.18);
         }
+
+        /* ═══════════════════════════════════════════════════════════
+           NEWS WORKSPACE — magazine layout, source trust, status strip
+           ═══════════════════════════════════════════════════════════ */
+        /* Category accent colors — tech=cyan, politics=amber, local=green, business=purple */
+        .news-ws { --c-tech:#00d4ff; --c-politics:#f59e0b; --c-local:#00ff80; --c-business:#a78bfa; }
+
+        /* Live status strip */
+        .status-strip { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+        .status-pill {
+            display:inline-flex; align-items:center; gap:6px;
+            padding:5px 11px; border-radius:20px; font-size:11px; color:#cdd3e0;
+            background:rgba(10,14,26,0.7); backdrop-filter:blur(16px) saturate(1.2);
+            -webkit-backdrop-filter:blur(16px) saturate(1.2);
+            border:1px solid rgba(255,255,255,0.06);
+        }
+        .status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+        .status-dot.connected { background:#00ff80; box-shadow:0 0 7px #00ff80; }
+        .status-dot.degraded { background:#f59e0b; box-shadow:0 0 7px rgba(245,158,11,0.7); }
+        .status-dot.disconnected { background:#666; }
+        .status-pill .st-detail { color:rgba(255,255,255,0.4); font-size:10px; }
+
+        /* News toolbar */
+        .news-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+        .news-tabs { display:flex; gap:4px; }
+
+        /* Generate-now progress animation */
+        .gen-progress {
+            display:flex; align-items:center; gap:10px; padding:10px 14px; margin-bottom:12px;
+            border-radius:8px; background:rgba(0,212,255,0.06);
+            border:1px solid rgba(0,212,255,0.18); font-size:12px; color:#bfe9ff;
+        }
+        .gen-spinner {
+            width:16px; height:16px; border-radius:50%; flex-shrink:0;
+            border:2px solid rgba(0,212,255,0.2); border-top-color:#00d4ff;
+            animation:gen-spin 0.8s linear infinite;
+        }
+        @keyframes gen-spin { to { transform:rotate(360deg); } }
+        .gen-steps { display:flex; gap:6px; flex-wrap:wrap; }
+        .gen-step { font-size:10px; padding:1px 7px; border-radius:10px; color:#7d8595; background:rgba(255,255,255,0.04); }
+        .gen-step.active { color:#00d4ff; background:rgba(0,212,255,0.12); }
+        .gen-step.done { color:#00ff80; background:rgba(0,255,128,0.1); }
+
+        /* Masonry feed (CSS columns) */
+        .news-masonry { column-count:3; column-gap:12px; }
+        @media (max-width:1100px){ .news-masonry { column-count:2; } }
+        @media (max-width:640px){ .news-masonry { column-count:1; } }
+        .news-card {
+            break-inside:avoid; display:inline-block; width:100%; margin:0 0 12px;
+            background:rgba(10,14,26,0.75); backdrop-filter:blur(16px) saturate(1.2);
+            -webkit-backdrop-filter:blur(16px) saturate(1.2);
+            border:1px solid rgba(255,255,255,0.06);
+            border-left:3px solid var(--accent, rgba(0,212,255,0.5));
+            border-radius:10px; padding:13px; box-shadow:0 4px 24px rgba(0,0,0,0.28);
+            transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+        }
+        .news-card:hover {
+            transform:translateY(-2px) scale(1.012);
+            box-shadow:0 8px 34px rgba(0,0,0,0.4), 0 0 22px var(--glow, rgba(0,212,255,0.18));
+            border-color:rgba(255,255,255,0.12);
+        }
+        .news-card.cat-tech { --accent:var(--c-tech); --glow:rgba(0,212,255,0.2); }
+        .news-card.cat-politics { --accent:var(--c-politics); --glow:rgba(245,158,11,0.2); }
+        .news-card.cat-local { --accent:var(--c-local); --glow:rgba(0,255,128,0.18); }
+        .news-card.cat-business { --accent:var(--c-business); --glow:rgba(167,139,250,0.2); }
+        .news-card.feature { padding:18px; }
+        .news-card.feature .news-headline { font-size:18px; line-height:1.25; }
+
+        .news-cardtop { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+        .cat-chip {
+            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.09em; text-transform:uppercase;
+            padding:2px 7px; border-radius:4px; color:var(--accent);
+            background:color-mix(in srgb, var(--accent) 12%, transparent);
+            border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+        }
+        .src-actions { display:flex; gap:3px; opacity:0; transition:opacity 0.15s; }
+        .news-card:hover .src-actions { opacity:1; }
+        .src-btn {
+            border:none; cursor:pointer; font-size:12px; line-height:1; padding:3px 5px;
+            border-radius:5px; background:rgba(255,255,255,0.05); color:#aeb4c2;
+            transition:background 0.15s, transform 0.1s;
+        }
+        .src-btn:hover { transform:scale(1.15); }
+        .src-btn.ban:hover { background:rgba(255,60,90,0.18); }
+        .src-btn.boost:hover { background:rgba(245,158,11,0.18); }
+
+        .news-headline {
+            font-size:14px; font-weight:650; line-height:1.32; color:#eef1f6; cursor:pointer;
+            margin-bottom:6px; transition:color 0.15s;
+        }
+        .news-headline:hover { color:var(--accent); }
+        .news-snippet {
+            font-size:12px; line-height:1.5; color:#a9b0bf; margin-bottom:9px;
+            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+        }
+        .news-card.feature .news-snippet { -webkit-line-clamp:3; }
+
+        .source-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:7px; }
+        .source-badge {
+            display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#c4cad6;
+            padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.07);
+        }
+        .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+        .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
+        .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
+        .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+
+        .news-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:10px; color:#727a8a; }
+        .breaking-badge {
+            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.07em;
+            padding:1px 6px; border-radius:4px; color:#ff5277;
+            background:rgba(255,60,90,0.12); border:1px solid rgba(255,60,90,0.3);
+            animation:breath 1.6s ease-in-out infinite;
+        }
+        @keyframes breath { 0%,100%{opacity:0.65;} 50%{opacity:1;} }
+        .relevance-tag {
+            font-size:10px; color:#8fb8c8; font-style:italic;
+            border-top:1px solid rgba(255,255,255,0.05); margin-top:8px; padding-top:7px;
+        }
+        .editorial-note {
+            margin-top:9px; padding:8px 10px; border-radius:7px; font-size:11px; line-height:1.45;
+            color:#ffe6b8; background:rgba(245,158,11,0.07); border:1px solid rgba(245,158,11,0.18);
+        }
+        .editorial-note b { color:#f59e0b; }
+
+        /* Briefing preview cards (past briefings) */
+        .brief-card {
+            margin-bottom:10px; border-radius:10px; padding:13px;
+            background:rgba(10,14,26,0.72); backdrop-filter:blur(16px) saturate(1.2);
+            -webkit-backdrop-filter:blur(16px) saturate(1.2);
+            border:1px solid rgba(255,255,255,0.06); cursor:pointer;
+            transition:border-color 0.18s, box-shadow 0.18s;
+        }
+        .brief-card:hover { border-color:rgba(0,212,255,0.3); box-shadow:0 4px 24px rgba(0,0,0,0.32); }
+        .brief-card.expanded { cursor:default; border-color:rgba(0,212,255,0.28); }
+        .brief-cardhead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .brief-date { font-family:'Orbitron',monospace; font-size:13px; color:#eef1f6; }
+        .brief-preview { font-size:11.5px; line-height:1.55; color:#9aa1b0; margin-top:7px;
+            display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+
+        /* Manage Sources / Customization slide-over panels */
+        .news-backdrop {
+            position:fixed; inset:0; background:rgba(3,3,8,0.5); backdrop-filter:blur(3px);
+            z-index:40; animation:fadein 0.18s ease;
+        }
+        @keyframes fadein { from{opacity:0;} to{opacity:1;} }
+        .news-side {
+            position:fixed; top:0; right:0; bottom:0; width:340px; max-width:90vw;
+            background:rgba(8,11,20,0.94); backdrop-filter:blur(20px) saturate(1.3);
+            -webkit-backdrop-filter:blur(20px) saturate(1.3);
+            border-left:1px solid rgba(0,212,255,0.18); box-shadow:-12px 0 40px rgba(0,0,0,0.5);
+            padding:18px; overflow-y:auto; z-index:41;
+            animation:slidein 0.22s ease;
+        }
+        @keyframes slidein { from{transform:translateX(28px);opacity:0;} to{transform:translateX(0);opacity:1;} }
+        .news-side h3 { font-family:'Orbitron',monospace; font-size:12px; color:#00d4ff; letter-spacing:0.08em; margin:0 0 12px; }
+        .manage-row {
+            display:flex; align-items:center; justify-content:space-between; gap:8px;
+            padding:8px 10px; margin-bottom:6px; border-radius:7px;
+            background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05); font-size:12px; color:#d2d7e2;
+        }
+        .reorder-row {
+            display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:6px;
+            border-radius:7px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);
+        }
+        .toggle-pill {
+            cursor:pointer; user-select:none; font-size:11px; padding:5px 11px; border-radius:14px;
+            border:1px solid rgba(255,255,255,0.08); color:#8d94a3; background:rgba(255,255,255,0.03);
+            transition:all 0.15s;
+        }
+        .toggle-pill.on { color:#031018; background:rgba(0,212,255,0.85); border-color:rgba(0,212,255,0.9); font-weight:600; }
+        .icon-btn { background:none; border:none; cursor:pointer; color:#8d94a3; font-size:13px; padding:2px 5px; border-radius:5px; }
+        .icon-btn:hover { color:#fff; background:rgba(255,255,255,0.07); }
     </style>
 </head>
 
@@ -4005,28 +4179,73 @@ function CodeWS(){
     </div>}
   </div>);
 }
+// ═══ NEWS WORKSPACE — magazine layout, source trust, live status ═══
+const NEWS_GEN_STEPS=['Fetching news…','Checking calendar…','Scanning email…','Writing briefing…'];
+function relevanceFor(it){
+  const m={'AI/Tech':'Matches your AI/Tech priority','Politics':'On your Politics watchlist','Local':'Austin local — near you','Business':'Markets & business focus'};
+  return (it.boosted?'⭐ From a source you boosted · ':'')+(m[it.category]||'Picked for your interests');
+}
+function editorialFor(it){
+  const m={'AI/Tech':'the pace of AI shifts what your work and tools can do next.','Politics':'policy moves here ripple into the decisions on your plate.','Local':'it is happening in your city and may touch your week directly.','Business':'market moves shape the financial backdrop of your plans.'};
+  return 'This matters because '+(m[it.category]||'it lines up with what you track most closely.');
+}
 function NewsWS(){
-  const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);const[generating,setGenerating]=useState(false);
+  const[tab,setTab]=useState('feed');
+  const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
+  const[status,setStatus]=useState([]);
+  const[sources,setSources]=useState({banned:[],boosted:[]});
+  const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
+  const[panel,setPanel]=useState(null); // 'sources' | 'customize' | null
+  const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
+  const[generating,setGenerating]=useState(false);const[genStep,setGenStep]=useState(-1);const[genDone,setGenDone]=useState([]);
+  const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
-  const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);
-  useEffect(()=>{fetch('/api/briefings').then(r=>r.json()).then(d=>{setBriefings(d.briefings||[]);setLoading(false)}).catch(()=>setLoading(false))},[]);
+  const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);const genTimer=useRef(null);
+
+  const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
+  const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
+  const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
+  useEffect(()=>{
+    fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
+    fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
+    loadFeed();loadSources();loadPrefs();
+    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
+  },[]);
+
+  const banSource=async(src)=>{setFeed(f=>f.filter(it=>it.source!==src));try{await fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources()}catch(e){}};
+  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+
+  const savePrefs=(next)=>{setPrefs(next);fetch('/api/briefing/preferences',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)}).catch(()=>{})};
+  const moveSection=(i,dir)=>{if(!prefs)return;const o=[...prefs.section_order];const j=i+dir;if(j<0||j>=o.length)return;[o[i],o[j]]=[o[j],o[i]];savePrefs({...prefs,section_order:o})};
+  const toggleSection=(s)=>{if(!prefs)return;savePrefs({...prefs,sections_enabled:{...prefs.sections_enabled,[s]:!prefs.sections_enabled[s]}})};
+  const toggleCat=(c)=>{if(!prefs)return;const next={...prefs,categories_enabled:{...prefs.categories_enabled,[c]:!prefs.categories_enabled[c]}};savePrefs(next);};
+
   const openBriefing=(b)=>{const file=b.html||b.md||b.name+'.md';fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{let c=d.content||'';if(d.is_html)c=c.replace('</head>','<style>.fab-btn,#readAloudBtn,#readAloudProgress{display:none!important}</style></head>');setHtmlContent(c);setSelected({...b,filename:file,isHtml:d.is_html})}).catch(()=>{})};
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
-  const launchBriefing=async()=>{if(generating)return;setGenerating(true);try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');setHtmlContent(d.content);setSelected({date:d.date,filename:d.filename,isHtml:false});fetch('/api/briefings').then(r=>r.json()).then(x=>setBriefings(x.briefings||[])).catch(()=>{})}catch(e){alert('Briefing generation failed: '+(e.message||e))}finally{setGenerating(false)}};
+  const generateBriefing=async()=>{if(generating)return;setGenerating(true);setGenStep(0);setGenDone([]);
+    let step=0;genTimer.current=setInterval(()=>{step=Math.min(step+1,NEWS_GEN_STEPS.length-1);setGenDone(NEWS_GEN_STEPS.slice(0,step));setGenStep(step)},1800);
+    try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');
+      setHtmlContent(d.content);setSelected({date:d.date,filename:d.filename,isHtml:false});setTab('briefings');
+      fetch('/api/briefings').then(r=>r.json()).then(x=>setBriefings(x.briefings||[])).catch(()=>{})}
+    catch(e){alert('Briefing generation failed: '+(e.message||e))}
+    finally{if(genTimer.current)clearInterval(genTimer.current);setGenerating(false);setGenStep(-1);setGenDone([])}};
   const sendBriefingChat=async()=>{if(!chatIn.trim())return;const m=chatIn.trim();setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m}]);setChatLoad(true);
     try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Context: The user is reading the daily briefing from '+selected?.date+'. Question: '+m})});const d=await r.json();setChatMsgs(p=>[...p,{role:'friday',text:d.response}])}catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Error]'}])}setChatLoad(false)};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading briefing archive...</div>;
-  if(selected)return(<div>
+
+  // ── Expanded single-briefing reader ──
+  if(selected)return(<div className="news-ws">
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>Back to Archive</button>
+      <button className="btn" onClick={()=>{setSelected(null);setChatOpen(false);setChatMsgs([])}} style={{fontSize:11}}>← Back</button>
       <div style={{display:'flex',gap:4}}>
-        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'Read Aloud'}</button>
+        <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'🔊 Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:11}}>Stop</button>
-        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'Discuss with Friday'}</button>
+        <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'💬 Discuss'}</button>
         <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
-        <button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>
+        {selected.filename&&selected.isHtml!==false&&<button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>}
       </div>
     </div>
     <div style={{display:'flex',gap:12}}>
@@ -4041,14 +4260,142 @@ function NewsWS(){
       </div>}
     </div>
   </div>);
+
+  // ── Feature (top story) gets a larger card + editorial note ──
+  const feature=feed[0];
+  const filteredBriefs=briefings.filter(b=>!briefSearch||(b.date||'').includes(briefSearch.trim()));
+
+  return(<div className="news-ws" style={{position:'relative'}}>
+    {/* Live status strip */}
+    <div className="status-strip">
+      {status.map((c,i)=><div key={i} className="status-pill" title={c.detail}>
+        <span className={'status-dot '+c.status}></span><span>{c.icon} {c.label}</span>
+        <span className="st-detail">{c.status==='connected'?'live':c.status==='degraded'?'active':'off'}</span>
+      </div>)}
+      {!status.length&&<div className="status-pill"><span className="status-dot degraded"></span><span>Checking connectors…</span></div>}
+    </div>
+
+    {/* Toolbar */}
+    <div className="news-toolbar">
+      <div className="news-tabs">
+        <button className={'btn '+(tab==='feed'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('feed')}>📰 Feed</button>
+        <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
+      </div>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
+        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={loadFeed}>↻ Refresh</button>}
+        <button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Now'}</button>
+      </div>
+    </div>
+
+    {/* Generate progress */}
+    {generating&&<div className="gen-progress">
+      <span className="gen-spinner"></span>
+      <span>Friday is assembling your briefing…</span>
+      <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
+    </div>}
+
+    {/* ── FEED TAB ── */}
+    {tab==='feed'&&<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <div style={{fontSize:11,color:'#888'}}>{feed.length} stories{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
+      </div>
+      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Pulling live stories…</div>:
+       feed.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories right now. Try ↻ Refresh, or check your category toggles in ⚙ Customize.</div>:
+       <div className="news-masonry">
+         {feed.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
+           <div className="news-cardtop">
+             <span className="cat-chip">{it.category}</span>
+             <div className="src-actions">
+               <button className="src-btn boost" title={'Boost '+it.source} onClick={()=>boostSource(it.source)}>⭐</button>
+               <button className="src-btn ban" title={'Ban '+it.source} onClick={()=>banSource(it.source)}>🚫</button>
+             </div>
+           </div>
+           {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
+           <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
+           <div className="news-snippet">{it.snippet}</div>
+           <div className="source-row">
+             <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
+             {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
+           </div>
+           <div className="news-meta">
+             {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
+           </div>
+           {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
+           <div className="relevance-tag">{relevanceFor(it)}</div>
+         </div>)}
+       </div>}
+    </div>}
+
+    {/* ── BRIEFINGS TAB ── */}
+    {tab==='briefings'&&<div>
+      <FridaySays text={briefings.length+' briefings in archive. Most recent is open below.'}/>
+      <div style={{display:'flex',gap:6,alignItems:'center',margin:'8px 0'}}>
+        <input className="input" style={{flex:1,fontSize:11}} value={briefSearch} onChange={e=>setBriefSearch(e.target.value)} placeholder="Filter by date (e.g. 2026-06)"/>
+      </div>
+      {loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading archive…</div>:
+       filteredBriefs.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings match. The daily briefing runs at 7:32 AM — or hit ✨ Generate Now.</div>:
+       filteredBriefs.map((b,i)=>{const isOpen=expanded[b.date];return(
+       <div key={b.date||i} className={'brief-card'+(isOpen?' expanded':'')} onClick={()=>!isOpen&&setExpanded({...expanded,[b.date]:true})}>
+         <div className="brief-cardhead">
+           <div className="brief-date">{b.date}{i===0&&<span className="badge-cyan" style={{fontSize:9,marginLeft:8,padding:'1px 6px'}}>LATEST</span>}</div>
+           <div style={{display:'flex',gap:4}}>
+             <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openBriefing(b)}}>Open full</button>
+             <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New tab</button>
+             <button className="icon-btn" onClick={e=>{e.stopPropagation();setExpanded({...expanded,[b.date]:!isOpen})}}>{isOpen?'▴':'▾'}</button>
+           </div>
+         </div>
+         {isOpen?<BriefPreview b={b} onFull={()=>openBriefing(b)}/>:
+          <div className="brief-preview">{b.html?'HTML + Markdown':'Markdown'} briefing · {b.size?(Math.round(b.size/1024)+' KB'):''} — click to preview.</div>}
+       </div>)})}
+    </div>}
+
+    {/* ── SLIDE-OVER PANELS ── */}
+    {panel&&<div className="news-backdrop" onClick={()=>setPanel(null)}></div>}
+    {panel==='sources'&&<div className="news-side">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>🛡 MANAGE SOURCES</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{fontSize:10,color:'#777',marginBottom:8}}>Banned sources are excluded from the feed and every future briefing.</div>
+      <div className="card-title" style={{marginTop:8}}>🚫 Banned ({sources.banned.length})</div>
+      {sources.banned.length===0?<div style={{fontSize:11,color:'#777',marginBottom:10}}>None banned yet.</div>:
+       sources.banned.map(s=><div key={s} className="manage-row"><span><span className="trust-dot red" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unban(s)}>Undo</button></div>)}
+      <div className="card-title" style={{marginTop:14}}>⭐ Boosted ({sources.boosted.length})</div>
+      {sources.boosted.length===0?<div style={{fontSize:11,color:'#777'}}>None boosted yet. Hit ⭐ on any story to prioritize that source.</div>:
+       sources.boosted.map(s=><div key={s} className="manage-row"><span><span className="trust-dot green" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unboost(s)}>Remove</button></div>)}
+      <div style={{marginTop:14,display:'flex',gap:4}}>
+        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed()})}}}/>
+      </div>
+    </div>}
+    {panel==='customize'&&prefs&&<div className="news-side">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>⚙ CUSTOMIZE BRIEFING</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div className="card-title" style={{marginTop:8}}>Section order & visibility</div>
+      {prefs.section_order.map((s,i)=><div key={s} className="reorder-row">
+        <div style={{display:'flex',flexDirection:'column',gap:1}}>
+          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,-1)} disabled={i===0}>▴</button>
+          <button className="icon-btn" style={{lineHeight:1,padding:0}} onClick={()=>moveSection(i,1)} disabled={i===prefs.section_order.length-1}>▾</button>
+        </div>
+        <span style={{flex:1,fontSize:12,color:prefs.sections_enabled[s]?'#e0e4ee':'#666'}}>{s}</span>
+        <span className={'toggle-pill '+(prefs.sections_enabled[s]?'on':'')} onClick={()=>toggleSection(s)}>{prefs.sections_enabled[s]?'Shown':'Hidden'}</span>
+      </div>)}
+      <div className="card-title" style={{marginTop:14}}>News categories</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+        {(cats.length?cats.map(c=>c.name):Object.keys(prefs.categories_enabled)).map(c=>
+          <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
+      </div>
+      <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
+    </div>}
+  </div>);
+}
+
+// Lazy-loaded 3-line preview of a past briefing's key items.
+function BriefPreview({b,onFull}){
+  const[txt,setTxt]=useState('');const[busy,setBusy]=useState(true);
+  useEffect(()=>{let on=true;const file=b.md||b.html||(b.name+'.md');fetch('/api/briefing/'+file).then(r=>r.json()).then(d=>{if(!on)return;let c=d.content||'';if(d.is_html)c=c.replace(/<[^>]*>/g,' ');c=c.replace(/[#*_>`]/g,'').replace(/\s+/g,' ').trim();setTxt(c.substring(0,360));setBusy(false)}).catch(()=>{if(on)setBusy(false)});return()=>{on=false}},[b]);
+  if(busy)return <div className="brief-preview" style={{color:'#666'}}>Loading preview…</div>;
   return(<div>
-    <FridaySays text={briefings.length+' briefings in archive. Click to read, or open in a new tab.'}/>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div className="card-title" style={{margin:0}}>Briefing Archive</div><button className="btn" style={{fontSize:11}} onClick={launchBriefing} disabled={generating}>{generating?'Generating…':'Generate Briefing'}</button></div>
-    {briefings.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No briefings yet. The daily briefing runs at 7:32 AM.</div>:
-    briefings.map((b,i)=><div key={i} className="card" style={{marginBottom:6,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}} onClick={()=>openBriefing(b)}>
-      <div><div style={{fontWeight:600,fontSize:13}}>{b.date}</div><div style={{fontSize:11,color:'#888'}}>{b.html?'HTML + MD':'MD only'} {b.size?(Math.round(b.size/1024)+'KB'):''}</div></div>
-      <div style={{display:'flex',gap:4}}><button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New Tab</button></div>
-    </div>)}
+    <div className="brief-preview" style={{WebkitLineClamp:3}}>{txt||'No preview available.'}</div>
+    <button className="btn" style={{fontSize:10,marginTop:8,padding:'3px 9px'}} onClick={onFull}>Read full briefing →</button>
   </div>);
 }
 
@@ -5307,6 +5654,10 @@ function App(){
       try{v.audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:PCM_OUT_RATE});}
       catch(_){v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
       if(v.audioCtx.sampleRate!==PCM_OUT_RATE)console.warn('[voice] ctx sampleRate='+v.audioCtx.sampleRate+' (wanted '+PCM_OUT_RATE+') — playback will be resampled');
+      // Diagnostic: confirm the 24kHz pin actually took. If pinned=false the
+      // browser ignored the hint and every chunk is being resampled 24k->ctxRate,
+      // which is the usual source of progressive rasp over a long conversation.
+      console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
       v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
       const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();

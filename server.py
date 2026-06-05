@@ -2851,6 +2851,141 @@ def serve_briefing(filename):
         return send_from_directory(str(path.parent), filename)
     return 'Not found', 404
 
+@app.route('/api/briefing/status')
+def briefing_status():
+    """Report which data connectors are live for the News workspace.
+
+    Drives the colored status indicators (✅ / ⚠️ / ❌). Static segment so it
+    ranks above the /api/briefing/<filename> rule in Werkzeug's matcher.
+    """
+    google_connected = _google_credentials() is not None
+    try:
+        import requests as _r  # noqa: F401
+        from bs4 import BeautifulSoup  # noqa: F401
+        news_ok = True
+    except Exception:
+        news_ok = False
+    connectors = [
+        {
+            "key": "gmail", "label": "Gmail", "icon": "📧",
+            "status": "connected" if google_connected else "disconnected",
+            "detail": "Live read-only" if google_connected else "Not linked — using local cache if present",
+        },
+        {
+            "key": "calendar", "label": "Calendar", "icon": "📅",
+            "status": "connected" if google_connected else "disconnected",
+            "detail": "Live read-only" if google_connected else "Not linked",
+        },
+        {
+            "key": "news", "label": "News (DuckDuckGo)", "icon": "📰",
+            "status": "degraded" if news_ok else "disconnected",
+            "detail": "Web search active" if news_ok else "requests/bs4 unavailable",
+        },
+    ]
+    return jsonify({
+        "status": "ok",
+        "connectors": connectors,
+        "google_connected": google_connected,
+    })
+
+
+@app.route('/api/briefing/preferences', methods=['GET', 'POST'])
+def briefing_preferences():
+    """Get or update briefing layout prefs (section order, toggles, categories)."""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        prefs = _save_briefing_prefs(data)
+        return jsonify({"status": "ok", "preferences": prefs})
+    return jsonify({
+        "status": "ok",
+        "preferences": _load_briefing_prefs(),
+        "categories": [
+            {"name": k, "color": v["color"]} for k, v in NEWS_CATEGORIES.items()
+        ],
+    })
+
+
+@app.route('/api/sources/preferences')
+def sources_preferences():
+    """Return the banned + boosted source lists for the Manage Sources panel."""
+    return jsonify({
+        "status": "ok",
+        "banned": _load_banned_sources(),
+        "boosted": _load_boosted_sources(),
+    })
+
+
+def _source_from_request():
+    data = request.get_json(silent=True) or {}
+    return _extract_domain(data.get("source") or data.get("domain") or "")
+
+
+@app.route('/api/sources/ban', methods=['POST', 'DELETE'])
+def sources_ban():
+    """Add (POST) or remove (DELETE) a source from the server-side blacklist."""
+    src = _source_from_request()
+    if not src:
+        return jsonify({"status": "error", "message": "A 'source' domain is required."}), 400
+    banned = _load_banned_sources()
+    if request.method == 'POST':
+        if src not in banned:
+            banned.append(src)
+        # Banning a source un-boosts it — the two lists are mutually exclusive.
+        boosted = [b for b in _load_boosted_sources() if b != src]
+        _write_json_list(BOOSTED_SOURCES_FILE, boosted)
+        banned = _write_json_list(BANNED_SOURCES_FILE, banned)
+    else:  # DELETE — un-ban
+        banned = _write_json_list(BANNED_SOURCES_FILE, [b for b in banned if b != src])
+    return jsonify({"status": "ok", "source": src,
+                    "banned": banned, "boosted": _load_boosted_sources()})
+
+
+@app.route('/api/sources/boost', methods=['POST', 'DELETE'])
+def sources_boost():
+    """Add (POST) or remove (DELETE) a source from the boosted/priority list."""
+    src = _source_from_request()
+    if not src:
+        return jsonify({"status": "error", "message": "A 'source' domain is required."}), 400
+    boosted = _load_boosted_sources()
+    if request.method == 'POST':
+        if src not in boosted:
+            boosted.append(src)
+        # Boosting a source un-bans it.
+        banned = [b for b in _load_banned_sources() if b != src]
+        _write_json_list(BANNED_SOURCES_FILE, banned)
+        boosted = _write_json_list(BOOSTED_SOURCES_FILE, boosted)
+    else:  # DELETE — un-boost
+        boosted = _write_json_list(BOOSTED_SOURCES_FILE, [b for b in boosted if b != src])
+    return jsonify({"status": "ok", "source": src,
+                    "banned": _load_banned_sources(), "boosted": boosted})
+
+
+@app.route('/api/news/feed')
+def news_feed():
+    """Live magazine feed for the News workspace cards.
+
+    Honors category toggles and excludes banned sources; boosted sources sort
+    first. ?categories=AI/Tech,Politics overrides the saved toggles.
+    """
+    raw = (request.args.get('categories') or '').strip()
+    cats = None
+    if raw:
+        cats = [c.strip() for c in raw.split(',') if c.strip() in NEWS_CATEGORIES]
+    try:
+        limit_per = max(1, min(8, int(request.args.get('limit_per', 4))))
+    except (TypeError, ValueError):
+        limit_per = 4
+    items = _fetch_news_items(categories=cats, limit_per=limit_per)
+    return jsonify({
+        "status": "ok",
+        "items": items,
+        "total": len(items),
+        "banned": _load_banned_sources(),
+        "boosted": _load_boosted_sources(),
+        "generated_at": datetime.now().isoformat(timespec='seconds'),
+    })
+
+
 @app.route('/api/briefing/<filename>')
 def get_briefing(filename):
     """Serve a briefing file content."""
@@ -3089,6 +3224,263 @@ def _google_section_error(items):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+#  NEWS SOURCE TRUST + BRIEFING PREFERENCES
+#  Server-side controls that let the user ban/boost news sources and
+#  reshape the briefing. State lives in flat JSON under ~/.friday so it
+#  persists across briefings and survives a server restart.
+# ═══════════════════════════════════════════════════════════════
+BANNED_SOURCES_FILE = FRIDAY_DIR / "banned_sources.json"
+BOOSTED_SOURCES_FILE = FRIDAY_DIR / "boosted_sources.json"
+BRIEFING_PREFS_FILE = FRIDAY_DIR / "briefing_prefs.json"
+
+# Category metadata: display color key (matched in the UI), and the live
+# search query used to populate the magazine feed. The color keys mirror the
+# spec — tech=cyan, politics=amber, local=green, business=purple.
+NEWS_CATEGORIES = {
+    "AI/Tech":  {"color": "tech",     "query": "latest AI and technology news today"},
+    "Politics": {"color": "politics", "query": "latest US politics news today"},
+    "Local":    {"color": "local",    "query": "Austin Texas local news today"},
+    "Business": {"color": "business", "query": "latest business and markets news today"},
+}
+
+DEFAULT_BRIEFING_PREFS = {
+    # Order the briefing renders its sections in (drag/arrow reorder in UI).
+    "section_order": ["Calendar", "News", "Email"],
+    # Per-section show/hide toggles.
+    "sections_enabled": {"Calendar": True, "News": True, "Email": True},
+    # Per-category news toggles.
+    "categories_enabled": {k: True for k in NEWS_CATEGORIES},
+}
+
+# A small static trust map — well-known domains we can color-rate without a
+# live reputation service. Everything unknown is "neutral" (yellow). The user's
+# own ban/boost decisions always override this.
+_TRUSTED_DOMAINS = {
+    "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "npr.org",
+    "arstechnica.com", "theverge.com", "wired.com", "nature.com",
+    "wsj.com", "nytimes.com", "bloomberg.com", "ft.com", "economist.com",
+    "techcrunch.com", "axios.com", "propublica.org", "statnews.com",
+}
+_LOW_TRUST_DOMAINS = {
+    "infowars.com", "breitbart.com", "dailybuzzlive.com", "naturalnews.com",
+    "yournewswire.com", "beforeitsnews.com", "theonion.com",
+}
+
+
+def _extract_domain(url_or_text):
+    """Normalize a URL or DuckDuckGo url-string into a bare domain.
+
+    DDG renders result URLs like "arstechnica.com/gadgets/..." or sometimes
+    "www.foxnews.com › politics"; this collapses either to "arstechnica.com".
+    """
+    s = (url_or_text or "").strip().lower()
+    if not s:
+        return ""
+    s = re.sub(r"^https?://", "", s)
+    # DDG sometimes uses " › " separators or whitespace after the host.
+    s = re.split(r"[\s/?#›»]", s)[0]
+    if s.startswith("www."):
+        s = s[4:]
+    return s.strip(".")
+
+
+def _read_json_list(path):
+    """Load a JSON array of source domains; tolerant of missing/corrupt files."""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [str(x).strip().lower() for x in data if str(x).strip()]
+        if isinstance(data, dict) and isinstance(data.get("sources"), list):
+            return [str(x).strip().lower() for x in data["sources"] if str(x).strip()]
+    except Exception:
+        pass
+    return []
+
+
+def _write_json_list(path, items):
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    # De-dup while preserving order.
+    seen, ordered = set(), []
+    for it in items:
+        d = _extract_domain(it)
+        if d and d not in seen:
+            seen.add(d)
+            ordered.append(d)
+    path.write_text(json.dumps(ordered, indent=2), encoding="utf-8")
+    return ordered
+
+
+def _load_banned_sources():
+    return _read_json_list(BANNED_SOURCES_FILE)
+
+
+def _load_boosted_sources():
+    return _read_json_list(BOOSTED_SOURCES_FILE)
+
+
+def _load_briefing_prefs():
+    """Load briefing prefs, deep-merged onto defaults so new keys appear."""
+    prefs = json.loads(json.dumps(DEFAULT_BRIEFING_PREFS))  # deep copy
+    if BRIEFING_PREFS_FILE.exists():
+        try:
+            saved = json.loads(BRIEFING_PREFS_FILE.read_text(encoding="utf-8"))
+            if isinstance(saved.get("section_order"), list) and saved["section_order"]:
+                prefs["section_order"] = [s for s in saved["section_order"]
+                                          if s in DEFAULT_BRIEFING_PREFS["sections_enabled"]]
+                # append any default sections the saved order dropped
+                for s in DEFAULT_BRIEFING_PREFS["section_order"]:
+                    if s not in prefs["section_order"]:
+                        prefs["section_order"].append(s)
+            if isinstance(saved.get("sections_enabled"), dict):
+                prefs["sections_enabled"].update(
+                    {k: bool(v) for k, v in saved["sections_enabled"].items()
+                     if k in prefs["sections_enabled"]})
+            if isinstance(saved.get("categories_enabled"), dict):
+                prefs["categories_enabled"].update(
+                    {k: bool(v) for k, v in saved["categories_enabled"].items()
+                     if k in prefs["categories_enabled"]})
+        except Exception:
+            pass
+    return prefs
+
+
+def _save_briefing_prefs(data):
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    prefs = _load_briefing_prefs()
+    data = data or {}
+    if isinstance(data.get("section_order"), list):
+        prefs["section_order"] = [s for s in data["section_order"]
+                                  if s in DEFAULT_BRIEFING_PREFS["sections_enabled"]]
+        for s in DEFAULT_BRIEFING_PREFS["section_order"]:
+            if s not in prefs["section_order"]:
+                prefs["section_order"].append(s)
+    if isinstance(data.get("sections_enabled"), dict):
+        for k, v in data["sections_enabled"].items():
+            if k in prefs["sections_enabled"]:
+                prefs["sections_enabled"][k] = bool(v)
+    if isinstance(data.get("categories_enabled"), dict):
+        for k, v in data["categories_enabled"].items():
+            if k in prefs["categories_enabled"]:
+                prefs["categories_enabled"][k] = bool(v)
+    BRIEFING_PREFS_FILE.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+    return prefs
+
+
+def _trust_rating(domain, banned=None, boosted=None):
+    """green | yellow | red trust rating for a source domain."""
+    domain = _extract_domain(domain)
+    boosted = boosted if boosted is not None else _load_boosted_sources()
+    banned = banned if banned is not None else _load_banned_sources()
+    if domain in banned:
+        return "red"
+    if domain in boosted or domain in _TRUSTED_DOMAINS:
+        return "green"
+    if domain in _LOW_TRUST_DOMAINS:
+        return "red"
+    return "yellow"
+
+
+def _ddg_results(query, limit=8):
+    """Structured DuckDuckGo HTML results: [{title, snippet, url}].
+
+    A structured sibling of _tool_search_web — the news feed needs the raw
+    fields (and the URL/domain) rather than a flattened text blob so it can
+    render per-item source badges and apply ban/boost filtering.
+    """
+    try:
+        import requests as _req
+    except ImportError:
+        return []
+    try:
+        encoded = _req.utils.quote(query)
+        resp = _req.get(
+            f"https://html.duckduckgo.com/html/?q={encoded}",
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0"},
+        )
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, "html.parser")
+        out = []
+        for r in soup.select(".result")[: max(limit * 2, limit)]:
+            title_el = r.select_one(".result__title")
+            snip_el = r.select_one(".result__snippet")
+            url_el = r.select_one(".result__url")
+            if not (title_el and snip_el):
+                continue
+            out.append({
+                "title": title_el.get_text(strip=True),
+                "snippet": snip_el.get_text(strip=True),
+                "url": (url_el.get_text(strip=True) if url_el else ""),
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _estimate_reading_time(text):
+    """Rough reading-time estimate in minutes from a snippet (≈200 wpm)."""
+    words = len((text or "").split())
+    return max(1, round(words / 200)) if words > 40 else 0
+
+
+def _detect_breaking(snippet):
+    """Heuristic 'breaking' flag — DDG occasionally embeds a relative time."""
+    s = (snippet or "").lower()
+    return bool(re.search(r"\b(\d+)\s*(minute|min|hour|hr)s?\s+ago\b", s)) and \
+        not re.search(r"\b([3-9]|1\d|2[0-4])\s*hours?\s+ago\b", s)
+
+
+def _fetch_news_items(categories=None, limit_per=4):
+    """Live magazine feed: structured news items across enabled categories.
+
+    Excludes banned sources entirely and surfaces boosted sources first, per
+    the source-trust spec. Each item carries enough metadata for the card UI:
+    source domain, trust rating, category color, reading time, breaking flag.
+    """
+    banned = set(_load_banned_sources())
+    boosted = set(_load_boosted_sources())
+    prefs = _load_briefing_prefs()
+    if categories is None:
+        categories = [c for c in NEWS_CATEGORIES
+                      if prefs["categories_enabled"].get(c, True)]
+    items, idx = [], 0
+    for cat in categories:
+        meta = NEWS_CATEGORIES.get(cat)
+        if not meta:
+            continue
+        kept = 0
+        for r in _ddg_results(meta["query"], limit=8):
+            domain = _extract_domain(r["url"])
+            if not domain or domain in banned:
+                continue  # banned sources never appear
+            is_boost = domain in boosted
+            items.append({
+                "id": f"{cat}-{idx}",
+                "title": r["title"],
+                "snippet": r["snippet"],
+                "url": r["url"] if r["url"].startswith("http") else ("https://" + r["url"]),
+                "source": domain,
+                "category": cat,
+                "color": meta["color"],
+                "trust": _trust_rating(domain, banned, boosted),
+                "boosted": is_boost,
+                "reading_time": _estimate_reading_time(r["snippet"]),
+                "breaking": _detect_breaking(r["snippet"]),
+            })
+            idx += 1
+            kept += 1
+            if kept >= limit_per:
+                break
+    # Boosted sources float to the top; otherwise keep category/search order.
+    items.sort(key=lambda x: (0 if x["boosted"] else 1))
+    return items
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -3100,82 +3492,123 @@ def _gather_live_briefing_context():
     instead of aborting the whole briefing.
     """
     today_str = datetime.now().strftime('%A, %B %d, %Y')
-    sections = []
+    prefs = _load_briefing_prefs()
+    enabled = prefs.get("sections_enabled", {})
+    order = prefs.get("section_order", ["Calendar", "News", "Email"])
+    banned = set(_load_banned_sources())
+    boosted = set(_load_boosted_sources())
 
-    # 1) Today's + tomorrow's calendar events -----------------------------------
-    try:
-        cal_events = _fetch_calendar_today()
-        cal_err = _google_section_error(cal_events)
-        if cal_err:
-            sections.append(f"## Today's Calendar\n({cal_err})")
-        elif cal_events:
-            lines = []
-            for ev in cal_events[:20]:
-                when = ev.get('start_time') or ''
-                title = ev.get('title') or 'Untitled'
-                loc = ev.get('location') or ''
-                attendees = ev.get('attendees') or []
-                line = f"- {when} — {title}"
-                if loc:
-                    line += f" @ {loc}"
-                if attendees:
-                    line += f" (with {', '.join(attendees[:5])})"
-                lines.append(line)
-            sections.append("## Today's & Tomorrow's Calendar\n" + "\n".join(lines))
-        else:
-            sections.append("## Today's Calendar\n(No events scheduled for today or tomorrow.)")
-    except Exception as e:
-        sections.append(f"## Today's Calendar\n(Calendar fetch failed: {e})")
+    # Build each section's markdown once, then assemble per the user's ordering
+    # and show/hide toggles. Each builder fails soft to a short note.
+    built = {}
 
-    # 2) Recent / unread email --------------------------------------------------
-    # Prefer the live Gmail API; if Google isn't connected, fall back to the
-    # local Gmail cache the signal watcher maintains.
-    try:
-        emails = _fetch_gmail_recent(limit=12)
-        gmail_err = _google_section_error(emails)
-        if gmail_err:
-            cached = _recent_unread_emails(limit=12)
-            if cached:
+    # ── Calendar ──────────────────────────────────────────────────────────────
+    def _build_calendar():
+        try:
+            cal_events = _fetch_calendar_today()
+            cal_err = _google_section_error(cal_events)
+            if cal_err:
+                return f"## Today's Calendar\n({cal_err})"
+            if cal_events:
                 lines = []
-                for m in cached:
-                    sender = m.get('from') or m.get('sender') or 'unknown'
-                    subj = m.get('subject') or '(no subject)'
-                    preview = (m.get('preview') or m.get('snippet') or m.get('body') or '')
-                    preview = str(preview).strip().replace('\n', ' ')[:160]
-                    lines.append(f"- **{sender}** — {subj}" + (f"\n  {preview}" if preview else ''))
-                sections.append("## Recent / Unread Email (local cache)\n" + "\n".join(lines))
-            else:
-                sections.append(f"## Recent / Unread Email\n({gmail_err})")
-        elif emails:
-            lines = []
-            for m in emails:
-                sender = m.get('sender') or 'unknown'
-                subj = m.get('subject') or '(no subject)'
-                snippet = str(m.get('snippet') or '').strip().replace('\n', ' ')[:160]
-                flag = '🔵 ' if 'UNREAD' in (m.get('labels') or []) else ''
-                lines.append(f"- {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
-            sections.append("## Recent / Unread Email\n" + "\n".join(lines))
-        else:
-            sections.append("## Recent / Unread Email\n(No email in the last 24 hours.)")
-    except Exception as e:
-        sections.append(f"## Recent / Unread Email\n(Email fetch failed: {e})")
+                for ev in cal_events[:20]:
+                    when = ev.get('start_time') or ''
+                    title = ev.get('title') or 'Untitled'
+                    loc = ev.get('location') or ''
+                    attendees = ev.get('attendees') or []
+                    line = f"- {when} — {title}"
+                    if loc:
+                        line += f" @ {loc}"
+                    if attendees:
+                        line += f" (with {', '.join(attendees[:5])})"
+                    lines.append(line)
+                return "## Today's & Tomorrow's Calendar\n" + "\n".join(lines)
+            return "## Today's Calendar\n(No events scheduled for today or tomorrow.)"
+        except Exception as e:
+            return f"## Today's Calendar\n(Calendar fetch failed: {e})"
 
-    # 3) Live news for the user's stated interests ------------------------------
-    try:
-        settings = _load_settings()
-        priorities = [p for p in (settings.get('news_priorities') or []) if p]
-        top = priorities[:2] or ['AI/Tech']  # cap at two live searches for latency
-        news_blocks = []
-        for p in top:
-            res = _tool_search_web({'query': f"latest {p} news today"})
-            if res and not res.lower().startswith(('web search error', 'search_web error', 'requests library')):
-                news_blocks.append(f"### {p}\n{res[:2500]}")
-        if news_blocks:
-            sections.append("## Live News (web search)\n" + "\n\n".join(news_blocks))
-        else:
-            sections.append("## Live News\n(Web search returned no usable results.)")
-    except Exception as e:
-        sections.append(f"## Live News\n(News fetch failed: {e})")
+    # ── Email ─────────────────────────────────────────────────────────────────
+    def _build_email():
+        try:
+            emails = _fetch_gmail_recent(limit=12)
+            gmail_err = _google_section_error(emails)
+            if gmail_err:
+                cached = _recent_unread_emails(limit=12)
+                if cached:
+                    lines = []
+                    for m in cached:
+                        sender = m.get('from') or m.get('sender') or 'unknown'
+                        subj = m.get('subject') or '(no subject)'
+                        preview = (m.get('preview') or m.get('snippet') or m.get('body') or '')
+                        preview = str(preview).strip().replace('\n', ' ')[:160]
+                        lines.append(f"- **{sender}** — {subj}" + (f"\n  {preview}" if preview else ''))
+                    return "## Recent / Unread Email (local cache)\n" + "\n".join(lines)
+                return f"## Recent / Unread Email\n({gmail_err})"
+            if emails:
+                lines = []
+                for m in emails:
+                    sender = m.get('sender') or 'unknown'
+                    subj = m.get('subject') or '(no subject)'
+                    snippet = str(m.get('snippet') or '').strip().replace('\n', ' ')[:160]
+                    flag = '🔵 ' if 'UNREAD' in (m.get('labels') or []) else ''
+                    lines.append(f"- {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
+                return "## Recent / Unread Email\n" + "\n".join(lines)
+            return "## Recent / Unread Email\n(No email in the last 24 hours.)"
+        except Exception as e:
+            return f"## Recent / Unread Email\n(Email fetch failed: {e})"
+
+    # ── News (banned sources excluded, boosted prioritized) ───────────────────
+    def _build_news():
+        try:
+            cats = [c for c in NEWS_CATEGORIES
+                    if prefs.get("categories_enabled", {}).get(c, True)]
+            items = _fetch_news_items(categories=cats, limit_per=4)
+            if items:
+                by_cat = {}
+                for it in items:
+                    by_cat.setdefault(it["category"], []).append(it)
+                blocks = []
+                for cat, group in by_cat.items():
+                    lines = []
+                    for it in group:
+                        star = "⭐ " if it["boosted"] else ""
+                        lines.append(
+                            f"- {star}**{it['title']}** ({it['source']})\n  {it['snippet']}\n  {it['url']}"
+                        )
+                    blocks.append(f"### {cat}\n" + "\n".join(lines))
+                note = ""
+                if boosted:
+                    note = (f"\n_(Prioritize these trusted sources where relevant: "
+                            f"{', '.join(sorted(boosted))}.)_")
+                if banned:
+                    note += (f"\n_(These sources are banned and were excluded — do not cite: "
+                             f"{', '.join(sorted(banned))}.)_")
+                return "## Live News (web search)\n" + "\n\n".join(blocks) + note
+            # Fallback: flat search text, with banned domains stripped line-wise.
+            settings = _load_settings()
+            priorities = [p for p in (settings.get('news_priorities') or []) if p]
+            top = priorities[:2] or ['AI/Tech']
+            news_blocks = []
+            for p in top:
+                res = _tool_search_web({'query': f"latest {p} news today"})
+                if res and not res.lower().startswith(('web search error', 'search_web error', 'requests library')):
+                    kept = [ln for ln in res.splitlines()
+                            if not any(b in ln.lower() for b in banned)]
+                    news_blocks.append(f"### {p}\n" + "\n".join(kept)[:2500])
+            if news_blocks:
+                return "## Live News (web search)\n" + "\n\n".join(news_blocks)
+            return "## Live News\n(Web search returned no usable results.)"
+        except Exception as e:
+            return f"## Live News\n(News fetch failed: {e})"
+
+    builders = {"Calendar": _build_calendar, "Email": _build_email, "News": _build_news}
+    sections = []
+    for name in order:
+        if not enabled.get(name, True):
+            continue
+        builder = builders.get(name)
+        if builder:
+            sections.append(builder())
 
     header = (
         f"=== LIVE DATA fetched {today_str} ===\n"
