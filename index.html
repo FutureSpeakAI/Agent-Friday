@@ -2961,8 +2961,18 @@ window.addEventListener('DOMContentLoaded',function(){
 
             // --- ANIMATE ACTIVE STRUCTURES ---
             const activeGroup = structures[targetStructure];
-            const interactionForce = Math.min(1.0, Math.abs(currFaceX) + Math.abs(currFaceY) + Math.abs(currFaceZ)); 
-            
+            const interactionForce = Math.min(1.0, Math.abs(currFaceX) + Math.abs(currFaceY) + Math.abs(currFaceZ));
+
+            // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward.
+            // Declared BEFORE the structure loop below — these consts are read inside it
+            // (e.g. breathScale uses idlePulse), and a `const` read before its declaration
+            // throws a TDZ ReferenceError that would kill the whole animate() frame before
+            // composer.render(), freezing the scene on certain structures.
+            const voiceBreathRaw = holoAmplitude * 3.0 + audioData.low * 2.0;
+            const isExecutingMood = currentMood === 'EXECUTING';
+            const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
+            const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
+
             if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN'].includes(targetStructure)) {
                 activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
                 if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
@@ -2972,12 +2982,6 @@ window.addEventListener('DOMContentLoaded',function(){
                     activeGroup.scale.setScalar(breathScale);
                 }
             }
-
-            // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward
-            const voiceBreathRaw = holoAmplitude * 3.0 + audioData.low * 2.0;
-            const isExecutingMood = currentMood === 'EXECUTING';
-            const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
-            const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
 
             if (structures['CUBES'] && structures['CUBES'].visible && coreCubes.length > 0) {
                 coreCubes.forEach(c => {
