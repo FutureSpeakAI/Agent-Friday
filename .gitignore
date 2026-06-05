@@ -96,6 +96,9 @@ assets/palette/
 assets/splash/
 
 # ─── Private user data — NEVER commit (PII / minors / family-court) ───────
+# VOICE_DEMO.md — personal demo material (founder story + ideological pitch).
+# Loaded locally by server.py (_load_voice_demo gracefully no-ops if absent).
+VOICE_DEMO.md
 data/coparenting-intel.json
 data/*-intel.json
 data/ofw-*.json
