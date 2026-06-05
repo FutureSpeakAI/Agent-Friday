@@ -5,6 +5,7 @@ cryptography>=44              # Sovereign Vault AES-256-GCM + Argon2id (vault_cr
 rich>=13.0
 colorama>=0.4
 pyautogui>=0.9
+pynput>=1.7                   # global Ctrl+Shift+Q kill-switch hotkey for Computer Control
 beautifulsoup4>=4.12
 requests>=2.31
 pyyaml>=6.0
