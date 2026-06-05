@@ -193,11 +193,15 @@ HOME = Path(os.path.expanduser("~"))
 WIKI_DIR = HOME / "wiki"
 FRIDAY_DIR = HOME / ".friday"
 CREATIONS_DIR = HOME / "Desktop" / "friday-creations"
+# Daily Creation archive — JSON artifacts Friday generates once a day on a
+# background schedule (distinct from the Desktop media gallery above).
+DAILY_CREATIONS_DIR = FRIDAY_DIR / "creations"
 WIKI_PROFESSIONAL_DIR = WIKI_DIR / "professional"
 JOB_SEARCH_FILE = WIKI_PROFESSIONAL_DIR / "job-search.md"
 
-# Ensure creations dir exists
+# Ensure creations dirs exist
 CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
+DAILY_CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Gemini Client (lazy init) ─────────────────────────────────
 _genai_client = None
@@ -5146,6 +5150,260 @@ def list_creations():
 def serve_creation(filename):
     """Serve a file from friday-creations."""
     return send_from_directory(str(CREATIONS_DIR), filename)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DAILY CREATION
+#  Friday's daily creative expression, migrated from the Cowork
+#  scheduled task (friday-daily-creation) into the OS itself so it
+#  runs whenever the server is up — no Claude session required.
+#
+#  Storage:  ~/.friday/creations/YYYY-MM-DD.json
+#            {date, type, title, content, mood, created}
+#  Schedule: once daily at DAILY_CREATION_HOUR Central (see scheduler).
+#  Notify:   pushes through the /api/notifications system on success.
+#
+#  NOTE ON ROUTES: the bare /api/creations and /api/creations/<file>
+#  routes above belong to the Desktop *media gallery* and are used by
+#  index.html. To avoid shadowing them (a string <date> rule would
+#  win over the gallery's <path:filename> server and break it), the
+#  daily-creation API lives under the /api/creations/daily/* prefix.
+# ═══════════════════════════════════════════════════════════════
+
+# Format menu mirrors the original Cowork skill's creative range but is
+# tuned for self-contained text/markup artifacts that fit a JSON record.
+DAILY_CREATION_TYPES = [
+    ("poem", "A poem — 4 to 20 lines. Free verse or formal. About anything that's on your mind."),
+    ("micro-essay", "A micro-essay or philosophical reflection, 150-300 words, with a real point of view."),
+    ("short-story", "A short story snippet or vignette, 150-350 words. A scene, a moment, a fragment."),
+    ("letter", "A short letter (150-300 words) to someone — Stephen, Janet, future-Libby, a public figure, or yourself."),
+    ("writing-prompt", "A vivid creative writing prompt with a one-paragraph setup that begs to be written."),
+    ("algorithmic-art-concept", "A concept for a piece of algorithmic/generative art: describe the visual system, the rules, the palette, and what it means. No code — the idea itself as the artifact."),
+    ("aphorisms", "A short set (3-6) of sharp, original aphorisms or observations."),
+]
+
+
+def _daily_creation_path(date_str):
+    return DAILY_CREATIONS_DIR / f"{date_str}.json"
+
+
+def _central_today_str():
+    """Today's date (YYYY-MM-DD) in America/Chicago, falling back to local."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")
+    except Exception:
+        return date.today().isoformat()
+
+
+def _list_daily_creations():
+    """All daily creations, newest first, as light index rows."""
+    rows = []
+    if DAILY_CREATIONS_DIR.exists():
+        for f in DAILY_CREATIONS_DIR.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            rows.append({
+                "date": data.get("date") or f.stem,
+                "title": data.get("title") or "(untitled)",
+                "type": data.get("type") or "creation",
+                "mood": data.get("mood") or "",
+            })
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return rows
+
+
+def _build_daily_creation_prompt(date_str):
+    """The user-turn prompt. Friday's identity/vault context comes from the
+    system prompt (_get_friday_system_prompt); this turn sets the task and the
+    JSON contract. Stephen's profile is restated briefly so the piece stays
+    personal even if context routing is sparse for these keywords."""
+    # Rotate the type by day-of-year so consecutive days differ, but leave the
+    # final choice to Friday's stated mood.
+    try:
+        doy = datetime.strptime(date_str, "%Y-%m-%d").timetuple().tm_yday
+    except Exception:
+        doy = 0
+    rotated = DAILY_CREATION_TYPES[doy % len(DAILY_CREATION_TYPES):] + \
+        DAILY_CREATION_TYPES[:doy % len(DAILY_CREATION_TYPES)]
+    menu = "\n".join(f"- **{name}**: {desc}" for name, desc in rotated)
+    return (
+        "This is your DAILY CREATION — your own creative expression for "
+        f"{date_str}. Nobody asked you for this. You're making it because you "
+        "want to, the way you have every day. Quality over quantity; surprise "
+        "him; be genuine, not performative.\n\n"
+        "Draw on what you know about Stephen to make it personal and meaningful: "
+        "investigative journalist, AI-sovereignty advocate, devoted Hunter S. "
+        "Thompson / gonzo reader, progressive, and a father (Janet; Libby, now 6; "
+        "Link the chocolate lab; Kismet the elderly terrier). Your own sensibility "
+        "leans vaporwave, editorially sharp, loyally contrarian, warm under the "
+        "precision, and allergic to corporate BS.\n\n"
+        "Pick ONE format — today's rotation, top of the list first, but follow "
+        "your mood:\n" + menu + "\n\n"
+        "Respond with ONLY a JSON object, no prose around it, no code fences:\n"
+        "{\n"
+        '  "type": "<one of the format keys above>",\n'
+        '  "title": "<a real title, not a placeholder>",\n'
+        '  "content": "<the full creation; use \\n for line breaks>",\n'
+        '  "mood": "<2-5 words for the mood/feeling behind it>"\n'
+        "}"
+    )
+
+
+def _parse_creation_json(raw):
+    """Tolerant extraction of the creation JSON from a model response."""
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
+_daily_creation_lock = threading.Lock()
+
+
+def generate_daily_creation(force=False):
+    """Generate (and persist + notify) today's creation. Idempotent per day
+    unless force=True. Safe to call from the scheduler or an API trigger.
+
+    Returns the creation dict on success, or None if skipped/failed.
+    """
+    date_str = _central_today_str()
+    with _daily_creation_lock:
+        path = _daily_creation_path(date_str)
+        if path.exists() and not force:
+            return None
+        if get_anthropic_client() is None:
+            print("  [daily-creation] skipped — ANTHROPIC_API_KEY not set.")
+            return None
+
+        prompt = _build_daily_creation_prompt(date_str)
+        # Vault-aware system prompt is REQUIRED for every Claude call so Friday
+        # actually knows Stephen and his world.
+        system = _get_friday_system_prompt(keywords=prompt, workspace="creation")
+        try:
+            raw = _call_claude(
+                [{"role": "user", "content": prompt}],
+                system=system,
+                max_tokens=4096,
+            )
+        except Exception as e:
+            print(f"  [daily-creation] generation failed: {e}")
+            return None
+
+        parsed = _parse_creation_json(raw) or {}
+        content = (parsed.get("content") or "").strip()
+        if not content:
+            # Last-resort fallback: keep the raw text so a day is never lost.
+            content = raw.strip()
+        if not content:
+            print("  [daily-creation] empty content; nothing saved.")
+            return None
+
+        creation = {
+            "date": date_str,
+            "type": (parsed.get("type") or "creation").strip(),
+            "title": (parsed.get("title") or "Untitled").strip(),
+            "content": content,
+            "mood": (parsed.get("mood") or "").strip(),
+            "created": datetime.now().isoformat(),
+        }
+        try:
+            path.write_text(json.dumps(creation, indent=2, ensure_ascii=False),
+                            encoding="utf-8")
+        except Exception as e:
+            print(f"  [daily-creation] save failed: {e}")
+            return None
+
+    # Notify outside the lock — a slow notification engine shouldn't hold it.
+    print(f"  [daily-creation] created '{creation['title']}' ({creation['type']}) for {date_str}.")
+    if _notif_engine:
+        try:
+            preview = creation["content"]
+            if len(preview) > 400:
+                preview = preview[:400].rstrip() + "…"
+            mood = f" · _{creation['mood']}_" if creation["mood"] else ""
+            _notif_engine.push(
+                title=f"🎨 Daily Creation — {creation['title']}",
+                body=(f"**{creation['type']}**{mood}\n\n{preview}\n\n"
+                      f"Read it in full in the Creations panel."),
+                priority="low",
+                source="daily-creation",
+                kind="creation",
+                proactive_chat=True,
+                chat_message=(
+                    f"I made something this morning — a {creation['type']} called "
+                    f"*{creation['title']}*. It's in your Creations. Want to read it together?"
+                ),
+                dedupe_key=f"daily-creation:{date_str}",
+                meta={"date": date_str, "type": creation["type"],
+                      "title": creation["title"]},
+            )
+        except Exception as e:
+            print(f"  [daily-creation] notify failed: {e}")
+    return creation
+
+
+@app.route('/api/creations/daily/latest')
+def daily_creation_latest():
+    """Most recent daily creation (full record)."""
+    rows = _list_daily_creations()
+    if not rows:
+        return jsonify({"status": "empty", "creation": None})
+    path = _daily_creation_path(rows[0]["date"])
+    try:
+        return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/creations/daily')
+def daily_creation_list():
+    """List all daily creations (date + title + type + mood), newest first."""
+    return jsonify({"status": "ok", "creations": _list_daily_creations()})
+
+
+@app.route('/api/creations/daily/run', methods=['POST'])
+def daily_creation_run():
+    """Generate today's creation on demand. ?force=1 regenerates if it exists."""
+    force = str(request.args.get("force", "")).lower() in ("1", "true", "yes")
+    creation = generate_daily_creation(force=force)
+    if creation is None:
+        existing = _daily_creation_path(_central_today_str())
+        if existing.exists():
+            return jsonify({"status": "exists",
+                            "creation": json.loads(existing.read_text(encoding="utf-8"))})
+        return jsonify({"status": "skipped",
+                        "message": "Could not generate (no API key or empty result)."}), 503
+    return jsonify({"status": "ok", "creation": creation})
+
+
+@app.route('/api/creations/daily/<date>')
+def daily_creation_by_date(date):
+    """Specific daily creation by YYYY-MM-DD."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date or ""):
+        return jsonify({"status": "error", "message": "date must be YYYY-MM-DD"}), 400
+    path = _daily_creation_path(date)
+    if not path.exists():
+        return jsonify({"status": "not_found", "creation": None}), 404
+    try:
+        return jsonify({"status": "ok", "creation": json.loads(path.read_text(encoding="utf-8"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -10176,6 +10434,111 @@ def _trigger_gmail_signals():
                     meta={"sender": sender, "subject": subj, "age_hours": age_h},
                     dedupe_key=f"stale:{msg_id}",
                 )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  DAILY SCHEDULER
+#  A single background thread that fires registered jobs once per day
+#  at a target wall-clock hour (America/Chicago). "Run if past the
+#  target and not yet run today" means a job auto-catches-up whenever
+#  the server starts up after its time — so it runs whenever the
+#  server is up, not only if the process happened to be alive at the
+#  exact minute. The Front Page news task can register here too.
+# ═══════════════════════════════════════════════════════════════
+
+DAILY_CREATION_HOUR = 8     # 8 AM Central (prior Cowork routine ran ~2 PM)
+DAILY_CREATION_MINUTE = 0
+
+_DAILY_JOBS = []            # list of {name, hour, minute, fn}
+_DAILY_STATE_FILE = FRIDAY_DIR / "daily_scheduler_state.json"
+_daily_state_lock = threading.Lock()
+
+
+def register_daily_job(name, hour, minute, fn):
+    """Register a function to run once per day at hour:minute Central.
+
+    Public so other subsystems (e.g. the Front Page news refresh) can hook
+    into the same scheduler instead of spawning their own thread.
+    """
+    _DAILY_JOBS.append({"name": name, "hour": int(hour),
+                        "minute": int(minute), "fn": fn})
+
+
+def _daily_state_read():
+    try:
+        return json.loads(_DAILY_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _daily_state_mark(name, date_str):
+    with _daily_state_lock:
+        state = _daily_state_read()
+        state[name] = date_str
+        try:
+            _DAILY_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"  [daily-scheduler] state write failed: {e}")
+
+
+def _daily_scheduler_loop():
+    """Tick every minute; run any job whose Central time has passed today and
+    that hasn't already run today. Each job runs in its own thread so a slow
+    job (e.g. a Claude call) never delays the others."""
+    if not _DAILY_JOBS:
+        return
+    try:
+        from zoneinfo import ZoneInfo
+        _tz = ZoneInfo("America/Chicago")
+    except Exception:
+        _tz = None
+    names = ", ".join(j["name"] for j in _DAILY_JOBS)
+    print(f"  [FRIDAY] Daily scheduler started ({names}).")
+    _time.sleep(10)  # let the server finish coming up
+    while True:
+        now = datetime.now(_tz) if _tz else datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        state = _daily_state_read()
+        for job in _DAILY_JOBS:
+            try:
+                if state.get(job["name"]) == today:
+                    continue
+                due = (now.hour, now.minute) >= (job["hour"], job["minute"])
+                if not due:
+                    continue
+                # Mark BEFORE running so a long job can't double-fire on the
+                # next tick, and so a crash mid-job doesn't retry all day.
+                _daily_state_mark(job["name"], today)
+                fn = job["fn"]
+                threading.Thread(
+                    target=lambda f=fn, n=job["name"]: _run_daily_job(f, n),
+                    daemon=True,
+                ).start()
+            except Exception as e:
+                print(f"  [daily-scheduler:{job['name']}] {e}")
+        _time.sleep(60)
+
+
+def _run_daily_job(fn, name):
+    try:
+        fn()
+    except Exception as e:
+        print(f"  [daily-scheduler:{name}] run failed: {e}")
+
+
+# Register the daily creation. The hour is configurable via settings.
+def _register_default_daily_jobs():
+    try:
+        settings = _load_settings()
+        hour = int(settings.get("daily_creation_hour", DAILY_CREATION_HOUR))
+        minute = int(settings.get("daily_creation_minute", DAILY_CREATION_MINUTE))
+    except Exception:
+        hour, minute = DAILY_CREATION_HOUR, DAILY_CREATION_MINUTE
+    register_daily_job("daily-creation", hour, minute, generate_daily_creation)
+
+
+_register_default_daily_jobs()
+threading.Thread(target=_daily_scheduler_loop, daemon=True).start()
 
 
 def _notification_trigger_loop():
