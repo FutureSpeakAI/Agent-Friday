@@ -34,6 +34,30 @@ except Exception as _vac_err:  # pragma: no cover
         pass
     print(f"  [FRIDAY] WARNING: vault_access unavailable ({_vac_err}); vault gating disabled.")
 
+# Cognitive Memory — versioned, hash-chained memory ledger.
+try:
+    from cognitive_memory import get_cognitive_memory, CognitiveMemory
+    _HAS_COGMEM = True
+except Exception as _cm_err:
+    _HAS_COGMEM = False
+    print(f"  [FRIDAY] WARNING: cognitive_memory unavailable ({_cm_err})")
+
+# Dynamic Privilege Rings — zero-trust per-call elevation.
+try:
+    from dynamic_rings import get_privilege_manager, DynamicPrivilegeManager
+    _HAS_DYNRINGS = True
+except Exception as _dr_err:
+    _HAS_DYNRINGS = False
+    print(f"  [FRIDAY] WARNING: dynamic_rings unavailable ({_dr_err})")
+
+# Proof of Integrity — AI Bill of Integrity manifest.
+try:
+    from proof_of_integrity import get_integrity_engine, IntegrityEngine, CLAWS_TEXT
+    _HAS_INTEGRITY = True
+except Exception as _poi_err:
+    _HAS_INTEGRITY = False
+    print(f"  [FRIDAY] WARNING: proof_of_integrity unavailable ({_poi_err})")
+
 # Prevent console windows from flashing when spawning subprocesses on Windows.
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -2058,6 +2082,28 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             for tu in tool_uses:
                 _orb_safe(process_update, orb_id, label=f"{tu.name}…",
                           step={"type": "tool", "name": tu.name, "input": tu.input, "ts": _time.time()})
+
+                # ── Zero-trust continuous vault authorization ──────────
+                # Gate every tool call through vault check_action before
+                # execution. If the provider can't see the data, deny.
+                _vault_ctl = _get_vault_control() if VaultAccessControl else None
+                if _vault_ctl is not None:
+                    _zt_provider = (session_ctx or {}).get("provider", "cloud")
+                    _zt_data = json.dumps(tu.input or {}, default=str)
+                    _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
+                        _zt_provider, tu.name, _zt_data,
+                        access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    )
+                    if not _zt_allowed:
+                        tool_trace.append({"name": tu.name, "input": tu.input, "result": f"[VAULT-ZT DENY] {_zt_detail}"})
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu.id,
+                            "content": f"[VAULT ACCESS DENIED] This tool call references {_zt_detail} data. "
+                                       f"Switch to a local model to access sensitive content.",
+                        })
+                        continue
+
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
 
                 # Screenshot results carry a base64 image — hand it to the model as
@@ -3033,6 +3079,166 @@ def get_memory_stats():
             else:
                 stats["working"] += 1
     return jsonify({"status": "ok", **stats})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ZERO-TRUST SECURITY ENDPOINTS (Builds 2-4)
+# ═══════════════════════════════════════════════════════════════
+
+# ── BUILD 2: Versioned Cognitive Memory ────────────────────────
+
+@app.route('/api/memory/ledger')
+@login_required
+def api_memory_ledger():
+    """Return the append-only memory ledger with hash-chain entries."""
+    if not _HAS_COGMEM:
+        return jsonify({"error": "cognitive_memory module not available"}), 501
+    since = request.args.get('since', type=float)
+    limit = request.args.get('limit', 200, type=int)
+    cm = get_cognitive_memory()
+    entries = cm.get_ledger(since=since, limit=limit)
+    chain = cm.verify_chain()
+    return jsonify({
+        "status": "ok",
+        "entries": entries,
+        "chain_valid": chain["valid"],
+        "chain_entries": chain["entries"],
+        "chain_break_at": chain.get("break_at"),
+    })
+
+
+@app.route('/api/memory/rollback', methods=['POST'])
+@login_required
+def api_memory_rollback():
+    """Roll back memory writes after a given timestamp."""
+    if not _HAS_COGMEM:
+        return jsonify({"error": "cognitive_memory module not available"}), 501
+    data = request.get_json(silent=True) or {}
+    timestamp = data.get('timestamp')
+    if timestamp is None:
+        return jsonify({"error": "timestamp required"}), 400
+    try:
+        timestamp = float(timestamp)
+    except (TypeError, ValueError):
+        return jsonify({"error": "timestamp must be a number"}), 400
+    cm = get_cognitive_memory()
+    result = cm.memory_rollback(timestamp)
+    return jsonify({"status": "ok", **result})
+
+
+@app.route('/api/memory/quarantine', methods=['POST'])
+@login_required
+def api_memory_quarantine():
+    """Quarantine memories by source_id or specific key."""
+    if not _HAS_COGMEM:
+        return jsonify({"error": "cognitive_memory module not available"}), 501
+    data = request.get_json(silent=True) or {}
+    source_id = data.get('source_id')
+    specific_key = data.get('key')
+    reason = data.get('reason', 'manual_quarantine')
+    if not source_id and not specific_key:
+        return jsonify({"error": "source_id or key required"}), 400
+    cm = get_cognitive_memory()
+    result = cm.memory_quarantine(source_id=source_id, specific_key=specific_key, reason=reason)
+    return jsonify({"status": "ok", **result})
+
+
+@app.route('/api/memory/health')
+@login_required
+def api_memory_health():
+    """Return cognitive memory health (counts, chain status)."""
+    if not _HAS_COGMEM:
+        return jsonify({"error": "cognitive_memory module not available"}), 501
+    cm = get_cognitive_memory()
+    return jsonify({"status": "ok", **cm.health()})
+
+
+# ── BUILD 3: Dynamic Privilege Rings ───────────────────────────
+
+@app.route('/api/governance/privilege-log')
+@login_required
+def api_governance_privilege_log():
+    """Return the privilege elevation/consumption log."""
+    if not _HAS_DYNRINGS:
+        return jsonify({"error": "dynamic_rings module not available"}), 501
+    since = request.args.get('since', type=float)
+    limit = request.args.get('limit', 200, type=int)
+    pm = get_privilege_manager(
+        log_path=FRIDAY_DIR / "vault" / "privilege-log.jsonl",
+        governance_key_fn=_get_governance_key,
+    )
+    entries = pm.get_privilege_log(since=since, limit=limit)
+    return jsonify({"status": "ok", "entries": entries, "count": len(entries)})
+
+
+@app.route('/api/governance/elevate', methods=['POST'])
+@login_required
+def api_governance_elevate():
+    """Request privilege elevation for a tool (Ring 3 requires user confirm)."""
+    if not _HAS_DYNRINGS:
+        return jsonify({"error": "dynamic_rings module not available"}), 501
+    data = request.get_json(silent=True) or {}
+    ring = data.get('ring', 0)
+    reason = data.get('reason', '')
+    tool = data.get('tool', '')
+    task_id = data.get('task_id', 'manual')
+    user_confirmed = data.get('user_confirmed', False)
+    if not tool:
+        return jsonify({"error": "tool name required"}), 400
+    pm = get_privilege_manager(
+        log_path=FRIDAY_DIR / "vault" / "privilege-log.jsonl",
+        governance_key_fn=_get_governance_key,
+    )
+    entry = pm.governance_elevate(ring, reason, tool,
+                                   task_id=task_id,
+                                   user_confirmed=user_confirmed)
+    return jsonify({"status": "ok", **entry})
+
+
+# ── BUILD 4: AI Bill of Integrity ──────────────────────────────
+
+@app.route('/api/integrity')
+@login_required
+def api_integrity():
+    """Generate and return a signed integrity manifest."""
+    if not _HAS_INTEGRITY:
+        return jsonify({"error": "proof_of_integrity module not available"}), 501
+    engine = get_integrity_engine(
+        friday_dir=FRIDAY_DIR,
+        governance_key_fn=_get_governance_key,
+    )
+    # Gather live data for the manifest
+    tool_manifest = [{"name": t, "ring": r} for t, r in TOOL_RINGS.items()]
+    vault_status = {}
+    try:
+        vac = _get_vault_control()
+        if vac:
+            vault_status = vac.stats()
+    except Exception:
+        pass
+    manifest = engine.sign_manifest(
+        tool_manifest=tool_manifest,
+        vault_status=vault_status,
+    )
+    return jsonify({"status": "ok", "manifest": manifest.to_dict()})
+
+
+@app.route('/api/integrity/verify', methods=['POST'])
+@login_required
+def api_integrity_verify():
+    """Verify a submitted integrity manifest."""
+    if not _HAS_INTEGRITY:
+        return jsonify({"error": "proof_of_integrity module not available"}), 501
+    data = request.get_json(silent=True) or {}
+    manifest_dict = data.get('manifest')
+    if not manifest_dict:
+        return jsonify({"error": "manifest object required"}), 400
+    engine = get_integrity_engine(
+        friday_dir=FRIDAY_DIR,
+        governance_key_fn=_get_governance_key,
+    )
+    result = engine.verify_manifest(manifest_dict)
+    return jsonify({"status": "ok", **result})
 
 
 # ═══════════════════════════════════════════════════════════════

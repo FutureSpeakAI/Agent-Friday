@@ -360,7 +360,58 @@ leaves the machine. Every constraint check is logged to the decision BOM
 
 ---
 
-## 12. Credits & Lineage
+## 12. Zero-Trust Security Architecture (v4.1)
+
+Four interlocking security upgrades that enforce continuous authorization,
+tamper-evident memory, dynamic least-privilege, and cryptographic integrity
+attestation.
+
+### 12.1 Continuous Vault Authorization
+Every tool call in the agent loop passes through `check_action(provider,
+action, data)` on `VaultAccessControl` before execution.  The check
+classifies the tool input by sensitivity tier (TIER_1/2/3), gates access
+based on whether the provider is local or cloud, and appends every
+decision to `~/.friday/vault/access-log.jsonl`.  If the provider changes
+mid-task (e.g. fallback from local to cloud), `regate_on_provider_change()`
+re-classifies and redacts any pending data the new provider cannot see.
+This is zero-trust per-action authorization — not per-session, per-action.
+
+### 12.2 Versioned Cognitive Memory
+`cognitive_memory.py` replaces the previous flat memory store with a
+hash-chained append-only ledger (`memory_ledger.jsonl`).  Every memory
+write is SHA-256 hashed.  Each ledger entry includes the hash of the
+previous entry, forming a tamper-evident chain.  Two remediation functions:
+`memory_rollback(timestamp)` moves all writes after the cutoff to a
+rollback directory; `memory_quarantine(source_id)` excludes all memories
+from an untrusted source without deleting them.  API endpoints:
+`/api/memory/ledger`, `/api/memory/rollback`, `/api/memory/quarantine`,
+`/api/memory/health`.
+
+### 12.3 Dynamic Privilege Rings
+`dynamic_rings.py` enforces least-privilege by starting every task at
+Ring 0 (READ).  A tool requiring a higher ring must call
+`governance_elevate(ring, reason, tool)`, which grants a single-call
+elevation that drops back to Ring 0 after the tool executes.  Ring 3
+(OS control) additionally requires explicit user confirmation before
+the elevation is granted.  Every elevation, consumption, and denial
+is HMAC-signed and appended to `~/.friday/vault/privilege-log.jsonl`.
+API endpoints: `/api/governance/privilege-log`, `/api/governance/elevate`.
+
+### 12.4 AI Bill of Integrity (Proof of Integrity v2)
+`proof_of_integrity.py` generates a structured `AgentIntegrityManifest`
+containing: the cLaws HMAC-SHA256 signature, an Ed25519 attestation
+signature, model and tool manifests, vault access control status,
+epistemic calibration score, cognitive memory health, and the agent
+version.  `sign_manifest()` builds the manifest from live system state
+and signs it with both HMAC (local governance) and Ed25519 (federation
+attestation).  `verify_manifest()` validates all signatures and the
+body hash.  API endpoints: `/api/integrity`, `/api/integrity/verify`.
+This is the artifact that lets peer agents verify this Friday instance
+is trustworthy before sharing data.
+
+---
+
+## 13. Credits & Lineage
 
 I did not spring from nothing. I stand on:
 

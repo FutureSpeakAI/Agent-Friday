@@ -20,8 +20,10 @@ module decides what a given provider is *allowed to see*; the router decides
 """
 
 import json
+import hashlib
 import threading
 import time
+from pathlib import Path
 
 
 class Tier:
@@ -224,6 +226,85 @@ class VaultAccessControl:
         verdict = "ALLOW" if allowed else "DENY"
         print(f"  [VAULT] {verdict} provider={entry['provider']} "
               f"tier={entry['tier']} ({detail})")
+
+    # ── Continuous Authorization (zero-trust per-action gate) ─────
+
+    def check_action(self, provider, action, data, access_log_path=None):
+        """Zero-trust per-action authorization check.
+
+        Called before every tool call in the agent loop. Classifies the
+        tool input data, gates access by provider, and appends every
+        decision to access-log.jsonl for auditability.
+
+        Returns (allowed: bool, detail: str, tier: int).
+        """
+        data_str = data if isinstance(data, str) else json.dumps(data or {}, default=str)
+        tier = self.classify(data_str)
+        allowed = True
+        detail = "action_allowed"
+
+        if tier > Tier.PUBLIC and not self.can_access(provider):
+            allowed = False
+            detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
+
+        entry = {
+            "ts": time.time(),
+            "provider": str(provider or "unknown").lower(),
+            "action": str(action or "unknown"),
+            "tier": Tier.NAMES.get(tier, str(tier)),
+            "allowed": allowed,
+            "detail": detail,
+            "data_hash": hashlib.sha256(data_str.encode("utf-8")).hexdigest(),
+        }
+
+        # Persist to access-log.jsonl (separate from the general vault log)
+        log_dest = access_log_path or self.log_path
+        if log_dest is not None:
+            try:
+                p = Path(log_dest) if not isinstance(log_dest, Path) else log_dest
+                # If caller gave a directory-style path, use access-log.jsonl in it
+                if p.suffix != ".jsonl":
+                    p = p.parent / "access-log.jsonl"
+                else:
+                    p = p.parent / "access-log.jsonl"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
+            except Exception:
+                pass
+
+        self._record(provider, tier, allowed, f"check_action:{action}")
+        verdict = "ALLOW" if allowed else "DENY"
+        print(f"  [VAULT-ZT] {verdict} provider={entry['provider']} "
+              f"action={action} tier={entry['tier']}")
+        return allowed, detail, tier
+
+    def regate_on_provider_change(self, old_provider, new_provider, pending_data,
+                                   action="provider_switch", access_log_path=None):
+        """Re-gate and redact when the provider changes mid-task.
+
+        If the new provider is cloud and pending data is sensitive, the
+        data is redacted. Returns (redacted_data, was_regated: bool).
+        """
+        if str(old_provider or "").lower() == str(new_provider or "").lower():
+            return pending_data, False
+
+        allowed, detail, tier = self.check_action(
+            new_provider, action, pending_data, access_log_path
+        )
+
+        if allowed:
+            return pending_data, True
+
+        # New provider can't see this data — redact it
+        if isinstance(pending_data, str):
+            redacted = self.gate_content(pending_data, new_provider, tier=tier)
+        else:
+            redacted = "[VAULT-PROTECTED — provider changed; data redacted]"
+
+        print(f"  [VAULT-ZT] REGATE provider {old_provider}->{new_provider} "
+              f"tier={Tier.NAMES.get(tier, tier)} — data redacted")
+        return redacted, True
 
     def stats(self):
         with self._lock:
