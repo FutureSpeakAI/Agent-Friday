@@ -4,7 +4,7 @@ Comprehensive Playwright UI test suite for Agent Friday Desktop.
 Target: http://localhost:3000 (localhost auto-authenticates)
 
 Covers:
-  - Page load + branding (AGENT FRIDAY, FutureSpeak.AI, Opus 4.7)
+  - Page load + branding (AGENT FRIDAY, FutureSpeak.AI, Opus 4.8)
   - Three.js holographic canvas
   - Workspace dock navigation (Home / Career / FutureSpeak / etc.)
   - Chat input, send, and response handling
@@ -115,12 +115,12 @@ class TestBranding:
         body = loaded_page.locator("body").inner_text(timeout=10000)
         assert "FutureSpeak" in body, "FutureSpeak.AI brand not visible"
 
-    def test_opus_47_label(self, loaded_page: Page):
-        # Opus 4.7 label lives in the model picker — open the small triangle next to brand
+    def test_opus_48_label(self, loaded_page: Page):
+        # Opus 4.8 label lives in the model picker — open the small triangle next to brand
         # OR the string appears anywhere in the DOM tree.
         full_html = loaded_page.content()
-        assert "Opus 4.7" in full_html or "claude-opus-4-7" in full_html, \
-            "Opus 4.7 label not present"
+        assert "Opus 4.8" in full_html or "claude-opus-4-8" in full_html, \
+            "Opus 4.8 label not present"
 
     def test_branding_screenshot(self, loaded_page: Page):
         loaded_page.screenshot(path=str(SCREENSHOTS / "branding_full.png"), full_page=False)

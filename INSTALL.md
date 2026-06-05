@@ -95,7 +95,7 @@ python setup_wizard.py --quick
 
 **The wizard covers:**
 1. Agent name (default: AGENT FRIDAY)
-2. Orchestrator model (Claude Opus 4.7 recommended)
+2. Orchestrator model (Claude Opus 4.8 recommended)
 3. Creative engine (Gemini 2.5 Flash recommended)
 4. Anthropic API key
 5. Gemini API key (optional)
@@ -159,7 +159,7 @@ All settings live in `~/.friday/settings.json`. You can edit this file directly 
 ```json
 {
   "agent_name": "AGENT FRIDAY",
-  "orchestrator_model": "claude-opus-4-7",
+  "orchestrator_model": "claude-opus-4-8",
   "tts_voice": "Aoede",
   "temperature": 0.7,
   "response_length": "standard",

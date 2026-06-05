@@ -83,7 +83,7 @@ class ContextCompressor:
             return False
         return self._estimate_tokens(messages) >= self._min_tokens
 
-    def compress(self, messages, model='claude-opus-4-7'):
+    def compress(self, messages, model='claude-opus-4-8'):
         """Compress messages using Headroom before sending to Anthropic.
 
         Returns the compressed messages list. On any failure (import error,

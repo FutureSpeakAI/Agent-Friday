@@ -19,8 +19,8 @@ Keys can also be set via environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-sonnet-4-6` | Default Claude model for chat. Options: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-7`. |
-| `default_cloud_model` | string | `claude-opus-4-7` | Cloud model used by the router when no override is specified. |
+| `orchestrator_model` | string | `claude-sonnet-4-6` | Default Claude model for chat. Options: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`. |
+| `default_cloud_model` | string | `claude-opus-4-8` | Cloud model used by the router when no override is specified. |
 
 ---
 
@@ -171,7 +171,7 @@ Set via environment variables (not in `settings.json`):
   "anthropic_api_key": "sk-ant-...",
   "gemini_api_key": "AIza...",
   "orchestrator_model": "claude-sonnet-4-6",
-  "default_cloud_model": "claude-opus-4-7",
+  "default_cloud_model": "claude-opus-4-8",
   "mode": "smart",
   "ollama_url": "http://localhost:11434",
   "fallback_to_cloud": true,

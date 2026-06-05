@@ -694,12 +694,30 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'JetBrains Mono', monospace; text-align: center;
             letter-spacing: 0.04em;
         }
+        .notif-row.clickable {
+            position: relative;
+        }
         .notif-row.clickable:hover {
             background: rgba(0,212,255,0.08);
+            box-shadow: inset 2px 0 0 rgba(0,212,255,0.55);
         }
         .notif-row.clickable:focus-visible {
             outline: 2px solid rgba(0,212,255,0.55);
             outline-offset: -2px;
+        }
+        /* "Open …" deep-link button revealed when a notification is expanded. */
+        .notif-open-btn {
+            background: rgba(0,212,255,0.12);
+            border: 1px solid rgba(0,212,255,0.35);
+            color: #00d4ff;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            padding: 4px 10px; border-radius: 6px; cursor: pointer;
+            transition: background .15s, border-color .15s;
+        }
+        .notif-open-btn:hover {
+            background: rgba(0,212,255,0.22);
+            border-color: rgba(0,212,255,0.6);
         }
         @keyframes notifDropdownSlide {
             from { opacity: 0; transform: translateY(-8px); }
@@ -3371,6 +3389,41 @@ const DOCK_GROUPS=[
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
 function getGreeting(){const h=new Date().getHours();if(h<5)return'Late night';if(h<12)return'Good morning';if(h<17)return'Good afternoon';if(h<21)return'Good evening';return'Late night'}
 
+// ═══ DEEP-LINK NAVIGATION BUS ═══
+// Notifications (and any other clickable surface) carry a `target` describing
+// where to go: {workspace, tab, lane, thread_id, event_id, date, url, ...}.
+// fridayNavigate(target) stashes it on window and fires a `friday-nav` event.
+// Workspaces that support deep-linking subscribe via useNavTarget(); a freshly
+// opened workspace — mounted by the very click that fired the event — picks up
+// the stashed target on its first render, so the "open window then apply target"
+// race is handled either way (already-open → event; just-opened → stash).
+function fridayNavigate(target){
+  if(!target||!target.workspace)return;
+  window.__fridayNavTarget=target;
+  try{window.dispatchEvent(new CustomEvent('friday-nav',{detail:target}))}catch(_){}
+}
+function useNavTarget(workspace,handler){
+  const handlerRef=useRef(handler);handlerRef.current=handler;
+  useEffect(()=>{
+    const apply=(t)=>{
+      if(!t||t.workspace!==workspace)return;
+      handlerRef.current(t);
+      if(window.__fridayNavTarget&&window.__fridayNavTarget.workspace===workspace)window.__fridayNavTarget=null;
+    };
+    apply(window.__fridayNavTarget); // pending target from the click that opened us
+    const onNav=(e)=>apply(e.detail||{});
+    window.addEventListener('friday-nav',onNav);
+    return()=>window.removeEventListener('friday-nav',onNav);
+  },[workspace]);
+}
+// Human label for an "Open …" button given a target descriptor.
+function notifTargetLabel(t){
+  if(!t)return'Open';
+  if(t.url&&!t.workspace)return'Open link';
+  const w=WS.find(x=>x.id===t.workspace);
+  return'Open '+(w?w.label:(t.workspace||''));
+}
+
 // ═══ FRIDAY-DOC — branded markdown renderer ═══
 // Single source of truth for rendering any markdown/plain-text content inside
 // Friday's UI. Prefers marked.js (loaded via CDN in head.html) and falls back
@@ -4965,6 +5018,8 @@ function CodeWS(){
   const[repos,setRepos]=useState([]);const[repoLoading,setRepoLoading]=useState(true);
   const[logs,setLogs]=useState([]);const[unseen,setUnseen]=useState(0);const[srcFilter,setSrcFilter]=useState('');
   const logBoxRef=useRef(null);
+  // Deep-link: a notification target {workspace:'code', tab:'logs'|'repos'|...}.
+  useNavTarget('code',t=>{if(t.tab)setTab(t.tab);});
   const scanRepos=()=>{setRepoLoading(true);fetch('/api/repos/scan').then(r=>r.json()).then(d=>{setRepos(d.repos||[]);setRepoLoading(false)}).catch(()=>setRepoLoading(false))};
   useEffect(()=>{scanRepos()},[]);
   // Live log stream via SSE — kept alive across tabs so the badge keeps pulsing.
@@ -5041,6 +5096,9 @@ function NewsWS(){
   const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);const genTimer=useRef(null);
+  // Deep-link: a notification target {workspace:'news', tab:'frontpage'|'briefings'|...}
+  // switches to the requested tab and clears any open single-briefing reader.
+  useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}});
 
   const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
@@ -5391,6 +5449,10 @@ function MessagesWS(){
   const[search,setSearch]=useState('');const[filterUnread,setFilterUnread]=useState(false);const[filterAttach,setFilterAttach]=useState(false);
   const[draftFor,setDraftFor]=useState(null);const[draftText,setDraftText]=useState('');const[draftBusy,setDraftBusy]=useState(false);const[draftInstr,setDraftInstr]=useState('');
   const[toast,setToast]=useState('');
+  // Deep-link: a notification target {workspace:'messages', lane, thread_id} jumps
+  // to the lane and (best-effort) auto-opens the thread once messages have loaded.
+  const pendingThread=useRef(null);
+  useNavTarget('messages',t=>{if(t.lane)setLane(t.lane);if(t.thread_id)pendingThread.current=t.thread_id;});
 
   const loadStats=()=>fetch('/api/messages/stats').then(r=>r.json()).then(d=>{setStats(d);if(d.lanes)setLanes(d.lanes);window._fridayMsgActionable=d.actionable||0;}).catch(()=>{});
   const loadMsgs=()=>{setLoading(true);const q=lane==='all'?'':('?lane='+lane);fetch('/api/messages'+q).then(r=>r.json()).then(d=>{setMsgs(d.messages||[]);setSource(d.source||'');if(d.lanes)setLanes(d.lanes);setLoading(false)}).catch(()=>setLoading(false))};
@@ -5401,6 +5463,13 @@ function MessagesWS(){
   const openThread=(m)=>{if(expanded===m.id){setExpanded(null);setThread(null);return}setExpanded(m.id);setThread(null);setThreadLoad(true);setDraftFor(null);
     if(m.unread)act(m,'read',true);
     fetch('/api/messages/'+m.thread_id).then(r=>r.json()).then(d=>{setThread(d.messages||[]);setThreadLoad(false)}).catch(()=>setThreadLoad(false))};
+  // Once messages for the deep-linked lane arrive, open the targeted thread.
+  useEffect(()=>{
+    if(!pendingThread.current||!msgs.length)return;
+    const want=pendingThread.current;
+    const m=msgs.find(x=>x.thread_id===want||x.id===want);
+    if(m){pendingThread.current=null;if(expanded!==m.id)openThread(m);}
+  },[msgs]);
   const act=async(m,action,silent)=>{try{await fetch('/api/messages/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,action})});
     if(action==='archive'){setMsgs(x=>x.filter(z=>z.id!==m.id));if(expanded===m.id){setExpanded(null);setThread(null)}}
     else setMsgs(x=>x.map(z=>z.id===m.id?{...z,flagged:action==='flag'?true:action==='unflag'?false:z.flagged,unread:action==='read'?false:action==='unread'?true:z.unread}:z));
@@ -5540,6 +5609,8 @@ function CalendarWS(){
   const[prepFor,setPrepFor]=useState(null);const[prepText,setPrepText]=useState('');const[prepBusy,setPrepBusy]=useState(false);
   const[toast,setToast]=useState('');
   const tlRef=useRef(null);
+  // Deep-link: a notification target {workspace:'calendar', date} selects that day.
+  useNavTarget('calendar',t=>{if(t.date)setSel(t.date);});
 
   const loadToday=()=>fetch('/api/calendar/today').then(r=>r.json()).then(d=>{setToday(d);setLoading(false)}).catch(()=>setLoading(false));
   const loadWeek=()=>fetch('/api/calendar/week').then(r=>r.json()).then(d=>setWeek(d.days||[])).catch(()=>{});
@@ -5712,14 +5783,14 @@ const DRAFT_MODES=[
   {id:'freeform',label:'Freeform',ico:'📝'},
 ];
 const ORCHESTRATOR_MODELS=[
-  {id:'claude-opus-4-7',label:'Claude Opus 4.7',short:'Opus 4.7'},
+  {id:'claude-opus-4-8',label:'Claude Opus 4.8',short:'Opus 4.8'},
   {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',short:'Sonnet 4.6'},
   {id:'claude-haiku-4-5-20251001',label:'Claude Haiku 4.5',short:'Haiku 4.5'},
 ];
 const SUBAGENT_MODELS=[
   {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',short:'Sonnet 4.6'},
   {id:'claude-haiku-4-5-20251001',label:'Claude Haiku 4.5',short:'Haiku 4.5'},
-  {id:'claude-opus-4-7',label:'Claude Opus 4.7',short:'Opus 4.7'},
+  {id:'claude-opus-4-8',label:'Claude Opus 4.8',short:'Opus 4.8'},
 ];
 const CREATIVE_MODELS=[
   {id:'gemini-2.5-flash',label:'Gemini 3.1 Flash Live',short:'Gemini 3.1'},
@@ -6375,7 +6446,7 @@ const WIZARD_STEPS=[
 function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
   const s=WIZARD_STEPS[step];
   const ORG_MODELS=[
-    {id:'claude-opus-4-7',label:'Claude Opus 4.7',desc:'Most capable — best for complex reasoning'},
+    {id:'claude-opus-4-8',label:'Claude Opus 4.8',desc:'Most capable — best for complex reasoning'},
     {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',desc:'Fast and capable — great everyday driver'},
     {id:'claude-haiku-4-5-20251001',label:'Claude Haiku 4.5',desc:'Ultra-fast — best for quick responses'},
   ];
@@ -6609,7 +6680,7 @@ function App(){
   // ── Setup Wizard ──
   const[setupDone,setSetupDone]=useState(true); // optimistic — flip after check
   const[wizStep,setWizStep]=useState(0);
-  const[wizData,setWizData]=useState({agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',tts_voice:'Aoede',communication_style:'professional',anthropic_api_key:'',gemini_api_key:'',preferred_scene_index:0});
+  const[wizData,setWizData]=useState({agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',tts_voice:'Aoede',communication_style:'professional',anthropic_api_key:'',gemini_api_key:'',preferred_scene_index:0});
   useEffect(()=>{
     // ?skip_setup=1 in URL → bypass immediately and stamp the marker
     if(new URLSearchParams(window.location.search).get('skip_setup')==='1'){
@@ -6656,7 +6727,7 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-7',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -7355,9 +7426,10 @@ function App(){
 
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
   const dismissedNotifIds=useRef(new Set());
-  const clearNotif=(id)=>{if(id)dismissedNotifIds.current.add(id);setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
-  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id)dismissedNotifIds.current.add(n.id)});setNotifs([])};
-  const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n))};
+  const _notifPost=(url,id)=>{if(!id)return;try{fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{})}catch(_){}};
+  const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
+  const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id){dismissedNotifIds.current.add(n.id);_notifPost('/api/notifications/dismiss',n.id)}});setNotifs([])};
+  const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/messages/stats').then(r=>r.json()).then(d=>setMsgActionable(d.actionable||0)).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
@@ -7504,6 +7576,9 @@ function App(){
   },[quickDraft]);
 
   const toggle=id=>{setOpenWins(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n});bringFront(id)};
+  // Ensure a workspace is OPEN (never toggles it closed) — used by deep-link nav
+  // so clicking a notification for an already-open workspace doesn't close it.
+  const openWs=id=>{setOpenWins(p=>{if(p.has(id))return p;const n=new Set(p);n.add(id);return n});bringFront(id)};
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
@@ -7924,17 +7999,35 @@ function App(){
           const key=n.id||`n_${i}`;
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));
+          // Resolve a deep-link target from the notification's `target` field,
+          // falling back to legacy shapes (actions[].workspace / n.workspace / n.url)
+          // so older queued notifications still navigate.
+          const tgt=(n.target&&(n.target.workspace||n.target.url))?n.target
+            :(Array.isArray(n.actions)&&n.actions[0]&&n.actions[0].workspace?{workspace:n.actions[0].workspace}
+            :(n.workspace?{workspace:n.workspace}:(n.url?{url:n.url}:null)));
+          // Navigate to the target: switch + deep-link the workspace, dismiss the
+          // notification, and close the panel.
+          const openTarget=()=>{
+            if(!tgt)return;
+            if(n.id){markNotifRead(n.id);clearNotif(n.id);}
+            setNotifOpen(false);
+            if(tgt.url&&!tgt.workspace){window.open(tgt.url,'_blank');return;}
+            if(tgt.workspace){openWs(tgt.workspace);fridayNavigate(tgt);}
+          };
+          // Row click: a bodied notification expands on first click; a second
+          // click (or the "Open" button) navigates. Bodyless notifications with a
+          // target navigate immediately. Bodied-but-targetless ones just toggle.
           const onClickRow=()=>{
             if(n.id&&!n.read)markNotifRead(n.id);
-            if(hasDetail){
-              setNotifCardExpanded(e=>({...e,[`notif_${key}`]:!e[`notif_${key}`]}));
-            } else if(n.url){
-              window.open(n.url,'_blank');
-            } else if(n.workspace){
-              toggle(n.workspace);setNotifOpen(false);
+            if(hasDetail&&!isExpanded){
+              setNotifCardExpanded(e=>({...e,[`notif_${key}`]:true}));
+            } else if(tgt){
+              openTarget();
+            } else if(hasDetail){
+              setNotifCardExpanded(e=>({...e,[`notif_${key}`]:false}));
             }
           };
-          const clickable=hasDetail||!!n.url||!!n.workspace;
+          const clickable=hasDetail||!!tgt;
           return(<div key={key}
             role={clickable?'button':undefined}
             tabIndex={clickable?0:undefined}
@@ -7948,10 +8041,13 @@ function App(){
                 {n.time&&<div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#aaa',marginTop:3}}>{n.time}</div>}
               </div>
               {hasDetail&&<span aria-hidden="true" style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:1}}>{isExpanded?'▾':'▸'}</span>}
-              {!hasDetail&&n.url&&<span aria-hidden="true" style={{fontSize:11,color:'#00d4ff'}}>↗</span>}
+              {!hasDetail&&tgt&&<span aria-hidden="true" title={notifTargetLabel(tgt)} style={{fontSize:12,color:'#00d4ff',marginTop:1}}>{tgt.url&&!tgt.workspace?'↗':'→'}</span>}
               {n.id&&<button onClick={e=>{e.stopPropagation();clearNotif(n.id)}} style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:10,padding:'0 2px',lineHeight:1}} title="Dismiss">&#x2715;</button>}
             </div>
             {isExpanded&&hasDetail&&<FridayDoc compact text={n.detail||n.body||n.message} style={{marginTop:8,padding:'8px 10px',background:'rgba(0,0,0,0.35)',borderRadius:6,border:'1px solid rgba(255,255,255,0.06)'}}/>}
+            {isExpanded&&tgt&&<div style={{marginTop:8,display:'flex',justifyContent:'flex-end'}}>
+              <button className="notif-open-btn" onClick={e=>{e.stopPropagation();openTarget()}}>{notifTargetLabel(tgt)} {tgt.url&&!tgt.workspace?'↗':'→'}</button>
+            </div>}
           </div>);
         })}
     </div>}

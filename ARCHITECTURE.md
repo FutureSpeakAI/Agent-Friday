@@ -286,7 +286,7 @@ The Three.js scene in `ui_parts/styles_and_scene.html` renders 13 named "evoluti
 ```json
 {
   "agent_name": "AGENT FRIDAY",
-  "orchestrator_model": "claude-opus-4-7",
+  "orchestrator_model": "claude-opus-4-8",
   "subagent_model": "claude-sonnet-4-6",
   "creative_model": "gemini-2.5-flash",
   "voice_model": "gemini-3.1-flash-live-preview",

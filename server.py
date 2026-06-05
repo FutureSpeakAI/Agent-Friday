@@ -255,9 +255,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
     system: optional system prompt (string)
-    model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-7)
+    model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-8)
     temperature: accepted for backward-compat but IGNORED — newer Claude
-        models (Opus 4.7+, Sonnet 4.6+) reject the deprecated param.
+        models (Opus 4.8+, Sonnet 4.6+) reject the deprecated param.
     """
     client = get_anthropic_client()
     if client is None:
@@ -274,7 +274,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     if system:
         kwargs["system"] = system
     # NOTE: `temperature` is intentionally NOT forwarded. Newer Claude models
-    # (Opus 4.7+, Sonnet 4.6+) reject the param with a 400 "temperature is
+    # (Opus 4.8+, Sonnet 4.6+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
     # backward-compat with callers; the model's default sampling is used.
     resp = client.messages.create(**kwargs)
@@ -2041,7 +2041,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             if _sys:
                 kwargs["system"] = _sys
             # NOTE: `temperature` intentionally NOT forwarded — newer Claude
-            # models (Opus 4.7+, Sonnet 4.6+) 400 on the deprecated param.
+            # models (Opus 4.8+, Sonnet 4.6+) 400 on the deprecated param.
             # Kept in the signature for backward-compat; model defaults are used.
 
             resp = client.messages.create(**kwargs)
@@ -2233,7 +2233,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 #  while keeping recent turns verbatim.
 # ══════════════════════════════════════════════════════════════
 
-_TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.7 has 1M ctx — only compress at this threshold
+_TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.8 has 1M ctx — only compress at this threshold
 _TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim
 
 
@@ -2380,7 +2380,7 @@ DEFAULT_SETTINGS = {
     "off_record": False,                   # quick toggle — when true, chat is not logged either
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",
-    "orchestrator_model": "claude-opus-4-7",    # main agent brain
+    "orchestrator_model": "claude-opus-4-8",    # main agent brain
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-2.5-flash",       # images, vision, creative generation
     "voice_model": "gemini-2.5-flash-native-audio-preview-12-2025",  # live audio (native-audio: affective + proactive)
@@ -2406,7 +2406,7 @@ DEFAULT_SETTINGS = {
     # mode: cloud_only (default, no change), smart, local_preferred, local_only
     "model_routing": {
         "mode": "cloud_only",
-        "default_cloud_model": "claude-opus-4-7",
+        "default_cloud_model": "claude-opus-4-8",
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
         "local_inference_slots": 3,
@@ -5477,6 +5477,7 @@ def _run_front_page_job(slot):
                 source="front-page",
                 kind="front_page",
                 actions=[{"label": "Open Front Page", "workspace": "news"}],
+                target={"workspace": "news", "tab": "frontpage"},
                 dedupe_key=f"front-page:{edition.get('id')}",
                 meta={"edition_id": edition.get("id"), "slot": slot},
             )
@@ -5885,7 +5886,7 @@ def friday_health():
         "creations_today": creations_today,
         "models": models,
         "agent_name": settings.get("agent_name", "AGENT FRIDAY"),
-        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-7"),
+        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-8"),
         "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
         "creative_model": settings.get("creative_model", "gemini-2.5-flash"),
         "voice_model": settings.get("voice_model", "gemini-live-2.5-flash-preview"),
@@ -6914,6 +6915,7 @@ def generate_daily_creation(force=False):
                     f"I made something this morning — a {creation['type']} called "
                     f"*{creation['title']}*. It's in your Creations. Want to read it together?"
                 ),
+                target={"workspace": "studio"},
                 dedupe_key=f"daily-creation:{date_str}",
                 meta={"date": date_str, "type": creation["type"],
                       "title": creation["title"]},
@@ -9298,7 +9300,7 @@ def chat():
             try:
                 compressor = _get_context_compressor(_compress_cfg)
                 if compressor.should_compress(messages):
-                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-4-7'
+                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-4-8'
                     # Brief process orb so the user can see compression happen.
                     _comp_pid = f"compress-{uuid.uuid4().hex[:8]}"
                     try:
@@ -9331,13 +9333,13 @@ def chat():
             _route_info = _router.route(messages, task_context={
                 "has_tools": True,
                 "workspace": workspace,
-                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-7',
+                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-8',
             })
         except Exception as _re:
             print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
             _route_info = {
                 "provider": "cloud",
-                "model": settings.get('orchestrator_model') or 'claude-opus-4-7',
+                "model": settings.get('orchestrator_model') or 'claude-opus-4-8',
                 "is_local": False, "vault_allowed": False, "scrub_pii": True,
                 "vault_access": False, "refuse": False, "warning": None,
             }
@@ -9484,7 +9486,7 @@ def chat():
                     _est_tokens = len(str(messages)) // 4 + len(reply) // 4
                     _router.cost_tracker.record(
                         "cloud",
-                        settings.get('orchestrator_model') or 'claude-opus-4-7',
+                        settings.get('orchestrator_model') or 'claude-opus-4-8',
                         prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
                     )
                 except Exception:
@@ -9933,6 +9935,7 @@ def _compute_derived_notifications():
                 "read": False, "dismissed": False,
                 "source": "briefing",
                 "created_at": date_str,
+                "target": {"workspace": "news", "tab": "briefings"},
                 "derived": True,
             })
 
@@ -9949,6 +9952,7 @@ def _compute_derived_notifications():
             "read": False, "dismissed": False,
             "source": "tasks",
             "created_at": datetime.now().strftime('%Y-%m-%d'),
+            "target": {"workspace": "home"},
             "derived": True,
         })
 
@@ -9971,6 +9975,7 @@ def _compute_derived_notifications():
             "read": False, "dismissed": False,
             "source": "tasks",
             "created_at": datetime.now().strftime('%Y-%m-%d'),
+            "target": {"workspace": "home"},
             "derived": True,
         })
     return derived
@@ -10036,6 +10041,7 @@ def push_notification_endpoint():
         chat_message=data.get('chat_message'),
         dedupe_key=data.get('dedupe_key'),
         meta=data.get('meta') or {},
+        target=data.get('target') or {},
     )
     return jsonify({"status": "ok", "notification": entry})
 
@@ -12923,6 +12929,7 @@ def _trigger_skill_promotions():
                     {"label": "Open in Observatory", "kind": "open_observatory",
                      "payload": {"skill": skill_dir.name}},
                 ],
+                target={"workspace": "studio"},
                 dedupe_key=f"skill_promoted:{skill_dir.name}:{int(mtime)}",
             )
     if changed:
@@ -12988,6 +12995,8 @@ def _trigger_ofw_messages():
                     {"label": "Open Co-Parent", "kind": "open_window",
                      "payload": {"window": "coparent"}},
                 ],
+                target={"workspace": "coparent",
+                        "message_id": m.get("id")},
                 dedupe_key=f"ofw:{m.get('id') or subj}",
             )
         _notif_engine.set_trigger_state("ofw_seen_ids", list(seen_ids)[-200:])
@@ -13049,6 +13058,8 @@ def _trigger_gmail_signals():
                     f"Want me to open it and draft a follow-up?"
                 ),
                 meta={"sender": sender, "subject": subj, "message_id": msg_id},
+                target={"workspace": "messages", "lane": "career",
+                        "thread_id": m.get("thread_id") or msg_id},
                 dedupe_key=f"job_reply:{msg_id}",
             )
             continue
@@ -13073,6 +13084,9 @@ def _trigger_gmail_signals():
                         f"replied yet. Want me to draft a response?"
                     ),
                     meta={"sender": sender, "subject": subj, "age_hours": age_h},
+                    target={"workspace": "messages",
+                            "lane": contact.get("lane", "all"),
+                            "thread_id": m.get("thread_id") or msg_id},
                     dedupe_key=f"stale:{msg_id}",
                 )
 

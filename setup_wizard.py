@@ -59,7 +59,7 @@ PROVIDERS = [
         "key_hint": "sk-ant-...",
         "key_url": "console.anthropic.com",
         "models": [
-            ("claude-opus-4-7",           "Claude Opus 4.7",    "Most capable — deep reasoning, complex multi-step"),
+            ("claude-opus-4-8",           "Claude Opus 4.8",    "Most capable — deep reasoning, complex multi-step"),
             ("claude-sonnet-4-6",         "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",   "Ultra-fast — quick responses, high volume"),
         ],
@@ -347,7 +347,7 @@ def step_model(total: int, provider_id: str, existing_model: str) -> str:
     models = provider["models"]
     if not models:
         console.print("  [yellow]No models available for this provider yet.[/yellow]")
-        return existing_model or "claude-opus-4-7"
+        return existing_model or "claude-opus-4-8"
 
     console.print(f"  [dim]Provider: {provider['name']}[/dim]\n")
     for i, (mid, mname, mdesc) in enumerate(models):
@@ -659,7 +659,7 @@ def main():
         # Step 3: Orchestrator model
         config["orchestrator_model"] = step_model(
             total_steps, config["provider"],
-            config.get("orchestrator_model", "claude-opus-4-7")
+            config.get("orchestrator_model", "claude-opus-4-8")
         )
 
         # Step 4: Creative engine
@@ -668,7 +668,7 @@ def main():
         )
     else:
         config.setdefault("provider", "anthropic")
-        config.setdefault("orchestrator_model", "claude-opus-4-7")
+        config.setdefault("orchestrator_model", "claude-opus-4-8")
         config.setdefault("creative_model", "gemini-2.5-flash")
 
     # Step 5 (always): API keys

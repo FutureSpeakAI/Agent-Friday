@@ -29,7 +29,7 @@ VAULT_KEYWORDS = (
 
 # Cost estimates per 1K tokens (USD) — used for savings tracking.
 CLOUD_COST_PER_1K = {
-    "claude-opus-4-7": 0.075,
+    "claude-opus-4-8": 0.075,
     "claude-sonnet-4-6": 0.015,
     "claude-haiku-4-5-20251001": 0.001,
 }
@@ -212,7 +212,7 @@ class ModelRouter:
         if fallback in ("deny", "warn"):
             return self._finalize({
                 "provider": "cloud",
-                "model": self.config.get("default_cloud_model", "claude-opus-4-7"),
+                "model": self.config.get("default_cloud_model", "claude-opus-4-8"),
                 "task_type": TaskType.VAULT_ACCESS,
                 "reason": f"Vault access required but no local model ({fallback})",
             }, vault_access=True, warning=warning, refuse=True)
@@ -220,7 +220,7 @@ class ModelRouter:
         # "redact" — proceed on cloud, but vault content is gated downstream.
         return self._finalize({
             "provider": "cloud",
-            "model": self.config.get("default_cloud_model", "claude-opus-4-7"),
+            "model": self.config.get("default_cloud_model", "claude-opus-4-8"),
             "task_type": TaskType.VAULT_ACCESS,
             "reason": "Vault access required but no local model — cloud with redaction",
         }, vault_access=True, warning=warning)
@@ -251,7 +251,7 @@ class ModelRouter:
 
         if mode == "cloud_only":
             model = ctx.get("cloud_model") or self.config.get(
-                "default_cloud_model", "claude-opus-4-7"
+                "default_cloud_model", "claude-opus-4-8"
             )
             return {
                 "provider": "cloud",
@@ -267,7 +267,7 @@ class ModelRouter:
             override = overrides[task_type]
             return {
                 "provider": override.get("provider", "cloud"),
-                "model": override.get("model", "claude-opus-4-7"),
+                "model": override.get("model", "claude-opus-4-8"),
                 "task_type": task_type,
                 "reason": f"User override for {task_type}",
             }
@@ -275,7 +275,7 @@ class ModelRouter:
         if task_type == TaskType.VOICE:
             return {
                 "provider": "cloud",
-                "model": ctx.get("cloud_model", "claude-opus-4-7"),
+                "model": ctx.get("cloud_model", "claude-opus-4-8"),
                 "task_type": task_type,
                 "reason": "Voice stays on cloud/Gemini pipeline",
             }
@@ -284,7 +284,7 @@ class ModelRouter:
             return {
                 "provider": "cloud",
                 "model": ctx.get("cloud_model") or self.config.get(
-                    "default_cloud_model", "claude-opus-4-7"
+                    "default_cloud_model", "claude-opus-4-8"
                 ),
                 "task_type": task_type,
                 "reason": "Tool use requires cloud model",
@@ -298,14 +298,14 @@ class ModelRouter:
                 return {
                     "provider": "cloud",
                     "model": ctx.get("cloud_model") or self.config.get(
-                        "default_cloud_model", "claude-opus-4-7"
+                        "default_cloud_model", "claude-opus-4-8"
                     ),
                     "task_type": task_type,
                     "reason": "Ollama not available, falling back to cloud",
                 }
             return {
                 "provider": "cloud",
-                "model": ctx.get("cloud_model", "claude-opus-4-7"),
+                "model": ctx.get("cloud_model", "claude-opus-4-8"),
                 "task_type": task_type,
                 "reason": "Ollama not available",
             }
@@ -315,7 +315,7 @@ class ModelRouter:
             return {
                 "provider": "cloud",
                 "model": ctx.get("cloud_model") or self.config.get(
-                    "default_cloud_model", "claude-opus-4-7"
+                    "default_cloud_model", "claude-opus-4-8"
                 ),
                 "task_type": task_type,
                 "reason": "No local models installed",
@@ -334,7 +334,7 @@ class ModelRouter:
             return {
                 "provider": "cloud",
                 "model": ctx.get("cloud_model") or self.config.get(
-                    "default_cloud_model", "claude-opus-4-7"
+                    "default_cloud_model", "claude-opus-4-8"
                 ),
                 "task_type": task_type,
                 "reason": "No suitable local model, falling back to cloud",
