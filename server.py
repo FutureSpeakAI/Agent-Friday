@@ -3056,31 +3056,45 @@ GOOGLE_SCOPES = [
 GOOGLE_TOKEN_PATH = FRIDAY_DIR / "google_token.json"
 
 
-def _google_client_block(data):
-    """Return the inner client block ('installed' or 'web') if the file holds
-    *real* credentials, else None.
+def _google_client_type(data):
+    """Return the client *kind* — "installed" (Desktop/CLI) or "web" — if the
+    file holds real credentials under that key, else None.
 
-    A Google client JSON nests client_id/client_secret under an "installed"
-    (Desktop) or "web" key — never at the top level. We also reject the template
-    placeholders Google ships (e.g. "YOUR_CLIENT_ID.apps.googleusercontent.com"),
-    since a structurally-valid but unfilled template would otherwise produce an
-    auth URL containing the literal placeholder.
+    Desktop clients nest under "installed"; Web clients under "web". We prefer
+    "installed" when a single file somehow carries both, because the Desktop flow
+    accepts any loopback redirect without GCP registration (no
+    redirect_uri_mismatch), whereas the Web flow requires the exact callback URL
+    to be pre-registered in the console.
     """
     if not isinstance(data, dict):
         return None
-    block = data.get("installed") or data.get("web")
-    if not isinstance(block, dict):
-        return None
-    cid = (block.get("client_id") or "").strip()
-    csec = (block.get("client_secret") or "").strip()
-    if not cid or not csec:
-        return None
-    if "YOUR_CLIENT" in cid.upper() or "YOUR_CLIENT" in csec.upper():
-        return None
-    # A real OAuth client_id always ends with this Google-issued suffix.
-    if not cid.endswith(".apps.googleusercontent.com"):
-        return None
-    return block
+    for kind in ("installed", "web"):  # order = preference
+        block = data.get(kind)
+        if not isinstance(block, dict):
+            continue
+        cid = (block.get("client_id") or "").strip()
+        csec = (block.get("client_secret") or "").strip()
+        if not cid or not csec:
+            continue
+        # Reject the template placeholders Google ships (e.g.
+        # "YOUR_CLIENT_ID.apps.googleusercontent.com") — a structurally-valid but
+        # unfilled template would otherwise produce an auth URL with the literal
+        # placeholder in it.
+        if "YOUR_CLIENT" in cid.upper() or "YOUR_CLIENT" in csec.upper():
+            continue
+        # A real OAuth client_id always ends with this Google-issued suffix.
+        if not cid.endswith(".apps.googleusercontent.com"):
+            continue
+        return kind
+    return None
+
+
+def _google_client_block(data):
+    """Return the inner client block ('installed' or 'web') if the file holds
+    *real* credentials, else None. Prefers the Desktop ("installed") block.
+    """
+    kind = _google_client_type(data)
+    return data.get(kind) if kind else None
 
 
 def _google_client_config():
@@ -3093,6 +3107,12 @@ def _google_client_config():
     ~/Downloads, then the GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET env vars.
     Files that exist but only contain template placeholders are skipped so a
     stale ~/.gmail-mcp/oauth-keys.json can't shadow the real credentials.
+
+    A Desktop ("installed") client is preferred over a Web ("web") client
+    *across all candidates*: if credentials.json still holds the old Web client
+    but a freshly-downloaded client_secret*.json holds the new Desktop client,
+    the Desktop one wins — because only the Desktop flow can use a loopback
+    redirect without hitting redirect_uri_mismatch.
     """
     candidates = [
         FRIDAY_DIR / "credentials.json",
@@ -3106,6 +3126,10 @@ def _google_client_config():
             candidates.extend(sorted(d.glob("client_secret*.json")))
         except Exception:
             pass
+
+    # First valid match of each kind, in candidate order; prefer Desktop overall.
+    first_installed = None  # (data, source)
+    first_web = None
     for p in candidates:
         if not p.exists():
             continue
@@ -3114,8 +3138,16 @@ def _google_client_config():
             data = json.loads(p.read_text(encoding="utf-8-sig"))
         except Exception:
             continue
-        if _google_client_block(data) is not None:
-            return data, str(p)
+        kind = _google_client_type(data)
+        if kind == "installed" and first_installed is None:
+            first_installed = (data, str(p))
+            break  # Desktop is the top preference — stop as soon as we find one.
+        if kind == "web" and first_web is None:
+            first_web = (data, str(p))
+    if first_installed is not None:
+        return first_installed
+    if first_web is not None:
+        return first_web
 
     cid = os.environ.get("GOOGLE_CLIENT_ID")
     csec = os.environ.get("GOOGLE_CLIENT_SECRET")
@@ -3148,13 +3180,24 @@ def _google_credentials():
         return None
     try:
         creds = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN_PATH), GOOGLE_SCOPES)
-    except Exception:
+    except Exception as e:
+        print(f"[google] could not load stored token: {e}", flush=True)
         return None
-    if creds and creds.expired and creds.refresh_token:
+    # Refresh whenever we hold a refresh token and the access token is missing or
+    # expired. Desktop-client refresh tokens are long-lived (they don't expire in
+    # 7 days the way unverified Web "Testing" tokens do), so a successful refresh
+    # here keeps Friday connected indefinitely without re-consent.
+    if creds and creds.refresh_token and (creds.expired or not creds.valid):
         try:
             creds.refresh(GoogleRequest())
+            FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
             GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
-        except Exception:
+            print("[google] refreshed and persisted access token", flush=True)
+        except Exception as e:
+            # A revoked grant or rotated client secret lands here — surface it so
+            # the cause is diagnosable rather than a silent "not connected".
+            print(f"[google] token refresh failed ({e}); reconnect at "
+                  f"/api/google/auth", flush=True)
             return None
     if not creds or not creds.valid:
         return None
@@ -3933,6 +3976,12 @@ def google_auth_start():
     except Exception as e:
         return jsonify({"status": "error", "message": f"google-auth-oauthlib not installed: {e}"}), 500
     try:
+        client_type = _google_client_type(cfg) or "installed"
+        # Loopback callback on the host the user is actually hitting (e.g.
+        # http://localhost:3000/api/google/auth/callback). A Desktop ("installed")
+        # client accepts ANY loopback redirect with no GCP registration, so this
+        # never triggers redirect_uri_mismatch. A Web client would require this
+        # exact URL to be pre-registered under "Authorized redirect URIs".
         redirect_uri = request.host_url.rstrip('/') + '/api/google/auth/callback'
         flow = Flow.from_client_config(cfg, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri)
         auth_url, state = flow.authorization_url(
@@ -3942,7 +3991,21 @@ def google_auth_start():
         )
         session['google_oauth_state'] = state
         session['google_oauth_redirect_uri'] = redirect_uri
-        return jsonify({"status": "ok", "auth_url": auth_url, "client_source": source})
+        resp = {
+            "status": "ok",
+            "auth_url": auth_url,
+            "client_source": source,
+            "client_type": client_type,
+            "redirect_uri": redirect_uri,
+        }
+        if client_type == "web":
+            resp["warning"] = (
+                "A Web OAuth client is in use. If you hit redirect_uri_mismatch, "
+                f"either register '{redirect_uri}' under Authorized redirect URIs "
+                "in Google Cloud Console, or switch to a Desktop client "
+                "(GET /api/google/auth/setup-guide for steps)."
+            )
+        return jsonify(resp)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -3997,7 +4060,82 @@ def google_status():
         "token_path": str(GOOGLE_TOKEN_PATH),
         "client_configured": cfg is not None,
         "client_source": source,
+        "client_type": _google_client_type(cfg) if cfg else None,
         "scopes": GOOGLE_SCOPES,
+    })
+
+
+@app.route('/api/google/auth/setup-guide')
+def google_auth_setup_guide():
+    """Step-by-step guide for creating the Desktop OAuth client in GCP.
+
+    Hit this in a browser (GET /api/google/auth/setup-guide) to see exactly what
+    to do, where Friday looks for the downloaded JSON, and what's currently
+    detected. Desktop clients are preferred because they accept any loopback
+    redirect with no registration — avoiding the redirect_uri_mismatch that
+    blocks the Web flow.
+    """
+    cfg, source = _google_client_config()
+    client_type = _google_client_type(cfg) if cfg else None
+    expected_redirect = request.host_url.rstrip('/') + '/api/google/auth/callback'
+    return jsonify({
+        "status": "ok",
+        "summary": (
+            "Create a Desktop (a.k.a. 'installed'/CLI) OAuth client in Google "
+            "Cloud Console, download its JSON, and drop it at "
+            f"{FRIDAY_DIR / 'credentials.json'}. No redirect URI registration is "
+            "needed — Desktop clients accept any localhost callback."
+        ),
+        "why_desktop": (
+            "Desktop OAuth clients allow arbitrary loopback (http://localhost / "
+            "http://127.0.0.1) redirects without pre-registering them, so the "
+            "redirect_uri_mismatch error that blocks the Web client flow can't "
+            "happen here."
+        ),
+        "steps": [
+            "1. Go to https://console.cloud.google.com/apis/credentials (pick the "
+            "project that owns your Gmail/Calendar API access).",
+            "2. Ensure the Gmail API and Google Calendar API are enabled under "
+            "'APIs & Services > Enabled APIs & services' (enable them if not).",
+            "3. If prompted, configure the OAuth consent screen: User type "
+            "'External', add your Google account under 'Test users' (read-only "
+            "scopes, so no verification is required for personal use).",
+            "4. Click 'Create Credentials' > 'OAuth client ID'.",
+            "5. For 'Application type' choose 'Desktop app' (this is the key step "
+            "— NOT 'Web application'). Give it any name, e.g. 'Friday Desktop'.",
+            "6. Click 'Create', then 'Download JSON' on the resulting client.",
+            f"7. Save/move that file to {FRIDAY_DIR / 'credentials.json'} "
+            "(overwriting the old Web client), OR just leave it named "
+            "client_secret_*.json in ~/.friday, ~/.gmail-mcp, or ~/Downloads — "
+            "Friday auto-discovers those and prefers the Desktop client.",
+            "8. Visit GET /api/google/auth to get the consent URL, approve the "
+            "read-only Gmail + Calendar scopes, and you're connected.",
+        ],
+        "scopes_requested": GOOGLE_SCOPES,
+        "credentials_search_paths": [
+            str(FRIDAY_DIR / "credentials.json"),
+            str(HOME / ".gmail-mcp" / "oauth-keys.json"),
+            str(FRIDAY_DIR / "oauth-keys.json"),
+            str(FRIDAY_DIR / "client_secret*.json"),
+            str(HOME / ".gmail-mcp" / "client_secret*.json"),
+            str(HOME / "Downloads" / "client_secret*.json"),
+            "or GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET env vars",
+        ],
+        "expected_redirect_uri": expected_redirect,
+        "token_path": str(GOOGLE_TOKEN_PATH),
+        "currently_detected": {
+            "client_found": cfg is not None,
+            "client_source": source,
+            "client_type": client_type,
+            "is_desktop": client_type == "installed",
+            "connected": _google_credentials() is not None,
+        },
+        "next_step": (
+            "Open /api/google/auth to connect."
+            if client_type == "installed"
+            else "Create the Desktop client per the steps above, then open "
+                 "/api/google/auth."
+        ),
     })
 
 
