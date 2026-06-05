@@ -16,7 +16,10 @@ import uuid
 import threading
 import asyncio
 import re
+import html
 import time as _time
+import calendar
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
@@ -2860,11 +2863,12 @@ def briefing_status():
     """
     google_connected = _google_credentials() is not None
     try:
-        import requests as _r  # noqa: F401
+        import feedparser  # noqa: F401
         from bs4 import BeautifulSoup  # noqa: F401
         news_ok = True
     except Exception:
         news_ok = False
+    brave_on = bool((os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip())
     connectors = [
         {
             "key": "gmail", "label": "Gmail", "icon": "📧",
@@ -2877,9 +2881,12 @@ def briefing_status():
             "detail": "Live read-only" if google_connected else "Not linked",
         },
         {
-            "key": "news", "label": "News (DuckDuckGo)", "icon": "📰",
-            "status": "degraded" if news_ok else "disconnected",
-            "detail": "Web search active" if news_ok else "requests/bs4 unavailable",
+            "key": "news", "label": "News (RSS)", "icon": "📰",
+            "status": "connected" if news_ok else "disconnected",
+            "detail": (
+                ("RSS feeds active" + (" + Brave fallback" if brave_on else ""))
+                if news_ok else "feedparser/bs4 unavailable"
+            ),
         },
     ]
     return jsonify({
@@ -3234,14 +3241,58 @@ BANNED_SOURCES_FILE = FRIDAY_DIR / "banned_sources.json"
 BOOSTED_SOURCES_FILE = FRIDAY_DIR / "boosted_sources.json"
 BRIEFING_PREFS_FILE = FRIDAY_DIR / "briefing_prefs.json"
 
-# Category metadata: display color key (matched in the UI), and the live
-# search query used to populate the magazine feed. The color keys mirror the
-# spec — tech=cyan, politics=amber, local=green, business=purple.
+# Category metadata: display color key (matched in the UI), the per-category RSS
+# feeds that populate the magazine feed, and a search query used only for the
+# optional Brave Search fallback. The color keys mirror the spec — tech=cyan,
+# politics=amber, local=green, business=purple.
+#
+# RSS is the primary source: reliable, no CAPTCHA, no API key. Feeds were chosen
+# to match the user's reading profile (tech/AI/politics, Austin local). Outlets
+# that killed their public RSS (AP, Reuters) are pulled via Google News topic
+# feeds scoped to that publisher's domain — feedparser exposes the real source
+# domain on each entry, so ban/boost and trust badges still resolve correctly.
+_GOOGLE_NEWS = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q="
 NEWS_CATEGORIES = {
-    "AI/Tech":  {"color": "tech",     "query": "latest AI and technology news today"},
-    "Politics": {"color": "politics", "query": "latest US politics news today"},
-    "Local":    {"color": "local",    "query": "Austin Texas local news today"},
-    "Business": {"color": "business", "query": "latest business and markets news today"},
+    "AI/Tech": {
+        "color": "tech",
+        "query": "latest AI and technology news today",
+        "feeds": [
+            "https://www.techmeme.com/feed.xml",
+            "https://feeds.arstechnica.com/arstechnica/index",
+            "https://www.theverge.com/rss/index.xml",
+            "https://www.platformer.news/rss/",
+            "https://stratechery.com/feed/",
+        ],
+    },
+    "Politics": {
+        "color": "politics",
+        "query": "latest US politics news today",
+        "feeds": [
+            "https://feeds.npr.org/1001/rss.xml",
+            "https://feeds.npr.org/1014/rss.xml",
+            "https://thehill.com/news/feed/",
+            _GOOGLE_NEWS + "when:24h+source:apnews.com",
+            _GOOGLE_NEWS + "when:24h+source:reuters.com",
+        ],
+    },
+    "Local": {
+        "color": "local",
+        "query": "Austin Texas local news today",
+        "feeds": [
+            "https://www.austinmonitor.com/feed/",
+            _GOOGLE_NEWS + "Austin+Texas+when:24h",
+            _GOOGLE_NEWS + "when:24h+source:kut.org",
+        ],
+    },
+    "Business": {
+        "color": "business",
+        "query": "latest business and markets news today",
+        "feeds": [
+            "https://api.axios.com/feed/",
+            "https://feeds.bloomberg.com/markets/news.rss",
+            "https://feeds.bloomberg.com/technology/news.rss",
+        ],
+    },
 }
 
 DEFAULT_BRIEFING_PREFS = {
@@ -3383,40 +3434,171 @@ def _trust_rating(domain, banned=None, boosted=None):
     return "yellow"
 
 
-def _ddg_results(query, limit=8):
-    """Structured DuckDuckGo HTML results: [{title, snippet, url}].
+# In-process cache for parsed feeds so the /api/news/feed endpoint and the
+# briefing builder (which fire back-to-back) don't re-pull the same feeds. Keyed
+# by feed URL → (fetched_at_epoch, [normalized entries]). Short TTL keeps news
+# fresh while smoothing bursts.
+_RSS_CACHE = {}
+_RSS_CACHE_TTL = 300  # seconds
+_RSS_CACHE_LOCK = threading.Lock()
 
-    A structured sibling of _tool_search_web — the news feed needs the raw
-    fields (and the URL/domain) rather than a flattened text blob so it can
-    render per-item source badges and apply ban/boost filtering.
+
+def _clean_feed_text(text):
+    """Collapse an HTML/RSS summary into clean one-line plain text.
+
+    Distinct from the file-oriented _strip_html elsewhere in this module: feed
+    summaries are often double-encoded and need full entity resolution, which
+    that helper doesn't do.
     """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    if "<" in s and ">" in s:
+        try:
+            from bs4 import BeautifulSoup
+            s = BeautifulSoup(s, "html.parser").get_text(" ", strip=True)
+        except Exception:
+            s = re.sub(r"<[^>]+>", " ", s)
+    # Some feeds double-encode entities (e.g. raw "&amp;mdash;" → "&mdash;"); a
+    # bounded unescape loop resolves those without looping forever on a stray "&".
+    for _ in range(3):
+        decoded = html.unescape(s)
+        if decoded == s:
+            break
+        s = decoded
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _normalize_entry(entry):
+    """Turn a feedparser entry into {title, snippet, url, source, ts}.
+
+    Resolves the *real* publisher domain even for Google News redirect items
+    (which carry the original outlet on entry.source.href) so ban/boost filters
+    and trust badges work uniformly across direct and aggregated feeds.
+    """
+    title = _clean_feed_text(entry.get("title", ""))
+    link = (entry.get("link") or "").strip()
+
+    # Google News wraps the outlet in entry.source ({href, title}); the title is
+    # suffixed " - Publisher". Prefer the source href for the domain, and strip
+    # the redundant suffix from the headline.
+    src = entry.get("source") or {}
+    src_href = src.get("href") if isinstance(src, dict) else getattr(src, "href", None)
+    src_title = src.get("title") if isinstance(src, dict) else getattr(src, "title", None)
+    domain = _extract_domain(src_href) if src_href else _extract_domain(link)
+    if src_title and title.endswith(f" - {src_title}"):
+        title = title[: -(len(src_title) + 3)].strip()
+
+    snippet = _clean_feed_text(entry.get("summary", "") or entry.get("description", ""))
+    # Google News summaries are usually a junk list of related links — drop them.
+    if "news.google.com" in (link or "") and (
+        not snippet or "View Full Coverage" in snippet or len(snippet) > 400
+    ):
+        snippet = ""
+    snippet = snippet[:300]
+
+    # feedparser returns published_parsed as a UTC struct_time; use timegm (not
+    # mktime, which would misread it as local time and skew the age by the UTC
+    # offset — enough to flag every item as "breaking").
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    ts = calendar.timegm(parsed) if parsed else 0.0
+    return {"title": title, "snippet": snippet, "url": link, "source": domain, "ts": ts}
+
+
+def _parse_feed(url, limit=12):
+    """Fetch+parse one RSS feed into normalized entries, with TTL caching."""
+    now = _time.time()
+    with _RSS_CACHE_LOCK:
+        hit = _RSS_CACHE.get(url)
+        if hit and (now - hit[0]) < _RSS_CACHE_TTL:
+            return hit[1][:limit]
     try:
-        import requests as _req
-    except ImportError:
+        import socket
+        import feedparser
+        d = feedparser.parse(url, request_headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0",
+        })
+        out = []
+        for e in d.entries[: max(limit * 2, limit)]:
+            norm = _normalize_entry(e)
+            if norm["title"]:
+                out.append(norm)
+        with _RSS_CACHE_LOCK:
+            _RSS_CACHE[url] = (now, out)
+        return out[:limit]
+    except Exception:
+        return []
+
+
+def _rss_results(feeds, limit=12):
+    """Pull + merge multiple RSS feeds concurrently, newest first.
+
+    Returns [{title, snippet, url, source, ts}] de-duplicated by headline. Feeds
+    are fetched in parallel with a bounded pool so a slow feed doesn't stall the
+    whole category, and each feed fails soft to an empty list.
+    """
+    feeds = [f for f in (feeds or []) if f]
+    if not feeds:
+        return []
+    merged = []
+    workers = min(8, len(feeds))
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_parse_feed, f, limit): f for f in feeds}
+            for fut in as_completed(futures, timeout=20):
+                try:
+                    merged.extend(fut.result() or [])
+                except Exception:
+                    continue
+    except Exception:
+        # Pool/timeout failure — fall back to whatever completed.
+        pass
+    seen, deduped = set(), []
+    for it in merged:
+        key = re.sub(r"\W+", "", it["title"].lower())[:80]
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(it)
+    deduped.sort(key=lambda x: x["ts"], reverse=True)
+    return deduped
+
+
+def _brave_results(query, limit=8):
+    """Optional supplemental search via the Brave Search API.
+
+    Used only as a fallback when RSS yields nothing for a category and a
+    BRAVE_SEARCH_API_KEY is configured (free tier: ~2K queries/month). Returns
+    the same {title, snippet, url, source, ts} shape as _rss_results so callers
+    can treat both uniformly. No key → empty list (RSS stays primary).
+    """
+    key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+    if not key:
         return []
     try:
-        encoded = _req.utils.quote(query)
+        import requests as _req
         resp = _req.get(
-            f"https://html.duckduckgo.com/html/?q={encoded}",
+            "https://api.search.brave.com/res/v1/news/search",
+            params={"q": query, "count": max(limit, 5), "freshness": "pd"},
+            headers={"Accept": "application/json",
+                     "X-Subscription-Token": key},
             timeout=12,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0"},
         )
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(resp.text, "html.parser")
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
         out = []
-        for r in soup.select(".result")[: max(limit * 2, limit)]:
-            title_el = r.select_one(".result__title")
-            snip_el = r.select_one(".result__snippet")
-            url_el = r.select_one(".result__url")
-            if not (title_el and snip_el):
-                continue
+        for r in (data.get("results") or [])[:limit]:
+            url = r.get("url") or ""
+            age = r.get("age") or ""
             out.append({
-                "title": title_el.get_text(strip=True),
-                "snippet": snip_el.get_text(strip=True),
-                "url": (url_el.get_text(strip=True) if url_el else ""),
+                "title": _clean_feed_text(r.get("title", "")),
+                "snippet": _clean_feed_text(r.get("description", ""))[:300],
+                "url": url,
+                "source": _extract_domain(url),
+                # Brave gives a relative "age" string, not an epoch; flag fresh
+                # items so _detect_breaking can still light up via the snippet.
+                "ts": _time.time() if "hour" in age or "minute" in age else 0.0,
             })
-            if len(out) >= limit:
-                break
         return out
     except Exception:
         return []
@@ -3428,8 +3610,15 @@ def _estimate_reading_time(text):
     return max(1, round(words / 200)) if words > 40 else 0
 
 
-def _detect_breaking(snippet):
-    """Heuristic 'breaking' flag — DDG occasionally embeds a relative time."""
+def _detect_breaking(snippet, ts=0.0):
+    """Heuristic 'breaking' flag.
+
+    Primary signal is the item's own publish timestamp (RSS gives a real one):
+    anything in the last 2 hours is breaking. Falls back to a relative-time
+    phrase embedded in the snippet for sources without a usable timestamp.
+    """
+    if ts:
+        return (_time.time() - ts) <= 2 * 3600
     s = (snippet or "").lower()
     return bool(re.search(r"\b(\d+)\s*(minute|min|hour|hr)s?\s+ago\b", s)) and \
         not re.search(r"\b([3-9]|1\d|2[0-4])\s*hours?\s+ago\b", s)
@@ -3453,30 +3642,36 @@ def _fetch_news_items(categories=None, limit_per=4):
         meta = NEWS_CATEGORIES.get(cat)
         if not meta:
             continue
+        # RSS is primary; Brave Search is an optional supplemental fallback only
+        # when RSS came back empty (e.g. every feed in the category timed out).
+        results = _rss_results(meta.get("feeds", []), limit=max(limit_per * 4, 12))
+        if not results:
+            results = _brave_results(meta["query"], limit=max(limit_per * 2, 8))
         kept = 0
-        for r in _ddg_results(meta["query"], limit=8):
-            domain = _extract_domain(r["url"])
+        for r in results:
+            domain = r.get("source") or _extract_domain(r.get("url", ""))
             if not domain or domain in banned:
                 continue  # banned sources never appear
             is_boost = domain in boosted
+            url = r.get("url", "")
             items.append({
                 "id": f"{cat}-{idx}",
                 "title": r["title"],
                 "snippet": r["snippet"],
-                "url": r["url"] if r["url"].startswith("http") else ("https://" + r["url"]),
+                "url": url if url.startswith("http") else ("https://" + url),
                 "source": domain,
                 "category": cat,
                 "color": meta["color"],
                 "trust": _trust_rating(domain, banned, boosted),
                 "boosted": is_boost,
                 "reading_time": _estimate_reading_time(r["snippet"]),
-                "breaking": _detect_breaking(r["snippet"]),
+                "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
             })
             idx += 1
             kept += 1
             if kept >= limit_per:
                 break
-    # Boosted sources float to the top; otherwise keep category/search order.
+    # Boosted sources float to the top; otherwise keep category/recency order.
     items.sort(key=lambda x: (0 if x["boosted"] else 1))
     return items
 
@@ -3583,21 +3778,22 @@ def _gather_live_briefing_context():
                 if banned:
                     note += (f"\n_(These sources are banned and were excluded — do not cite: "
                              f"{', '.join(sorted(banned))}.)_")
-                return "## Live News (web search)\n" + "\n\n".join(blocks) + note
-            # Fallback: flat search text, with banned domains stripped line-wise.
-            settings = _load_settings()
-            priorities = [p for p in (settings.get('news_priorities') or []) if p]
-            top = priorities[:2] or ['AI/Tech']
+                return "## Live News (RSS)\n" + "\n\n".join(blocks) + note
+            # Fallback: optional Brave Search across the top categories, with
+            # banned domains excluded. No-ops cleanly when no API key is set.
             news_blocks = []
-            for p in top:
-                res = _tool_search_web({'query': f"latest {p} news today"})
-                if res and not res.lower().startswith(('web search error', 'search_web error', 'requests library')):
-                    kept = [ln for ln in res.splitlines()
-                            if not any(b in ln.lower() for b in banned)]
-                    news_blocks.append(f"### {p}\n" + "\n".join(kept)[:2500])
+            for cat in (cats or ["AI/Tech"])[:2]:
+                meta = NEWS_CATEGORIES.get(cat) or {}
+                lines = []
+                for r in _brave_results(meta.get("query", f"latest {cat} news today"), limit=5):
+                    dom = r.get("source") or _extract_domain(r.get("url", ""))
+                    if dom and dom not in banned:
+                        lines.append(f"- **{r['title']}** ({dom})\n  {r['snippet']}\n  {r['url']}")
+                if lines:
+                    news_blocks.append(f"### {cat}\n" + "\n".join(lines))
             if news_blocks:
-                return "## Live News (web search)\n" + "\n\n".join(news_blocks)
-            return "## Live News\n(Web search returned no usable results.)"
+                return "## Live News (Brave Search fallback)\n" + "\n\n".join(news_blocks)
+            return "## Live News\n(No RSS items available right now.)"
         except Exception as e:
             return f"## Live News\n(News fetch failed: {e})"
 
