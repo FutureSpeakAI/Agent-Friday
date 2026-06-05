@@ -2773,9 +2773,10 @@ function App(){
     window.fridayVibe.setSystemMood?.(sysMood);
     const holoMap={SPEAKING:'speaking',REASONING:'executing',EXECUTING:'executing',LISTENING:'listening',IDLE:'idle'};
     window.fridaySetHoloState?.(holoMap[sysMood]||'idle',sig.ttsActive?1:0);
-    // Belt-and-suspenders: always update the HUD text so the indicator never appears stuck
-    const moodEl=document.getElementById('mood-text');
-    if(moodEl)moodEl.innerText='STATE: '+sysMood;
+    // Belt-and-suspenders: always update the HUD text so the indicator never appears stuck.
+    // Route through fridayApplyMoodText so the emoji + mood color are preserved (plain text is the fallback).
+    if(window.fridayApplyMoodText)window.fridayApplyMoodText(sysMood);
+    else{const moodEl=document.getElementById('mood-text');if(moodEl)moodEl.innerText='STATE: '+sysMood;}
   }},1000);return()=>clearInterval(t)},[]);
   // --- Reasoning Thread Panel (Layer 3) ---
   const[threadOrb,setThreadOrb]=useState(null);

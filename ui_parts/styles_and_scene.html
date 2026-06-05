@@ -17,8 +17,9 @@
         <div class="hud-corner bottom-right"><div class="dot"></div></div>
         
 
-        <div style="position:fixed;bottom:72px;left:18px;font-family:'Orbitron',sans-serif;font-size:11px;font-weight:600;color:rgba(0,212,255,0.95);letter-spacing:2px;pointer-events:none;text-shadow:0 0 8px rgba(0,0,0,0.95),0 1px 2px rgba(0,0,0,0.9);z-index:71;">
-            <span id="mood-text">STATE: LISTENING</span>
+        <!-- State / mood indicator: FIXED HTML overlay, anchored above the dock. Never drifts with the camera. -->
+        <div id="state-indicator" style="position:fixed;bottom:130px;left:20px;z-index:80;display:inline-flex;align-items:center;font-family:'Orbitron',sans-serif;font-size:11px;font-weight:600;letter-spacing:2px;pointer-events:none;padding:6px 12px;border-radius:10px;background:rgba(8,16,28,0.55);border:1px solid rgba(0,212,255,0.25);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 2px 12px rgba(0,0,0,0.45),inset 0 0 0 1px rgba(255,255,255,0.04);text-shadow:0 0 8px rgba(0,0,0,0.9),0 1px 2px rgba(0,0,0,0.9);">
+            <span id="mood-text" style="color:rgba(0,212,255,0.95);">STATE: LISTENING</span>
         </div>
 
     </div>
@@ -509,6 +510,7 @@
             el.innerText = meta.emoji + ' STATE: ' + m;
             el.style.color = meta.color;
         }
+        window.fridayApplyMoodText = _applyMoodText;
 
         function setMood(m, isManualOverride) {
             if (isManualOverride) moodOverride = m;
