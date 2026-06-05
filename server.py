@@ -249,7 +249,8 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     messages: list of {"role": "user"|"assistant", "content": "..."}
     system: optional system prompt (string)
     model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-7)
-    temperature: 0.0–1.0; lower is more precise, higher is more creative.
+    temperature: accepted for backward-compat but IGNORED — newer Claude
+        models (Opus 4.7+, Sonnet 4.6+) reject the deprecated param.
     """
     client = get_anthropic_client()
     if client is None:
@@ -265,11 +266,10 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     }
     if system:
         kwargs["system"] = system
-    if temperature is not None:
-        try:
-            kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
-        except (TypeError, ValueError):
-            pass
+    # NOTE: `temperature` is intentionally NOT forwarded. Newer Claude models
+    # (Opus 4.7+, Sonnet 4.6+) reject the param with a 400 "temperature is
+    # deprecated for this model". The param is kept in the signature for
+    # backward-compat with callers; the model's default sampling is used.
     resp = client.messages.create(**kwargs)
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     return "".join(parts).strip()
@@ -2033,11 +2033,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                 _sys = (_sys or '') + f"\n\n[OPERATOR STEER — FOLLOW THIS IMMEDIATELY]: {_steer_inject}"
             if _sys:
                 kwargs["system"] = _sys
-            if temperature is not None:
-                try:
-                    kwargs["temperature"] = max(0.0, min(1.0, float(temperature)))
-                except (TypeError, ValueError):
-                    pass
+            # NOTE: `temperature` intentionally NOT forwarded — newer Claude
+            # models (Opus 4.7+, Sonnet 4.6+) 400 on the deprecated param.
+            # Kept in the signature for backward-compat; model defaults are used.
 
             resp = client.messages.create(**kwargs)
 
