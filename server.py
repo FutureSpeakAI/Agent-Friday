@@ -2997,6 +2997,76 @@ def news_feed():
     })
 
 
+# ── Read Later ────────────────────────────────────────────────────────────────
+# A flat saved-articles list at ~/.friday/read_later.json. Keyed by URL so the
+# same article can't be saved twice; newest-saved first.
+_READ_LATER_LOCK = threading.Lock()
+
+
+def _load_read_later():
+    """Load saved Read-Later articles (list of dicts), newest first. Fail-soft."""
+    try:
+        if READ_LATER_FILE.exists():
+            data = json.loads(READ_LATER_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [a for a in data if isinstance(a, dict) and a.get("url")]
+    except Exception:
+        pass
+    return []
+
+
+def _save_read_later(items):
+    FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    READ_LATER_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    return items
+
+
+@app.route('/api/news/read-later', methods=['GET', 'POST', 'DELETE'])
+def news_read_later():
+    """Saved-for-later articles store.
+
+    GET    → {items: [...]} newest-saved first
+    POST   → save an article ({url, title, source, snippet, category, ...})
+    DELETE → remove by ?url= (or JSON {url}); ?clear=1 empties the list
+    """
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "items": _load_read_later()})
+
+    with _READ_LATER_LOCK:
+        items = _load_read_later()
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            url = (data.get("url") or "").strip()
+            if not url:
+                return jsonify({"status": "error", "message": "url required"}), 400
+            # De-dup by URL — re-saving just refreshes the stored fields.
+            items = [a for a in items if a.get("url") != url]
+            entry = {
+                "url": url,
+                "title": (data.get("title") or url)[:300],
+                "source": _extract_domain(data.get("source") or url),
+                "snippet": (data.get("snippet") or "")[:400],
+                "category": data.get("category") or "",
+                "color": data.get("color") or "",
+                "saved_at": datetime.now().isoformat(timespec='seconds'),
+            }
+            items.insert(0, entry)
+            _save_read_later(items)
+            return jsonify({"status": "ok", "item": entry, "items": items})
+
+        # DELETE
+        if request.args.get("clear"):
+            _save_read_later([])
+            return jsonify({"status": "ok", "items": []})
+        data = request.get_json(silent=True) or {}
+        url = (request.args.get("url") or data.get("url") or "").strip()
+        if not url:
+            return jsonify({"status": "error", "message": "url required"}), 400
+        items = [a for a in items if a.get("url") != url]
+        _save_read_later(items)
+        return jsonify({"status": "ok", "items": items})
+
+
 @app.route('/api/briefing/<filename>')
 def get_briefing(filename):
     """Serve a briefing file content."""
@@ -3315,6 +3385,1070 @@ def _google_section_error(items):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  MESSAGES — "Friday's Comms Center"
+#  Smart triage that auto-classifies every message into lanes using
+#  sender domain + subject keyword rules. Rules live at
+#  ~/.friday/message_rules.json so the user can tune routing without a
+#  redeploy. Live mail comes from the Gmail API when Google is linked,
+#  otherwise from the heartbeat-populated cache at
+#  ~/.friday/messages/cache.json. Classification is applied either way
+#  before anything is served to the UI.
+#
+#  PRIVACY NOTE: the defaults shipped in source are deliberately
+#  DOMAIN/keyword-based only — no personal names. Personal-name routing
+#  (family, co-parent, colleagues) lives ONLY in the user's local
+#  ~/.friday/message_rules.json, which is outside the (public) repo.
+# ═══════════════════════════════════════════════════════════════
+MESSAGES_DIR = FRIDAY_DIR / "messages"
+MESSAGE_CACHE_FILE = MESSAGES_DIR / "cache.json"
+MESSAGE_RULES_FILE = FRIDAY_DIR / "message_rules.json"
+MESSAGE_STATE_FILE = MESSAGES_DIR / "state.json"  # archived/snoozed/flagged per message
+_MESSAGE_LOCK = threading.Lock()
+
+# Lane definitions: id, label, UI color key (mirrored in head.html CSS), and
+# whether the lane counts toward the "actionable" notification badge. Order is
+# priority order — the first lane whose rules match wins.
+MESSAGE_LANES = [
+    {"id": "coparent", "label": "Co-Parent", "color": "coparent", "actionable": True},
+    {"id": "career", "label": "Career", "color": "career", "actionable": True},
+    {"id": "finance", "label": "Finance", "color": "finance", "actionable": True},
+    {"id": "innex", "label": "INNEX", "color": "innex", "actionable": True},
+    {"id": "futurespeak", "label": "FutureSpeak", "color": "futurespeak", "actionable": True},
+    {"id": "family", "label": "Family", "color": "family", "actionable": True},
+    {"id": "subscriptions", "label": "Subscriptions", "color": "subscriptions", "actionable": False},
+    {"id": "noise", "label": "Noise", "color": "noise", "actionable": False},
+]
+MESSAGE_LANE_IDS = {l["id"] for l in MESSAGE_LANES}
+
+
+def _default_message_rules():
+    """Generic, non-PII default triage rules (safe for a public repo).
+
+    Matches on sender domain and subject/snippet keywords only. Personal-name
+    routing is layered on top from the user's local message_rules.json.
+    """
+    return {
+        "version": 1,
+        "lanes": [
+            {
+                "id": "coparent",
+                "domains": ["ourfamilywizard.com", "myfamilywizard.com", "ofw.com"],
+                "senders": [],
+                "keywords": ["ourfamilywizard", "ofw notification", "custody", "parenting time"],
+            },
+            {
+                "id": "career",
+                "domains": [
+                    "linkedin.com", "indeed.com", "greenhouse.io", "lever.co",
+                    "ashbyhq.com", "workday.com", "myworkday.com", "jobvite.com",
+                    "smartrecruiters.com", "icims.com", "ziprecruiter.com",
+                    "hire.lever.co", "us.greenhouse-mail.io", "glassdoor.com",
+                    "wellfound.com", "angel.co", "dice.com", "builtin.com",
+                ],
+                "senders": ["recruiting", "recruiter", "talent", "careers", "jobs", "no-reply@hi.wellfound"],
+                "keywords": [
+                    "application received", "your application", "interview", "recruiter",
+                    "next steps", "phone screen", "we received your application",
+                    "thanks for applying", "job opportunity", "hiring", "offer letter",
+                ],
+            },
+            {
+                "id": "finance",
+                "domains": [
+                    "rwbaird.com", "bairdfinancialadvisor.com", "whitleypenn.com",
+                    "capitalone.com", "americanexpress.com", "aexp.com",
+                    "chase.com", "bankofamerica.com", "wellsfargo.com",
+                    "fidelity.com", "schwab.com", "vanguard.com", "intuit.com",
+                    "venmo.com", "paypal.com", "discover.com",
+                ],
+                "senders": ["alerts@", "statements@", "no-reply@alerts", "secure@"],
+                "keywords": [
+                    "statement is ready", "payment due", "transaction alert",
+                    "account alert", "balance", "invoice", "deposit", "wire transfer",
+                    "your statement", "tax document", "1099", "k-1",
+                ],
+            },
+            {
+                "id": "innex",
+                "domains": ["innexenergy.com"],
+                "senders": [],
+                "keywords": ["innex energy", "innex"],
+            },
+            {
+                "id": "futurespeak",
+                "domains": ["github.com", "notifications.github.com", "gitlab.com"],
+                "senders": ["notifications@github.com", "noreply@github.com"],
+                "keywords": [
+                    "pull request", "merged", "opened an issue", "commented on",
+                    "new release", "review requested", "ci failed", "workflow run",
+                ],
+            },
+            {
+                "id": "family",
+                "domains": [],
+                "senders": [],
+                "keywords": ["school", "pta", "parent portal", "report card", "field trip"],
+            },
+            {
+                "id": "subscriptions",
+                "domains": ["substack.com", "mailchimp.com", "beehiiv.com", "ghost.io"],
+                "senders": ["newsletter@", "digest@", "updates@", "hello@", "team@"],
+                "keywords": [
+                    "newsletter", "unsubscribe", "this week in", "weekly digest",
+                    "daily digest", "your weekly", "subscribe", "view in browser",
+                ],
+            },
+        ],
+    }
+
+
+def _load_message_rules():
+    """Load triage rules, seeding the defaults on first run. Fail-soft."""
+    try:
+        if MESSAGE_RULES_FILE.exists():
+            data = json.loads(MESSAGE_RULES_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("lanes"), list):
+                return data
+    except Exception:
+        pass
+    rules = _default_message_rules()
+    try:
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        MESSAGE_RULES_FILE.write_text(json.dumps(rules, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return rules
+
+
+def _sender_domain(sender):
+    """Pull the bare domain out of a 'Name <user@host>' From header."""
+    s = (sender or "").lower()
+    m = re.search(r"@([a-z0-9.\-]+)", s)
+    if not m:
+        return ""
+    dom = m.group(1).strip(".")
+    # Collapse mail subdomains (mail.github.com -> github.com) for matching,
+    # but keep the full host too so subdomain-specific rules still hit.
+    return dom
+
+
+def _classify_message(msg, rules=None):
+    """Return a lane id for a single message using domain + keyword rules.
+
+    Evaluation is two-pass within the lane priority order: a domain/sender
+    match is stronger than a keyword match, so we first look for any lane whose
+    domain or sender matches, and only fall back to keyword matching if none do.
+    Anything unmatched lands in 'noise'.
+    """
+    rules = rules or _load_message_rules()
+    sender = (msg.get("sender") or msg.get("from") or "").lower()
+    subject = (msg.get("subject") or "").lower()
+    snippet = (msg.get("snippet") or msg.get("preview") or "").lower()
+    domain = _sender_domain(sender)
+    lanes = rules.get("lanes", [])
+
+    # Pass 1 — domain / explicit sender substring (high confidence)
+    for lane in lanes:
+        lid = lane.get("id")
+        if lid not in MESSAGE_LANE_IDS:
+            continue
+        for d in lane.get("domains", []):
+            d = (d or "").lower().strip()
+            if d and (domain == d or domain.endswith("." + d) or d in sender):
+                return lid
+        for s in lane.get("senders", []):
+            s = (s or "").lower().strip()
+            if s and s in sender:
+                return lid
+
+    # Pass 2 — subject / snippet keywords
+    hay = subject + " \n " + snippet
+    for lane in lanes:
+        lid = lane.get("id")
+        if lid not in MESSAGE_LANE_IDS:
+            continue
+        for kw in lane.get("keywords", []):
+            kw = (kw or "").lower().strip()
+            if kw and kw in hay:
+                return lid
+
+    return "noise"
+
+
+def _message_id(msg):
+    """Stable id for a message: prefer Gmail id/thread, else hash of fields."""
+    mid = msg.get("id") or msg.get("message_id")
+    if mid:
+        return str(mid)
+    tid = msg.get("thread_id")
+    if tid:
+        return str(tid)
+    raw = (msg.get("sender", "") + "|" + msg.get("subject", "") + "|" +
+           str(msg.get("timestamp", "")))
+    return _hashlib.sha1(raw.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _load_message_state():
+    """Per-message UI state: {id: {archived, snoozed_until, flagged, read}}."""
+    try:
+        if MESSAGE_STATE_FILE.exists():
+            data = json.loads(MESSAGE_STATE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _save_message_state(state):
+    MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+    MESSAGE_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return state
+
+
+def _load_cached_messages():
+    """Load heartbeat-cached messages (list of raw dicts). Fail-soft."""
+    try:
+        if MESSAGE_CACHE_FILE.exists():
+            data = json.loads(MESSAGE_CACHE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data = data.get("messages", [])
+            if isinstance(data, list):
+                return [m for m in data if isinstance(m, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def _cache_messages(messages):
+    MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "messages": messages,
+        "cached_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    MESSAGE_CACHE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return messages
+
+
+def _normalize_message(raw, rules, state):
+    """Shape a raw mail dict into the UI card model + apply state & lane."""
+    sender = raw.get("sender") or raw.get("from") or "unknown"
+    # Split "Display Name <addr>" into a friendly name + address.
+    name, addr = sender, ""
+    m = re.match(r"\s*\"?([^\"<]*?)\"?\s*<([^>]+)>", sender)
+    if m:
+        name = (m.group(1).strip() or m.group(2).strip())
+        addr = m.group(2).strip()
+    elif "@" in sender:
+        addr = sender.strip()
+        name = sender.split("@")[0]
+    mid = _message_id(raw)
+    lane = raw.get("lane") if raw.get("lane") in MESSAGE_LANE_IDS else _classify_message(raw, rules)
+    st = state.get(mid, {}) if isinstance(state, dict) else {}
+    labels = raw.get("labels") or []
+    unread = ("UNREAD" in labels) if labels else (not st.get("read"))
+    if st.get("read"):
+        unread = False
+    return {
+        "id": mid,
+        "thread_id": raw.get("thread_id") or mid,
+        "sender": name or "unknown",
+        "sender_email": addr,
+        "initial": (name or addr or "?").strip()[:1].upper() or "?",
+        "subject": raw.get("subject") or "(no subject)",
+        "snippet": (raw.get("snippet") or raw.get("preview") or "").strip()[:400],
+        "timestamp": raw.get("timestamp") or raw.get("date") or "",
+        "lane": lane,
+        "labels": labels,
+        "unread": bool(unread),
+        "has_attachment": bool(raw.get("has_attachment")),
+        "archived": bool(st.get("archived")),
+        "snoozed_until": st.get("snoozed_until") or "",
+        "flagged": bool(st.get("flagged")),
+    }
+
+
+def _collect_messages(limit=40):
+    """Fetch the freshest messages (live Gmail if linked, else cache), classify,
+    and return (cards, source) where source is 'gmail'|'cache'|'empty'."""
+    rules = _load_message_rules()
+    state = _load_message_state()
+    raw, source = [], "empty"
+
+    if _google_credentials() is not None:
+        fetched = _fetch_gmail_recent(limit=limit)
+        if not _google_section_error(fetched):
+            raw = fetched
+            source = "gmail"
+            try:
+                _cache_messages(raw)
+            except Exception:
+                pass
+    if not raw:
+        raw = _load_cached_messages()
+        source = "cache" if raw else "empty"
+
+    cards = [_normalize_message(r, rules, state) for r in raw]
+    # Newest first when timestamps are comparable; stable otherwise.
+    def _ts(c):
+        return str(c.get("timestamp") or "")
+    cards.sort(key=_ts, reverse=True)
+    return cards, source
+
+
+@app.route('/api/messages')
+def api_messages():
+    """Classified message cards. ?lane= filters to a single lane;
+    ?include_archived=1 keeps archived/snoozed cards in the result."""
+    lane = (request.args.get("lane") or "").strip().lower()
+    include_archived = request.args.get("include_archived") in ("1", "true", "yes")
+    try:
+        limit = max(5, min(100, int(request.args.get("limit", 40))))
+    except (TypeError, ValueError):
+        limit = 40
+    cards, source = _collect_messages(limit=limit)
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    if not include_archived:
+        cards = [c for c in cards if not c["archived"]
+                 and not (c["snoozed_until"] and c["snoozed_until"] > now_iso)]
+    if lane and lane in MESSAGE_LANE_IDS:
+        cards = [c for c in cards if c["lane"] == lane]
+    # Cross-reference: flag messages whose sender is an attendee of an upcoming
+    # event (next 7 days). Best-effort — failures must not break the inbox.
+    try:
+        email_events = {}
+        for i in range(7):
+            d = date.today() + timedelta(days=i)
+            for ev in _events_for_day(d):
+                for a in ev.get("attendees", []):
+                    email_events.setdefault((a or "").lower(), []).append({
+                        "id": ev.get("id"), "title": ev.get("title"),
+                        "start_time": ev.get("start_time"),
+                    })
+        for c in cards:
+            hit = email_events.get((c.get("sender_email") or "").lower())
+            if hit:
+                c["related_event"] = hit[0]
+    except Exception:
+        pass
+    return jsonify({
+        "status": "ok",
+        "messages": cards,
+        "total": len(cards),
+        "source": source,
+        "lanes": MESSAGE_LANES,
+        "generated_at": now_iso,
+    })
+
+
+@app.route('/api/messages/stats')
+def api_messages_stats():
+    """Per-lane counts + an actionable (non-noise/sub, unread, active) badge."""
+    cards, source = _collect_messages(limit=80)
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    active = [c for c in cards if not c["archived"]
+              and not (c["snoozed_until"] and c["snoozed_until"] > now_iso)]
+    counts = {l["id"]: 0 for l in MESSAGE_LANES}
+    for c in active:
+        counts[c["lane"]] = counts.get(c["lane"], 0) + 1
+    actionable_lanes = {l["id"] for l in MESSAGE_LANES if l["actionable"]}
+    actionable = sum(1 for c in active
+                     if c["lane"] in actionable_lanes and c["unread"])
+    return jsonify({
+        "status": "ok",
+        "counts": counts,
+        "total": len(active),
+        "actionable": actionable,
+        "source": source,
+        "lanes": MESSAGE_LANES,
+    })
+
+
+@app.route('/api/messages/<thread_id>')
+def api_message_thread(thread_id):
+    """Full thread for a message. Pulls the whole Gmail thread when linked,
+    otherwise returns the single cached message body."""
+    rules = _load_message_rules()
+    state = _load_message_state()
+    creds = _google_credentials()
+    if creds is not None:
+        try:
+            from googleapiclient.discovery import build
+            svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+            thread = svc.users().threads().get(
+                userId="me", id=thread_id, format="full").execute()
+            out = []
+            for msg in thread.get("messages", []):
+                headers = {h["name"].lower(): h["value"]
+                           for h in msg.get("payload", {}).get("headers", [])}
+                body = _extract_gmail_body(msg.get("payload", {}))
+                ts = msg.get("internalDate")
+                try:
+                    ts_iso = (datetime.fromtimestamp(int(ts) / 1000).isoformat()
+                              if ts else headers.get("date", ""))
+                except Exception:
+                    ts_iso = headers.get("date", "")
+                out.append({
+                    "id": msg.get("id"),
+                    "sender": headers.get("from", "unknown"),
+                    "to": headers.get("to", ""),
+                    "subject": headers.get("subject", "(no subject)"),
+                    "timestamp": ts_iso,
+                    "body": body or (msg.get("snippet") or ""),
+                    "snippet": msg.get("snippet", ""),
+                })
+            return jsonify({"status": "ok", "thread_id": thread_id,
+                            "messages": out, "source": "gmail"})
+        except Exception as e:
+            # fall through to cache on any API error
+            pass
+    # Cache fallback — find by id/thread.
+    for r in _load_cached_messages():
+        if str(_message_id(r)) == str(thread_id) or str(r.get("thread_id")) == str(thread_id):
+            card = _normalize_message(r, rules, state)
+            return jsonify({"status": "ok", "thread_id": thread_id, "messages": [{
+                "id": card["id"], "sender": card["sender"],
+                "subject": card["subject"], "timestamp": card["timestamp"],
+                "body": r.get("body") or card["snippet"], "snippet": card["snippet"],
+            }], "source": "cache"})
+    return jsonify({"status": "not_found", "thread_id": thread_id, "messages": []}), 404
+
+
+def _extract_gmail_body(payload):
+    """Recursively pull a text/plain (fallback text/html-stripped) body."""
+    if not isinstance(payload, dict):
+        return ""
+    mime = payload.get("mimeType", "")
+    body = payload.get("body", {})
+    data = body.get("data")
+    if data and mime == "text/plain":
+        try:
+            return base64.urlsafe_b64decode(data + "===").decode("utf-8", "ignore")
+        except Exception:
+            return ""
+    # Walk parts; prefer plain, keep html as a fallback.
+    html_fallback = ""
+    for part in payload.get("parts", []) or []:
+        txt = _extract_gmail_body(part)
+        if txt:
+            if part.get("mimeType") == "text/plain":
+                return txt
+            html_fallback = html_fallback or txt
+    if not html_fallback and data and mime == "text/html":
+        try:
+            raw = base64.urlsafe_b64decode(data + "===").decode("utf-8", "ignore")
+            html_fallback = re.sub(r"<[^>]+>", " ", raw)
+        except Exception:
+            pass
+    return re.sub(r"[ \t]+", " ", html_fallback).strip() if html_fallback else ""
+
+
+@app.route('/api/messages/classify', methods=['POST'])
+def api_messages_classify():
+    """Manually reclassify a message into a lane, persisting an override so it
+    sticks across refreshes. Body: {id, lane}."""
+    data = request.get_json(silent=True) or {}
+    mid = str(data.get("id") or "").strip()
+    lane = str(data.get("lane") or "").strip().lower()
+    if not mid or lane not in MESSAGE_LANE_IDS:
+        return jsonify({"status": "error",
+                        "message": "id and a valid lane are required"}), 400
+    with _MESSAGE_LOCK:
+        # Persist a lane override onto the cached message so reclassification
+        # survives the next live fetch (overrides are honored in _normalize).
+        cached = _load_cached_messages()
+        found = False
+        for r in cached:
+            if str(_message_id(r)) == mid:
+                r["lane"] = lane
+                found = True
+                break
+        if found:
+            _cache_messages(cached)
+        # Also record in state for messages not in cache (live-only).
+        state = _load_message_state()
+        st = state.get(mid, {})
+        st["lane_override"] = lane
+        state[mid] = st
+        _save_message_state(state)
+    return jsonify({"status": "ok", "id": mid, "lane": lane})
+
+
+@app.route('/api/messages/action', methods=['POST'])
+def api_messages_action():
+    """Archive / snooze / flag / mark-read a message. Body: {id, action,
+    until?(iso)}. action in archive|unarchive|snooze|unsnooze|flag|unflag|read|unread."""
+    data = request.get_json(silent=True) or {}
+    mid = str(data.get("id") or "").strip()
+    action = str(data.get("action") or "").strip().lower()
+    if not mid or not action:
+        return jsonify({"status": "error", "message": "id and action required"}), 400
+    with _MESSAGE_LOCK:
+        state = _load_message_state()
+        st = state.get(mid, {})
+        if action == "archive":
+            st["archived"] = True
+        elif action == "unarchive":
+            st["archived"] = False
+        elif action == "snooze":
+            st["snoozed_until"] = data.get("until") or (
+                datetime.now() + timedelta(hours=4)).isoformat(timespec="seconds")
+        elif action == "unsnooze":
+            st["snoozed_until"] = ""
+        elif action == "flag":
+            st["flagged"] = True
+        elif action == "unflag":
+            st["flagged"] = False
+        elif action == "read":
+            st["read"] = True
+        elif action == "unread":
+            st["read"] = False
+        else:
+            return jsonify({"status": "error", "message": f"unknown action {action}"}), 400
+        state[mid] = st
+        _save_message_state(state)
+    return jsonify({"status": "ok", "id": mid, "action": action, "state": st})
+
+
+@app.route('/api/messages/draft', methods=['POST'])
+def api_messages_draft():
+    """Generate a reply draft with Claude, grounded in vault/wiki context.
+    Body: {id?, sender?, subject?, snippet?, body?, instructions?}."""
+    data = request.get_json(silent=True) or {}
+    sender = data.get("sender") or ""
+    subject = data.get("subject") or ""
+    snippet = data.get("snippet") or data.get("body") or ""
+    instructions = (data.get("instructions") or "").strip()
+    lane = (data.get("lane") or "").strip()
+    if not (sender or subject or snippet):
+        return jsonify({"status": "error",
+                        "message": "Provide at least sender/subject/snippet"}), 400
+    lane_hint = {
+        "coparent": ("This is co-parenting correspondence. Be calm, factual, "
+                     "child-focused, businesslike and brief. Avoid emotional "
+                     "language; stick to logistics and the child's interests."),
+        "career": ("This is career/recruiting correspondence. Be warm, "
+                   "professional, concise, and enthusiastic without overselling."),
+        "finance": "This is financial correspondence. Be precise and formal.",
+        "innex": "This is INNEX Energy business correspondence. Be professional.",
+        "futurespeak": "This is a collaborator/dev message. Be technical and direct.",
+        "family": "This is family correspondence. Be warm and personal.",
+    }.get(lane, "")
+    prompt = (
+        "Draft a reply to the email below. Return ONLY the reply body — no "
+        "subject line, no preamble, no sign-off placeholder beyond a natural "
+        "closing.\n\n"
+        f"{lane_hint}\n\n"
+        f"From: {sender}\nSubject: {subject}\n\n{snippet}\n\n"
+        + (f"Extra instructions from the user: {instructions}\n" if instructions else "")
+    )
+    try:
+        system = _get_friday_system_prompt(keywords=subject + " " + snippet,
+                                           workspace="draft")
+        draft = _call_claude([{"role": "user", "content": prompt}],
+                             system=system, max_tokens=1200)
+        return jsonify({"status": "ok", "draft": draft})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════
+#  CALENDAR — "Friday's Time Intelligence"
+#  Today timeline with gap analysis + Friday annotations, a 7-day week
+#  strip, on-demand prep cards, and natural-language quick-add. Live
+#  events come from the Calendar API (read-only) when linked; locally
+#  created quick-add events are merged from
+#  ~/.friday/calendar/local_events.json. NO time-analytics feature
+#  (explicitly excluded).
+# ═══════════════════════════════════════════════════════════════
+CALENDAR_DIR = FRIDAY_DIR / "calendar"
+CAL_LOCAL_FILE = CALENDAR_DIR / "local_events.json"
+CAL_ANNOTATIONS_FILE = CALENDAR_DIR / "annotations.json"
+CAL_PREP_FILE = CALENDAR_DIR / "prep_cache.json"
+_CALENDAR_LOCK = threading.Lock()
+
+# Heuristic custody/career detection keywords (no PII in source — names live in
+# the user's local calendar rules if they want finer control later).
+_CUSTODY_KW = ["libby", "custody", "pickup", "drop off", "drop-off", "exchange",
+               "parenting time", "with dad", "with mom"]
+_CAREER_KW = ["interview", "screen", "recruiter", "onsite", "hiring", "panel",
+              "coffee chat", "phone screen", "1:1 with"]
+
+
+def _load_local_events():
+    try:
+        if CAL_LOCAL_FILE.exists():
+            data = json.loads(CAL_LOCAL_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [e for e in data if isinstance(e, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def _save_local_events(events):
+    CALENDAR_DIR.mkdir(parents=True, exist_ok=True)
+    CAL_LOCAL_FILE.write_text(json.dumps(events, indent=2), encoding="utf-8")
+    return events
+
+
+def _fetch_calendar_range(start, end):
+    """Live Calendar events in [start, end) as dicts incl. stable id.
+    Returns [] (not an error sentinel) when Google isn't linked, so callers can
+    merge with local events transparently."""
+    creds = _google_credentials()
+    if not creds:
+        return []
+    try:
+        from googleapiclient.discovery import build
+        svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        resp = svc.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True, orderBy="startTime", maxResults=250,
+        ).execute()
+        out = []
+        for ev in resp.get("items", []):
+            s, e = ev.get("start", {}), ev.get("end", {})
+            out.append({
+                "id": ev.get("id", ""),
+                "title": ev.get("summary", "(untitled)"),
+                "start_time": s.get("dateTime") or s.get("date") or "",
+                "end_time": e.get("dateTime") or e.get("date") or "",
+                "all_day": bool(s.get("date") and not s.get("dateTime")),
+                "location": ev.get("location", ""),
+                "attendees": [a.get("email", "") for a in ev.get("attendees", [])
+                              if a.get("email")],
+                "description": (ev.get("description") or "").strip()[:1000],
+                "html_link": ev.get("htmlLink", ""),
+                "source": "google",
+            })
+        return out
+    except Exception:
+        return []
+
+
+def _parse_dt(s):
+    """Best-effort parse of an ISO datetime or date string to a datetime."""
+    if not s:
+        return None
+    try:
+        txt = str(s)
+        if len(txt) == 10:  # date only
+            return datetime.fromisoformat(txt)
+        return datetime.fromisoformat(txt.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        try:
+            return datetime.fromisoformat(str(s)[:19])
+        except Exception:
+            return None
+
+
+def _classify_event(ev):
+    """Tag an event as custody / career / normal from its text."""
+    hay = (ev.get("title", "") + " " + ev.get("description", "") + " " +
+           ev.get("location", "")).lower()
+    if any(k in hay for k in _CUSTODY_KW):
+        return "custody"
+    if any(k in hay for k in _CAREER_KW):
+        return "career"
+    return "normal"
+
+
+def _events_for_day(target_date):
+    """All events (Google + local) intersecting the given date, time-sorted."""
+    start = datetime(target_date.year, target_date.month, target_date.day)
+    end = start + timedelta(days=1)
+    events = _fetch_calendar_range(start, end)
+    # Merge local quick-add events whose start falls on this day.
+    for le in _load_local_events():
+        sdt = _parse_dt(le.get("start_time"))
+        if sdt and start <= sdt < end:
+            events.append(le)
+    # De-dup by id, then sort by start.
+    seen, merged = set(), []
+    for ev in events:
+        k = ev.get("id") or (ev.get("title", "") + ev.get("start_time", ""))
+        if k in seen:
+            continue
+        seen.add(k)
+        ev = dict(ev)
+        ev["type"] = ev.get("type") or _classify_event(ev)
+        merged.append(ev)
+    merged.sort(key=lambda e: str(e.get("start_time") or ""))
+    return merged
+
+
+def _gap_analysis(events, day):
+    """Find free blocks between 6 AM and midnight, label them heuristically."""
+    day_start = datetime(day.year, day.month, day.day, 6, 0)
+    day_end = datetime(day.year, day.month, day.day, 23, 59)
+    # Build busy intervals from timed (non all-day) events.
+    busy = []
+    for ev in events:
+        if ev.get("all_day"):
+            continue
+        s = _parse_dt(ev.get("start_time"))
+        e = _parse_dt(ev.get("end_time")) or (s + timedelta(hours=1) if s else None)
+        if s and e and e > s:
+            busy.append((max(s, day_start), min(e, day_end)))
+    busy.sort()
+    gaps, cursor = [], day_start
+    for s, e in busy:
+        if s > cursor:
+            gaps.append((cursor, s))
+        cursor = max(cursor, e)
+    if cursor < day_end:
+        gaps.append((cursor, day_end))
+
+    def _label(gs, ge):
+        mins = (ge - gs).total_seconds() / 60.0
+        # Lunch if the gap straddles noon and is reasonable.
+        if gs.hour <= 12 <= ge.hour and 30 <= mins <= 150:
+            return "Lunch"
+        if mins < 30:
+            return "Quick break"
+        if mins <= 60:
+            return "Buffer"
+        if mins >= 120:
+            return "Deep work window"
+        return "Open block"
+
+    out = []
+    for gs, ge in gaps:
+        mins = (ge - gs).total_seconds() / 60.0
+        if mins < 20:  # ignore tiny slivers
+            continue
+        out.append({
+            "start_time": gs.isoformat(timespec="minutes"),
+            "end_time": ge.isoformat(timespec="minutes"),
+            "minutes": int(mins),
+            "label": _label(gs, ge),
+        })
+    return out
+
+
+def _load_json_dict(path):
+    try:
+        if path.exists():
+            d = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(d, dict):
+                return d
+    except Exception:
+        pass
+    return {}
+
+
+def _save_json_dict(path, data):
+    CALENDAR_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return data
+
+
+def _day_annotation(day, events):
+    """A one-line Friday intro for the day, cached per-date (lightweight Claude)."""
+    key = day.isoformat()
+    cache = _load_json_dict(CAL_ANNOTATIONS_FILE)
+    if key in cache:
+        return cache[key]
+    if not events:
+        note = "Clear day — a blank canvas. Good for deep work or rest."
+    else:
+        try:
+            titles = "; ".join(f"{e.get('title','')} ({e.get('type','normal')})"
+                               for e in events[:8])
+            system = _get_friday_system_prompt(keywords=titles, workspace="chat")
+            note = _call_claude([{"role": "user", "content": (
+                "In ONE short sentence (max 22 words), give me a warm, sharp "
+                "heads-up about my day given these events. No preamble.\n\n"
+                + titles)}], system=system, max_tokens=120).strip().strip('"')
+        except Exception:
+            note = f"{len(events)} event{'s' if len(events) != 1 else ''} today. You've got this."
+    cache[key] = note
+    try:
+        _save_json_dict(CAL_ANNOTATIONS_FILE, cache)
+    except Exception:
+        pass
+    return note
+
+
+def _detect_conflicts(events):
+    """Return a set of event ids that overlap another timed event."""
+    timed = []
+    for ev in events:
+        if ev.get("all_day"):
+            continue
+        s = _parse_dt(ev.get("start_time"))
+        e = _parse_dt(ev.get("end_time")) or (s + timedelta(hours=1) if s else None)
+        if s and e:
+            timed.append((s, e, ev.get("id") or ev.get("title", "")))
+    conflicted = set()
+    for i in range(len(timed)):
+        for j in range(i + 1, len(timed)):
+            s1, e1, id1 = timed[i]
+            s2, e2, id2 = timed[j]
+            if s1 < e2 and s2 < e1:
+                conflicted.add(id1)
+                conflicted.add(id2)
+    return conflicted
+
+
+def _cached_messages_by_email():
+    """{lower-email: [{subject, id, thread_id}]} from the message cache.
+
+    Powers calendar↔email cross-references without a live Gmail round-trip.
+    """
+    out = {}
+    rules = _load_message_rules()
+    state = _load_message_state()
+    for raw in _load_cached_messages():
+        card = _normalize_message(raw, rules, state)
+        addr = (card.get("sender_email") or "").lower()
+        if not addr:
+            continue
+        out.setdefault(addr, []).append({
+            "subject": card["subject"], "id": card["id"],
+            "thread_id": card["thread_id"], "lane": card["lane"],
+        })
+    return out
+
+
+def _enrich_events(events):
+    """Attach conflict flags, custody countdowns, and related emails."""
+    conflicts = _detect_conflicts(events)
+    by_email = _cached_messages_by_email()
+    now = datetime.now()
+    for ev in events:
+        # Cross-reference: emails from any attendee of this event.
+        related = []
+        for a in ev.get("attendees", []):
+            related.extend(by_email.get((a or "").lower(), []))
+        ev["related_emails"] = related[:5]
+        eid = ev.get("id") or ev.get("title", "")
+        ev["conflict"] = eid in conflicts
+        ev["prep_available"] = ev.get("type") == "career" or bool(
+            [a for a in ev.get("attendees", []) if a])
+        if ev.get("type") == "custody":
+            s = _parse_dt(ev.get("start_time"))
+            if s and s > now:
+                delta = s - now
+                h = int(delta.total_seconds() // 3600)
+                m = int((delta.total_seconds() % 3600) // 60)
+                ev["countdown"] = f"{h}h {m}m"
+                ev["countdown_target"] = s.isoformat()
+    return events
+
+
+@app.route('/api/calendar/today')
+def api_calendar_today():
+    """Today's events + gap analysis + Friday's annotation."""
+    today = date.today()
+    events = _enrich_events(_events_for_day(today))
+    gaps = _gap_analysis(events, today)
+    return jsonify({
+        "status": "ok",
+        "date": today.isoformat(),
+        "events": events,
+        "gaps": gaps,
+        "annotation": _day_annotation(today, events),
+        "google_connected": _google_credentials() is not None,
+    })
+
+
+@app.route('/api/calendar/tomorrow')
+def api_calendar_tomorrow():
+    """Condensed preview of tomorrow's events, flagging prep-needed items."""
+    tmrw = date.today() + timedelta(days=1)
+    events = _enrich_events(_events_for_day(tmrw))
+    return jsonify({
+        "status": "ok",
+        "date": tmrw.isoformat(),
+        "events": events,
+        "needs_prep": [e for e in events if e.get("prep_available")],
+    })
+
+
+@app.route('/api/calendar/week')
+def api_calendar_week():
+    """7-day overview with per-day density + custody/interview flags."""
+    start = date.today()
+    days = []
+    for i in range(7):
+        d = start + timedelta(days=i)
+        evs = _events_for_day(d)
+        timed = [e for e in evs if not e.get("all_day")]
+        density = "light" if len(timed) <= 1 else "medium" if len(timed) <= 3 else "heavy"
+        days.append({
+            "date": d.isoformat(),
+            "weekday": d.strftime("%a"),
+            "day": d.day,
+            "count": len(evs),
+            "density": density,
+            "has_custody": any(e.get("type") == "custody" for e in evs),
+            "has_career": any(e.get("type") == "career" for e in evs),
+            "is_today": i == 0,
+        })
+    return jsonify({"status": "ok", "days": days})
+
+
+@app.route('/api/calendar/day/<day_str>')
+def api_calendar_day(day_str):
+    """Events for an arbitrary YYYY-MM-DD (week-strip navigation)."""
+    try:
+        d = date.fromisoformat(day_str)
+    except Exception:
+        return jsonify({"status": "error", "message": "use YYYY-MM-DD"}), 400
+    events = _enrich_events(_events_for_day(d))
+    return jsonify({
+        "status": "ok", "date": d.isoformat(), "events": events,
+        "gaps": _gap_analysis(events, d),
+        "annotation": _day_annotation(d, events),
+    })
+
+
+@app.route('/api/calendar/event/<event_id>')
+def api_calendar_event(event_id):
+    """Single event detail (searches today + the next 7 days + local)."""
+    for i in range(8):
+        d = date.today() + timedelta(days=i)
+        for ev in _enrich_events(_events_for_day(d)):
+            if str(ev.get("id")) == str(event_id):
+                return jsonify({"status": "ok", "event": ev})
+    return jsonify({"status": "not_found", "event_id": event_id}), 404
+
+
+@app.route('/api/calendar/prep/<event_id>', methods=['POST'])
+def api_calendar_prep(event_id):
+    """Generate (and cache) a Friday prep card for an event with attendees."""
+    # Locate the event across the upcoming week.
+    target = None
+    for i in range(8):
+        d = date.today() + timedelta(days=i)
+        for ev in _events_for_day(d):
+            if str(ev.get("id")) == str(event_id):
+                target = ev
+                break
+        if target:
+            break
+    if not target:
+        return jsonify({"status": "not_found", "event_id": event_id}), 404
+
+    cache = _load_json_dict(CAL_PREP_FILE)
+    force = (request.get_json(silent=True) or {}).get("refresh")
+    if not force and event_id in cache:
+        return jsonify({"status": "ok", "prep": cache[event_id], "cached": True})
+
+    attendees = ", ".join(target.get("attendees", [])) or "no external attendees listed"
+    prompt = (
+        "Build a concise meeting prep card. Use this exact markdown structure:\n"
+        "**Attendees & context** — who they are and our relationship\n"
+        "**Last interaction** — what I last discussed with them (if known)\n"
+        "**Talking points** — 3-4 sharp bullets\n"
+        "**Watch-outs** — anything to be careful about\n\n"
+        f"Event: {target.get('title')}\n"
+        f"When: {target.get('start_time')}\n"
+        f"Location/link: {target.get('location') or 'n/a'}\n"
+        f"Attendees: {attendees}\n"
+        f"Notes: {target.get('description') or 'none'}\n"
+    )
+    try:
+        system = _get_friday_system_prompt(
+            keywords=target.get("title", "") + " " + attendees, workspace="task")
+        prep = _call_claude([{"role": "user", "content": prompt}],
+                            system=system, max_tokens=1400)
+        cache[event_id] = prep
+        try:
+            _save_json_dict(CAL_PREP_FILE, cache)
+        except Exception:
+            pass
+        return jsonify({"status": "ok", "prep": prep, "cached": False})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/calendar/quick-add', methods=['POST'])
+def api_calendar_quick_add():
+    """Natural-language event creation. Parses with Claude, then writes to
+    Google Calendar if a write scope is available, else stores locally so the
+    event still appears on the timeline. Body: {text}."""
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"status": "error", "message": "text required"}), 400
+    now = datetime.now()
+    prompt = (
+        "Parse this into a calendar event. Return ONLY a JSON object with keys: "
+        "title (string), start_time (ISO 8601 local, no timezone), end_time "
+        "(ISO 8601 local; default 1 hour after start), location (string, may be "
+        "empty), attendees (array of strings, may be empty). Assume the current "
+        f"date/time is {now.isoformat(timespec='minutes')}. If a weekday is "
+        "named, pick the next future occurrence. Return nothing but the JSON.\n\n"
+        f"Request: {text}"
+    )
+    try:
+        system = _get_friday_system_prompt(keywords=text, workspace="task")
+        raw = _call_claude([{"role": "user", "content": prompt}],
+                           system=system, max_tokens=400)
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else {}
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"parse failed: {e}"}), 500
+
+    title = (parsed.get("title") or text)[:200]
+    start_time = parsed.get("start_time") or ""
+    end_time = parsed.get("end_time") or ""
+    sdt = _parse_dt(start_time)
+    if not end_time and sdt:
+        end_time = (sdt + timedelta(hours=1)).isoformat(timespec="minutes")
+
+    event = {
+        "id": "local-" + uuid.uuid4().hex[:12],
+        "title": title,
+        "start_time": start_time,
+        "end_time": end_time,
+        "location": parsed.get("location") or "",
+        "attendees": [a for a in (parsed.get("attendees") or []) if a],
+        "description": f"Created via Quick Add: \"{text}\"",
+        "all_day": False,
+        "source": "local",
+    }
+    event["type"] = _classify_event(event)
+
+    # Try Google insert only if a write scope was granted (read-only by default,
+    # so this normally no-ops and we fall back to local — never silently expand
+    # the OAuth consent the user agreed to).
+    created_in_google = False
+    if "https://www.googleapis.com/auth/calendar.events" in GOOGLE_SCOPES:
+        creds = _google_credentials()
+        if creds is not None and sdt:
+            try:
+                from googleapiclient.discovery import build
+                svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+                body = {
+                    "summary": title,
+                    "location": event["location"],
+                    "description": event["description"],
+                    "start": {"dateTime": sdt.isoformat()},
+                    "end": {"dateTime": (_parse_dt(end_time) or sdt + timedelta(hours=1)).isoformat()},
+                }
+                gev = svc.events().insert(calendarId="primary", body=body).execute()
+                event["id"] = gev.get("id", event["id"])
+                event["source"] = "google"
+                created_in_google = True
+            except Exception:
+                created_in_google = False
+
+    if not created_in_google:
+        with _CALENDAR_LOCK:
+            events = _load_local_events()
+            events.append(event)
+            _save_local_events(events)
+    return jsonify({"status": "ok", "event": event,
+                    "created_in_google": created_in_google})
+
+
+# ═══════════════════════════════════════════════════════════════
 #  NEWS SOURCE TRUST + BRIEFING PREFERENCES
 #  Server-side controls that let the user ban/boost news sources and
 #  reshape the briefing. State lives in flat JSON under ~/.friday so it
@@ -3323,6 +4457,8 @@ def _google_section_error(items):
 BANNED_SOURCES_FILE = FRIDAY_DIR / "banned_sources.json"
 BOOSTED_SOURCES_FILE = FRIDAY_DIR / "boosted_sources.json"
 BRIEFING_PREFS_FILE = FRIDAY_DIR / "briefing_prefs.json"
+READ_LATER_FILE = FRIDAY_DIR / "read_later.json"
+FRONT_PAGES_DIR = FRIDAY_DIR / "front_pages"
 
 # Category metadata: display color key (matched in the UI), the per-category RSS
 # feeds that populate the magazine feed, and a search query used only for the
@@ -3335,6 +4471,11 @@ BRIEFING_PREFS_FILE = FRIDAY_DIR / "briefing_prefs.json"
 # feeds scoped to that publisher's domain — feedparser exposes the real source
 # domain on each entry, so ban/boost and trust badges still resolve correctly.
 _GOOGLE_NEWS = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q="
+# Every feed below was verified with feedparser (HTTP 200/301 + ≥2 real entries)
+# before inclusion. Outlets that 403 their direct feed (Politico's picks feed) or
+# 301-to-empty (Austin Chronicle) are pulled via a Google-News source-scoped
+# query instead — _normalize_entry resolves the real publisher domain off each
+# entry, so ban/boost + trust badges still work for those.
 NEWS_CATEGORIES = {
     "AI/Tech": {
         "color": "tech",
@@ -3345,6 +4486,12 @@ NEWS_CATEGORIES = {
             "https://www.theverge.com/rss/index.xml",
             "https://www.platformer.news/rss/",
             "https://stratechery.com/feed/",
+            "https://www.wired.com/feed/rss",
+            "https://www.technologyreview.com/feed/",
+            "https://techcrunch.com/feed/",
+            "https://www.404media.co/rss/",
+            "https://restofworld.org/feed/latest/",
+            "https://www.engadget.com/rss.xml",
             # The Brutalist Report (brutalist.report) was requested, but it
             # exposes no public RSS/Atom feed — every feed route 404s and it
             # publishes no original articles (it's an aggregator). Its Tech
@@ -3360,6 +4507,16 @@ NEWS_CATEGORIES = {
             "https://feeds.npr.org/1001/rss.xml",
             "https://feeds.npr.org/1014/rss.xml",
             "https://thehill.com/news/feed/",
+            # Politico's politicopicks feed 403s; politics-news.xml serves clean.
+            "https://rss.politico.com/politics-news.xml",
+            "https://www.theguardian.com/us-news/rss",
+            "https://www.propublica.org/feeds/propublica/main",
+            "https://theintercept.com/feed/?lang=en",
+            "https://talkingpointsmemo.com/feed",
+            "https://www.motherjones.com/feed/",
+            "https://www.theatlantic.com/feed/all/",
+            "https://slate.com/feeds/all.rss",
+            "https://www.salon.com/feed/",
             _GOOGLE_NEWS + "when:24h+source:apnews.com",
             _GOOGLE_NEWS + "when:24h+source:reuters.com",
         ],
@@ -3369,8 +4526,12 @@ NEWS_CATEGORIES = {
         "query": "Austin Texas local news today",
         "feeds": [
             "https://www.austinmonitor.com/feed/",
+            "https://www.texastribune.org/feeds/main/",
+            "https://www.texasmonthly.com/feed/",
             _GOOGLE_NEWS + "Austin+Texas+when:24h",
             _GOOGLE_NEWS + "when:24h+source:kut.org",
+            # Austin Chronicle 301s its RSS to an empty doc — source-scope it.
+            _GOOGLE_NEWS + "source:austinchronicle.com+when:7d",
         ],
     },
     "Business": {
@@ -3380,6 +4541,29 @@ NEWS_CATEGORIES = {
             "https://api.axios.com/feed/",
             "https://feeds.bloomberg.com/markets/news.rss",
             "https://feeds.bloomberg.com/technology/news.rss",
+            "https://fortune.com/feed/",
+            "https://www.forbes.com/business/feed/",
+            "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+            "https://www.businessinsider.com/rss",
+            "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+        ],
+    },
+    "Science": {
+        "color": "science",
+        "query": "latest science research news today",
+        "feeds": [
+            "https://www.nature.com/nature.rss",
+            "https://www.scientificamerican.com/platform/syndication/rss/",
+            "https://www.carbonbrief.org/feed/",
+        ],
+    },
+    "Media": {
+        "color": "media",
+        "query": "journalism and media industry news today",
+        "feeds": [
+            "https://www.niemanlab.org/feed/",
+            "https://www.cjr.org/feed",
+            "https://www.poynter.org/feed/",
         ],
     },
 }
@@ -3401,6 +4585,13 @@ _TRUSTED_DOMAINS = {
     "arstechnica.com", "theverge.com", "wired.com", "nature.com",
     "wsj.com", "nytimes.com", "bloomberg.com", "ft.com", "economist.com",
     "techcrunch.com", "axios.com", "propublica.org", "statnews.com",
+    # Outlets added with the expanded feed set (well-established newsrooms).
+    "technologyreview.com", "404media.co", "restofworld.org", "engadget.com",
+    "theguardian.com", "politico.com", "theintercept.com", "talkingpointsmemo.com",
+    "motherjones.com", "theatlantic.com", "fortune.com", "cnbc.com",
+    "marketwatch.com", "businessinsider.com", "texastribune.org",
+    "texasmonthly.com", "austinmonitor.com", "kut.org", "scientificamerican.com",
+    "carbonbrief.org", "niemanlab.org", "cjr.org", "poynter.org",
 }
 _LOW_TRUST_DOMAINS = {
     "infowars.com", "breitbart.com", "dailybuzzlive.com", "naturalnews.com",
@@ -10541,6 +11732,18 @@ _register_default_daily_jobs()
 threading.Thread(target=_daily_scheduler_loop, daemon=True).start()
 
 
+def _trigger_message_cache():
+    """Keep the Comms Center cache warm: pull + classify live Gmail so the
+    Messages workspace and its badge work even before the UI is opened. No-ops
+    quietly when Google isn't linked (the cache then just isn't refreshed)."""
+    if _google_credentials() is None:
+        return
+    try:
+        _collect_messages(limit=40)  # side effect: refreshes cache.json
+    except Exception as e:
+        print(f"  [message-cache] {e}")
+
+
 def _notification_trigger_loop():
     """Single background tick that runs all triggers safely."""
     if not _notif_engine:
@@ -10549,6 +11752,7 @@ def _notification_trigger_loop():
         ("skill_promotions", _trigger_skill_promotions),
         ("ofw", _trigger_ofw_messages),
         ("gmail", _trigger_gmail_signals),
+        ("message_cache", _trigger_message_cache),
     ]
     print("  [FRIDAY] Notification trigger loop started.")
     # Wait a bit so the server can finish coming up

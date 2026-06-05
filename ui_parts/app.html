@@ -3,6 +3,8 @@ const{useState,useEffect,useRef,useCallback}=React;
 const DOCK_GROUPS=[
   {name:'Life',items:[
     {id:'home',ico:'🏠',label:'Home'},
+    {id:'messages',ico:'💬',label:'Messages'},
+    {id:'calendar',ico:'📅',label:'Calendar'},
     {id:'family',ico:'👪',label:'Family'},
     {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},
     {id:'health',ico:'❤️',label:'Health'},
@@ -1454,6 +1456,300 @@ function BriefPreview({b,onFull}){
   </div>);
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  MESSAGES — "Friday's Comms Center"
+//  Smart-triage inbox. Every message is auto-classified server-side into
+//  lanes; this UI presents lane tabs, glassmorphism cards, inline thread
+//  expansion, Friday-drafted replies, and archive/snooze/flag actions.
+// ═══════════════════════════════════════════════════════════════
+const MSG_LANE_META={
+  all:{label:'All',ico:'📥'},coparent:{label:'Co-Parent',ico:'👨‍👩‍👧'},
+  career:{label:'Career',ico:'💼'},finance:{label:'Finance',ico:'💰'},
+  innex:{label:'INNEX',ico:'⚡'},futurespeak:{label:'FutureSpeak',ico:'🚀'},
+  family:{label:'Family',ico:'👪'},subscriptions:{label:'Subscriptions',ico:'📰'},
+  noise:{label:'Noise',ico:'🔇'},
+};
+function fmtWhen(ts){
+  if(!ts)return'';const d=new Date(ts);if(isNaN(d))return'';
+  const now=new Date();const diff=(now-d)/1000;
+  if(diff<60)return'now';if(diff<3600)return Math.floor(diff/60)+'m';
+  if(diff<86400&&now.getDate()===d.getDate())return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+  if(diff<604800)return d.toLocaleDateString([],{weekday:'short'});
+  return d.toLocaleDateString([],{month:'short',day:'numeric'});
+}
+function laneStyle(lane){return {'--lc':`var(--lane-${lane||'noise'})`};}
+
+function MessagesWS(){
+  const[lane,setLane]=useState('all');
+  const[msgs,setMsgs]=useState([]);const[loading,setLoading]=useState(true);const[source,setSource]=useState('');
+  const[stats,setStats]=useState({counts:{},actionable:0});const[lanes,setLanes]=useState([]);
+  const[expanded,setExpanded]=useState(null);const[thread,setThread]=useState(null);const[threadLoad,setThreadLoad]=useState(false);
+  const[search,setSearch]=useState('');const[filterUnread,setFilterUnread]=useState(false);const[filterAttach,setFilterAttach]=useState(false);
+  const[draftFor,setDraftFor]=useState(null);const[draftText,setDraftText]=useState('');const[draftBusy,setDraftBusy]=useState(false);const[draftInstr,setDraftInstr]=useState('');
+  const[toast,setToast]=useState('');
+
+  const loadStats=()=>fetch('/api/messages/stats').then(r=>r.json()).then(d=>{setStats(d);if(d.lanes)setLanes(d.lanes);window._fridayMsgActionable=d.actionable||0;}).catch(()=>{});
+  const loadMsgs=()=>{setLoading(true);const q=lane==='all'?'':('?lane='+lane);fetch('/api/messages'+q).then(r=>r.json()).then(d=>{setMsgs(d.messages||[]);setSource(d.source||'');if(d.lanes)setLanes(d.lanes);setLoading(false)}).catch(()=>setLoading(false))};
+  useEffect(()=>{loadStats()},[]);
+  useEffect(()=>{loadMsgs()},[lane]);
+
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2200)};
+  const openThread=(m)=>{if(expanded===m.id){setExpanded(null);setThread(null);return}setExpanded(m.id);setThread(null);setThreadLoad(true);setDraftFor(null);
+    if(m.unread)act(m,'read',true);
+    fetch('/api/messages/'+m.thread_id).then(r=>r.json()).then(d=>{setThread(d.messages||[]);setThreadLoad(false)}).catch(()=>setThreadLoad(false))};
+  const act=async(m,action,silent)=>{try{await fetch('/api/messages/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,action})});
+    if(action==='archive'){setMsgs(x=>x.filter(z=>z.id!==m.id));if(expanded===m.id){setExpanded(null);setThread(null)}}
+    else setMsgs(x=>x.map(z=>z.id===m.id?{...z,flagged:action==='flag'?true:action==='unflag'?false:z.flagged,unread:action==='read'?false:action==='unread'?true:z.unread}:z));
+    if(!silent)flash(action.charAt(0).toUpperCase()+action.slice(1)+'d');loadStats()}catch(e){}};
+  const reclassify=async(m,newLane)=>{try{await fetch('/api/messages/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,lane:newLane})});setMsgs(x=>x.map(z=>z.id===m.id?{...z,lane:newLane}:z));flash('Moved to '+(MSG_LANE_META[newLane]?.label||newLane));loadStats()}catch(e){}};
+  const draft=async(m)=>{setDraftFor(m.id);setDraftBusy(true);setDraftText('');
+    try{const r=await fetch('/api/messages/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:m.id,sender:m.sender_email||m.sender,subject:m.subject,snippet:m.snippet,lane:m.lane,instructions:draftInstr})});const d=await r.json();setDraftText(d.draft||('[Error: '+(d.message||'draft failed')+']'))}catch(e){setDraftText('[Error generating draft]')}setDraftBusy(false)};
+
+  const laneList=lanes.length?lanes:Object.keys(MSG_LANE_META).filter(k=>k!=='all').map(id=>({id,label:MSG_LANE_META[id].label}));
+  const q=search.trim().toLowerCase();
+  const shown=msgs.filter(m=>{
+    if(filterUnread&&!m.unread)return false;
+    if(filterAttach&&!m.has_attachment)return false;
+    if(q&&!((m.sender||'').toLowerCase().includes(q)||(m.subject||'').toLowerCase().includes(q)||(m.snippet||'').toLowerCase().includes(q)))return false;
+    return true;
+  });
+  // Career pipeline stats from subjects (lightweight heuristic on cached cards).
+  const careerMsgs=(stats.counts?.career||0);
+  const pipeApplied=msgs.filter(m=>/appl/i.test(m.subject||'')).length;
+  const pipeResp=msgs.filter(m=>m.lane==='career').length;
+  const pipeInterview=msgs.filter(m=>/interview|phone screen|onsite/i.test(m.subject||'')).length;
+
+  return(<div className="msg-ws" style={{position:'relative'}}>
+    <FridaySays text={stats.actionable>0?(stats.actionable+' message'+(stats.actionable>1?'s':'')+' need your attention'+(source==='cache'?' · showing cached mail (Gmail not linked live)':source==='empty'?' · no mail cached yet — link Google to populate':'')) :('Inbox triaged into '+laneList.length+' lanes'+(source==='empty'?' · no mail yet — link Google or wait for the next heartbeat':''))}/>
+
+    {/* Lane tabs */}
+    <div className="lane-tabs">
+      {['all',...laneList.map(l=>l.id)].map(id=>{const cnt=id==='all'?(stats.total||0):(stats.counts?.[id]||0);const meta=MSG_LANE_META[id]||{label:id,ico:'•'};
+        return(<div key={id} className={'lane-tab'+(lane===id?' active':'')} style={laneStyle(id)} onClick={()=>setLane(id)}>
+          <span className="lane-dot"></span><span>{meta.ico} {meta.label}</span>{cnt>0&&<span className="lane-count">{cnt}</span>}
+        </div>);
+      })}
+    </div>
+
+    {/* Career pipeline bar */}
+    {(lane==='career'||lane==='all')&&careerMsgs>0&&<div className="msg-pipeline">
+      <div className="pl-stat"><span className="pl-num">{pipeApplied}</span><span className="pl-lbl">Applications</span></div>
+      <span className="pl-arrow">→</span>
+      <div className="pl-stat"><span className="pl-num">{pipeResp}</span><span className="pl-lbl">Responses</span></div>
+      <span className="pl-arrow">→</span>
+      <div className="pl-stat"><span className="pl-num">{pipeInterview}</span><span className="pl-lbl">Interviews</span></div>
+      <div style={{marginLeft:'auto',fontSize:10,color:'#8fb8c8'}}>Career lane · live triage</div>
+    </div>}
+
+    {/* Toolbar + filters */}
+    <div className="msg-toolbar">
+      <div className="msg-filters">
+        <input className="input" style={{fontSize:11,width:200}} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search messages…"/>
+        <span className={'toggle-pill '+(filterUnread?'on':'')} onClick={()=>setFilterUnread(v=>!v)}>Unread</span>
+        <span className={'toggle-pill '+(filterAttach?'on':'')} onClick={()=>setFilterAttach(v=>!v)}>📎 Attachments</span>
+      </div>
+      <div style={{display:'flex',gap:4,alignItems:'center'}}>
+        {toast&&<span style={{fontSize:11,color:'#00d4ff'}}>{toast}</span>}
+        <button className="btn" style={{fontSize:11}} onClick={()=>{loadMsgs();loadStats()}}>↻ Refresh</button>
+      </div>
+    </div>
+
+    {/* Message list */}
+    {loading?<div className="msg-empty">Triaging your inbox…</div>:
+     shown.length===0?<div className="msg-empty">No messages{lane!=='all'?(' in '+(MSG_LANE_META[lane]?.label||lane)):''}{q?' matching “'+search+'”':''}. {source==='empty'?'Link Google or wait for the next heartbeat to populate.':'Try another lane or clear filters.'}</div>:
+     <div className="msg-list">
+       {shown.map(m=>{const open=expanded===m.id;return(
+        <div key={m.id} className={'msg-card'+(m.unread?' unread':'')+(open?' expanded':'')} style={laneStyle(m.lane)} onClick={()=>openThread(m)}>
+          <div className="msg-avatar">{m.initial}</div>
+          <div className="msg-body">
+            <div className="msg-cardtop">
+              <span className="msg-sender">{m.sender}</span>
+              <span className="msg-lane-badge">{MSG_LANE_META[m.lane]?.label||m.lane}</span>
+              {m.flagged&&<span title="Flagged" style={{fontSize:11}}>🚩</span>}
+              {m.has_attachment&&<span title="Attachment" style={{fontSize:11}}>📎</span>}
+              <span className="msg-time">{fmtWhen(m.timestamp)}</span>
+              {m.unread&&<span className="msg-dot-unread"></span>}
+            </div>
+            <div className="msg-subject">{m.subject}</div>
+            <div className="msg-snippet">{m.snippet}</div>
+            {m.related_event&&<div style={{fontSize:10,color:'#a78bfa',marginTop:5,fontStyle:'italic'}}>📅 Related event: {m.related_event.title}{m.related_event.start_time?(' · '+fmtWhen(m.related_event.start_time)):''}</div>}
+
+            {open&&<div onClick={e=>e.stopPropagation()}>
+              {threadLoad?<div style={{fontSize:11,color:'#00d4ff',padding:'8px 0'}}>Loading thread…</div>:
+               thread&&thread.length>0&&<div className="msg-thread">
+                 {thread.map((tm,i)=><div key={i} className="msg-thread-item">
+                   <div className="tm-head"><b style={{color:'#cdd3e0'}}>{tm.sender}</b><span style={{marginLeft:'auto'}}>{fmtWhen(tm.timestamp)}</span></div>
+                   <div className="tm-body">{tm.body||tm.snippet}</div>
+                 </div>)}
+               </div>}
+
+              {/* Actions */}
+              <div className="msg-actions" style={{opacity:1}}>
+                <span className="mini-btn" onClick={()=>draft(m)}>💬 Reply with Friday</span>
+                <span className="mini-btn" onClick={()=>act(m,'archive')}>🗄 Archive</span>
+                <span className="mini-btn" onClick={()=>act(m,'snooze')}>😴 Snooze 4h</span>
+                <span className={'mini-btn'+(m.flagged?' flagged':'')} onClick={()=>act(m,m.flagged?'unflag':'flag')}>{m.flagged?'🚩 Unflag':'🏳 Flag'}</span>
+                <select className="mini-btn" style={{cursor:'pointer'}} value={m.lane} onChange={e=>reclassify(m,e.target.value)} title="Reclassify">
+                  {laneList.map(l=><option key={l.id} value={l.id}>{MSG_LANE_META[l.id]?.label||l.label}</option>)}
+                </select>
+              </div>
+
+              {/* Draft panel */}
+              {draftFor===m.id&&<div className="msg-draft-panel">
+                <div style={{display:'flex',gap:6,marginBottom:6}}>
+                  <input className="input" style={{flex:1,fontSize:11}} value={draftInstr} onChange={e=>setDraftInstr(e.target.value)} placeholder="Optional: how should Friday angle this reply?"/>
+                  <button className="btn" style={{fontSize:11}} onClick={()=>draft(m)} disabled={draftBusy}>{draftBusy?'…':'↻ Regenerate'}</button>
+                </div>
+                {draftBusy&&!draftText?<div style={{fontSize:11,color:'#b794f6'}}>Friday is drafting a reply…</div>:
+                 <><textarea value={draftText} onChange={e=>setDraftText(e.target.value)}/>
+                   <div style={{display:'flex',gap:6,marginTop:6}}>
+                     <button className="btn" style={{fontSize:11}} onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(draftText);flash('Copied draft')}}>📋 Copy</button>
+                     <SendTo content={()=>draftText} dataType="email_reply" emailThreadId={m.thread_id} options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
+                     <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setDraftFor(null)}>Close</button>
+                   </div></>}
+              </div>}
+            </div>}
+          </div>
+        </div>);
+       })}
+     </div>}
+  </div>);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CALENDAR — "Friday's Time Intelligence"
+//  Today timeline (6AM→midnight) with a live now-line, gap labels,
+//  custody countdowns + interview prep badges, a 7-day week strip,
+//  tomorrow preview, and natural-language quick-add.
+// ═══════════════════════════════════════════════════════════════
+const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
+function calY(iso){const d=new Date(iso);if(isNaN(d))return 0;const h=d.getHours()+d.getMinutes()/60;return Math.max(0,(h-CAL_START_HOUR)*CAL_HOUR_PX);}
+function calFmtTime(iso){const d=new Date(iso);if(isNaN(d))return'';return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
+
+function CalendarWS(){
+  const[today,setToday]=useState(null);const[loading,setLoading]=useState(true);
+  const[week,setWeek]=useState([]);const[sel,setSel]=useState(null);// selected date iso (null=today)
+  const[dayData,setDayData]=useState(null);
+  const[tomorrow,setTomorrow]=useState(null);
+  const[now,setNow]=useState(new Date());
+  const[quick,setQuick]=useState('');const[adding,setAdding]=useState(false);
+  const[prepFor,setPrepFor]=useState(null);const[prepText,setPrepText]=useState('');const[prepBusy,setPrepBusy]=useState(false);
+  const[toast,setToast]=useState('');
+  const tlRef=useRef(null);
+
+  const loadToday=()=>fetch('/api/calendar/today').then(r=>r.json()).then(d=>{setToday(d);setLoading(false)}).catch(()=>setLoading(false));
+  const loadWeek=()=>fetch('/api/calendar/week').then(r=>r.json()).then(d=>setWeek(d.days||[])).catch(()=>{});
+  const loadTomorrow=()=>fetch('/api/calendar/tomorrow').then(r=>r.json()).then(setTomorrow).catch(()=>{});
+  const loadDay=(iso)=>fetch('/api/calendar/day/'+iso).then(r=>r.json()).then(setDayData).catch(()=>{});
+  useEffect(()=>{loadToday();loadWeek();loadTomorrow();
+    const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t)},[]);
+
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2400)};
+  const pickDay=(iso,isToday)=>{if(isToday){setSel(null);setDayData(null)}else{setSel(iso);loadDay(iso)}setPrepFor(null)};
+  const quickAdd=async()=>{if(!quick.trim()||adding)return;setAdding(true);
+    try{const r=await fetch('/api/calendar/quick-add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:quick})});const d=await r.json();
+      if(d.status==='ok'){flash((d.created_in_google?'Added to Google Calendar':'Added (stored locally)')+': '+d.event.title);setQuick('');loadToday();loadWeek();loadTomorrow();if(sel)loadDay(sel)}
+      else flash('Could not parse that — try “interview with Coupa Tuesday 2pm”')}
+    catch(e){flash('Quick-add failed')}setAdding(false)};
+  const genPrep=async(ev)=>{if(prepFor===ev.id){setPrepFor(null);return}setPrepFor(ev.id);setPrepBusy(true);setPrepText('');
+    try{const r=await fetch('/api/calendar/prep/'+ev.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();setPrepText(d.prep||('[Error: '+(d.message||'prep failed')+']'))}catch(e){setPrepText('[Error generating prep]')}setPrepBusy(false)};
+
+  const active=sel?dayData:today;
+  const events=(active?.events)||[];
+  const gaps=(active?.gaps)||[];
+  const allDay=events.filter(e=>e.all_day);
+  const timed=events.filter(e=>!e.all_day);
+  const conflicts=timed.filter(e=>e.conflict);
+  const hours=[];for(let h=CAL_START_HOUR;h<CAL_END_HOUR;h++)hours.push(h);
+  const showNow=!sel; // only show now-line on the actual today view
+  const nowY=calY(now.toISOString());const nowVisible=now.getHours()>=CAL_START_HOUR;
+
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading your day…</div>;
+
+  return(<div className="cal-ws" style={{position:'relative'}}>
+    <FridaySays text={(active?.annotation)||'Your timeline is ready.'}/>
+
+    {/* Quick add */}
+    <div className="cal-quickadd">
+      <input className="input" style={{flex:1}} value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} placeholder="Quick add — e.g. “interview with Coupa Tuesday 2pm”"/>
+      <button className="btn active" onClick={quickAdd} disabled={adding}>{adding?'Parsing…':'✨ Add'}</button>
+    </div>
+    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+
+    {/* Week strip */}
+    <div className="cal-week">
+      {week.map(d=><div key={d.date} className={'cal-day'+(d.is_today?' today':'')+((sel===d.date||(!sel&&d.is_today))?' selected':'')+(d.has_custody?' custody':'')+(d.has_career?' career':'')} onClick={()=>pickDay(d.date,d.is_today)}>
+        <div className="cal-dow">{d.weekday}</div>
+        <div className="cal-daynum">{d.day}</div>
+        <div className="cal-dots">{d.count>0&&[...Array(Math.min(3,d.count))].map((_,i)=><span key={i} className={'dd '+d.density}></span>)}</div>
+      </div>)}
+    </div>
+
+    {/* Conflict warnings */}
+    {conflicts.length>0&&<div className="cal-conflict-warn">⚠️ {conflicts.length} overlapping event{conflicts.length>1?'s':''} — {conflicts.map(c=>c.title).join(', ')}</div>}
+
+    <div className="cal-section-title">{sel?new Date(sel+'T00:00').toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'}):'Today · '+now.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'})}</div>
+
+    {/* All-day events */}
+    {allDay.length>0&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+      {allDay.map(e=><span key={e.id} className={'cal-event '+(e.type||'normal')} style={{position:'static',display:'inline-block'}}>{e.title} <span style={{color:'#8a93a6',fontSize:10}}>(all day)</span></span>)}
+    </div>}
+
+    {/* Timeline */}
+    {timed.length===0&&gaps.length===0?<div className="msg-empty">No timed events. {sel?'':'Enjoy the open day, or quick-add something above.'}</div>:
+    <div className="cal-timeline" ref={tlRef} style={{position:'relative',height:(CAL_END_HOUR-CAL_START_HOUR)*CAL_HOUR_PX+10}}>
+      {hours.map(h=><div key={h} className="cal-hour" style={{height:CAL_HOUR_PX}}>
+        <span className="cal-hour-label">{h===12?'12 PM':h===0||h===24?'12 AM':h<12?h+' AM':(h-12)+' PM'}</span>
+      </div>)}
+
+      {/* Gap labels */}
+      {gaps.map((g,i)=>{const top=calY(g.start_time);const ht=Math.max(18,calY(g.end_time)-top);return(
+        <div key={'g'+i} className="cal-gap" style={{top,height:ht}}>{g.label} · {g.minutes>=60?Math.floor(g.minutes/60)+'h '+(g.minutes%60?g.minutes%60+'m':''):g.minutes+'m'}</div>);
+      })}
+
+      {/* Events */}
+      {timed.map(e=>{const top=calY(e.start_time);const end=calY(e.end_time)||top+CAL_HOUR_PX;const ht=Math.max(34,end-top);const open=prepFor===e.id;return(
+        <div key={e.id} className={'cal-event '+(e.type||'normal')+(e.conflict?' conflict':'')} style={{top,minHeight:ht,height:open?'auto':ht}} onClick={()=>e.prep_available&&genPrep(e)}>
+          <div className="cal-ev-title">{e.title}</div>
+          <div className="cal-ev-meta">
+            <span>{calFmtTime(e.start_time)}{e.end_time?(' – '+calFmtTime(e.end_time)):''}</span>
+            {e.location&&<span>📍 {e.location}</span>}
+            {e.attendees&&e.attendees.length>0&&<span>👥 {e.attendees.length}</span>}
+            {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
+            {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
+            {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
+          </div>
+          {open&&<div onClick={ev=>ev.stopPropagation()} style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+            {e.related_emails&&e.related_emails.length>0&&<div style={{fontSize:10,color:'#8fb8c8',marginBottom:6}}>Related threads: {e.related_emails.map(r=>r.subject).join(' · ')}</div>}
+            {prepBusy&&!prepText?<div style={{fontSize:11,color:'#c4b5fd'}}>Friday is building your prep card…</div>:
+             <><FridayDoc text={prepText} compact style={{fontSize:11}}/>
+               <div style={{display:'flex',gap:6,marginTop:6}}>
+                 <button className="btn" style={{fontSize:10}} onClick={()=>genPrep(e)} disabled={prepBusy}>↻ Regenerate</button>
+                 <SendTo content={()=>prepText} dataType="meeting_prep" eventId={e.id} options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Send to Calendar',dest:'calendar_notes',ico:'📅'}]}/>
+               </div></>}
+          </div>}
+        </div>);
+      })}
+
+      {/* Now line */}
+      {showNow&&nowVisible&&<div className="cal-now-line" style={{top:nowY}}><span className="now-time">{now.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}</span></div>}
+    </div>}
+
+    {/* Tomorrow preview */}
+    {!sel&&tomorrow&&tomorrow.events&&tomorrow.events.length>0&&<div>
+      <div className="cal-section-title">Tomorrow{tomorrow.needs_prep&&tomorrow.needs_prep.length>0?(' · '+tomorrow.needs_prep.length+' need prep'):''}</div>
+      {tomorrow.events.map(e=><div key={e.id} className={'cal-tomorrow-card '+(e.type||'normal')}>
+        <span className="cal-tt-time">{e.all_day?'All day':calFmtTime(e.start_time)}</span>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12,color:'#eef1f6',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.title}</div>
+          {e.location&&<div style={{fontSize:10,color:'#8a93a6'}}>📍 {e.location}</div>}
+        </div>
+        {e.prep_available&&<span className="cal-prep-badge">Prep</span>}
+      </div>)}
+    </div>}
+  </div>);
+}
+
 // ═══ DRAFT PREVIEW HELPERS ═══
 function buildDraftHtml(text,mode,promptText){
   const ML={linkedin_post:'LinkedIn Post',email_reply:'Email Reply',slack_message:'Slack Message',tweet:'Tweet',coparent_response:'Co-Parent Response',freeform:'Freeform Draft'};
@@ -2397,6 +2693,7 @@ function App(){
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[wikiPending,setWikiPending]=useState(0);
+  const[msgActionable,setMsgActionable]=useState(0);
   const[countdowns,setCountdowns]=useState([]);const[promptText,setPromptText]=useState('');
   const[settingsOpen,setSettingsOpen]=useState(false);
   const[notifOpen,setNotifOpen]=useState(false);
@@ -3159,6 +3456,7 @@ function App(){
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n))};
   useEffect(()=>{const pull=()=>fetch('/api/notifications').then(r=>r.json()).then(d=>{const items=(d.items||[]).filter(n=>!dismissedNotifIds.current.has(n.id));setNotifs(prev=>{const readMap=new Map(prev.map(n=>[n.id,n.read]));return items.map(n=>({...n,read:readMap.has(n.id)?readMap.get(n.id):!!n.read}))})}).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{const pull=()=>fetch('/api/wiki/pending').then(r=>r.json()).then(d=>setWikiPending((d.pending||[]).length)).catch(()=>{});pull();const iv=setInterval(pull,15000);return()=>clearInterval(iv)},[]);
+  useEffect(()=>{const pull=()=>fetch('/api/messages/stats').then(r=>r.json()).then(d=>setMsgActionable(d.actionable||0)).catch(()=>{});pull();const iv=setInterval(pull,30000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{chatEnd.current?.scrollIntoView({behavior:'smooth'})},[chatMsgs]);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(d=>{setCountdowns(d.countdowns||[])}).catch(()=>{})},[]);
   useEffect(()=>{fetch('/api/evolution').then(r=>r.json()).then(d=>{if(typeof d.structure_index==='number')setTimeout(()=>window.fridayVibe?.setStructure(d.structure_index),600)}).catch(()=>{})},[]);
@@ -3334,7 +3632,7 @@ function App(){
   };
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -4380,6 +4678,7 @@ function App(){
             {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''}`} onClick={()=>toggle(w.id)} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
+              {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
             </button>)}
           </div>
           <div className="dock-group-label">{g.name}</div>

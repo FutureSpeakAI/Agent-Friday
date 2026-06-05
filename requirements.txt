@@ -10,6 +10,7 @@ pyautogui>=0.9
 pynput>=1.7                   # global Ctrl+Shift+Q kill-switch hotkey for Computer Control
 beautifulsoup4>=4.12
 feedparser>=6.0              # RSS-based news fetcher in server.py (_rss_results) — replaces CAPTCHA-blocked DuckDuckGo scraping
+tzdata>=2024.1               # IANA tz database for zoneinfo on Windows (Front Page 7AM/6PM Central scheduler in server.py)
 requests>=2.31
 pyyaml>=6.0
 sentence-transformers>=2.2   # local embeddings for semantic context pruning (all-MiniLM-L6-v2)
