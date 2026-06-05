@@ -5345,28 +5345,35 @@ function App(){
           // them. Gemini's server-side VAD picks up the new speech and opens a
           // fresh turn — we only silence the local output here.
           const _now=v.audioCtx?v.audioCtx.currentTime:0;
-          // NUCLEAR ANTI-ECHO: while ANY audio BufferSource is actively playing,
-          // client-side barge-in is COMPLETELY DISABLED. Friday's speaker output
-          // bleeds into the mic and kept tripping false interrupts even with a high
-          // threshold + grace + sustain. We now ignore mic RMS entirely whenever audio
-          // is queued; Gemini's server-side VAD handles natural turn-taking, and the
-          // user can still interrupt by clicking the stop button. Barge-in is only ever
-          // evaluated during silence (no audio queued) — where it's effectively moot
-          // since there's nothing to flush, but the raised constants below stay as a
-          // belt-and-suspenders guard.
+          // Two-layer barge-in:
+          //   • Mid-speech: handled SERVER-SIDE. Gemini's VAD knows what it just
+          //     said, so it can tell the user's voice from speaker echo. When it
+          //     fires we get a {type:'interrupted'} WS frame and flush there.
+          //   • Silence gaps: handled LOCALLY here. Between utterances no audio is
+          //     playing, so there's no echo to fool the mic — local RMS can safely
+          //     catch the user starting to talk and flush the queue (dropping any
+          //     trailing chunks of the turn they're interrupting).
+          // Local RMS is therefore evaluated ONLY when nothing is actively playing
+          // (activeSources empty). While a BufferSource is live we skip it entirely,
+          // because Friday's output bleeds into the mic and would self-trigger.
           const _audioPlaying=v.activeSources&&v.activeSources.length>0;
           if(_audioPlaying){
             v.bargeRmsSince=null;
           }else{
-            const _speaking=v.audioCtx&&v.audioCtx.state!=='closed'&&v.playCursor>_now;
-            // Grace period: ignore the mic for the first 1500ms after Friday STARTS
-            // speaking so the browser's echo canceller can engage.
             const _graceSec=v.bargeGraceSec!=null?v.bargeGraceSec:1.5;
             const _sustainSec=v.bargeSustainSec!=null?v.bargeSustainSec:0.4;
-            const _inGrace=_speaking&&v.speakStartedAt!=null&&(_now-v.speakStartedAt)<_graceSec;
-            // Threshold raised to 0.25 (very high — only loud, direct speech qualifies)
-            // and sustain to 400ms so only a deliberate sustained burst would interrupt.
-            if(_speaking&&!_inGrace&&_rms>0.25){
+            // Only barge in during a gap WITHIN an active speaking turn — i.e. a
+            // burst was armed (speakStartedAt set) and the turn hasn't ended
+            // (playbackCancelled false; turn_end clears speakStartedAt). This
+            // stops a loud sound during plain listening from swallowing the start
+            // of Friday's next reply.
+            const _midTurn=v.speakStartedAt!=null&&!v.playbackCancelled;
+            // Grace: ignore the mic for the first 1500ms after the burst started so
+            // the browser's echo canceller has engaged.
+            const _inGrace=_midTurn&&(_now-v.speakStartedAt)<_graceSec;
+            // Threshold 0.25 (high — only loud, direct speech qualifies) and a 400ms
+            // sustain so only a deliberate sustained burst interrupts.
+            if(_midTurn&&!_inGrace&&_rms>0.25){
               if(v.bargeRmsSince==null)v.bargeRmsSince=_now;
               if(_now-v.bargeRmsSince>=_sustainSec){
                 flushPlaybackRef.current?.();
@@ -5492,8 +5499,12 @@ function App(){
         });
       }else if(m.type==='turn_end'){
         // Old turn is over — re-open the playback gate for the next response.
+        // Clear the speaking-burst marker so the silence-gap RMS barge-in goes
+        // idle (it only fires mid-turn); otherwise a loud sound while merely
+        // listening could flush the start of Friday's next reply.
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
+        v.speakStartedAt=null;v.bargeRmsSince=null;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
         // Gemini acknowledged the interruption: stop any in-flight old audio,
