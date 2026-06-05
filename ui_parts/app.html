@@ -2354,6 +2354,10 @@ function App(){
       v.activeSources=[];
     }
     if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
+    // Clear the barge-in grace window and the sustained-RMS accumulator so the
+    // next speaking burst starts with a fresh echo-canceller grace period and
+    // can't inherit a stale "RMS has been high since…" timestamp.
+    v.speakStartedAt=null;v.bargeRmsSince=null;
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
     v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv)vv.playbackCancelled=false},2000);
   };
@@ -2419,10 +2423,25 @@ function App(){
           // and flush the queue so the old response doesn't keep playing over
           // them. Gemini's server-side VAD picks up the new speech and opens a
           // fresh turn — we only silence the local output here.
-          const _speaking=v.audioCtx&&v.audioCtx.state!=='closed'&&v.activeSources&&v.activeSources.length>0&&v.playCursor>v.audioCtx.currentTime;
-          if(_speaking&&_rms>0.045){
-            flushPlaybackRef.current?.();
-            setVoiceStatus('listening');
+          const _now=v.audioCtx?v.audioCtx.currentTime:0;
+          const _speaking=v.audioCtx&&v.audioCtx.state!=='closed'&&v.activeSources&&v.activeSources.length>0&&v.playCursor>_now;
+          // Grace period: for the first 800ms after Friday STARTS speaking, ignore
+          // the mic entirely so the browser's echo canceller can engage. Without
+          // this, Friday's own speaker output bleeds back into the mic and trips a
+          // false barge-in that cuts her off after a word or two.
+          const _inGrace=_speaking&&v.speakStartedAt!=null&&(_now-v.speakStartedAt)<0.8;
+          if(_speaking&&!_inGrace&&_rms>0.15){
+            // Require the elevated RMS to persist CONTINUOUSLY for >=200ms before
+            // flushing playback. A single echo/ambient spike resets below; only a
+            // sustained burst (deliberate speech) actually interrupts Friday.
+            if(v.bargeRmsSince==null)v.bargeRmsSince=_now;
+            if(_now-v.bargeRmsSince>=0.2){
+              flushPlaybackRef.current?.();
+              setVoiceStatus('listening');
+              v.bargeRmsSince=null;
+            }
+          }else{
+            v.bargeRmsSince=null;
           }
           const ws=v.ws;
           if(!ws||ws.readyState!==WebSocket.OPEN)return;
@@ -2512,6 +2531,10 @@ function App(){
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
+        // If the play cursor is in the past, the queue had drained — this chunk
+        // begins a fresh speaking burst, so (re)arm the echo-canceller grace
+        // window from the moment this audio will actually start.
+        if(v.playCursor<=now)v.speakStartedAt=startAt;
         const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}
         // Track the node so a barge-in / disconnect can stop it mid-playback;
         // self-evict from the queue when it finishes cleanly.
