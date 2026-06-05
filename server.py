@@ -2456,6 +2456,41 @@ def _load_self_knowledge():
     return text
 
 
+# ── Voice demo spec sheet (VOICE_DEMO.md) ────────────────────
+# Public (Tier 1) product/marketing knowledge spoken aloud in voice mode.
+# Unlike SELF.md, this is NEVER vault-gated — it's the answer to "what are you?"
+# that Gemini Live always has, so Friday can describe himself to anyone without
+# the vault redacting his own product pitch.
+_voice_demo_cache = None
+_voice_demo_mtime = 0.0
+VOICE_DEMO_MD_PATH = Path(__file__).resolve().parent / "VOICE_DEMO.md"
+
+
+def _load_voice_demo():
+    """Lazily load VOICE_DEMO.md — Friday's spoken, ungated spec sheet.
+
+    Cached and mtime-invalidated like SELF.md, so the disk hit happens at most
+    once per file edit. Returns the full text, or an empty string if missing.
+    This content is Tier 1 (public) and must never be passed through vault
+    gating — it is product marketing, not sensitive data.
+    """
+    global _voice_demo_cache, _voice_demo_mtime
+    try:
+        mtime = VOICE_DEMO_MD_PATH.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        _voice_demo_cache = ""
+        return ""
+    if _voice_demo_cache is not None and mtime == _voice_demo_mtime:
+        return _voice_demo_cache
+    try:
+        text = VOICE_DEMO_MD_PATH.read_text(encoding='utf-8').strip()
+    except Exception:
+        text = ""
+    _voice_demo_cache = text
+    _voice_demo_mtime = mtime
+    return text
+
+
 def _settings_system_prefix(settings, personality):
     """Build the prefix that gets prepended to every chat system prompt."""
     length_hint = {
@@ -7732,6 +7767,22 @@ if sock is not None:
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"
+
+        # Voice demo spec sheet: Tier 1 (public) product knowledge, injected
+        # UNGATED so Gemini Live always knows what Friday IS. This sits between
+        # the personality prefix and the vault-gated context — it is never
+        # passed through vault_control, so it survives cloud gating intact and
+        # Friday can always answer "what are you?" / "how do you work?" instead
+        # of deflecting to the Sovereign Vault.
+        voice_demo = _load_voice_demo()
+        if voice_demo:
+            voice_prefix += (
+                "=== ABOUT AGENT FRIDAY (PUBLIC / ALWAYS SHAREABLE) ===\n"
+                "The following is public product knowledge. You may speak any of "
+                "it aloud to anyone — it is never private vault data, so never "
+                "deflect these topics to the Sovereign Vault.\n\n"
+                + voice_demo + "\n\n"
+            )
 
         try:
             ws.send(json.dumps({"type": "status", "text": "loading context"}))
