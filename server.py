@@ -2737,14 +2737,14 @@ def list_briefings():
                 entry[f.suffix.lstrip('.')] = f.name
                 entry['size'] = f.stat().st_size
 
-    # Location 2: ~/.friday/wiki/briefings — filenames like 2026-04-14.html
+    # Location 2: ~/.friday/wiki/briefings — filenames like 2026-04-14.html or .md
     wiki_briefings = HOME / '.friday' / 'wiki' / 'briefings'
     if wiki_briefings.exists():
         for f in wiki_briefings.iterdir():
-            if f.suffix == '.html' and len(f.stem) == 10 and f.stem[4] == '-' and f.stem[7] == '-':
+            if f.suffix in ('.html', '.md') and len(f.stem) == 10 and f.stem[4] == '-' and f.stem[7] == '-':
                 date_part = f.stem  # e.g. "2026-04-14"
                 entry = briefings_by_date.setdefault(date_part, {'date': date_part, 'name': f.stem})
-                entry['html'] = f.name
+                entry[f.suffix.lstrip('.')] = f.name
                 entry.setdefault('size', f.stat().st_size)
 
     briefings = sorted(briefings_by_date.values(), key=lambda b: b['date'], reverse=True)
@@ -2777,6 +2777,54 @@ def get_briefing(filename):
     if path:
         return jsonify({'status': 'ok', 'content': path.read_text(encoding='utf-8'), 'filename': filename, 'is_html': path.suffix == '.html'})
     return jsonify({'status': 'not_found'}), 404
+
+@app.route('/api/briefing/generate', methods=['POST'])
+def generate_briefing():
+    """Generate a fresh daily briefing on demand via Claude and persist it.
+
+    Replaces the old behavior of spawning a Claude Code terminal (which failed
+    with "not found"). Synthesizes a briefing from Friday's vault/wiki/daily
+    context, saves it as markdown in the archive, and returns the markdown so
+    the News panel can render it inline with the branded markdown viewer.
+    """
+    try:
+        prompt = (
+            "Generate a crisp daily briefing using everything you know about me "
+            "(calendar, top news headlines, career pipeline, active tasks, and "
+            "co-parenting context). Cover, in order:\n"
+            "1. Today's calendar events — most important first\n"
+            "2. Top news relevant to me\n"
+            "3. Active tasks and commitments needing attention\n"
+            "4. One proactive insight or recommendation\n\n"
+            "Format as clean markdown with a level-1 heading, section subheadings, "
+            "and tight bullet points. Lead with the most urgent item. Be specific — "
+            "use real names, dates, and details from my context, not placeholders."
+        )
+        # ALL _call_claude() calls must carry Friday's vault/wiki context.
+        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        content = _call_claude(
+            [{"role": "user", "content": prompt}],
+            system=system,
+            temperature=0.4,
+        )
+        if not content or not content.strip():
+            return jsonify({"status": "error", "message": "Empty briefing generated"}), 502
+
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        briefings_dir = FRIDAY_DIR / "wiki" / "briefings"
+        briefings_dir.mkdir(parents=True, exist_ok=True)
+        out_path = briefings_dir / f"{date_str}.md"
+        out_path.write_text(content, encoding='utf-8')
+
+        return jsonify({
+            "status": "ok",
+            "date": date_str,
+            "filename": out_path.name,
+            "content": content,
+            "is_html": False,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/jobs')
 def get_jobs():
