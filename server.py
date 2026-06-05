@@ -2859,27 +2859,165 @@ def get_briefing(filename):
         return jsonify({'status': 'ok', 'content': path.read_text(encoding='utf-8'), 'filename': filename, 'is_html': path.suffix == '.html'})
     return jsonify({'status': 'not_found'}), 404
 
+def _recent_unread_emails(limit=12):
+    """Read recent unread (or last-24h) messages from the local Gmail cache.
+
+    Mirrors the candidate paths used by the Gmail signal watcher
+    (_trigger_gmail_signals). Returns a list of message dicts, most recent first.
+    Empty list if no cache exists — the Gmail connector exports into these files.
+    """
+    candidates = [
+        FRIDAY_DIR / "gmail" / "inbox.json",
+        FRIDAY_DIR / "gmail-cache.json",
+    ]
+    inbox_path = next((p for p in candidates if p.exists()), None)
+    if not inbox_path:
+        return []
+    try:
+        data = json.loads(inbox_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    messages = data if isinstance(data, list) else data.get("messages", [])
+    if not isinstance(messages, list):
+        return []
+
+    cutoff = datetime.utcnow() - timedelta(days=1)
+    selected = []
+    for m in reversed(messages):  # cache appends chronologically; newest last
+        if not isinstance(m, dict):
+            continue
+        # Prefer an explicit unread flag; otherwise treat "newer_than:1d" as the
+        # signal — the same filter the scheduled briefing uses.
+        is_unread = m.get('unread') if 'unread' in m else (not m.get('read', False))
+        ts_raw = m.get('received_at') or m.get('date') or m.get('timestamp')
+        recent = True
+        try:
+            recent = datetime.fromisoformat(str(ts_raw).replace("Z", "")) >= cutoff
+        except Exception:
+            recent = True  # undated — include rather than silently drop
+        if is_unread or recent:
+            selected.append(m)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _gather_live_briefing_context():
+    """Fetch live calendar, unread email, and news for an on-demand briefing.
+
+    The News-workspace "Generate Briefing" button must reflect *today*, not the
+    stale cached context baked into the system prompt. This mirrors what the
+    scheduled morning-briefing routine tells its agent to do (scan news, summarize
+    calendar, pull unread mail) but runs synchronously so the data is fresh at
+    click time. Each source fails soft: a dead source contributes a short note
+    instead of aborting the whole briefing.
+    """
+    today_str = datetime.now().strftime('%A, %B %d, %Y')
+    sections = []
+
+    # 1) Today's calendar events ------------------------------------------------
+    try:
+        cal_raw = _tool_query_calendar({})
+        cal_events = []
+        try:
+            cal_data = json.loads(cal_raw) if isinstance(cal_raw, str) else cal_raw
+            if isinstance(cal_data, dict):
+                cal_events = cal_data.get('events', []) or []
+        except Exception:
+            cal_events = []
+        if cal_events:
+            lines = []
+            for ev in cal_events[:20]:
+                if isinstance(ev, dict):
+                    when = ev.get('start') or ev.get('time') or ev.get('when') or ''
+                    title = ev.get('summary') or ev.get('title') or ev.get('name') or 'Untitled'
+                    loc = ev.get('location') or ''
+                    lines.append(f"- {when} — {title}" + (f" @ {loc}" if loc else ''))
+                else:
+                    lines.append(f"- {ev}")
+            sections.append("## Today's Calendar\n" + "\n".join(lines))
+        else:
+            sections.append(
+                "## Today's Calendar\n"
+                "(No live calendar events available — Google Calendar connector returned nothing.)"
+            )
+    except Exception as e:
+        sections.append(f"## Today's Calendar\n(Calendar fetch failed: {e})")
+
+    # 2) Recent / unread email --------------------------------------------------
+    try:
+        emails = _recent_unread_emails(limit=12)
+        if emails:
+            lines = []
+            for m in emails:
+                sender = m.get('from') or m.get('sender') or 'unknown'
+                subj = m.get('subject') or '(no subject)'
+                preview = (m.get('preview') or m.get('snippet') or m.get('body') or '')
+                preview = str(preview).strip().replace('\n', ' ')[:160]
+                lines.append(f"- **{sender}** — {subj}" + (f"\n  {preview}" if preview else ''))
+            sections.append("## Recent / Unread Email\n" + "\n".join(lines))
+        else:
+            sections.append(
+                "## Recent / Unread Email\n"
+                "(No local Gmail cache found at ~/.friday/gmail/inbox.json or gmail-cache.json.)"
+            )
+    except Exception as e:
+        sections.append(f"## Recent / Unread Email\n(Email fetch failed: {e})")
+
+    # 3) Live news for the user's stated interests ------------------------------
+    try:
+        settings = _load_settings()
+        priorities = [p for p in (settings.get('news_priorities') or []) if p]
+        top = priorities[:2] or ['AI/Tech']  # cap at two live searches for latency
+        news_blocks = []
+        for p in top:
+            res = _tool_search_web({'query': f"latest {p} news today"})
+            if res and not res.lower().startswith(('web search error', 'search_web error', 'requests library')):
+                news_blocks.append(f"### {p}\n{res[:2500]}")
+        if news_blocks:
+            sections.append("## Live News (web search)\n" + "\n\n".join(news_blocks))
+        else:
+            sections.append("## Live News\n(Web search returned no usable results.)")
+    except Exception as e:
+        sections.append(f"## Live News\n(News fetch failed: {e})")
+
+    header = (
+        f"=== LIVE DATA fetched {today_str} ===\n"
+        "Base the briefing on THIS live data, not on any cached/remembered context. "
+        "If a section says data is unavailable, note that honestly rather than inventing it.\n\n"
+    )
+    return header + "\n\n".join(sections)
+
+
 @app.route('/api/briefing/generate', methods=['POST'])
 def generate_briefing():
     """Generate a fresh daily briefing on demand via Claude and persist it.
 
     Replaces the old behavior of spawning a Claude Code terminal (which failed
-    with "not found"). Synthesizes a briefing from Friday's vault/wiki/daily
-    context, saves it as markdown in the archive, and returns the markdown so
-    the News panel can render it inline with the branded markdown viewer.
+    with "not found"). Pulls LIVE data first — today's calendar, recent unread
+    email, and a fresh news search for the user's interests — then synthesizes
+    the briefing from that live data plus Friday's vault/wiki context. Saves it
+    as markdown in the archive and returns the markdown so the News panel can
+    render it inline with the branded markdown viewer.
     """
     try:
+        # Pull live sources BEFORE writing the briefing so it never runs on stale
+        # cached context. This mirrors the scheduled morning-briefing routine.
+        live_context = _gather_live_briefing_context()
+
         prompt = (
-            "Generate a crisp daily briefing using everything you know about me "
-            "(calendar, top news headlines, career pipeline, active tasks, and "
-            "co-parenting context). Cover, in order:\n"
+            "Generate a crisp daily briefing using the LIVE DATA below plus what "
+            "you know about me (career pipeline, active tasks, co-parenting "
+            "context). Cover, in order:\n"
             "1. Today's calendar events — most important first\n"
             "2. Top news relevant to me\n"
             "3. Active tasks and commitments needing attention\n"
             "4. One proactive insight or recommendation\n\n"
             "Format as clean markdown with a level-1 heading, section subheadings, "
             "and tight bullet points. Lead with the most urgent item. Be specific — "
-            "use real names, dates, and details from my context, not placeholders."
+            "use real names, dates, and details from the live data and my context, "
+            "not placeholders.\n\n"
+            f"{live_context}"
         )
         # ALL _call_claude() calls must carry Friday's vault/wiki context.
         system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
