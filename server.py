@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response
+from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context
 from functools import wraps
 
 # Vault access control — gates Sovereign Vault content so it reaches local
@@ -4934,7 +4934,7 @@ def _fetch_news_items(categories=None, limit_per=4):
                 continue  # banned sources never appear
             is_boost = domain in boosted
             url = r.get("url", "")
-            items.append({
+            item = {
                 "id": f"{cat}-{idx}",
                 "title": r["title"],
                 "snippet": r["snippet"],
@@ -4946,7 +4946,11 @@ def _fetch_news_items(categories=None, limit_per=4):
                 "boosted": is_boost,
                 "reading_time": _estimate_reading_time(r["snippet"]),
                 "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
-            })
+                # ts + score let the stream UI sort by time and by relevance.
+                "ts": r.get("ts", 0.0),
+            }
+            item["score"] = _score_article(item)
+            items.append(item)
             idx += 1
             kept += 1
             if kept >= limit_per:
@@ -5149,6 +5153,376 @@ def generate_briefing():
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FRIDAY'S FRONT PAGE
+#  An AI-curated editorial page generated twice daily (7 AM + 6 PM
+#  Central) via the shared daily scheduler (register_daily_job).
+#  Friday fetches every feed, dedupes, scores each story against
+#  Stephen's profile, picks a lead with an editorial note, and
+#  organizes the rest into sections. Editions persist as JSON under
+#  ~/.friday/front_pages/ and are browsable in the UI.
+# ═══════════════════════════════════════════════════════════════
+
+# Stephen's reading profile — drives deterministic relevance scoring so the
+# front page is useful even when Claude is unavailable. Buckets map a regex of
+# signal terms to a weight; an article's score is the sum of matched buckets
+# plus category/recency/source bonuses. Tuned to his life: AI executive +
+# FutureSpeak founder, Austin TX, progressive politics, career journalist
+# (former Raw Story editor), currently job searching.
+_PROFILE_KEYWORDS = [
+    (6, r"\b(artificial intelligence|\bA\.?I\.?\b|machine learning|\bLLM\b|"
+        r"large language model|generative|chatgpt|openai|anthropic|claude|"
+        r"gemini|deepmind|nvidia|agent(ic)?|foundation model)\b"),
+    (5, r"\b(founder|startup|venture|fundrais|seed round|series [a-d]|"
+        r"layoff|hiring|job market|chief executive|\bCEO\b|exec(utive)?)\b"),
+    (5, r"\b(journalism|journalist|newsroom|press freedom|media industry|"
+        r"reporter|editor|publisher|local news|disinformation|misinformation)\b"),
+    (4, r"\b(austin|texas|\bTX\b|texas tribune|abbott|texas legislature)\b"),
+    (4, r"\b(progressive|democra(t|cy|tic)|republican|\bGOP\b|election|"
+        r"voting rights|abortion|labor|union|inequality|civil rights|trump)\b"),
+    (3, r"\b(climate|emissions|clean energy|solar|carbon)\b"),
+    (3, r"\b(futurespeak|future of work|automation|knowledge work)\b"),
+]
+_PROFILE_KEYWORDS = [(w, re.compile(p, re.I)) for w, p in _PROFILE_KEYWORDS]
+
+# Category baseline weights — how central each beat is to Stephen's interests.
+_CATEGORY_WEIGHT = {
+    "AI/Tech": 5, "Politics": 4, "Media": 4,
+    "Local": 3, "Business": 3, "Science": 2,
+}
+
+# Central-time scheduling. The two daily editions and the hour each fires.
+FRONT_PAGE_SLOTS = {"morning": 7, "evening": 18}
+
+
+def _front_page_central_now():
+    """Current time in US Central. Uses zoneinfo when tzdata is present, else a
+    manual US DST calc (2nd Sun Mar → 1st Sun Nov) so the front page still
+    timestamps correctly on a bare Windows Python without the tzdata package."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Chicago"))
+    except Exception:
+        utc = datetime.utcnow()
+        y = utc.year
+
+        def _nth_sunday(month, n):
+            d = datetime(y, month, 1)
+            offset = (6 - d.weekday()) % 7  # days to first Sunday
+            return d + timedelta(days=offset + 7 * (n - 1))
+        dst_start = _nth_sunday(3, 2).replace(hour=8)   # 2 AM CST = 08:00 UTC
+        dst_end = _nth_sunday(11, 1).replace(hour=7)    # 2 AM CDT = 07:00 UTC
+        offset = -5 if dst_start <= utc < dst_end else -6
+        return (utc + timedelta(hours=offset))
+
+
+def _score_article(item):
+    """Relevance score for a fetched news item against Stephen's profile."""
+    text = f"{item.get('title','')} {item.get('snippet','')}"
+    score = float(_CATEGORY_WEIGHT.get(item.get("category"), 2))
+    for weight, rx in _PROFILE_KEYWORDS:
+        if rx.search(text):
+            score += weight
+    if item.get("boosted"):
+        score += 6
+    if item.get("trust") == "green":
+        score += 1.5
+    if item.get("breaking"):
+        score += 2
+    # Recency: full bonus under 3h, decaying to 0 by ~24h.
+    ts = item.get("ts") or 0.0
+    if ts:
+        age_h = max(0.0, (_time.time() - ts) / 3600.0)
+        score += max(0.0, 3.0 * (1 - age_h / 24.0))
+    return round(score, 2)
+
+
+def _gather_front_page_pool(per_cat=14):
+    """Fetch every enabled category broadly, dedup globally, score each item.
+
+    Returns (pool, stats). Banned sources are excluded; boosted sources are
+    flagged. Unlike _fetch_news_items (which caps tightly for the card feed)
+    this pulls wide so the editorial scorer has real choice.
+    """
+    banned = set(_load_banned_sources())
+    boosted = set(_load_boosted_sources())
+    prefs = _load_briefing_prefs()
+    cats = [c for c in NEWS_CATEGORIES
+            if prefs.get("categories_enabled", {}).get(c, True)]
+    pool, seen = [], set()
+    for cat in cats:
+        meta = NEWS_CATEGORIES.get(cat) or {}
+        results = _rss_results(meta.get("feeds", []), limit=per_cat)
+        if not results:
+            results = _brave_results(meta.get("query", ""), limit=per_cat)
+        for r in results:
+            domain = r.get("source") or _extract_domain(r.get("url", ""))
+            if not domain or domain in banned:
+                continue
+            key = re.sub(r"\W+", "", (r.get("title") or "").lower())[:80]
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            url = r.get("url", "")
+            item = {
+                "title": r["title"],
+                "snippet": r["snippet"],
+                "url": url if url.startswith("http") else ("https://" + url),
+                "source": domain,
+                "category": cat,
+                "color": meta.get("color", "tech"),
+                "trust": _trust_rating(domain, banned, boosted),
+                "boosted": domain in boosted,
+                "reading_time": _estimate_reading_time(r["snippet"]),
+                "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
+                "ts": r.get("ts", 0.0),
+            }
+            item["score"] = _score_article(item)
+            pool.append(item)
+    pool.sort(key=lambda x: x["score"], reverse=True)
+    stats = {"total_considered": len(pool),
+             "sources": len({p["source"] for p in pool}),
+             "categories": len({p["category"] for p in pool})}
+    return pool, stats
+
+
+def _extract_json_block(text):
+    """Pull the first JSON object out of an LLM reply (tolerates code fences)."""
+    if not text:
+        return None
+    s = text.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", s, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
+def _editorialize_front_page(pool):
+    """Ask Claude to pick the lead + write editorial context. Fails soft to a
+    deterministic pick (top-scored story) so the front page always renders.
+
+    Returns {lead_index, lead_note, section_context: {cat: str}, headline}.
+    """
+    top = pool[:28]
+    fallback = {
+        "lead_index": 0,
+        "lead_note": ("Friday's top pick for you right now — highest signal "
+                      "against your AI, politics, media, and Austin beats."),
+        "section_context": {},
+        "headline": "Your Front Page",
+    }
+    if not top:
+        return fallback
+    try:
+        lines = []
+        for i, it in enumerate(top):
+            lines.append(f"[{i}] ({it['category']} · {it['source']} · "
+                         f"score {it['score']}) {it['title']} — {it['snippet'][:140]}")
+        cats_present = sorted({it["category"] for it in top})
+        prompt = (
+            "You are Friday, Stephen's personal news editor. Stephen is an AI "
+            "executive and FutureSpeak founder in Austin, TX — a career "
+            "journalist (former Raw Story editor) with progressive politics, "
+            "currently job searching. Below are today's candidate stories, "
+            "pre-scored.\n\n"
+            "Choose the single LEAD story (the one Stephen should read first) "
+            "and write a 2-3 sentence editorial note explaining why it leads — "
+            "in your voice, specific to him. Then write one punchy sentence of "
+            "context for each section.\n\n"
+            "Return ONLY JSON, no prose, in exactly this shape:\n"
+            '{\n  "lead_index": <int>,\n  "lead_note": "<2-3 sentences>",\n'
+            '  "headline": "<a 3-6 word front-page headline for the whole edition>",\n'
+            '  "section_context": {' +
+            ", ".join(f'"{c}": "<one sentence>"' for c in cats_present) +
+            "}\n}\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
+        )
+        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        raw = _call_claude([{"role": "user", "content": prompt}],
+                           system=system, max_tokens=1200)
+        data = _extract_json_block(raw)
+        if not isinstance(data, dict):
+            return fallback
+        li = data.get("lead_index")
+        if not isinstance(li, int) or not (0 <= li < len(top)):
+            li = 0
+        sc = data.get("section_context")
+        return {
+            "lead_index": li,
+            "lead_note": (data.get("lead_note") or fallback["lead_note"]).strip()[:600],
+            "section_context": sc if isinstance(sc, dict) else {},
+            "headline": (data.get("headline") or fallback["headline"]).strip()[:80],
+        }
+    except Exception:
+        return fallback
+
+
+def _generate_front_page(slot="morning"):
+    """Build + persist one Front Page edition. Returns the edition dict.
+
+    Idempotent per (date, slot): regenerating overwrites that edition's file.
+    """
+    cnow = _front_page_central_now()
+    date_str = cnow.strftime('%Y-%m-%d')
+    slot = slot if slot in FRONT_PAGE_SLOTS else "morning"
+    edition_id = f"{date_str}-{slot}"
+
+    pool, stats = _gather_front_page_pool()
+    editorial = _editorialize_front_page(pool)
+    lead_idx = editorial["lead_index"] if pool else None
+
+    lead = None
+    if pool:
+        lead = dict(pool[lead_idx])
+        lead["editorial_note"] = editorial["lead_note"]
+
+    # Group remaining stories into sections by category, in interest order.
+    rest = [p for i, p in enumerate(pool) if i != lead_idx]
+    sections = []
+    order = sorted(NEWS_CATEGORIES.keys(),
+                   key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
+    for cat in order:
+        group = [p for p in rest if p["category"] == cat][:6]
+        if not group:
+            continue
+        sections.append({
+            "title": cat,
+            "color": (NEWS_CATEGORIES.get(cat) or {}).get("color", "tech"),
+            "context": (editorial["section_context"].get(cat) or "").strip(),
+            "articles": group,
+        })
+
+    edition = {
+        "id": edition_id,
+        "date": date_str,
+        "slot": slot,
+        "headline": editorial["headline"],
+        "generated_at": datetime.now().isoformat(timespec='seconds'),
+        "generated_central": cnow.strftime('%Y-%m-%d %H:%M %Z') or cnow.isoformat(timespec='minutes'),
+        "lead": lead,
+        "sections": sections,
+        "stats": stats,
+    }
+
+    FRONT_PAGES_DIR.mkdir(parents=True, exist_ok=True)
+    (FRONT_PAGES_DIR / f"{edition_id}.json").write_text(
+        json.dumps(edition, indent=2), encoding="utf-8")
+    return edition
+
+
+def _list_front_pages():
+    """All saved editions, newest first, as light summaries for the index."""
+    if not FRONT_PAGES_DIR.exists():
+        return []
+    out = []
+    for p in FRONT_PAGES_DIR.glob("*.json"):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            out.append({
+                "id": d.get("id") or p.stem,
+                "date": d.get("date", ""),
+                "slot": d.get("slot", ""),
+                "headline": d.get("headline", ""),
+                "lead_title": (d.get("lead") or {}).get("title", ""),
+                "generated_central": d.get("generated_central", ""),
+                "section_count": len(d.get("sections") or []),
+                "stats": d.get("stats") or {},
+            })
+        except Exception:
+            continue
+    # Sort by (date desc, hour desc) — "evening" must rank above "morning" of
+    # the same day, which a plain string sort on slot would get wrong.
+    out.sort(key=lambda e: (e["date"], FRONT_PAGE_SLOTS.get(e["slot"], 0)),
+             reverse=True)
+    return out
+
+
+def _read_front_page(edition_id):
+    """Load one edition by id, or None."""
+    if not edition_id:
+        return None
+    safe = re.sub(r"[^0-9a-zA-Z\-]", "", edition_id)
+    path = FRONT_PAGES_DIR / f"{safe}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _run_front_page_job(slot):
+    """Scheduled-job entry point: generate an edition and drop a notification."""
+    edition = _generate_front_page(slot)
+    try:
+        if _notif_engine and edition:
+            lead = edition.get("lead") or {}
+            label = "Morning" if slot == "morning" else "Evening"
+            _notif_engine.push(
+                title=f"📰 Friday's Front Page — {label} edition",
+                body=(f"{edition.get('headline','Your Front Page')} · Lead: "
+                      f"{lead.get('title','(no stories)')}"),
+                priority="medium",
+                source="front-page",
+                kind="front_page",
+                actions=[{"label": "Open Front Page", "workspace": "news"}],
+                dedupe_key=f"front-page:{edition.get('id')}",
+                meta={"edition_id": edition.get("id"), "slot": slot},
+            )
+    except Exception as e:
+        print(f"  [front-page:{slot}] notification failed: {e}")
+    return edition
+
+
+@app.route('/api/news/front-page/generate', methods=['POST'])
+def front_page_generate():
+    """Generate (or regenerate) a Front Page edition on demand."""
+    data = request.get_json(silent=True) or {}
+    slot = data.get("slot")
+    if slot not in FRONT_PAGE_SLOTS:
+        # Auto-pick the slot from the current Central hour.
+        slot = "evening" if _front_page_central_now().hour >= 12 else "morning"
+    try:
+        edition = _generate_front_page(slot)
+        return jsonify({"status": "ok", "edition": edition})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/news/front-page/latest')
+def front_page_latest():
+    """The most recent edition (or null if none generated yet)."""
+    listing = _list_front_pages()
+    if not listing:
+        return jsonify({"status": "ok", "edition": None, "editions": []})
+    latest = _read_front_page(listing[0]["id"])
+    return jsonify({"status": "ok", "edition": latest, "editions": listing})
+
+
+@app.route('/api/news/front-pages')
+def front_pages_list():
+    """Index of all saved editions, newest first."""
+    return jsonify({"status": "ok", "editions": _list_front_pages()})
+
+
+@app.route('/api/news/front-page/<edition_id>')
+def front_page_get(edition_id):
+    """A specific edition by id (YYYY-MM-DD-{morning|evening})."""
+    edition = _read_front_page(edition_id)
+    if not edition:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": "ok", "edition": edition})
 
 
 # Fixed loopback redirect for Desktop ("installed") OAuth clients. Google accepts
@@ -10502,6 +10876,318 @@ def fs_assets():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  FUTURESPEAK STUDIO — portfolio project / deployment cockpit
+# ═══════════════════════════════════════════════════════════════
+#  Project-management + deploy layer on top of the Dev Studio vibe-coding
+#  backend. The curated portfolio lives in ~/.friday/futurespeak_projects.json;
+#  live git/deploy status is computed on demand from the local clone.
+
+FS_PROJECTS_FILE = FRIDAY_DIR / "futurespeak_projects.json"
+FS_ORG = "FutureSpeakAI"                      # GitHub org + Replit owner handle
+FS_PROJECTS_ROOT = HOME / "Projects"          # where local clones live
+
+# Seeded the first time the file is absent. repo == local clone dir name under
+# ~/Projects; url == live site; replit_url derived from the org handle. Sites
+# that aren't cloned locally (Replit-only) still show as live cards.
+FS_DEFAULT_PROJECTS = [
+    {"name": "FutureSpeak.AI", "url": "https://futurespeak.ai",
+     "replit_url": "https://replit.com/@FutureSpeakAI/FutureSpeakAI-Website",
+     "repo": "FutureSpeakAI-Website",
+     "description": "Main company site — AI product studio & strategic consultancy",
+     "category": "company"},
+    {"name": "InnexEnergy.com", "url": "https://innexenergy.com",
+     "replit_url": "https://replit.com/@FutureSpeakAI/innex-energy",
+     "repo": "innex-energy",
+     "description": "Jay family energy business site",
+     "category": "client"},
+    {"name": "OurPainfulTruth.org", "url": "https://ourpainfultruth.org",
+     "replit_url": "https://replit.com/@FutureSpeakAI/our-painful-truth",
+     "repo": "our-painful-truth",
+     "description": "Janet's chronic-pain advocacy site",
+     "category": "personal"},
+    {"name": "Brushfire", "url": "",
+     "replit_url": "https://replit.com/@FutureSpeakAI/Brushfire-INNEX-Dashboard",
+     "repo": "Brushfire-INNEX-Dashboard",
+     "description": "Petroleum analysis tool for INNEX",
+     "category": "client"},
+    {"name": "Agent Friday", "url": "",
+     "replit_url": "",
+     "repo": "friday-desktop",
+     "description": "This sovereign AI desktop — the app you're running now",
+     "category": "company"},
+]
+
+
+def _fs_projects_load():
+    """Load the portfolio, seeding defaults on first run."""
+    if not FS_PROJECTS_FILE.exists():
+        try:
+            FS_PROJECTS_FILE.write_text(
+                json.dumps({"projects": FS_DEFAULT_PROJECTS}, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+        return list(FS_DEFAULT_PROJECTS)
+    try:
+        data = json.loads(FS_PROJECTS_FILE.read_text(encoding='utf-8'))
+        return data.get('projects', []) or []
+    except Exception:
+        return list(FS_DEFAULT_PROJECTS)
+
+
+def _fs_projects_save(projects):
+    try:
+        FS_PROJECTS_FILE.write_text(
+            json.dumps({"projects": projects}, indent=2), encoding='utf-8')
+        return True
+    except Exception:
+        return False
+
+
+def _git(repo_path, *args, timeout=10):
+    """Run a git command inside repo_path; return stdout (stripped) or None."""
+    try:
+        r = subprocess.run(['git', '-C', str(repo_path), *args],
+                           capture_output=True, text=True, timeout=timeout,
+                           creationflags=_POPEN_FLAGS)
+        if r.returncode != 0:
+            return None
+        return (r.stdout or '').strip()
+    except Exception:
+        return None
+
+
+def _fs_resolve_repo_path(proj):
+    """Resolve a project's local clone dir, or None if it isn't cloned."""
+    rp = proj.get('repo_path')
+    if rp:
+        p = Path(os.path.expanduser(rp))
+        if p.exists():
+            return p
+    repo = proj.get('repo')
+    if repo:
+        p = FS_PROJECTS_ROOT / repo
+        if (p / '.git').exists():
+            return p
+    return None
+
+
+def _fs_has_replit(repo_path):
+    return bool(repo_path) and ((repo_path / '.replit').exists() or (repo_path / 'replit.nix').exists())
+
+
+def _fs_repo_status(repo_path):
+    """Compute live git/deploy status for a local clone.
+
+    deploy_status: green = clean & in sync · yellow = uncommitted or ahead ·
+    red = git error · remote = no local clone (handled by the caller).
+    """
+    status = {
+        "cloned": True, "branch": None, "last_commit_date": None,
+        "last_commit_msg": None, "last_commit_rel": None,
+        "uncommitted": 0, "ahead": 0, "behind": 0, "dirty": False,
+        "has_replit": _fs_has_replit(repo_path), "deploy_status": "green",
+        "error": None,
+    }
+    branch = _git(repo_path, 'rev-parse', '--abbrev-ref', 'HEAD')
+    if branch is None:
+        status.update({"deploy_status": "red", "error": "git unavailable"})
+        return status
+    status["branch"] = branch
+
+    log = _git(repo_path, 'log', '-1', '--format=%cI|%s|%cr')
+    if log and '|' in log:
+        parts = log.split('|', 2)
+        status["last_commit_date"] = parts[0]
+        status["last_commit_msg"] = parts[1] if len(parts) > 1 else ''
+        status["last_commit_rel"] = parts[2] if len(parts) > 2 else ''
+
+    porcelain = _git(repo_path, 'status', '--porcelain')
+    if porcelain:
+        files = [l for l in porcelain.splitlines() if l.strip()]
+        status["uncommitted"] = len(files)
+        status["dirty"] = len(files) > 0
+
+    counts = _git(repo_path, 'rev-list', '--count', '--left-right', '@{u}...HEAD')
+    if counts and '\t' in counts:
+        try:
+            behind, ahead = counts.split('\t')
+            status["behind"] = int(behind)
+            status["ahead"] = int(ahead)
+        except Exception:
+            pass
+
+    if status["dirty"] or status["ahead"] > 0:
+        status["deploy_status"] = "yellow"
+    return status
+
+
+def _fs_project_view(proj):
+    """Merge a stored project with its live status for the API response."""
+    out = dict(proj)
+    repo_path = _fs_resolve_repo_path(proj)
+    if not proj.get('replit_url') and proj.get('repo'):
+        out['replit_url'] = f"https://replit.com/@{FS_ORG}/{proj['repo']}"
+    if repo_path:
+        out['repo_path'] = str(repo_path)
+        out['status'] = _fs_repo_status(repo_path)
+    else:
+        # Live on Replit but not cloned here — surface as a remote-only card.
+        out['repo_path'] = None
+        out['status'] = {
+            "cloned": False, "deploy_status": "remote",
+            "has_replit": False, "branch": None, "uncommitted": 0,
+            "ahead": 0, "behind": 0, "dirty": False,
+            "last_commit_date": None, "last_commit_msg": None,
+            "last_commit_rel": None, "error": None,
+        }
+    return out
+
+
+@app.route('/api/futurespeak/projects')
+def fs_projects():
+    projects = [_fs_project_view(p) for p in _fs_projects_load()]
+    counts = {"green": 0, "yellow": 0, "red": 0, "remote": 0}
+    for p in projects:
+        ds = (p.get('status') or {}).get('deploy_status', 'remote')
+        counts[ds] = counts.get(ds, 0) + 1
+    return jsonify({"status": "ok", "projects": projects, "total": len(projects),
+                    "by_deploy": counts})
+
+
+@app.route('/api/futurespeak/project/<name>')
+def fs_project_detail(name):
+    for p in _fs_projects_load():
+        if p.get('name', '').lower() == name.lower():
+            return jsonify({"status": "ok", "project": _fs_project_view(p)})
+    return jsonify({"status": "error", "message": "Project not found"}), 404
+
+
+@app.route('/api/futurespeak/project', methods=['POST'])
+def fs_project_add():
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({"status": "error", "message": "name required"}), 400
+    projects = _fs_projects_load()
+    if any(p.get('name', '').lower() == name.lower() for p in projects):
+        return jsonify({"status": "error", "message": "Project already exists"}), 409
+    proj = {
+        "name": name,
+        "url": (data.get('url') or '').strip(),
+        "replit_url": (data.get('replit_url') or '').strip(),
+        "repo": (data.get('repo') or '').strip(),
+        "repo_path": (data.get('repo_path') or '').strip() or None,
+        "description": (data.get('description') or '').strip(),
+        "category": (data.get('category') or 'company').strip(),
+    }
+    projects.append(proj)
+    _fs_projects_save(projects)
+    return jsonify({"status": "ok", "project": _fs_project_view(proj)})
+
+
+@app.route('/api/futurespeak/project/<name>', methods=['DELETE'])
+def fs_project_remove(name):
+    projects = _fs_projects_load()
+    remaining = [p for p in projects if p.get('name', '').lower() != name.lower()]
+    if len(remaining) == len(projects):
+        return jsonify({"status": "error", "message": "Project not found"}), 404
+    _fs_projects_save(remaining)
+    return jsonify({"status": "ok", "removed": name, "total": len(remaining)})
+
+
+@app.route('/api/futurespeak/project/<name>/edit', methods=['POST'])
+def fs_project_edit(name):
+    """Scoped vibe-coding: launch a Claude Code terminal pinned to this repo.
+
+    Mirrors /api/vibe-code/launch but pre-sets cwd to the project's clone so
+    the Dev Studio flow is scoped to a single site. With deploy=true the task
+    is wrapped to stage, commit and push (Replit auto-deploys from GitHub).
+    """
+    data = request.get_json(silent=True) or {}
+    instruction = (data.get('task') or data.get('instruction') or '').strip()
+    if not instruction:
+        return jsonify({"status": "error", "message": "task required"}), 400
+
+    proj = next((p for p in _fs_projects_load()
+                 if p.get('name', '').lower() == name.lower()), None)
+    if not proj:
+        return jsonify({"status": "error", "message": "Project not found"}), 404
+    repo_path = _fs_resolve_repo_path(proj)
+    if not repo_path:
+        return jsonify({"status": "error",
+                        "message": f"{name} is not cloned locally — clone it under ~/Projects first"}), 400
+
+    task_desc = instruction
+    if data.get('deploy'):
+        task_desc = (
+            f"In the {proj['name']} repo: {instruction}. "
+            "When the change is complete and verified, stage all changes, commit with a clear "
+            "conventional-commit message describing the change, and push to the current branch's "
+            "remote so Replit auto-deploys from GitHub. Report the commit hash and push result."
+        )
+
+    cwd = os.path.normpath(str(repo_path))
+    tid = str(uuid.uuid4())[:12]
+    VIBE_TERMINALS[tid] = {
+        'id': tid, 'task': task_desc, 'status': 'launching', 'cwd': cwd,
+        'pid': None, 'started': datetime.now().isoformat(), 'stopped': None,
+        'log_file': None, 'project': proj['name'],
+    }
+    threading.Thread(target=_run_claude_terminal, args=(tid, task_desc, cwd), daemon=True).start()
+    return jsonify({"status": "ok", "terminal_id": tid, "project": proj['name'],
+                    "cwd": cwd, "deploy": bool(data.get('deploy'))})
+
+
+@app.route('/api/futurespeak/scan')
+def fs_scan():
+    """Rescan ~/Projects for FutureSpeakAI repos.
+
+    A repo is a deployable candidate if its origin remote belongs to the
+    FutureSpeakAI org AND it carries a Replit config (.replit / replit.nix).
+    Also auto-links repo_path for any portfolio entry whose repo is now found,
+    and flags which candidates are already in the portfolio.
+    """
+    portfolio = _fs_projects_load()
+    portfolio_repos = {(p.get('repo') or '').lower() for p in portfolio}
+
+    candidates = []
+    if FS_PROJECTS_ROOT.exists():
+        for d in sorted(FS_PROJECTS_ROOT.iterdir()):
+            if not d.is_dir() or not (d / '.git').exists():
+                continue
+            remote = _git(d, 'remote', 'get-url', 'origin') or ''
+            is_org = FS_ORG.lower() in remote.lower()
+            has_replit = _fs_has_replit(d)
+            if not (is_org and has_replit):
+                continue
+            st = _fs_repo_status(d)
+            candidates.append({
+                "repo": d.name, "repo_path": str(d), "remote": remote,
+                "has_replit": has_replit,
+                "in_portfolio": d.name.lower() in portfolio_repos,
+                "branch": st.get('branch'),
+                "last_commit_rel": st.get('last_commit_rel'),
+                "last_commit_msg": st.get('last_commit_msg'),
+                "deploy_status": st.get('deploy_status'),
+            })
+
+    # Refresh repo_path on portfolio entries that are now resolvable.
+    changed = False
+    for p in portfolio:
+        rp = _fs_resolve_repo_path(p)
+        if rp and p.get('repo_path') != str(rp):
+            p['repo_path'] = str(rp)
+            changed = True
+    if changed:
+        _fs_projects_save(portfolio)
+
+    return jsonify({"status": "ok", "candidates": candidates,
+                    "total": len(candidates),
+                    "discovered": [c for c in candidates if not c['in_portfolio']],
+                    "root": str(FS_PROJECTS_ROOT)})
+
+
+# ═══════════════════════════════════════════════════════════════
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
@@ -11726,6 +12412,11 @@ def _register_default_daily_jobs():
     except Exception:
         hour, minute = DAILY_CREATION_HOUR, DAILY_CREATION_MINUTE
     register_daily_job("daily-creation", hour, minute, generate_daily_creation)
+    # Friday's Front Page — two editions a day at 7 AM and 6 PM Central.
+    register_daily_job("front-page-morning", FRONT_PAGE_SLOTS["morning"], 0,
+                       lambda: _run_front_page_job("morning"))
+    register_daily_job("front-page-evening", FRONT_PAGE_SLOTS["evening"], 0,
+                       lambda: _run_front_page_job("evening"))
 
 
 _register_default_daily_jobs()

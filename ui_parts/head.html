@@ -1519,6 +1519,75 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .editorial-note b { color:#f59e0b; }
 
+        /* Save (Read Later) + background-open card buttons */
+        .src-btn.save:hover { background:rgba(0,212,255,0.18); }
+        .src-btn.save.on { background:rgba(0,212,255,0.16); }
+        .src-btn.bg:hover { background:rgba(124,58,237,0.2); }
+
+        /* Stream filter bar: category tabs + sort pills */
+        .stream-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+        .stream-tabs { display:flex; flex-wrap:wrap; gap:5px; }
+        .stream-tab {
+            font-size:11px; padding:4px 11px; border-radius:16px; cursor:pointer;
+            color:#aeb4c2; background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.07); transition:all 0.15s;
+        }
+        .stream-tab:hover { color:#e0e4ee; border-color:rgba(0,212,255,0.3); }
+        .stream-tab.active { color:#03060d; background:#00d4ff; border-color:#00d4ff; font-weight:600; }
+        .stream-sort { display:flex; align-items:center; gap:5px; }
+        .sort-pill {
+            font-size:10px; padding:3px 9px; border-radius:12px; cursor:pointer;
+            color:#9aa1b0; background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.06); transition:all 0.15s;
+        }
+        .sort-pill:hover { color:#e0e4ee; }
+        .sort-pill.active { color:#00d4ff; background:rgba(0,212,255,0.12); border-color:rgba(0,212,255,0.3); }
+
+        /* ── Friday's Front Page ── */
+        .fp-masthead {
+            display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+            padding-bottom:12px; margin-bottom:14px; border-bottom:2px solid rgba(0,212,255,0.25);
+        }
+        .fp-title { font-family:'Orbitron',monospace; font-size:22px; font-weight:700; color:#eef1f6; letter-spacing:0.02em; line-height:1.1; }
+        .fp-sub { font-size:11px; color:#8b93a4; margin-top:5px; }
+        .fp-lead {
+            position:relative; margin-bottom:20px; padding:20px;
+            background:rgba(10,14,26,0.8); backdrop-filter:blur(16px) saturate(1.2);
+            -webkit-backdrop-filter:blur(16px) saturate(1.2);
+            border:1px solid rgba(255,255,255,0.07);
+            border-left:4px solid var(--accent, #00d4ff);
+            border-radius:12px; box-shadow:0 8px 36px rgba(0,0,0,0.4), 0 0 26px var(--glow, rgba(0,212,255,0.14));
+        }
+        .fp-lead.cat-tech { --accent:var(--c-tech); --glow:rgba(0,212,255,0.18); }
+        .fp-lead.cat-politics { --accent:var(--c-politics); --glow:rgba(245,158,11,0.18); }
+        .fp-lead.cat-local { --accent:var(--c-local); --glow:rgba(0,255,128,0.16); }
+        .fp-lead.cat-business { --accent:var(--c-business); --glow:rgba(167,139,250,0.18); }
+        .fp-lead.cat-science { --accent:var(--c-science); --glow:rgba(45,212,191,0.18); }
+        .fp-lead.cat-media { --accent:var(--c-media); --glow:rgba(244,114,182,0.18); }
+        .fp-lead-headline {
+            font-size:26px; font-weight:700; line-height:1.18; color:#f4f6fa; cursor:pointer;
+            margin:6px 0 10px; transition:color 0.15s;
+        }
+        .fp-lead-headline:hover { color:var(--accent, #00d4ff); }
+        .fp-lead-snippet { font-size:14px; line-height:1.55; color:#bcc3d2; margin-bottom:4px; }
+        .fp-section { margin-bottom:22px; }
+        .fp-section-head {
+            display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+            margin-bottom:10px; padding-bottom:6px;
+            border-bottom:1px solid color-mix(in srgb, var(--accent, #00d4ff) 35%, transparent);
+        }
+        .fp-section-head.cat-tech { --accent:var(--c-tech); }
+        .fp-section-head.cat-politics { --accent:var(--c-politics); }
+        .fp-section-head.cat-local { --accent:var(--c-local); }
+        .fp-section-head.cat-business { --accent:var(--c-business); }
+        .fp-section-head.cat-science { --accent:var(--c-science); }
+        .fp-section-head.cat-media { --accent:var(--c-media); }
+        .fp-section-title {
+            font-family:'Orbitron',monospace; font-size:13px; font-weight:600; text-transform:uppercase;
+            letter-spacing:0.08em; color:var(--accent, #00d4ff);
+        }
+        .fp-section-ctx { font-size:11.5px; color:#9aa1b0; font-style:italic; }
+
         /* Briefing preview cards (past briefings) */
         .brief-card {
             margin-bottom:10px; border-radius:10px; padding:13px;

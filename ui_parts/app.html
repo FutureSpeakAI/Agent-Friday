@@ -746,8 +746,186 @@ function CoparentWS(){
     </div>}
   </div>);
 }
+
+// ═══ FUTURESPEAK STUDIO — portfolio project / deployment cockpit ═══
+// Project-management layer over the Dev Studio vibe-coding backend. Each
+// deployed site gets an interactive card with live git/deploy status, an
+// "Open in Replit" jump, scoped Quick Edit, and a one-click Apply+Deploy flow.
+const FS_DEPLOY_META={
+  green:{c:'#00ff80',label:'DEPLOYED'},
+  yellow:{c:'#f59e0b',label:'UNCOMMITTED'},
+  red:{c:'#ff0080',label:'ERROR'},
+  remote:{c:'#00d4ff',label:'REPLIT-ONLY'},
+};
+const FS_CAT_META={
+  company:{c:'#00d4ff',ico:'🚀'},
+  client:{c:'#f59e0b',ico:'🤝'},
+  personal:{c:'#7c3aed',ico:'💜'},
+};
+function FSProjectCard({p,onToast,onChanged}){
+  const[expanded,setExpanded]=useState(false);
+  const[editing,setEditing]=useState(false);
+  const[instr,setInstr]=useState('');
+  const[deploy,setDeploy]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const st=p.status||{};
+  const ds=FS_DEPLOY_META[st.deploy_status]||FS_DEPLOY_META.remote;
+  const cat=FS_CAT_META[p.category]||FS_CAT_META.company;
+  const cloned=st.cloned;
+  const runEdit=async()=>{
+    if(!instr.trim())return;setBusy(true);
+    try{const r=await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name)+'/edit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:instr,deploy})});
+      const d=await r.json();
+      if(d.status==='ok'){onToast((deploy?'Deploy':'Quick Edit')+' launched for '+p.name+' — track in Code workspace');setInstr('');setEditing(false);setDeploy(false)}
+      else onToast(d.message||'Launch failed')}
+    catch(e){onToast('Launch failed')}
+    setBusy(false);
+  };
+  const removeProject=async()=>{
+    if(!window.confirm('Remove "'+p.name+'" from the portfolio? (Does not touch the repo.)'))return;
+    try{await fetch('/api/futurespeak/project/'+encodeURIComponent(p.name),{method:'DELETE'});onToast(p.name+' removed');onChanged&&onChanged()}
+    catch(e){onToast('Remove failed')}
+  };
+  return(<div className="card" style={{borderColor:ds.c+'33',display:'flex',flexDirection:'column',gap:6,transition:'all .2s',position:'relative'}}
+    onMouseEnter={e=>e.currentTarget.style.borderColor=ds.c+'88'} onMouseLeave={e=>e.currentTarget.style.borderColor=ds.c+'33'}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:6}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{fontSize:16}}>{cat.ico}</span>
+          <span style={{fontSize:14,fontWeight:700,color:'#eee',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</span>
+        </div>
+        {p.url?<a href={p.url} target="_blank" rel="noopener" style={{fontSize:11,color:'#00d4ff',textDecoration:'none'}}>{p.url.replace(/^https?:\/\//,'')} →</a>:<span style={{fontSize:11,color:'#666'}}>no public URL</span>}
+      </div>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
+        <span style={{display:'flex',alignItems:'center',gap:4,fontSize:11,fontFamily:'Orbitron',color:ds.c}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:ds.c,boxShadow:'0 0 8px '+ds.c}}/>{ds.label}
+        </span>
+        <span style={{fontSize:11,color:cat.c,textTransform:'uppercase',letterSpacing:.5}}>{p.category}</span>
+      </div>
+    </div>
+    <div style={{fontSize:11,color:'#a8a8b4',lineHeight:1.4}}>{p.description}</div>
+    {cloned?<div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono',background:'rgba(0,0,0,0.25)',borderRadius:4,padding:'5px 7px',lineHeight:1.5}}>
+      <div style={{color:'#bbb'}}>⎇ {st.branch||'—'}{st.last_commit_rel?' · '+st.last_commit_rel:''}</div>
+      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{st.last_commit_msg||'(no commits)'}</div>
+      <div style={{display:'flex',gap:10,marginTop:3,color:'#888'}}>
+        <span style={{color:st.uncommitted>0?'#f59e0b':'#888'}}>● {st.uncommitted} changed</span>
+        <span style={{color:st.ahead>0?'#00d4ff':'#888'}}>↑ {st.ahead} ahead</span>
+        {st.has_replit&&<span style={{color:'#00ff80'}}>⚡ replit</span>}
+      </div>
+    </div>:<div style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono',background:'rgba(0,212,255,0.06)',borderRadius:4,padding:'5px 7px'}}>Live on Replit · not cloned locally</div>}
+    <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+      {p.url&&<a className="btn" style={{fontSize:11,textDecoration:'none'}} href={p.url} target="_blank" rel="noopener">🌐 View Site</a>}
+      {p.replit_url&&<button className="btn" style={{fontSize:11}} onClick={()=>window.open(p.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
+      {cloned&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>{setEditing(!editing);setExpanded(true)}}>✏️ Quick Edit</button>}
+      <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setExpanded(!expanded)}>{expanded?'▴':'▾'}</button>
+    </div>
+    {editing&&cloned&&<div style={{borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6}}>
+      <textarea className="input" style={{width:'100%',height:54,resize:'vertical',fontSize:11}} value={instr} onChange={e=>setInstr(e.target.value)} placeholder={'Describe the change to '+p.name+'… (e.g. "update the hero headline")'}/>
+      <div style={{display:'flex',gap:6,alignItems:'center',marginTop:5,flexWrap:'wrap'}}>
+        <label style={{fontSize:11,color:'#aaa',display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
+          <input type="checkbox" checked={deploy} onChange={e=>setDeploy(e.target.checked)}/> commit &amp; deploy
+        </label>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} disabled={busy||!instr.trim()} onClick={runEdit}>{busy?'Launching…':(deploy?'🚀 Apply, Commit & Deploy':'💻 Apply in Claude Code')}</button>
+      </div>
+      <div style={{fontSize:11,color:'#666',marginTop:4}}>Opens a scoped Claude Code terminal in {p.repo}. {deploy?'Pushes to GitHub → Replit auto-deploys.':'Diff stays local until you commit.'}</div>
+    </div>}
+    {expanded&&<div style={{borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6,fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>
+      <div>repo: {p.repo||'—'}</div>
+      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>path: {p.repo_path||'(not cloned)'}</div>
+      {st.behind>0&&<div style={{color:'#f59e0b'}}>↓ {st.behind} behind remote</div>}
+      {st.error&&<div style={{color:'#ff0080'}}>error: {st.error}</div>}
+      <button className="btn btn-magenta" style={{fontSize:11,marginTop:6,padding:'2px 8px'}} onClick={removeProject}>🗑 Remove from portfolio</button>
+    </div>}
+  </div>);
+}
+function FSStudio(){
+  const[projects,setProjects]=useState([]);const[counts,setCounts]=useState({});
+  const[loading,setLoading]=useState(true);const[scanning,setScanning]=useState(false);
+  const[toast,setToast]=useState('');const[discovered,setDiscovered]=useState([]);
+  const[wizard,setWizard]=useState(false);const[wMode,setWMode]=useState('describe');
+  const[wDesc,setWDesc]=useState('');const[wBusy,setWBusy]=useState(false);
+  const[wf,setWf]=useState({name:'',url:'',replit_url:'',repo:'',description:'',category:'company'});
+  const showToast=(m)=>{setToast(m);setTimeout(()=>setToast(''),2800)};
+  const load=useCallback(()=>{fetch('/api/futurespeak/projects').then(r=>r.json()).then(d=>{setProjects(d.projects||[]);setCounts(d.by_deploy||{});setLoading(false)}).catch(()=>setLoading(false))},[]);
+  useEffect(()=>{load()},[load]);
+  const refreshAll=async()=>{setScanning(true);
+    try{const r=await fetch('/api/futurespeak/scan').then(r=>r.json());setDiscovered(r.discovered||[]);showToast('Scanned '+(r.total||0)+' deployable repos · '+((r.discovered||[]).length)+' new');load()}
+    catch(e){showToast('Scan failed')}
+    setScanning(false);
+  };
+  const addDiscovered=async(c)=>{
+    try{const r=await fetch('/api/futurespeak/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.repo,repo:c.repo,repo_path:c.repo_path,replit_url:'https://replit.com/@FutureSpeakAI/'+c.repo,description:(c.last_commit_msg||'').slice(0,80),category:'company'})}).then(r=>r.json());
+      if(r.status==='ok'){showToast(c.repo+' added to portfolio');setDiscovered(d=>d.filter(x=>x.repo!==c.repo));load()}else showToast(r.message||'Add failed')}
+    catch(e){showToast('Add failed')}
+  };
+  const scaffold=async()=>{
+    if(!wDesc.trim())return;setWBusy(true);
+    try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Scaffold a new FutureSpeak.AI web project: '+wDesc+'. Create a clean modern site, initialize a git repo, create a GitHub repo under the FutureSpeakAI org, push it, then print Replit connect instructions (Import from GitHub at replit.com).'],cwd:'~\\Projects'})});
+      showToast('Scaffold launched in Claude Code — watch the Code workspace');setWDesc('');setWizard(false)}
+    catch(e){showToast('Launch failed')}
+    setWBusy(false);
+  };
+  const addManual=async()=>{
+    if(!wf.name.trim()){showToast('Name required');return}
+    setWBusy(true);
+    try{const r=await fetch('/api/futurespeak/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(wf)}).then(r=>r.json());
+      if(r.status==='ok'){showToast(wf.name+' added');setWf({name:'',url:'',replit_url:'',repo:'',description:'',category:'company'});setWizard(false);load()}else showToast(r.message||'Add failed')}
+    catch(e){showToast('Add failed')}
+    setWBusy(false);
+  };
+  if(loading)return <div style={{color:'#999',textAlign:'center',padding:30}}>Loading portfolio…</div>;
+  return(<div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
+      <div style={{display:'flex',gap:10,fontSize:11,fontFamily:'Orbitron',alignItems:'center'}}>
+        <span style={{color:'#00ff80'}}>● {counts.green||0} deployed</span>
+        <span style={{color:'#f59e0b'}}>● {counts.yellow||0} uncommitted</span>
+        {(counts.red||0)>0&&<span style={{color:'#ff0080'}}>● {counts.red} error</span>}
+        <span style={{color:'#00d4ff'}}>● {counts.remote||0} replit-only</span>
+      </div>
+      <div style={{display:'flex',gap:4}}>
+        <button className="btn" style={{fontSize:11}} onClick={refreshAll} disabled={scanning}>{scanning?'Scanning…':'🔄 Refresh All'}</button>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setWizard(!wizard)}>＋ New Project</button>
+      </div>
+    </div>
+    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+    {wizard&&<div className="card" style={{marginBottom:10,borderColor:'rgba(0,212,255,0.3)'}}>
+      <div style={{display:'flex',gap:4,marginBottom:8}}>
+        <button className={'btn '+(wMode==='describe'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setWMode('describe')}>🪄 Describe (scaffold)</button>
+        <button className={'btn '+(wMode==='manual'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setWMode('manual')}>✍️ Add existing</button>
+      </div>
+      {wMode==='describe'?<div>
+        <textarea className="input" style={{width:'100%',height:60,resize:'vertical',fontSize:12}} value={wDesc} onChange={e=>setWDesc(e.target.value)} placeholder="Describe the site to create… (e.g. 'a landing page for a solar installer with a quote form')"/>
+        <button className="btn" style={{fontSize:11,fontWeight:600,marginTop:6}} disabled={wBusy||!wDesc.trim()} onClick={scaffold}>{wBusy?'Launching…':'🚀 Scaffold & Create Repo'}</button>
+        <div style={{fontSize:11,color:'#666',marginTop:4}}>Friday scaffolds via Claude Code, creates a GitHub repo, and prints Replit connect steps.</div>
+      </div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+        <input className="input" style={{fontSize:11}} placeholder="Name *" value={wf.name} onChange={e=>setWf({...wf,name:e.target.value})}/>
+        <input className="input" style={{fontSize:11}} placeholder="Live URL" value={wf.url} onChange={e=>setWf({...wf,url:e.target.value})}/>
+        <input className="input" style={{fontSize:11}} placeholder="Repo dir name (under ~/Projects)" value={wf.repo} onChange={e=>setWf({...wf,repo:e.target.value})}/>
+        <input className="input" style={{fontSize:11}} placeholder="Replit URL (optional)" value={wf.replit_url} onChange={e=>setWf({...wf,replit_url:e.target.value})}/>
+        <input className="input" style={{fontSize:11,gridColumn:'1 / span 2'}} placeholder="Description" value={wf.description} onChange={e=>setWf({...wf,description:e.target.value})}/>
+        <select className="input" style={{fontSize:11}} value={wf.category} onChange={e=>setWf({...wf,category:e.target.value})}>
+          <option value="company">company</option><option value="client">client</option><option value="personal">personal</option>
+        </select>
+        <button className="btn" style={{fontSize:11,fontWeight:600}} disabled={wBusy} onClick={addManual}>{wBusy?'Adding…':'＋ Add to Portfolio'}</button>
+      </div>}
+    </div>}
+    {discovered.length>0&&<div className="card" style={{marginBottom:10,borderColor:'rgba(245,158,11,0.3)'}}>
+      <div className="card-title" style={{color:'#f59e0b'}}>Discovered — deployable FutureSpeakAI repos not in your portfolio</div>
+      <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:4}}>
+        {discovered.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,padding:'3px 0'}}>
+          <span style={{color:'#ccc'}}>{c.repo} <span style={{color:'#666'}}>· {c.last_commit_rel||''}</span></span>
+          <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={()=>addDiscovered(c)}>＋ Add</button>
+        </div>)}
+      </div>
+    </div>}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(290px,1fr))',gap:8}}>
+      {projects.map((p,i)=><FSProjectCard key={p.name||i} p={p} onToast={showToast} onChanged={load}/>)}
+    </div>
+    {projects.length===0&&<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No projects in portfolio. Click 🔄 Refresh All to discover repos, or ＋ New Project.</div>}
+  </div>);
+}
 function FuturespeakWS(){
-  const[view,setView]=useState('overview');
+  const[view,setView]=useState('sites');
   const[pipe,setPipe]=useState(null);const[rev,setRev]=useState(null);const[legal,setLegal]=useState(null);const[assets,setAssets]=useState(null);
   const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
   useEffect(()=>{Promise.all([
@@ -771,8 +949,10 @@ function FuturespeakWS(){
 
   return(<div>
     <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
+    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
+
+    {view==='sites'&&<FSStudio/>}
 
     {view==='overview'&&<div>
       <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div>
@@ -1178,11 +1358,18 @@ function SystemWS(){
 function CodeWS(){
   const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('~\\Projects');const[terminals,setTerminals]=useState([]);const[loading,setLoading]=useState(false);
   const[presets,setPresets]=useState([]);const[selectedTerminal,setSelectedTerminal]=useState(null);
+  const[replitProjects,setReplitProjects]=useState([]);
   useEffect(()=>{
     fetch('/api/vibe-code/presets').then(r=>r.json()).then(d=>setPresets(d.presets||[])).catch(()=>{});
+    // Replit shortcuts — any portfolio repo deployed on Replit (has a clone +
+    // .replit, or simply a replit_url). Surfaces "Open in Replit" in Dev Studio.
+    fetch('/api/futurespeak/projects').then(r=>r.json()).then(d=>setReplitProjects((d.projects||[]).filter(p=>p.replit_url&&(p.repo_path||(p.status||{}).has_replit||(p.status||{}).deploy_status==='remote')))).catch(()=>{});
     const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setTerminals(d.terminals||[])).catch(()=>{})},3000);
     return()=>clearInterval(iv);
   },[]);
+  // Does the current working dir match a known Replit repo? (path or repo-name suffix)
+  const cwdNorm=(cwd||'').replace(/\//g,'\\').toLowerCase().replace(/\\+$/,'');
+  const cwdProject=replitProjects.find(p=>{const rp=(p.repo_path||'').toLowerCase().replace(/\\+$/,'');return rp&&cwdNorm===rp||(p.repo&&cwdNorm.endsWith('\\'+p.repo.toLowerCase()))});
   const launch=async(taskList)=>{const lines=(taskList||tasks).split('\n').filter(l=>l.trim());if(!lines.length)return;setLoading(true);
     await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})});setLoading(false);setTasks('')};
   const launchPreset=(p)=>{launch(p.tasks.join('\n'))};
@@ -1192,7 +1379,10 @@ function CodeWS(){
   return(<div>
     <FridaySays text={running>0?running+' terminal'+(running>1?'s':'')+' active. Click to expand.':'Launch Claude Code terminals. Use presets or type custom tasks.'}/>
     <div className="card" style={{marginBottom:10,padding:10}}>
-      <div style={{display:'flex',gap:6,marginBottom:6}}><input className="input" style={{flex:1}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/></div>
+      <div style={{display:'flex',gap:6,marginBottom:6}}>
+        <input className="input" style={{flex:1}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/>
+        {cwdProject&&cwdProject.replit_url&&<button className="btn" style={{fontSize:11,whiteSpace:'nowrap',borderColor:'rgba(0,255,128,0.4)',color:'#00ff80'}} title={'This repo is deployed on Replit'} onClick={()=>window.open(cwdProject.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
+      </div>
       <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:6}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line... (e.g. 'Scan portals for AI director roles')"/>
       <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
         <button className="btn" onClick={()=>launch()} disabled={loading} style={{fontWeight:600}}>{loading?'Launching...':'Launch All'}</button>
@@ -1203,6 +1393,10 @@ function CodeWS(){
     {presets.length>0&&<div style={{marginBottom:10}}><div className="card-title">Presets</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
       {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>launchPreset(p)}>{p.name}</button>)}
     </div></div>}
+    {replitProjects.length>0&&<div style={{marginBottom:10}}><div className="card-title">⚡ Replit Shortcuts</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+      {replitProjects.map((p,i)=><button key={i} className="btn" style={{fontSize:11,borderColor:p.repo_path&&cwdNorm.endsWith('\\'+(p.repo||'').toLowerCase())?'rgba(0,255,128,0.5)':undefined}} title={p.repo_path?('Set cwd to '+p.repo+' · click ⚡ to open Replit'):'Replit-only site'}
+        onClick={()=>{if(p.repo_path)setCwd(p.repo_path);window.open(p.replit_url,'_blank','noopener')}}>🚀 {p.name}</button>)}
+    </div><div style={{fontSize:11,color:'#666',marginTop:3}}>Opens the Replit project; if cloned locally, also pins the working dir here.</div></div>}
     {terminals.length>0&&<div><div className="card-title">Terminals ({running} active)</div>
       <div style={{display:'grid',gridTemplateColumns:selectedTerminal?'1fr':'1fr 1fr',gap:6}}>
         {terminals.map((t,i)=>{const color=colors[i%4];const isSelected=selectedTerminal===t.id;
@@ -1239,16 +1433,22 @@ function CodeWS(){
 // ═══ NEWS WORKSPACE — magazine layout, source trust, live status ═══
 const NEWS_GEN_STEPS=['Fetching news…','Checking calendar…','Scanning email…','Writing briefing…'];
 function relevanceFor(it){
-  const m={'AI/Tech':'Matches your AI/Tech priority','Politics':'On your Politics watchlist','Local':'Austin local — near you','Business':'Markets & business focus'};
+  const m={'AI/Tech':'Matches your AI/Tech priority','Politics':'On your Politics watchlist','Local':'Austin local — near you','Business':'Markets & business focus','Science':'Science & climate signal','Media':'Journalism & media — your beat'};
   return (it.boosted?'⭐ From a source you boosted · ':'')+(m[it.category]||'Picked for your interests');
 }
 function editorialFor(it){
-  const m={'AI/Tech':'the pace of AI shifts what your work and tools can do next.','Politics':'policy moves here ripple into the decisions on your plate.','Local':'it is happening in your city and may touch your week directly.','Business':'market moves shape the financial backdrop of your plans.'};
+  const m={'AI/Tech':'the pace of AI shifts what your work and tools can do next.','Politics':'policy moves here ripple into the decisions on your plate.','Local':'it is happening in your city and may touch your week directly.','Business':'market moves shape the financial backdrop of your plans.','Science':'the research frontier reshapes the future you build for.','Media':'how the press is changing is your professional terrain.'};
   return 'This matters because '+(m[it.category]||'it lines up with what you track most closely.');
 }
+// Stream categories for the Feed filter tabs (All + each beat).
+const NEWS_STREAM_CATS=['All','AI/Tech','Politics','Business','Local','Science','Media'];
 function NewsWS(){
-  const[tab,setTab]=useState('feed');
+  const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
+  // Front Page (AI-curated editorial), Read Later store, and stream filters.
+  const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
+  const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
+  const[streamCat,setStreamCat]=useState('All');const[sortBy,setSortBy]=useState('relevance');
   const[status,setStatus]=useState([]);
   const[sources,setSources]=useState({banned:[],boosted:[]});
   const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
@@ -1262,12 +1462,22 @@ function NewsWS(){
   const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
+  const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
+  const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
+  const loadReadLater=()=>{setRlLoading(true);fetch('/api/news/read-later').then(r=>r.json()).then(d=>{const it=d.items||[];setReadLater(it);setSavedUrls(Object.fromEntries(it.map(a=>[a.url,true])));setRlLoading(false)}).catch(()=>setRlLoading(false))};
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
-    loadFeed();loadSources();loadPrefs();
+    loadFeed();loadSources();loadPrefs();loadFrontPage();loadReadLater();
     return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
   },[]);
+
+  // Front Page generation + Read Later actions + background open.
+  const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){alert('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
+  const saveLater=async(it)=>{if(!it||!it.url)return;setSavedUrls(s=>({...s,[it.url]:true}));try{await fetch('/api/news/read-later',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:it.url,title:it.title,source:it.source,snippet:it.snippet,category:it.category,color:it.color})});loadReadLater()}catch(e){}};
+  const removeLater=async(url)=>{setReadLater(l=>l.filter(a=>a.url!==url));setSavedUrls(s=>{const n={...s};delete n[url];return n});try{await fetch('/api/news/read-later?url='+encodeURIComponent(url),{method:'DELETE'})}catch(e){}};
+  // Open without stealing focus: pop the tab, then blur it and refocus this window.
+  const openBg=(url)=>{if(!url)return;const w=window.open(url,'_blank','noopener');if(w){try{w.blur();window.focus()}catch(_){}}};
 
   const banSource=async(src)=>{setFeed(f=>f.filter(it=>it.source!==src));try{await fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources()}catch(e){}};
   const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
@@ -1319,8 +1529,20 @@ function NewsWS(){
   </div>);
 
   // ── Feature (top story) gets a larger card + editorial note ──
-  const feature=feed[0];
   const filteredBriefs=briefings.filter(b=>!briefSearch||(b.date||'').includes(briefSearch.trim()));
+  // Stream view: filter by the selected category tab, then sort.
+  const streamItems=feed.filter(it=>streamCat==='All'||it.category===streamCat).slice().sort((a,b)=>{
+    if(sortBy==='time')return (b.ts||0)-(a.ts||0);
+    if(sortBy==='source')return (a.source||'').localeCompare(b.source||'');
+    return (b.score||0)-(a.score||0); // relevance (default)
+  });
+  // Reusable card-corner actions: Read Later (toggle) + Open in Background.
+  const cardActions=(it)=>(<div className="src-actions">
+    <button className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
+    <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+    <button className="src-btn boost" title={'Boost '+it.source} onClick={e=>{e.stopPropagation();boostSource(it.source)}}>⭐</button>
+    <button className="src-btn ban" title={'Ban '+it.source} onClick={e=>{e.stopPropagation();banSource(it.source)}}>🚫</button>
+  </div>);
 
   return(<div className="news-ws" style={{position:'relative'}}>
     {/* Live status strip */}
@@ -1335,14 +1557,17 @@ function NewsWS(){
     {/* Toolbar */}
     <div className="news-toolbar">
       <div className="news-tabs">
+        <button className={'btn '+(tab==='frontpage'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('frontpage')}>🗞 Front Page</button>
         <button className={'btn '+(tab==='feed'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('feed')}>📰 Feed</button>
+        <button className={'btn '+(tab==='readlater'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('readlater');loadReadLater()}}>🔖 Read Later{readLater.length?(' ('+readLater.length+')'):''}</button>
         <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
       </div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
         {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={loadFeed}>↻ Refresh</button>}
-        <button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Now'}</button>
+        {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
+        {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
       </div>
     </div>
 
@@ -1353,21 +1578,28 @@ function NewsWS(){
       <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
     </div>}
 
-    {/* ── FEED TAB ── */}
+    {/* ── FEED TAB (category stream + sort) ── */}
     {tab==='feed'&&<div>
+      <div className="stream-bar">
+        <div className="stream-tabs">
+          {NEWS_STREAM_CATS.map(c=><button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{c!=='All'&&feed.filter(it=>it.category===c).length>0?(' '+feed.filter(it=>it.category===c).length):''}</button>)}
+        </div>
+        <div className="stream-sort">
+          <span style={{fontSize:10,color:'#777'}}>Sort</span>
+          {[['relevance','Relevance'],['time','Newest'],['source','Source']].map(([k,lbl])=>
+            <button key={k} className={'sort-pill'+(sortBy===k?' active':'')} onClick={()=>setSortBy(k)}>{lbl}</button>)}
+        </div>
+      </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontSize:11,color:'#888'}}>{feed.length} stories{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
+        <div style={{fontSize:11,color:'#888'}}>{streamItems.length} stor{streamItems.length===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
       </div>
       {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Pulling live stories…</div>:
-       feed.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories right now. Try ↻ Refresh, or check your category toggles in ⚙ Customize.</div>:
+       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories{streamCat!=='All'?(' in '+streamCat):''} right now. Try ↻ Refresh, another category, or your toggles in ⚙ Customize.</div>:
        <div className="news-masonry">
-         {feed.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
+         {streamItems.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
            <div className="news-cardtop">
              <span className="cat-chip">{it.category}</span>
-             <div className="src-actions">
-               <button className="src-btn boost" title={'Boost '+it.source} onClick={()=>boostSource(it.source)}>⭐</button>
-               <button className="src-btn ban" title={'Ban '+it.source} onClick={()=>banSource(it.source)}>🚫</button>
-             </div>
+             {cardActions(it)}
            </div>
            {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
            <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
@@ -1375,13 +1607,102 @@ function NewsWS(){
            <div className="source-row">
              <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
              {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
+             {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖 Saved</span>}
            </div>
            <div className="news-meta">
              {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>openBg(it.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
            </div>
            {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
+         </div>)}
+       </div>}
+    </div>}
+
+    {/* ── FRONT PAGE TAB (AI-curated editorial) ── */}
+    {tab==='frontpage'&&<div>
+      {fpGen&&<div className="gen-progress"><span className="gen-spinner"></span><span>Friday is curating your Front Page — fetching every feed, scoring against your profile, writing the lead…</span></div>}
+      {fpLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your Front Page…</div>:
+       !fp?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
+         No edition yet. Friday publishes automatically at 7 AM &amp; 6 PM Central — or hit ✨ Generate Front Page to make one now.
+       </div>:
+       <div>
+         {/* Masthead */}
+         <div className="fp-masthead">
+           <div>
+             <div className="fp-title">{fp.headline||"Friday's Front Page"}</div>
+             <div className="fp-sub">{(fp.slot==='evening'?'Evening edition':'Morning edition')+(fp.generated_central?(' · '+fp.generated_central):'')}{fp.stats&&fp.stats.total_considered?(' · '+fp.stats.total_considered+' stories from '+fp.stats.sources+' sources'):''}</div>
+           </div>
+           {fpList.length>1&&<select className="input" style={{fontSize:11,maxWidth:200}} value={fp.id} onChange={e=>loadFpEdition(e.target.value)}>
+             {fpList.map(e=><option key={e.id} value={e.id}>{e.date+' · '+(e.slot==='evening'?'PM':'AM')}</option>)}
+           </select>}
+         </div>
+         {/* Lead story */}
+         {fp.lead&&<div className={'fp-lead cat-'+(fp.lead.color||'tech')}>
+           <div className="news-cardtop">
+             <span className="cat-chip">LEAD · {fp.lead.category}</span>
+             {cardActions(fp.lead)}
+           </div>
+           {fp.lead.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
+           <div className="fp-lead-headline" onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>{fp.lead.title}</div>
+           <div className="fp-lead-snippet">{fp.lead.snippet}</div>
+           {fp.lead.editorial_note&&<div className="editorial-note"><b>Friday's note:</b> {fp.lead.editorial_note}</div>}
+           <div className="source-row" style={{marginTop:8}}>
+             <span className="source-badge"><span className={'trust-dot '+(fp.lead.trust||'yellow')}></span>{fp.lead.source}</span>
+             <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
+             <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
+           </div>
+         </div>}
+         {/* Sections */}
+         {(fp.sections||[]).map((sec,si)=><div key={si} className="fp-section">
+           <div className={'fp-section-head cat-'+(sec.color||'tech')}>
+             <span className="fp-section-title">{sec.title}</span>
+             {sec.context&&<span className="fp-section-ctx">{sec.context}</span>}
+           </div>
+           <div className="news-masonry">
+             {(sec.articles||[]).map((it,i)=><div key={i} className={'news-card cat-'+(it.color||sec.color||'tech')}>
+               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{cardActions(it)}</div>
+               {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
+               <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
+               <div className="news-snippet">{it.snippet}</div>
+               <div className="source-row">
+                 <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
+                 {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
+                 {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
+               </div>
+             </div>)}
+           </div>
+         </div>)}
+       </div>}
+    </div>}
+
+    {/* ── READ LATER TAB ── */}
+    {tab==='readlater'&&<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <div style={{fontSize:11,color:'#888'}}>{readLater.length} saved article{readLater.length===1?'':'s'}</div>
+        {readLater.length>0&&<button className="btn" style={{fontSize:10,padding:'2px 8px'}} onClick={()=>{if(confirm('Clear all saved articles?')){fetch('/api/news/read-later?clear=1',{method:'DELETE'}).then(()=>loadReadLater())}}}>Clear all</button>}
+      </div>
+      {rlLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading saved articles…</div>:
+       readLater.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>Nothing saved yet. Hit 🏷 on any story to save it here for later.</div>:
+       <div className="news-masonry">
+         {readLater.map((it,i)=><div key={it.url||i} className={'news-card cat-'+(it.color||'tech')}>
+           <div className="news-cardtop">
+             <span className="cat-chip">{it.category||it.source}</span>
+             <div className="src-actions">
+               <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+               <button className="src-btn ban" title="Remove from Read Later" onClick={e=>{e.stopPropagation();removeLater(it.url)}}>✕</button>
+             </div>
+           </div>
+           <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
+           {it.snippet&&<div className="news-snippet">{it.snippet}</div>}
+           <div className="source-row">
+             <span className="source-badge"><span className="trust-dot green"></span>{it.source}</span>
+             {it.saved_at&&<span style={{fontSize:9,color:'#777'}}>saved {new Date(it.saved_at).toLocaleDateString()}</span>}
+           </div>
+           <div className="news-meta">
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
+           </div>
          </div>)}
        </div>}
     </div>}
