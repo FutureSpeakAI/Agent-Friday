@@ -4697,78 +4697,319 @@ function SystemWS(){
     </div>}
   </div>);
 }
-function CodeWS(){
-  const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('~\\Projects');const[terminals,setTerminals]=useState([]);const[loading,setLoading]=useState(false);
-  const[presets,setPresets]=useState([]);const[selectedTerminal,setSelectedTerminal]=useState(null);
-  const[replitProjects,setReplitProjects]=useState([]);
+// ═══ FRIDAY'S DEV STUDIO — Code workspace ═══
+// Six panels: live log stream (SSE), repo dashboard, vibe coding,
+// git operations, file browser, process monitor. All endpoints under
+// /api/code/, /api/repos/, /api/git/, /api/logs/, /api/files/.
+function DevDiff({diff}){
+  const lines=String(diff||'').split('\n');
+  return(<pre style={{margin:0,maxHeight:'46vh',overflow:'auto',fontFamily:'JetBrains Mono',fontSize:11,lineHeight:1.5,background:'rgba(0,0,0,0.35)',borderRadius:8,padding:'8px 10px'}}>
+    {lines.map((ln,i)=>{
+      let col='#9aa';
+      if(/^\+\+\+|^---/.test(ln))col='#888';
+      else if(/^@@/.test(ln))col='#ff6dd9';
+      else if(/^\+/.test(ln))col='#00ff80';
+      else if(/^-/.test(ln))col='#ff5a7a';
+      return <div key={i} style={{color:col,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{ln||' '}</div>;
+    })}
+  </pre>);
+}
+function CodeViewer({content,lang}){
+  const ref=useRef(null);
   useEffect(()=>{
-    fetch('/api/vibe-code/presets').then(r=>r.json()).then(d=>setPresets(d.presets||[])).catch(()=>{});
-    // Replit shortcuts — any portfolio repo deployed on Replit (has a clone +
-    // .replit, or simply a replit_url). Surfaces "Open in Replit" in Dev Studio.
-    fetch('/api/futurespeak/projects').then(r=>r.json()).then(d=>setReplitProjects((d.projects||[]).filter(p=>p.replit_url&&(p.repo_path||(p.status||{}).has_replit||(p.status||{}).deploy_status==='remote')))).catch(()=>{});
-    const iv=setInterval(()=>{fetch('/api/vibe-code/status').then(r=>r.json()).then(d=>setTerminals(d.terminals||[])).catch(()=>{})},3000);
-    return()=>clearInterval(iv);
-  },[]);
-  // Does the current working dir match a known Replit repo? (path or repo-name suffix)
-  const cwdNorm=(cwd||'').replace(/\//g,'\\').toLowerCase().replace(/\\+$/,'');
-  const cwdProject=replitProjects.find(p=>{const rp=(p.repo_path||'').toLowerCase().replace(/\\+$/,'');return rp&&cwdNorm===rp||(p.repo&&cwdNorm.endsWith('\\'+p.repo.toLowerCase()))});
-  const launch=async(taskList)=>{const lines=(taskList||tasks).split('\n').filter(l=>l.trim());if(!lines.length)return;setLoading(true);
-    await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})});setLoading(false);setTasks('')};
-  const launchPreset=(p)=>{launch(p.tasks.join('\n'))};
-  const stopTerminal=(id)=>{fetch('/api/vibe-code/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})};
-  const running=terminals.filter(t=>t.status==='running').length;
-  const colors=['#00d4ff','#00ff80','#f59e0b','#ff0080'];
+    if(!ref.current)return;
+    ref.current.textContent=content||'';
+    ref.current.className='language-'+(lang||'plaintext');
+    ref.current.removeAttribute('data-highlighted');
+    try{if(window.hljs)window.hljs.highlightElement(ref.current)}catch(e){}
+  },[content,lang]);
+  return(<pre style={{margin:0,maxHeight:'60vh',overflow:'auto',borderRadius:8,fontSize:12,lineHeight:1.55}}>
+    <code ref={ref} className={'language-'+(lang||'plaintext')}/>
+  </pre>);
+}
+// ─── Repo dashboard ───
+function DevRepos({repos,loading,onScan,onPick}){
+  const dot=(c)=>({width:8,height:8,borderRadius:'50%',background:c,display:'inline-block'});
   return(<div>
-    <FridaySays text={running>0?running+' terminal'+(running>1?'s':'')+' active. Click to expand.':'Launch Claude Code terminals. Use presets or type custom tasks.'}/>
-    <div className="card" style={{marginBottom:10,padding:10}}>
-      <div style={{display:'flex',gap:6,marginBottom:6}}>
-        <input className="input" style={{flex:1}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/>
-        {cwdProject&&cwdProject.replit_url&&<button className="btn" style={{fontSize:11,whiteSpace:'nowrap',borderColor:'rgba(0,255,128,0.4)',color:'#00ff80'}} title={'This repo is deployed on Replit'} onClick={()=>window.open(cwdProject.replit_url,'_blank','noopener')}>⚡ Open in Replit</button>}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+      <div className="card-title" style={{margin:0}}>Repositories in ~/Projects</div>
+      <button className="btn" style={{fontSize:11}} onClick={onScan}>{loading?'Scanning…':'↻ Rescan'}</button>
+    </div>
+    {loading&&repos.length===0&&<div style={{color:'#999',textAlign:'center',padding:24,fontSize:12}}>Scanning ~/Projects…</div>}
+    {!loading&&repos.length===0&&<div className="card" style={{textAlign:'center',padding:18,fontSize:12,color:'#999'}}>No git repos found in ~/Projects.</div>}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+      {repos.map((r,i)=>{const col=r.clean?'#00ff80':'#f59e0b';
+        return(<div key={i} className="card" style={{cursor:'pointer',borderColor:r.error?'rgba(255,0,128,0.3)':undefined}} onClick={()=>onPick&&onPick(r)}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontWeight:600,color:'#cfe'}}>{r.name}</span>
+            <span style={{display:'flex',alignItems:'center',gap:5,fontSize:11,fontFamily:'JetBrains Mono',color:'#9ad'}}>
+              <span style={dot(col)}/>{r.branch}
+            </span>
+          </div>
+          <div style={{display:'flex',gap:8,marginTop:5,flexWrap:'wrap',fontSize:11,fontFamily:'JetBrains Mono'}}>
+            <span style={{color:r.dirty?'#f59e0b':'#666'}}>{r.dirty?r.dirty+' changed':'clean'}</span>
+            {r.ahead>0&&<span style={{color:'#00d4ff'}}>↑{r.ahead}</span>}
+            {r.behind>0&&<span style={{color:'#ff6dd9'}}>↓{r.behind}</span>}
+            {r.upstream===false&&<span style={{color:'#666'}}>no upstream</span>}
+          </div>
+          {r.last_commit&&<div style={{fontSize:11,color:'#888',marginTop:5,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title={r.last_commit}>{r.last_commit}</div>}
+          {r.last_when&&<div style={{fontSize:11,color:'#666',marginTop:2}}>{r.last_when}</div>}
+          {r.error&&<div style={{fontSize:11,color:'#ff5a7a',marginTop:4}}>{r.error}</div>}
+        </div>);
+      })}
+    </div>
+  </div>);
+}
+// ─── Vibe coding: NL → plan → diff → apply → commit ───
+function DevVibe({repos,onLog}){
+  const[repo,setRepo]=useState('');const[instr,setInstr]=useState('');
+  const[plan,setPlan]=useState(null);const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState('');const[applied,setApplied]=useState(null);
+  const[openFile,setOpenFile]=useState(0);const[committing,setCommitting]=useState(false);const[commitMsg,setCommitMsg]=useState('');
+  useEffect(()=>{if(!repo&&repos.length)setRepo(repos[0].name)},[repos]);
+  const genPlan=async()=>{
+    if(!repo||!instr.trim())return;setBusy(true);setErr('');setPlan(null);setApplied(null);
+    try{const r=await fetch('/api/code/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo,instruction:instr})});
+      const d=await r.json();
+      if(d.status==='ok'){setPlan(d.plan);setCommitMsg((d.plan.summary||instr).split('\n')[0].slice(0,72))}
+      else setErr(d.message||'Plan failed');
+    }catch(e){setErr('Request failed')}
+    setBusy(false);
+  };
+  const applyPlan=async()=>{
+    if(!plan)return;setBusy(true);setErr('');
+    try{const r=await fetch('/api/code/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan_id:plan.id})});
+      const d=await r.json();if(d.status==='ok'){setApplied(d);onLog&&onLog()}else setErr(d.message||'Apply failed');
+    }catch(e){setErr('Apply failed')}
+    setBusy(false);
+  };
+  const commit=async()=>{
+    if(!plan||!commitMsg.trim())return;setCommitting(true);setErr('');
+    try{const r=await fetch('/api/git/commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repo:plan.repo,message:commitMsg})});
+      const d=await r.json();if(!d.ok)setErr(d.message||d.stderr||'Commit failed');else setApplied(a=>({...(a||{}),committed:true}));
+    }catch(e){setErr('Commit failed')}
+    setCommitting(false);
+  };
+  return(<div>
+    <FridaySays text="Describe a change in plain English. Friday drafts a plan, you preview the diff, then apply and commit."/>
+    <div className="card" style={{padding:10,marginBottom:10}}>
+      <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#9ad'}}>Repo</span>
+        <select className="input" style={{flex:1,padding:'5px 8px'}} value={repo} onChange={e=>setRepo(e.target.value)}>
+          {repos.length===0&&<option value="">(no repos)</option>}
+          {repos.map((r,i)=><option key={i} value={r.name}>{r.name} · {r.branch}</option>)}
+        </select>
       </div>
-      <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:6}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line... (e.g. 'Scan portals for AI director roles')"/>
-      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-        <button className="btn" onClick={()=>launch()} disabled={loading} style={{fontWeight:600}}>{loading?'Launching...':'Launch All'}</button>
-        <button className="btn" onClick={()=>launch(tasks||'Ready for instructions')} style={{fontSize:11}}>1 Terminal</button>
-        <button className="btn" onClick={()=>{const t=tasks||'Task 1\nTask 2';launch(t+'\n'+t)}} style={{fontSize:11}}>Quad Code (4x)</button>
+      <textarea className="input" style={{width:'100%',height:64,resize:'vertical',marginBottom:6}} value={instr} onChange={e=>setInstr(e.target.value)} placeholder="e.g. Add a /health endpoint that returns uptime and version as JSON"/>
+      <div style={{display:'flex',gap:6}}>
+        <button className="btn" style={{fontWeight:600}} disabled={busy||!repo||!instr.trim()} onClick={genPlan}>{busy?'Thinking…':'✨ Generate Plan'}</button>
+        {plan&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>{setPlan(null);setApplied(null)}}>Clear</button>}
       </div>
     </div>
-    {presets.length>0&&<div style={{marginBottom:10}}><div className="card-title">Presets</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-      {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>launchPreset(p)}>{p.name}</button>)}
-    </div></div>}
-    {replitProjects.length>0&&<div style={{marginBottom:10}}><div className="card-title">⚡ Replit Shortcuts</div><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-      {replitProjects.map((p,i)=><button key={i} className="btn" style={{fontSize:11,borderColor:p.repo_path&&cwdNorm.endsWith('\\'+(p.repo||'').toLowerCase())?'rgba(0,255,128,0.5)':undefined}} title={p.repo_path?('Set cwd to '+p.repo+' · click ⚡ to open Replit'):'Replit-only site'}
-        onClick={()=>{if(p.repo_path)setCwd(p.repo_path);window.open(p.replit_url,'_blank','noopener')}}>🚀 {p.name}</button>)}
-    </div><div style={{fontSize:11,color:'#666',marginTop:3}}>Opens the Replit project; if cloned locally, also pins the working dir here.</div></div>}
-    {terminals.length>0&&<div><div className="card-title">Terminals ({running} active)</div>
-      <div style={{display:'grid',gridTemplateColumns:selectedTerminal?'1fr':'1fr 1fr',gap:6}}>
-        {terminals.map((t,i)=>{const color=colors[i%4];const isSelected=selectedTerminal===t.id;
-          return(<div key={t.id} className="card" style={{borderColor:t.status==='running'?color:'rgba(255,255,255,0.04)',cursor:'pointer',transition:'all .2s'}}
-            onClick={()=>setSelectedTerminal(isSelected?null:t.id)}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <div style={{width:8,height:8,borderRadius:'50%',background:t.status==='running'?color:'#999',boxShadow:t.status==='running'?'0 0 8px '+color:'none'}}/>
-                <span style={{fontFamily:'Orbitron',fontSize:11,color}}>Q{i+1}</span>
-              </div>
-              <div style={{display:'flex',gap:4}}>
-                <span style={{fontSize:11,color:t.status==='running'?'#00ff80':'#888',fontFamily:'JetBrains Mono'}}>{t.status||'unknown'}</span>
-                {t.status==='running'&&<button className="btn btn-magenta" style={{fontSize:11,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();stopTerminal(t.id)}}>Stop</button>}
-              </div>
-            </div>
-            <div style={{fontSize:11,color:'#aaa',marginTop:4,wordBreak:'break-word'}}>{(t.task||'').substring(0,isSelected?500:80)}{!isSelected&&(t.task||'').length>80?'...':''}</div>
-            {isSelected&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-              <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>PID: {t.pid||'N/A'} | CWD: {t.cwd||cwd}</div>
-              <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>Started: {t.started||'N/A'}</div>
-              <div style={{marginTop:6,padding:8,background:'rgba(0,0,0,0.3)',borderRadius:4,fontFamily:'JetBrains Mono',fontSize:11,color:'#888',minHeight:60}}>
-                Terminal output will appear here when log streaming is enabled.
-                For now, check the CMD window on your desktop.
-              </div>
-            </div>}
-          </div>)})}
+    {err&&<div className="card" style={{borderColor:'rgba(255,0,128,0.3)',color:'#ff8db3',fontSize:12,marginBottom:10}}>⚠ {err}</div>}
+    {plan&&<div>
+      <div className="card" style={{marginBottom:8}}>
+        <div className="card-title" style={{marginTop:0}}>Plan — {plan.repo}</div>
+        <FridayDoc text={plan.summary} compact/>
+        {(plan.steps||[]).length>0&&<ul style={{margin:'4px 0 0 0',paddingLeft:18,fontSize:12,color:'#bcd'}}>{plan.steps.map((s,i)=><li key={i}>{s}</li>)}</ul>}
       </div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6}}>
+        {(plan.files||[]).map((f,i)=><button key={i} className={'btn '+(openFile===i?'active':'')} style={{fontSize:11}} onClick={()=>setOpenFile(i)}>
+          <span style={{color:f.action==='create'?'#00ff80':'#f59e0b'}}>{f.action==='create'?'+':'~'}</span> {f.path}</button>)}
+      </div>
+      {(plan.files||[])[openFile]&&<div className="card" style={{marginBottom:8}}>
+        {plan.files[openFile].rationale&&<div style={{fontSize:11,color:'#9ad',marginBottom:6,fontStyle:'italic'}}>{plan.files[openFile].rationale}</div>}
+        <DevDiff diff={plan.files[openFile].diff}/>
+      </div>}
+      {!applied&&<button className="btn" style={{fontWeight:600,borderColor:'rgba(0,255,128,0.4)',color:'#00ff80'}} disabled={busy} onClick={applyPlan}>{busy?'Applying…':'✓ Apply '+(plan.files||[]).length+' file change(s)'}</button>}
+      {applied&&<div className="card" style={{borderColor:'rgba(0,255,128,0.3)'}}>
+        <div style={{fontSize:12,color:'#00ff80',marginBottom:6}}>✓ Applied {applied.count} file(s){applied.failed&&applied.failed.length?' · '+applied.failed.length+' failed':''}</div>
+        {applied.committed?<div style={{fontSize:12,color:'#00d4ff'}}>✓ Committed</div>:<div style={{display:'flex',gap:6}}>
+          <input className="input" style={{flex:1,padding:'5px 8px'}} value={commitMsg} onChange={e=>setCommitMsg(e.target.value)} placeholder="Commit message"/>
+          <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} disabled={committing||!commitMsg.trim()} onClick={commit}>{committing?'…':'Commit'}</button>
+        </div>}
+      </div>}
     </div>}
-    {terminals.length===0&&<div className="card" style={{textAlign:'center',padding:16}}>
-      <div style={{fontSize:13,marginBottom:6}}>No terminals running</div>
-      <div style={{fontSize:11,color:'#888'}}>Type tasks above or use a preset to launch parallel Claude Code instances.</div>
+  </div>);
+}
+// ─── Git operations panel ───
+function DevGit({repos,onLog,onRefresh}){
+  const[repo,setRepo]=useState('');const[branches,setBranches]=useState([]);const[current,setCurrent]=useState('');
+  const[diff,setDiff]=useState('');const[toast,setToast]=useState('');const[busy,setBusy]=useState('');
+  const[newBranch,setNewBranch]=useState('');const[prOpen,setPrOpen]=useState(false);const[prTitle,setPrTitle]=useState('');const[prBody,setPrBody]=useState('');
+  useEffect(()=>{if(!repo&&repos.length)setRepo(repos[0].name)},[repos]);
+  const loadBranches=()=>{if(!repo)return;fetch('/api/git/branches?repo='+encodeURIComponent(repo)).then(r=>r.json()).then(d=>{if(d.status==='ok'){setBranches(d.branches||[]);setCurrent(d.current||'')}}).catch(()=>{})};
+  const loadDiff=()=>{if(!repo)return;fetch('/api/git/diff?repo='+encodeURIComponent(repo)).then(r=>r.json()).then(d=>setDiff(d.diff||'')).catch(()=>{})};
+  useEffect(()=>{loadBranches();loadDiff()},[repo]);
+  const flash=(m)=>{setToast(m);setTimeout(()=>setToast(''),2600)};
+  const op=async(label,url,body)=>{setBusy(label);
+    try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{repo})});
+      const d=await r.json();flash((d.ok||d.status==='ok')?('✓ '+label+(d.url?' → '+d.url:'')):('⚠ '+(d.message||d.stderr||label+' failed')));
+      onLog&&onLog();loadBranches();loadDiff();onRefresh&&onRefresh();
+    }catch(e){flash('⚠ '+label+' failed')}
+    setBusy('');
+  };
+  return(<div>
+    <div className="card" style={{padding:10,marginBottom:10}}>
+      <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#9ad'}}>Repo</span>
+        <select className="input" style={{flex:1,padding:'5px 8px'}} value={repo} onChange={e=>setRepo(e.target.value)}>
+          {repos.length===0&&<option value="">(no repos)</option>}
+          {repos.map((r,i)=><option key={i} value={r.name}>{r.name}</option>)}
+        </select>
+        <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:'#00ff80'}}>{current}</span>
+      </div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        <button className="btn" style={{fontSize:11}} disabled={!!busy} onClick={()=>op('pull','/api/git/pull')}>⤓ Pull</button>
+        <button className="btn" style={{fontSize:11}} disabled={!!busy} onClick={()=>op('push','/api/git/push')}>⤒ Push</button>
+        <button className="btn" style={{fontSize:11}} disabled={!!busy} onClick={()=>{setPrTitle('');setPrBody('');setPrOpen(true)}}>⎇ Open PR</button>
+        <button className="btn" style={{fontSize:11}} disabled={!!busy} onClick={loadDiff}>↻ Refresh diff</button>
+      </div>
+      <div style={{display:'flex',gap:4,marginTop:8,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#9ad'}}>Switch:</span>
+        {branches.map((b,i)=><button key={i} className={'btn '+(b===current?'active':'')} style={{fontSize:11,padding:'2px 7px'}} disabled={!!busy||b===current} onClick={()=>op('checkout '+b,'/api/git/checkout',{repo,branch:b})}>{b}</button>)}
+      </div>
+      <div style={{display:'flex',gap:4,marginTop:8}}>
+        <input className="input" style={{flex:1,padding:'5px 8px'}} value={newBranch} onChange={e=>setNewBranch(e.target.value)} placeholder="new-branch-name"/>
+        <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} disabled={!!busy||!newBranch.trim()} onClick={()=>{op('branch '+newBranch,'/api/git/branch',{repo,name:newBranch});setNewBranch('')}}>+ Create & switch</button>
+      </div>
+    </div>
+    {toast&&<div style={{fontSize:12,color:'#00d4ff',marginBottom:8,fontFamily:'JetBrains Mono',wordBreak:'break-all'}}>{toast}</div>}
+    {prOpen&&<div className="card" style={{marginBottom:10,borderColor:'rgba(0,212,255,0.3)'}}>
+      <div className="card-title" style={{marginTop:0}}>Open Pull Request</div>
+      <input className="input" style={{width:'100%',marginBottom:6,padding:'5px 8px'}} value={prTitle} onChange={e=>setPrTitle(e.target.value)} placeholder="PR title"/>
+      <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:6}} value={prBody} onChange={e=>setPrBody(e.target.value)} placeholder="PR description (optional)"/>
+      <div style={{display:'flex',gap:6}}>
+        <button className="btn" style={{fontSize:11}} disabled={!!busy||!prTitle.trim()} onClick={()=>{op('PR','/api/git/pr',{repo,title:prTitle,body:prBody});setPrOpen(false)}}>Create via gh</button>
+        <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setPrOpen(false)}>Cancel</button>
+      </div>
+      <div style={{fontSize:11,color:'#666',marginTop:4}}>Pushes the branch first, then runs <code>gh pr create</code>. Requires the GitHub CLI.</div>
+    </div>}
+    <div className="card-title">Working tree diff</div>
+    {diff?<DevDiff diff={diff}/>:<div className="card" style={{textAlign:'center',padding:14,fontSize:12,color:'#999'}}>Working tree clean.</div>}
+  </div>);
+}
+// ─── File browser + syntax-highlighted viewer ───
+function DevFiles(){
+  const[path,setPath]=useState('');const[data,setData]=useState(null);const[file,setFile]=useState(null);const[loading,setLoading]=useState(true);
+  const load=(p)=>{setLoading(true);setFile(null);fetch('/api/files/list?path='+encodeURIComponent(p||'')).then(r=>r.json()).then(d=>{if(d.status==='ok'){setData(d);setPath(d.path||'')}setLoading(false)}).catch(()=>setLoading(false))};
+  useEffect(()=>{load('')},[]);
+  const openFile=(p)=>{setFile({loading:true});fetch('/api/files/read?path='+encodeURIComponent(p)).then(r=>r.json()).then(d=>{if(d.status==='ok')setFile(d);else setFile({error:d.message})}).catch(()=>setFile({error:'read failed'}))};
+  const crumbs=(path||'').split('/').filter(Boolean);
+  return(<div>
+    <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:8,flexWrap:'wrap',fontSize:12,fontFamily:'JetBrains Mono'}}>
+      <button className="btn" style={{fontSize:11,padding:'2px 7px'}} onClick={()=>load('')}>~/Projects</button>
+      {crumbs.map((c,i)=><span key={i}><span style={{color:'#555'}}>/</span><button className="btn" style={{fontSize:11,padding:'2px 7px'}} onClick={()=>load(crumbs.slice(0,i+1).join('/'))}>{c}</button></span>)}
+    </div>
+    {file?(<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <button className="btn" style={{fontSize:11}} onClick={()=>setFile(null)}>← Back to files</button>
+        {file.name&&<span style={{fontSize:11,fontFamily:'JetBrains Mono',color:'#9ad'}}>{file.name} · {file.lang} · {file.lines} lines</span>}
+      </div>
+      {file.loading&&<div style={{color:'#999',padding:20,textAlign:'center'}}>Loading…</div>}
+      {file.error&&<div className="card" style={{color:'#ff8db3',fontSize:12}}>⚠ {file.error}</div>}
+      {file.content!=null&&<CodeViewer content={file.content} lang={file.lang}/>}
+    </div>):(<div>
+      {loading?<div style={{color:'#999',padding:20,textAlign:'center'}}>Loading…</div>:
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>
+        {data&&data.parent!=null&&<button className="btn" style={{fontSize:11,textAlign:'left'}} onClick={()=>load(data.parent)}>📁 ..</button>}
+        {(data&&data.entries||[]).map((e,i)=><button key={i} className="btn" style={{fontSize:11,textAlign:'left',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}
+          onClick={()=>e.dir?load(e.path):openFile(e.path)}>{e.dir?'📁':'📄'} {e.name}{!e.dir&&e.size?<span style={{color:'#666'}}> · {(e.size/1024).toFixed(e.size>10240?0:1)}k</span>:''}</button>)}
+      </div>}
+    </div>)}
+  </div>);
+}
+// ─── Process monitor (companion to the 3D orbs) + terminal launcher ───
+function DevProcs({onLog}){
+  const[procs,setProcs]=useState([]);const[running,setRunning]=useState(0);
+  const[tasks,setTasks]=useState('');const[cwd,setCwd]=useState('~\\Projects');const[presets,setPresets]=useState([]);const[loading,setLoading]=useState(false);
+  const refresh=()=>fetch('/api/code/processes').then(r=>r.json()).then(d=>{setProcs(d.processes||[]);setRunning(d.running||0)}).catch(()=>{});
+  useEffect(()=>{refresh();const iv=setInterval(refresh,3000);fetch('/api/vibe-code/presets').then(r=>r.json()).then(d=>setPresets(d.presets||[])).catch(()=>{});return()=>clearInterval(iv)},[]);
+  const launch=async(taskList)=>{const lines=(taskList||tasks).split('\n').filter(l=>l.trim());if(!lines.length)return;setLoading(true);
+    await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:lines,cwd})});setLoading(false);setTasks('');onLog&&onLog();setTimeout(refresh,800)};
+  const kill=(id)=>{fetch('/api/code/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).then(()=>{onLog&&onLog();setTimeout(refresh,400)})};
+  const colors=['#00d4ff','#00ff80','#f59e0b','#ff0080'];
+  return(<div>
+    <FridaySays text={running>0?running+' background process'+(running>1?'es':'')+' running.':'Launch Claude Code terminals and monitor running processes here.'}/>
+    <div className="card" style={{padding:10,marginBottom:10}}>
+      <input className="input" style={{width:'100%',marginBottom:6}} value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Working directory"/>
+      <textarea className="input" style={{width:'100%',height:54,resize:'vertical',marginBottom:6}} value={tasks} onChange={e=>setTasks(e.target.value)} placeholder="One task per line…"/>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        <button className="btn" style={{fontWeight:600}} disabled={loading} onClick={()=>launch()}>{loading?'Launching…':'Launch All'}</button>
+        <button className="btn" style={{fontSize:11}} onClick={()=>launch(tasks||'Ready for instructions')}>1 Terminal</button>
+        {presets.map((p,i)=><button key={i} className="btn" style={{fontSize:11}} onClick={()=>launch(p.tasks.join('\n'))}>{p.name}</button>)}
+      </div>
+    </div>
+    <div className="card-title">Processes ({running} running)</div>
+    {procs.length===0?<div className="card" style={{textAlign:'center',padding:14,fontSize:12,color:'#999'}}>No tracked processes.</div>:
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+      {procs.map((p,i)=>{const color=colors[i%4];const live=p.status==='running';
+        return(<div key={p.id||i} className="card" style={{borderColor:live?color:'rgba(255,255,255,0.04)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{width:8,height:8,borderRadius:'50%',background:live?color:'#777',boxShadow:live?'0 0 8px '+color:'none',animation:live?'pulse 1.6s infinite':'none',display:'inline-block'}}/>
+              <span style={{fontFamily:'Orbitron',fontSize:11,color:live?color:'#888'}}>{p.kind||'proc'}</span>
+            </span>
+            {p.killable&&<button className="btn btn-magenta" style={{fontSize:11,padding:'1px 7px'}} onClick={()=>kill(p.id)}>Kill</button>}
+          </div>
+          <div style={{fontSize:11,color:'#bcd',marginTop:4,wordBreak:'break-word'}}>{p.label||p.task||''}</div>
+          <div style={{fontSize:11,color:'#777',marginTop:3,fontFamily:'JetBrains Mono'}}>{p.status} · PID {p.pid||'—'}</div>
+        </div>);
+      })}
+    </div>}
+  </div>);
+}
+function CodeWS(){
+  const TABS=[{id:'repos',ico:'📁',label:'Repos'},{id:'vibe',ico:'✨',label:'Vibe'},{id:'git',ico:'🔀',label:'Git'},{id:'files',ico:'🗂',label:'Files'},{id:'procs',ico:'⚙️',label:'Procs'},{id:'logs',ico:'📡',label:'Logs'}];
+  const[tab,setTab]=useState('repos');
+  const[repos,setRepos]=useState([]);const[repoLoading,setRepoLoading]=useState(true);
+  const[logs,setLogs]=useState([]);const[unseen,setUnseen]=useState(0);const[srcFilter,setSrcFilter]=useState('');
+  const logBoxRef=useRef(null);
+  const scanRepos=()=>{setRepoLoading(true);fetch('/api/repos/scan').then(r=>r.json()).then(d=>{setRepos(d.repos||[]);setRepoLoading(false)}).catch(()=>setRepoLoading(false))};
+  useEffect(()=>{scanRepos()},[]);
+  // Live log stream via SSE — kept alive across tabs so the badge keeps pulsing.
+  useEffect(()=>{
+    let es;
+    const seed=()=>fetch('/api/logs/recent?limit=120').then(r=>r.json()).then(d=>setLogs(d.events||[])).catch(()=>{});
+    seed();
+    try{
+      es=new EventSource('/api/logs/stream');
+      es.onmessage=(e)=>{try{const evt=JSON.parse(e.data);setLogs(p=>{const next=[...p,evt];return next.slice(-600)});setUnseen(u=>u+1)}catch(x){}};
+      es.onerror=()=>{};
+    }catch(x){}
+    return()=>{try{es&&es.close()}catch(x){}};
+  },[]);
+  useEffect(()=>{if(tab==='logs'){setUnseen(0);if(logBoxRef.current)logBoxRef.current.scrollTop=logBoxRef.current.scrollHeight}},[tab,logs.length]);
+  const lvlColor=(l)=>({info:'#9ad',warn:'#f59e0b',error:'#ff5a7a'}[l]||'#9aa');
+  const sources=Array.from(new Set(logs.map(l=>l.source))).slice(0,12);
+  const shown=srcFilter?logs.filter(l=>l.source===srcFilter):logs;
+  const noPad={padding:'2px 7px'};
+  return(<div>
+    <div style={{display:'flex',gap:4,marginBottom:12,flexWrap:'wrap',borderBottom:'1px solid rgba(255,255,255,0.06)',paddingBottom:8}}>
+      {TABS.map(t=><button key={t.id} className={'btn '+(tab===t.id?'active':'')} style={{fontSize:11,position:'relative'}} onClick={()=>setTab(t.id)}>
+        {t.ico} {t.label}
+        {t.id==='logs'&&unseen>0&&tab!=='logs'&&<span style={{position:'absolute',top:-6,right:-6,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:'#ff0080',color:'#fff',fontSize:9,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 10px rgba(255,0,128,0.8)',animation:'pulse 1.4s infinite'}}>{unseen>99?'99+':unseen}</span>}
+      </button>)}
+    </div>
+    {tab==='repos'&&<DevRepos repos={repos} loading={repoLoading} onScan={scanRepos} onPick={(r)=>setTab('git')}/>}
+    {tab==='vibe'&&<DevVibe repos={repos} onLog={scanRepos}/>}
+    {tab==='git'&&<DevGit repos={repos} onLog={()=>{}} onRefresh={scanRepos}/>}
+    {tab==='files'&&<DevFiles/>}
+    {tab==='procs'&&<DevProcs onLog={()=>{}}/>}
+    {tab==='logs'&&<div>
+      <div style={{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#9ad'}}>{logs.length} events · live</span>
+        <button className={'btn '+(srcFilter===''?'active':'')} style={{fontSize:11,...noPad}} onClick={()=>setSrcFilter('')}>all</button>
+        {sources.map((s,i)=><button key={i} className={'btn '+(srcFilter===s?'active':'')} style={{fontSize:11,...noPad}} onClick={()=>setSrcFilter(s)}>{s}</button>)}
+      </div>
+      <div ref={logBoxRef} style={{maxHeight:'60vh',overflowY:'auto',background:'rgba(0,0,0,0.45)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:8,padding:'8px 10px',fontFamily:'JetBrains Mono',fontSize:11,lineHeight:1.6}}>
+        {shown.length===0&&<div style={{color:'#777',textAlign:'center',padding:20}}>Waiting for activity… plan a change, run a git op, or launch a terminal.</div>}
+        {shown.map((l,i)=><div key={l.id||i} style={{display:'flex',gap:8,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+          <span style={{color:'#566',flexShrink:0}}>{(l.ts||'').slice(11,19)}</span>
+          <span style={{color:'#7af',flexShrink:0,minWidth:64}}>{l.source}</span>
+          <span style={{color:lvlColor(l.level)}}>{l.message}</span>
+        </div>)}
+      </div>
     </div>}
   </div>);
 }

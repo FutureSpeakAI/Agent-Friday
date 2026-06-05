@@ -7550,6 +7550,770 @@ def vibe_code_presets():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  FRIDAY'S DEV STUDIO — Code workspace
+#  Log streaming (SSE) · repo dashboard · vibe coding · git ops ·
+#  file browser · process monitor. Safety: every filesystem and git
+#  operation is sandboxed to ~/Projects/; no force-push, no reset.
+# ═══════════════════════════════════════════════════════════════
+
+import queue as _queue
+import difflib as _difflib
+from collections import deque as _deque
+
+PROJECTS_DIR = HOME / "Projects"
+CODE_LOGS_DIR = FRIDAY_DIR / "logs"
+CODE_PLANS_DIR = FRIDAY_DIR / "code_plans"
+for _d in (CODE_LOGS_DIR, CODE_PLANS_DIR):
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+# ── Live log bus (in-memory ring buffer + SSE pub/sub) ──────────
+_CODE_LOG_BUF = _deque(maxlen=2000)       # recent events for late subscribers
+_CODE_LOG_SUBS = []                       # list[queue.Queue] of live SSE clients
+_CODE_LOG_LOCK = threading.Lock()
+_CODE_LOG_SEQ = {"n": 0}
+
+# Process registry for the monitor (id -> meta). Separate from VIBE_TERMINALS
+# so non-terminal background jobs (plans, git ops) can register too.
+CODE_PROCESSES = {}
+
+
+def _code_log(message, source="system", level="info"):
+    """Publish a log line to the ring buffer, the daily file, and live SSE subs."""
+    with _CODE_LOG_LOCK:
+        _CODE_LOG_SEQ["n"] += 1
+        evt = {
+            "id": _CODE_LOG_SEQ["n"],
+            "ts": datetime.now().isoformat(),
+            "source": str(source)[:60],
+            "level": str(level)[:12],
+            "message": str(message)[:4000],
+        }
+        _CODE_LOG_BUF.append(evt)
+        dead = []
+        for q in _CODE_LOG_SUBS:
+            try:
+                q.put_nowait(evt)
+            except Exception:
+                dead.append(q)
+        for q in dead:
+            try:
+                _CODE_LOG_SUBS.remove(q)
+            except ValueError:
+                pass
+    # Persist to a daily log file (best-effort, outside the lock)
+    try:
+        day = datetime.now().strftime("%Y-%m-%d")
+        with open(CODE_LOGS_DIR / f"{day}.log", "a", encoding="utf-8") as f:
+            f.write(f"[{evt['ts']}] [{evt['source']}/{evt['level']}] {evt['message']}\n")
+    except Exception:
+        pass
+    return evt
+
+
+# ── Path safety ────────────────────────────────────────────────
+def _projects_root():
+    return os.path.realpath(str(PROJECTS_DIR))
+
+
+def _safe_project_path(target):
+    """Resolve `target` (abs or relative to ~/Projects) and confirm it lives
+    inside ~/Projects/. Returns the realpath, or None if it escapes the sandbox."""
+    if target is None:
+        return None
+    raw = str(target).strip()
+    if not raw:
+        return None
+    raw = os.path.expanduser(raw)
+    if not os.path.isabs(raw):
+        raw = os.path.join(_projects_root(), raw)
+    rp = os.path.realpath(raw)
+    root = _projects_root()
+    if rp == root or rp.startswith(root + os.sep):
+        return rp
+    return None
+
+
+def _repo_path(name):
+    """Resolve a repo by directory name (or relative path) under ~/Projects/.
+    Returns realpath only if it exists and is a git working tree."""
+    p = _safe_project_path(name)
+    if not p or not os.path.isdir(p):
+        return None
+    if not os.path.isdir(os.path.join(p, ".git")) and not os.path.isfile(os.path.join(p, ".git")):
+        return None
+    return p
+
+
+def _dev_git(repo_path, *args, timeout=40):
+    """Run a git subcommand inside repo_path. Returns CompletedProcess."""
+    return subprocess.run(
+        ["git", "-C", repo_path, *args],
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=_POPEN_FLAGS,
+    )
+
+
+def _git_repo_summary(repo_path):
+    """Build a status card dict for one repo."""
+    name = os.path.basename(repo_path)
+    card = {"name": name, "path": repo_path, "branch": "?", "dirty": 0,
+            "ahead": 0, "behind": 0, "last_commit": "", "last_when": "",
+            "upstream": None, "clean": True, "error": None}
+    try:
+        b = _dev_git(repo_path, "rev-parse", "--abbrev-ref", "HEAD", timeout=10)
+        if b.returncode == 0:
+            card["branch"] = b.stdout.strip() or "?"
+        st = _dev_git(repo_path, "status", "--porcelain", timeout=15)
+        if st.returncode == 0:
+            lines = [l for l in st.stdout.splitlines() if l.strip()]
+            card["dirty"] = len(lines)
+            card["clean"] = len(lines) == 0
+        up = _dev_git(repo_path, "rev-list", "--left-right", "--count", "@{u}...HEAD", timeout=10)
+        if up.returncode == 0 and up.stdout.strip():
+            parts = up.stdout.split()
+            if len(parts) == 2:
+                card["behind"] = int(parts[0])
+                card["ahead"] = int(parts[1])
+                card["upstream"] = True
+        else:
+            card["upstream"] = False
+        lc = _dev_git(repo_path, "log", "-1", "--format=%h\x1f%s\x1f%cr", timeout=10)
+        if lc.returncode == 0 and lc.stdout.strip():
+            bits = lc.stdout.strip().split("\x1f")
+            if len(bits) == 3:
+                card["last_commit"] = f"{bits[0]} {bits[1]}"
+                card["last_when"] = bits[2]
+    except subprocess.TimeoutExpired:
+        card["error"] = "git timed out"
+    except Exception as e:
+        card["error"] = str(e)
+    return card
+
+
+# ── LOGS: live streaming ───────────────────────────────────────
+@app.route('/api/logs/recent')
+def code_logs_recent():
+    """Return the recent log ring buffer (for initial paint / SSE fallback)."""
+    try:
+        limit = int(request.args.get('limit', 200))
+    except Exception:
+        limit = 200
+    with _CODE_LOG_LOCK:
+        items = list(_CODE_LOG_BUF)[-limit:]
+    return jsonify({"status": "ok", "events": items, "count": len(items)})
+
+
+@app.route('/api/logs/stream')
+def code_logs_stream():
+    """Server-Sent Events stream of all Dev Studio log activity."""
+    def gen():
+        q = _queue.Queue(maxsize=500)
+        with _CODE_LOG_LOCK:
+            backlog = list(_CODE_LOG_BUF)[-50:]
+            _CODE_LOG_SUBS.append(q)
+        try:
+            yield "retry: 3000\n\n"
+            for evt in backlog:
+                yield f"data: {json.dumps(evt)}\n\n"
+            while True:
+                try:
+                    evt = q.get(timeout=20)
+                    yield f"data: {json.dumps(evt)}\n\n"
+                except _queue.Empty:
+                    # Heartbeat keeps the connection (and any proxy) alive.
+                    yield ": ping\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _CODE_LOG_LOCK:
+                try:
+                    _CODE_LOG_SUBS.remove(q)
+                except ValueError:
+                    pass
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return Response(stream_with_context(gen()), headers=headers)
+
+
+@app.route('/api/logs/emit', methods=['POST'])
+def code_logs_emit():
+    """Manually push a log line (used by clients / external tasks)."""
+    data = request.get_json(silent=True) or {}
+    msg = (data.get('message') or '').strip()
+    if not msg:
+        return jsonify({"status": "error", "message": "message required"}), 400
+    evt = _code_log(msg, source=data.get('source', 'client'), level=data.get('level', 'info'))
+    return jsonify({"status": "ok", "event": evt})
+
+
+# ── REPOS: dashboard ───────────────────────────────────────────
+@app.route('/api/repos/scan')
+def repos_scan():
+    """Scan ~/Projects/ for git repos and return status cards."""
+    root = PROJECTS_DIR
+    repos = []
+    if not root.exists():
+        return jsonify({"status": "ok", "repos": [], "root": str(root),
+                        "message": "~/Projects does not exist yet."})
+    try:
+        children = sorted([d for d in root.iterdir() if d.is_dir()], key=lambda p: p.name.lower())
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    for d in children:
+        if (d / ".git").exists():
+            rp = _repo_path(d.name)
+            if rp:
+                repos.append(_git_repo_summary(rp))
+    return jsonify({"status": "ok", "repos": repos, "root": str(root), "count": len(repos)})
+
+
+@app.route('/api/repos/<name>/status')
+def repos_status(name):
+    rp = _repo_path(name)
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found in ~/Projects"}), 404
+    card = _git_repo_summary(rp)
+    # Attach the porcelain file list for the detail view.
+    files = []
+    try:
+        st = _dev_git(rp, "status", "--porcelain", timeout=15)
+        for line in st.stdout.splitlines():
+            if len(line) >= 3:
+                files.append({"code": line[:2].strip() or "?", "file": line[3:]})
+    except Exception:
+        pass
+    card["files"] = files
+    return jsonify({"status": "ok", "repo": card})
+
+
+# ── GIT: operations ────────────────────────────────────────────
+def _git_result(rp, cp, action):
+    ok = cp.returncode == 0
+    out = (cp.stdout or "").strip()
+    err = (cp.stderr or "").strip()
+    _code_log(f"git {action} -> {'ok' if ok else 'FAILED'} :: {(out or err)[:300]}",
+              source=f"git:{os.path.basename(rp)}", level="info" if ok else "error")
+    return {"status": "ok" if ok else "error", "ok": ok, "stdout": out, "stderr": err, "code": cp.returncode}
+
+
+@app.route('/api/git/diff')
+def git_diff():
+    rp = _repo_path(request.args.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    target = request.args.get('file')
+    try:
+        args = ["diff", "--no-color"]
+        if request.args.get('staged') in ('1', 'true', 'yes'):
+            args.append("--cached")
+        if target:
+            safe = _safe_project_path(os.path.join(rp, target))
+            if not safe:
+                return jsonify({"status": "error", "message": "bad path"}), 400
+            args += ["--", target]
+        cp = _dev_git(rp, *args, timeout=20)
+        diff = cp.stdout or ""
+        if not diff.strip():
+            # Include untracked content as a synthetic add-diff so the UI shows new files too.
+            unt = _dev_git(rp, "ls-files", "--others", "--exclude-standard", timeout=15)
+            files = [f for f in unt.stdout.splitlines() if f.strip()]
+            if files:
+                diff = "Untracked files:\n" + "\n".join("  + " + f for f in files)
+        return jsonify({"status": "ok", "diff": diff})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/branches')
+def git_branches():
+    rp = _repo_path(request.args.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    try:
+        cur = _dev_git(rp, "rev-parse", "--abbrev-ref", "HEAD", timeout=10).stdout.strip()
+        cp = _dev_git(rp, "branch", "--format=%(refname:short)", timeout=10)
+        branches = [b.strip() for b in cp.stdout.splitlines() if b.strip()]
+        return jsonify({"status": "ok", "branches": branches, "current": cur})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/pull', methods=['POST'])
+def git_pull():
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    try:
+        cp = _dev_git(rp, "pull", "--ff-only", timeout=120)
+        return jsonify(_git_result(rp, cp, "pull"))
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "message": "pull timed out"}), 504
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/push', methods=['POST'])
+def git_push():
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    # SAFETY: never allow force pushes, no matter what the client sends.
+    try:
+        branch = _dev_git(rp, "rev-parse", "--abbrev-ref", "HEAD", timeout=10).stdout.strip()
+        has_up = _dev_git(rp, "rev-parse", "--abbrev-ref", "@{u}", timeout=10).returncode == 0
+        if has_up:
+            cp = _dev_git(rp, "push", timeout=120)
+        else:
+            cp = _dev_git(rp, "push", "--set-upstream", "origin", branch, timeout=120)
+        return jsonify(_git_result(rp, cp, "push"))
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "message": "push timed out"}), 504
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/checkout', methods=['POST'])
+def git_checkout():
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    branch = (data.get('branch') or '').strip()
+    if not branch or not re.match(r'^[\w./\-]+$', branch):
+        return jsonify({"status": "error", "message": "invalid branch name"}), 400
+    create = bool(data.get('create'))
+    try:
+        args = ["checkout", "-b", branch] if create else ["checkout", branch]
+        cp = _dev_git(rp, *args, timeout=30)
+        return jsonify(_git_result(rp, cp, "checkout " + branch))
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/branch', methods=['POST'])
+def git_branch_create():
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    name = (data.get('name') or '').strip()
+    if not name or not re.match(r'^[\w./\-]+$', name):
+        return jsonify({"status": "error", "message": "invalid branch name"}), 400
+    try:
+        cp = _dev_git(rp, "checkout", "-b", name, timeout=30)
+        return jsonify(_git_result(rp, cp, "branch " + name))
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/commit', methods=['POST'])
+def git_commit():
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    msg = (data.get('message') or '').strip()
+    if not msg:
+        return jsonify({"status": "error", "message": "commit message required"}), 400
+    try:
+        if data.get('add_all', True):
+            _dev_git(rp, "add", "-A", timeout=30)
+        cp = _dev_git(rp, "commit", "-m", msg, timeout=30)
+        res = _git_result(rp, cp, "commit")
+        if not res["ok"] and "nothing to commit" in (res["stdout"] + res["stderr"]).lower():
+            res["message"] = "Nothing to commit — working tree clean."
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/git/pr', methods=['POST'])
+def git_pr():
+    """Open a PR via the GitHub CLI (gh). Pushes the branch first."""
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found"}), 404
+    title = (data.get('title') or '').strip()
+    body = (data.get('body') or '').strip()
+    if not title:
+        return jsonify({"status": "error", "message": "PR title required"}), 400
+    try:
+        branch = _dev_git(rp, "rev-parse", "--abbrev-ref", "HEAD", timeout=10).stdout.strip()
+        # Ensure the branch is on origin first (non-force).
+        if _dev_git(rp, "rev-parse", "--abbrev-ref", "@{u}", timeout=10).returncode != 0:
+            _dev_git(rp, "push", "--set-upstream", "origin", branch, timeout=120)
+        cp = subprocess.run(
+            ["gh", "pr", "create", "--title", title, "--body", body or title],
+            cwd=rp, capture_output=True, text=True, timeout=60, creationflags=_POPEN_FLAGS,
+        )
+        ok = cp.returncode == 0
+        out = (cp.stdout or "").strip()
+        err = (cp.stderr or "").strip()
+        _code_log(f"gh pr create -> {'ok' if ok else 'FAILED'} :: {(out or err)[:300]}",
+                  source=f"git:{os.path.basename(rp)}", level="info" if ok else "error")
+        url = ""
+        m = re.search(r'https?://\S+', out)
+        if m:
+            url = m.group(0)
+        msg = err if not ok else out
+        if not ok and ("not found" in err.lower() or "is not recognized" in err.lower()):
+            msg = "GitHub CLI (gh) not installed or not on PATH. Install from https://cli.github.com/"
+        return jsonify({"status": "ok" if ok else "error", "ok": ok, "url": url,
+                        "stdout": out, "stderr": err, "message": msg})
+    except FileNotFoundError:
+        return jsonify({"status": "error", "message": "GitHub CLI (gh) not installed. https://cli.github.com/"}), 200
+    except subprocess.TimeoutExpired:
+        return jsonify({"status": "error", "message": "gh pr create timed out"}), 504
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ── FILES: browser + viewer ────────────────────────────────────
+_LANG_BY_EXT = {
+    'py': 'python', 'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript',
+    'tsx': 'typescript', 'html': 'html', 'htm': 'html', 'css': 'css', 'scss': 'scss',
+    'json': 'json', 'md': 'markdown', 'sh': 'bash', 'bat': 'dos', 'ps1': 'powershell',
+    'yml': 'yaml', 'yaml': 'yaml', 'toml': 'ini', 'ini': 'ini', 'sql': 'sql',
+    'go': 'go', 'rs': 'rust', 'java': 'java', 'c': 'c', 'h': 'c', 'cpp': 'cpp',
+    'rb': 'ruby', 'php': 'php', 'xml': 'xml', 'vue': 'xml', 'txt': 'plaintext',
+}
+_SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist',
+              'build', '.next', '.cache', 'test-results', '.pytest_cache'}
+
+
+@app.route('/api/files/list')
+def files_list():
+    """List a directory inside ~/Projects/ (dirs first, then files)."""
+    rel = request.args.get('path', '')
+    target = _safe_project_path(rel) if rel else _projects_root()
+    if not target or not os.path.isdir(target):
+        return jsonify({"status": "error", "message": "path not found in ~/Projects"}), 404
+    entries = []
+    try:
+        for entry in sorted(os.scandir(target), key=lambda e: (not e.is_dir(), e.name.lower())):
+            if entry.name in _SKIP_DIRS:
+                continue
+            is_dir = entry.is_dir()
+            try:
+                size = entry.stat().st_size if not is_dir else 0
+            except Exception:
+                size = 0
+            entries.append({
+                "name": entry.name,
+                "path": os.path.relpath(entry.path, _projects_root()).replace("\\", "/"),
+                "dir": is_dir,
+                "size": size,
+            })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    parent = None
+    if os.path.realpath(target) != _projects_root():
+        parent = os.path.relpath(os.path.dirname(target), _projects_root()).replace("\\", "/")
+        if parent == ".":
+            parent = ""
+    return jsonify({"status": "ok", "path": os.path.relpath(target, _projects_root()).replace("\\", "/"),
+                    "parent": parent, "entries": entries})
+
+
+@app.route('/api/files/read')
+def files_read():
+    """Read a file inside ~/Projects/ with detected language for highlighting."""
+    rel = request.args.get('path', '')
+    target = _safe_project_path(rel)
+    if not target or not os.path.isfile(target):
+        return jsonify({"status": "error", "message": "file not found in ~/Projects"}), 404
+    try:
+        size = os.path.getsize(target)
+        if size > 1024 * 1024:
+            return jsonify({"status": "error", "message": "file too large to preview (>1 MB)"}), 413
+        with open(target, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    ext = os.path.splitext(target)[1].lstrip('.').lower()
+    return jsonify({"status": "ok", "content": content, "lang": _LANG_BY_EXT.get(ext, 'plaintext'),
+                    "ext": ext, "size": size, "lines": content.count("\n") + 1,
+                    "name": os.path.basename(target)})
+
+
+# ── CODE: vibe coding (plan -> diff -> apply) ──────────────────
+def _repo_tree(repo_path, max_files=200):
+    """A compact relative-path listing of a repo for plan context."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for fn in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, fn), repo_path).replace("\\", "/")
+            out.append(rel)
+            if len(out) >= max_files:
+                return out
+    return out
+
+
+@app.route('/api/code/plan', methods=['POST'])
+def code_plan():
+    """Natural language -> Claude generates a structured code plan with file changes."""
+    data = request.get_json(silent=True) or {}
+    rp = _repo_path(data.get('repo', ''))
+    if not rp:
+        return jsonify({"status": "error", "message": "repo not found in ~/Projects"}), 404
+    instruction = (data.get('instruction') or '').strip()
+    if not instruction:
+        return jsonify({"status": "error", "message": "instruction required"}), 400
+    if get_anthropic_client() is None:
+        return jsonify({"status": "error", "message": "ANTHROPIC_API_KEY not set."}), 503
+
+    _code_log(f"planning: {instruction[:120]}", source="vibe", level="info")
+    tree = _repo_tree(rp)
+    # Pull in the contents of any files the instruction names, plus README for grounding.
+    ctx_files = []
+    for rel in tree:
+        base = os.path.basename(rel).lower()
+        if base in ('readme.md', 'package.json', 'requirements.txt'):
+            ctx_files.append(rel)
+    for rel in tree:
+        stem = os.path.splitext(os.path.basename(rel))[0].lower()
+        if stem and stem in instruction.lower() and rel not in ctx_files:
+            ctx_files.append(rel)
+    ctx_blocks = []
+    for rel in ctx_files[:6]:
+        try:
+            fp = os.path.join(rp, rel)
+            if os.path.getsize(fp) <= 40000:
+                with open(fp, 'r', encoding='utf-8', errors='replace') as f:
+                    ctx_blocks.append(f"### {rel}\n```\n{f.read()}\n```")
+        except Exception:
+            pass
+
+    user_prompt = (
+        f"You are working in the git repo `{os.path.basename(rp)}` at `{rp}`.\n\n"
+        f"Repository files (truncated):\n" + "\n".join(tree[:200]) + "\n\n"
+        + ("Relevant file contents:\n" + "\n\n".join(ctx_blocks) + "\n\n" if ctx_blocks else "")
+        + f"TASK: {instruction}\n\n"
+        "Produce a concrete implementation plan. Respond with ONLY a JSON object, no prose, "
+        "no markdown fences, in exactly this shape:\n"
+        "{\n"
+        '  "summary": "one-paragraph description of the change",\n'
+        '  "steps": ["short step 1", "short step 2"],\n'
+        '  "files": [\n'
+        '    {"path": "relative/path.ext", "action": "create|modify", '
+        '"rationale": "why", "new_content": "FULL new file contents"}\n'
+        "  ]\n"
+        "}\n"
+        "Rules: paths are RELATIVE to the repo root and must stay inside it. "
+        "`new_content` must be the COMPLETE file, not a diff or fragment. "
+        "Keep changes minimal and focused on the task."
+    )
+    try:
+        system = _get_friday_system_prompt(keywords=instruction, workspace='code')
+    except Exception:
+        system = None
+    try:
+        raw = _call_claude([{"role": "user", "content": user_prompt}], system=system, max_tokens=16384)
+    except Exception as e:
+        _code_log(f"plan failed: {e}", source="vibe", level="error")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+    # Extract the JSON object from the response (tolerate stray fences/prose).
+    plan_obj = None
+    txt = raw.strip()
+    if txt.startswith("```"):
+        txt = re.sub(r'^```[a-zA-Z]*\n', '', txt)
+        txt = re.sub(r'\n```\s*$', '', txt)
+    try:
+        plan_obj = json.loads(txt)
+    except Exception:
+        m = re.search(r'\{.*\}', txt, re.DOTALL)
+        if m:
+            try:
+                plan_obj = json.loads(m.group(0))
+            except Exception:
+                plan_obj = None
+    if not isinstance(plan_obj, dict) or "files" not in plan_obj:
+        _code_log("plan: model returned unparseable JSON", source="vibe", level="error")
+        return jsonify({"status": "error", "message": "Could not parse a plan from the model.",
+                        "raw": raw[:2000]}), 502
+
+    # Compute a unified diff per file (current vs proposed).
+    files_out = []
+    for f in plan_obj.get("files", []):
+        if not isinstance(f, dict):
+            continue
+        rel = (f.get("path") or "").strip().replace("\\", "/")
+        safe = _safe_project_path(os.path.join(rp, rel)) if rel else None
+        if not safe:
+            continue
+        new_content = f.get("new_content") or ""
+        old_content = ""
+        exists = os.path.isfile(safe)
+        if exists:
+            try:
+                with open(safe, 'r', encoding='utf-8', errors='replace') as fh:
+                    old_content = fh.read()
+            except Exception:
+                old_content = ""
+        diff = "".join(_difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=f"a/{rel}", tofile=f"b/{rel}",
+        ))
+        files_out.append({
+            "path": rel,
+            "action": "modify" if exists else "create",
+            "rationale": f.get("rationale", ""),
+            "new_content": new_content,
+            "diff": diff or ("(new file)\n" + new_content[:4000]),
+        })
+
+    plan_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + str(uuid.uuid4())[:6]
+    record = {
+        "id": plan_id,
+        "created": datetime.now().isoformat(),
+        "repo": os.path.basename(rp),
+        "repo_path": rp,
+        "instruction": instruction,
+        "summary": plan_obj.get("summary", ""),
+        "steps": plan_obj.get("steps", []),
+        "files": files_out,
+        "applied": False,
+    }
+    try:
+        (CODE_PLANS_DIR / f"{plan_id}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except Exception as e:
+        _code_log(f"plan save failed: {e}", source="vibe", level="error")
+    _code_log(f"plan ready: {len(files_out)} file change(s)", source="vibe", level="info")
+    return jsonify({"status": "ok", "plan": record})
+
+
+@app.route('/api/code/plans')
+def code_plans_list():
+    plans = []
+    try:
+        for p in sorted(CODE_PLANS_DIR.glob("*.json"), reverse=True)[:50]:
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+                plans.append({"id": d.get("id"), "created": d.get("created"),
+                              "repo": d.get("repo"), "instruction": d.get("instruction", "")[:200],
+                              "summary": d.get("summary", "")[:300],
+                              "file_count": len(d.get("files", [])), "applied": d.get("applied", False)})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "plans": plans})
+
+
+@app.route('/api/code/plan/<plan_id>')
+def code_plan_get(plan_id):
+    pid = re.sub(r'[^\w\-]', '', plan_id)
+    p = CODE_PLANS_DIR / f"{pid}.json"
+    if not p.exists():
+        return jsonify({"status": "error", "message": "plan not found"}), 404
+    try:
+        return jsonify({"status": "ok", "plan": json.loads(p.read_text(encoding="utf-8"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/code/apply', methods=['POST'])
+def code_apply():
+    """Write the file changes from a saved plan onto disk (inside ~/Projects/)."""
+    data = request.get_json(silent=True) or {}
+    pid = re.sub(r'[^\w\-]', '', data.get('plan_id', ''))
+    p = CODE_PLANS_DIR / f"{pid}.json"
+    if not p.exists():
+        return jsonify({"status": "error", "message": "plan not found"}), 404
+    try:
+        record = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    rp = _repo_path(record.get("repo_path") or record.get("repo") or "")
+    if not rp:
+        return jsonify({"status": "error", "message": "repo no longer found"}), 404
+
+    applied, failed = [], []
+    for f in record.get("files", []):
+        rel = (f.get("path") or "").replace("\\", "/")
+        safe = _safe_project_path(os.path.join(rp, rel))
+        if not safe:
+            failed.append({"path": rel, "error": "escapes sandbox"})
+            continue
+        try:
+            os.makedirs(os.path.dirname(safe), exist_ok=True)
+            with open(safe, 'w', encoding='utf-8', newline='') as fh:
+                fh.write(f.get("new_content") or "")
+            applied.append(rel)
+            _code_log(f"applied {f.get('action','write')}: {rel}", source="vibe", level="info")
+        except Exception as e:
+            failed.append({"path": rel, "error": str(e)})
+            _code_log(f"apply failed {rel}: {e}", source="vibe", level="error")
+
+    record["applied"] = True
+    record["applied_at"] = datetime.now().isoformat()
+    try:
+        p.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "applied": applied, "failed": failed, "count": len(applied)})
+
+
+# ── PROCESS MONITOR ────────────────────────────────────────────
+@app.route('/api/code/processes')
+def code_processes():
+    """List Friday-spawned background processes (vibe terminals + tracked jobs)."""
+    procs = []
+    for t in VIBE_TERMINALS.values():
+        alive = t.get("status") == "running"
+        procs.append({
+            "id": t.get("id"), "kind": "terminal", "label": (t.get("task") or "")[:80],
+            "status": t.get("status"), "pid": t.get("pid"), "cwd": t.get("cwd"),
+            "started": t.get("started"), "killable": bool(alive and t.get("pid")),
+        })
+    for pid, m in list(CODE_PROCESSES.items()):
+        procs.append({**m, "id": pid, "killable": True})
+    running = sum(1 for p in procs if p.get("status") == "running")
+    return jsonify({"status": "ok", "processes": procs, "running": running, "total": len(procs)})
+
+
+@app.route('/api/code/kill', methods=['POST'])
+def code_kill():
+    """Kill a tracked background process by its id."""
+    data = request.get_json(silent=True) or {}
+    pid_or_id = str(data.get('id', '')).strip()
+    if not pid_or_id:
+        return jsonify({"status": "error", "message": "id required"}), 400
+    # Only kill processes Friday tracks — never arbitrary system PIDs.
+    target = VIBE_TERMINALS.get(pid_or_id) or CODE_PROCESSES.get(pid_or_id)
+    if not target:
+        return jsonify({"status": "error", "message": "unknown process id"}), 404
+    os_pid = target.get("pid")
+    if not os_pid:
+        return jsonify({"status": "error", "message": "no OS pid for this process"}), 400
+    try:
+        subprocess.run(["taskkill", "/PID", str(os_pid), "/T", "/F"],
+                       capture_output=True, creationflags=_POPEN_FLAGS)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    if pid_or_id in VIBE_TERMINALS:
+        VIBE_TERMINALS[pid_or_id]["status"] = "stopped"
+        VIBE_TERMINALS[pid_or_id]["stopped"] = datetime.now().isoformat()
+    CODE_PROCESSES.pop(pid_or_id, None)
+    _code_log(f"killed process {pid_or_id} (pid {os_pid})", source="monitor", level="warn")
+    return jsonify({"status": "ok", "killed": pid_or_id})
+
+
+
+# ═══════════════════════════════════════════════════════════════
 #  AI CONVERSATION & VOICE
 # ═══════════════════════════════════════════════════════════════
 
