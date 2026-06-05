@@ -49,8 +49,11 @@
         // Mouse Tracker Fallback
         let mouseX = 0, mouseY = 0;
         document.addEventListener('mousemove', (e) => {
-            mouseX = (e.clientX / window.innerWidth - 0.5) * 2.0;
-            mouseY = (e.clientY / window.innerHeight - 0.5) * 2.0;
+            // Mouse responsiveness reduced 50% (range *2.0 -> *1.0): the camera
+            // parallax and HUD tilt both derive from mouseX/mouseY, so halving the
+            // normalized range here halves the scene's reaction to mouse movement.
+            mouseX = (e.clientX / window.innerWidth - 0.5) * 1.0;
+            mouseY = (e.clientY / window.innerHeight - 0.5) * 1.0;
         });
 
         // --- COMPUTER VISION ENGINE (MediaPipe Shared Camera) ---
@@ -334,7 +337,7 @@
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
                     oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
                     birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
-                    hoverScale:1.0, baseGlowOpacity:0.4});
+                    hoverScale:1.0, baseGlowOpacity:0.4, snapping:false});
             }
             updateOrb(id, upd) {
                 const o = this.orbs.get(id); if (!o) return;
@@ -355,15 +358,25 @@
                 return out;
             }
             _onClick(ev) {
+                // Screen-space hit test rather than raycasting: at orbit distance the
+                // 0.35-unit sphere is only ~12px wide, which is far too finicky to click.
+                // Project each orb to screen and pick the nearest within a generous radius —
+                // the same forgiving approach the hover/snap detection uses.
                 const rect = this.renderer.domElement.getBoundingClientRect();
-                this.mouse.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-                this.mouse.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-                this.raycaster.setFromCamera(this.mouse, this.camera);
+                const mx = ev.clientX - rect.left;
+                const my = ev.clientY - rect.top;
+                let bestDist = 50, hit = null;
                 for (const [id, o] of this.orbs) {
-                    if (this.raycaster.intersectObject(o.sphere).length > 0) {
-                        window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id,label:o.label,category:o.category,icon:o.icon,progress:o.progress,status:o.status,steps:o.steps}}));
-                        return;
-                    }
+                    if (o.dying) continue;
+                    const p3 = o.group.position.clone().project(this.camera);
+                    if (p3.z >= 1) continue;
+                    const sx = (p3.x*0.5+0.5)*window.innerWidth;
+                    const sy = (-p3.y*0.5+0.5)*window.innerHeight;
+                    const d = Math.hypot(sx - mx, sy - my);
+                    if (d < bestDist) { bestDist = d; hit = o; }
+                }
+                if (hit) {
+                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps}}));
                 }
             }
             _cleanup(id) {
@@ -403,10 +416,32 @@
                     }
                 }
                 this.hoveredOrbId = hoveredId;
-                this.renderer.domElement.style.cursor = hoveredId ? 'pointer' : '';
+
+                // Magnetic snap: any orb whose screen projection comes within ~80px of the
+                // cursor is gently pulled toward it (engage at 80px, release at 120px — the
+                // hysteresis stops it from buzzing at the boundary). Tracked here so we can
+                // also flip the cursor to a pointer for the whole snap zone, not just hover.
+                const mouseScreenX = this.mouseScreen.x, mouseScreenY = this.mouseScreen.y;
+                const hasMouse = mouseScreenX > -1000;
+                let anyInSnapRange = false;
 
                 for (const [id, o] of this.orbs) {
                     const isHovered = (id === hoveredId);
+
+                    // --- Magnetic snap range check (uses the pre-pass projection) ---
+                    let screenDist = Infinity;
+                    if (hasMouse) {
+                        const pr = projected.get(id);
+                        if (pr && pr.onScreen) screenDist = Math.hypot(pr.sx - mouseScreenX, pr.sy - mouseScreenY);
+                    }
+                    if (o.dying) {
+                        o.snapping = false;
+                    } else if (o.snapping) {
+                        if (screenDist > 120) o.snapping = false;   // release
+                    } else if (screenDist < 80) {
+                        o.snapping = true;                          // engage
+                    }
+                    if (o.snapping) anyInSnapRange = true;
 
                     // Scale: birth > death > hover. Use mutually exclusive branches so they don't fight.
                     if (!o.birthDone) {
@@ -426,12 +461,32 @@
                         o.group.scale.setScalar(o.hoverScale);
                     }
 
-                    // Freeze orbit angle when hovered so the orb stays under the cursor.
-                    if (!isHovered) {
+                    // Freeze the orbit angle while snapped so the orb's resting position
+                    // doesn't drift out from under the cursor; resume orbiting otherwise.
+                    if (!o.snapping) {
                         o.oAngle += o.oSpeed*dt*(1+amp*0.5);
                     }
-                    o.group.position.set(Math.cos(o.oAngle)*o.oRadius, o.oHeight+Math.sin(elapsed*1.5+o.oAngle)*0.5, Math.sin(o.oAngle)*o.oRadius);
-                    o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + (isHovered ? 0.45 : 0);
+                    const orbitalX = Math.cos(o.oAngle)*o.oRadius;
+                    const orbitalY = o.oHeight+Math.sin(elapsed*1.5+o.oAngle)*0.5;
+                    const orbitalZ = Math.sin(o.oAngle)*o.oRadius;
+
+                    if (o.snapping && hasMouse && !o.dying) {
+                        // Soft magnetic pull: unproject the cursor onto the orb's current depth
+                        // plane to get a world-space target, then lerp gently toward it (0.08).
+                        // The orb never attaches — it just drifts toward the cursor and eases
+                        // back to its orbit once the mouse leaves the release radius.
+                        const depth = o.group.position.clone().project(this.camera).z;
+                        const target = new THREE.Vector3(
+                            (mouseScreenX/window.innerWidth)*2-1,
+                            -(mouseScreenY/window.innerHeight)*2+1,
+                            depth
+                        ).unproject(this.camera);
+                        o.group.position.lerp(target, 0.08);
+                    } else {
+                        // Ease back to the orbital position with the same gentle factor.
+                        o.group.position.lerp(new THREE.Vector3(orbitalX, orbitalY, orbitalZ), 0.08);
+                    }
+                    o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + ((isHovered || o.snapping) ? 0.45 : 0);
 
                     const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
                     const pos = o.ringGeo.attributes.position.array;
@@ -461,6 +516,8 @@
                         o.labelEl.style.display='none';
                     }
                 }
+                // Pointer cursor for the whole snap zone, not just the tight hover radius.
+                this.renderer.domElement.style.cursor = (hoveredId || anyInSnapRange) ? 'pointer' : '';
                 for (const id of dead) this._cleanup(id);
             }
         }
