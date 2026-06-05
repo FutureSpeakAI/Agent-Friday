@@ -2354,8 +2354,11 @@ function App(){
   // and by Gemini's server-side interrupt ({type:'interrupted'} WS frame). A
   // safety timer re-opens the gate so a flush can never permanently mute playback.
   const flushPlaybackRef=useRef(null);
-  flushPlaybackRef.current=()=>{
+  flushPlaybackRef.current=(caller)=>{
     const v=voiceRef.current;
+    const _stopped=v.activeSources?v.activeSources.length:0;
+    console.log('VOICE_DEBUG: FLUSH called from: '+(caller||'unknown')+' (stopping '+_stopped+' active sources)');
+    console.log('VOICE_DEBUG: playbackCancelled set TRUE by: '+(caller||'unknown'));
     v.playbackCancelled=true;
     if(v.activeSources){
       v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});
@@ -2363,7 +2366,7 @@ function App(){
     }
     if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
-    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv)vv.playbackCancelled=false},2000);
+    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv){vv.playbackCancelled=false;console.log('VOICE_DEBUG: 2s safety timer fired — playbackCancelled reset to FALSE (caller was: '+(caller||'unknown')+')')}},2000);
   };
   voiceStartRef.current=async()=>{
     if(voiceOn)return;
@@ -2505,9 +2508,11 @@ function App(){
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
+        const _approxBytes=m.data?Math.floor(m.data.length*3/4):0;
+        console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
         // Drop chunks that arrive after a barge-in / disconnect flushed the
         // queue — these are trailing audio from the turn the user interrupted.
-        if(v.playbackCancelled)return;
+        if(v.playbackCancelled){console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
         if(!v.audioCtx||v.audioCtx.state==='closed')return;
         const int16=b64ToI16(m.data);
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
@@ -2518,8 +2523,9 @@ function App(){
         // self-evict from the queue when it finishes cleanly.
         if(!v.activeSources)v.activeSources=[];
         v.activeSources.push(src);
-        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1)};
+        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
         src.start(startAt);
+        console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -2535,14 +2541,16 @@ function App(){
           return next;
         });
       }else if(m.type==='turn_end'){
+        console.log('VOICE_DEBUG: turn_end received');
         // Old turn is over — re-open the playback gate for the next response.
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
+        console.log('VOICE_DEBUG: SERVER INTERRUPTED received');
         // Gemini acknowledged the interruption: stop any in-flight old audio,
         // then re-open the gate so the fresh turn's audio plays.
-        flushPlaybackRef.current?.();
+        flushPlaybackRef.current?.('WS interrupted message');
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
         v.playCursor=v.audioCtx&&v.audioCtx.state!=='closed'?v.audioCtx.currentTime:0;
@@ -2562,6 +2570,7 @@ function App(){
       }
     };
     ws.onerror=(e)=>{
+      console.log('VOICE_DEBUG: WS close/error: error '+(e&&e.message?e.message:'(no message)'));
       console.warn('[voice] WebSocket error',e);
       // Only surface "socket error" when the WS never managed to open. Once
       // the connection is established, any subsequent failure is reported via
@@ -2570,6 +2579,7 @@ function App(){
       if(!wsOpened)setVoiceStatus('socket error — is the server running?');
     };
     ws.onclose=(e)=>{
+      console.log('VOICE_DEBUG: WS close/error: '+e.code+' '+(e.reason||'(no reason)'));
       console.log('[voice] WebSocket closed, code='+e.code+' reason='+e.reason);
       // Stop mic tracks so Chrome clears the recording indicator
       const v2=voiceRef.current;
@@ -2597,7 +2607,7 @@ function App(){
     const v=voiceRef.current;
     // 1) Kill audio output FIRST — stop every scheduled/playing source and
     //    flush the queue so nothing keeps speaking as we tear down.
-    try{flushPlaybackRef.current?.()}catch(_){}
+    try{flushPlaybackRef.current?.('voiceStop (stop button / disengage)')}catch(_){}
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
     // 2) Drop the connection immediately. Do NOT send {type:'end'} /
     //    audio_stream_end first — that makes Gemini treat the click as "user
