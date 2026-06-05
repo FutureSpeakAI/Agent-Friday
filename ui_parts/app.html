@@ -2342,9 +2342,9 @@ function App(){
   const voiceStopRef=useRef(null);
   // Flush ALL voice output: stop every scheduled/playing source node, drop the
   // pending queue, and raise the "cancelled" gate so any in-flight chunks from
-  // the old turn are discarded on arrival. Used by both the stop button
-  // (disengage) and barge-in (user talks over Friday). A safety timer re-opens
-  // the gate so a false barge-in can never permanently mute playback.
+  // the old turn are discarded on arrival. Used by the stop button (disengage)
+  // and by Gemini's server-side interrupt ({type:'interrupted'} WS frame). A
+  // safety timer re-opens the gate so a flush can never permanently mute playback.
   const flushPlaybackRef=useRef(null);
   flushPlaybackRef.current=()=>{
     const v=voiceRef.current;
@@ -2354,10 +2354,6 @@ function App(){
       v.activeSources=[];
     }
     if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
-    // Clear the barge-in grace window and the sustained-RMS accumulator so the
-    // next speaking burst starts with a fresh echo-canceller grace period and
-    // can't inherit a stale "RMS has been high since…" timestamp.
-    v.speakStartedAt=null;v.bargeRmsSince=null;
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
     v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv)vv.playbackCancelled=false},2000);
   };
@@ -2404,11 +2400,6 @@ function App(){
       // Pulled into a helper so the silence guard can swap the mic stream
       // and re-wire without leaking nodes.
       v.chunksSent=0;v.bytesSent=0;v.micPeak=0;v.micPeakRecent=0;
-      // Barge-in tuning (ms in settings -> seconds here). Grace = how long the
-      // mic is ignored after Friday starts speaking (echo-canceller warmup);
-      // sustain = how long deliberate speech must persist before it interrupts.
-      v.bargeGraceSec=Math.max(0,(agentSettings.voice_barge_grace_ms??1500)/1000);
-      v.bargeSustainSec=Math.max(0,(agentSettings.voice_barge_sustain_ms??400)/1000);
       const _wireProcessor=()=>{
         try{v.micSource&&v.micSource.disconnect()}catch(_){}
         try{v.micNode&&v.micNode.disconnect()}catch(_){}
@@ -2417,57 +2408,15 @@ function App(){
         v.micNode=proc;
         proc.onaudioprocess=ev=>{
           const input=ev.inputBuffer.getChannelData(0);
-          // Always measure peak (and RMS) so silence detection works even
-          // before WS opens. RMS drives barge-in; peak drives silence guards.
-          let _peak=0,_sumSq=0;for(let i=0;i<input.length;i++){const x=input[i];const a=x<0?-x:x;if(a>_peak)_peak=a;_sumSq+=x*x}
-          const _rms=Math.sqrt(_sumSq/input.length);
+          // Measure peak amplitude for the silence guards (zero-mic detection)
+          // and the UI level meter. NOTE: client-side RMS barge-in was removed —
+          // mic echo cancellation isn't reliable enough on this hardware, so it
+          // kept clipping Friday's audio. Interrupts are now SERVER-SIDE ONLY:
+          // Gemini's VAD detects the user talking over Friday and sends a
+          // {type:'interrupted'} WS frame, which is where playback is flushed.
+          let _peak=0;for(let i=0;i<input.length;i++){const x=input[i];const a=x<0?-x:x;if(a>_peak)_peak=a}
           if(_peak>v.micPeak)v.micPeak=_peak;
           v.micPeakRecent=_peak;
-          // Barge-in: if Friday is currently speaking (audio still queued ahead
-          // of the play cursor) and the user starts talking, cut playback now
-          // and flush the queue so the old response doesn't keep playing over
-          // them. Gemini's server-side VAD picks up the new speech and opens a
-          // fresh turn — we only silence the local output here.
-          const _now=v.audioCtx?v.audioCtx.currentTime:0;
-          // Two-layer barge-in:
-          //   • Mid-speech: handled SERVER-SIDE. Gemini's VAD knows what it just
-          //     said, so it can tell the user's voice from speaker echo. When it
-          //     fires we get a {type:'interrupted'} WS frame and flush there.
-          //   • Silence gaps: handled LOCALLY here. Between utterances no audio is
-          //     playing, so there's no echo to fool the mic — local RMS can safely
-          //     catch the user starting to talk and flush the queue (dropping any
-          //     trailing chunks of the turn they're interrupting).
-          // Local RMS is therefore evaluated ONLY when nothing is actively playing
-          // (activeSources empty). While a BufferSource is live we skip it entirely,
-          // because Friday's output bleeds into the mic and would self-trigger.
-          const _audioPlaying=v.activeSources&&v.activeSources.length>0;
-          if(_audioPlaying){
-            v.bargeRmsSince=null;
-          }else{
-            const _graceSec=v.bargeGraceSec!=null?v.bargeGraceSec:1.5;
-            const _sustainSec=v.bargeSustainSec!=null?v.bargeSustainSec:0.4;
-            // Only barge in during a gap WITHIN an active speaking turn — i.e. a
-            // burst was armed (speakStartedAt set) and the turn hasn't ended
-            // (playbackCancelled false; turn_end clears speakStartedAt). This
-            // stops a loud sound during plain listening from swallowing the start
-            // of Friday's next reply.
-            const _midTurn=v.speakStartedAt!=null&&!v.playbackCancelled;
-            // Grace: ignore the mic for the first 1500ms after the burst started so
-            // the browser's echo canceller has engaged.
-            const _inGrace=_midTurn&&(_now-v.speakStartedAt)<_graceSec;
-            // Threshold 0.25 (high — only loud, direct speech qualifies) and a 400ms
-            // sustain so only a deliberate sustained burst interrupts.
-            if(_midTurn&&!_inGrace&&_rms>0.25){
-              if(v.bargeRmsSince==null)v.bargeRmsSince=_now;
-              if(_now-v.bargeRmsSince>=_sustainSec){
-                flushPlaybackRef.current?.();
-                setVoiceStatus('listening');
-                v.bargeRmsSince=null;
-              }
-            }else{
-              v.bargeRmsSince=null;
-            }
-          }
           const ws=v.ws;
           if(!ws||ws.readyState!==WebSocket.OPEN)return;
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
@@ -2556,10 +2505,6 @@ function App(){
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
-        // If the play cursor is in the past, the queue had drained — this chunk
-        // begins a fresh speaking burst, so (re)arm the echo-canceller grace
-        // window from the moment this audio will actually start.
-        if(v.playCursor<=now)v.speakStartedAt=startAt;
         const src=v.audioCtx.createBufferSource();src.buffer=buf;src.connect(v.audioCtx.destination);if(v.holoAnalyser){try{src.connect(v.holoAnalyser)}catch(_){}}
         // Track the node so a barge-in / disconnect can stop it mid-playback;
         // self-evict from the queue when it finishes cleanly.
@@ -2583,12 +2528,8 @@ function App(){
         });
       }else if(m.type==='turn_end'){
         // Old turn is over — re-open the playback gate for the next response.
-        // Clear the speaking-burst marker so the silence-gap RMS barge-in goes
-        // idle (it only fires mid-turn); otherwise a loud sound while merely
-        // listening could flush the start of Friday's next reply.
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
-        v.speakStartedAt=null;v.bargeRmsSince=null;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
         // Gemini acknowledged the interruption: stop any in-flight old audio,
@@ -3011,9 +2952,6 @@ function App(){
   useEffect(()=>{window.fridayCamera={latestFrame:()=>cameraFrameRef.current,isOn:()=>cameraOn,source:()=>cameraSource,intervalSec:()=>cameraIntervalSec}},[cameraOn,cameraSource,cameraIntervalSec]);
   // Persist camera prefs through /api/settings (interval + auto-describe).
   useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
-  // Push barge-in tuning onto the live voice ref so slider changes take effect
-  // mid-session without restarting voice. voiceStart also seeds these on start.
-  useEffect(()=>{const v=voiceRef.current;if(!v)return;v.bargeGraceSec=Math.max(0,(agentSettings.voice_barge_grace_ms??1500)/1000);v.bargeSustainSec=Math.max(0,(agentSettings.voice_barge_sustain_ms??400)/1000)},[agentSettings.voice_barge_grace_ms,agentSettings.voice_barge_sustain_ms]);
   const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};
 
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
@@ -3609,33 +3547,6 @@ function App(){
                     </div>
                   </label>
                 </div>
-
-                <div className="settings-subtitle" style={{marginTop:18}}>Barge-in (interrupt) sensitivity</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4,marginBottom:8}}>How easily talking over Friday cuts her off. Raise the grace period if her replies get clipped after a word or two (echo); lower the hold time if interrupting feels sluggish.</div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Grace period (echo-canceller warmup)</span>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>{(agentSettings.voice_barge_grace_ms??1500)} ms</span>
-                </div>
-                <input type="range" min="0" max="2000" step="50"
-                  value={agentSettings.voice_barge_grace_ms??1500}
-                  onChange={e=>saveAgentSettings({voice_barge_grace_ms:parseInt(e.target.value,10)})}
-                  style={{width:'100%',accentColor:'#7c3aed'}}/>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:8,fontFamily:'JetBrains Mono'}}>
-                  <span>instant</span><span>1500 (default)</span><span>2s</span>
-                </div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Hold time (speech must persist)</span>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>{(agentSettings.voice_barge_sustain_ms??400)} ms</span>
-                </div>
-                <input type="range" min="0" max="1000" step="50"
-                  value={agentSettings.voice_barge_sustain_ms??400}
-                  onChange={e=>saveAgentSettings({voice_barge_sustain_ms:parseInt(e.target.value,10)})}
-                  style={{width:'100%',accentColor:'#7c3aed'}}/>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
-                  <span>twitchy</span><span>400 (default)</span><span>1s</span>
-                </div>
-                {((agentSettings.voice_barge_grace_ms??1500)!==1500||(agentSettings.voice_barge_sustain_ms??400)!==400)&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6,fontSize:11}}
-                  onClick={()=>saveAgentSettings({voice_barge_grace_ms:1500,voice_barge_sustain_ms:400})}>Reset barge-in to defaults</button>}
               </div>
             </div>
           </div>
