@@ -5218,6 +5218,14 @@ function App(){
     document.addEventListener('mousedown',h);
     return()=>document.removeEventListener('mousedown',h);
   },[modelMenuOpen]);
+  const[sceneMenuOpen,setSceneMenuOpen]=useState(false);
+  const sceneMenuRef=useRef(null);
+  useEffect(()=>{
+    if(!sceneMenuOpen)return;
+    const h=e=>{if(sceneMenuRef.current&&!sceneMenuRef.current.contains(e.target))setSceneMenuOpen(false)};
+    document.addEventListener('mousedown',h);
+    return()=>document.removeEventListener('mousedown',h);
+  },[sceneMenuOpen]);
   const orchModel=ORCHESTRATOR_MODELS.find(m=>m.id===agentSettings.orchestrator_model)||ORCHESTRATOR_MODELS[0];
   const creativeModel=CREATIVE_MODELS.find(m=>m.id===agentSettings.creative_model)||CREATIVE_MODELS[0];
 
@@ -5801,6 +5809,7 @@ function App(){
       setTopBarHidden(false);
       if(topBarTimer.current){clearTimeout(topBarTimer.current);topBarTimer.current=null;}
       setModelMenuOpen(false);
+      setSceneMenuOpen(false);
     }
   },[settingsOpen,chatOpen,quickDraft,paletteOpen,notifOpen]);
 
@@ -5924,11 +5933,40 @@ function App(){
           </a>
         </div>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
-        <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.72)',letterSpacing:'.05em',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}>{structureName}</span>
+        {/* Scene selector dropdown */}
+        <div ref={sceneMenuRef} style={{position:'relative'}}>
+          <button onClick={()=>{setSceneMenuOpen(o=>!o);setModelMenuOpen(false)}}
+            style={{background:'rgba(0,0,0,0.35)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s',textShadow:'0 0 6px rgba(0,0,0,0.8)'}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.45)'}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(0,212,255,0.18)'}}
+            title="Select holographic scene"
+            aria-label="Scene selection">
+            {structureName}
+            <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
+          </button>
+          {sceneMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:260,background:'rgba(10,14,26,0.88)',backdropFilter:'blur(20px) saturate(1.3)',WebkitBackdropFilter:'blur(20px) saturate(1.3)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.5),0 0 40px rgba(0,212,255,0.06)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+            <div style={{padding:'4px 12px 6px',fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.7)',letterSpacing:'0.08em',textTransform:'uppercase'}}>Holographic Scene</div>
+            {(structures.length>0?structures:WIZARD_STRUCTURES).map((s,i)=>(
+              <button key={i} onClick={()=>{window.fridayVibe?.setStructure(i);fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});setSceneMenuOpen(false)}}
+                style={{display:'block',width:'100%',textAlign:'left',background:sceneState.structIdx===i?'rgba(0,212,255,0.12)':'transparent',border:'none',borderLeft:sceneState.structIdx===i?'2px solid rgba(0,212,255,0.7)':'2px solid transparent',padding:'7px 12px',cursor:'pointer',color:sceneState.structIdx===i?'#00d4ff':'rgba(255,255,255,0.72)',fontFamily:'JetBrains Mono',fontSize:11,transition:'background .15s,border-color .15s',letterSpacing:'.03em'}}
+                onMouseEnter={e=>{if(sceneState.structIdx!==i)e.currentTarget.style.background='rgba(255,255,255,0.06)'}}
+                onMouseLeave={e=>{if(sceneState.structIdx!==i)e.currentTarget.style.background='transparent'}}>
+                <span style={{opacity:0.35,marginRight:6,fontSize:10}}>D{i+1}</span>{s.name}
+              </button>
+            ))}
+            <div style={{borderTop:'1px solid rgba(255,255,255,0.06)',margin:'4px 0'}}/>
+            <button onClick={()=>{fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:null})}).catch(()=>{});setSceneMenuOpen(false)}}
+              style={{display:'block',width:'100%',textAlign:'left',background:'transparent',border:'none',borderLeft:'2px solid transparent',padding:'6px 12px',cursor:'pointer',color:'rgba(0,212,255,0.45)',fontFamily:'JetBrains Mono',fontSize:10,transition:'background .15s',letterSpacing:'.03em'}}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent'}}>
+              Reset to auto (evolution)
+            </button>
+          </div>}
+        </div>
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
-          <button onClick={()=>setModelMenuOpen(o=>!o)}
+          <button onClick={()=>{setModelMenuOpen(o=>!o);setSceneMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid '+(routingMode!=='cloud_only'?'rgba(245,158,11,0.35)':'rgba(255,255,255,0.18)'),borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
             title="Model selection & routing"
             aria-label="Model selection">
