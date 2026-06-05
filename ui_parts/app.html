@@ -2386,6 +2386,10 @@ function App(){
       try{v.audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:PCM_OUT_RATE});}
       catch(_){v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
       if(v.audioCtx.sampleRate!==PCM_OUT_RATE)console.warn('[voice] ctx sampleRate='+v.audioCtx.sampleRate+' (wanted '+PCM_OUT_RATE+') — playback will be resampled');
+      // Diagnostic: confirm the 24kHz pin actually took. If pinned=false the
+      // browser ignored the hint and every chunk is being resampled 24k->ctxRate,
+      // which is the usual source of progressive rasp over a long conversation.
+      console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
       v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
       const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();

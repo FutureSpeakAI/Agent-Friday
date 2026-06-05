@@ -2319,7 +2319,7 @@ DEFAULT_SETTINGS = {
     "voice_max_tokens": 0,                 # cap response length in tokens; 0 = unlimited
     "voice_affective": True,               # Live API enable_affective_dialog
     "voice_proactive": True,               # Live API proactivity.proactive_audio
-    "voice_context_compression": False,    # Live API sliding-window compression (set-and-forget)
+    "voice_context_compression": True,     # Live API sliding-window compression; ON by default so the context-window cap never silently terminates a long voice session (pairs with session_resumption renewal)
     "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
     "voice_barge_sustain_ms": 200,         # deliberate speech must persist this long to interrupt playback
     # ── Privacy / Context Log ──
@@ -7891,6 +7891,15 @@ if sock is not None:
                 sliding_window=types.SlidingWindow(),
             )
 
+        # Session resumption: ask Gemini to emit resumption handles. A single Live
+        # session is capped (~10-15 min of audio, plus a context-window cap); when
+        # it ages out Gemini sends GoAway and ends the stream. With a handle in hand
+        # the reconnect loop in runner() transparently renews the session mid-call
+        # instead of the audio just stopping. Captured in writer(), replayed below.
+        _supports_resumption = hasattr(types, 'SessionResumptionConfig')
+        if _supports_resumption:
+            live_cfg_kwargs["session_resumption"] = types.SessionResumptionConfig()
+
         # The per-attempt LiveConnectConfig is built inside runner() from
         # live_cfg_kwargs (affective/proactive stripped per endpoint+model).
 
@@ -7964,207 +7973,264 @@ if sock is not None:
                 _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
                       f'affective={use_affective}, proactive={use_proactive})')
                 try:
-                    async with active_client.aio.live.connect(model=model_name, config=per_model_cfg) as session_ai:
-                        _safe_send({"type": "status", "text": "live"})
-                        _vlog(f'session established with {model_name}')
+                    # ── Per-connection conversation state. Lives ACROSS the
+                    # transparent session renewals below so a reconnect seam never
+                    # loses an in-flight turn or the distill log. ──
+                    _audio_chunks_received = 0
+                    _gemini_chunks_received = 0
+                    _audio_bytes_to_gemini = 0
+                    _audio_bytes_from_gemini = 0
+                    _safe_send_failures = 0
+                    in_buf = []
+                    out_buf = []
+                    turn_log = []
+                    resume_handle = [None]   # newest session-resumption handle from Gemini
+                    greeted = [False]
 
-                        # Kick off an initial greeting so the user immediately hears Friday
-                        # and we can confirm the audio-out path works without needing to
-                        # rely on the user's mic / VAD.
+                    def _flush_turn():
+                        user_text = ''.join(in_buf).strip()
+                        agent_text = ''.join(out_buf).strip()
+                        in_buf.clear()
+                        out_buf.clear()
+                        if not user_text and not agent_text:
+                            return
                         try:
-                            await session_ai.send_client_content(
-                                turns={"role": "user", "parts": [{"text": "Greet me in one short sentence."}]},
-                                turn_complete=True,
-                            )
-                            _vlog('sent initial greeting prompt')
-                        except Exception as _e:
-                            _vlog(f'greeting send failed: {_e}')
+                            _persist_voice_turn(user_text, agent_text)
+                        except Exception as e:
+                            print(f'[live] persist_voice_turn error: {e}')
+                        _safe_send({
+                            "type": "voice_turn_done",
+                            "user_text": user_text,
+                            "agent_text": agent_text,
+                        })
+                        turn_log.append((user_text, agent_text))
 
-                        _audio_chunks_received = 0
-                        _gemini_chunks_received = 0
-
-                        in_buf = []
-                        out_buf = []
-                        turn_log = []
-
-                        def _flush_turn():
-                            user_text = ''.join(in_buf).strip()
-                            agent_text = ''.join(out_buf).strip()
-                            in_buf.clear()
-                            out_buf.clear()
-                            if not user_text and not agent_text:
-                                return
+                    # reader()/writer() are bound to ONE Gemini session via `sess`
+                    # and stop on either `done` (browser closed — terminal) or
+                    # `sdone` (this session leg ended — GoAway/timeout/drop, renew).
+                    async def reader(sess, sdone):
+                        nonlocal _audio_chunks_received, _audio_bytes_to_gemini
+                        while not done.is_set() and not sdone.is_set():
                             try:
-                                _persist_voice_turn(user_text, agent_text)
+                                raw = await asyncio.to_thread(ws.receive, 1.0)
+                            except ConnectionClosed:
+                                _vlog('reader: ConnectionClosed from browser')
+                                done.set()
+                                return
                             except Exception as e:
-                                print(f'[live] persist_voice_turn error: {e}')
-                            _safe_send({
-                                "type": "voice_turn_done",
-                                "user_text": user_text,
-                                "agent_text": agent_text,
-                            })
-                            turn_log.append((user_text, agent_text))
-
-                        _audio_bytes_to_gemini = 0
-                        _audio_bytes_from_gemini = 0
-                        _safe_send_failures = 0
-
-                        async def reader():
-                            nonlocal _audio_chunks_received, _audio_bytes_to_gemini
-                            while not done.is_set():
+                                continue
+                            if raw is None:
+                                continue
+                            if isinstance(raw, bytes):
                                 try:
-                                    raw = await asyncio.to_thread(ws.receive, 1.0)
-                                except ConnectionClosed:
-                                    _vlog('reader: ConnectionClosed from browser')
-                                    done.set()
-                                    return
-                                except Exception as e:
-                                    continue
-                                if raw is None:
-                                    continue
-                                if isinstance(raw, bytes):
-                                    try:
-                                        raw = raw.decode('utf-8')
-                                    except Exception:
-                                        continue
-                                try:
-                                    msg = json.loads(raw)
+                                    raw = raw.decode('utf-8')
                                 except Exception:
                                     continue
-                                t = msg.get('type')
-                                try:
-                                    if t == 'audio' and msg.get('data'):
-                                        data = base64.b64decode(msg['data'])
-                                        _audio_chunks_received += 1
-                                        _audio_bytes_to_gemini += len(data)
-                                        if _audio_chunks_received in (1, 5, 25) or _audio_chunks_received % 50 == 0:
-                                            # Log RMS amplitude so we can tell speech from silence.
-                                            try:
-                                                import struct as _st
-                                                _n = len(data) // 2
-                                                if _n > 0:
-                                                    _samples = _st.unpack(f'<{_n}h', data)
-                                                    _peak = max(abs(s) for s in _samples)
-                                                    _sumsq = sum(s * s for s in _samples)
-                                                    _rms = int((_sumsq / _n) ** 0.5)
-                                                else:
-                                                    _peak = _rms = 0
-                                            except Exception:
-                                                _peak = _rms = -1
-                                            _vlog(f'browser->gemini: chunk #{_audio_chunks_received} ({len(data)} bytes, total {_audio_bytes_to_gemini}, rms={_rms}, peak={_peak})')
-                                        await session_ai.send_realtime_input(
-                                            audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
-                                        )
-                                    elif t == 'image' and msg.get('data'):
-                                        data = base64.b64decode(msg['data'])
-                                        await session_ai.send_realtime_input(
-                                            video=types.Blob(data=data, mime_type='image/jpeg')
-                                        )
-                                    elif t == 'text' and msg.get('text'):
-                                        _vlog(f'browser->gemini: text {msg["text"]!r}')
-                                        await session_ai.send_realtime_input(text=msg['text'])
-                                    elif t == 'end':
-                                        _vlog('reader: browser sent end signal')
-                                        # Explicitly flush audio stream so Gemini stops waiting for VAD.
-                                        try:
-                                            await session_ai.send_realtime_input(audio_stream_end=True)
-                                            _vlog('sent audio_stream_end=True to gemini')
-                                        except Exception as _e:
-                                            _vlog(f'audio_stream_end send failed: {_e}')
-                                        done.set()
-                                        return
-                                except Exception as e:
-                                    _vlog(f'send-to-gemini ERROR: {type(e).__name__}: {e}')
-                                    traceback.print_exc()
-
-                        async def writer():
-                            nonlocal _gemini_chunks_received, _audio_bytes_from_gemini, _safe_send_failures
                             try:
-                                while not done.is_set():
-                                    async for chunk in session_ai.receive():
-                                        if done.is_set():
-                                            return
+                                msg = json.loads(raw)
+                            except Exception:
+                                continue
+                            t = msg.get('type')
+                            try:
+                                if t == 'audio' and msg.get('data'):
+                                    data = base64.b64decode(msg['data'])
+                                    _audio_chunks_received += 1
+                                    _audio_bytes_to_gemini += len(data)
+                                    if _audio_chunks_received in (1, 5, 25) or _audio_chunks_received % 50 == 0:
+                                        # Log RMS amplitude so we can tell speech from silence.
                                         try:
-                                            _gemini_chunks_received += 1
-                                            if _gemini_chunks_received <= 5 or _gemini_chunks_received % 20 == 0:
-                                                _resume = getattr(chunk, 'session_resumption_update', None)
-                                                _va = getattr(chunk, 'voice_activity', None) or getattr(chunk, 'voice_activity_detection_signal', None)
-                                                _vlog(f'gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None} resume={_resume is not None} va={_va is not None}')
-                                            sc = getattr(chunk, 'server_content', None)
-                                            if sc is not None:
-                                                out_tr = getattr(sc, 'output_transcription', None)
-                                                if out_tr and getattr(out_tr, 'text', None):
-                                                    _vlog(f'output_transcription: {out_tr.text!r}')
-                                                    out_buf.append(out_tr.text)
-                                                    _safe_send({"type": "text", "text": out_tr.text})
-                                                in_tr = getattr(sc, 'input_transcription', None)
-                                                if in_tr and getattr(in_tr, 'text', None):
-                                                    _vlog(f'input_transcription: {in_tr.text!r}')
-                                                    in_buf.append(in_tr.text)
-                                                    _safe_send({"type": "input_transcript", "text": in_tr.text})
-                                                mt = getattr(sc, 'model_turn', None)
-                                                if mt and getattr(mt, 'parts', None):
-                                                    for part in mt.parts:
-                                                        # Audio: PCM bytes at 24kHz in part.inline_data.data
-                                                        il = getattr(part, 'inline_data', None)
-                                                        if il and getattr(il, 'data', None):
-                                                            _audio_bytes_from_gemini += len(il.data)
-                                                            if _audio_bytes_from_gemini <= 50000 or _gemini_chunks_received % 20 == 0:
-                                                                _vlog(f'gemini->browser: audio {len(il.data)} bytes ({il.mime_type}); total {_audio_bytes_from_gemini}')
-                                                            ok = _safe_send({
-                                                                "type": "audio",
-                                                                "data": base64.b64encode(il.data).decode('ascii'),
-                                                            })
-                                                            if not ok:
-                                                                _safe_send_failures += 1
-                                                                _vlog(f'ws.send FAILED for audio chunk (cumulative failures: {_safe_send_failures})')
-                                                        pt = getattr(part, 'text', None)
-                                                        if pt:
-                                                            out_buf.append(pt)
-                                                            _safe_send({"type": "text", "text": pt})
-                                                if getattr(sc, 'turn_complete', False):
-                                                    _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
-                                                    _flush_turn()
-                                                    _safe_send({"type": "turn_end"})
-                                                if getattr(sc, 'interrupted', False):
-                                                    _vlog('interrupted')
-                                                    _safe_send({"type": "interrupted"})
-                                        except Exception as e:
-                                            _vlog(f'recv processing ERROR: {type(e).__name__}: {e}')
-                                            traceback.print_exc()
-                                    # session.receive() iterator ends after a turn; re-enter to keep listening
-                                    _vlog(f'receive iterator completed (after {_gemini_chunks_received} chunks), re-entering for next turn')
+                                            import struct as _st
+                                            _n = len(data) // 2
+                                            if _n > 0:
+                                                _samples = _st.unpack(f'<{_n}h', data)
+                                                _peak = max(abs(s) for s in _samples)
+                                                _sumsq = sum(s * s for s in _samples)
+                                                _rms = int((_sumsq / _n) ** 0.5)
+                                            else:
+                                                _peak = _rms = 0
+                                        except Exception:
+                                            _peak = _rms = -1
+                                        _vlog(f'browser->gemini: chunk #{_audio_chunks_received} ({len(data)} bytes, total {_audio_bytes_to_gemini}, rms={_rms}, peak={_peak})')
+                                    await sess.send_realtime_input(
+                                        audio=types.Blob(data=data, mime_type='audio/pcm;rate=16000')
+                                    )
+                                elif t == 'image' and msg.get('data'):
+                                    data = base64.b64decode(msg['data'])
+                                    await sess.send_realtime_input(
+                                        video=types.Blob(data=data, mime_type='image/jpeg')
+                                    )
+                                elif t == 'text' and msg.get('text'):
+                                    _vlog(f'browser->gemini: text {msg["text"]!r}')
+                                    await sess.send_realtime_input(text=msg['text'])
+                                elif t == 'end':
+                                    _vlog('reader: browser sent end signal')
+                                    # Explicitly flush audio stream so Gemini stops waiting for VAD.
+                                    try:
+                                        await sess.send_realtime_input(audio_stream_end=True)
+                                        _vlog('sent audio_stream_end=True to gemini')
+                                    except Exception as _e:
+                                        _vlog(f'audio_stream_end send failed: {_e}')
+                                    done.set()
+                                    return
                             except Exception as e:
-                                _vlog(f'writer EXCEPTION: {type(e).__name__}: {e}')
-                            finally:
-                                _vlog(f'writer done. stats: gemini_chunks={_gemini_chunks_received}, audio_in_bytes={_audio_bytes_to_gemini}, audio_out_bytes={_audio_bytes_from_gemini}, send_fails={_safe_send_failures}')
-                                done.set()
+                                _vlog(f'send-to-gemini ERROR: {type(e).__name__}: {e}')
+                                traceback.print_exc()
 
-                        async def no_audio_watchdog():
-                            # If the browser sends zero audio chunks within 5s of the
-                            # session opening, log a clear warning. This catches "WS
-                            # connected but mic never streams" cases that otherwise
-                            # look identical to "user just isn't talking yet".
-                            try:
-                                await asyncio.sleep(5.0)
-                            except asyncio.CancelledError:
-                                return
-                            if done.is_set():
-                                return
-                            if _audio_chunks_received == 0:
-                                _vlog('WARNING: no audio chunks received from browser after 5s — mic likely silent or WS not flowing')
-                                _safe_send({"type": "status", "text": "no mic audio reaching server"})
-
-                        await asyncio.gather(reader(), writer(), no_audio_watchdog(), return_exceptions=True)
+                    async def writer(sess, sdone):
+                        nonlocal _gemini_chunks_received, _audio_bytes_from_gemini, _safe_send_failures
                         try:
-                            _flush_turn()
-                        except Exception:
-                            pass
-                        if turn_log:
-                            try:
-                                _spawn_voice_distill(turn_log)
-                            except Exception as e:
-                                print(f'[live] voice distill spawn error: {e}')
+                            while not done.is_set() and not sdone.is_set():
+                                async for chunk in sess.receive():
+                                    if done.is_set() or sdone.is_set():
+                                        return
+                                    try:
+                                        _gemini_chunks_received += 1
+                                        # Capture the newest resumption handle so the
+                                        # reconnect loop can renew this exact session.
+                                        _sru = getattr(chunk, 'session_resumption_update', None)
+                                        if _sru is not None and getattr(_sru, 'new_handle', None):
+                                            resume_handle[0] = _sru.new_handle
+                                        # GoAway: Gemini is about to retire this session
+                                        # (audio/context cap). End this leg cleanly so the
+                                        # reconnect loop renews it via the handle above —
+                                        # the user hears no break.
+                                        _ga = getattr(chunk, 'go_away', None)
+                                        if _ga is not None:
+                                            _tl = getattr(_ga, 'time_left', None)
+                                            _vlog(f'GoAway from Gemini (time_left={_tl}) — renewing session via resumption handle')
+                                            sdone.set()
+                                            return
+                                        if _gemini_chunks_received <= 5 or _gemini_chunks_received % 20 == 0:
+                                            _resume = _sru
+                                            _va = getattr(chunk, 'voice_activity', None) or getattr(chunk, 'voice_activity_detection_signal', None)
+                                            _vlog(f'gemini chunk #{_gemini_chunks_received}: setup={chunk.setup_complete is not None} sc={chunk.server_content is not None} tool={chunk.tool_call is not None} resume={_resume is not None} va={_va is not None}')
+                                        sc = getattr(chunk, 'server_content', None)
+                                        if sc is not None:
+                                            out_tr = getattr(sc, 'output_transcription', None)
+                                            if out_tr and getattr(out_tr, 'text', None):
+                                                _vlog(f'output_transcription: {out_tr.text!r}')
+                                                out_buf.append(out_tr.text)
+                                                _safe_send({"type": "text", "text": out_tr.text})
+                                            in_tr = getattr(sc, 'input_transcription', None)
+                                            if in_tr and getattr(in_tr, 'text', None):
+                                                _vlog(f'input_transcription: {in_tr.text!r}')
+                                                in_buf.append(in_tr.text)
+                                                _safe_send({"type": "input_transcript", "text": in_tr.text})
+                                            mt = getattr(sc, 'model_turn', None)
+                                            if mt and getattr(mt, 'parts', None):
+                                                for part in mt.parts:
+                                                    # Audio: PCM bytes at 24kHz in part.inline_data.data
+                                                    il = getattr(part, 'inline_data', None)
+                                                    if il and getattr(il, 'data', None):
+                                                        _audio_bytes_from_gemini += len(il.data)
+                                                        if _audio_bytes_from_gemini <= 50000 or _gemini_chunks_received % 20 == 0:
+                                                            _vlog(f'gemini->browser: audio {len(il.data)} bytes ({il.mime_type}); total {_audio_bytes_from_gemini}')
+                                                        ok = _safe_send({
+                                                            "type": "audio",
+                                                            "data": base64.b64encode(il.data).decode('ascii'),
+                                                        })
+                                                        if not ok:
+                                                            _safe_send_failures += 1
+                                                            _vlog(f'ws.send FAILED for audio chunk (cumulative failures: {_safe_send_failures})')
+                                                    pt = getattr(part, 'text', None)
+                                                    if pt:
+                                                        out_buf.append(pt)
+                                                        _safe_send({"type": "text", "text": pt})
+                                            if getattr(sc, 'turn_complete', False):
+                                                _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
+                                                _flush_turn()
+                                                _safe_send({"type": "turn_end"})
+                                            if getattr(sc, 'interrupted', False):
+                                                _vlog('interrupted')
+                                                _safe_send({"type": "interrupted"})
+                                    except Exception as e:
+                                        _vlog(f'recv processing ERROR: {type(e).__name__}: {e}')
+                                        traceback.print_exc()
+                                # session.receive() iterator ends after a turn; re-enter to keep listening
+                                _vlog(f'receive iterator completed (after {_gemini_chunks_received} chunks), re-entering for next turn')
+                        except Exception as e:
+                            _vlog(f'writer EXCEPTION: {type(e).__name__}: {e}')
+                        finally:
+                            _vlog(f'writer leg done. stats: gemini_chunks={_gemini_chunks_received}, audio_in_bytes={_audio_bytes_to_gemini}, audio_out_bytes={_audio_bytes_from_gemini}, send_fails={_safe_send_failures}')
+                            # End THIS leg only. Whether the whole connection is over
+                            # (done) is decided by reader/GoAway, not by the receive
+                            # stream ending — an unexpected stream end with a handle in
+                            # hand should renew, not terminate.
+                            sdone.set()
+
+                    async def no_audio_watchdog():
+                        # If the browser sends zero audio chunks within 5s of the
+                        # session opening, log a clear warning. This catches "WS
+                        # connected but mic never streams" cases that otherwise
+                        # look identical to "user just isn't talking yet".
+                        try:
+                            await asyncio.sleep(5.0)
+                        except asyncio.CancelledError:
+                            return
+                        if done.is_set():
+                            return
+                        if _audio_chunks_received == 0:
+                            _vlog('WARNING: no audio chunks received from browser after 5s — mic likely silent or WS not flowing')
+                            _safe_send({"type": "status", "text": "no mic audio reaching server"})
+
+                    # ── Reconnect loop ──────────────────────────────────────────
+                    # A single Gemini Live session is capped (~10-15 min of audio,
+                    # plus a context-window cap). When Gemini sends GoAway / ends the
+                    # stream while the BROWSER is still connected, we renew the session
+                    # using the last resumption handle and keep going — Gemini restores
+                    # the conversation context server-side, so the user hears no seam.
+                    # If no handle was ever issued (resumption unsupported), this runs
+                    # exactly once and behaves like the old single-session path.
+                    leg = 0
+                    while not done.is_set():
+                        if leg > 0 and resume_handle[0] is not None and _supports_resumption:
+                            _leg_kwargs = dict(per_model_kwargs)
+                            _leg_kwargs["session_resumption"] = types.SessionResumptionConfig(handle=resume_handle[0])
+                            _leg_cfg = types.LiveConnectConfig(**_leg_kwargs)
+                            _vlog(f'reconnecting voice session (renewal #{leg}) with resumption handle')
+                        else:
+                            _leg_cfg = per_model_cfg
+                        async with active_client.aio.live.connect(model=model_name, config=_leg_cfg) as session_ai:
+                            if leg == 0:
+                                _safe_send({"type": "status", "text": "live"})
+                                _vlog(f'session established with {model_name}')
+                            else:
+                                _vlog(f'session renewed with {model_name} (renewal #{leg})')
+
+                            # Greeting only on the very first leg — a renewal must not
+                            # re-greet (and Gemini already has the restored context).
+                            if not greeted[0]:
+                                greeted[0] = True
+                                try:
+                                    await session_ai.send_client_content(
+                                        turns={"role": "user", "parts": [{"text": "Greet me in one short sentence."}]},
+                                        turn_complete=True,
+                                    )
+                                    _vlog('sent initial greeting prompt')
+                                except Exception as _e:
+                                    _vlog(f'greeting send failed: {_e}')
+
+                            sdone = asyncio.Event()
+                            _tasks = [reader(session_ai, sdone), writer(session_ai, sdone)]
+                            if leg == 0:
+                                _tasks.append(no_audio_watchdog())
+                            await asyncio.gather(*_tasks, return_exceptions=True)
+
+                        # Browser gone, or no handle to renew with → terminal.
+                        if done.is_set() or resume_handle[0] is None or not _supports_resumption:
+                            break
+                        leg += 1
+                        _vlog(f'voice session leg ended without browser close — renewing (total renewals: {leg})')
+
+                    try:
+                        _flush_turn()
+                    except Exception:
+                        pass
+                    if turn_log:
+                        try:
+                            _spawn_voice_distill(turn_log)
+                        except Exception as e:
+                            print(f'[live] voice distill spawn error: {e}')
                     break  # session completed successfully, don't try fallback
                 except Exception as e:
                     last_error = e
