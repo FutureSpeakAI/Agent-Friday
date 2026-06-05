@@ -3056,19 +3056,56 @@ GOOGLE_SCOPES = [
 GOOGLE_TOKEN_PATH = FRIDAY_DIR / "google_token.json"
 
 
+def _google_client_block(data):
+    """Return the inner client block ('installed' or 'web') if the file holds
+    *real* credentials, else None.
+
+    A Google client JSON nests client_id/client_secret under an "installed"
+    (Desktop) or "web" key — never at the top level. We also reject the template
+    placeholders Google ships (e.g. "YOUR_CLIENT_ID.apps.googleusercontent.com"),
+    since a structurally-valid but unfilled template would otherwise produce an
+    auth URL containing the literal placeholder.
+    """
+    if not isinstance(data, dict):
+        return None
+    block = data.get("installed") or data.get("web")
+    if not isinstance(block, dict):
+        return None
+    cid = (block.get("client_id") or "").strip()
+    csec = (block.get("client_secret") or "").strip()
+    if not cid or not csec:
+        return None
+    if "YOUR_CLIENT" in cid.upper() or "YOUR_CLIENT" in csec.upper():
+        return None
+    # A real OAuth client_id always ends with this Google-issued suffix.
+    if not cid.endswith(".apps.googleusercontent.com"):
+        return None
+    return block
+
+
 def _google_client_config():
     """Locate the OAuth *client* secrets (the app credentials, not the token).
 
     Returns (config_dict, source_label) or (None, None). Checks, in order:
     ~/.friday/credentials.json, the existing gmail-mcp Desktop client at
-    ~/.gmail-mcp/oauth-keys.json, ~/.friday/oauth-keys.json, then the
-    GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET environment variables.
+    ~/.gmail-mcp/oauth-keys.json, ~/.friday/oauth-keys.json, any
+    client_secret*.json that Google delivers into ~/.friday, ~/.gmail-mcp or
+    ~/Downloads, then the GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET env vars.
+    Files that exist but only contain template placeholders are skipped so a
+    stale ~/.gmail-mcp/oauth-keys.json can't shadow the real credentials.
     """
     candidates = [
         FRIDAY_DIR / "credentials.json",
         HOME / ".gmail-mcp" / "oauth-keys.json",
         FRIDAY_DIR / "oauth-keys.json",
     ]
+    # Google's console downloads the client as client_secret_*.json; pick those
+    # up automatically rather than forcing a manual rename.
+    for d in (FRIDAY_DIR, HOME / ".gmail-mcp", HOME / "Downloads"):
+        try:
+            candidates.extend(sorted(d.glob("client_secret*.json")))
+        except Exception:
+            pass
     for p in candidates:
         if not p.exists():
             continue
@@ -3077,7 +3114,7 @@ def _google_client_config():
             data = json.loads(p.read_text(encoding="utf-8-sig"))
         except Exception:
             continue
-        if isinstance(data, dict) and ("installed" in data or "web" in data):
+        if _google_client_block(data) is not None:
             return data, str(p)
 
     cid = os.environ.get("GOOGLE_CLIENT_ID")
