@@ -3341,6 +3341,12 @@ NEWS_CATEGORIES = {
             "https://www.theverge.com/rss/index.xml",
             "https://www.platformer.news/rss/",
             "https://stratechery.com/feed/",
+            # The Brutalist Report (brutalist.report) was requested, but it
+            # exposes no public RSS/Atom feed — every feed route 404s and it
+            # publishes no original articles (it's an aggregator). Its Tech
+            # section is built largely on Hacker News, so we pull HN's canonical
+            # front-page feed directly as the closest functional substitute.
+            "https://news.ycombinator.com/rss",
         ],
     },
     "Politics": {
