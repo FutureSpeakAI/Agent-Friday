@@ -2320,6 +2320,8 @@ DEFAULT_SETTINGS = {
     "voice_affective": True,               # Live API enable_affective_dialog
     "voice_proactive": True,               # Live API proactivity.proactive_audio
     "voice_context_compression": False,    # Live API sliding-window compression (set-and-forget)
+    "voice_barge_grace_ms": 800,           # ignore mic this long after Friday starts speaking (echo-canceller warmup)
+    "voice_barge_sustain_ms": 200,         # deliberate speech must persist this long to interrupt playback
     # ── Privacy / Context Log ──
     "context_logging_enabled": True,       # master switch for the append-only event log
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
