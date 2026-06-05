@@ -2376,7 +2376,16 @@ function App(){
     const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
     const b64ToI16=(b64)=>{const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Int16Array(bytes.buffer)};
     try{
-      v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      // Pin the context to Gemini's 24kHz output rate. If left at the hardware
+      // default (usually 48kHz), every received chunk gets resampled 24k->48k and
+      // each src.start(startAt) is quantized to a 48k output frame — the per-chunk
+      // rounding errors accumulate into clicks/rasp over a long conversation. At a
+      // native 24k context there is no resampling and startAt aligns exactly to
+      // source frames, so chunks butt together gaplessly. Some browsers ignore the
+      // hint, so we still guard scheduling against the actual ctx.sampleRate below.
+      try{v.audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:PCM_OUT_RATE});}
+      catch(_){v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
+      if(v.audioCtx.sampleRate!==PCM_OUT_RATE)console.warn('[voice] ctx sampleRate='+v.audioCtx.sampleRate+' (wanted '+PCM_OUT_RATE+') — playback will be resampled');
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
       v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
       const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();
