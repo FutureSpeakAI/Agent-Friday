@@ -1,6 +1,8 @@
 flask>=3.0
 anthropic>=0.40
 google-genai>=1.0
+google-api-python-client>=2.0     # live Gmail + Calendar reads (server.py _fetch_gmail_recent/_fetch_calendar_today)
+google-auth-oauthlib>=1.0         # OAuth flow for /api/google/auth (read-only gmail + calendar scopes)
 cryptography>=44              # Sovereign Vault AES-256-GCM + Argon2id (vault_crypto.py)
 rich>=13.0
 colorama>=0.4

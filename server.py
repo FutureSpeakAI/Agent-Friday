@@ -2902,6 +2902,193 @@ def _recent_unread_emails(limit=12):
     return selected
 
 
+# ═══════════════════════════════════════════════════════════════
+#  GOOGLE (Gmail + Calendar) — live, read-only via the official API
+# ═══════════════════════════════════════════════════════════════
+# Read-only scopes for both Gmail and Calendar, served by one shared OAuth
+# client (the same Desktop client the gmail-mcp-multi setup already created).
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
+GOOGLE_TOKEN_PATH = FRIDAY_DIR / "google_token.json"
+
+
+def _google_client_config():
+    """Locate the OAuth *client* secrets (the app credentials, not the token).
+
+    Returns (config_dict, source_label) or (None, None). Checks, in order:
+    ~/.friday/credentials.json, the existing gmail-mcp Desktop client at
+    ~/.gmail-mcp/oauth-keys.json, ~/.friday/oauth-keys.json, then the
+    GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET environment variables.
+    """
+    candidates = [
+        FRIDAY_DIR / "credentials.json",
+        HOME / ".gmail-mcp" / "oauth-keys.json",
+        FRIDAY_DIR / "oauth-keys.json",
+    ]
+    for p in candidates:
+        if not p.exists():
+            continue
+        try:
+            # utf-8-sig: the gmail-mcp file is a PowerShell-written BOM'd JSON.
+            data = json.loads(p.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and ("installed" in data or "web" in data):
+            return data, str(p)
+
+    cid = os.environ.get("GOOGLE_CLIENT_ID")
+    csec = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if cid and csec:
+        return {
+            "installed": {
+                "client_id": cid,
+                "client_secret": csec,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost"],
+            }
+        }, "env"
+    return None, None
+
+
+def _google_credentials():
+    """Load stored Google OAuth credentials, refreshing if expired.
+
+    Returns a google.oauth2 Credentials object, or None if the user hasn't
+    connected Google yet (no token) or the libraries are missing. On a silent
+    refresh the rotated token is written back to disk.
+    """
+    if not GOOGLE_TOKEN_PATH.exists():
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GoogleRequest
+    except Exception:
+        return None
+    try:
+        creds = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN_PATH), GOOGLE_SCOPES)
+    except Exception:
+        return None
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(GoogleRequest())
+            GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        except Exception:
+            return None
+    if not creds or not creds.valid:
+        return None
+    return creds
+
+
+def _fetch_gmail_recent(limit=15):
+    """Recent Gmail messages (last 24h, unread first) via the Gmail API.
+
+    Returns a list of {sender, subject, snippet, timestamp, thread_id, labels}.
+    If Google isn't connected, returns a single-item list with an 'error' key
+    pointing the caller at /api/google/auth — callers can detect that and fall
+    back to the local cache.
+    """
+    creds = _google_credentials()
+    if not creds:
+        return [{"error": "Google not connected. Visit /api/google/auth to link Gmail (read-only)."}]
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return [{"error": f"google-api-python-client not installed: {e}"}]
+    try:
+        svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        # Unread-in-last-day first, then anything from the last day, deduped.
+        seen, out = set(), []
+        for q in ("is:unread newer_than:1d", "newer_than:1d"):
+            resp = svc.users().messages().list(userId="me", q=q, maxResults=limit).execute()
+            for ref in resp.get("messages", []):
+                mid = ref.get("id")
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                msg = svc.users().messages().get(
+                    userId="me", id=mid, format="metadata",
+                    metadataHeaders=["From", "Subject", "Date"],
+                ).execute()
+                headers = {
+                    h["name"].lower(): h["value"]
+                    for h in msg.get("payload", {}).get("headers", [])
+                }
+                ts = msg.get("internalDate")
+                try:
+                    ts_iso = datetime.fromtimestamp(int(ts) / 1000).isoformat() if ts else (headers.get("date") or "")
+                except Exception:
+                    ts_iso = headers.get("date") or ""
+                out.append({
+                    "sender": headers.get("from", "unknown"),
+                    "subject": headers.get("subject", "(no subject)"),
+                    "snippet": (msg.get("snippet") or "").strip(),
+                    "timestamp": ts_iso,
+                    "thread_id": msg.get("threadId", ""),
+                    "labels": msg.get("labelIds", []),
+                })
+                if len(out) >= limit:
+                    break
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as e:
+        return [{"error": f"Gmail fetch failed: {e}"}]
+
+
+def _fetch_calendar_today():
+    """Today's + tomorrow's Google Calendar events via the Calendar API.
+
+    Tomorrow is included so the briefing can flag prep needed tonight. Returns a
+    list of {title, start_time, end_time, location, attendees, description}, or a
+    single-item list with an 'error' key if Google isn't connected.
+    """
+    creds = _google_credentials()
+    if not creds:
+        return [{"error": "Google not connected. Visit /api/google/auth to link Calendar (read-only)."}]
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return [{"error": f"google-api-python-client not installed: {e}"}]
+    try:
+        svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        now = datetime.now().astimezone()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=2)  # today + tomorrow (for prep)
+        resp = svc.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=50,
+        ).execute()
+        out = []
+        for ev in resp.get("items", []):
+            s, e = ev.get("start", {}), ev.get("end", {})
+            attendees = [a.get("email", "") for a in ev.get("attendees", []) if a.get("email")]
+            out.append({
+                "title": ev.get("summary", "(untitled)"),
+                "start_time": s.get("dateTime") or s.get("date") or "",
+                "end_time": e.get("dateTime") or e.get("date") or "",
+                "location": ev.get("location", ""),
+                "attendees": attendees,
+                "description": (ev.get("description") or "").strip()[:500],
+            })
+        return out
+    except Exception as e:
+        return [{"error": f"Calendar fetch failed: {e}"}]
+
+
+def _google_section_error(items):
+    """Return the 'error' note if a fetch helper returned its error sentinel."""
+    if items and isinstance(items[0], dict) and "error" in items[0]:
+        return items[0]["error"]
+    return None
+
+
 def _gather_live_briefing_context():
     """Fetch live calendar, unread email, and news for an on-demand briefing.
 
@@ -2915,52 +3102,61 @@ def _gather_live_briefing_context():
     today_str = datetime.now().strftime('%A, %B %d, %Y')
     sections = []
 
-    # 1) Today's calendar events ------------------------------------------------
+    # 1) Today's + tomorrow's calendar events -----------------------------------
     try:
-        cal_raw = _tool_query_calendar({})
-        cal_events = []
-        try:
-            cal_data = json.loads(cal_raw) if isinstance(cal_raw, str) else cal_raw
-            if isinstance(cal_data, dict):
-                cal_events = cal_data.get('events', []) or []
-        except Exception:
-            cal_events = []
-        if cal_events:
+        cal_events = _fetch_calendar_today()
+        cal_err = _google_section_error(cal_events)
+        if cal_err:
+            sections.append(f"## Today's Calendar\n({cal_err})")
+        elif cal_events:
             lines = []
             for ev in cal_events[:20]:
-                if isinstance(ev, dict):
-                    when = ev.get('start') or ev.get('time') or ev.get('when') or ''
-                    title = ev.get('summary') or ev.get('title') or ev.get('name') or 'Untitled'
-                    loc = ev.get('location') or ''
-                    lines.append(f"- {when} — {title}" + (f" @ {loc}" if loc else ''))
-                else:
-                    lines.append(f"- {ev}")
-            sections.append("## Today's Calendar\n" + "\n".join(lines))
+                when = ev.get('start_time') or ''
+                title = ev.get('title') or 'Untitled'
+                loc = ev.get('location') or ''
+                attendees = ev.get('attendees') or []
+                line = f"- {when} — {title}"
+                if loc:
+                    line += f" @ {loc}"
+                if attendees:
+                    line += f" (with {', '.join(attendees[:5])})"
+                lines.append(line)
+            sections.append("## Today's & Tomorrow's Calendar\n" + "\n".join(lines))
         else:
-            sections.append(
-                "## Today's Calendar\n"
-                "(No live calendar events available — Google Calendar connector returned nothing.)"
-            )
+            sections.append("## Today's Calendar\n(No events scheduled for today or tomorrow.)")
     except Exception as e:
         sections.append(f"## Today's Calendar\n(Calendar fetch failed: {e})")
 
     # 2) Recent / unread email --------------------------------------------------
+    # Prefer the live Gmail API; if Google isn't connected, fall back to the
+    # local Gmail cache the signal watcher maintains.
     try:
-        emails = _recent_unread_emails(limit=12)
-        if emails:
+        emails = _fetch_gmail_recent(limit=12)
+        gmail_err = _google_section_error(emails)
+        if gmail_err:
+            cached = _recent_unread_emails(limit=12)
+            if cached:
+                lines = []
+                for m in cached:
+                    sender = m.get('from') or m.get('sender') or 'unknown'
+                    subj = m.get('subject') or '(no subject)'
+                    preview = (m.get('preview') or m.get('snippet') or m.get('body') or '')
+                    preview = str(preview).strip().replace('\n', ' ')[:160]
+                    lines.append(f"- **{sender}** — {subj}" + (f"\n  {preview}" if preview else ''))
+                sections.append("## Recent / Unread Email (local cache)\n" + "\n".join(lines))
+            else:
+                sections.append(f"## Recent / Unread Email\n({gmail_err})")
+        elif emails:
             lines = []
             for m in emails:
-                sender = m.get('from') or m.get('sender') or 'unknown'
+                sender = m.get('sender') or 'unknown'
                 subj = m.get('subject') or '(no subject)'
-                preview = (m.get('preview') or m.get('snippet') or m.get('body') or '')
-                preview = str(preview).strip().replace('\n', ' ')[:160]
-                lines.append(f"- **{sender}** — {subj}" + (f"\n  {preview}" if preview else ''))
+                snippet = str(m.get('snippet') or '').strip().replace('\n', ' ')[:160]
+                flag = '🔵 ' if 'UNREAD' in (m.get('labels') or []) else ''
+                lines.append(f"- {flag}**{sender}** — {subj}" + (f"\n  {snippet}" if snippet else ''))
             sections.append("## Recent / Unread Email\n" + "\n".join(lines))
         else:
-            sections.append(
-                "## Recent / Unread Email\n"
-                "(No local Gmail cache found at ~/.friday/gmail/inbox.json or gmail-cache.json.)"
-            )
+            sections.append("## Recent / Unread Email\n(No email in the last 24 hours.)")
     except Exception as e:
         sections.append(f"## Recent / Unread Email\n(Email fetch failed: {e})")
 
@@ -3044,6 +3240,100 @@ def generate_briefing():
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/google/auth')
+def google_auth_start():
+    """Begin the Google OAuth flow (Gmail + Calendar, read-only).
+
+    Returns an auth URL for the user to visit. Google redirects back to
+    /api/google/auth/callback, which exchanges the code and stores the token at
+    ~/.friday/google_token.json. Works with a Desktop OAuth client because
+    Google accepts any loopback (localhost) redirect for installed apps, so the
+    redirect URI is derived from the actual host the user is hitting.
+    """
+    cfg, source = _google_client_config()
+    if not cfg:
+        return jsonify({
+            "status": "error",
+            "message": (
+                "No Google OAuth client found. Place a Desktop OAuth client JSON at "
+                "~/.friday/credentials.json or ~/.gmail-mcp/oauth-keys.json, or set "
+                "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+            ),
+        }), 400
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"google-auth-oauthlib not installed: {e}"}), 500
+    try:
+        redirect_uri = request.host_url.rstrip('/') + '/api/google/auth/callback'
+        flow = Flow.from_client_config(cfg, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri)
+        auth_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent',  # force a refresh_token so the token survives expiry
+        )
+        session['google_oauth_state'] = state
+        session['google_oauth_redirect_uri'] = redirect_uri
+        return jsonify({"status": "ok", "auth_url": auth_url, "client_source": source})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/google/auth/callback')
+def google_auth_callback():
+    """OAuth redirect target — exchange the code for a token and persist it."""
+    # localhost is http, and Google may return scopes in a different order; relax
+    # oauthlib's https-only and exact-scope checks for this loopback desktop flow.
+    os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+    os.environ.setdefault('OAUTHLIB_RELAX_TOKEN_SCOPE', '1')
+
+    err = request.args.get('error')
+    if err:
+        return f"<h2>Google authorization failed</h2><p>{err}</p>", 400
+    cfg, _ = _google_client_config()
+    if not cfg:
+        return "<h2>Google OAuth client missing</h2>", 400
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except Exception as e:
+        return f"<h2>google-auth-oauthlib not installed</h2><p>{e}</p>", 500
+    try:
+        state = session.get('google_oauth_state')
+        redirect_uri = session.get('google_oauth_redirect_uri') or (
+            request.host_url.rstrip('/') + '/api/google/auth/callback'
+        )
+        flow = Flow.from_client_config(
+            cfg, scopes=GOOGLE_SCOPES, state=state, redirect_uri=redirect_uri
+        )
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding='utf-8')
+        return (
+            "<h2>✅ Google connected</h2>"
+            "<p>Gmail and Calendar (read-only) are now linked to Friday. "
+            "You can close this tab and regenerate your briefing.</p>"
+        )
+    except Exception as e:
+        return f"<h2>Token exchange failed</h2><p>{e}</p>", 500
+
+
+@app.route('/api/google/status')
+def google_status():
+    """Report whether Google is connected and which OAuth client is in use."""
+    cfg, source = _google_client_config()
+    connected = _google_credentials() is not None
+    return jsonify({
+        "status": "ok",
+        "connected": connected,
+        "token_path": str(GOOGLE_TOKEN_PATH),
+        "client_configured": cfg is not None,
+        "client_source": source,
+        "scopes": GOOGLE_SCOPES,
+    })
+
 
 @app.route('/api/jobs')
 def get_jobs():
