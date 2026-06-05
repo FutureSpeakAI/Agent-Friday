@@ -3190,8 +3190,7 @@ def _google_credentials():
     if creds and creds.refresh_token and (creds.expired or not creds.valid):
         try:
             creds.refresh(GoogleRequest())
-            FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-            GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+            _write_google_token(creds)
             print("[google] refreshed and persisted access token", flush=True)
         except Exception as e:
             # A revoked grant or rotated client secret lands here — surface it so
@@ -3951,6 +3950,47 @@ def generate_briefing():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# Fixed loopback redirect for Desktop ("installed") OAuth clients. Google accepts
+# any localhost/loopback redirect for installed apps *without* registering it in
+# the GCP console, so we pin a deterministic URI matching the port the server
+# binds to (3000). Critically, the app binds 0.0.0.0 when a tunnel password is
+# set, so request.host_url can be a tunnel/LAN host that Google would REJECT for
+# an installed client — pinning localhost:3000 keeps the loopback flow valid.
+GOOGLE_DESKTOP_REDIRECT_URI = "http://localhost:3000/api/google/auth/callback"
+
+
+def _google_redirect_uri(cfg, client_type=None):
+    """Canonical OAuth redirect URI for this client config.
+
+    Desktop ("installed") clients accept any loopback redirect without
+    registering it in GCP, so we pin the deterministic localhost:3000 URI and
+    never hit redirect_uri_mismatch — even when the user reaches the app through
+    a tunnel or LAN IP. Web ("web") clients must match a URI pre-registered in
+    the console, so we derive it from the actual request host (legacy behavior).
+    """
+    kind = client_type or _google_client_type(cfg) or "installed"
+    if kind == "installed":
+        return GOOGLE_DESKTOP_REDIRECT_URI
+    return request.host_url.rstrip('/') + '/api/google/auth/callback'
+
+
+def _write_google_token(creds):
+    """Persist Google credentials to ~/.friday/google_token.json atomically.
+
+    Written via temp file + rename so a crash mid-write can't truncate the token
+    and force a re-auth. Returns True on success.
+    """
+    try:
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = GOOGLE_TOKEN_PATH.with_name(GOOGLE_TOKEN_PATH.name + ".tmp")
+        tmp.write_text(creds.to_json(), encoding="utf-8")
+        tmp.replace(GOOGLE_TOKEN_PATH)
+        return True
+    except Exception as e:
+        print(f"[google] could not persist token ({e})", flush=True)
+        return False
+
+
 @app.route('/api/google/auth')
 def google_auth_start():
     """Begin the Google OAuth flow (Gmail + Calendar, read-only).
@@ -3977,12 +4017,13 @@ def google_auth_start():
         return jsonify({"status": "error", "message": f"google-auth-oauthlib not installed: {e}"}), 500
     try:
         client_type = _google_client_type(cfg) or "installed"
-        # Loopback callback on the host the user is actually hitting (e.g.
-        # http://localhost:3000/api/google/auth/callback). A Desktop ("installed")
-        # client accepts ANY loopback redirect with no GCP registration, so this
-        # never triggers redirect_uri_mismatch. A Web client would require this
-        # exact URL to be pre-registered under "Authorized redirect URIs".
-        redirect_uri = request.host_url.rstrip('/') + '/api/google/auth/callback'
+        # A Desktop ("installed") client gets the pinned loopback callback
+        # (http://localhost:3000/api/google/auth/callback) — Google accepts ANY
+        # loopback redirect with no GCP registration, so this never triggers
+        # redirect_uri_mismatch even when the app is reached via a tunnel/LAN host.
+        # A Web client instead uses the actual request host, which must be
+        # pre-registered under "Authorized redirect URIs" in the console.
+        redirect_uri = _google_redirect_uri(cfg, client_type)
         flow = Flow.from_client_config(cfg, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri)
         auth_url, state = flow.authorization_url(
             access_type='offline',
@@ -4030,16 +4071,15 @@ def google_auth_callback():
         return f"<h2>google-auth-oauthlib not installed</h2><p>{e}</p>", 500
     try:
         state = session.get('google_oauth_state')
-        redirect_uri = session.get('google_oauth_redirect_uri') or (
-            request.host_url.rstrip('/') + '/api/google/auth/callback'
-        )
+        # Fall back to the same redirect the start endpoint would have chosen so
+        # the token exchange matches even if the session cookie was dropped.
+        redirect_uri = session.get('google_oauth_redirect_uri') or _google_redirect_uri(cfg)
         flow = Flow.from_client_config(
             cfg, scopes=GOOGLE_SCOPES, state=state, redirect_uri=redirect_uri
         )
         flow.fetch_token(authorization_response=request.url)
         creds = flow.credentials
-        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-        GOOGLE_TOKEN_PATH.write_text(creds.to_json(), encoding='utf-8')
+        _write_google_token(creds)
         return (
             "<h2>✅ Google connected</h2>"
             "<p>Gmail and Calendar (read-only) are now linked to Friday. "
