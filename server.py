@@ -7678,8 +7678,11 @@ if sock is not None:
         except Exception:
             return
 
-        # Live API requires v1alpha endpoint for WebSocket streaming.
-        client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1alpha"})
+        # NOTE: the Live client is created lazily inside runner() per API version.
+        # v1alpha unlocks affective dialog + proactive audio, but the AI Studio
+        # API-key tier sometimes rejects it with a 1008 "Expected OAuth 2 access
+        # token" auth error — so we try v1alpha first, then fall back to the
+        # default (v1beta) endpoint, which reliably accepts API-key auth.
 
         live_voice = _get_live_voice()
         live_language = _get_voice_language()
@@ -7766,7 +7769,8 @@ if sock is not None:
                 sliding_window=types.SlidingWindow(),
             )
 
-        cfg = types.LiveConnectConfig(**live_cfg_kwargs)
+        # The per-attempt LiveConnectConfig is built inside runner() from
+        # live_cfg_kwargs (affective/proactive stripped per endpoint+model).
 
         done = threading.Event()
 
@@ -7786,27 +7790,59 @@ if sock is not None:
             # The actual connection happens inside `async with`, so the fallback
             # must wrap the entire session block, not just the connect() call.
             configured_live_model = _get_live_model()
-            models_to_try = [configured_live_model]
+
+            # Build an ordered attempt plan of (api_version, model_name).
+            #  • v1alpha is tried first ONLY when affective/proactive would actually
+            #    be used (those features require v1alpha). If v1alpha rejects the
+            #    API key (1008 "Expected OAuth 2 access token"), we fall through.
+            #  • The default endpoint (api_version=None → v1beta) reliably accepts
+            #    API-key auth; affective/proactive are stripped there.
+            attempts = []
+            _seen = set()
+            def _add_attempt(api_version, model_name):
+                key = (api_version, model_name)
+                if key not in _seen:
+                    _seen.add(key)
+                    attempts.append(key)
+
+            _primary_affective = live_affective and _model_supports_affective_dialog(configured_live_model)
+            if _primary_affective or live_proactive:
+                _add_attempt("v1alpha", configured_live_model)
+            _add_attempt(None, configured_live_model)
             for _fallback in (LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2):
-                if _fallback not in models_to_try:
-                    models_to_try.append(_fallback)
+                _add_attempt(None, _fallback)
+
+            # Lazily create (and cache) a client per API version.
+            _clients = {}
+            def _client_for(api_version):
+                if api_version not in _clients:
+                    if api_version:
+                        _clients[api_version] = genai.Client(
+                            api_key=GEMINI_API_KEY, http_options={"api_version": api_version})  # pragma: allowlist secret
+                    else:
+                        _clients[api_version] = genai.Client(api_key=GEMINI_API_KEY)  # pragma: allowlist secret
+                return _clients[api_version]
 
             last_error = None
-            for model_name in models_to_try:
-                _vlog(f'connecting to model: {model_name}')
-
-                # enable_affective_dialog is only valid on native-audio models.
-                # Build a per-model cfg with that field stripped when the model
-                # doesn't support it, so a user who has the toggle on doesn't
-                # see the standard model fail with 1011.
-                if live_affective and not _model_supports_affective_dialog(model_name):
-                    per_model_kwargs = {k: v for k, v in live_cfg_kwargs.items() if k != "enable_affective_dialog"}
-                    per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
-                    _vlog(f'  (affective dialog skipped — {model_name} does not support it)')
-                else:
-                    per_model_cfg = cfg
+            for api_version, model_name in attempts:
+                # affective dialog + proactive audio are only valid on native-audio
+                # models AND only on the v1alpha endpoint. Strip them otherwise so a
+                # user who has the toggle on doesn't see the standard endpoint/model
+                # fail with 1011 (unsupported field) or 1008 (auth).
+                use_affective = (api_version == "v1alpha" and live_affective
+                                 and _model_supports_affective_dialog(model_name))
+                use_proactive = (api_version == "v1alpha" and live_proactive)
+                per_model_kwargs = dict(live_cfg_kwargs)
+                if not use_affective:
+                    per_model_kwargs.pop("enable_affective_dialog", None)
+                if not use_proactive:
+                    per_model_kwargs.pop("proactivity", None)
+                per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
+                active_client = _client_for(api_version)
+                _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
+                      f'affective={use_affective}, proactive={use_proactive})')
                 try:
-                    async with client.aio.live.connect(model=model_name, config=per_model_cfg) as session_ai:
+                    async with active_client.aio.live.connect(model=model_name, config=per_model_cfg) as session_ai:
                         _safe_send({"type": "status", "text": "live"})
                         _vlog(f'session established with {model_name}')
 
@@ -8012,14 +8048,14 @@ if sock is not None:
                     last_error = e
                     import traceback as _tb
                     tb_str = _tb.format_exc()
-                    _vlog(f'SESSION ERROR with {model_name}: {type(e).__name__}: {e}')
+                    _vlog(f'SESSION ERROR with {model_name} (api={api_version or "default(v1beta)"}): {type(e).__name__}: {e}')
                     _vlog(f'TRACEBACK: {tb_str}')
                     traceback.print_exc()
-                    if model_name == models_to_try[-1]:
+                    if (api_version, model_name) == attempts[-1]:
                         _safe_send({"type": "error", "error": str(e)})
                     else:
-                        nxt = models_to_try[models_to_try.index(model_name) + 1]
-                        _vlog(f'trying fallback model: {nxt}')
+                        nxt = attempts[attempts.index((api_version, model_name)) + 1]
+                        _vlog(f'trying fallback: model={nxt[1]} api={nxt[0] or "default(v1beta)"}')
 
         loop = asyncio.new_event_loop()
         try:
