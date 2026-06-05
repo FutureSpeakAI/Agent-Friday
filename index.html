@@ -712,6 +712,11 @@ window.addEventListener('DOMContentLoaded',function(){
         /* Animations */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        /* Glowing pulse for the mic orb while voice mode is active. */
+        @keyframes micPulse {
+            0%,100% { box-shadow: 0 0 14px rgba(62,255,161,0.45), 0 4px 16px rgba(0,0,0,0.5); }
+            50%     { box-shadow: 0 0 26px rgba(62,255,161,0.85), 0 4px 16px rgba(0,0,0,0.5); }
+        }
         @keyframes typingDot {
             0%, 60%, 100% { transform: translateY(0); opacity: 0.55; }
             30%           { transform: translateY(-4px); opacity: 1; }
@@ -6126,9 +6131,17 @@ function App(){
         <input value={promptText} onChange={e=>setPromptText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendPrompt()}
           placeholder="Ask Friday anything..."
           style={{width:360,background:'rgba(10,14,26,0.75)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:24,padding:'10px 20px',color:'#f0f0f8',fontSize:13,outline:'none',fontFamily:'Inter',transition:'border-color .2s',boxShadow:'0 4px 30px rgba(0,0,0,0.3)'}}/>
-        <button onClick={()=>{if(promptText.trim())sendPrompt();else{setChatOpen(true);toggleVoice()}}}
-          title={promptText.trim()?'Send message':'Open chat and start voice mode'}
-          style={{width:40,height:40,borderRadius:'50%',background:'rgba(0,212,255,0.18)',border:'1px solid rgba(0,212,255,0.4)',color:'#00d4ff',cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 16px rgba(0,0,0,0.5)'}}>&#x1F3A4;</button>
+        <button onClick={()=>{if(promptText.trim())sendPrompt();else toggleVoice()}}
+          title={promptText.trim()?'Send message':(voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)')}
+          style={{width:40,height:40,borderRadius:'50%',
+            background:(voiceOn&&!promptText.trim())?'rgba(62,255,161,0.20)':'rgba(0,212,255,0.18)',
+            border:'1px solid '+((voiceOn&&!promptText.trim())?'rgba(62,255,161,0.65)':'rgba(0,212,255,0.4)'),
+            color:(voiceOn&&!promptText.trim())?'#3effa1':'#00d4ff',
+            cursor:'pointer',fontSize:16,display:'flex',alignItems:'center',justifyContent:'center',
+            boxShadow:(voiceOn&&!promptText.trim())?'0 0 20px rgba(62,255,161,0.7), 0 4px 16px rgba(0,0,0,0.5)':'0 4px 16px rgba(0,0,0,0.5)',
+            animation:(voiceOn&&!promptText.trim())?'micPulse 1.6s ease-in-out infinite':'none',
+            transition:'background .2s, border-color .2s, color .2s, box-shadow .2s'}}>
+          {(voiceOn&&!promptText.trim())?'■':'🎤'}</button>
       </div>
     </div>}
 
