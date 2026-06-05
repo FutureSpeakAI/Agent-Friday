@@ -96,9 +96,8 @@ assets/palette/
 assets/splash/
 
 # ─── Private user data — NEVER commit (PII / minors / family-court) ───────
-# VOICE_DEMO.md — personal demo material (founder story + ideological pitch).
-# Loaded locally by server.py (_load_voice_demo gracefully no-ops if absent).
-VOICE_DEMO.md
+# VOICE_DEMO.md — now tracked: rewritten as product spec sheet (70% features).
+# Loaded by server.py (_load_voice_demo) into Gemini Live system prompt.
 data/coparenting-intel.json
 data/*-intel.json
 data/ofw-*.json
