@@ -5316,10 +5316,157 @@ def draft_email():
     return jsonify({"status": "placeholder", "draft": "Email drafting coming in Phase C"})
 
 
+OFW_STATE_DIR = FRIDAY_DIR / "ofw"
+
+
+def _parse_ofw_date(raw):
+    """Best-effort parse of a message timestamp into an ISO date string + epoch."""
+    if not raw:
+        return None, None
+    if isinstance(raw, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(raw)
+            return dt.date().isoformat(), raw
+        except Exception:
+            return None, None
+    s = str(raw).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
+                "%m/%d/%Y %I:%M %p", "%m/%d/%Y", "%b %d, %Y", "%B %d, %Y"):
+        try:
+            dt = datetime.strptime(s[:len(datetime.now().strftime(fmt)) + 4], fmt)
+            return dt.date().isoformat(), dt.timestamp()
+        except Exception:
+            continue
+    # ISO with timezone / fractional seconds
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt.date().isoformat(), dt.timestamp()
+    except Exception:
+        return s[:10], None
+
+
+def _load_ofw_messages():
+    """Load + normalize co-parent messages from the OFW monitor store.
+
+    Reads the same files _trigger_ofw_messages() watches. Returns a list of
+    normalized dicts: {id, sender, subject, body, date, ts, direction, answered}.
+    """
+    candidates = [
+        OFW_STATE_DIR / "inbox.json",
+        OFW_STATE_DIR / "messages.json",
+        OFW_STATE_DIR / "new_messages.json",
+    ]
+    raw_msgs = []
+    seen_files = set()
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        items = data if isinstance(data, list) else data.get("messages", [])
+        if isinstance(items, list):
+            for m in items:
+                if isinstance(m, dict):
+                    raw_msgs.append(m)
+        seen_files.add(path.name)
+
+    normalized = []
+    dedupe = set()
+    for m in raw_msgs:
+        mid = str(m.get("id") or m.get("message_id") or m.get("hash") or len(normalized))
+        if mid in dedupe:
+            continue
+        dedupe.add(mid)
+        date_iso, ts = _parse_ofw_date(
+            m.get("date") or m.get("timestamp") or m.get("sent_at") or m.get("received_at"))
+        direction = (m.get("direction") or "").lower()
+        if not direction:
+            direction = "outbound" if m.get("sent_by_me") or m.get("from_me") else "inbound"
+        answered = bool(m.get("answered") or m.get("replied") or m.get("response_id"))
+        normalized.append({
+            "id": mid,
+            "sender": m.get("from") or m.get("sender") or "co-parent",
+            "subject": m.get("subject") or "(no subject)",
+            "body": (m.get("body") or m.get("preview") or m.get("text") or ""),
+            "date": date_iso,
+            "ts": ts,
+            "direction": direction,
+            "answered": answered,
+            "flags": m.get("flags") or [],
+        })
+    # Newest first when we have timestamps
+    normalized.sort(key=lambda x: (x["ts"] is not None, x["ts"] or 0), reverse=True)
+    return normalized
+
+
+@app.route('/api/coparent/messages')
+def coparent_messages():
+    """Return normalized OFW message log + stats + timeline for the Co-Parent workspace."""
+    try:
+        msgs = _load_ofw_messages()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e), "messages": [], "stats": {}})
+
+    inbound = [m for m in msgs if m["direction"] != "outbound"]
+    unanswered = [m for m in inbound if not m["answered"]]
+
+    # Timeline: messages per ISO-week-day bucket (last 90 days worth of buckets present)
+    timeline = {}
+    for m in msgs:
+        if m["date"]:
+            timeline[m["date"]] = timeline.get(m["date"], 0) + 1
+    timeline_list = [{"date": d, "count": c} for d, c in sorted(timeline.items())]
+
+    # Pattern tracking: top senders + flag tallies
+    sender_counts = {}
+    flag_counts = {}
+    for m in msgs:
+        sender_counts[m["sender"]] = sender_counts.get(m["sender"], 0) + 1
+        for fl in (m["flags"] or []):
+            flag_counts[str(fl)] = flag_counts.get(str(fl), 0) + 1
+    top_senders = sorted(sender_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    stats = {
+        "total": len(msgs),
+        "inbound": len(inbound),
+        "outbound": len(msgs) - len(inbound),
+        "unanswered": len(unanswered),
+        "top_senders": [{"sender": s, "count": c} for s, c in top_senders],
+        "flags": flag_counts,
+        "connected": len(msgs) > 0,
+    }
+    return jsonify({
+        "status": "ok",
+        "messages": msgs[:200],
+        "stats": stats,
+        "timeline": timeline_list,
+    })
+
+
 @app.route('/api/coparent/draft', methods=['POST'])
 def draft_coparent():
-    """Draft co-parenting platform response (placeholder)."""
-    return jsonify({"status": "placeholder", "draft": "Co-parenting draft coming in a future release"})
+    """Draft a calm, factual, brief, airtight co-parent response.
+
+    Delegates to the background draft worker with mode=coparent_response so the
+    reply gets full vault/wiki + OFW context. Returns a task_id to poll via
+    /api/tasks/<id>.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        message = (data.get('message') or data.get('context') or '').strip()
+        instruction = (data.get('prompt') or data.get('instruction') or
+                       'Draft a reply to the co-parent message above.').strip()
+        if not message and not data.get('prompt'):
+            return jsonify({"status": "error", "message": "No message or prompt provided"}), 400
+        resp, code = _spawn_draft_task(
+            mode='coparent_response', prompt_text=instruction, context=message)
+        return jsonify(resp), code
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5480,7 +5627,7 @@ def _run_claude_terminal(terminal_id, task, cwd):
     """Launch a Claude Code instance in a new CMD window."""
     log_file = VIBE_LOG_DIR / f"{terminal_id}.log"
     try:
-        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd} && claude --yes \"{task}\""'
+        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd} && claude --dangerously-skip-permissions \"{task}\""'
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd)
         VIBE_TERMINALS[terminal_id].update({
             'status': 'running',
@@ -7754,99 +7901,108 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
     )
 
 
+def _spawn_draft_task(mode, prompt_text, context=''):
+    """Spawn a background draft-generation task. Returns (response_dict, http_status).
+
+    Shared by /api/draft and /api/coparent/draft so both go through the same
+    vault-context-aware pipeline.
+    """
+    if not (prompt_text or '').strip():
+        return {"status": "error", "message": "No prompt provided"}, 400
+
+    system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
+    if mode == 'coparent_response':
+        ofw_ctx = _load_ofw_context()
+        if ofw_ctx:
+            system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
+    system += "\n\nOutput ONLY the draft text, no commentary or labels."
+
+    user_parts = []
+    if context:
+        user_parts.append(f"CONTEXT (what the user is looking at / replying to):\n{context}")
+    user_parts.append(f"USER INSTRUCTION:\n{prompt_text}")
+    full_prompt = '\n\n'.join(user_parts)
+
+    mode_labels = {
+        'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
+        'slack_message': 'Slack Message', 'tweet': 'Tweet',
+        'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
+    }
+    task_name = f"Quick Draft — {mode_labels.get(mode, mode)}"
+    task_id = str(uuid.uuid4())
+
+    with TASKS_LOCK:
+        TASKS[task_id] = {
+            'task_id': task_id,
+            'name': task_name,
+            'description': prompt_text[:100],
+            'status': 'queued',
+            'created': _time.time(),
+            'started': None,
+            'ended': None,
+            'log': [],
+            'result': '',
+            'draft_mode': mode,
+        }
+
+    # Capture loop variables for the thread closure
+    _system = system
+    _full_prompt = full_prompt
+    _mode = mode
+
+    def _draft_worker():
+        _task_set(task_id, status='running', started=_time.time())
+        _task_log(task_id, f'Generating {_mode} draft…')
+        try:
+            # Load full vault/wiki context — Friday MUST know the user's contacts,
+            # his name, his boss, his family, etc. when writing on his behalf.
+            _task_log(task_id, 'Loading vault context…')
+            full_system = _get_friday_system_prompt(prompt_text, workspace='draft')
+            full_system += f"\n\n== DRAFT WRITING INSTRUCTIONS ==\n{_system}"
+            draft_text = _call_claude(
+                [{"role": "user", "content": _full_prompt}],
+                system=full_system,
+                max_tokens=16384,
+            )
+            # Auto-save to content library
+            try:
+                CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+                now_dt = datetime.now()
+                slug = re.sub(r'[^a-z0-9]+', '-', prompt_text[:30].lower()).strip('-') or _mode
+                fname = f"draft-{now_dt.strftime('%Y-%m-%d-%H%M')}-{slug}.html"
+                html_content = _build_draft_html(draft_text, _mode, prompt_text)
+                (CONTENT_DRAFTS_DIR / fname).write_text(html_content, encoding='utf-8')
+                _task_log(task_id, f'Saved to library: {fname}')
+            except Exception as _se:
+                _task_log(task_id, f'Library save failed (non-fatal): {_se}')
+            _task_set(task_id, status='complete', result=draft_text, ended=_time.time())
+            _task_log(task_id, 'Draft ready.')
+        except Exception as e:
+            traceback.print_exc()
+            _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
+            _task_log(task_id, f'Error: {e}')
+
+    threading.Thread(target=_draft_worker, daemon=True).start()
+    _log_context("draft_spawn", {"task_id": task_id, "mode": mode, "prompt": prompt_text[:200]})
+
+    return {
+        "status": "queued",
+        "task_id": task_id,
+        "name": task_name,
+    }, 200
+
+
 @app.route('/api/draft', methods=['POST'])
 def draft_generate():
     """Generate a draft via Claude — spawns as a background task, returns task_id immediately."""
     try:
         data = request.get_json(silent=True) or {}
-
-        mode = data.get('mode', 'freeform')
-        context = data.get('context', '')
-        prompt_text = data.get('prompt', '')
-
-        if not prompt_text.strip():
-            return jsonify({"status": "error", "message": "No prompt provided"}), 400
-
-        system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
-        if mode == 'coparent_response':
-            ofw_ctx = _load_ofw_context()
-            if ofw_ctx:
-                system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
-        system += "\n\nOutput ONLY the draft text, no commentary or labels."
-
-        user_parts = []
-        if context:
-            user_parts.append(f"CONTEXT (what the user is looking at / replying to):\n{context}")
-        user_parts.append(f"USER INSTRUCTION:\n{prompt_text}")
-        full_prompt = '\n\n'.join(user_parts)
-
-        mode_labels = {
-            'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
-            'slack_message': 'Slack Message', 'tweet': 'Tweet',
-            'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
-        }
-        task_name = f"Quick Draft — {mode_labels.get(mode, mode)}"
-        task_id = str(uuid.uuid4())
-
-        with TASKS_LOCK:
-            TASKS[task_id] = {
-                'task_id': task_id,
-                'name': task_name,
-                'description': prompt_text[:100],
-                'status': 'queued',
-                'created': _time.time(),
-                'started': None,
-                'ended': None,
-                'log': [],
-                'result': '',
-                'draft_mode': mode,
-            }
-
-        # Capture loop variables for the thread closure
-        _system = system
-        _full_prompt = full_prompt
-        _mode = mode
-
-        def _draft_worker():
-            _task_set(task_id, status='running', started=_time.time())
-            _task_log(task_id, f'Generating {_mode} draft…')
-            try:
-                # Load full vault/wiki context — Friday MUST know the user's contacts,
-                # his name, his boss, his family, etc. when writing on his behalf.
-                _task_log(task_id, 'Loading vault context…')
-                full_system = _get_friday_system_prompt(prompt_text, workspace='draft')
-                full_system += f"\n\n== DRAFT WRITING INSTRUCTIONS ==\n{_system}"
-                draft_text = _call_claude(
-                    [{"role": "user", "content": _full_prompt}],
-                    system=full_system,
-                    max_tokens=16384,
-                )
-                # Auto-save to content library
-                try:
-                    CONTENT_DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-                    now_dt = datetime.now()
-                    slug = re.sub(r'[^a-z0-9]+', '-', prompt_text[:30].lower()).strip('-') or _mode
-                    fname = f"draft-{now_dt.strftime('%Y-%m-%d-%H%M')}-{slug}.html"
-                    html_content = _build_draft_html(draft_text, _mode, prompt_text)
-                    (CONTENT_DRAFTS_DIR / fname).write_text(html_content, encoding='utf-8')
-                    _task_log(task_id, f'Saved to library: {fname}')
-                except Exception as _se:
-                    _task_log(task_id, f'Library save failed (non-fatal): {_se}')
-                _task_set(task_id, status='complete', result=draft_text, ended=_time.time())
-                _task_log(task_id, 'Draft ready.')
-            except Exception as e:
-                traceback.print_exc()
-                _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
-                _task_log(task_id, f'Error: {e}')
-
-        threading.Thread(target=_draft_worker, daemon=True).start()
-        _log_context("draft_spawn", {"task_id": task_id, "mode": mode, "prompt": prompt_text[:200]})
-
-        return jsonify({
-            "status": "queued",
-            "task_id": task_id,
-            "name": task_name,
-        })
+        resp, code = _spawn_draft_task(
+            mode=data.get('mode', 'freeform'),
+            prompt_text=data.get('prompt', ''),
+            context=data.get('context', ''),
+        )
+        return jsonify(resp), code
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500

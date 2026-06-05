@@ -569,29 +569,179 @@ function WikiWS(){
     </div>}
   </div>);
 }
+// ═══ CO-PARENT WORKSPACE ═══
+// Drafting principles enforced by the coparent_response system prompt (server.py).
+const COPARENT_PRINCIPLES=[
+  {k:'calm',label:'Calm',desc:'Never match their emotional register. Ignore bait.'},
+  {k:'factual',label:'Factual',desc:'State facts only. No interpretation, no accusation.'},
+  {k:'brief',label:'Brief',desc:'Answer only what needs answering. Short sentences.'},
+  {k:'airtight',label:'Airtight',desc:'Everything a family-court judge would call reasonable.'},
+];
 function CoparentWS(){
   const now=new Date();const month=now.getMonth();const year=now.getFullYear();const daysInMonth=new Date(year,month+1,0).getDate();
   const firstDay=new Date(year,month,1).getDay();const days=[];for(let i=0;i<firstDay;i++)days.push(null);for(let i=1;i<=daysInMonth;i++)days.push(i);
   const isThursday=d=>d&&new Date(year,month,d).getDay()===4;
   const isCustodyWeekend=d=>{if(!d)return false;const dow=new Date(year,month,d).getDay();if(dow!==0&&dow!==6)return false;let sunCount=0;for(let i=1;i<=d;i++){if(new Date(year,month,i).getDay()===0)sunCount++}return sunCount===1||sunCount===3||sunCount===5};
   const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
-  const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate co-parent weekly summary'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Weekly summary generation launched')).catch(()=>{})};
+
+  const[view,setView]=useState('messages');
+  const[data,setData]=useState(null);const[loading,setLoading]=useState(true);
+  const[selected,setSelected]=useState(null);
+  // Drafting state
+  const[incoming,setIncoming]=useState('');const[instruction,setInstruction]=useState('');
+  const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);
+  const[taskId,setTaskId]=useState(null);const[copied,setCopied]=useState(false);
+  const[toast,setToast]=useState('');
+  const pollRef=useRef(null);
+
+  const loadMessages=()=>{setLoading(true);fetch('/api/coparent/messages').then(r=>r.json()).then(d=>{setData(d);setLoading(false)}).catch(()=>{setData({status:'error',messages:[],stats:{}});setLoading(false)})};
+  useEffect(()=>{loadMessages()},[]);
+  const showToast=(m)=>{setToast(m);setTimeout(()=>setToast(''),2200)};
+
+  // Poll the background draft task
+  useEffect(()=>{
+    if(!taskId)return;
+    pollRef.current=setInterval(async()=>{
+      try{const r=await fetch('/api/tasks/'+taskId);const t=await r.json();
+        if(t.status==='complete'){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft(t.result||'')}
+        else if(t.status==='failed'){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft('[Error] '+(t.result||'Generation failed'))}
+      }catch(e){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft('[Error] '+e.message)}
+    },1500);
+    return()=>clearInterval(pollRef.current);
+  },[taskId]);
+
+  const generateDraft=async()=>{
+    if(drafting)return;if(!incoming.trim()&&!instruction.trim()){showToast('Paste the message or add an instruction first');return}
+    setDrafting(true);setDraft('');setCopied(false);
+    try{const r=await fetch('/api/coparent/draft',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:incoming,prompt:instruction||'Draft a calm, factual, brief, airtight reply to the message above.'})});
+      const d=await r.json();
+      if(d.status==='queued'&&d.task_id){setTaskId(d.task_id)}
+      else if(d.draft){setDraft(d.draft);setDrafting(false)}
+      else{setDraft('[Error] '+(d.message||'Generation failed'));setDrafting(false)}
+    }catch(e){setDraft('[Error] '+e.message);setDrafting(false)}
+  };
+  const copyDraft=async()=>{if(!draft)return;try{await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:draft,destination:'clipboard'})});setCopied(true);setTimeout(()=>setCopied(false),2000)}catch(e){showToast('Copy failed')}};
+  const draftReplyTo=(m)=>{setIncoming((m.subject&&m.subject!=='(no subject)'?('Re: '+m.subject+'\n\n'):'')+(m.body||''));setInstruction('');setDraft('');setView('draft')};
+  const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate a co-parent weekly summary: review recent OFW messages in ~/.friday/ofw, custody calendar, and outstanding items. Output a calm, factual brief.'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>showToast('Weekly summary launched in a Claude terminal')).catch(()=>showToast('Launch failed'))};
+
+  const stats=(data&&data.stats)||{};const messages=(data&&data.messages)||[];const timeline=(data&&data.timeline)||[];
+  const connected=stats.connected;
+  const maxTl=timeline.reduce((m,t)=>Math.max(m,t.count),0)||1;
+  const TABS=[{k:'messages',l:'📨 Messages'},{k:'draft',l:'✍️ Draft Reply'},{k:'patterns',l:'📊 Patterns'},{k:'calendar',l:'📅 Calendar'}];
+
   return(<div>
-    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. Stats below are placeholders — wire an /api/coparent/stats endpoint to make them live.`}/>
-    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:8}}><button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>Generate Weekly Summary</button></div>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-      <div className="card"><div className="card-title">Co-Parent Communication <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat">0</div><div className="stat-label">total messages</div><div style={{marginTop:4,fontSize:11,color:'#a8a8b4'}}>Connect your co-parenting platform to populate stats</div></div>
-      <div className="card"><div className="card-title">Unanswered <span style={{fontSize:9,color:'#f59e0b',marginLeft:6,letterSpacing:'.05em'}}>PLACEHOLDER</span></div><div className="stat" style={{color:'#ff0080'}}>89</div><div className="stat-label">threads awaiting response</div></div>
-    </div>
-    <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
-        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#999',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
-        {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
+    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. ${connected?(stats.unanswered+' message(s) awaiting a reply.'):'No co-parent messages synced yet — drop an inbox.json into ~/.friday/ofw/ to populate the log.'}`}/>
+
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        {TABS.map(t=><button key={t.k} className="btn" onClick={()=>setView(t.k)}
+          style={{fontSize:11,padding:'4px 10px',background:view===t.k?'rgba(0,212,255,0.15)':'transparent',color:view===t.k?'#00d4ff':'#888',border:view===t.k?'1px solid rgba(0,212,255,0.35)':'1px solid rgba(255,255,255,0.08)'}}>{t.l}</button>)}
       </div>
-      <div style={{fontSize:11,color:'#999',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
+      <button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>⚡ Weekly Summary</button>
     </div>
-    <div className="card"><div className="card-title">Child's Weekly Schedule</div>
-      {['Add activities in your co-parenting platform settings'].map((a,i)=><div key={i} style={{padding:'3px 0',fontSize:12,color:'#aaa'}}>{a}</div>)}</div>
+    {toast&&<div style={{background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',borderRadius:6,padding:'6px 10px',marginBottom:10,fontSize:12,color:'#00d4ff'}}>{toast}</div>}
+
+    {/* ─── MESSAGES TAB ─── */}
+    {view==='messages'&&<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#888'}}>OFW MESSAGE LOG · {messages.length} shown</span>
+        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={loadMessages}>↻ Refresh</button>
+      </div>
+      {loading?<div className="card" style={{textAlign:'center',color:'#888',fontSize:12}}>Loading messages…</div>
+      :messages.length===0?<div className="card" style={{fontSize:12,color:'#a8a8b4',lineHeight:1.7}}>
+        <div style={{fontWeight:600,color:'#ccc',marginBottom:4}}>No messages yet</div>
+        Friday reads your co-parenting message log from <code style={{color:'#00d4ff'}}>~/.friday/ofw/inbox.json</code> (also accepts <code>messages.json</code> / <code>new_messages.json</code>). Export your OFW / TalkingParents thread to that path and hit Refresh. Each entry can include <code>from</code>, <code>subject</code>, <code>body</code>, <code>date</code>, and <code>answered</code>.
+      </div>
+      :messages.map(m=><div key={m.id} className="card" style={{marginBottom:6,padding:'8px 10px',cursor:'pointer',borderLeft:m.direction==='outbound'?'2px solid rgba(124,58,237,0.5)':(m.answered?'2px solid rgba(0,255,128,0.4)':'2px solid rgba(255,0,128,0.6)')}}
+          onClick={()=>setSelected(selected&&selected.id===m.id?null:m)}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:12,fontWeight:600,color:'#ddd'}}>{m.direction==='outbound'?'↗ ':''}{m.sender}</span>
+          <span style={{fontSize:10,color:'#777',fontFamily:'JetBrains Mono'}}>{m.date||''}{m.direction!=='outbound'&&!m.answered&&<span style={{color:'#ff0080',marginLeft:6}}>● unanswered</span>}</span>
+        </div>
+        <div style={{fontSize:12,color:'#bbb',marginTop:2}}>{m.subject}</div>
+        {selected&&selected.id===m.id&&<div style={{marginTop:8}}>
+          <div style={{fontSize:12,color:'#c8c8d0',whiteSpace:'pre-wrap',lineHeight:1.6,background:'rgba(0,0,0,0.25)',borderRadius:6,padding:8,maxHeight:200,overflowY:'auto'}}>{m.body||'(no body)'}</div>
+          <button className="btn btn-magenta" style={{fontSize:11,padding:'3px 8px',marginTop:6}} onClick={e=>{e.stopPropagation();draftReplyTo(m)}}>✍️ Draft Reply</button>
+        </div>}
+      </div>)}
+    </div>}
+
+    {/* ─── DRAFT TAB ─── */}
+    {view==='draft'&&<div>
+      <div className="card" style={{marginBottom:10}}>
+        <div className="card-title">Drafting Principles</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:6}}>
+          {COPARENT_PRINCIPLES.map(p=><div key={p.k} style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:6,padding:'6px 8px'}}>
+            <div style={{fontSize:12,fontWeight:700,color:'#00d4ff'}}>✓ {p.label}</div>
+            <div style={{fontSize:10.5,color:'#9a9aa6',marginTop:2,lineHeight:1.4}}>{p.desc}</div>
+          </div>)}
+        </div>
+      </div>
+      <div className="card" style={{marginBottom:10}}>
+        <div className="card-title">Their Message</div>
+        <textarea className="input" style={{width:'100%',height:90,resize:'vertical',fontSize:12,fontFamily:'JetBrains Mono',marginTop:4}}
+          value={incoming} onChange={e=>setIncoming(e.target.value)} placeholder="Paste the co-parent's message here (or pick one from the Messages tab)…"/>
+        <div style={{marginTop:8,fontSize:11,color:'#888',marginBottom:4}}>What do you need to say back? (optional — leave blank for a straight reply)</div>
+        <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:12,fontFamily:'JetBrains Mono'}}
+          value={instruction} onChange={e=>setInstruction(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)generateDraft()}}
+          placeholder="e.g. Confirm the Thursday pickup time and decline the schedule change…"/>
+        <div style={{display:'flex',gap:6,marginTop:8}}>
+          <button className="btn" onClick={generateDraft} disabled={drafting} style={{fontWeight:600}}>{drafting?'Drafting…':'Generate Reply'}</button>
+          {draft&&!drafting&&<button className="btn" style={{fontSize:11}} onClick={generateDraft}>Regenerate</button>}
+        </div>
+      </div>
+      {draft&&<div className="card">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>DRAFT REPLY</span>
+          <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={copyDraft}>{copied?'✓ Copied':'📋 Copy'}</button>
+        </div>
+        <textarea className="input" style={{width:'100%',minHeight:140,resize:'vertical',fontSize:13,lineHeight:1.6,color:'#e0e0e8',fontFamily:'JetBrains Mono'}}
+          value={draft} onChange={e=>setDraft(e.target.value)}/>
+        <div style={{fontSize:10.5,color:'#777',marginTop:4}}>Review before sending — Friday drafts but you decide. {draft.length} chars.</div>
+      </div>}
+    </div>}
+
+    {/* ─── PATTERNS TAB ─── */}
+    {view==='patterns'&&<div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:12}}>
+        <div className="card"><div className="stat">{stats.total||0}</div><div className="stat-label">total messages</div></div>
+        <div className="card"><div className="stat" style={{color:'#00d4ff'}}>{stats.inbound||0}</div><div className="stat-label">received</div></div>
+        <div className="card"><div className="stat" style={{color:'#7c3aed'}}>{stats.outbound||0}</div><div className="stat-label">sent</div></div>
+        <div className="card"><div className="stat" style={{color:(stats.unanswered||0)>0?'#ff0080':'#00ff80'}}>{stats.unanswered||0}</div><div className="stat-label">unanswered</div></div>
+      </div>
+      <div className="card" style={{marginBottom:12}}>
+        <div className="card-title">Message Volume Over Time</div>
+        {timeline.length===0?<div style={{fontSize:12,color:'#888',marginTop:4}}>No dated messages to chart yet.</div>
+        :<div style={{display:'flex',alignItems:'flex-end',gap:3,height:90,marginTop:8}}>
+          {timeline.slice(-30).map((t,i)=><div key={i} title={`${t.date}: ${t.count}`} style={{flex:1,minWidth:3,height:Math.max(3,(t.count/maxTl)*80),background:'linear-gradient(to top,#00d4ff,rgba(0,212,255,0.3))',borderRadius:'2px 2px 0 0'}}/>)}
+        </div>}
+        {timeline.length>0&&<div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'#666',marginTop:4,fontFamily:'JetBrains Mono'}}><span>{timeline.slice(-30)[0]&&timeline.slice(-30)[0].date}</span><span>{timeline[timeline.length-1]&&timeline[timeline.length-1].date}</span></div>}
+      </div>
+      <div className="card" style={{marginBottom:12}}>
+        <div className="card-title">Most Frequent Senders</div>
+        {(stats.top_senders||[]).length===0?<div style={{fontSize:12,color:'#888',marginTop:4}}>No data yet.</div>
+        :(stats.top_senders||[]).map((s,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:12,borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{color:'#ccc'}}>{s.sender}</span><span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{s.count}</span></div>)}
+      </div>
+      {stats.flags&&Object.keys(stats.flags).length>0&&<div className="card">
+        <div className="card-title">Flagged Patterns</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>
+          {Object.entries(stats.flags).map(([f,c])=><span key={f} style={{fontSize:11,background:'rgba(245,158,11,0.1)',color:'#f59e0b',border:'1px solid rgba(245,158,11,0.25)',borderRadius:12,padding:'2px 10px'}}>{f} · {c}</span>)}
+        </div>
+      </div>}
+    </div>}
+
+    {/* ─── CALENDAR TAB ─── */}
+    {view==='calendar'&&<div>
+      <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
+          {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#999',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
+          {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
+        </div>
+        <div style={{fontSize:11,color:'#999',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
+      </div>
+    </div>}
   </div>);
 }
 function FuturespeakWS(){
