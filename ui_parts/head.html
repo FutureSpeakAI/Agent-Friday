@@ -694,12 +694,30 @@ window.addEventListener('DOMContentLoaded',function(){
             font-family: 'JetBrains Mono', monospace; text-align: center;
             letter-spacing: 0.04em;
         }
+        .notif-row.clickable {
+            position: relative;
+        }
         .notif-row.clickable:hover {
             background: rgba(0,212,255,0.08);
+            box-shadow: inset 2px 0 0 rgba(0,212,255,0.55);
         }
         .notif-row.clickable:focus-visible {
             outline: 2px solid rgba(0,212,255,0.55);
             outline-offset: -2px;
+        }
+        /* "Open …" deep-link button revealed when a notification is expanded. */
+        .notif-open-btn {
+            background: rgba(0,212,255,0.12);
+            border: 1px solid rgba(0,212,255,0.35);
+            color: #00d4ff;
+            font-family: 'JetBrains Mono', monospace; font-size: 10px;
+            letter-spacing: 0.04em; text-transform: uppercase;
+            padding: 4px 10px; border-radius: 6px; cursor: pointer;
+            transition: background .15s, border-color .15s;
+        }
+        .notif-open-btn:hover {
+            background: rgba(0,212,255,0.22);
+            border-color: rgba(0,212,255,0.6);
         }
         @keyframes notifDropdownSlide {
             from { opacity: 0; transform: translateY(-8px); }

@@ -101,6 +101,7 @@ def push(
     chat_message: Optional[str] = None,
     dedupe_key: Optional[str] = None,
     meta: Optional[Dict[str, Any]] = None,
+    target: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Add a notification to the queue.
 
@@ -108,6 +109,12 @@ def push(
                 notification with the same key is already queued.
     chat_message: text to inject into the chat stream if proactive_chat=True.
                   Defaults to title + body.
+    target:     deep-link descriptor the UI uses to navigate when the
+                notification is clicked, e.g.
+                  {"workspace": "news", "tab": "frontpage"}
+                  {"workspace": "messages", "lane": "career", "thread_id": "..."}
+                  {"workspace": "calendar", "event_id": "...", "date": "..."}
+                  {"workspace": "studio"}  /  {"url": "https://..."}
     """
     if priority not in PRIORITY_ORDER:
         priority = "medium"
@@ -125,6 +132,7 @@ def push(
             "source": source,
             "kind": kind,
             "actions": actions or [],
+            "target": target or {},
             "read": False,
             "dismissed": False,
             "created_at": _now_iso(),
