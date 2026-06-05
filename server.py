@@ -7803,6 +7803,13 @@ if sock is not None:
                     disabled=False,
                     silence_duration_ms=500,
                     prefix_padding_ms=200,
+                    # LOW sensitivity: require louder/clearer speech to trip VAD.
+                    # Friday's own speaker bleed (echo) is quieter than a real
+                    # user talking, so LOW makes the server far less likely to
+                    # mistake that echo for a barge-in and fire a spurious
+                    # {type:'interrupted'} that cuts her off mid-sentence.
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
                 ),
             ),
         )
