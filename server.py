@@ -74,6 +74,17 @@ except Exception as _poi_err:
     _HAS_INTEGRITY = False
     print(f"  [FRIDAY] WARNING: proof_of_integrity unavailable ({_poi_err})")
 
+# Trust systems — split into human contacts (PeopleGraph) and media/agent
+# reputation (SourceTrustGraph) + the signed Federation attestation protocol.
+try:
+    from people_graph import get_people_graph
+    from source_trust_graph import get_source_trust_graph
+    import source_trust_federation as federation
+    _HAS_TRUST_GRAPHS = True
+except Exception as _tg_err:
+    _HAS_TRUST_GRAPHS = False
+    print(f"  [FRIDAY] WARNING: trust graphs unavailable ({_tg_err})")
+
 # Prevent console windows from flashing when spawning subprocesses on Windows.
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -3430,6 +3441,17 @@ def _source_from_request():
     return _extract_domain(data.get("source") or data.get("domain") or "")
 
 
+def _mirror_source_action(domain, action):
+    """Reflect a ban/boost/unban/unboost into the SourceTrustGraph user_actions.
+    Fail-soft; trust bookkeeping must never break a source preference write."""
+    if not _HAS_TRUST_GRAPHS or not domain:
+        return
+    try:
+        get_source_trust_graph(friday_dir=FRIDAY_DIR).record_user_action(domain, action)
+    except Exception:
+        pass
+
+
 @app.route('/api/sources/ban', methods=['POST', 'DELETE'])
 def sources_ban():
     """Add (POST) or remove (DELETE) a source from the server-side blacklist."""
@@ -3447,6 +3469,7 @@ def sources_ban():
         _record_source_event(src, 'ban')
     else:  # DELETE — un-ban
         banned = _write_json_list(BANNED_SOURCES_FILE, [b for b in banned if b != src])
+        _mirror_source_action(src, 'unban')
     return jsonify({"status": "ok", "source": src,
                     "banned": banned, "boosted": _load_boosted_sources()})
 
@@ -3468,6 +3491,7 @@ def sources_boost():
         _record_source_event(src, 'boost')
     else:  # DELETE — un-boost
         boosted = _write_json_list(BOOSTED_SOURCES_FILE, [b for b in boosted if b != src])
+        _mirror_source_action(src, 'unboost')
     return jsonify({"status": "ok", "source": src,
                     "banned": _load_banned_sources(), "boosted": boosted})
 
@@ -5211,17 +5235,60 @@ def _save_briefing_prefs(data):
 
 
 def _trust_rating(domain, banned=None, boosted=None):
-    """green | yellow | red trust rating for a source domain."""
+    """green | yellow | red trust rating for a source domain.
+
+    User ban/boost always win. Otherwise the rating follows the learned
+    SourceTrustGraph composite score (green ≥0.7, yellow 0.4-0.7, red <0.4),
+    falling back to the static authority map when the graph is unavailable.
+    """
     domain = _extract_domain(domain)
     boosted = boosted if boosted is not None else _load_boosted_sources()
     banned = banned if banned is not None else _load_banned_sources()
     if domain in banned:
         return "red"
-    if domain in boosted or domain in _TRUSTED_DOMAINS:
+    if domain in boosted:
+        return "green"
+    if _HAS_TRUST_GRAPHS:
+        try:
+            return _trust_color_from_score(
+                get_source_trust_graph(friday_dir=FRIDAY_DIR).score_for(domain))
+        except Exception:
+            pass
+    if domain in _TRUSTED_DOMAINS:
         return "green"
     if domain in _LOW_TRUST_DOMAINS:
         return "red"
     return "yellow"
+
+
+def _trust_color_from_score(score):
+    """Map a 0-1 composite trust score to the badge color buckets."""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "yellow"
+    if s >= 0.7:
+        return "green"
+    if s >= 0.4:
+        return "yellow"
+    return "red"
+
+
+def _source_trust_meta(domain, banned=None, boosted=None):
+    """Full trust metadata for an article's source: {trust(color), trust_score,
+    trust_dims}. Used to decorate feed/archive items so the UI can render a
+    numeric badge with a 6-dimension breakdown tooltip."""
+    domain = _extract_domain(domain)
+    color = _trust_rating(domain, banned, boosted)
+    score, dims = None, None
+    if _HAS_TRUST_GRAPHS:
+        try:
+            g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+            score = round(g.score_for(domain), 3)
+            dims = {k: round(v, 3) for k, v in g.dimensions_for(domain).items()}
+        except Exception:
+            pass
+    return {"trust": color, "trust_score": score, "trust_dims": dims}
 
 
 # In-process cache for parsed feeds so the /api/news/feed endpoint and the
@@ -5452,7 +5519,7 @@ def _fetch_news_items(categories=None, limit_per=4):
                 "source": domain,
                 "category": cat,
                 "color": meta["color"],
-                "trust": _trust_rating(domain, banned, boosted),
+                **_source_trust_meta(domain, banned, boosted),
                 "boosted": is_boost,
                 "reading_time": _estimate_reading_time(r["snippet"]),
                 "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
@@ -5832,7 +5899,7 @@ def _gather_front_page_pool(per_cat=14):
                 "source": domain,
                 "category": cat,
                 "color": meta.get("color", "tech"),
-                "trust": _trust_rating(domain, banned, boosted),
+                **_source_trust_meta(domain, banned, boosted),
                 "boosted": domain in boosted,
                 "reading_time": _estimate_reading_time(r["snippet"]),
                 "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
@@ -5944,6 +6011,11 @@ def _archive_record_from_item(item):
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
         "sentiment": _article_sentiment(f"{title} {snippet}"),
         "relevance_score": item.get("score", _score_article(item)),
+        # Learned source-trust snapshot at fetch time (numeric + color); lets the
+        # archive-backed Feed render the same trust badge as the live cards.
+        "trust": item.get("trust") or _trust_rating(domain),
+        "trust_score": item.get("trust_score"),
+        "trust_dims": item.get("trust_dims"),
         "read": False,
         "bookmarked": False,
     }
@@ -6020,6 +6092,23 @@ def _news_archiver_tick():
     added = _archive_articles(pool)
     if added:
         print(f"  [news-archive] +{added} new article(s)")
+    # Source-trust learning: run cross-source comparison over this fetch cycle
+    # and fold the resulting observations into the SourceTrustGraph. Fail-soft —
+    # trust learning must never break the archiver.
+    if _HAS_TRUST_GRAPHS:
+        try:
+            g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+            clusters = _cluster_articles(pool, min_sources=2)
+            summary = g.analyze_fetch(pool, clusters)
+            for it in pool:
+                dom = it.get("source") or _extract_domain(it.get("url", ""))
+                if dom:
+                    g.record_article_seen(dom)
+            if summary and any(summary.get(k) for k in
+                               ("corrections", "minority_claims", "primary_boosts", "independence")):
+                print(f"  [source-trust] {summary}")
+        except Exception as e:
+            print(f"  [source-trust] analysis skipped: {e}")
     return added
 
 
@@ -7304,6 +7393,183 @@ def news_clusters():
     })
 
 
+# ═══════════════════════════════════════════════════════════════
+#  SOURCE TRUST GRAPH  (media/agent reputation — distinct from people)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/source-trust')
+def api_source_trust_all():
+    """All learned source trust scores."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "source trust graph unavailable"}), 501
+    try:
+        g = get_source_trust_graph(friday_dir=FRIDAY_DIR)
+        rows = g.leaderboard(limit=1000)
+        return jsonify({"status": "ok", "sources": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/source-trust/leaderboard')
+def api_source_trust_leaderboard():
+    """Sources ranked by composite trust score."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "source trust graph unavailable"}), 501
+    try:
+        limit = max(1, min(500, int(request.args.get('limit', 100))))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        rows = get_source_trust_graph(friday_dir=FRIDAY_DIR).leaderboard(limit=limit)
+        return jsonify({"status": "ok", "leaderboard": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/source-trust/observe', methods=['POST'])
+def api_source_trust_observe():
+    """Manually add an observation (user correction). Body: {domain, type,
+    dimension, signal, detail?, counter_sources?, name?}."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "source trust graph unavailable"}), 501
+    data = request.get_json(silent=True) or {}
+    domain = (data.get("domain") or data.get("source") or "").strip()
+    dimension = (data.get("dimension") or "").strip()
+    if not domain or not dimension:
+        return jsonify({"status": "error", "message": "domain and dimension are required"}), 400
+    try:
+        rec = get_source_trust_graph(friday_dir=FRIDAY_DIR).observe(
+            domain,
+            obs_type=data.get("type", "user_observation"),
+            dimension=dimension,
+            signal=data.get("signal", 0.5),
+            detail=data.get("detail", ""),
+            counter_sources=data.get("counter_sources"),
+            signed_by="user",
+            name=data.get("name"),
+        )
+        if rec is None:
+            return jsonify({"status": "error",
+                            "message": "invalid dimension or signal"}), 400
+        return jsonify({"status": "ok", "source": rec})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/source-trust/<path:domain>')
+def api_source_trust_one(domain):
+    """Single source detail with full observation history."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "source trust graph unavailable"}), 501
+    try:
+        rec = get_source_trust_graph(friday_dir=FRIDAY_DIR).get(domain)
+        if not rec:
+            return jsonify({"status": "error", "message": "source not found"}), 404
+        return jsonify({"status": "ok", "source": rec})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FEDERATION PROTOCOL  (signed source-trust attestations)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/federation/attestations')
+def api_federation_attestations():
+    """List the attestations this agent has signed, plus identity + counts."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "federation unavailable"}), 501
+    try:
+        agent_id = None
+        if _HAS_INTEGRITY:
+            agent_id = get_integrity_engine(
+                friday_dir=FRIDAY_DIR,
+                governance_key_fn=_get_governance_key).get_public_key_hex()
+        signed = federation.list_attestations(friday_dir=FRIDAY_DIR)
+        imported = federation.list_imported(friday_dir=FRIDAY_DIR)
+        return jsonify({
+            "status": "ok",
+            "agent_id": agent_id,
+            "attestations": signed,
+            "signed_count": len(signed),
+            "imported_count": len(imported),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/federation/attestations/sign', methods=['POST'])
+def api_federation_sign():
+    """Sign a new source attestation. Body: {source_domain, observation:{type,
+    claim, evidence, counter_sources}}."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "federation unavailable"}), 501
+    data = request.get_json(silent=True) or {}
+    domain = (data.get("source_domain") or data.get("domain") or "").strip()
+    observation = data.get("observation") or {}
+    if not domain or not observation.get("type"):
+        return jsonify({"status": "error",
+                        "message": "source_domain and observation.type are required"}), 400
+    try:
+        att = federation.sign_attestation(
+            domain, observation,
+            governance_key_fn=_get_governance_key, friday_dir=FRIDAY_DIR)
+        if not att:
+            return jsonify({"status": "error",
+                            "message": "signing unavailable (no Ed25519 key)"}), 501
+        federation.record_attestation(att, friday_dir=FRIDAY_DIR)
+        return jsonify({"status": "ok", "attestation": att})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/federation/attestations/import', methods=['POST'])
+def api_federation_import():
+    """Import a peer attestation (verifies the signature before accepting).
+    Body: a single attestation object, or {attestations: [...]}."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "federation unavailable"}), 501
+    data = request.get_json(silent=True) or {}
+    atts = data.get("attestations") if isinstance(data.get("attestations"), list) else [data]
+    results = []
+    for att in atts:
+        try:
+            results.append(federation.import_attestation(
+                att, governance_key_fn=_get_governance_key, friday_dir=FRIDAY_DIR))
+        except Exception as e:
+            results.append({"accepted": False, "reason": str(e)})
+    accepted = sum(1 for r in results if r.get("accepted"))
+    return jsonify({"status": "ok", "accepted": accepted,
+                    "total": len(results), "results": results})
+
+
+@app.route('/api/federation/trust-scores')
+def api_federation_trust_scores():
+    """This agent's computed source trust scores in shareable form (the
+    leaderboard plus the signing identity that vouches for them)."""
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "federation unavailable"}), 501
+    try:
+        agent_id = None
+        if _HAS_INTEGRITY:
+            agent_id = get_integrity_engine(
+                friday_dir=FRIDAY_DIR,
+                governance_key_fn=_get_governance_key).get_public_key_hex()
+        rows = get_source_trust_graph(friday_dir=FRIDAY_DIR).leaderboard(limit=1000)
+        scores = [{"source_domain": r["domain"], "name": r["name"],
+                   "trust_score": r["trust_score"], "scores": r["scores"],
+                   "article_count": r["article_count"]} for r in rows]
+        return jsonify({
+            "status": "ok",
+            "agent_id": agent_id,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "trust_scores": scores,
+            "count": len(scores),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # ── Source reputation / "Your Media Diet" ──────────────────────────────────
 # Per-source engagement counters at ~/.friday/news/source_stats.json. Each user
 # interaction (click, read-later, boost, ban, ignore) bumps a counter; category
@@ -7347,6 +7613,13 @@ def _record_source_event(source, action, category=""):
             SOURCE_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
             SOURCE_STATS_FILE.write_text(json.dumps(stats, indent=2),
                                          encoding="utf-8")
+        except Exception:
+            pass
+    # Mirror engagement into the SourceTrustGraph user_actions (outside the
+    # stats lock; the graph has its own lock). Fail-soft.
+    if _HAS_TRUST_GRAPHS:
+        try:
+            get_source_trust_graph(friday_dir=FRIDAY_DIR).record_user_action(domain, action)
         except Exception:
             pass
 
@@ -7811,15 +8084,23 @@ def get_jobs():
 
 @app.route('/api/trust')
 def get_trust():
-    """Return trust graph data."""
-    trust_file = FRIDAY_DIR / "trust_graph.json"
-    if trust_file.exists():
-        try:
-            data = json.loads(trust_file.read_text(encoding='utf-8'))
-            return jsonify({"status": "ok", **data})
-        except Exception:
-            pass
-    return jsonify({"status": "ok", "people": {}})
+    """Return the people (contacts) graph. Backward-compat route; delegates to
+    PeopleGraph internally now that source/media trust lives elsewhere."""
+    try:
+        data = _load_trust_graph()
+        return jsonify({"status": "ok", **data})
+    except Exception:
+        return jsonify({"status": "ok", "people": {}})
+
+
+@app.route('/api/people')
+def get_people():
+    """The human-contact trust graph (PeopleGraph). New canonical route."""
+    try:
+        data = _load_trust_graph()
+        return jsonify({"status": "ok", **data})
+    except Exception:
+        return jsonify({"status": "ok", "people": {}})
 
 
 @app.route('/api/personality')
@@ -12321,44 +12602,14 @@ def edit_trust():
     if not person_key:
         return jsonify({"status": "error", "message": "No person specified"}), 400
 
-    trust_file = FRIDAY_DIR / "trust_graph.json"
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "people graph unavailable"}), 501
     try:
-        tdata = {}
-        if trust_file.exists():
-            tdata = json.loads(trust_file.read_text(encoding='utf-8'))
-
-        if 'people' not in tdata:
-            tdata['people'] = {}
-
-        if person_key not in tdata['people']:
-            return jsonify({"status": "error", "message": f"Person '{person_key}' not found"}), 404
-
-        person = tdata['people'][person_key]
-
-        if scores:
-            if 'scores' not in person:
-                person['scores'] = {}
-            for dim, val in scores.items():
-                person['scores'][dim] = float(val)
-            score_vals = [v for k, v in person['scores'].items() if k != 'overall' and isinstance(v, (int, float))]
-            if score_vals:
-                person['scores']['overall'] = sum(score_vals) / len(score_vals)
-
-        if add_evidence:
-            if 'evidence' not in person:
-                person['evidence'] = []
-            person['evidence'].append({
-                "type": add_evidence.get('type', 'observation'),
-                "magnitude": float(add_evidence.get('magnitude', 0.5)),
-                "timestamp": datetime.now().isoformat(),
-                "source": "friday-desktop-ui",
-                "notes": add_evidence.get('notes', ''),
-                "dimension": add_evidence.get('dimension', 'overall')
-            })
-            person['last_interaction'] = datetime.now().isoformat()
-
-        tdata['people'][person_key] = person
-        trust_file.write_text(json.dumps(tdata, indent=2), encoding='utf-8')
+        person, err = get_people_graph(friday_dir=FRIDAY_DIR).edit(
+            person_key, scores=scores, add_evidence=add_evidence)
+        if err:
+            code = 404 if 'not found' in err else 400
+            return jsonify({"status": "error", "message": err}), code
         return jsonify({"status": "ok", "person": person_key})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -12375,39 +12626,14 @@ def add_trust_person():
     if not name:
         return jsonify({"status": "error", "message": "No name specified"}), 400
 
-    trust_file = FRIDAY_DIR / "trust_graph.json"
+    if not _HAS_TRUST_GRAPHS:
+        return jsonify({"status": "error", "message": "people graph unavailable"}), 501
     try:
-        tdata = {}
-        if trust_file.exists():
-            tdata = json.loads(trust_file.read_text(encoding='utf-8'))
-
-        if 'people' not in tdata:
-            tdata['people'] = {}
-
-        key = name.lower().replace(' ', '_').replace('-', '_')
-
-        if key in tdata['people']:
-            return jsonify({"status": "error", "message": f"Person '{name}' already exists"}), 409
-
-        tdata['people'][key] = {
-            "name": name,
-            "aliases": aliases if isinstance(aliases, list) else [],
-            "entity_type": entity_type,
-            "scores": {
-                "overall": 0.5,
-                "reliability": 0.5,
-                "information_quality": 0.5,
-                "emotional_trust": 0.5,
-                "timeliness": 0.5,
-                "domain_expertise": 0.5
-            },
-            "evidence": [],
-            "domains": [],
-            "last_interaction": datetime.now().isoformat(),
-            "created": datetime.now().isoformat()
-        }
-
-        trust_file.write_text(json.dumps(tdata, indent=2), encoding='utf-8')
+        key, err = get_people_graph(friday_dir=FRIDAY_DIR).add_person(
+            name, aliases=aliases, entity_type=entity_type)
+        if err:
+            code = 409 if 'already exists' in err else 400
+            return jsonify({"status": "error", "message": err}), code
         return jsonify({"status": "ok", "key": key, "name": name})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -13091,7 +13317,14 @@ def confirm_draft():
 # ═══════════════════════════════════════════════════════════════
 
 def _load_trust_graph():
-    """Load trust graph with consistent shape. Returns dict with people keyed by name."""
+    """Load the people graph with consistent shape. Delegates to PeopleGraph
+    (canonical ~/.friday/people_graph.json, mirrored to trust_graph.json), with
+    a direct-file fallback if the module is unavailable."""
+    if _HAS_TRUST_GRAPHS:
+        try:
+            return get_people_graph(friday_dir=FRIDAY_DIR).load()
+        except Exception:
+            pass
     tfile = FRIDAY_DIR / "trust_graph.json"
     if not tfile.exists():
         return {"people": {}}

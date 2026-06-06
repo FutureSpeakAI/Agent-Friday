@@ -152,6 +152,29 @@ class IntegrityEngine:
             return None
         return bytes(self._verify_key).hex()
 
+    # ── Generic payload signing (reused by the Federation protocol) ─
+
+    def sign_payload(self, data: bytes) -> str | None:
+        """Ed25519-sign an arbitrary payload. Returns the hex signature, or
+        None if no signing key is available."""
+        if self._signing_key is None:
+            return None
+        try:
+            return self._signing_key.sign(data).signature.hex()
+        except Exception:
+            return None
+
+    @staticmethod
+    def verify_payload(data: bytes, sig_hex: str, pubkey_hex: str) -> bool:
+        """Verify an Ed25519 signature over a payload with a given public key."""
+        if not (_HAS_ED25519 and sig_hex and pubkey_hex):
+            return False
+        try:
+            VerifyKey(bytes.fromhex(pubkey_hex)).verify(data, bytes.fromhex(sig_hex))
+            return True
+        except (BadSignatureError, Exception):
+            return False
+
     # ── Manifest generation ────────────────────────────────────────
 
     def sign_manifest(self, model_manifest: dict | None = None,

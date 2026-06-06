@@ -4,6 +4,7 @@ google-genai>=1.0
 google-api-python-client>=2.0     # live Gmail + Calendar reads (server.py _fetch_gmail_recent/_fetch_calendar_today)
 google-auth-oauthlib>=1.0         # OAuth flow for /api/google/auth (read-only gmail + calendar scopes)
 cryptography>=44              # Sovereign Vault AES-256-GCM + Argon2id (vault_crypto.py)
+pynacl>=1.5                   # Ed25519 attestation keys — Integrity Manifest (proof_of_integrity.py) + Source Trust Federation (source_trust_federation.py); both degrade gracefully if absent
 rich>=13.0
 colorama>=0.4
 pyautogui>=0.9

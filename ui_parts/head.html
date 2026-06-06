@@ -1519,6 +1519,76 @@ window.addEventListener('DOMContentLoaded',function(){
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
 
+        /* ── Source-trust badge + hover tooltip (article cards) ── */
+        .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
+        .trust-num { font-size:9px; color:#aeb6c4; font-variant-numeric:tabular-nums; }
+        .trust-tip {
+            position:absolute; bottom:140%; left:0; z-index:50; width:220px;
+            background:rgba(14,16,24,0.98); border:1px solid rgba(255,255,255,0.12);
+            border-radius:10px; padding:9px 10px; box-shadow:0 8px 28px rgba(0,0,0,0.55);
+            opacity:0; visibility:hidden; transform:translateY(4px); transition:all .14s ease; pointer-events:none;
+        }
+        .trust-badge:hover .trust-tip, .trust-badge:focus .trust-tip { opacity:1; visibility:visible; transform:translateY(0); }
+        .trust-tip-head { font-size:10px; font-weight:700; color:#dfe4ee; margin-bottom:6px; letter-spacing:.02em; }
+        .trust-tip-row { display:flex; align-items:center; gap:6px; margin:3px 0; font-size:9px; color:#9aa3b2; }
+        .trust-tip-lbl { width:74px; flex-shrink:0; }
+        .trust-tip-bar { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.08); overflow:hidden; }
+        .trust-tip-fill { display:block; height:100%; border-radius:3px; }
+        .trust-tip-fill.green { background:#00ff80; } .trust-tip-fill.yellow { background:#f59e0b; } .trust-tip-fill.red { background:#ff3c5a; }
+        .trust-tip-val { width:24px; text-align:right; font-variant-numeric:tabular-nums; color:#c4cad6; }
+
+        /* ── Trust tab: federation strip ── */
+        .fed-strip { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px;
+            background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.18); font-size:11px; color:#c4cad6; }
+        .fed-ico { font-size:14px; }
+        .fed-id { margin-left:auto; font-size:9px; color:#7fb6c9; font-family:monospace; cursor:help; }
+
+        /* ── Trust tab: leaderboard + detail layout ── */
+        .trust-layout { display:grid; grid-template-columns:minmax(280px,1fr) minmax(320px,1.4fr); gap:14px; align-items:start; }
+        @media (max-width:900px){ .trust-layout { grid-template-columns:1fr; } }
+        .trust-board { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); border-radius:12px; overflow:hidden; max-height:70vh; overflow-y:auto; }
+        .trust-board-head { display:flex; justify-content:space-between; padding:10px 12px; font-size:11px; font-weight:700; color:#dfe4ee; border-bottom:1px solid rgba(255,255,255,0.07); position:sticky; top:0; background:rgba(18,20,28,0.96); }
+        .trust-row { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:11px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03); }
+        .trust-row:hover { background:rgba(255,255,255,0.04); }
+        .trust-row.active { background:rgba(0,212,255,0.08); }
+        .trust-rank { width:18px; color:#6b7280; font-size:10px; text-align:right; }
+        .trust-row-name { flex:1; color:#dfe4ee; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .trust-row-score { font-weight:700; color:#c4cad6; font-variant-numeric:tabular-nums; }
+        .trust-row-meta { font-size:9px; color:#6b7280; min-width:74px; text-align:right; }
+        .trust-detail { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:14px; min-height:200px; }
+        .trust-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+        .trust-detail-name { font-size:15px; font-weight:700; color:#fff; }
+        .trust-detail-sub { font-size:10px; color:#7a8290; margin-top:2px; }
+        .trust-detail-score { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; }
+        .trust-detail-score.green { color:#00ff80; } .trust-detail-score.yellow { color:#f59e0b; } .trust-detail-score.red { color:#ff3c5a; }
+        .trust-detail-grid { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:12px 0; }
+        .trust-dimbars { flex:1; min-width:200px; }
+        .trust-dimbar { display:flex; align-items:center; gap:8px; margin:5px 0; font-size:10px; color:#9aa3b2; }
+        .trust-dimbar-lbl { width:96px; flex-shrink:0; }
+        .trust-dimbar-track { flex:1; height:7px; border-radius:4px; background:rgba(255,255,255,0.07); overflow:hidden; }
+        .trust-dimbar-fill { display:block; height:100%; border-radius:4px; }
+        .trust-dimbar-fill.green { background:#00ff80; } .trust-dimbar-fill.yellow { background:#f59e0b; } .trust-dimbar-fill.red { background:#ff3c5a; }
+        .trust-dimbar-val { width:26px; text-align:right; color:#c4cad6; font-variant-numeric:tabular-nums; }
+
+        /* ── Trust radar (SVG) ── */
+        .trust-radar { flex-shrink:0; }
+        .trust-radar .radar-grid { fill:rgba(255,255,255,0.02); stroke:rgba(255,255,255,0.1); stroke-width:1; }
+        .trust-radar .radar-spoke { stroke:rgba(255,255,255,0.08); stroke-width:1; }
+        .trust-radar .radar-area { fill:rgba(0,212,255,0.22); stroke:#00d4ff; stroke-width:1.5; }
+        .trust-radar .radar-lbl { fill:#8a92a2; font-size:7px; }
+
+        /* ── Trust observation history ── */
+        .trust-obs-head { font-size:11px; font-weight:700; color:#dfe4ee; margin:14px 0 6px; }
+        .trust-obs-list { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
+        .trust-obs { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:10px; color:#9aa3b2; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+        .trust-obs-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+        .trust-obs-dot.green { background:#00ff80; } .trust-obs-dot.yellow { background:#f59e0b; } .trust-obs-dot.red { background:#ff3c5a; }
+        .trust-obs-type { color:#dfe4ee; font-weight:600; }
+        .trust-obs-dim { color:#7fb6c9; }
+        .trust-obs-date { color:#6b7280; margin-left:auto; font-variant-numeric:tabular-nums; }
+        .trust-obs-detail { flex-basis:100%; color:#7a8290; font-size:9px; padding-left:14px; }
+        .trust-obs-peer { font-size:8px; background:rgba(167,139,250,0.18); color:#c4b5fd; padding:1px 5px; border-radius:6px; }
+
         .news-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:10px; color:#727a8a; }
         .breaking-badge {
             font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.07em;
