@@ -3444,6 +3444,7 @@ def sources_ban():
         boosted = [b for b in _load_boosted_sources() if b != src]
         _write_json_list(BOOSTED_SOURCES_FILE, boosted)
         banned = _write_json_list(BANNED_SOURCES_FILE, banned)
+        _record_source_event(src, 'ban')
     else:  # DELETE — un-ban
         banned = _write_json_list(BANNED_SOURCES_FILE, [b for b in banned if b != src])
     return jsonify({"status": "ok", "source": src,
@@ -3464,6 +3465,7 @@ def sources_boost():
         banned = [b for b in _load_banned_sources() if b != src]
         _write_json_list(BANNED_SOURCES_FILE, banned)
         boosted = _write_json_list(BOOSTED_SOURCES_FILE, boosted)
+        _record_source_event(src, 'boost')
     else:  # DELETE — un-boost
         boosted = _write_json_list(BOOSTED_SOURCES_FILE, [b for b in boosted if b != src])
     return jsonify({"status": "ok", "source": src,
@@ -6936,6 +6938,354 @@ def news_archive_stats():
         "by_category": per_cat,
         "by_source": by_source,
     })
+
+
+# ═══════════════════════════════════════════════════════════════
+#  SMART NEWS FEATURES
+#  Trending clusters · Deep Dive summaries · Wiki connections ·
+#  Source-reputation tracking. (Sentiment + the archive live above.)
+# ═══════════════════════════════════════════════════════════════
+_NEWS_STATS_LOCK = threading.Lock()
+
+
+# ── Trending clusters ──────────────────────────────────────────────────────
+# Group articles that cover the same story. Similarity = Jaccard overlap of the
+# lowercased word sets of two headlines (minus common stopwords); a cluster is
+# surfaced when 3+ DISTINCT sources land above the 0.4 threshold on one story.
+_CLUSTER_STOPWORDS = frozenset(
+    "the a an and or of to in on for with at by from as is are was were be "
+    "this that these those it its his her their our your my new amid over how "
+    "after before why what when who will would could should can may has have "
+    "but not you he she they we".split())
+
+
+def _title_tokens(title):
+    toks = re.findall(r"[a-z0-9]+", (title or "").lower())
+    return {t for t in toks if len(t) > 2 and t not in _CLUSTER_STOPWORDS}
+
+
+def _jaccard(a, b):
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    return inter / len(a | b) if inter else 0.0
+
+
+def _cluster_articles(pool, threshold=0.4, min_sources=3):
+    """Greedy single-pass clustering of a scored article pool by title overlap.
+
+    Returns cluster dicts (most-covered first), each with the main headline (the
+    highest-scored member), the distinct-source count, and every member article.
+    Only clusters spanning >= min_sources distinct sources are returned, per the
+    trending-story spec."""
+    enriched = [(it, _title_tokens(it.get("title"))) for it in pool]
+    enriched = [(it, t) for it, t in enriched if t]
+    clusters = []  # each: {"seed": token set of first member, "items": [...]}
+    for it, toks in enriched:
+        best, best_sim = None, 0.0
+        for c in clusters:
+            sim = _jaccard(toks, c["seed"])
+            if sim >= threshold and sim > best_sim:
+                best, best_sim = c, sim
+        if best is None:
+            clusters.append({"seed": toks, "items": [it]})
+        else:
+            best["items"].append(it)
+    out = []
+    for c in clusters:
+        items = c["items"]
+        sources = {i.get("source") for i in items if i.get("source")}
+        if len(sources) < min_sources:
+            continue
+        items.sort(key=lambda x: x.get("score", 0), reverse=True)
+        lead = items[0]
+        out.append({
+            "id": _news_url_hash(lead.get("url", "") + str(len(items))),
+            "headline": lead.get("title", ""),
+            "category": lead.get("category", ""),
+            "color": lead.get("color", "tech"),
+            "source_count": len(sources),
+            "sources": sorted(sources),
+            "articles": [{
+                "title": i.get("title"), "url": i.get("url"),
+                "source": i.get("source"), "snippet": i.get("snippet"),
+                "category": i.get("category"), "color": i.get("color"),
+                "trust": i.get("trust"), "sentiment": i.get("sentiment"),
+                "ts": i.get("ts", 0.0),
+            } for i in items],
+        })
+    out.sort(key=lambda c: c["source_count"], reverse=True)
+    return out
+
+
+@app.route('/api/news/clusters')
+def news_clusters():
+    """Trending clusters: stories covered by 3+ sources within the last 24h."""
+    try:
+        pool, _ = _gather_front_page_pool(per_cat=16)
+    except Exception:
+        pool = []
+    if not pool:
+        try:
+            pool = _fetch_news_items(limit_per=8)
+        except Exception:
+            pool = []
+    now = _time.time()
+    recent = [it for it in pool
+              if not it.get("ts") or (now - it["ts"]) <= 24 * 3600]
+    clusters = _cluster_articles(recent)
+    return jsonify({
+        "status": "ok",
+        "clusters": clusters,
+        "total": len(clusters),
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    })
+
+
+# ── Source reputation / "Your Media Diet" ──────────────────────────────────
+# Per-source engagement counters at ~/.friday/news/source_stats.json. Each user
+# interaction (click, read-later, boost, ban, ignore) bumps a counter; category
+# read-counts power the Media Diet bar chart.
+_SOURCE_STAT_ACTIONS = {
+    "click": "clicks", "read": "reads", "read_later": "read_laters",
+    "boost": "boosts", "ban": "bans", "ignore": "ignores",
+}
+
+
+def _load_source_stats():
+    try:
+        if SOURCE_STATS_FILE.exists():
+            data = json.loads(SOURCE_STATS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data.setdefault("sources", {})
+                data.setdefault("categories", {})
+                return data
+    except Exception:
+        pass
+    return {"sources": {}, "categories": {}}
+
+
+def _record_source_event(source, action, category=""):
+    """Increment the engagement counter for (source, action). Fail-soft."""
+    col = _SOURCE_STAT_ACTIONS.get(action)
+    domain = _extract_domain(source)
+    if not col or not domain:
+        return
+    with _NEWS_STATS_LOCK:
+        stats = _load_source_stats()
+        rec = stats["sources"].setdefault(domain, {})
+        rec[col] = int(rec.get(col, 0)) + 1
+        rec["last"] = datetime.now().isoformat(timespec="seconds")
+        # Category distribution counts only consumption-type events so the bar
+        # chart reflects what Stephen actually read, not what he banned.
+        if category and action in ("click", "read", "read_later"):
+            stats["categories"][category] = int(
+                stats["categories"].get(category, 0)) + 1
+        try:
+            SOURCE_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SOURCE_STATS_FILE.write_text(json.dumps(stats, indent=2),
+                                         encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _source_engagement(rec):
+    """Net engagement score: positive signals minus avoidance signals."""
+    return (int(rec.get("clicks", 0)) + int(rec.get("reads", 0))
+            + 2 * int(rec.get("read_laters", 0))
+            + 3 * int(rec.get("boosts", 0))
+            - 2 * int(rec.get("bans", 0))
+            - int(rec.get("ignores", 0)))
+
+
+@app.route('/api/news/source-stats', methods=['GET', 'POST'])
+def news_source_stats():
+    """Per-source engagement data for the 'Your Media Diet' panel.
+
+    POST {source, action, category?} records one interaction. Recognized
+    actions: click, read, read_later, boost, ban, ignore.
+    GET returns per-source counters, per-category read counts, and the
+    most/least engaged sources."""
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        _record_source_event(data.get("source") or "",
+                             (data.get("action") or "").strip().lower(),
+                             (data.get("category") or "").strip())
+        return jsonify({"status": "ok"})
+    stats = _load_source_stats()
+    sources = stats.get("sources", {})
+    ranked = []
+    for dom, rec in sources.items():
+        ranked.append({"source": dom, "engagement": _source_engagement(rec),
+                       **rec})
+    ranked.sort(key=lambda r: r["engagement"], reverse=True)
+    most = [r for r in ranked if r["engagement"] > 0][:8]
+    least = [r for r in reversed(ranked) if r["engagement"] <= 0][:8]
+    return jsonify({
+        "status": "ok",
+        "sources": sources,
+        "categories": stats.get("categories", {}),
+        "most_engaged": most,
+        "least_engaged": least,
+        "total_sources": len(sources),
+    })
+
+
+# ── "Related from Wiki" connections ────────────────────────────────────────
+_WIKI_INDEX_CACHE = {"at": 0.0, "titles": []}
+_WIKI_INDEX_TTL = 120
+
+
+def _wiki_title_index():
+    """Cached [{title, path, section}] for every wiki page across both stores.
+
+    Scans the primary wiki (~/wiki) and Friday's mirror (~/.friday/wiki). Page
+    titles are humanized (dashes/underscores -> spaces) for substring matching;
+    titles under 4 chars are skipped to avoid spurious matches."""
+    now = _time.time()
+    cache = _WIKI_INDEX_CACHE
+    if cache["titles"] and (now - cache["at"]) < _WIKI_INDEX_TTL:
+        return cache["titles"]
+    out, seen = [], set()
+    for root in (WIKI_DIR, FRIDAY_DIR / "wiki"):
+        if not root.exists():
+            continue
+        for f in root.rglob("*"):
+            if not f.is_file() or f.suffix.lower() not in (".md", ".txt"):
+                continue
+            display = re.sub(r"[-_]+", " ", f.stem).strip()
+            key = display.lower()
+            if len(display) < 4 or key in seen:
+                continue
+            seen.add(key)
+            try:
+                rel = str(f.relative_to(root)).replace("\\", "/")
+            except Exception:
+                rel = f.name
+            out.append({"title": display, "path": rel, "section": f.parent.name})
+    cache.update({"at": now, "titles": out})
+    return out
+
+
+@app.route('/api/news/wiki-connections')
+def news_wiki_connections():
+    """Wiki pages whose title appears in an article's title or snippet.
+
+    Accepts ?title= & ?snippet= (the card has them) or ?article_id= to look the
+    article up in the current live feed. Case-insensitive substring match
+    against humanized wiki page titles."""
+    title = (request.args.get("title") or "").strip()
+    snippet = (request.args.get("snippet") or "").strip()
+    article_id = (request.args.get("article_id") or "").strip()
+    if not title and not snippet and article_id:
+        try:
+            for it in _fetch_news_items(limit_per=8):
+                if it.get("id") == article_id:
+                    title, snippet = it.get("title", ""), it.get("snippet", "")
+                    break
+        except Exception:
+            pass
+    hay = f"{title} {snippet}".lower()
+    matches = []
+    if hay.strip():
+        for page in _wiki_title_index():
+            if page["title"].lower() in hay:
+                matches.append(page)
+    matches.sort(key=lambda m: len(m["title"]), reverse=True)
+    return jsonify({"status": "ok", "matches": matches[:5], "count": len(matches)})
+
+
+# ── "Deep Dive" full-article summaries ─────────────────────────────────────
+def _extract_article_text(url):
+    """Fetch a URL and extract readable article text via BeautifulSoup.
+
+    Returns (page_title, text). Strips script/style/nav chrome and joins the
+    article's paragraph text; falls back to whole-container text for thin <p>
+    markup. Raises on network/parse failure."""
+    import requests as _req
+    from bs4 import BeautifulSoup
+    resp = _req.get(url, timeout=15, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0",
+    })
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "aside", "footer", "header",
+                     "form", "noscript"]):
+        tag.decompose()
+    page_title = soup.title.get_text(strip=True) if soup.title else ""
+    container = soup.find("article") or soup.find("main") or soup.body or soup
+    paras = [p.get_text(" ", strip=True) for p in container.find_all("p")]
+    text = "\n\n".join(p for p in paras if len(p) > 40)
+    if len(text) < 200:  # thin <p> markup — fall back to all container text
+        text = container.get_text("\n", strip=True)
+    return page_title, re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+@app.route('/api/news/deep-dive', methods=['POST'])
+def news_deep_dive():
+    """Fetch an article, summarize it with Claude, and cache the result.
+
+    Body: {url, title?, refresh?}. Returns {summary, implications, key_quotes}.
+    Cached at ~/.friday/news/deep_dives/<url_hash>.json so repeat opens are
+    instant."""
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url or not url.startswith("http"):
+        return jsonify({"status": "error", "message": "A valid url is required."}), 400
+    cache_path = DEEP_DIVE_DIR / f"{_news_url_hash(url)}.json"
+    if not data.get("refresh") and cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached["cached"] = True
+            return jsonify(cached)
+        except Exception:
+            pass
+    try:
+        page_title, body = _extract_article_text(url)
+    except Exception as e:
+        return jsonify({"status": "error",
+                        "message": f"Couldn't fetch the article: {e}"}), 502
+    if len(body) < 200:
+        return jsonify({"status": "error",
+                        "message": "Couldn't extract enough article text to summarize."}), 422
+    headline = data.get("title") or page_title or url
+    body = body[:14000]  # keep the prompt bounded
+    prompt = (
+        "You are deep-reading a news article for Stephen. Use what you know about "
+        "him (his work, interests, and goals) to make the 'implications' specific "
+        "and personal — not generic.\n\n"
+        f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
+        "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
+        "these keys:\n"
+        '  "summary": a 3-paragraph plain-text summary, paragraphs separated by \\n\\n;\n'
+        '  "implications": 2-4 sentences on what this specifically means for Stephen;\n'
+        '  "key_quotes": an array of 2-4 short verbatim quote strings from the article.'
+    )
+    try:
+        system = _get_friday_system_prompt(keywords=headline, workspace="news")
+        raw = _call_claude([{"role": "user", "content": prompt}],
+                           system=system, max_tokens=2000)
+    except Exception as e:
+        return jsonify({"status": "error",
+                        "message": f"Summary generation failed: {e}"}), 502
+    parsed = _extract_json_block(raw) or {}
+    quotes = parsed.get("key_quotes")
+    result = {
+        "status": "ok",
+        "url": url,
+        "title": headline,
+        "summary": (parsed.get("summary") or raw or "").strip(),
+        "implications": (parsed.get("implications") or "").strip(),
+        "key_quotes": quotes if isinstance(quotes, list) else [],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "cached": False,
+    }
+    try:
+        DEEP_DIVE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return jsonify(result)
 
 
 # Fixed loopback redirect for Desktop ("installed") OAuth clients. Google accepts

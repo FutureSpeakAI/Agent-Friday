@@ -1536,11 +1536,116 @@ window.addEventListener('DOMContentLoaded',function(){
             color:#ffe6b8; background:rgba(245,158,11,0.07); border:1px solid rgba(245,158,11,0.18);
         }
         .editorial-note b { color:#f59e0b; }
+        /* ── Smart news features ── */
+        /* Sentiment dot: green positive / gray neutral / red negative */
+        .sentiment-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; display:inline-block; margin-right:3px; }
+        .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
+        .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
+        .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* "In your wiki" connection link */
+        .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
+        .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
+        .wiki-link:hover { color:#7fe3ff; }
+        /* Deep Dive button + expandable panel */
+        .deepdive-wrap { margin-top:8px; }
+        .deepdive-btn {
+            font-size:10px; color:#b794f6; cursor:pointer; background:rgba(124,58,237,0.10);
+            border:1px solid rgba(124,58,237,0.28); border-radius:6px; padding:3px 9px;
+            font-family:'Orbitron',monospace; letter-spacing:0.04em;
+        }
+        .deepdive-btn:hover { background:rgba(124,58,237,0.20); color:#d6bcff; }
+        .deepdive-panel {
+            margin-top:8px; padding:10px 12px; border-radius:8px; font-size:11.5px; line-height:1.5;
+            color:#d7dbe6; background:rgba(124,58,237,0.06); border:1px solid rgba(124,58,237,0.18);
+        }
+        .deepdive-loading { display:flex; align-items:center; gap:8px; color:#b794f6; font-size:11px; }
+        .deepdive-err { color:#ff7a93; font-size:11px; }
+        .deepdive-summary p { margin:0 0 8px; }
+        .deepdive-impl { margin-top:6px; padding-top:7px; border-top:1px solid rgba(255,255,255,0.06); color:#ffe6b8; }
+        .deepdive-impl b { color:#f59e0b; }
+        .deepdive-quotes { margin-top:8px; }
+        .deepdive-quotes blockquote {
+            margin:5px 0; padding-left:9px; border-left:2px solid rgba(0,212,255,0.4);
+            color:#9fc6d6; font-style:italic; font-size:11px;
+        }
+        .deepdive-meta { margin-top:6px; font-size:9px; color:#667; text-align:right; }
+        /* Trending clusters strip */
+        .cluster-strip { margin-bottom:14px; }
+        .cluster-strip-head {
+            font-family:'Orbitron',monospace; font-size:11px; color:#ffae5b; letter-spacing:0.05em; margin-bottom:8px;
+        }
+        .cluster-card {
+            border-radius:10px; padding:11px 13px; margin-bottom:9px;
+            background:rgba(255,174,91,0.05); border:1px solid rgba(255,174,91,0.20); border-left:3px solid #ffae5b;
+        }
+        .cluster-cardtop { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+        .cluster-badge {
+            font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.05em; padding:2px 8px;
+            border-radius:5px; color:#1a1208; background:#ffae5b; font-weight:600;
+        }
+        .cluster-headline { font-size:14px; font-weight:600; color:#f2f4fa; cursor:pointer; line-height:1.3; }
+        .cluster-headline:hover { color:#fff; }
+        .cluster-sources { font-size:10px; color:#8b94a6; margin-top:5px; }
+        .cluster-toggle {
+            margin-top:7px; font-size:10px; color:#ffae5b; cursor:pointer; background:none; border:none; padding:0;
+            font-family:'Orbitron',monospace; letter-spacing:0.03em;
+        }
+        .cluster-toggle:hover { color:#ffc98a; }
+        .cluster-list { margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; }
+        .cluster-item { display:flex; align-items:center; gap:7px; padding:4px 0; font-size:11.5px; }
+        .cluster-item-link { color:#cfd6e4; cursor:pointer; flex:1; text-decoration:none; }
+        .cluster-item-link:hover { color:#fff; }
+        .cluster-item-src { display:flex; align-items:center; gap:5px; font-size:9px; color:#7a8394; white-space:nowrap; }
+        /* Your Media Diet bar chart */
+        .diet-bar-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+        .diet-bar-label { font-size:10px; color:#aeb6c4; width:64px; flex-shrink:0; }
+        .diet-bar-track { flex:1; height:9px; border-radius:5px; background:rgba(255,255,255,0.05); overflow:hidden; }
+        .diet-bar-fill { display:block; height:100%; border-radius:5px; background:linear-gradient(90deg,#00d4ff,#7c3aed); }
+        .diet-bar-num { font-size:10px; color:#8fb8c8; width:24px; text-align:right; flex-shrink:0; }
 
         /* Save (Read Later) + background-open card buttons */
         .src-btn.save:hover { background:rgba(0,212,255,0.18); }
         .src-btn.save.on { background:rgba(0,212,255,0.16); }
         .src-btn.bg:hover { background:rgba(124,58,237,0.2); }
+        .src-btn.draft:hover { background:rgba(245,158,11,0.2); }
+        .src-btn.note:hover { background:rgba(0,212,255,0.2); }
+        .src-btn.note.on { background:rgba(0,212,255,0.14); }
+        .src-btn.note.active { background:rgba(0,212,255,0.28); box-shadow:0 0 0 1px rgba(0,212,255,0.4) inset; }
+
+        /* Front Page audio briefing — mini player bar */
+        .fp-audio-bar {
+            display:flex; align-items:center; gap:10px; margin-bottom:12px;
+            padding:8px 12px; border-radius:10px;
+            background:linear-gradient(90deg,rgba(0,212,255,0.10),rgba(124,58,237,0.10));
+            border:1px solid rgba(0,212,255,0.22);
+        }
+        .fp-audio-btn {
+            flex:0 0 auto; width:30px; height:30px; border-radius:50%; cursor:pointer;
+            display:flex; align-items:center; justify-content:center; font-size:13px;
+            color:#03060d; background:#00d4ff; border:none; transition:filter 0.15s;
+        }
+        .fp-audio-btn:hover { filter:brightness(1.12); }
+        .fp-audio-btn:disabled { opacity:0.5; cursor:default; }
+        .fp-audio-btn.close { background:rgba(255,255,255,0.08); color:#aeb4c2; }
+        .fp-audio-btn.close:hover { background:rgba(255,0,128,0.2); color:#fff; }
+        .fp-audio-label { flex:0 0 auto; font-size:11px; color:#cfe9f4; white-space:nowrap; }
+        .fp-audio-track { flex:1 1 auto; height:6px; border-radius:4px; cursor:pointer;
+            background:rgba(255,255,255,0.10); overflow:hidden; min-width:80px; }
+        .fp-audio-fill { height:100%; background:linear-gradient(90deg,#00d4ff,#7c3aed); transition:width 0.1s linear; }
+        .fp-audio-time { flex:0 0 auto; font-size:10px; color:#8fb8c8; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
+        .fp-audio-speed { flex:0 0 auto; display:flex; gap:3px; }
+        .fp-spd { font-size:10px; padding:2px 7px; border-radius:10px; cursor:pointer;
+            color:#9aa1b0; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.07); }
+        .fp-spd:hover { color:#e0e4ee; }
+        .fp-spd.on { color:#00d4ff; background:rgba(0,212,255,0.14); border-color:rgba(0,212,255,0.32); }
+
+        /* News transient toast */
+        .news-toast {
+            position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:30;
+            font-size:11px; color:#e0f6ff; background:rgba(10,18,30,0.92);
+            border:1px solid rgba(0,212,255,0.3); border-radius:8px; padding:6px 14px;
+            box-shadow:0 6px 24px rgba(0,0,0,0.45);
+        }
 
         /* Stream filter bar: category tabs + sort pills */
         .stream-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px; }
@@ -1605,6 +1710,78 @@ window.addEventListener('DOMContentLoaded',function(){
             letter-spacing:0.08em; color:var(--accent, #00d4ff);
         }
         .fp-section-ctx { font-size:11.5px; color:#9aa1b0; font-style:italic; }
+        /* What-changed badges + thread updates */
+        .fp-badge {
+            display:inline-block; font-family:'Orbitron',monospace; font-size:8.5px;
+            letter-spacing:0.08em; padding:1px 6px; border-radius:4px; margin-left:7px;
+            vertical-align:middle; font-weight:700;
+        }
+        .fp-badge.new { color:#03130a; background:#00ff88; border:1px solid #00ff88; }
+        .fp-badge.update { color:#0a0a14; background:#f59e0b; border:1px solid #f59e0b; }
+        .fp-thread {
+            margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px; line-height:1.45;
+            color:#cfe8ff; background:rgba(0,212,255,0.07); border:1px solid rgba(0,212,255,0.2);
+        }
+        .fp-thread.sm { font-size:10.5px; margin-top:6px; padding:5px 8px; }
+        .fp-thread b { color:#00d4ff; }
+
+        /* Your day in context */
+        .fp-daycontext {
+            margin-bottom:18px; padding:14px 16px; border-radius:11px;
+            background:linear-gradient(135deg,rgba(124,58,237,0.1),rgba(0,212,255,0.06));
+            border:1px solid rgba(124,58,237,0.28);
+        }
+        .fp-daycontext-head {
+            font-family:'Orbitron',monospace; font-size:12px; font-weight:600;
+            letter-spacing:0.05em; color:#b794f6; margin-bottom:6px;
+        }
+        .fp-daycontext-body { font-size:13px; line-height:1.55; color:#d6d9e3; }
+
+        /* Contrarian Corner */
+        .fp-contrarian {
+            position:relative; margin-bottom:20px; padding:16px 18px; border-radius:11px;
+            background:rgba(244,114,182,0.06);
+            border:1px solid rgba(244,114,182,0.3); border-left:4px solid #f472b6;
+            box-shadow:0 0 22px rgba(244,114,182,0.12);
+        }
+        .fp-contrarian-head {
+            font-family:'Orbitron',monospace; font-size:12px; font-weight:700;
+            letter-spacing:0.05em; color:#f472b6; margin-bottom:7px;
+        }
+        .fp-contrarian-title { font-size:15px; font-weight:700; color:#f6e9f1; line-height:1.25; margin-bottom:6px; }
+        .fp-contrarian-title:hover { color:#f472b6; }
+        .fp-contrarian-note { font-size:12.5px; line-height:1.55; color:#e3c9d8; }
+        .fp-contrarian-src { font-size:10.5px; color:#b07a96; margin-top:6px; font-style:italic; }
+
+        /* Competitor Watch */
+        .fp-competitor-head { border-bottom-color:color-mix(in srgb,#a78bfa 40%,transparent)!important; }
+        .fp-competitor-head .fp-section-title { color:#a78bfa!important; }
+        .fp-competitor-card { border-left:3px solid #a78bfa; }
+        .fp-competitor-analysis {
+            margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px; line-height:1.5;
+            color:#dcd2f7; background:rgba(167,139,250,0.08); border:1px solid rgba(167,139,250,0.2);
+        }
+        .fp-competitor-analysis b { color:#a78bfa; }
+
+        /* Weekly Digest */
+        .wk-stories { display:flex; flex-direction:column; gap:9px; }
+        .wk-story {
+            display:flex; gap:12px; align-items:flex-start; padding:11px 13px; border-radius:9px;
+            background:rgba(10,14,26,0.7); border:1px solid rgba(255,255,255,0.06);
+        }
+        .wk-num {
+            flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+            display:flex; align-items:center; justify-content:center;
+            font-family:'Orbitron',monospace; font-size:13px; font-weight:700;
+            color:#03060d; background:#00d4ff;
+        }
+        .wk-story-title { font-size:13.5px; font-weight:600; color:#eef1f6; line-height:1.3; }
+        .wk-story-why { font-size:11.5px; color:#9aa1b0; line-height:1.45; margin-top:3px; }
+        .wk-trends { display:flex; flex-wrap:wrap; gap:7px; }
+        .wk-trend {
+            font-size:11.5px; padding:5px 11px; border-radius:14px;
+            color:#9be7c4; background:rgba(45,212,191,0.1); border:1px solid rgba(45,212,191,0.28);
+        }
 
         /* Briefing preview cards (past briefings) */
         .brief-card {
@@ -5074,9 +5251,82 @@ function CodeWS(){
 }
 // ═══ NEWS WORKSPACE — magazine layout, source trust, live status ═══
 const NEWS_GEN_STEPS=['Fetching news…','Checking calendar…','Scanning email…','Writing briefing…'];
+// "Why Friday Picked This" — pure keyword matching against Stephen's profile.
+// Each card gets one subtle relevance tag; the profile with the most keyword
+// hits wins. No model call — title + snippet substring match only.
+const NEWS_PROFILE=[
+  {key:'job_search',label:'AI Leadership',kw:['AI','director','CAIO','leadership','remote']},
+  {key:'futurespeak',label:'FutureSpeak',kw:['agent','sovereign','MCP','LLM','framework']},
+  {key:'austin',label:'Austin Local',kw:['Austin','Texas','ATX']},
+  {key:'politics',label:'Policy & Regulation',kw:['regulation','policy','FTC','antitrust']},
+  {key:'media',label:'Media',kw:['journalism','newsroom','media']},
+];
 function relevanceFor(it){
-  const m={'AI/Tech':'Matches your AI/Tech priority','Politics':'On your Politics watchlist','Local':'Austin local — near you','Business':'Markets & business focus','Science':'Science & climate signal','Media':'Journalism & media — your beat'};
-  return (it.boosted?'⭐ From a source you boosted · ':'')+(m[it.category]||'Picked for your interests');
+  const text=((it.title||'')+' '+(it.snippet||'')).toLowerCase();
+  let best=null,bestN=0;
+  for(const p of NEWS_PROFILE){
+    let n=0;for(const w of p.kw){if(text.includes(w.toLowerCase()))n++;}
+    if(n>bestN){bestN=n;best=p;}
+  }
+  if(best)return (it.boosted?'⭐ ':'')+'Matches: '+best.label;
+  const m={'AI/Tech':'AI/Tech priority','Politics':'Politics watchlist','Local':'Austin local','Business':'Markets & business','Science':'Science signal','Media':'Media & journalism'};
+  return (it.boosted?'⭐ Boosted source · ':'')+'Relevant: '+(m[it.category]||'your interests');
+}
+// Lexicon sentiment dot — server attaches it.sentiment (positive/neutral/negative).
+function SentimentDot({it}){
+  const s=it&&it.sentiment||'neutral';
+  const tip={positive:'Positive tone',negative:'Negative tone',neutral:'Neutral tone'}[s]||'Neutral tone';
+  return <span className={'sentiment-dot '+s} title={tip}></span>;
+}
+// Record a per-source engagement event for the "Your Media Diet" panel. Fire-
+// and-forget; ban/boost are recorded server-side so they're not posted here.
+function newsRecord(source,action,category){
+  if(!source||!action)return;
+  try{fetch('/api/news/source-stats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,action,category:category||''})})}catch(e){}
+}
+// "In your wiki" — lazily checks an article's title+snippet against wiki page
+// titles and renders a link to the wiki workspace if there's a match.
+function NewsWikiLink({it}){
+  const[matches,setMatches]=useState(null);
+  useEffect(()=>{let on=true;
+    const q='title='+encodeURIComponent(it.title||'')+'&snippet='+encodeURIComponent((it.snippet||'').slice(0,300));
+    fetch('/api/news/wiki-connections?'+q).then(r=>r.json()).then(d=>{if(on)setMatches(d.matches||[])}).catch(()=>{if(on)setMatches([])});
+    return()=>{on=false}},[it.url||it.id]);
+  if(!matches||!matches.length)return null;
+  const go=(m)=>{try{if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'wiki',path:m.path});else fridayNavigate({workspace:'wiki',path:m.path})}catch(e){}};
+  return(<div className="wiki-connect">🔗 In your wiki: {matches.slice(0,3).map((m,i)=>
+    <span key={i}><a className="wiki-link" onClick={()=>go(m)}>{m.title}</a>{i<Math.min(matches.length,3)-1?', ':''}</span>)}</div>);
+}
+// "Deep Dive" — fetches full-article text server-side, has Claude write a
+// 3-paragraph summary + implications, and shows it in an expandable panel.
+function DeepDive({it,category}){
+  const[open,setOpen]=useState(false);const[busy,setBusy]=useState(false);
+  const[data,setData]=useState(null);const[err,setErr]=useState('');
+  const run=async()=>{
+    if(open){setOpen(false);return}
+    setOpen(true);
+    if(data)return;
+    setBusy(true);setErr('');
+    try{const r=await fetch('/api/news/deep-dive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:it.url,title:it.title})});
+      const d=await r.json();
+      if(d.status!=='ok')throw new Error(d.message||'Deep dive failed');
+      setData(d);newsRecord(it.source,'read',category||it.category);
+    }catch(e){setErr(e.message||String(e))}finally{setBusy(false)}
+  };
+  if(!it.url)return null;
+  return(<div className="deepdive-wrap">
+    <button className="deepdive-btn" onClick={e=>{e.stopPropagation();run()}}>{open?'▾ Deep Dive':'🔬 Deep Dive'}</button>
+    {open&&<div className="deepdive-panel" onClick={e=>e.stopPropagation()}>
+      {busy?<div className="deepdive-loading"><span className="gen-spinner"></span> Friday is reading the full article…</div>:
+       err?<div className="deepdive-err">Couldn't deep-dive: {err}</div>:
+       data?<div>
+         <div className="deepdive-summary">{(data.summary||'').split(/\n\n+/).map((p,i)=><p key={i}>{p}</p>)}</div>
+         {data.implications&&<div className="deepdive-impl"><b>Implications for you:</b> {data.implications}</div>}
+         {data.key_quotes&&data.key_quotes.length>0&&<div className="deepdive-quotes">{data.key_quotes.map((q,i)=><blockquote key={i}>“{q}”</blockquote>)}</div>}
+         {data.cached&&<div className="deepdive-meta">cached summary</div>}
+       </div>:null}
+    </div>}
+  </div>);
 }
 function editorialFor(it){
   const m={'AI/Tech':'the pace of AI shifts what your work and tools can do next.','Politics':'policy moves here ripple into the decisions on your plate.','Local':'it is happening in your city and may touch your week directly.','Business':'market moves shape the financial backdrop of your plans.','Science':'the research frontier reshapes the future you build for.','Media':'how the press is changing is your professional terrain.'};
@@ -5103,6 +5353,8 @@ function archiveToCard(a,boostedSet){
     breaking:false,
   });
 }
+// mm:ss for the audio-player timecode (NaN/∞-safe).
+function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
@@ -5113,17 +5365,29 @@ function NewsWS(){
   const feedTopRef=useRef(null);const feedSentinelRef=useRef(null);const loadFeedRef=useRef(null);
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
+  const[weekly,setWeekly]=useState(null);const[wkList,setWkList]=useState([]);const[wkLoading,setWkLoading]=useState(true);const[wkGen,setWkGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
   const[streamCat,setStreamCat]=useState('All');const[sortBy,setSortBy]=useState('relevance');
   const[status,setStatus]=useState([]);
   const[sources,setSources]=useState({banned:[],boosted:[]});
   const[prefs,setPrefs]=useState(null);const[cats,setCats]=useState([]);
-  const[panel,setPanel]=useState(null); // 'sources' | 'customize' | null
+  const[panel,setPanel]=useState(null); // 'sources' | 'customize' | 'diet' | null
+  const[clusters,setClusters]=useState([]);const[clLoading,setClLoading]=useState(false);const[clOpen,setClOpen]=useState({});
+  const[diet,setDiet]=useState(null);const[dietLoading,setDietLoading]=useState(false);
   const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
   const[generating,setGenerating]=useState(false);const[genStep,setGenStep]=useState(-1);const[genDone,setGenDone]=useState([]);
   const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);const genTimer=useRef(null);
+  // Front Page audio briefing ("🔊 Listen") — mini player bar at the top.
+  const[fpAudio,setFpAudio]=useState(false);const[fpAudioLoading,setFpAudioLoading]=useState(false);
+  const[fpPlaying,setFpPlaying]=useState(false);const[fpProgress,setFpProgress]=useState(0);
+  const[fpDuration,setFpDuration]=useState(0);const[fpSpeed,setFpSpeed]=useState(1);
+  const fpAudioEl=useRef(null);const fpAudioCtx=useRef(null);
+  // Share-to-Draft + Annotation mode.
+  const[annById,setAnnById]=useState({});const[annotations,setAnnotations]=useState([]);
+  const[annotateFor,setAnnotateFor]=useState(null);const[annoText,setAnnoText]=useState('');const[annoBusy,setAnnoBusy]=useState(false);
+  const[shareBusy,setShareBusy]=useState(null);const[newsToast,setNewsToast]=useState('');
   // Deep-link: a notification target {workspace:'news', tab:'frontpage'|'briefings'|...}
   // switches to the requested tab and clears any open single-briefing reader.
   useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}});
@@ -5154,12 +5418,17 @@ function NewsWS(){
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
   const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
+  const loadWeekly=()=>{setWkLoading(true);fetch('/api/news/front-page/weekly/latest').then(r=>r.json()).then(d=>{setWeekly(d.digest||null);setWkList(d.digests||[]);setWkLoading(false)}).catch(()=>setWkLoading(false))};
+  const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){alert('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
   const loadReadLater=()=>{setRlLoading(true);fetch('/api/news/read-later').then(r=>r.json()).then(d=>{const it=d.items||[];setReadLater(it);setSavedUrls(Object.fromEntries(it.map(a=>[a.url,true])));setRlLoading(false)}).catch(()=>setRlLoading(false))};
+  const loadAnnotations=()=>fetch('/api/news/annotations').then(r=>r.json()).then(d=>{setAnnotations(d.annotations||[]);const m={};(d.annotated_ids||[]).forEach(id=>{if(id)m[id]=true});setAnnById(m)}).catch(()=>{});
+  const loadClusters=()=>{setClLoading(true);fetch('/api/news/clusters').then(r=>r.json()).then(d=>{setClusters(d.clusters||[]);setClLoading(false)}).catch(()=>setClLoading(false))};
+  const loadDiet=()=>{setDietLoading(true);fetch('/api/news/source-stats').then(r=>r.json()).then(d=>{setDiet(d);setDietLoading(false)}).catch(()=>setDietLoading(false))};
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
-    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadArchStats();
-    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
+    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadWeekly();loadArchStats();loadAnnotations();loadClusters();
+    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading();stopFpAudio()};
   },[]);
 
   // (Re)load the archive feed from the top whenever the category or sort changes
@@ -5187,7 +5456,7 @@ function NewsWS(){
 
   // Front Page generation + Read Later actions + background open.
   const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){alert('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
-  const saveLater=async(it)=>{if(!it||!it.url)return;setSavedUrls(s=>({...s,[it.url]:true}));try{await fetch('/api/news/read-later',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:it.url,title:it.title,source:it.source,snippet:it.snippet,category:it.category,color:it.color})});loadReadLater()}catch(e){}};
+  const saveLater=async(it)=>{if(!it||!it.url)return;setSavedUrls(s=>({...s,[it.url]:true}));newsRecord(it.source,'read_later',it.category);try{await fetch('/api/news/read-later',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:it.url,title:it.title,source:it.source,snippet:it.snippet,category:it.category,color:it.color})});loadReadLater()}catch(e){}};
   const removeLater=async(url)=>{setReadLater(l=>l.filter(a=>a.url!==url));setSavedUrls(s=>{const n={...s};delete n[url];return n});try{await fetch('/api/news/read-later?url='+encodeURIComponent(url),{method:'DELETE'})}catch(e){}};
   // Open without stealing focus: pop the tab, then blur it and refocus this window.
   const openBg=(url)=>{if(!url)return;const w=window.open(url,'_blank','noopener');if(w){try{w.blur();window.focus()}catch(_){}}};
@@ -5206,6 +5475,63 @@ function NewsWS(){
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
+
+  // ── Front Page audio briefing ──
+  const flashNews=t=>{setNewsToast(t);setTimeout(()=>setNewsToast(''),2400)};
+  const stopFpAudio=()=>{const a=fpAudioEl.current;if(a){try{a.pause()}catch(_){}if(a.src&&a.src.startsWith('blob:'))URL.revokeObjectURL(a.src);fpAudioEl.current=null}try{if(fpAudioCtx.current)fpAudioCtx.current.close()}catch(_){}fpAudioCtx.current=null;setFpPlaying(false);setFpProgress(0);window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false};
+  const closeFpAudio=()=>{stopFpAudio();setFpAudio(false)};
+  const listenFrontPage=async()=>{
+    if(fpAudioLoading)return;stopReading();stopFpAudio();setFpAudioLoading(true);setFpAudio(true);
+    if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;
+    try{
+      const r=await fetch('/api/news/front-page/audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fp&&fp.id?{edition_id:fp.id}:{})});
+      if(!r.ok){let m='Audio generation failed';try{m=(await r.json()).message||m}catch(_){}throw new Error(m)}
+      const blob=await r.blob();const url=URL.createObjectURL(blob);
+      const a=new Audio(url);a.playbackRate=fpSpeed;fpAudioEl.current=a;
+      // Drive the holographic scene amplitude off the briefing audio (voice-mode pattern).
+      try{const ctx=new(window.AudioContext||window.webkitAudioContext)();fpAudioCtx.current=ctx;const srcN=ctx.createMediaElementSource(a);const an=ctx.createAnalyser();an.fftSize=256;srcN.connect(ctx.destination);try{srcN.connect(an)}catch(_){}const bufA=new Uint8Array(an.frequencyBinCount);const loop=()=>{if(!fpAudioEl.current){window._fridayHoloAmplitude=0;return}an.getByteFrequencyData(bufA);let s=0;for(let i=0;i<bufA.length;i++)s+=bufA[i];window._fridayHoloAmplitude=Math.min(1,(s/bufA.length)/128);requestAnimationFrame(loop)};a.addEventListener('play',()=>loop());}catch(_){}
+      a.ontimeupdate=()=>{if(a.duration)setFpProgress(a.currentTime/a.duration)};
+      a.onloadedmetadata=()=>setFpDuration(a.duration||0);
+      a.onplay=()=>setFpPlaying(true);a.onpause=()=>setFpPlaying(false);
+      a.onended=()=>{setFpPlaying(false);setFpProgress(1);window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false};
+      await a.play();
+    }catch(e){flashNews(e.message||'Audio failed');setFpAudio(false);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false}
+    finally{setFpAudioLoading(false)}
+  };
+  const toggleFpPlay=()=>{const a=fpAudioEl.current;if(!a)return;if(a.paused)a.play();else a.pause()};
+  const seekFp=(frac)=>{const a=fpAudioEl.current;if(!a||!a.duration)return;a.currentTime=Math.max(0,Math.min(1,frac))*a.duration;setFpProgress(frac)};
+  const setFpRate=(rate)=>{setFpSpeed(rate);if(fpAudioEl.current)fpAudioEl.current.playbackRate=rate};
+
+  // ── Share to Draft ──
+  const shareToDraft=async(it)=>{
+    if(!it||shareBusy)return;setShareBusy(it.url);
+    try{
+      const r=await fetch('/api/news/share-to-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:it.url,article_title:it.title,article_url:it.url,article_snippet:it.snippet})});
+      const d=await r.json();if(d.status!=='ok')throw new Error(d.message||'Failed');
+      flashNews('Opening Draft workspace…');
+      if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'draft',seedId:d.draft_id});
+      else fridayNavigate({workspace:'draft',seedId:d.draft_id});
+    }catch(e){flashNews('Share failed: '+(e.message||e))}
+    finally{setShareBusy(null)}
+  };
+
+  // ── Annotation mode ──
+  const openAnnotate=(it)=>{setAnnotateFor(annotateFor===it.url?null:it.url);setAnnoText('')};
+  const saveAnnotation=async(it)=>{
+    const txt=annoText.trim();if(!txt||annoBusy)return;setAnnoBusy(true);
+    try{await fetch('/api/news/annotate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:it.url,text:txt,article_title:it.title,article_url:it.url})});setAnnoText('');setAnnotateFor(null);flashNews('Note saved');loadAnnotations();}
+    catch(e){flashNews('Could not save note')}finally{setAnnoBusy(false)}
+  };
+  const removeAnnotations=async(articleId)=>{try{await fetch('/api/news/annotate',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:articleId})});loadAnnotations()}catch(e){}};
+  // Reusable: 📝 badge for annotated cards + the inline note panel.
+  const annoBadge=(it)=>annById[it.url]?<span className="badge-cyan" title="You annotated this" style={{fontSize:9,padding:'1px 6px'}}>📝</span>:null;
+  const annoBox=(it)=>annotateFor===it.url?(<div className="anno-box" onClick={e=>e.stopPropagation()} style={{marginTop:8,padding:8,background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8}}>
+    <textarea className="input" autoFocus style={{width:'100%',height:54,resize:'vertical',fontSize:11}} value={annoText} onChange={e=>setAnnoText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))saveAnnotation(it)}} placeholder="Your note — commentary, reminder, insight… (Ctrl+Enter to save)"/>
+    <div style={{display:'flex',gap:4,marginTop:6}}>
+      <button className="btn" style={{fontSize:10,padding:'2px 8px'}} disabled={annoBusy||!annoText.trim()} onClick={()=>saveAnnotation(it)}>{annoBusy?'Saving…':'Save note'}</button>
+      <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px'}} onClick={()=>{setAnnotateFor(null);setAnnoText('')}}>Cancel</button>
+    </div>
+  </div>):null;
   const generateBriefing=async()=>{if(generating)return;setGenerating(true);setGenStep(0);setGenDone([]);
     let step=0;genTimer.current=setInterval(()=>{step=Math.min(step+1,NEWS_GEN_STEPS.length-1);setGenDone(NEWS_GEN_STEPS.slice(0,step));setGenStep(step)},1800);
     try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');
@@ -5250,11 +5576,25 @@ function NewsWS(){
   const cardActions=(it)=>(<div className="src-actions">
     <button className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
     <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+    <button className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
+    <button className={'src-btn note'+(annById[it.url]?' on':'')+(annotateFor===it.url?' active':'')} title={annById[it.url]?'Annotated — add another note':'Annotate'} onClick={e=>{e.stopPropagation();openAnnotate(it)}}>📝</button>
     <button className="src-btn boost" title={'Boost '+it.source} onClick={e=>{e.stopPropagation();boostSource(it.source)}}>⭐</button>
     <button className="src-btn ban" title={'Ban '+it.source} onClick={e=>{e.stopPropagation();banSource(it.source)}}>🚫</button>
   </div>);
 
   return(<div className="news-ws" style={{position:'relative'}}>
+    {/* Front Page audio briefing — mini player bar */}
+    {fpAudio&&<div className="fp-audio-bar">
+      <button className="fp-audio-btn" title={fpPlaying?'Pause':'Play'} onClick={toggleFpPlay} disabled={fpAudioLoading}>{fpAudioLoading?'⏳':(fpPlaying?'⏸':'▶')}</button>
+      <span className="fp-audio-label">🔊 {fpAudioLoading?'Generating audio…':'Front Page briefing'}</span>
+      <div className="fp-audio-track" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();seekFp((e.clientX-rect.left)/rect.width)}}>
+        <div className="fp-audio-fill" style={{width:(Math.round(fpProgress*1000)/10)+'%'}}></div>
+      </div>
+      <span className="fp-audio-time">{_fmtDur(fpProgress*fpDuration)} / {_fmtDur(fpDuration)}</span>
+      <div className="fp-audio-speed">{[1,1.5,2].map(s=><button key={s} className={'fp-spd'+(fpSpeed===s?' on':'')} onClick={()=>setFpRate(s)}>{s}x</button>)}</div>
+      <button className="fp-audio-btn close" title="Close player" onClick={closeFpAudio}>✕</button>
+    </div>}
+    {newsToast&&<div className="news-toast">{newsToast}</div>}
     {/* Live status strip */}
     <div className="status-strip">
       {status.map((c,i)=><div key={i} className="status-pill" title={c.detail}>
@@ -5270,12 +5610,16 @@ function NewsWS(){
         <button className={'btn '+(tab==='frontpage'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('frontpage')}>🗞 Front Page</button>
         <button className={'btn '+(tab==='feed'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('feed')}>📰 Feed</button>
         <button className={'btn '+(tab==='readlater'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('readlater');loadReadLater()}}>🔖 Read Later{readLater.length?(' ('+readLater.length+')'):''}</button>
+        <button className={'btn '+(tab==='notes'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('notes');loadAnnotations()}}>📝 My Notes{annotations.length?(' ('+annotations.length+')'):''}</button>
         <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
+        <button className={'btn '+(tab==='weekly'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('weekly');loadWeekly()}}>📅 Weekly</button>
       </div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
-        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={()=>{loadFeed(true);loadArchStats()}}>↻ Refresh</button>}
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('diet');loadDiet()}}>📊 Your Media Diet</button>
+        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={()=>{loadFeed(true);loadArchStats();loadClusters()}}>↻ Refresh</button>}
+        {tab==='frontpage'&&fp&&<button className="btn" style={{fontSize:11}} onClick={listenFrontPage} disabled={fpAudioLoading}>{fpAudioLoading?'Generating…':'🔊 Listen'}</button>}
         {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
         {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
       </div>
@@ -5307,6 +5651,25 @@ function NewsWS(){
       {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your news archive…</div>:
        streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No archived stories{streamCat!=='All'?(' in '+streamCat):''} yet. Friday archives articles every few minutes as it fetches them — check back shortly, or open the 🗞 Front Page.</div>:
        <div>
+       {clusters.length>0&&<div className="cluster-strip">
+         <div className="cluster-strip-head">🔥 Trending — one story, covered by multiple sources</div>
+         {clusters.map((cl,ci)=><div key={cl.id||ci} className={'cluster-card cat-'+(cl.color||'tech')}>
+           <div className="cluster-cardtop">
+             <span className="cluster-badge">Covered by {cl.source_count} sources</span>
+             <span className="cat-chip">{cl.category}</span>
+           </div>
+           <div className="cluster-headline" onClick={()=>{const a=cl.articles[0];if(a&&a.url){window.open(a.url,'_blank');newsRecord(a.source,'click',a.category)}}}>{cl.headline}</div>
+           <div className="cluster-sources">{cl.sources.slice(0,6).join(' · ')}{cl.sources.length>6?' …':''}</div>
+           <button className="cluster-toggle" onClick={()=>setClOpen(o=>({...o,[cl.id]:!o[cl.id]}))}>{clOpen[cl.id]?'▾ Hide coverage':'▸ Show all '+cl.articles.length+' articles'}</button>
+           {clOpen[cl.id]&&<div className="cluster-list">
+             {cl.articles.map((a,ai)=><div key={ai} className="cluster-item">
+               <SentimentDot it={a}/>
+               <a className="cluster-item-link" onClick={()=>{if(a.url){window.open(a.url,'_blank');newsRecord(a.source,'click',a.category)}}}>{a.title}</a>
+               <span className="cluster-item-src"><span className={'trust-dot '+(a.trust||'yellow')}></span>{a.source}</span>
+             </div>)}
+           </div>}
+         </div>)}
+       </div>}
        <div className="news-masonry">
          {streamItems.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
            <div className="news-cardtop">
@@ -5317,19 +5680,24 @@ function NewsWS(){
            <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
            <div className="news-snippet">{it.snippet}</div>
            <div className="source-row">
+             <SentimentDot it={it}/>
              <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
              {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
              {it.sentiment&&it.sentiment!=='neutral'&&<span className={it.sentiment==='positive'?'badge-cyan':'badge-amber'} style={{fontSize:9,padding:'1px 6px'}}>{it.sentiment==='positive'?'▲ Positive':'▼ Negative'}</span>}
              {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖 Saved</span>}
+             {annoBadge(it)}
            </div>
            <div className="news-meta">
              {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
              {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
-             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>openBg(it.url)}>⧉ Background</span>
-             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{openBg(it.url);newsRecord(it.source,'click',it.category)}}>⧉ Background</span>
+             <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{if(it.url){window.open(it.url,'_blank');newsRecord(it.source,'click',it.category)}}}>↗ Open article</span>
            </div>
            {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
+           <NewsWikiLink it={it}/>
+           <DeepDive it={it} category={it.category}/>
+           {annoBox(it)}
          </div>)}
        </div>
        {/* Infinite-scroll sentinel + loading spinner */}
@@ -5359,20 +5727,43 @@ function NewsWS(){
              {fpList.map(e=><option key={e.id} value={e.id}>{e.date+' · '+(e.slot==='evening'?'PM':'AM')}</option>)}
            </select>}
          </div>
+         {fp.day_in_context&&<div className="fp-daycontext">
+           <div className="fp-daycontext-head">📅 Your day in context</div>
+           <div className="fp-daycontext-body">{fp.day_in_context}</div>
+         </div>}
          {/* Lead story */}
          {fp.lead&&<div className={'fp-lead cat-'+(fp.lead.color||'tech')}>
            <div className="news-cardtop">
-             <span className="cat-chip">LEAD · {fp.lead.category}</span>
+             <span className="cat-chip">LEAD · {fp.lead.category}</span>{fp.lead.continuing?<span className="fp-badge update">UPDATE</span>:fp.lead.new_since_last?<span className="fp-badge new">NEW</span>:null}
              {cardActions(fp.lead)}
            </div>
            {fp.lead.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
            <div className="fp-lead-headline" onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>{fp.lead.title}</div>
            <div className="fp-lead-snippet">{fp.lead.snippet}</div>
            {fp.lead.editorial_note&&<div className="editorial-note"><b>Friday's note:</b> {fp.lead.editorial_note}</div>}
+           {fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
            <div className="source-row" style={{marginTop:8}}>
              <span className="source-badge"><span className={'trust-dot '+(fp.lead.trust||'yellow')}></span>{fp.lead.source}</span>
+             {annoBadge(fp.lead)}
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
+           </div>
+           {annoBox(fp.lead)}
+         </div>}
+         {fp.contrarian_corner&&fp.contrarian_corner.note&&<div className={'fp-contrarian cat-'+(fp.contrarian_corner.color||'media')}>
+           <div className="fp-contrarian-head">🤔 Contrarian Corner</div>
+           {fp.contrarian_corner.title&&<div className="fp-contrarian-title" style={{cursor:fp.contrarian_corner.url?'pointer':'default'}} onClick={()=>fp.contrarian_corner.url&&window.open(fp.contrarian_corner.url,'_blank')}>{fp.contrarian_corner.title}</div>}
+           <div className="fp-contrarian-note">{fp.contrarian_corner.note}</div>
+           {fp.contrarian_corner.source&&<div className="fp-contrarian-src">— {fp.contrarian_corner.source}</div>}
+         </div>}
+         {(fp.competitor_watch||[]).length>0&&<div className="fp-section">
+           <div className="fp-section-head fp-competitor-head"><span className="fp-section-title">🛰 Competitor Watch</span></div>
+           <div className="news-masonry">
+             {fp.competitor_watch.map((c,ci)=><div key={ci} className="news-card fp-competitor-card">
+               <div className="news-headline" onClick={()=>c.url&&window.open(c.url,'_blank')}>{c.title}</div>
+               {c.analysis&&<div className="fp-competitor-analysis"><b>Positioning:</b> {c.analysis}</div>}
+               {c.source&&<div className="source-row"><span className="source-badge">{c.source}</span></div>}
+             </div>)}
            </div>
          </div>}
          {/* Sections */}
@@ -5383,7 +5774,7 @@ function NewsWS(){
            </div>
            <div className="news-masonry">
              {(sec.articles||[]).map((it,i)=><div key={i} className={'news-card cat-'+(it.color||sec.color||'tech')}>
-               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{cardActions(it)}</div>
+               <div className="news-cardtop"><span className="cat-chip">{it.source}</span>{it.continuing?<span className="fp-badge update">UPDATE</span>:it.new_since_last?<span className="fp-badge new">NEW</span>:null}{cardActions(it)}</div>{it.thread_update&&<div className="fp-thread sm"><b>New:</b> {it.thread_update}</div>}
                {it.breaking&&<span className="breaking-badge" style={{marginBottom:6,display:'inline-block'}}>● BREAKING</span>}
                <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
                <div className="news-snippet">{it.snippet}</div>
@@ -5391,10 +5782,52 @@ function NewsWS(){
                  <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
                  {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
                  {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
+                 {annoBadge(it)}
                </div>
+               {annoBox(it)}
              </div>)}
            </div>
          </div>)}
+       </div>}
+    </div>}
+
+    {/* ── WEEKLY DIGEST TAB ── */}
+    {tab==='weekly'&&<div>
+      {wkLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading the Weekly Digest…</div>:
+       !weekly?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
+         No weekly digest yet. Friday publishes one every Sunday at 8 AM Central.
+         <div style={{marginTop:12}}><button className="btn active" style={{fontSize:11}} onClick={genWeekly} disabled={wkGen}>{wkGen?'Synthesizing…':'✨ Generate Weekly Digest'}</button></div>
+       </div>:
+       <div>
+         <div className="fp-masthead">
+           <div>
+             <div className="fp-title">Weekly Digest</div>
+             <div className="fp-sub">{(weekly.date_range||weekly.week||'')+(weekly.edition_count?(' · '+weekly.edition_count+' editions'):'')}</div>
+           </div>
+           <div style={{display:'flex',gap:6,alignItems:'center'}}>
+             {wkList.length>1&&<select className="input" style={{fontSize:11,maxWidth:160}} value={weekly.id} onChange={e=>{const d=wkList.find(x=>x.id===e.target.value);if(d)setWeekly(d)}}>
+               {wkList.map(w=><option key={w.id} value={w.id}>{w.week||w.id}</option>)}
+             </select>}
+             <button className="btn" style={{fontSize:11}} onClick={genWeekly} disabled={wkGen}>{wkGen?'Synthesizing…':'↻ Regenerate'}</button>
+           </div>
+         </div>
+         {weekly.editorial&&<div className="fp-lead cat-business">
+           <div className="news-cardtop"><span className="cat-chip">EDITORIAL TAKE</span></div>
+           <div className="editorial-note" style={{marginTop:4}}><b>Friday's take:</b> {weekly.editorial}</div>
+         </div>}
+         {(weekly.top_stories||[]).length>0&&<div className="fp-section">
+           <div className="fp-section-head cat-tech"><span className="fp-section-title">Top 5 Stories of the Week</span></div>
+           <div className="wk-stories">
+             {weekly.top_stories.map((s,si)=><div key={si} className="wk-story">
+               <span className="wk-num">{si+1}</span>
+               <div><div className="wk-story-title">{s.title}</div>{s.why&&<div className="wk-story-why">{s.why}</div>}</div>
+             </div>)}
+           </div>
+         </div>}
+         {(weekly.trends||[]).length>0&&<div className="fp-section">
+           <div className="fp-section-head cat-science"><span className="fp-section-title">Trends</span></div>
+           <div className="wk-trends">{weekly.trends.map((tr,ti)=><span key={ti} className="wk-trend">{tr}</span>)}</div>
+         </div>}
        </div>}
     </div>}
 
@@ -5423,6 +5856,28 @@ function NewsWS(){
            </div>
            <div className="news-meta">
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
+           </div>
+         </div>)}
+       </div>}
+    </div>}
+
+    {/* ── MY NOTES TAB (annotations) ── */}
+    {tab==='notes'&&<div>
+      <div style={{fontSize:11,color:'#888',marginBottom:8}}>{annotations.length} note{annotations.length===1?'':'s'} across your articles, newest first</div>
+      {annotations.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>No notes yet. Hit 📝 on any story to jot a thought — commentary, a reminder, an insight — and it'll collect here.</div>:
+       <div className="news-masonry">
+         {annotations.map((n,i)=><div key={i} className="news-card cat-tech">
+           <div className="news-cardtop">
+             <span className="cat-chip">📝 Note</span>
+             <div className="src-actions">
+               {n.article_url&&<button className="src-btn bg" title="Open article" onClick={()=>openBg(n.article_url)}>⧉</button>}
+               <button className="src-btn ban" title="Delete notes for this article" onClick={()=>removeAnnotations(n.article_id||n.article_url)}>✕</button>
+             </div>
+           </div>
+           <div className="news-snippet" style={{color:'#e0e4ee',fontStyle:'italic'}}>“{n.text}”</div>
+           {n.article_title&&<div className="news-headline" style={{fontSize:13,cursor:n.article_url?'pointer':'default'}} onClick={()=>n.article_url&&window.open(n.article_url,'_blank')}>{n.article_title}</div>}
+           <div className="source-row">
+             <span style={{fontSize:9,color:'#777'}}>{n.timestamp?new Date(n.timestamp).toLocaleString():''}</span>
            </div>
          </div>)}
        </div>}
@@ -5483,6 +5938,19 @@ function NewsWS(){
           <span key={c} className={'toggle-pill '+(prefs.categories_enabled[c]?'on':'')} onClick={()=>toggleCat(c)}>{c}</span>)}
       </div>
       <div style={{fontSize:10,color:'#777',marginTop:10}}>Changes save instantly and shape your next ✨ Generate Now and the live feed.</div>
+    </div>}
+    {panel==='diet'&&<div className="news-side">
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h3>📊 YOUR MEDIA DIET</h3><button className="icon-btn" onClick={()=>setPanel(null)}>✕</button></div>
+      <div style={{fontSize:10,color:'#777',marginBottom:8}}>How you engage with the news — what you read, save, boost, and ban.</div>
+      {dietLoading?<div style={{color:'#999',textAlign:'center',padding:24,fontSize:12}}>Loading…</div>:!diet?<div style={{fontSize:11,color:'#777'}}>No engagement data yet. Read, save, boost, or ban a few stories and your diet will fill in.</div>:<div>
+        <div className="card-title" style={{marginTop:8}}>Articles read by category</div>
+        {(()=>{const cats=diet.categories||{};const keys=Object.keys(cats);const max=Math.max(1,...keys.map(k=>cats[k]));return keys.length===0?<div style={{fontSize:11,color:'#777'}}>Nothing read yet.</div>:keys.sort((a,b)=>cats[b]-cats[a]).map(k=><div key={k} className="diet-bar-row"><span className="diet-bar-label">{k}</span><span className="diet-bar-track"><span className="diet-bar-fill" style={{width:Math.round(cats[k]/max*100)+'%'}}></span></span><span className="diet-bar-num">{cats[k]}</span></div>)})()}
+        <div className="card-title" style={{marginTop:16}}>⭐ Most engaged sources</div>
+        {(diet.most_engaged||[]).length===0?<div style={{fontSize:11,color:'#777'}}>None yet.</div>:(diet.most_engaged||[]).map(s=><div key={s.source} className="manage-row"><span><span className="trust-dot green" style={{display:'inline-block',marginRight:7}}></span>{s.source}</span><span style={{fontSize:10,color:'#7fb6c9'}}>{s.clicks||0} read · {s.read_laters||0} saved · {s.boosts||0} boosted</span></div>)}
+        <div className="card-title" style={{marginTop:16}}>🚫 Least engaged sources</div>
+        {(diet.least_engaged||[]).length===0?<div style={{fontSize:11,color:'#777'}}>None yet.</div>:(diet.least_engaged||[]).map(s=><div key={s.source} className="manage-row"><span><span className="trust-dot red" style={{display:'inline-block',marginRight:7}}></span>{s.source}</span><span style={{fontSize:10,color:'#888'}}>{s.bans||0} banned · {s.ignores||0} ignored</span></div>)}
+        <div style={{fontSize:10,color:'#667',marginTop:14}}>{diet.total_sources||0} source{diet.total_sources===1?'':'s'} tracked.</div>
+      </div>}
     </div>}
   </div>);
 }
@@ -5894,7 +6362,16 @@ function DraftWS(){
   const[charCount,setCharCount]=useState(0);
   const[taskId,setTaskId]=useState(null);
   const[editing,setEditing]=useState(false);
+  const[seedNote,setSeedNote]=useState('');
   const pollRef=useRef(null);
+
+  // Deep-link from News "✍️ Draft": fetch the stored seed and pre-populate the
+  // mode/prompt/context, or accept an inline prefill payload.
+  const loadSeed=async(id)=>{try{const r=await fetch('/api/news/share-to-draft/'+encodeURIComponent(id));const d=await r.json();if(d.status==='ok'&&d.seed){const s=d.seed;setMode(s.mode||'linkedin_post');setPrompt(s.prompt||'');if(s.context){setContext(s.context);setShowCtx(true)}setSeedNote('Seeded from News: '+(s.article_title||s.article_url||'article'))}}catch(e){}};
+  useNavTarget('draft',t=>{
+    if(t.seedId){loadSeed(t.seedId);return}
+    if(t.prefillPrompt){setMode(t.prefillMode||'freeform');setPrompt(t.prefillPrompt);if(t.prefillContext){setContext(t.prefillContext);setShowCtx(true)}if(t.seedNote)setSeedNote(t.seedNote)}
+  });
 
   useEffect(()=>{
     if(!taskId)return;
@@ -5946,6 +6423,7 @@ function DraftWS(){
 
   return(<div>
     <FridaySays text="Draft engine ready. Pick a mode, describe what you need, and generate."/>
+    {seedNote&&<div style={{display:'flex',alignItems:'center',gap:8,fontSize:11,color:'#00d4ff',background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,padding:'6px 10px',marginBottom:8}}><span>✍️ {seedNote}</span><button className="btn" style={{fontSize:10,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setSeedNote('')}>Dismiss</button></div>}
     {/* Mode selector */}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
       {DRAFT_MODES.map(m=><button key={m.id} className={'btn '+(mode===m.id?'':'btn-magenta')}
@@ -6603,7 +7081,7 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
               <input
                 type={showAKey?'text':'password'}
                 value={data.anthropic_api_key||''}
-                onChange={e=>onChange({anthropic_api_key:e.target.value})}
+                onChange={e=>onChange({anthropic_api_key:e.target.value})/* pragma: allowlist secret */}
                 placeholder="sk-ant-..."
                 style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:8,padding:'12px 56px 12px 18px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:13,outline:'none',boxSizing:'border-box',transition:'border-color .2s'}}
                 onFocus={e=>e.target.style.borderColor='rgba(0,212,255,0.6)'}
@@ -6621,7 +7099,7 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
               <input
                 type={showGKey?'text':'password'}
                 value={data.gemini_api_key||''}
-                onChange={e=>onChange({gemini_api_key:e.target.value})}
+                onChange={e=>onChange({gemini_api_key:e.target.value})/* pragma: allowlist secret */}
                 placeholder="AIza..."
                 style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(124,58,237,0.25)',borderRadius:8,padding:'12px 56px 12px 18px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:13,outline:'none',boxSizing:'border-box',transition:'border-color .2s'}}
                 onFocus={e=>e.target.style.borderColor='rgba(124,58,237,0.6)'}
@@ -7673,6 +8151,9 @@ function App(){
   const cameraFrameRef=useRef(null);
   // Expose latest frame so external code (e.g. friday_live.html voice mode) can pull it.
   useEffect(()=>{window.fridayCamera={latestFrame:()=>cameraFrameRef.current,isOn:()=>cameraOn,source:()=>cameraSource,intervalSec:()=>cameraIntervalSec}},[cameraOn,cameraSource,cameraIntervalSec]);
+  // Global workspace opener — lets any child component (e.g. NewsWS "Share to
+  // Draft") open + deep-link a workspace without prop-drilling openWs.
+  useEffect(()=>{window.fridayOpenWorkspace=(t)=>{if(!t||!t.workspace)return;openWs(t.workspace);fridayNavigate(t)};return()=>{if(window.fridayOpenWorkspace)delete window.fridayOpenWorkspace}},[]);
   // Persist camera prefs through /api/settings (interval + auto-describe).
   useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
   const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};
