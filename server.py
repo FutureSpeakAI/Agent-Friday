@@ -1,5 +1,5 @@
 """
-FRIDAY Desktop v4.0 — Phase B OS Backend
+FRIDAY Desktop v4.4 — Phase B OS Backend
 Flask server with live data endpoints + Gemini creative API integration.
 Powered by FutureSpeak.AI
 """
@@ -10,6 +10,7 @@ import json
 import glob
 import subprocess
 import base64
+import secrets
 import sys
 import traceback
 import uuid
@@ -22,6 +23,18 @@ import calendar
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
+
+# ── Frozen (PyInstaller) resource root ──────────────────────────
+# When bundled, data files (index.html, static/, assets/, SELF.md, skills/…)
+# live under sys._MEIPASS. Resolve resource paths against it and chdir there so
+# the many CWD-relative send_from_directory('.', …) / ('static', …) calls work.
+_RES_DIR = (Path(getattr(sys, "_MEIPASS")) if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parent)
+if getattr(sys, "frozen", False):
+    try:
+        os.chdir(_RES_DIR)
+    except Exception:
+        pass
 
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context
 from functools import wraps
@@ -72,7 +85,45 @@ except ImportError:
     print("  [FRIDAY] WARNING: flask-sock not installed. /ws/live disabled.")
 
 app = Flask(__name__, static_folder='.', static_url_path='')
-app.secret_key = os.environ.get("FRIDAY_SECRET_KEY", "friday-default-secret-change-me")
+
+
+def _load_or_create_secret():
+    """Use FRIDAY_SECRET_KEY if provided, else a persisted random secret.
+
+    Never falls back to a hardcoded value: this repo is public, so a known
+    fallback secret would let anyone forge an authenticated session cookie on a
+    remotely-exposed instance. The generated secret is stored 0600 under
+    ~/.friday so sessions survive restarts.
+    """
+    env = os.environ.get("FRIDAY_SECRET_KEY")
+    if env:
+        return env
+    try:
+        p = Path(os.path.expanduser("~")) / ".friday" / "secret_key"
+        if p.exists():
+            existing = p.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        s = secrets.token_hex(32)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(s, encoding="utf-8")
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+        return s
+    except Exception:
+        # Last resort: ephemeral per-process secret (logs everyone out on restart,
+        # but never a guessable constant).
+        return secrets.token_hex(32)
+
+
+app.secret_key = _load_or_create_secret()
+# Harden the session cookie. SECURE is opt-in (set FRIDAY_COOKIE_SECURE=1) since
+# it requires HTTPS — enable it when serving over a tunnel.
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+if os.environ.get("FRIDAY_COOKIE_SECURE", "") not in ("", "0", "false", "False"):
+    app.config["SESSION_COOKIE_SECURE"] = True
 sock = Sock(app) if _HAS_SOCK else None
 
 # Server start time for uptime reporting
@@ -81,6 +132,20 @@ SERVER_START_TS = _time.time()
 # ── Authentication ───────────────────────────────────────────
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
 FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
+# When "0"/"false", same-machine (loopback) requests are NOT auto-trusted and
+# must authenticate like remote clients. Default "1" preserves the local-dev UX.
+# (Only has an effect when FRIDAY_PASSWORD is set — without a password, auth is
+# disabled entirely.)
+FRIDAY_TRUST_LOOPBACK = os.environ.get("FRIDAY_TRUST_LOOPBACK", "1") not in ("0", "false", "False")
+# Optional shared token required for the /ws/live WebSocket regardless of
+# loopback trust — defense-in-depth for voice when the server is exposed.
+FRIDAY_WS_TOKEN = os.environ.get("FRIDAY_WS_TOKEN", "")
+
+# Simple in-memory login throttle (no extra deps): per-IP failed-attempt window.
+_LOGIN_ATTEMPTS = {}            # remote_addr -> (count, window_start_ts)
+_LOGIN_LOCK = threading.Lock()
+_LOGIN_MAX = 8                  # attempts allowed per window
+_LOGIN_WINDOW = 300            # seconds
 
 # Loopback addresses that are always auto-authenticated. Requests from the
 # user's own machine (direct HTTP or WebSocket) skip the login screen; only
@@ -100,12 +165,36 @@ def _is_local_request():
         addr = addr[7:]
     return addr in _LOOPBACK_ADDRS
 
+def _loopback_trusted():
+    """Loopback auto-auth, unless FRIDAY_TRUST_LOOPBACK=0 forces login locally too."""
+    return FRIDAY_TRUST_LOOPBACK and _is_local_request()
+
+def _login_attempt_ok(ip):
+    """False if this IP has exceeded the failed-login budget for the window."""
+    with _LOGIN_LOCK:
+        cnt, first = _LOGIN_ATTEMPTS.get(ip, (0, _time.time()))
+        if _time.time() - first > _LOGIN_WINDOW:
+            cnt, first = 0, _time.time()
+            _LOGIN_ATTEMPTS[ip] = (cnt, first)
+        return cnt < _LOGIN_MAX
+
+def _login_attempt_fail(ip):
+    with _LOGIN_LOCK:
+        cnt, first = _LOGIN_ATTEMPTS.get(ip, (0, _time.time()))
+        if _time.time() - first > _LOGIN_WINDOW:
+            cnt, first = 0, _time.time()
+        _LOGIN_ATTEMPTS[ip] = (cnt + 1, first)
+
+def _login_attempt_reset(ip):
+    with _LOGIN_LOCK:
+        _LOGIN_ATTEMPTS.pop(ip, None)
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not FRIDAY_PASSWORD:
             return f(*args, **kwargs)
-        if _is_local_request():
+        if _loopback_trusted():
             session['authenticated'] = True
             return f(*args, **kwargs)
         if not session.get("authenticated"):
@@ -157,8 +246,9 @@ button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # Loopback users are auto-authenticated — never show the form locally.
-    if _is_local_request():
+    # Loopback users are auto-authenticated — never show the form locally
+    # (unless FRIDAY_TRUST_LOOPBACK=0 explicitly opts into local auth).
+    if _loopback_trusted():
         session['authenticated'] = True
         session.permanent = True
         app.permanent_session_lifetime = timedelta(days=30)
@@ -167,13 +257,21 @@ def login():
         return redirect('/')
     error = ""
     if request.method == 'POST':
+        ip = request.remote_addr or 'unknown'
+        if not _login_attempt_ok(ip):
+            error = '<div class="error">TOO MANY ATTEMPTS — WAIT AND RETRY</div>'
+            html = LOGIN_HTML.replace('{{ error }}', error)
+            return Response(html, content_type='text/html', status=429)
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username == FRIDAY_USERNAME and password == FRIDAY_PASSWORD:
+        # Constant-time comparison to avoid leaking credentials via timing.
+        if _hmac.compare_digest(username, FRIDAY_USERNAME) and _hmac.compare_digest(password, FRIDAY_PASSWORD):
             session['authenticated'] = True
             session.permanent = True
             app.permanent_session_lifetime = timedelta(days=30)
+            _login_attempt_reset(ip)
             return redirect('/')
+        _login_attempt_fail(ip)
         error = '<div class="error">ACCESS DENIED — INVALID CREDENTIALS</div>'
     html = LOGIN_HTML.replace('{{ error }}', error)
     return Response(html, content_type='text/html')
@@ -559,6 +657,71 @@ def _safe_under_home(path_str):
         return None
 
 
+# ── Tool execution sandbox ──────────────────────────────────────
+# A defense layer in front of host-affecting tools, enforced in _execute_tool
+# (every agent tool call funnels through it) ON TOP of the governance rings.
+#   "off"     — no sandbox checks (legacy behavior)
+#   "confine" — DEFAULT. Path tools (write_file/read_file) must stay under
+#               FRIDAY_SANDBOX_ROOT; run_command keeps the destructive blocklist.
+#   "strict"  — additionally, run_command is allowlist-only (leading token must
+#               be in _RUN_COMMAND_ALLOW).
+FRIDAY_SANDBOX_MODE = os.environ.get("FRIDAY_SANDBOX_MODE", "confine").lower()
+FRIDAY_SANDBOX_ROOT = (os.environ.get("FRIDAY_SANDBOX_ROOT", "") or str(HOME))
+# Leading commands allowed for run_command under "strict" mode.
+_RUN_COMMAND_ALLOW = (
+    "git", "python", "py", "pip", "pipx", "node", "npm", "npx", "pnpm", "yarn",
+    "dir", "ls", "cat", "type", "echo", "cd", "pwd", "get-content", "set-location",
+    "get-childitem", "select-string", "findstr", "where", "which", "test-path",
+    "dotnet", "cargo", "go", "rustc", "pytest", "ruff", "black", "mypy", "flake8",
+)
+# Only WRITES are path-confined by default (reads are lower-risk and confining
+# them would break legitimate reads of files outside HOME the user references).
+# Add "read_file" here, or run strict mode, to also confine reads.
+_SANDBOX_PATH_TOOLS = {"write_file": "path"}
+
+
+def _sandbox_policy(name, args):
+    """Sandbox gate run for every agent tool call, after the governance ring
+    check. Returns (allowed, reason).
+
+    - Confines path-affecting tools (write_file/read_file) to FRIDAY_SANDBOX_ROOT.
+    - Keeps the destructive-command blocklist for run_command.
+    - In "strict" mode, allowlists run_command's leading command.
+    """
+    if FRIDAY_SANDBOX_MODE in ("off", "0", "false", ""):
+        return True, "sandbox off"
+    args = args or {}
+
+    field = _SANDBOX_PATH_TOOLS.get(name)
+    if field:
+        raw = str(args.get(field) or "").strip()
+        if raw:
+            try:
+                p = Path(raw).expanduser().resolve()
+                root = Path(FRIDAY_SANDBOX_ROOT).expanduser().resolve()
+                p.relative_to(root)
+            except ValueError:
+                return False, f"path {raw!r} escapes sandbox root {FRIDAY_SANDBOX_ROOT}"
+            except Exception as e:
+                return False, f"path check failed: {e}"
+
+    if name == "run_command":
+        cmd = str(args.get("command") or "").strip()
+        low = cmd.lower()
+        for bad in _RUN_COMMAND_BLOCKLIST:
+            if bad in low:
+                return False, f"command matches destructive blocklist token {bad!r}"
+        if FRIDAY_SANDBOX_MODE == "strict":
+            lead = re.split(r"[\s|;&]+", low.lstrip("&; "), maxsplit=1)[0]
+            lead = lead.replace("\\", "/").split("/")[-1]   # basename of an exe path
+            if lead.endswith(".exe"):
+                lead = lead[:-4]
+            if lead and lead not in _RUN_COMMAND_ALLOW:
+                return False, f"command {lead!r} not in strict allowlist"
+
+    return True, "ok"
+
+
 def _html_to_text(html):
     """Strip HTML tags to plain text, preferring BeautifulSoup when available."""
     try:
@@ -721,7 +884,17 @@ def _tool_learn_skill(inp):
         existed = skill_file.exists()
         skill_file.write_text(content, encoding='utf-8')
         _log_context("skill_write", {"name": name, "action": action})
-        return f"Skill '{name}' {'modified' if existed else 'created'} at {skill_file}. Restart server to load."
+        # Register into the portable SKILL.md registry + SkillOpt so the skill is
+        # matched/injected on the very next turn (no restart needed) and enters
+        # the closed-loop optimizer.
+        try:
+            import skill_registry as _skreg
+            _sk = _skreg.get_skill(name)
+            if _sk:
+                _skreg.register_with_skillopt(_sk)
+        except Exception:
+            pass
+        return f"Skill '{name}' {'modified' if existed else 'created'} at {skill_file}. Active now — its triggers will inject it on matching turns."
 
     if action == 'read':
         if not skill_file.exists():
@@ -1865,6 +2038,14 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     if not allowed:
         return f"[GOVERNANCE DENY] {reason}"
 
+    sb_allowed, sb_reason = _sandbox_policy(name, tool_input)
+    if not sb_allowed:
+        try:
+            _log_context("sandbox_deny", {"name": name, "reason": sb_reason})
+        except Exception:
+            pass
+        return f"[SANDBOX DENY] {sb_reason}"
+
     try:
         result = handler(tool_input or {})
         if not isinstance(result, str):
@@ -2226,6 +2407,180 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 pass
 
 
+def _call_openai(messages, system=None, model=None, max_tokens=4096,
+                 temperature=None, orb_label=None, orb_icon='☁️',
+                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
+    """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
+
+    Unlocks OpenRouter + any /v1 base_url (Together, Groq, Fireworks, vLLM,
+    LM Studio, OpenAI). Configured via settings['model_routing']:
+      openai_base_url  — e.g. https://openrouter.ai/api/v1
+      openai_model     — model id at that endpoint
+      openai_api_key   — blank falls back to env OPENAI_API_KEY / OPENROUTER_API_KEY
+
+    When `tools` (the Anthropic CLAUDE_TOOLS list) is supplied, runs a full
+    agentic tool loop with parity to _call_claude_agent: tool calls are gated by
+    the same zero-trust vault check and executed via _execute_tool (which applies
+    the governance rings + sandbox). PII is scrubbed upstream and the reply is
+    rehydrated by the shared caller, so privacy matches the Anthropic path.
+    """
+    import requests
+    settings = _load_settings()
+    cfg = settings.get('model_routing') or {}
+    base_url = (cfg.get('openai_base_url') or 'https://api.openai.com/v1').rstrip('/')
+    api_key = (cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')  # pragma: allowlist secret
+               or os.environ.get('OPENROUTER_API_KEY') or '')
+    model = model or cfg.get('openai_model') or 'gpt-4o-mini'
+    if not api_key:
+        raise RuntimeError(
+            "No OpenAI-compatible API key set (model_routing.openai_api_key or "
+            "env OPENAI_API_KEY / OPENROUTER_API_KEY)."
+        )
+
+    # Convert Anthropic tool schemas → OpenAI function-tool schemas.
+    oai_tools = None
+    if tools:
+        try:
+            from model_router import anthropic_to_openai_tools
+            oai_tools = anthropic_to_openai_tools(tools)
+        except Exception:
+            oai_tools = None
+
+    orb_id = f"openai-{uuid.uuid4().hex[:8]}"
+    try:
+        process_register(
+            orb_id, name="Cloud Inference",
+            label=orb_label or "Cloud inference…",
+            category="monitoring", icon=orb_icon, steps=[], model=model,
+        )
+    except Exception:
+        orb_id = None
+
+    def _orb(**kw):
+        if orb_id:
+            try:
+                process_update(orb_id, **kw)
+            except Exception:
+                pass
+
+    tool_trace = []
+    try:
+        convo = []
+        if system:
+            convo.append({"role": "system", "content": system})
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                convo.append({"role": m.get("role", "user"), "content": content})
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            # OpenRouter etiquette headers; ignored by other providers.
+            "HTTP-Referer": "https://futurespeak.ai",
+            "X-Title": "Agent Friday",
+        }
+        from model_router import get_router
+
+        loops = max_iters if oai_tools else 1
+        for _ in range(loops):
+            payload = {
+                "model": model,
+                "messages": convo,
+                "temperature": temperature if temperature is not None else 0.7,
+                "max_tokens": max_tokens,
+            }
+            if oai_tools:
+                payload["tools"] = oai_tools
+                payload["tool_choice"] = "auto"
+
+            r = requests.post(f"{base_url}/chat/completions", headers=headers,
+                              json=payload, timeout=180)
+            r.raise_for_status()
+            resp = r.json()
+
+            usage = resp.get("usage", {}) or {}
+            try:
+                get_router().cost_tracker.record(
+                    "openai", model,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                )
+            except Exception:
+                pass
+
+            choices = resp.get("choices", [])
+            msg = (choices[0].get("message", {}) if choices else {}) or {}
+            tool_calls = msg.get("tool_calls") or []
+
+            # No tools available, or the model is done calling them → final answer.
+            if not oai_tools or not tool_calls:
+                text = (msg.get("content") or "").strip()
+                _orb(status='completed', progress=1.0, label=f'Done ({model})')
+                return text, tool_trace
+
+            # Echo the assistant turn (must carry tool_calls verbatim).
+            convo.append({
+                "role": "assistant",
+                "content": msg.get("content") or "",
+                "tool_calls": tool_calls,
+            })
+            try:
+                _first = (tool_calls[0].get("function") or {}).get("name") or "tool"
+                _orb(label=f"{_first}…",
+                     step={"type": "tool", "name": _first, "ts": _time.time()})
+            except Exception:
+                pass
+
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                tname = fn.get("name") or ""
+                tcid = tc.get("id") or ""
+                try:
+                    targs = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    targs = {}
+
+                # ── Zero-trust continuous vault authorization (parity). ──
+                _vault_ctl = _get_vault_control() if VaultAccessControl else None
+                if _vault_ctl is not None:
+                    _zt_provider = (session_ctx or {}).get("provider", "cloud")
+                    _zt_allowed, _zt_detail, _zt_tier = _vault_ctl.check_action(
+                        _zt_provider, tname, json.dumps(targs, default=str),
+                        access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
+                    )
+                    if not _zt_allowed:
+                        tool_trace.append({"name": tname, "input": targs,
+                                           "result": f"[VAULT-ZT DENY] {_zt_detail}"})
+                        convo.append({"role": "tool", "tool_call_id": tcid,
+                                      "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
+                                                 f"data — switch to a local model to access it."})
+                        continue
+
+                result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                       session_ctx=session_ctx)
+                # Screenshots return a base64 blob — useless as text here, and CC
+                # already forces the Anthropic path, so degrade gracefully.
+                if tname == 'screenshot':
+                    result = "[screenshot captured — vision is only available on the Anthropic path]"
+                tool_trace.append({"name": tname, "input": targs, "result": result[:2000]})
+                convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
+
+        _orb(status='error', label='Max iters', progress=1.0)
+        return "[Agent hit max tool iterations without completing.]", tool_trace
+    except Exception:
+        _orb(status='error', label='Error', progress=1.0)
+        raise
+    finally:
+        if orb_id:
+            try:
+                p = PROCESSES.get(orb_id)
+                if p and p.get('status') == 'running':
+                    process_update(orb_id, status='completed', progress=1.0)
+            except Exception:
+                pass
+
+
 # ══════════════════════════════════════════════════════════════
 #  TRAJECTORY COMPRESSION  (Hermes-inspired context management)
 #  When the conversation history sent to Claude would exceed the
@@ -2412,6 +2767,17 @@ DEFAULT_SETTINGS = {
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
+        # ── OpenAI-compatible cloud provider (opt-in) ──
+        # Set cloud_provider="openai" to route cloud turns through an
+        # OpenAI-compatible endpoint instead of Anthropic. Unlocks OpenRouter
+        # (hundreds of models) and any /v1 endpoint (Together, Groq, vLLM,
+        # LM Studio, OpenAI). Full agentic tool loop is supported (tool use
+        # requires a tool-calling-capable model at the endpoint). Default
+        # "anthropic" leaves behavior unchanged.
+        "cloud_provider": "anthropic",
+        "openai_base_url": "https://openrouter.ai/api/v1",
+        "openai_model": "anthropic/claude-3.7-sonnet",
+        "openai_api_key": "",   # blank → falls back to env OPENAI_API_KEY / OPENROUTER_API_KEY
         # ── Sovereign Vault access control ──
         # vault_local_only: when true, vault TIER_2/TIER_3 content reaches local
         #   models only; vault-touching requests are force-routed to Ollama.
@@ -2480,7 +2846,7 @@ def _save_agent_personality(text):
 # ── Self-knowledge (SELF.md) ─────────────────────────────────
 _self_knowledge_cache = None
 _self_knowledge_mtime = 0.0
-SELF_MD_PATH = Path(__file__).resolve().parent / "SELF.md"
+SELF_MD_PATH = _RES_DIR / "SELF.md"
 
 
 def _load_self_knowledge():
@@ -2514,7 +2880,7 @@ def _load_self_knowledge():
 # the vault redacting his own product pitch.
 _voice_demo_cache = None
 _voice_demo_mtime = 0.0
-VOICE_DEMO_MD_PATH = Path(__file__).resolve().parent / "VOICE_DEMO.md"
+VOICE_DEMO_MD_PATH = _RES_DIR / "VOICE_DEMO.md"
 
 
 def _load_voice_demo():
@@ -2629,7 +2995,7 @@ def check_auth():
     # session so the user never sees a login screen on their own device.
     # Remote access (e.g. via Cloudflare Tunnel) still goes through the
     # password gate below.
-    if _is_local_request():
+    if _loopback_trusted():
         if not session.get("authenticated"):
             session['authenticated'] = True
             session.permanent = True
@@ -5892,7 +6258,7 @@ def friday_health():
         "voice_model": settings.get("voice_model", "gemini-live-2.5-flash-preview"),
         "governance": {
             "enabled": True,
-            "version": "v4.1",
+            "version": "v4.4",
             "policy": "cLaws",
             "decision_bom": str(DECISION_BOM_FILE),
             "ring_permissions": {
@@ -7452,8 +7818,16 @@ def _run_claude_terminal(terminal_id, task, cwd):
     """Launch a Claude Code instance in a new CMD window."""
     log_file = VIBE_LOG_DIR / f"{terminal_id}.log"
     try:
-        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd} && claude --dangerously-skip-permissions \"{task}\""'
-        proc = subprocess.Popen(cmd, shell=True, cwd=cwd)
+        # Validate cwd: must be an existing directory under HOME (prevents path
+        # injection and escaping the sandbox root).
+        cwd_p = Path(cwd or '').expanduser().resolve()
+        if not cwd_p.is_dir() or _safe_under_home(str(cwd_p)) is None:
+            raise ValueError(f"invalid or out-of-sandbox cwd: {cwd!r}")
+        # Sanitize the task string: strip characters that could break out of the
+        # nested cmd quoting and chain commands (command injection).
+        safe_task = re.sub(r'["&|<>^%\r\n`]', ' ', str(task or ''))[:2000].strip()
+        cmd = f'start "Friday-Vibe-{terminal_id[:8]}" cmd /k "cd /d {cwd_p} && claude --dangerously-skip-permissions \"{safe_task}\""'
+        proc = subprocess.Popen(cmd, shell=True, cwd=str(cwd_p))
         VIBE_TERMINALS[terminal_id].update({
             'status': 'running',
             'pid': proc.pid,
@@ -8831,6 +9205,18 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         add(f"\n== PROJECT CONTEXT FILES ==\n{ctx_block}", classify(ctx_block, _T1))
         sources_consulted.append('context_files')
 
+    # Layer 2.6: Portable skills (SKILL.md registry) whose triggers match the
+    # message. Injecting the matched skill's procedure is what makes a learned or
+    # imported skill actually shape behavior on the next turn.
+    try:
+        import skill_registry as _skreg
+        _skill_block = _skreg.build_injection(message, limit=3)
+        if _skill_block:
+            add(f"\n== MATCHED SKILLS (follow when relevant) ==\n{_skill_block}", _T1)
+            sources_consulted.append('skills')
+    except Exception:
+        pass
+
     # Layer 3: Vision context (from Gemini screen capture) — the screen could
     # show anything private, so treat it as private by default.
     if vision_description:
@@ -9448,6 +9834,7 @@ def chat():
 
         _sess_ctx = {
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
+            "provider": _provider,
         }
 
         # ── Dispatch. ──
@@ -9474,23 +9861,33 @@ def chat():
                 system_prompt, sources, pii_lookup = _prep_for('cloud')
 
         if not _routed_local:
-            reply, tool_trace = _call_claude_agent(
-                messages, system=system_prompt, temperature=settings.get('temperature'),
-                pii_lookup=pii_lookup, session_ctx=_sess_ctx,
-                orb_label=_orb_label, orb_category='default', orb_icon='💬',
-            )
-            if _routing_cfg.get('cost_tracking', True):
-                try:
-                    from model_router import get_router
-                    _router = get_router()
-                    _est_tokens = len(str(messages)) // 4 + len(reply) // 4
-                    _router.cost_tracker.record(
-                        "cloud",
-                        settings.get('orchestrator_model') or 'claude-opus-4-8',
-                        prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
-                    )
-                except Exception:
-                    pass
+            if _provider == 'openai':
+                # OpenAI-compatible cloud path (OpenRouter / any /v1 endpoint),
+                # with a full agentic tool loop. Records its own cost.
+                reply, tool_trace = _call_openai(
+                    messages, system=system_prompt, model=_route_info.get('model'),
+                    temperature=settings.get('temperature'),
+                    orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
+                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                )
+            else:
+                reply, tool_trace = _call_claude_agent(
+                    messages, system=system_prompt, temperature=settings.get('temperature'),
+                    pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    orb_label=_orb_label, orb_category='default', orb_icon='💬',
+                )
+                if _routing_cfg.get('cost_tracking', True):
+                    try:
+                        from model_router import get_router
+                        _router = get_router()
+                        _est_tokens = len(str(messages)) // 4 + len(reply) // 4
+                        _router.cost_tracker.record(
+                            "cloud",
+                            settings.get('orchestrator_model') or 'claude-opus-4-8',
+                            prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
+                        )
+                    except Exception:
+                        pass
 
         # ── Rehydrate: restore real PII before returning to the user. ──
         if pii_lookup:
@@ -9538,6 +9935,18 @@ def chat():
             from epistemic_engine import get_epistemic_engine
             threading.Thread(
                 target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
+        # Closed-loop learning — capture the turn trajectory + accumulate skill
+        # metrics in the background. Feeds the nightly SkillOpt optimizer.
+        try:
+            import skill_capture as _skcap
+            threading.Thread(
+                target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
+                    _skcap.capture(m, r, tool_trace=tt, workspace=ws),
                 daemon=True,
             ).start()
         except Exception:
@@ -9732,6 +10141,73 @@ def model_stats():
         return jsonify({"error": str(e), "mode": "cloud_only",
                         "local_requests": 0, "cloud_requests": 0,
                         "estimated_savings": 0})
+
+
+# ── Portable skill registry (SKILL.md folder format) ────────────
+@app.route('/api/skills', methods=['GET'])
+@login_required
+def api_skills_list():
+    """List all skills (learned, imported, bundled) in the registry."""
+    try:
+        import skill_registry as _skreg
+        skills = _skreg.list_skills()
+        return jsonify({"skills": skills, "count": len(skills)})
+    except Exception as e:
+        return jsonify({"error": str(e), "skills": [], "count": 0}), 500
+
+
+@app.route('/api/skills/import', methods=['POST'])
+@login_required
+def api_skills_import():
+    """Import a portable skill — multipart .zip upload, or JSON {path, name}
+    pointing at a local folder / zip / legacy .yaml."""
+    import tempfile as _tf, shutil as _sh
+    try:
+        import skill_registry as _skreg
+        upload = request.files.get('file') if request.files else None
+        if upload is not None:
+            name = request.form.get('name') or None
+            tmpd = Path(_tf.mkdtemp(prefix='skup_'))
+            try:
+                dest = tmpd / (upload.filename or 'skill.zip')
+                upload.save(str(dest))
+                res = _skreg.import_skill(dest, name=name)
+            finally:
+                _sh.rmtree(tmpd, ignore_errors=True)
+        else:
+            data = request.get_json(silent=True) or {}
+            src = data.get('path')
+            if not src:
+                return jsonify({"error": "provide a 'file' upload or JSON {path}"}), 400
+            res = _skreg.import_skill(src, name=data.get('name'))
+        return jsonify({"status": "ok", **res})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route('/api/skills/<name>/export', methods=['GET'])
+@login_required
+def api_skills_export(name):
+    """Download a skill as a portable .zip (canonical SKILL.md folder)."""
+    try:
+        import skill_registry as _skreg
+        z = _skreg.export_skill(name)
+        return send_file(str(z), as_attachment=True, download_name=f"{name}.zip")
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/skillopt/state', methods=['GET'])
+@login_required
+def api_skillopt_state():
+    """Fleet state for the Skills Observatory UI (was previously unrouted)."""
+    try:
+        from skillopt_engine import export_fleet_state
+        return jsonify(export_fleet_state())
+    except Exception as e:
+        return jsonify({"error": str(e), "skills": []})
 
 
 @app.route('/api/ollama/status')
@@ -12242,7 +12718,16 @@ if sock is not None:
         # requests, but be defensive in case /ws/ paths were excluded).
         # Loopback connections are always trusted — same-machine usage skips
         # auth so the user never hits an "unauthorized" voice error locally.
-        if FRIDAY_PASSWORD and not session.get("authenticated") and not _is_local_request():
+        if FRIDAY_WS_TOKEN:
+            _tok = request.args.get('token', '')
+            if not _hmac.compare_digest(_tok, FRIDAY_WS_TOKEN):
+                _vlog('AUTH FAIL — bad/missing ws token')
+                try:
+                    ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+                except Exception:
+                    pass
+                return
+        if FRIDAY_PASSWORD and not session.get("authenticated") and not _loopback_trusted():
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
@@ -13181,6 +13666,16 @@ def _run_daily_job(fn, name):
         print(f"  [daily-scheduler:{name}] run failed: {e}")
 
 
+def _skillopt_nightly():
+    """Nightly closed-loop tick: run SkillOpt auto-research over drifted skills."""
+    try:
+        import skill_capture as _skcap
+        result = _skcap.run_nightly()
+        print(f"  [skillopt] nightly research: {result}")
+    except Exception as e:
+        print(f"  [skillopt] nightly failed: {e}")
+
+
 # Register the daily creation. The hour is configurable via settings.
 def _register_default_daily_jobs():
     try:
@@ -13195,6 +13690,8 @@ def _register_default_daily_jobs():
                        lambda: _run_front_page_job("morning"))
     register_daily_job("front-page-evening", FRONT_PAGE_SLOTS["evening"], 0,
                        lambda: _run_front_page_job("evening"))
+    # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central.
+    register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
 
 
 _register_default_daily_jobs()
@@ -13244,9 +13741,17 @@ if _notif_engine:
 # ═══════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
+    # Make stdout/stderr encoding-safe. When launched with a piped/redirected
+    # stdout on Windows (cp1252), the box-drawing banner and emoji below would
+    # otherwise crash with UnicodeEncodeError — replace unencodable chars instead.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
     print()
     print("  ╔══════════════════════════════════════════════╗")
-    print("  ║   FRIDAY Desktop v4.0 — Phase B OS          ║")
+    print("  ║   FRIDAY Desktop v4.4 — Phase B OS          ║")
     print("  ╠══════════════════════════════════════════════╣")
     print("  ║  http://localhost:3000                       ║")
     print("  ║  Flask + Gemini API + Three.js Holographic   ║")
@@ -13267,6 +13772,11 @@ if __name__ == '__main__':
     except Exception as _wi_err:
         print(f"  Wiki indexes: skipped ({_wi_err})")
 
-    # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only
+    # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only.
+    # Port is configurable via FRIDAY_PORT to avoid conflicts (default 3000).
     bind_host = '0.0.0.0' if FRIDAY_PASSWORD else '127.0.0.1'
-    app.run(host=bind_host, port=3000, debug=False, threaded=True)
+    try:
+        _port = int(os.environ.get('FRIDAY_PORT', '3000'))
+    except ValueError:
+        _port = 3000
+    app.run(host=bind_host, port=_port, debug=False, threaded=True)

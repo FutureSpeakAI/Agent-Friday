@@ -41,7 +41,7 @@ CLAWS_TEXT = (
     "4. All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action."
 )
 
-AGENT_VERSION = "4.1.0"
+AGENT_VERSION = "4.4.0"
 
 
 class AgentIntegrityManifest:

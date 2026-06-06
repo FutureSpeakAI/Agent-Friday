@@ -5,6 +5,56 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [4.4.0] — 2026-06-06
+
+The trust-and-portability release. Hardens authentication, adds a third
+(OpenAI-compatible) provider with a full agentic tool loop, gates every tool
+call behind a sandbox policy, ships a portable SKILL.md registry, and closes the
+loop on skill learning so real chat usage feeds the optimizer.
+
+### Added
+
+- **OpenAI-compatible provider** — A third cloud provider alongside Anthropic and
+  Ollama. Opt-in via `model_routing.cloud_provider = "openai"` plus
+  `openai_base_url` (defaults to OpenRouter), `openai_model`, and `openai_api_key`
+  (or env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`). Unlocks OpenRouter's hundreds
+  of models and any `/v1` endpoint. Ships a **full agentic tool loop** at parity
+  with the Anthropic path. Vault / sensitive requests still never route here —
+  they stay local or on Anthropic.
+- **Portable skill registry** (`skill_registry.py`) — A portable "SKILL.md
+  folder" format: YAML frontmatter plus a markdown body, agentskills.io-compatible.
+  Import/export across folder, zip, legacy-YAML, and OpenClaw formats. New HTTP
+  routes `/api/skills`, `/api/skills/import`, `/api/skills/<name>/export`, and
+  `/api/skillopt/state`. Matched skills are injected into the system prompt each
+  turn, so newly learned skills take effect without a restart.
+- **Closed-loop learning** (`skill_capture.py`) — Captures turn trajectories to
+  CognitiveMemory and JSONL, feeds real chat usage into the SkillOpt optimizer,
+  and runs a nightly `skillopt-nightly` auto-research job. Connects the
+  previously-dormant SkillOpt machinery to live usage.
+
+### Security
+
+- **Auth hardening** — The session secret is now a persisted random value
+  (`~/.friday/secret_key`, mode `0600`) instead of a hardcoded default. Credential
+  checks are constant-time (`hmac.compare_digest`). A per-IP login throttle caps
+  attempts at 8 per 5 minutes. New env toggles: `FRIDAY_TRUST_LOOPBACK` (default
+  on; set `0` to require login even on localhost), `FRIDAY_WS_TOKEN` (optional
+  token gating the `/ws/live` voice WebSocket), and `FRIDAY_COOKIE_SECURE` (Secure
+  cookie for HTTPS / tunnel). Session cookies are now `SameSite=Lax` and
+  `HttpOnly`.
+- **Tool-execution sandbox** — Every agent tool call passes through a policy gate
+  controlled by `FRIDAY_SANDBOX_MODE` (`off` / `confine` [default] / `strict`)
+  and `FRIDAY_SANDBOX_ROOT`. `confine` keeps `write_file` inside a root (default
+  `HOME`) and runs `run_command` against a destructive-command blocklist;
+  `strict` additionally allowlists commands.
+
+### Fixed
+
+- **Command injection in the vibe-code launcher** — Closed a command-injection
+  hole in the vibe-code terminal launcher.
+
+---
+
 ## [v4.3] — 2026-05-28
 
 The self-evolving interface release. Adds Liquid UI, Co-Parent Monitor, and the

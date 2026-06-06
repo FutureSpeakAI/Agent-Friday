@@ -65,11 +65,13 @@ class CostTracker:
         cutoff = since or (time.time() - 86400)  # default: last 24h
         with self._lock:
             recent = [r for r in self._requests if r["ts"] >= cutoff]
+        # Any non-local provider (cloud Anthropic, openai-compatible, …) counts
+        # as "cloud" for the savings comparison.
         local_count = sum(1 for r in recent if r["provider"] == "local")
-        cloud_count = sum(1 for r in recent if r["provider"] == "cloud")
+        cloud_count = sum(1 for r in recent if r["provider"] != "local")
         local_tokens = sum(r["total_tokens"] for r in recent if r["provider"] == "local")
-        cloud_tokens = sum(r["total_tokens"] for r in recent if r["provider"] == "cloud")
-        cloud_cost = sum(r["cost"] for r in recent if r["provider"] == "cloud")
+        cloud_tokens = sum(r["total_tokens"] for r in recent if r["provider"] != "local")
+        cloud_cost = sum(r["cost"] for r in recent if r["provider"] != "local")
         saved = sum(
             (r["total_tokens"] / 1000) * 0.015
             for r in recent if r["provider"] == "local"
@@ -241,7 +243,31 @@ class ModelRouter:
         if self.needs_vault_access(messages, ctx):
             return self._route_vault(ctx)
 
-        return self._finalize(self._route_basic(messages, ctx), vault_access=False)
+        result = self._apply_cloud_provider(self._route_basic(messages, ctx), ctx)
+        return self._finalize(result, vault_access=False)
+
+    def _apply_cloud_provider(self, result, ctx):
+        """Retag a 'cloud' decision as 'openai' when an OpenAI-compatible cloud
+        provider is configured, so the server dispatches to _call_openai.
+
+        Covers OpenRouter (hundreds of models) and any /v1 base_url endpoint
+        (Together, Groq, Fireworks, vLLM, LM Studio, OpenAI itself). is_local
+        stays False in _finalize, so PII scrubbing and vault gating still apply
+        exactly as they do for Anthropic. Vault routing is intentionally left on
+        the trusted Anthropic 'cloud' path (handled in _route_vault).
+        """
+        if result.get("provider") != "cloud":
+            return result
+        cp = str(self.config.get("cloud_provider") or "anthropic").lower()
+        if cp in ("openai", "openrouter", "openai_compatible", "compatible"):
+            result["provider"] = "openai"
+            result["model"] = (
+                ctx.get("openai_model")
+                or self.config.get("openai_model")
+                or result.get("model")
+            )
+            result["reason"] = (result.get("reason") or "") + " (openai-compatible)"
+        return result
 
     def _route_basic(self, messages, ctx):
         """Original (non-vault) routing decision. Returns a bare result dict."""

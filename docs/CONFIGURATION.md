@@ -13,6 +13,13 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 Keys can also be set via environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the settings file.
 
+When the OpenAI-compatible cloud provider is enabled (see [Model Routing](#model-routing)), an API key may also be supplied via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | Fallback API key for the OpenAI-compatible provider (used when `model_routing.openai_api_key` is blank). |
+| `OPENROUTER_API_KEY` | Alternate fallback API key for the OpenAI-compatible provider (e.g. OpenRouter). |
+
 ---
 
 ## Model Settings
@@ -33,6 +40,12 @@ Keys can also be set via environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API
 | `ollama_url` | string | `http://localhost:11434` | Ollama API endpoint. |
 | `vault_cloud_fallback` | string | `redact` | Behavior when vault access is needed but no local model is available: `redact` (proceed with gated content), `deny` (refuse), `warn` (refuse and notify). |
 | `task_overrides` | object | `{}` | Per-task-type routing overrides. Keys: `simple`, `tool_use`, `code`, `research`, `voice`, `vault_access`. Values: `{"provider": "local"|"cloud", "model": "..."}`. |
+| `cloud_provider` | string | `anthropic` | Provider for cloud turns: `anthropic` (default) or `openai` (route through an OpenAI-compatible endpoint). |
+| `openai_base_url` | string | `https://openrouter.ai/api/v1` | Base URL for the OpenAI-compatible endpoint. Works with OpenRouter and any `/v1` endpoint (Together, Groq, vLLM, LM Studio, OpenAI). |
+| `openai_model` | string | `anthropic/claude-3.7-sonnet` | Model name passed to the OpenAI-compatible endpoint. |
+| `openai_api_key` | string | _(empty)_ | API key for the OpenAI-compatible endpoint. Blank → falls back to env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`. |
+
+> **OpenAI-compatible provider.** When `cloud_provider` is `openai`, cloud turns route through the configured `/v1` endpoint with a full agentic tool loop (parity with the Anthropic path) when the model supports tool-calling. The default settings leave Anthropic behavior unchanged. Vault and TIER_2/TIER_3 requests always stay on the local/Anthropic path and are never sent to the OpenAI endpoint.
 
 ### Routing configuration example
 
@@ -151,7 +164,10 @@ Set via environment variables (not in `settings.json`):
 |----------|---------|-------------|
 | `FRIDAY_USERNAME` | `admin` | Login username (only for remote access). |
 | `FRIDAY_PASSWORD` | _(empty)_ | Login password. Empty = no auth required. |
-| `FRIDAY_SECRET_KEY` | `friday-default-secret-change-me` | Flask session secret. Change this in production. |
+| `FRIDAY_SECRET_KEY` | _(auto-generated)_ | Flask session secret. If unset, a random secret is generated once and persisted to `~/.friday/secret_key` (mode `0600`). Set this to pin a fixed value (e.g. across instances). |
+| `FRIDAY_TRUST_LOOPBACK` | `1` | When `1`, same-machine (loopback) requests are auto-authenticated. Set to `0` to require login for loopback requests too (only matters when `FRIDAY_PASSWORD` is set). |
+| `FRIDAY_WS_TOKEN` | _(empty)_ | Optional shared token required on the `/ws/live` WebSocket regardless of loopback trust (defense-in-depth for voice when remotely exposed). Pass as `?token=…`. |
+| `FRIDAY_COOKIE_SECURE` | _(unset)_ | Set to `1`/`true` to mark the session cookie `Secure` (use behind HTTPS / a tunnel). |
 
 ---
 
@@ -161,6 +177,22 @@ Set via environment variables (not in `settings.json`):
 |----------|---------|-------------|
 | `FRIDAY_PORT` | `3000` | Server port. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Default Claude model (env var override). |
+
+---
+
+## Sandbox
+
+Constrains the `write_file` and `run_command` tools. Set via environment variables (not in `settings.json`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FRIDAY_SANDBOX_MODE` | `confine` | Sandbox enforcement level: `off`, `confine`, or `strict`. |
+| `FRIDAY_SANDBOX_ROOT` | _(user HOME)_ | Root directory that `write_file` is confined to. |
+
+**Modes:**
+- `off` — No sandbox restrictions.
+- `confine` (default) — `write_file` is confined to `FRIDAY_SANDBOX_ROOT`, and `run_command` is filtered through a destructive-command blocklist.
+- `strict` — Everything `confine` does, plus `run_command`'s leading command must be on an allowlist.
 
 ---
 

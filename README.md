@@ -36,6 +36,7 @@ chmod +x install.sh && ./install.sh
 - **Python 3.10+**
 - **Anthropic API key** — required ([get one here](https://console.anthropic.com/settings/keys))
 - **Google Gemini API key** — required for voice mode and creative features ([get one here](https://aistudio.google.com/apikey))
+- **OpenAI-compatible API key** — optional, for the third provider (OpenRouter or any `/v1` endpoint) via `OPENAI_API_KEY` / `OPENROUTER_API_KEY` ([OpenRouter keys](https://openrouter.ai/keys))
 - **Ollama** — optional, for local models and vault privacy ([ollama.com](https://ollama.com))
 - **GPU** — optional, for local model acceleration
 
@@ -73,9 +74,9 @@ The installer handles cloning, virtual environment setup, dependency installatio
 │  Anthropic Claude ◄──────────────────────► Ollama (local)      │
 │  (cloud, tool use)                          (private data,     │
 │                                              vault access)     │
-│  Google Gemini                                                 │
-│  (TTS, creative,                                               │
-│   voice mode)                                                  │
+│  OpenAI-compatible          Google Gemini                      │
+│  (OpenRouter / any /v1,     (TTS, creative,                    │
+│   opt-in, tool loop)         voice mode)                       │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -134,6 +135,8 @@ Three routing modes:
 
 The router classifies tasks by scanning the last user message for intent signals (code keywords, research keywords, message length, tool definitions). A `CostTracker` logs every request's provider, model, token count, and cost.
 
+**Choosing the cloud provider.** The cloud side of routing is itself pluggable. Set `model_routing.cloud_provider = "openai"` (default is Anthropic) to send cloud requests to an OpenAI-compatible endpoint instead — configured via `openai_base_url` (defaults to OpenRouter), `openai_model`, and `openai_api_key` (or env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`). This unlocks OpenRouter's hundreds of models and any `/v1` endpoint, and runs a full agentic tool loop at parity with the Anthropic path. Vault and sensitive requests are never sent to it — they stay local or on Anthropic.
+
 ---
 
 ## Holographic UI
@@ -162,9 +165,11 @@ Real-time voice interaction powered by Google Gemini's multimodal Live API:
 
 Friday can build and evolve its own skills:
 
+- **Portable Skill Registry** (`skill_registry.py`) — A portable **SKILL.md folder** format: YAML frontmatter plus a markdown body, agentskills.io-compatible. Skills import/export across folders, zips, legacy-YAML, and OpenClaw formats via `/api/skills`, `/api/skills/import`, and `/api/skills/<name>/export`. Matched skills are injected into the system prompt each turn, so newly learned skills take effect without a restart.
 - **Learnable Skills** — YAML files in `~/.friday/skills/` defining reusable workflows with trigger patterns, tool chains, prompt templates, and success criteria
 - **SkillOpt Engine** (`skillopt_engine.py`) — Skills evolve through training epochs, validated against regression gates (must score within 5% of best), and refined by an auto-research loop
 - **Karpathy Auto-Research** — When a skill's rolling composite score drops >10% below its best, the system generates hypotheses and proposes improvements
+- **Closed-Loop Learning** (`skill_capture.py`) — Captures turn trajectories to Cognitive Memory and JSONL, feeding real chat usage straight into the SkillOpt optimizer. A nightly `skillopt-nightly` auto-research job turns lived experience into skill improvements.
 
 See [docs/SKILLS.md](docs/SKILLS.md) for the full skill system reference.
 
@@ -183,6 +188,15 @@ pip install -r requirements.txt
 # Set API keys (no keys are stored in the repo)
 set ANTHROPIC_API_KEY=your-key-here
 set GEMINI_API_KEY=your-key-here        # optional, for creative/voice
+set OPENAI_API_KEY=your-key-here        # optional, for the OpenAI-compatible provider
+set OPENROUTER_API_KEY=your-key-here    # optional, alias for OpenRouter
+
+# Optional hardening (sensible defaults; override only if needed)
+set FRIDAY_TRUST_LOOPBACK=0             # require login even on localhost
+set FRIDAY_WS_TOKEN=your-token-here     # gate the /ws/live voice WebSocket
+set FRIDAY_COOKIE_SECURE=1              # Secure cookie behind HTTPS / a tunnel
+set FRIDAY_SANDBOX_MODE=confine         # off | confine (default) | strict
+set FRIDAY_SANDBOX_ROOT=%USERPROFILE%   # write-confinement root for tools
 
 # Run
 python server.py

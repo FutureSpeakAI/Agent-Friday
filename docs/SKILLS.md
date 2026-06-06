@@ -8,7 +8,7 @@ Agent Friday's skill system enables self-improvement through learnable workflows
 
 The skill system has three layers:
 
-1. **Learnable Skills** — YAML files defining reusable workflows
+1. **Learnable Skills** — portable `SKILL.md` folders (or legacy YAML files) defining reusable workflows
 2. **SkillOpt Engine** — Versioned skill optimization with training epochs and regression gates
 3. **Auto-Research Loop** — Automatic quality recovery when skill performance drops
 
@@ -57,6 +57,71 @@ Skills are managed through the `learn_skill` tool, available in chat:
 | `read` | Read a skill's content |
 
 Skills can also be managed via the filesystem at `~/.friday/skills/`.
+
+---
+
+## Portable Skill Format (SKILL.md folder)
+
+The portable skill format is a **folder containing a `SKILL.md` file** with YAML frontmatter plus a Markdown body (the procedure). Folders are stored under `~/.friday/skills/<name>/`.
+
+### `SKILL.md` structure
+
+```markdown
+---
+name: meeting-prep
+description: Prepare a briefing for an upcoming meeting
+version: 1.0.0
+triggers:
+  - "prepare for my meeting with"
+  - "meeting prep"
+  - "brief me on"
+tool_chain:
+  - search_wiki
+  - query_trust_graph
+  - search_web
+success_criteria:
+  - Includes background from local sources
+  - Includes recent external context
+  - Provides actionable talking points
+license: MIT
+source: https://example.com/skills/meeting-prep
+---
+
+# Meeting Prep
+
+Research {person} and prepare a meeting briefing:
+1. What we know from the wiki and trust graph
+2. Recent news and activity
+3. Suggested talking points
+4. Potential areas of collaboration
+```
+
+| Frontmatter field | Type | Description |
+|-------------------|------|-------------|
+| `name` | string | Skill identifier (matches the folder name). |
+| `description` | string | One-line summary. |
+| `version` | string | Skill version. |
+| `triggers` | string[] | Substrings that activate the skill. |
+| `tool_chain` | string[] | Tools the procedure relies on. |
+| `success_criteria` | string[] | Conditions for a successful run. |
+| `license` | string | License of the portable skill. |
+| `source` | string | Origin / attribution for the skill. |
+
+### Loading & matching
+
+The skill registry (`skill_registry.py`) discovers skills at startup. On every turn, skills whose `triggers` substring-match the user's message are injected into the system prompt. Legacy single-file `~/.friday/skills/*.yaml` skills are still supported and auto-discovered alongside the folder format.
+
+### Import / export
+
+Skills are portable. They can be imported from a folder, a `.zip`, a legacy `.yaml`, or an OpenClaw-style package, and exported as a `.zip`:
+
+- `GET /api/skills` — list all skills (learned, imported, bundled).
+- `POST /api/skills/import` — import a portable skill (`.zip` upload, or JSON pointing at a folder/zip/legacy `.yaml`).
+- `GET /api/skills/<name>/export` — download a skill as a portable `.zip`.
+
+### Closed-loop learning
+
+`skill_capture.py` records turn trajectories and feeds real usage metrics back to the SkillOpt engine (see below). A nightly `skillopt-nightly` job (3:30 AM Central) runs auto-research over the fleet.
 
 ---
 

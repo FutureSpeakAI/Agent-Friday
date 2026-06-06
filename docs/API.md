@@ -1,6 +1,6 @@
 # API Reference
 
-All endpoints are served by the Flask application in `server.py` at `http://localhost:3000` by default. Endpoints under `/api/` require authentication when `FRIDAY_PASSWORD` is set; loopback requests are auto-authenticated.
+All endpoints are served by the Flask application in `server.py` at `http://localhost:3000` by default. Endpoints under `/api/` require authentication when `FRIDAY_PASSWORD` is set; loopback (same-machine) requests are auto-authenticated by default. Set `FRIDAY_TRUST_LOOPBACK=0` to require login for loopback requests too. The `/ws/live` voice WebSocket can additionally require a shared token via `FRIDAY_WS_TOKEN` (passed as `?token=…`) regardless of loopback trust. See [Configuration → Authentication](CONFIGURATION.md#authentication) for details.
 
 ---
 
@@ -235,6 +235,27 @@ Skip the setup wizard.
 
 ### `POST /api/setup/complete`
 Complete the setup wizard with initial configuration.
+
+---
+
+## Skills
+
+### `GET /api/skills`
+List all skills (learned, imported, and bundled) from the skill registry.
+
+### `POST /api/skills/import`
+Import a portable skill. Accepts either a multipart `file` upload (a `.zip`) or a JSON body pointing at a folder, zip, or legacy `.yaml`.
+
+**Request (JSON):**
+```json
+{ "path": "C:\\path\\to\\skill-folder", "name": "meeting-prep" }
+```
+
+### `GET /api/skills/<name>/export`
+Download a skill as a portable `.zip`.
+
+### `GET /api/skillopt/state`
+Returns the SkillOpt fleet state (JSON snapshot used by the Observatory UI).
 
 ---
 

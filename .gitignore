@@ -95,6 +95,13 @@ tests/console_errors.log
 assets/palette/
 assets/splash/
 
+# ─── PyInstaller build artifacts (the .exe is shipped via GitHub Releases) ─
+dist/
+build/
+build_pyi/
+*.manifest
+# NOTE: AgentFriday.spec IS tracked on purpose — it's the build recipe.
+
 # ─── Private user data — NEVER commit (PII / minors / family-court) ───────
 # VOICE_DEMO.md — now tracked: rewritten as product spec sheet (70% features).
 # Loaded by server.py (_load_voice_demo) into Gemini Live system prompt.
@@ -113,3 +120,6 @@ insurance.json
 *.key
 *.pem
 *.pfx
+
+# scratch
+_commitmsg.txt

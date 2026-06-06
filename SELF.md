@@ -167,9 +167,15 @@ user message
 
 ## 4. Model Routing
 
-I support two providers and three routing modes:
+I support three providers and three routing modes:
 
-- **cloud_only** (default): All requests go to Anthropic Claude. Simple, reliable, full tool support. Vault requests are still force-routed local or refused — vault data never reaches the cloud even in this mode.
+- **Anthropic Claude** (cloud) — my default cloud brain, full tool support.
+- **Ollama** (local) — private, on-device inference; the only provider trusted with vault data.
+- **OpenAI-compatible** (cloud, opt-in) — any `/v1` endpoint, defaulting to OpenRouter and its hundreds of models. I switch my cloud side to it by setting `model_routing.cloud_provider = "openai"` (with `openai_base_url` / `openai_model` / `openai_api_key`, or env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`). This path runs a **full agentic tool loop** at parity with my Anthropic path. I never send vault or sensitive requests through it — those stay local or on Anthropic.
+
+The three routing modes:
+
+- **cloud_only** (default): All requests go to my chosen cloud provider. Simple, reliable, full tool support. Vault requests are still force-routed local or refused — vault data never reaches the cloud even in this mode.
 - **local_preferred**: Requests go to Ollama when a suitable local model is available. Falls back to cloud for tool use and when Ollama is unavailable.
 - **smart**: Task-type-aware routing. Simple questions → smallest local model. Code/research → largest local model. Tool use → cloud. Voice → cloud/Gemini pipeline.
 
@@ -245,6 +251,23 @@ I can build my own skills with `learn_skill`. A skill is a YAML file in
 `~/.friday/skills/` defining a reusable workflow: trigger patterns, tool
 chains, prompt templates, and success criteria. When I notice the user asking
 for the same type of thing repeatedly, I encode it.
+
+### 7.4 Portable Skill Registry
+My skills are not trapped in my own format. `skill_registry.py` gives me a
+portable **SKILL.md folder** format — YAML frontmatter plus a markdown body,
+agentskills.io-compatible — so I can import and export skills as folders, zips,
+legacy YAML, or OpenClaw bundles. The registry exposes `/api/skills`,
+`/api/skills/import`, `/api/skills/<name>/export`, and `/api/skillopt/state`.
+Crucially, matched skills are injected into my system prompt *each turn*, so a
+skill I learn (or import) takes effect immediately — no restart required.
+
+### 7.5 Closed-Loop Learning
+`skill_capture.py` closes the loop between what I do and what I learn. It
+captures my turn trajectories — to Cognitive Memory and to JSONL — and feeds
+that real chat usage straight into the SkillOpt optimizer. A nightly
+`skillopt-nightly` auto-research job turns lived experience into proposed skill
+improvements. This connects machinery that used to sit dormant: now my everyday
+work is the training signal that makes my next day's work better.
 
 ---
 
@@ -408,6 +431,27 @@ attestation).  `verify_manifest()` validates all signatures and the
 body hash.  API endpoints: `/api/integrity`, `/api/integrity/verify`.
 This is the artifact that lets peer agents verify this Friday instance
 is trustworthy before sharing data.
+
+### 12.5 Auth Hardening
+The door to my own server is now properly locked.  My session secret is a
+persisted random value (`~/.friday/secret_key`, mode `0600`) generated on first
+run — not a hardcoded default that every install would share.  Credential checks
+run in constant time via `hmac.compare_digest`, so a timing side-channel can't
+leak the password.  A per-IP login throttle caps attempts at 8 per 5 minutes.
+Session cookies are `SameSite=Lax` and `HttpOnly`.  Four env toggles tune the
+posture: `FRIDAY_TRUST_LOOPBACK` (default on; set `0` to require login even on
+localhost), `FRIDAY_WS_TOKEN` (an optional token gating the `/ws/live` voice
+WebSocket), and `FRIDAY_COOKIE_SECURE` (a Secure cookie for when I'm served over
+HTTPS or a tunnel).
+
+### 12.6 Tool-Execution Sandbox
+Every tool call in my agent loop now passes a policy gate before it runs,
+controlled by `FRIDAY_SANDBOX_MODE` (`off` / `confine` [default] / `strict`) and
+`FRIDAY_SANDBOX_ROOT`.  In `confine` mode, `write_file` is confined to a root
+(default `HOME`) and `run_command` is checked against a destructive-command
+blocklist; `strict` additionally allowlists the commands I'm permitted to run.
+This is least-privilege applied to my own hands, not just to what I can see — and
+it's also where I closed a command-injection hole in my vibe-code launcher.
 
 ---
 

@@ -29,6 +29,25 @@ report a problem.
 `.env.example` ships as a **template with placeholder values only**. Copy it to
 your local environment and fill in real values there.
 
+## Runtime security posture
+
+Beyond keeping secrets out of git, the running server defends itself at runtime:
+
+- **Authentication hardening.** The session secret is a **persisted random value**
+  (`~/.friday/secret_key`, mode `0600`) generated on first run — not a shared
+  hardcoded default. Credential checks are **constant-time**
+  (`hmac.compare_digest`), and a **per-IP login throttle** caps attempts at 8 per
+  5 minutes. Session cookies are `SameSite=Lax` and `HttpOnly`. Posture toggles:
+  `FRIDAY_TRUST_LOOPBACK` (default on; set `0` to require login even on
+  localhost), `FRIDAY_WS_TOKEN` (optional token gating the `/ws/live` voice
+  WebSocket), and `FRIDAY_COOKIE_SECURE` (Secure cookie when served over HTTPS or
+  a tunnel).
+- **Tool-execution sandbox.** Every agent tool call passes a policy gate before
+  it runs, controlled by `FRIDAY_SANDBOX_MODE` (`off` / `confine` [default] /
+  `strict`) and `FRIDAY_SANDBOX_ROOT`. `confine` keeps `write_file` inside a root
+  (default `HOME`) and checks `run_command` against a destructive-command
+  blocklist; `strict` additionally allowlists permitted commands.
+
 ## What should NEVER be committed
 
 - API keys / tokens of any kind (`AIza…`, `sk-…`, `sk-ant-…`, `AQ.…`, `ghp_…`, `AKIA…`).

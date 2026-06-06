@@ -1,7 +1,7 @@
 # Architecture — Agent Friday / Asimov's Mind
 
 > Technical reference for the Friday Desktop system.  
-> Last updated: 2026-05-28 · v4.2
+> Last updated: 2026-06-06 · v4.4
 
 ---
 
@@ -304,9 +304,17 @@ The Three.js scene in `ui_parts/styles_and_scene.html` renders 13 named "evoluti
   "camera_interval_sec": 3,
   "anthropic_api_key": "sk-ant-...",
   "gemini_api_key": "AIza...",
+  "model_routing": {
+    "cloud_provider": "anthropic",
+    "openai_base_url": "https://openrouter.ai/api/v1",
+    "openai_model": "anthropic/claude-3.7-sonnet",
+    "openai_api_key": ""
+  },
   "setup_complete": true
 }
 ```
+
+**`model_routing` cloud provider** — `cloud_provider` defaults to `anthropic`. Set it to `openai` to route cloud turns through an OpenAI-compatible `/v1` endpoint (OpenRouter, Together, Groq, vLLM, LM Studio, OpenAI). The OpenAI path runs a full agentic tool loop (parity with Anthropic) when the model supports tool-calling. `openai_api_key` falls back to env `OPENAI_API_KEY` / `OPENROUTER_API_KEY` when blank. Vault and TIER_2/TIER_3 requests always stay on the local/Anthropic path and never hit the OpenAI endpoint.
 
 ---
 
@@ -316,9 +324,16 @@ The Three.js scene in `ui_parts/styles_and_scene.html` renders 13 named "evoluti
 |----------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key | *(from settings.json)* |
 | `GEMINI_API_KEY` | Google Gemini API key | *(from settings.json)* |
+| `OPENAI_API_KEY` | Fallback key for the OpenAI-compatible provider | *(from settings.json)* |
+| `OPENROUTER_API_KEY` | Alternate fallback key for the OpenAI-compatible provider | *(from settings.json)* |
 | `FRIDAY_PASSWORD` | HTTP Basic Auth password | *(none — open access)* |
 | `FRIDAY_USERNAME` | HTTP Basic Auth username | `admin` |
-| `FRIDAY_SECRET_KEY` | Flask session secret | `friday-default-secret-change-me` |
+| `FRIDAY_SECRET_KEY` | Flask session secret | *(random, persisted to `~/.friday/secret_key` `0600`)* |
+| `FRIDAY_TRUST_LOOPBACK` | Auto-authenticate loopback requests; set `0` to require login on loopback too (only matters with `FRIDAY_PASSWORD` set) | `1` |
+| `FRIDAY_WS_TOKEN` | Shared token required on `/ws/live` regardless of loopback (passed as `?token=…`) | *(none)* |
+| `FRIDAY_COOKIE_SECURE` | Mark the session cookie `Secure` (use behind HTTPS/tunnel) | *(unset)* |
+| `FRIDAY_SANDBOX_MODE` | Tool sandbox level: `off`, `confine`, `strict` | `confine` |
+| `FRIDAY_SANDBOX_ROOT` | Root that `write_file` is confined to | *(user HOME)* |
 | `ANTHROPIC_MODEL` | Override default model | `claude-sonnet-4-6` |
 
 API keys set via environment variables take priority over settings.json. Keys saved through the setup wizard are stored in settings.json and loaded at first use.
@@ -339,6 +354,11 @@ DELETE /api/chat/history    → clear history
 
 GET  /api/setup/status      → { initialized: bool }
 POST /api/setup/complete    → save wizard choices, mark setup done
+
+GET  /api/skills            → list skills (learned, imported, bundled)
+POST /api/skills/import     → import a portable skill (zip upload / folder / zip / legacy yaml)
+GET  /api/skills/<name>/export → download a skill as a portable .zip
+GET  /api/skillopt/state    → SkillOpt fleet state (Observatory UI)
 
 POST /api/voice/tts         → Gemini TTS (returns WAV)
 WS   /ws/live               → Gemini Live real-time audio
