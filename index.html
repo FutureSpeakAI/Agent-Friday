@@ -7776,6 +7776,10 @@ function App(){
     console.log('VOICE_DEBUG: FLUSH called from: '+(caller||'unknown')+' (stopping '+_stopped+' active sources)');
     console.log('VOICE_DEBUG: playbackCancelled set TRUE by: '+(caller||'unknown'));
     v.playbackCancelled=true;
+    // Worklet path: empty the ring buffer instantly so interrupted/old-turn audio
+    // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
+    if(v.playerNode){try{v.playerNode.port.postMessage({type:'flush'})}catch(_){}}
+    v.fridaySpeaking=false;if(v._drainT){try{clearTimeout(v._drainT)}catch(_){}v._drainT=null;}
     if(v.activeSources){
       v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});
       v.activeSources=[];
@@ -7791,6 +7795,58 @@ function App(){
     const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
     const i16ToB64=(int16)=>{const bytes=new Uint8Array(int16.buffer);let bin='';for(let i=0;i<bytes.length;i++)bin+=String.fromCharCode(bytes[i]);return btoa(bin)};
     const b64ToI16=(b64)=>{const bin=atob(b64);const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Int16Array(bytes.buffer)};
+    // AudioWorklet PCM player. Runs on the audio RENDER thread (not the main
+    // thread), so it is immune to the React/GC/console jank that progressively
+    // glitches the context over a long call. It keeps ONE persistent node fed by
+    // a ring buffer and resamples srcRate->ctxRate CONTINUOUSLY — carrying the
+    // fractional read cursor across chunks — so there is no per-chunk resampler
+    // reset (the real source of progressive rasp) and no churn of thousands of
+    // short-lived BufferSource/AudioBuffer objects. The ring is the jitter buffer
+    // that absorbs Gemini's faster-than-realtime bursts; underruns emit clean
+    // silence rather than distortion. registerProcessor name: 'friday-pcm-player'.
+    const PCM_PLAYER_WORKLET_SRC=`
+class FridayPCMPlayer extends AudioWorkletProcessor {
+  constructor(o){
+    super();
+    this.srcRate = (o.processorOptions && o.processorOptions.srcRate) || 24000;
+    this.step = this.srcRate / sampleRate;     // src samples consumed per output sample
+    this.size = Math.ceil(this.srcRate * 60);  // 60s ring at source rate
+    this.ring = new Float32Array(this.size);
+    this.writeIdx = 0;                          // absolute samples written
+    this.readIdx = 0;                           // absolute fractional read cursor
+    this.lastPlaying = false;
+    this.port.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === 'samples') {
+        const f = m.data;
+        for (let i = 0; i < f.length; i++) { this.ring[this.writeIdx % this.size] = f[i]; this.writeIdx++; }
+      } else if (m.type === 'flush') {
+        this.readIdx = this.writeIdx;            // drop everything pending
+      }
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0][0];
+    if (!out) return true;
+    for (let i = 0; i < out.length; i++) {
+      const base = Math.floor(this.readIdx);
+      if (base + 1 < this.writeIdx) {
+        const frac = this.readIdx - base;
+        const s0 = this.ring[base % this.size];
+        const s1 = this.ring[(base + 1) % this.size];
+        out[i] = s0 * (1 - frac) + s1 * frac;
+        this.readIdx += this.step;
+      } else {
+        out[i] = 0;                              // underrun -> clean silence
+      }
+    }
+    const playing = (Math.floor(this.readIdx) + 1) < this.writeIdx;
+    if (playing !== this.lastPlaying) { this.lastPlaying = playing; this.port.postMessage({ type: playing ? 'active' : 'drained' }); }
+    return true;
+  }
+}
+registerProcessor('friday-pcm-player', FridayPCMPlayer);
+`;
     try{
       // Pin the context to Gemini's 24kHz output rate. If left at the hardware
       // default (usually 48kHz), every received chunk gets resampled 24k->48k and
@@ -7808,6 +7864,37 @@ function App(){
       console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
       v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
+      // Preferred playback path: a single AudioWorklet ring-buffer player on the
+      // audio render thread. This replaces the per-chunk BufferSource scheduler,
+      // which progressively rasps over long calls (per-node resampler resets +
+      // main-thread jank corrupting the shared context). If the worklet can't be
+      // loaded we fall back to the legacy scheduler below, so voice never breaks.
+      v.usePlayerWorklet=false;v.fridaySpeaking=false;
+      try{
+        if(v.audioCtx.audioWorklet){
+          const _blob=new Blob([PCM_PLAYER_WORKLET_SRC],{type:'application/javascript'});
+          const _url=URL.createObjectURL(_blob);
+          await v.audioCtx.audioWorklet.addModule(_url);
+          try{URL.revokeObjectURL(_url)}catch(_){}
+          v.playerNode=new AudioWorkletNode(v.audioCtx,'friday-pcm-player',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[1],processorOptions:{srcRate:PCM_OUT_RATE}});
+          v.playerNode.connect(v.audioCtx.destination);
+          try{v.playerNode.connect(v.holoAnalyser)}catch(_){}
+          // Track whether Friday is speaking from the ring-buffer fill state so
+          // the mic-mute guard still works. A short hangover on 'drained' avoids
+          // a brief mid-turn buffer dip unmuting the mic and triggering a
+          // spurious server-side VAD interrupt.
+          v.playerNode.port.onmessage=(e)=>{
+            const t=e.data&&e.data.type;
+            if(t==='active'){v.fridaySpeaking=true;if(v._drainT){clearTimeout(v._drainT);v._drainT=null}}
+            else if(t==='drained'){if(v._drainT)clearTimeout(v._drainT);v._drainT=setTimeout(()=>{v.fridaySpeaking=false;v._drainT=null},250)}
+          };
+          v.usePlayerWorklet=true;
+          console.log('VOICE_DEBUG: AudioWorklet PCM player active (ctxRate='+v.audioCtx.sampleRate+', srcRate='+PCM_OUT_RATE+') — continuous resampling + jitter buffer on the audio thread; no per-chunk scheduling drift');
+        }
+      }catch(err){
+        v.usePlayerWorklet=false;
+        console.warn('[voice] AudioWorklet player unavailable — falling back to per-chunk BufferSource scheduling:',err);
+      }
       const _voiceAmpLoop=()=>{if(!v.audioCtx){window._fridayHoloAmplitude=0;return}v.holoAnalyser.getByteFrequencyData(v.holoAmpBuf);let s=0;for(let i=0;i<v.holoAmpBuf.length;i++)s+=v.holoAmpBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/v.holoAmpBuf.length)/128);v._holoFrame=requestAnimationFrame(_voiceAmpLoop)};_voiceAmpLoop();
       const _outputId=agentSettings.audio_output_device_id;
       if(_outputId&&v.audioCtx.setSinkId){try{await v.audioCtx.setSinkId(_outputId)}catch(e){console.warn('[voice] setSinkId failed:',e)}}
@@ -7865,9 +7952,10 @@ function App(){
           // cutting her off mid-sentence. While activeSources is non-empty we
           // simply don't forward mic audio; once playback drains (length===0) the
           // user can speak and Gemini's VAD detects them normally.
-          if(v.activeSources&&v.activeSources.length>0){
+          const _speaking=v.usePlayerWorklet?!!v.fridaySpeaking:(v.activeSources&&v.activeSources.length>0);
+          if(_speaking){
             v.micMuteLogN=(v.micMuteLogN||0)+1;
-            if(v.micMuteLogN%20===1)console.log('VOICE_DEBUG: mic MUTED (Friday speaking, activeSources='+v.activeSources.length+')');
+            if(v.micMuteLogN%20===1)console.log('VOICE_DEBUG: mic MUTED (Friday speaking, worklet='+(!!v.usePlayerWorklet)+', activeSources='+(v.activeSources?v.activeSources.length:0)+')');
             return;
           }
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
@@ -7955,6 +8043,15 @@ function App(){
         if(v.playbackCancelled){console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
         if(!v.audioCtx||v.audioCtx.state==='closed')return;
         const int16=b64ToI16(m.data);
+        if(v.usePlayerWorklet&&v.playerNode){
+          // Worklet path: hand raw float PCM to the ring buffer and let the audio
+          // thread resample + play it gaplessly. No per-chunk nodes, no playCursor.
+          const f32=new Float32Array(int16.length);for(let i=0;i<int16.length;i++)f32[i]=int16[i]/32768;
+          v.fridaySpeaking=true;if(v._drainT){clearTimeout(v._drainT);v._drainT=null}
+          try{v.playerNode.port.postMessage({type:'samples',data:f32},[f32.buffer])}catch(_){}
+          setVoiceStatus('speaking');
+          return;
+        }
         const buf=v.audioCtx.createBuffer(1,int16.length,PCM_OUT_RATE);
         const ch=buf.getChannelData(0);for(let i=0;i<int16.length;i++)ch[i]=int16[i]/32768;
         const now=v.audioCtx.currentTime;const startAt=Math.max(now,v.playCursor);
@@ -8031,6 +8128,9 @@ function App(){
       try{v2.frameTimer&&clearInterval(v2.frameTimer)}catch(_){}
       // Stop any audio still scheduled/playing before tearing down the context.
       try{(v2.activeSources||[]).forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}})}catch(_){}
+      try{v2._drainT&&clearTimeout(v2._drainT)}catch(_){}
+      try{v2.playerNode&&v2.playerNode.port.postMessage({type:'flush'})}catch(_){}
+      try{v2.playerNode&&v2.playerNode.disconnect()}catch(_){}
       try{v2.micNode&&v2.micNode.disconnect()}catch(_){}
       try{v2.micSource&&v2.micSource.disconnect()}catch(_){}
       try{v2.micStream&&v2.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
@@ -8058,6 +8158,9 @@ function App(){
     try{v.diagTimer&&clearInterval(v.diagTimer)}catch(_){}
     try{v.meterTimer&&clearInterval(v.meterTimer)}catch(_){}
     try{v.frameTimer&&clearInterval(v.frameTimer)}catch(_){}
+    try{v._drainT&&clearTimeout(v._drainT)}catch(_){}
+    try{v.playerNode&&v.playerNode.port.postMessage({type:'flush'})}catch(_){}
+    try{v.playerNode&&v.playerNode.disconnect()}catch(_){}
     try{v.micNode&&v.micNode.disconnect()}catch(_){}
     try{v.micSource&&v.micSource.disconnect()}catch(_){}
     try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
