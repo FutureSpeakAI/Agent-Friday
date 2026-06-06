@@ -1783,6 +1783,35 @@ window.addEventListener('DOMContentLoaded',function(){
             color:#9be7c4; background:rgba(45,212,191,0.1); border:1px solid rgba(45,212,191,0.28);
         }
 
+        /* Friday's Weekly Editorial */
+        .ed-disclaimer {
+            padding:11px 15px; border-radius:10px; font-size:12px; line-height:1.5;
+            color:#ffd9a8; background:rgba(245,158,11,0.09);
+            border:1px solid rgba(245,158,11,0.32); border-left:4px solid #f59e0b;
+        }
+        .ed-body {
+            margin:14px 0 4px; padding:20px 22px; border-radius:12px;
+            background:rgba(10,14,26,0.7); border:1px solid rgba(255,255,255,0.06);
+            border-left:3px solid #f472b6;
+        }
+        .ed-body blockquote {
+            margin:12px 0; padding:8px 14px; border-left:3px solid rgba(244,114,182,0.5);
+            color:#e3c9d8; background:rgba(244,114,182,0.05);
+        }
+        .ed-archive { display:flex; flex-direction:column; gap:8px; }
+        .ed-archive-item {
+            padding:11px 13px; border-radius:9px; cursor:pointer;
+            background:rgba(10,14,26,0.6); border:1px solid rgba(255,255,255,0.05);
+            transition:border-color .15s, background .15s;
+        }
+        .ed-archive-item:hover { border-color:rgba(244,114,182,0.4); background:rgba(244,114,182,0.05); }
+        .ed-archive-item.active { border-color:#f472b6; background:rgba(244,114,182,0.08); }
+        .ed-archive-week {
+            font-family:'Orbitron',monospace; font-size:12px; font-weight:600; color:#f472b6;
+        }
+        .ed-archive-meta { font-size:10.5px; color:#8b93a4; margin-top:2px; }
+        .ed-archive-preview { font-size:11.5px; color:#9aa1b0; line-height:1.45; margin-top:5px; }
+
         /* Briefing preview cards (past briefings) */
         .brief-card {
             margin-bottom:10px; border-radius:10px; padding:13px;

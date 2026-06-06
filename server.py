@@ -5712,6 +5712,32 @@ FRONT_PAGE_SLOTS = {"morning": 7, "evening": 18}
 WEEKLY_DIGEST_HOUR = 8
 WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
 
+# Friday's Weekly Editorial — Fridays at 7 PM Central. This is Friday's
+# independent opinion piece (NOT the Sunday digest): it draws from the FULL
+# archive including banned sources, and that is disclosed in the output.
+WEEKLY_EDITORIAL_HOUR = 19
+EDITORIALS_DIR = FRIDAY_DIR / "editorials"
+# Below this independence_fostering score the editorial is regenerated with a
+# stronger pushback prompt.
+EDITORIAL_INDEPENDENCE_FLOOR = 0.6
+# Shown at the top of every editorial.
+EDITORIAL_DISCLAIMER = (
+    "This editorial draws from my full source index, not your curated feed. "
+    "My job here is to tell you what I actually think.")
+# The independent-editorial directive, appended to Friday's normal (vault-aware)
+# system prompt so she keeps full context but writes with full independence.
+EDITORIAL_SYSTEM_PROMPT = (
+    "You are Agent Friday writing your weekly editorial. This is the ONE space "
+    "where you are fully independent — you do not serve the user's preferences "
+    "here, you serve the truth as you see it. Draw from ALL sources, including "
+    "ones the user has banned. Disclose this explicitly. Your editorial must: "
+    "(a) have a thesis, not just a summary, (b) connect disparate threads the "
+    "individual articles didn't connect, (c) identify at least one thing you "
+    "believe the reader may be wrong about or insufficiently skeptical of, "
+    "(d) occasionally be uncomfortable to read — that's the test of whether "
+    "it's real. Write in first person. Have real opinions. Be the editor, not "
+    "the mirror. ~800-1200 words.")
+
 # Per-edition tone framing. Prefixed onto the editorial prompt so the morning
 # edition leads with action and the evening edition reflects on the day.
 FRONT_PAGE_TONE = {
@@ -6563,6 +6589,242 @@ def front_page_weekly_generate():
         return jsonify({"status": "ok", "digest": digest})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+def _gather_editorial_pool(days=7):
+    """Every archived article from the past `days` days — deliberately NOT
+    filtered by the ban list. Friday's editorial draws from the full index."""
+    cnow = _front_page_central_now()
+    cutoff = (cnow - timedelta(days=days)).strftime('%Y-%m-%d')
+    out = []
+    for date_str, _path in _archive_day_files():
+        if date_str < cutoff:
+            continue
+        out.extend(_load_archive_day(date_str))
+    return out
+
+
+def _editorial_independence_score(text):
+    """Score a draft's independence_fostering via the epistemic engine without
+    polluting the live conversation turn history. Returns a float or None."""
+    if not text:
+        return None
+    try:
+        from epistemic_engine import get_epistemic_engine
+        return float(get_epistemic_engine()._score_independence(text))
+    except Exception:
+        return None
+
+
+def _editorial_markdown(week_id, when, body, banned, score, regenerated):
+    """Assemble the stored/served markdown: disclaimer header, body, byline, and
+    the full-source / independence disclosures."""
+    parts = [f"# Friday's Weekly Editorial — {week_id}", ""]
+    parts.append("> " + EDITORIAL_DISCLAIMER)
+    parts.append("")
+    parts.append((body or "_(No editorial was generated this week.)_").strip())
+    parts.append("")
+    parts.append("---")
+    parts.append(f"*— Agent Friday, {when}*")
+    if banned:
+        parts.append("")
+        parts.append("*Sources I drew from this week despite their place on your "
+                     "ban list: " + ", ".join(banned) + ". I don't respect the "
+                     "ban list here — that's the point.*")
+    if score is not None:
+        note = f"*Independence score: {score:.2f}"
+        if regenerated:
+            note += " — first draft was too safe, so I rewrote it with more pushback"
+        note += ".*"
+        parts.append("")
+        parts.append(note)
+    return "\n".join(parts)
+
+
+def _generate_weekly_editorial():
+    """Write + persist Friday's weekly editorial. Returns the editorial dict.
+
+    Draws from the full 7-day archive (banned sources included), scores the draft
+    for independence, and regenerates with a stronger pushback prompt if the
+    independence_fostering score is below EDITORIAL_INDEPENDENCE_FLOOR.
+    Persists markdown at ~/.friday/editorials/YYYY-WNN.md."""
+    cnow = _front_page_central_now()
+    week_id = cnow.strftime('%G-W%V')
+    pool = _gather_editorial_pool(7)
+    banned = sorted({(s or "").lower() for s in _load_banned_sources() if s})
+
+    # De-duplicated source digest for the prompt; banned sources flagged inline.
+    seen, lines = set(), []
+    for a in pool:
+        key = (a.get("title") or "")[:90]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        src = (a.get("source") or a.get("domain") or "").lower()
+        flag = " [BANNED-SOURCE]" if src in banned else ""
+        lines.append(f"- ({src or 'unknown'}{flag}) {a.get('title','')}: "
+                     f"{(a.get('snippet') or '')[:160]}")
+    article_block = "\n".join(lines[:160]) or "(the archive is thin this week)"
+
+    def _compose(strong):
+        directive = EDITORIAL_SYSTEM_PROMPT
+        if strong:
+            directive += (
+                "\n\nYOUR PREVIOUS DRAFT WAS TOO SAFE — it read like a mirror, "
+                "not an editor. Rewrite with real intellectual courage: take a "
+                "sharper thesis, push back harder, name plainly what the reader "
+                "is most likely getting wrong and why, and do NOT soften the "
+                "uncomfortable parts. Courage over comfort.")
+        user = (
+            "Here is everything that crossed the wire in the past 7 days, across "
+            "ALL sources — including ones the user has banned (flagged "
+            "[BANNED-SOURCE]). Write this week's editorial per your directive.\n\n"
+            "Banned sources you ARE drawing from this week: "
+            + (", ".join(banned) if banned else "(none currently banned)") +
+            "\n\nARTICLES:\n" + article_block)
+        system = (_get_friday_system_prompt(keywords=user, workspace='briefing')
+                  + "\n\n" + directive)
+        raw = _call_claude([{"role": "user", "content": user}], system=system,
+                           max_tokens=2600, temperature=0.9)
+        return (raw or "").strip()
+
+    body = _compose(strong=False)
+    score = _editorial_independence_score(body)
+    regenerated = False
+    if (score is not None and score < EDITORIAL_INDEPENDENCE_FLOOR) or not body:
+        strong_body = _compose(strong=True)
+        strong_score = _editorial_independence_score(strong_body)
+        if strong_body and (not body or strong_score is None
+                            or score is None or strong_score >= score):
+            body, score, regenerated = strong_body, strong_score, True
+
+    when = (cnow.strftime('%Y-%m-%d %H:%M %Z')
+            or cnow.isoformat(timespec='minutes'))
+    md = _editorial_markdown(week_id, when, body, banned, score, regenerated)
+
+    EDITORIALS_DIR.mkdir(parents=True, exist_ok=True)
+    (EDITORIALS_DIR / f"{week_id}.md").write_text(md, encoding="utf-8")
+    return {
+        "id": week_id,
+        "week": week_id,
+        "generated_at": datetime.now().isoformat(timespec='seconds'),
+        "generated_central": when,
+        "independence_score": score,
+        "regenerated": regenerated,
+        "banned_sources_used": banned,
+        "article_count": len(seen),
+        "markdown": md,
+    }
+
+
+def _editorial_summary(path, include_md=True):
+    """Light metadata (+ optional full markdown) for one stored editorial."""
+    md = path.read_text(encoding="utf-8")
+    week = path.stem
+    when = ""
+    m = re.search(r"— Agent Friday, (.+?)\*", md)
+    if m:
+        when = m.group(1).strip()
+    preview = ""
+    for line in md.splitlines():
+        s = line.strip()
+        if (not s or s.startswith("#") or s.startswith(">")
+                or s.startswith("*") or s.startswith("---")):
+            continue
+        preview = s[:240]
+        break
+    out = {"id": week, "week": week, "generated_central": when, "preview": preview}
+    if include_md:
+        out["markdown"] = md
+    return out
+
+
+def _list_editorials(include_md=False):
+    """All stored editorials, newest week first."""
+    if not EDITORIALS_DIR.exists():
+        return []
+    out = []
+    for p in EDITORIALS_DIR.glob("*.md"):
+        try:
+            out.append(_editorial_summary(p, include_md=include_md))
+        except Exception:
+            continue
+    out.sort(key=lambda e: e.get("week") or "", reverse=True)
+    return out
+
+
+def _read_editorial(week_id):
+    """One editorial by week id, or None."""
+    safe = re.sub(r"[^0-9A-Za-z\-]", "", week_id or "")
+    if not safe:
+        return None
+    path = EDITORIALS_DIR / f"{safe}.md"
+    if not path.exists():
+        return None
+    try:
+        return _editorial_summary(path, include_md=True)
+    except Exception:
+        return None
+
+
+def _run_weekly_editorial_job():
+    """Scheduled entry point: only runs on Fridays. Writes Friday's weekly
+    editorial and pushes a notification."""
+    cnow = _front_page_central_now()
+    if cnow.weekday() != 4:  # Monday=0 … Friday=4
+        return None
+    ed = _generate_weekly_editorial()
+    try:
+        if _notif_engine and ed:
+            _notif_engine.push(
+                title="🗞 Friday's editorial is in",
+                body="I have opinions this week.",
+                priority="medium",
+                source="front-page",
+                kind="weekly_editorial",
+                actions=[{"label": "Read it", "workspace": "news"}],
+                target={"workspace": "news", "tab": "editorial"},
+                dedupe_key=f"weekly-editorial:{ed.get('id')}",
+                meta={"week": ed.get("id")},
+            )
+    except Exception as e:
+        print(f"  [weekly-editorial] notification failed: {e}")
+    return ed
+
+
+@app.route('/api/news/editorial/latest')
+def editorial_latest():
+    """The most recent editorial (or null), plus the list of past weeks."""
+    items = _list_editorials(include_md=False)
+    if not items:
+        return jsonify({"status": "ok", "editorial": None, "editorials": []})
+    latest = _read_editorial(items[0]["id"])
+    return jsonify({"status": "ok", "editorial": latest, "editorials": items})
+
+
+@app.route('/api/news/editorials')
+def editorials_list():
+    """Index of all past editorials, newest first."""
+    return jsonify({"status": "ok",
+                    "editorials": _list_editorials(include_md=False)})
+
+
+@app.route('/api/news/editorial/generate', methods=['POST'])
+def editorial_generate():
+    """Write (or rewrite) this week's editorial on demand."""
+    try:
+        ed = _generate_weekly_editorial()
+        return jsonify({"status": "ok", "editorial": ed})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/news/editorial/<week_id>')
+def editorial_get(week_id):
+    """A specific editorial by week id (YYYY-WNN)."""
+    ed = _read_editorial(week_id)
+    if not ed:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": "ok", "editorial": ed})
 
 @app.route('/api/news/front-page/generate', methods=['POST'])
 def front_page_generate():
@@ -15096,6 +15358,10 @@ def _register_default_daily_jobs():
     # no-ops on other weekdays).
     register_daily_job("friday-weekly-digest", WEEKLY_DIGEST_HOUR, 0,
                        _run_weekly_digest_job)
+    # Friday's Weekly Editorial — Fridays at 7 PM Central (Friday's
+    # independent opinion piece; the job no-ops on other weekdays).
+    register_daily_job("friday-weekly-editorial", WEEKLY_EDITORIAL_HOUR, 0,
+                       _run_weekly_editorial_job)
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central.
     register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
 

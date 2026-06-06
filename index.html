@@ -1783,6 +1783,35 @@ window.addEventListener('DOMContentLoaded',function(){
             color:#9be7c4; background:rgba(45,212,191,0.1); border:1px solid rgba(45,212,191,0.28);
         }
 
+        /* Friday's Weekly Editorial */
+        .ed-disclaimer {
+            padding:11px 15px; border-radius:10px; font-size:12px; line-height:1.5;
+            color:#ffd9a8; background:rgba(245,158,11,0.09);
+            border:1px solid rgba(245,158,11,0.32); border-left:4px solid #f59e0b;
+        }
+        .ed-body {
+            margin:14px 0 4px; padding:20px 22px; border-radius:12px;
+            background:rgba(10,14,26,0.7); border:1px solid rgba(255,255,255,0.06);
+            border-left:3px solid #f472b6;
+        }
+        .ed-body blockquote {
+            margin:12px 0; padding:8px 14px; border-left:3px solid rgba(244,114,182,0.5);
+            color:#e3c9d8; background:rgba(244,114,182,0.05);
+        }
+        .ed-archive { display:flex; flex-direction:column; gap:8px; }
+        .ed-archive-item {
+            padding:11px 13px; border-radius:9px; cursor:pointer;
+            background:rgba(10,14,26,0.6); border:1px solid rgba(255,255,255,0.05);
+            transition:border-color .15s, background .15s;
+        }
+        .ed-archive-item:hover { border-color:rgba(244,114,182,0.4); background:rgba(244,114,182,0.05); }
+        .ed-archive-item.active { border-color:#f472b6; background:rgba(244,114,182,0.08); }
+        .ed-archive-week {
+            font-family:'Orbitron',monospace; font-size:12px; font-weight:600; color:#f472b6;
+        }
+        .ed-archive-meta { font-size:10.5px; color:#8b93a4; margin-top:2px; }
+        .ed-archive-preview { font-size:11.5px; color:#9aa1b0; line-height:1.45; margin-top:5px; }
+
         /* Briefing preview cards (past briefings) */
         .brief-card {
             margin-bottom:10px; border-radius:10px; padding:13px;
@@ -5366,6 +5395,7 @@ function NewsWS(){
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
   const[weekly,setWeekly]=useState(null);const[wkList,setWkList]=useState([]);const[wkLoading,setWkLoading]=useState(true);const[wkGen,setWkGen]=useState(false);
+  const[editorial,setEditorial]=useState(null);const[edList,setEdList]=useState([]);const[edLoading,setEdLoading]=useState(true);const[edGen,setEdGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
   const[streamCat,setStreamCat]=useState('All');const[sortBy,setSortBy]=useState('relevance');
   const[status,setStatus]=useState([]);
@@ -5420,6 +5450,9 @@ function NewsWS(){
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
   const loadWeekly=()=>{setWkLoading(true);fetch('/api/news/front-page/weekly/latest').then(r=>r.json()).then(d=>{setWeekly(d.digest||null);setWkList(d.digests||[]);setWkLoading(false)}).catch(()=>setWkLoading(false))};
   const genWeekly=async()=>{if(wkGen)return;setWkGen(true);try{const r=await fetch('/api/news/front-page/weekly/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.digest)throw new Error(d.message||'Generation failed');setWeekly(d.digest);loadWeekly()}catch(e){alert('Weekly Digest generation failed: '+(e.message||e))}finally{setWkGen(false)}};
+  const loadEditorial=()=>{setEdLoading(true);fetch('/api/news/editorial/latest').then(r=>r.json()).then(d=>{setEditorial(d.editorial||null);setEdList(d.editorials||[]);setEdLoading(false)}).catch(()=>setEdLoading(false))};
+  const loadEdWeek=(id)=>{fetch('/api/news/editorial/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.editorial)setEditorial(d.editorial)}).catch(()=>{})};
+  const genEditorial=async()=>{if(edGen)return;setEdGen(true);try{const r=await fetch('/api/news/editorial/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.editorial)throw new Error(d.message||'Generation failed');setEditorial(d.editorial);loadEditorial()}catch(e){alert('Editorial generation failed: '+(e.message||e))}finally{setEdGen(false)}};
   const loadReadLater=()=>{setRlLoading(true);fetch('/api/news/read-later').then(r=>r.json()).then(d=>{const it=d.items||[];setReadLater(it);setSavedUrls(Object.fromEntries(it.map(a=>[a.url,true])));setRlLoading(false)}).catch(()=>setRlLoading(false))};
   const loadAnnotations=()=>fetch('/api/news/annotations').then(r=>r.json()).then(d=>{setAnnotations(d.annotations||[]);const m={};(d.annotated_ids||[]).forEach(id=>{if(id)m[id]=true});setAnnById(m)}).catch(()=>{});
   const loadClusters=()=>{setClLoading(true);fetch('/api/news/clusters').then(r=>r.json()).then(d=>{setClusters(d.clusters||[]);setClLoading(false)}).catch(()=>setClLoading(false))};
@@ -5427,7 +5460,7 @@ function NewsWS(){
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
-    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadWeekly();loadArchStats();loadAnnotations();loadClusters();
+    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadWeekly();loadEditorial();loadArchStats();loadAnnotations();loadClusters();
     return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading();stopFpAudio()};
   },[]);
 
@@ -5613,6 +5646,7 @@ function NewsWS(){
         <button className={'btn '+(tab==='notes'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('notes');loadAnnotations()}}>📝 My Notes{annotations.length?(' ('+annotations.length+')'):''}</button>
         <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
         <button className={'btn '+(tab==='weekly'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('weekly');loadWeekly()}}>📅 Weekly</button>
+        <button className={'btn '+(tab==='editorial'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('editorial');loadEditorial()}}>🖋 Editorial</button>
       </div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
@@ -5827,6 +5861,41 @@ function NewsWS(){
          {(weekly.trends||[]).length>0&&<div className="fp-section">
            <div className="fp-section-head cat-science"><span className="fp-section-title">Trends</span></div>
            <div className="wk-trends">{weekly.trends.map((tr,ti)=><span key={ti} className="wk-trend">{tr}</span>)}</div>
+         </div>}
+       </div>}
+    </div>}
+
+    {/* ── EDITORIAL TAB (Friday's independent weekly opinion) ── */}
+    {tab==='editorial'&&<div>
+      {edLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading Friday's editorial…</div>:
+       !editorial?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>
+         No editorial yet. Friday writes one every Friday at 7 PM Central — her one fully independent space.
+         <div style={{marginTop:12}}><button className="btn active" style={{fontSize:11}} onClick={genEditorial} disabled={edGen}>{edGen?'Writing…':"✨ Write this week's editorial"}</button></div>
+       </div>:
+       <div>
+         <div className="ed-disclaimer">⚠ This editorial draws from my full source index, not your curated feed. My job here is to tell you what I actually think.</div>
+         <div className="fp-masthead" style={{marginTop:12}}>
+           <div>
+             <div className="fp-title">Friday's Editorial</div>
+             <div className="fp-sub">{(editorial.generated_central||editorial.week||'')+(editorial.regenerated?' · rewritten for stronger pushback':'')+(typeof editorial.independence_score==='number'?(' · independence '+editorial.independence_score.toFixed(2)):'')}</div>
+           </div>
+           <div style={{display:'flex',gap:6,alignItems:'center'}}>
+             {edList.length>1&&<select className="input" style={{fontSize:11,maxWidth:160}} value={editorial.id} onChange={e=>loadEdWeek(e.target.value)}>
+               {edList.map(w=><option key={w.id} value={w.id}>{w.week||w.id}</option>)}
+             </select>}
+             <button className="btn" style={{fontSize:11}} onClick={genEditorial} disabled={edGen}>{edGen?'Writing…':'↻ Rewrite'}</button>
+           </div>
+         </div>
+         <div className="ed-body"><FridayDoc text={(editorial.markdown||'').replace(/^# .*(\r?\n)+/,'').replace(/^> .*(\r?\n)+/,'')}/></div>
+         {edList.length>1&&<div className="fp-section" style={{marginTop:20}}>
+           <div className="fp-section-head cat-media"><span className="fp-section-title">Past Editorials</span></div>
+           <div className="ed-archive">
+             {edList.map((w,wi)=><div key={wi} className={'ed-archive-item'+(editorial&&w.id===editorial.id?' active':'')} onClick={()=>loadEdWeek(w.id)}>
+               <div className="ed-archive-week">{w.week||w.id}</div>
+               {w.generated_central&&<div className="ed-archive-meta">{w.generated_central}</div>}
+               {w.preview&&<div className="ed-archive-preview">{w.preview}</div>}
+             </div>)}
+           </div>
          </div>}
        </div>}
     </div>}
