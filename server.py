@@ -1953,6 +1953,139 @@ def _get_governance_key() -> bytes:
     return key
 
 
+# ── Sovereign Vault: encryption-at-rest ──────────────────────────────
+# Transparent AES-256-GCM for sensitive files (finance, health, co-parent,
+# legal). The key is derived once from FRIDAY_PASSWORD via Argon2id — see
+# vault_crypto.py. When no password is set (or the crypto deps are missing)
+# the key is None and every helper falls back to plaintext, so behaviour is
+# unchanged for the keyless local-dev case.
+try:
+    import vault_crypto as _vc
+    _HAS_VAULT_CRYPTO = True
+except Exception:
+    _vc = None
+    _HAS_VAULT_CRYPTO = False
+
+_VAULT_KEY: bytes | None = None
+_VAULT_KEY_READY = False
+_VAULT_CONFIG_FILE = FRIDAY_DIR / "vault" / ".vault_config.json"
+
+
+def _get_vault_key() -> bytes | None:
+    """Derive (once) the AES-256 vault key from FRIDAY_PASSWORD.
+
+    Returns the 32-byte key, or None when encryption is disabled/unavailable
+    (no password set, or vault_crypto/cryptography missing). On None, callers
+    transparently read and write plaintext.
+    """
+    global _VAULT_KEY, _VAULT_KEY_READY
+    if _VAULT_KEY_READY:
+        return _VAULT_KEY
+    _VAULT_KEY_READY = True
+    if not _HAS_VAULT_CRYPTO or not FRIDAY_PASSWORD:
+        if not FRIDAY_PASSWORD:
+            print("[vault] FRIDAY_PASSWORD not set — sensitive data stored as PLAINTEXT at rest.")
+        elif not _HAS_VAULT_CRYPTO:
+            print("[vault] vault_crypto unavailable — sensitive data stored as PLAINTEXT at rest.")
+        _VAULT_KEY = None
+        return None
+    try:
+        _VAULT_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        cfg = {}
+        if _VAULT_CONFIG_FILE.exists():
+            cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
+        salt_hex = cfg.get("salt_hex")
+        if not salt_hex:
+            salt_hex = os.urandom(16).hex()
+            cfg.update({"salt_hex": salt_hex, "kdf": "argon2id", "cipher": "aes-256-gcm"})
+            _tmp = _VAULT_CONFIG_FILE.with_name(_VAULT_CONFIG_FILE.name + ".tmp")
+            _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+            _tmp.replace(_VAULT_CONFIG_FILE)
+        _VAULT_KEY = _vc.derive_key(FRIDAY_PASSWORD, bytes.fromhex(salt_hex))
+        print("[vault] Encryption-at-rest ENABLED (AES-256-GCM · Argon2id).")
+    except Exception as e:
+        print(f"[vault] key derivation failed ({e}) — falling back to plaintext.")
+        _VAULT_KEY = None
+    return _VAULT_KEY
+
+
+def _vault_read_text(path) -> str:
+    """Read a possibly-encrypted file as UTF-8 text.
+
+    Decrypts when the file is a FRIDAYVAULT blob and a key is available;
+    otherwise returns the bytes as text (handles plaintext + mixed states
+    during rollover). Raises on an encrypted blob with no/incorrect key.
+    """
+    raw = Path(path).read_bytes()
+    key = _get_vault_key()
+    if _HAS_VAULT_CRYPTO and _vc.is_encrypted(raw):
+        if key is None:
+            raise RuntimeError("file is vault-encrypted but FRIDAY_PASSWORD is not set")
+        return _vc.decrypt(raw, key).decode("utf-8")
+    return raw.decode("utf-8")
+
+
+def _vault_write_text(path, text: str) -> None:
+    """Write text, encrypting at rest when a vault key is available. Atomic."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = text.encode("utf-8")
+    key = _get_vault_key()
+    if key is not None:
+        data = _vc.encrypt(data, key)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(p)
+
+
+# Sensitive directories whose file contents are encrypted at rest when a vault
+# key is present. Scoped to the TIER_3 personal-data stores — NOT the wiki or
+# the append-only audit logs (those are handled separately / kept plaintext).
+def _sensitive_vault_dirs() -> list:
+    dirs = [FRIDAY_DIR / "finance", FRIDAY_DIR / "health", FRIDAY_DIR / "ofw"]
+    vault_root = FRIDAY_DIR / "vault"
+    dirs += [vault_root / c for c in ("legal", "coparenting", "finances", "family")]
+    return dirs
+
+
+_VAULT_MIGRATE_SKIP = {".vault_config.json", ".governance-key",
+                       "access-log.jsonl", "decision-bom.jsonl"}
+
+
+def _migrate_vault_plaintext() -> None:
+    """Encrypt any still-plaintext sensitive files in place (idempotent).
+
+    Runs once at startup when a vault key is available. Verifies a decrypt
+    round-trip before replacing each file; per-file try/except so a single
+    failure never blocks boot. Files already encrypted are skipped.
+    """
+    key = _get_vault_key()
+    if key is None or not _HAS_VAULT_CRYPTO:
+        return
+    migrated = 0
+    for d in _sensitive_vault_dirs():
+        if not d.exists():
+            continue
+        for p in d.rglob("*"):
+            if not p.is_file() or p.name in _VAULT_MIGRATE_SKIP or p.suffix == ".tmp":
+                continue
+            try:
+                raw = p.read_bytes()
+                if _vc.is_encrypted(raw):
+                    continue
+                blob = _vc.encrypt(raw, key)
+                if _vc.decrypt(blob, key) != raw:   # prove recoverability first
+                    continue
+                tmp = p.with_name(p.name + ".tmp")
+                tmp.write_bytes(blob)
+                tmp.replace(p)
+                migrated += 1
+            except Exception as e:
+                print(f"[vault] migrate skipped {p.name}: {e}")
+    if migrated:
+        print(f"[vault] encrypted {migrated} previously-plaintext sensitive file(s) at rest.")
+
+
 def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = None) -> tuple[bool, str]:
     """Policy gate executed before every tool call.
 
@@ -7352,13 +7485,13 @@ def finance_portfolio():
     path = FINANCE_DIR / "portfolio.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     # Create template if missing
     template = {"positions": [{"ticker": "NVDA", "shares": 0, "cost_basis": 0}], "accounts": ["RW Baird - Lisa Schmidt"]}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 @app.route('/api/finance/perks')
@@ -7367,12 +7500,12 @@ def finance_perks():
     path = FINANCE_DIR / "amex_perks.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     template = {"perks": [{"name": "Perk name", "value": "$X/yr", "used": False, "expires": "", "notes": ""}]}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 @app.route('/api/finance/contacts')
@@ -7407,12 +7540,12 @@ def health_medications():
     path = HEALTH_DIR / "medications.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     template = {"medications": [{"name": "GLP-1 (Henry Meds)", "dose": "", "frequency": "", "notes": ""}]}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 @app.route('/api/health/appointments')
@@ -7421,12 +7554,12 @@ def health_appointments():
     path = HEALTH_DIR / "appointments.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     template = {"appointments": [{"provider": "", "type": "", "email": "", "next": "", "frequency": ""}]}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 @app.route('/api/health/insurance')
@@ -7435,12 +7568,12 @@ def health_insurance():
     path = HEALTH_DIR / "insurance.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     template = {"insurance": {"provider": "Cigna Healthcare", "plan": "Add your plan name", "policy_number": "Add your policy number", "group_number": "Add your group number"}}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 @app.route('/api/health/vehicles')
@@ -7449,12 +7582,12 @@ def health_vehicles():
     path = HEALTH_DIR / "vehicles.json"
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding='utf-8'))
+            data = json.loads(_vault_read_text(path))
             return jsonify({"status": "ok", **data})
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)})
     template = {"vehicles": [{"name": "2015 VW Golf TSI SEL", "miles": "~60K", "notes": "", "mechanic": "Motormania Austin", "service_history": []}], "mechanics": []}
-    path.write_text(json.dumps(template, indent=2), encoding='utf-8')
+    _vault_write_text(path, json.dumps(template, indent=2))
     return jsonify({"status": "ok", **template})
 
 
@@ -7553,7 +7686,7 @@ def _load_ofw_messages():
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(_vault_read_text(path))
         except Exception:
             continue
         items = data if isinstance(data, list) else data.get("messages", [])
@@ -13771,6 +13904,14 @@ if __name__ == '__main__':
         print("  Wiki indexes: generated")
     except Exception as _wi_err:
         print(f"  Wiki indexes: skipped ({_wi_err})")
+
+    # Derive the vault key (if FRIDAY_PASSWORD is set) and encrypt any existing
+    # plaintext sensitive files at rest. No-op when no password is configured.
+    try:
+        _get_vault_key()
+        _migrate_vault_plaintext()
+    except Exception as _vk_err:
+        print(f"  Vault encryption: skipped ({_vk_err})")
 
     # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only.
     # Port is configurable via FRIDAY_PORT to avoid conflicts (default 3000).

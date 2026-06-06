@@ -5,6 +5,24 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **Vault encryption-at-rest, wired into the running app.** The `vault_crypto.py`
+  primitives (AES-256-GCM + Argon2id, already present and tested) are now actually
+  used by `server.py`. A vault key is derived once from `FRIDAY_PASSWORD` at startup
+  (`_get_vault_key`); sensitive files (finance, health, co-parent/OFW, and
+  `vault/{legal,coparenting,finances,family}`) are transparently encrypted on write
+  and decrypted on read (`_vault_write_text` / `_vault_read_text`); and any existing
+  plaintext is encrypted in place on first boot (`_migrate_vault_plaintext`, verifies
+  a decrypt round-trip before replacing each file). With no `FRIDAY_PASSWORD` set the
+  vault stays plaintext (logged at startup) — behaviour is unchanged for keyless
+  local-dev. New tests: `tests/test_vault_at_rest.py`. This closes the gap documented
+  in `docs/SITE_VS_REPO_DISCREPANCIES.md` (vault was previously plaintext at rest).
+
+---
+
 ## [4.4.0] — 2026-06-06
 
 The trust-and-portability release. Hardens authentication, adds a third

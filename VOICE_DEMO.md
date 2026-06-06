@@ -411,10 +411,12 @@ behavioral history to see it.
 Security isn't a feature I bolt on — it's the shape of the architecture itself.
 Here's how each layer contributes:
 
-**Vault encryption.** The Sovereign Vault is encrypted at rest. Your most
-sensitive data — financials, health records, legal documents — is encrypted on
-your disk. Even with physical access to your machine, the vault contents aren't
-readable without the proper keys.
+**Vault encryption.** The Sovereign Vault is encrypted at rest with AES-256-GCM,
+keyed from your vault passphrase via Argon2id. Your most sensitive data —
+financials, health records, legal documents — is encrypted on your disk. Even
+with physical access to your machine, the vault contents aren't readable without
+your passphrase. (Set a passphrase to turn it on; without one, the vault runs in
+local plaintext mode.)
 
 **Privacy Shield.** Every outbound message is inspected before it leaves your
 machine. The Shield prevents accidental data leakage to cloud providers by
