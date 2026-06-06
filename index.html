@@ -1519,6 +1519,76 @@ window.addEventListener('DOMContentLoaded',function(){
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
 
+        /* ── Source-trust badge + hover tooltip (article cards) ── */
+        .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
+        .trust-num { font-size:9px; color:#aeb6c4; font-variant-numeric:tabular-nums; }
+        .trust-tip {
+            position:absolute; bottom:140%; left:0; z-index:50; width:220px;
+            background:rgba(14,16,24,0.98); border:1px solid rgba(255,255,255,0.12);
+            border-radius:10px; padding:9px 10px; box-shadow:0 8px 28px rgba(0,0,0,0.55);
+            opacity:0; visibility:hidden; transform:translateY(4px); transition:all .14s ease; pointer-events:none;
+        }
+        .trust-badge:hover .trust-tip, .trust-badge:focus .trust-tip { opacity:1; visibility:visible; transform:translateY(0); }
+        .trust-tip-head { font-size:10px; font-weight:700; color:#dfe4ee; margin-bottom:6px; letter-spacing:.02em; }
+        .trust-tip-row { display:flex; align-items:center; gap:6px; margin:3px 0; font-size:9px; color:#9aa3b2; }
+        .trust-tip-lbl { width:74px; flex-shrink:0; }
+        .trust-tip-bar { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.08); overflow:hidden; }
+        .trust-tip-fill { display:block; height:100%; border-radius:3px; }
+        .trust-tip-fill.green { background:#00ff80; } .trust-tip-fill.yellow { background:#f59e0b; } .trust-tip-fill.red { background:#ff3c5a; }
+        .trust-tip-val { width:24px; text-align:right; font-variant-numeric:tabular-nums; color:#c4cad6; }
+
+        /* ── Trust tab: federation strip ── */
+        .fed-strip { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px;
+            background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.18); font-size:11px; color:#c4cad6; }
+        .fed-ico { font-size:14px; }
+        .fed-id { margin-left:auto; font-size:9px; color:#7fb6c9; font-family:monospace; cursor:help; }
+
+        /* ── Trust tab: leaderboard + detail layout ── */
+        .trust-layout { display:grid; grid-template-columns:minmax(280px,1fr) minmax(320px,1.4fr); gap:14px; align-items:start; }
+        @media (max-width:900px){ .trust-layout { grid-template-columns:1fr; } }
+        .trust-board { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); border-radius:12px; overflow:hidden; max-height:70vh; overflow-y:auto; }
+        .trust-board-head { display:flex; justify-content:space-between; padding:10px 12px; font-size:11px; font-weight:700; color:#dfe4ee; border-bottom:1px solid rgba(255,255,255,0.07); position:sticky; top:0; background:rgba(18,20,28,0.96); }
+        .trust-row { display:flex; align-items:center; gap:8px; padding:7px 12px; font-size:11px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03); }
+        .trust-row:hover { background:rgba(255,255,255,0.04); }
+        .trust-row.active { background:rgba(0,212,255,0.08); }
+        .trust-rank { width:18px; color:#6b7280; font-size:10px; text-align:right; }
+        .trust-row-name { flex:1; color:#dfe4ee; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .trust-row-score { font-weight:700; color:#c4cad6; font-variant-numeric:tabular-nums; }
+        .trust-row-meta { font-size:9px; color:#6b7280; min-width:74px; text-align:right; }
+        .trust-detail { background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); border-radius:12px; padding:14px; min-height:200px; }
+        .trust-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+        .trust-detail-name { font-size:15px; font-weight:700; color:#fff; }
+        .trust-detail-sub { font-size:10px; color:#7a8290; margin-top:2px; }
+        .trust-detail-score { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; }
+        .trust-detail-score.green { color:#00ff80; } .trust-detail-score.yellow { color:#f59e0b; } .trust-detail-score.red { color:#ff3c5a; }
+        .trust-detail-grid { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:12px 0; }
+        .trust-dimbars { flex:1; min-width:200px; }
+        .trust-dimbar { display:flex; align-items:center; gap:8px; margin:5px 0; font-size:10px; color:#9aa3b2; }
+        .trust-dimbar-lbl { width:96px; flex-shrink:0; }
+        .trust-dimbar-track { flex:1; height:7px; border-radius:4px; background:rgba(255,255,255,0.07); overflow:hidden; }
+        .trust-dimbar-fill { display:block; height:100%; border-radius:4px; }
+        .trust-dimbar-fill.green { background:#00ff80; } .trust-dimbar-fill.yellow { background:#f59e0b; } .trust-dimbar-fill.red { background:#ff3c5a; }
+        .trust-dimbar-val { width:26px; text-align:right; color:#c4cad6; font-variant-numeric:tabular-nums; }
+
+        /* ── Trust radar (SVG) ── */
+        .trust-radar { flex-shrink:0; }
+        .trust-radar .radar-grid { fill:rgba(255,255,255,0.02); stroke:rgba(255,255,255,0.1); stroke-width:1; }
+        .trust-radar .radar-spoke { stroke:rgba(255,255,255,0.08); stroke-width:1; }
+        .trust-radar .radar-area { fill:rgba(0,212,255,0.22); stroke:#00d4ff; stroke-width:1.5; }
+        .trust-radar .radar-lbl { fill:#8a92a2; font-size:7px; }
+
+        /* ── Trust observation history ── */
+        .trust-obs-head { font-size:11px; font-weight:700; color:#dfe4ee; margin:14px 0 6px; }
+        .trust-obs-list { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
+        .trust-obs { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:10px; color:#9aa3b2; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+        .trust-obs-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+        .trust-obs-dot.green { background:#00ff80; } .trust-obs-dot.yellow { background:#f59e0b; } .trust-obs-dot.red { background:#ff3c5a; }
+        .trust-obs-type { color:#dfe4ee; font-weight:600; }
+        .trust-obs-dim { color:#7fb6c9; }
+        .trust-obs-date { color:#6b7280; margin-left:auto; font-variant-numeric:tabular-nums; }
+        .trust-obs-detail { flex-basis:100%; color:#7a8290; font-size:9px; padding-left:14px; }
+        .trust-obs-peer { font-size:8px; background:rgba(167,139,250,0.18); color:#c4b5fd; padding:1px 5px; border-radius:6px; }
+
         .news-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:10px; color:#727a8a; }
         .breaking-badge {
             font-family:'Orbitron',monospace; font-size:9px; letter-spacing:0.07em;
@@ -5307,6 +5377,48 @@ function SentimentDot({it}){
   const tip={positive:'Positive tone',negative:'Negative tone',neutral:'Neutral tone'}[s]||'Neutral tone';
   return <span className={'sentiment-dot '+s} title={tip}></span>;
 }
+// Source Trust Graph dimension labels + ordering (matches source_trust_graph.py).
+const TRUST_DIMS=[
+  ['factual_accuracy','Factual accuracy'],
+  ['correction_behavior','Corrections'],
+  ['source_attribution','Attribution'],
+  ['prediction_accuracy','Predictions'],
+  ['opinion_separation','Opinion labeling'],
+  ['narrative_independence','Independence'],
+];
+function trustColor(score){const s=Number(score);if(isNaN(s))return'yellow';return s>=0.7?'green':s>=0.4?'yellow':'red';}
+// Inline trust badge for an article card: colored dot + numeric score, with a
+// hover tooltip breaking down the six Source Trust Graph dimensions.
+function TrustBadge({it,compact}){
+  const score=(it&&it.trust_score!=null)?Number(it.trust_score):null;
+  const color=(it&&it.trust)||(score!=null?trustColor(score):'yellow');
+  const dims=it&&it.trust_dims;
+  return <span className="trust-badge" tabIndex={0}>
+    <span className={'trust-dot '+color}></span>
+    {score!=null&&!compact&&<span className="trust-num">{score.toFixed(2)}</span>}
+    <span className="trust-tip">
+      <div className="trust-tip-head">Source trust{score!=null?(' · '+score.toFixed(2)):''}</div>
+      {dims?TRUST_DIMS.map(([k,lbl])=>{const v=dims[k];return <div key={k} className="trust-tip-row">
+        <span className="trust-tip-lbl">{lbl}</span>
+        <span className="trust-tip-bar"><span className={'trust-tip-fill '+trustColor(v)} style={{width:Math.round((Number(v)||0)*100)+'%'}}></span></span>
+        <span className="trust-tip-val">{v!=null?Number(v).toFixed(2):'—'}</span>
+      </div>}):<div className="trust-tip-row" style={{color:'#888'}}>No observations yet — score is a seed estimate.</div>}
+    </span>
+  </span>;
+}
+// Six-axis radar (hexagon) chart of a source's trust dimensions, pure SVG.
+function TrustRadar({scores}){
+  const sc=scores||{};const cx=90,cy=90,R=70;const n=TRUST_DIMS.length;
+  const pt=(i,r)=>{const ang=-Math.PI/2+i*2*Math.PI/n;return[cx+r*Math.cos(ang),cy+r*Math.sin(ang)];};
+  const ring=(f)=>TRUST_DIMS.map((_,i)=>pt(i,R*f).join(',')).join(' ');
+  const data=TRUST_DIMS.map(([k],i)=>pt(i,R*Math.max(0,Math.min(1,Number(sc[k])||0))).join(',')).join(' ');
+  return <svg className="trust-radar" viewBox="0 0 180 180" width="180" height="180">
+    {[0.25,0.5,0.75,1].map((f,i)=><polygon key={i} points={ring(f)} className="radar-grid"/>)}
+    {TRUST_DIMS.map((_,i)=>{const[x,y]=pt(i,R);return <line key={i} x1={cx} y1={cy} x2={x} y2={y} className="radar-spoke"/>})}
+    <polygon points={data} className="radar-area"/>
+    {TRUST_DIMS.map(([k,lbl],i)=>{const[x,y]=pt(i,R+12);return <text key={k} x={x} y={y} className="radar-lbl" textAnchor={x<cx-5?'end':x>cx+5?'start':'middle'}>{lbl.split(' ')[0]}</text>})}
+  </svg>;
+}
 // Record a per-source engagement event for the "Your Media Diet" panel. Fire-
 // and-forget; ban/boost are recorded server-side so they're not posted here.
 function newsRecord(source,action,category){
@@ -5372,12 +5484,17 @@ const NEWS_CAT_COLOR={'AI/Tech':'tech','Politics':'politics','Business':'busines
 function archiveToCard(a,boostedSet){
   const ts=a.published_at?Math.floor(Date.parse(a.published_at)/1000):0;
   const boosted=boostedSet?boostedSet.has(a.source):false;
+  // Trust: prefer the numeric score archived at fetch time; boost/ban override.
+  const ts2=(a.trust_score!=null)?Number(a.trust_score):null;
+  const trust=boosted?'green':(a.trust||(ts2!=null?trustColor(ts2):'yellow'));
   return Object.assign({},a,{
     color:NEWS_CAT_COLOR[a.category]||'tech',
     score:(a.relevance_score!=null?a.relevance_score:0),
     ts:(isNaN(ts)?0:ts),
     boosted:boosted,
-    trust:boosted?'green':'yellow',
+    trust:trust,
+    trust_score:ts2,
+    trust_dims:a.trust_dims||null,
     reading_time:a.reading_time||0,
     breaking:false,
   });
@@ -5404,6 +5521,10 @@ function NewsWS(){
   const[panel,setPanel]=useState(null); // 'sources' | 'customize' | 'diet' | null
   const[clusters,setClusters]=useState([]);const[clLoading,setClLoading]=useState(false);const[clOpen,setClOpen]=useState({});
   const[diet,setDiet]=useState(null);const[dietLoading,setDietLoading]=useState(false);
+  // Source Trust Graph tab: leaderboard, selected source detail, federation status.
+  const[trustBoard,setTrustBoard]=useState([]);const[trustLoading,setTrustLoading]=useState(false);
+  const[trustSel,setTrustSel]=useState(null);const[trustDetail,setTrustDetail]=useState(null);
+  const[fedStatus,setFedStatus]=useState(null);
   const[briefings,setBriefings]=useState([]);const[selected,setSelected]=useState(null);const[htmlContent,setHtmlContent]=useState('');const[loading,setLoading]=useState(true);
   const[generating,setGenerating]=useState(false);const[genStep,setGenStep]=useState(-1);const[genDone,setGenDone]=useState([]);
   const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
@@ -5457,6 +5578,12 @@ function NewsWS(){
   const loadAnnotations=()=>fetch('/api/news/annotations').then(r=>r.json()).then(d=>{setAnnotations(d.annotations||[]);const m={};(d.annotated_ids||[]).forEach(id=>{if(id)m[id]=true});setAnnById(m)}).catch(()=>{});
   const loadClusters=()=>{setClLoading(true);fetch('/api/news/clusters').then(r=>r.json()).then(d=>{setClusters(d.clusters||[]);setClLoading(false)}).catch(()=>setClLoading(false))};
   const loadDiet=()=>{setDietLoading(true);fetch('/api/news/source-stats').then(r=>r.json()).then(d=>{setDiet(d);setDietLoading(false)}).catch(()=>setDietLoading(false))};
+  const loadTrust=()=>{setTrustLoading(true);
+    fetch('/api/source-trust/leaderboard?limit=200').then(r=>r.json()).then(d=>{setTrustBoard(d.leaderboard||[]);setTrustLoading(false)}).catch(()=>setTrustLoading(false));
+    fetch('/api/federation/attestations').then(r=>r.json()).then(d=>setFedStatus(d)).catch(()=>setFedStatus(null));
+  };
+  const openTrustSource=(domain)=>{setTrustSel(domain);setTrustDetail(null);
+    fetch('/api/source-trust/'+encodeURIComponent(domain)).then(r=>r.json()).then(d=>setTrustDetail(d.status==='ok'?d.source:null)).catch(()=>setTrustDetail(null));};
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
@@ -5647,6 +5774,7 @@ function NewsWS(){
         <button className={'btn '+(tab==='briefings'?'active':'')} style={{fontSize:11}} onClick={()=>setTab('briefings')}>🗂 Briefings</button>
         <button className={'btn '+(tab==='weekly'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('weekly');loadWeekly()}}>📅 Weekly</button>
         <button className={'btn '+(tab==='editorial'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('editorial');loadEditorial()}}>🖋 Editorial</button>
+        <button className={'btn '+(tab==='trust'?'active':'')} style={{fontSize:11}} onClick={()=>{setTab('trust');loadTrust()}}>🛡 Trust</button>
       </div>
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
@@ -5699,7 +5827,7 @@ function NewsWS(){
              {cl.articles.map((a,ai)=><div key={ai} className="cluster-item">
                <SentimentDot it={a}/>
                <a className="cluster-item-link" onClick={()=>{if(a.url){window.open(a.url,'_blank');newsRecord(a.source,'click',a.category)}}}>{a.title}</a>
-               <span className="cluster-item-src"><span className={'trust-dot '+(a.trust||'yellow')}></span>{a.source}</span>
+               <span className="cluster-item-src"><TrustBadge it={a} compact={true}/>{a.source}</span>
              </div>)}
            </div>}
          </div>)}
@@ -5715,7 +5843,7 @@ function NewsWS(){
            <div className="news-snippet">{it.snippet}</div>
            <div className="source-row">
              <SentimentDot it={it}/>
-             <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
+             <span className="source-badge"><TrustBadge it={it}/>{it.source}</span>
              {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
              {it.sentiment&&it.sentiment!=='neutral'&&<span className={it.sentiment==='positive'?'badge-cyan':'badge-amber'} style={{fontSize:9,padding:'1px 6px'}}>{it.sentiment==='positive'?'▲ Positive':'▼ Negative'}</span>}
              {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖 Saved</span>}
@@ -5777,7 +5905,7 @@ function NewsWS(){
            {fp.lead.editorial_note&&<div className="editorial-note"><b>Friday's note:</b> {fp.lead.editorial_note}</div>}
            {fp.lead.thread_update&&<div className="fp-thread"><b>What's new today:</b> {fp.lead.thread_update}</div>}
            <div className="source-row" style={{marginTop:8}}>
-             <span className="source-badge"><span className={'trust-dot '+(fp.lead.trust||'yellow')}></span>{fp.lead.source}</span>
+             <span className="source-badge"><TrustBadge it={fp.lead}/>{fp.lead.source}</span>
              {annoBadge(fp.lead)}
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
@@ -5813,7 +5941,7 @@ function NewsWS(){
                <div className="news-headline" onClick={()=>it.url&&window.open(it.url,'_blank')}>{it.title}</div>
                <div className="news-snippet">{it.snippet}</div>
                <div className="source-row">
-                 <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
+                 <span className="source-badge"><TrustBadge it={it}/>{it.source}</span>
                  {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
                  {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
                  {annoBadge(it)}
@@ -5897,6 +6025,72 @@ function NewsWS(){
              </div>)}
            </div>
          </div>}
+       </div>}
+    </div>}
+
+    {/* ── TRUST TAB (Source Trust Graph + Federation) ── */}
+    {tab==='trust'&&<div>
+      {/* Federation status */}
+      <div className="fed-strip">
+        <span className="fed-ico">🔗</span>
+        <span><b>Federation</b> — {fedStatus?(fedStatus.signed_count||0):0} attestation{(fedStatus&&fedStatus.signed_count===1)?'':'s'} signed, {fedStatus?(fedStatus.imported_count||0):0} imported from peers</span>
+        {fedStatus&&fedStatus.agent_id&&<span className="fed-id" title={'This agent’s Ed25519 identity: '+fedStatus.agent_id}>id {fedStatus.agent_id.slice(0,10)}…</span>}
+        {fedStatus&&!fedStatus.agent_id&&<span className="fed-id" style={{color:'#f59e0b'}}>no signing key (install pynacl)</span>}
+      </div>
+      <div style={{fontSize:11,color:'#888',margin:'8px 0'}}>Friday scores every source on six dimensions, learned by cross-referencing claims across outlets on every fetch. Click a source for its breakdown and observation history.</div>
+      {trustLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading source trust scores…</div>:
+       trustBoard.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:36}}>No sources scored yet. Friday builds the graph as it fetches news — check back after a fetch cycle (every few minutes).</div>:
+       <div className="trust-layout">
+         {/* Leaderboard */}
+         <div className="trust-board">
+           <div className="trust-board-head">
+             <span>Trust leaderboard</span>
+             <span style={{color:'#777',fontWeight:400}}>{trustBoard.length} sources</span>
+           </div>
+           {trustBoard.map((s,i)=><div key={s.domain} className={'trust-row'+(trustSel===s.domain?' active':'')} onClick={()=>openTrustSource(s.domain)}>
+             <span className="trust-rank">{i+1}</span>
+             <span className={'trust-dot '+trustColor(s.trust_score)}></span>
+             <span className="trust-row-name">{s.name||s.domain}</span>
+             <span className="trust-row-score">{Number(s.trust_score).toFixed(2)}</span>
+             <span className="trust-row-meta">{s.article_count||0} art · {s.observation_count||0} obs</span>
+           </div>)}
+         </div>
+         {/* Detail */}
+         <div className="trust-detail">
+           {!trustSel?<div style={{color:'#888',fontSize:12,textAlign:'center',padding:40}}>Select a source to see its six-dimension breakdown, radar, and observation history.</div>:
+            !trustDetail?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading {trustSel}…</div>:
+            <div>
+              <div className="trust-detail-head">
+                <div>
+                  <div className="trust-detail-name">{trustDetail.name||trustDetail.domain}</div>
+                  <div className="trust-detail-sub">{trustDetail.domain} · {trustDetail.article_count||0} articles · first seen {trustDetail.first_seen||'—'}</div>
+                </div>
+                <div className={'trust-detail-score '+trustColor(trustDetail.trust_score)}>{Number(trustDetail.trust_score).toFixed(2)}</div>
+              </div>
+              <div className="trust-detail-grid">
+                <TrustRadar scores={trustDetail.scores}/>
+                <div className="trust-dimbars">
+                  {TRUST_DIMS.map(([k,lbl])=>{const v=(trustDetail.scores||{})[k];return <div key={k} className="trust-dimbar">
+                    <span className="trust-dimbar-lbl">{lbl}</span>
+                    <span className="trust-dimbar-track"><span className={'trust-dimbar-fill '+trustColor(v)} style={{width:Math.round((Number(v)||0)*100)+'%'}}></span></span>
+                    <span className="trust-dimbar-val">{v!=null?Number(v).toFixed(2):'—'}</span>
+                  </div>})}
+                </div>
+              </div>
+              <div className="trust-obs-head">Observation history ({(trustDetail.observations||[]).length})</div>
+              <div className="trust-obs-list">
+                {(trustDetail.observations||[]).length===0?<div style={{color:'#888',fontSize:11,padding:'8px 0'}}>No observations yet — this score is a seed estimate from known reputation.</div>:
+                 trustDetail.observations.slice().reverse().slice(0,40).map((o,oi)=><div key={oi} className="trust-obs">
+                   <span className={'trust-obs-dot '+trustColor(o.signal)}></span>
+                   <span className="trust-obs-type">{o.type}</span>
+                   <span className="trust-obs-dim">{(TRUST_DIMS.find(d=>d[0]===o.dimension)||[null,o.dimension])[1]}</span>
+                   <span className="trust-obs-date">{o.date}</span>
+                   {o.detail&&<div className="trust-obs-detail">{o.detail}{o.counter_sources&&o.counter_sources.length?(' — vs '+o.counter_sources.slice(0,4).join(', ')):''}</div>}
+                   {o.signed_by&&o.signed_by!=='local'&&<span className="trust-obs-peer" title={'imported attestation from '+o.signed_by}>peer</span>}
+                 </div>)}
+              </div>
+            </div>}
+         </div>
        </div>}
     </div>}
 
@@ -7606,7 +7800,7 @@ function App(){
       // source frames, so chunks butt together gaplessly. Some browsers ignore the
       // hint, so we still guard scheduling against the actual ctx.sampleRate below.
       try{v.audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:PCM_OUT_RATE});}
-      catch(_){v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
+      catch(e){console.warn('[voice] AudioContext({sampleRate:'+PCM_OUT_RATE+'}) was rejected — hardware/browser may not support a native 24kHz context. Falling back to default-rate context; Gemini PCM will be resampled and may sound raspy over long sessions:',e);v.audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
       if(v.audioCtx.sampleRate!==PCM_OUT_RATE)console.warn('[voice] ctx sampleRate='+v.audioCtx.sampleRate+' (wanted '+PCM_OUT_RATE+') — playback will be resampled');
       // Diagnostic: confirm the 24kHz pin actually took. If pinned=false the
       // browser ignored the hint and every chunk is being resampled 24k->ctxRate,
