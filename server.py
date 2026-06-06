@@ -4958,6 +4958,15 @@ BOOSTED_SOURCES_FILE = FRIDAY_DIR / "boosted_sources.json"
 BRIEFING_PREFS_FILE = FRIDAY_DIR / "briefing_prefs.json"
 READ_LATER_FILE = FRIDAY_DIR / "read_later.json"
 FRONT_PAGES_DIR = FRIDAY_DIR / "front_pages"
+# Persistent article archive: one JSON file per day (YYYY-MM-DD.json), each an
+# array of article records. A background archiver appends every newly-seen
+# article (deduped by URL hash) so the archive grows from install onward and the
+# Feed UI can scroll back through everything Friday has ever fetched.
+NEWS_ARCHIVE_DIR = FRIDAY_DIR / "news" / "archive"
+# Smart-feed feature stores: per-source engagement counters (the "Media Diet"
+# panel) and cached Deep Dive summaries keyed by URL hash.
+SOURCE_STATS_FILE = FRIDAY_DIR / "news" / "source_stats.json"
+DEEP_DIVE_DIR = FRIDAY_DIR / "news" / "deep_dives"
 
 # Category metadata: display color key (matched in the UI), the per-category RSS
 # feeds that populate the magazine feed, and a search query used only for the
@@ -5447,6 +5456,8 @@ def _fetch_news_items(categories=None, limit_per=4):
                 "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
                 # ts + score let the stream UI sort by time and by relevance.
                 "ts": r.get("ts", 0.0),
+                # Lexicon sentiment drives the colored dot on each card.
+                "sentiment": _article_sentiment(f"{r['title']} {r['snippet']}"),
             }
             item["score"] = _score_article(item)
             items.append(item)
@@ -5695,6 +5706,27 @@ _CATEGORY_WEIGHT = {
 # Central-time scheduling. The two daily editions and the hour each fires.
 FRONT_PAGE_SLOTS = {"morning": 7, "evening": 18}
 
+# Weekly Digest — Sunday 8 AM Central synthesis of the week's editions.
+WEEKLY_DIGEST_HOUR = 8
+WEEKLY_DIGESTS_DIR = FRONT_PAGES_DIR / "weekly"
+
+# Per-edition tone framing. Prefixed onto the editorial prompt so the morning
+# edition leads with action and the evening edition reflects on the day.
+FRONT_PAGE_TONE = {
+    "morning": ("This is a MORNING briefing. Be forward-looking — focus on what "
+                "Stephen needs to know TODAY. Lead with action items."),
+    "evening": ("This is an EVENING briefing. Be reflective — focus on what "
+                "happened today and what it means for tomorrow. Summarize "
+                "developments."),
+}
+
+# Sources/terms that put a story on the Competitor Watch radar (deterministic
+# pre-filter; Claude then writes the positioning analysis).
+_COMPETITOR_RX = re.compile(
+    r"\b(openclaw|hermes agent|hermes(?=\s|\b)|nous research|personal ai|"
+    r"ai assistant|ai agent|agent framework|sovereign ai|autonomous agent|"
+    r"local[- ]first ai|on[- ]device ai)\b", re.I)
+
 
 def _front_page_central_now():
     """Current time in US Central. Uses zoneinfo when tzdata is present, else a
@@ -5777,6 +5809,7 @@ def _gather_front_page_pool(per_cat=14):
                 "reading_time": _estimate_reading_time(r["snippet"]),
                 "breaking": _detect_breaking(r["snippet"], r.get("ts", 0.0)),
                 "ts": r.get("ts", 0.0),
+                "sentiment": _article_sentiment(f"{r['title']} {r['snippet']}"),
             }
             item["score"] = _score_article(item)
             pool.append(item)
@@ -5785,6 +5818,194 @@ def _gather_front_page_pool(per_cat=14):
              "sources": len({p["source"] for p in pool}),
              "categories": len({p["category"] for p in pool})}
     return pool, stats
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PERSISTENT NEWS ARCHIVE
+#  Every article Friday fetches is appended (deduped by URL hash) to a
+#  per-day JSON file under ~/.friday/news/archive. A background thread keeps
+#  the archive growing on the same ~5-min cadence as the RSS TTL cache, so the
+#  Feed UI has a permanent, paginated backlog to scroll through.
+# ═══════════════════════════════════════════════════════════════
+_NEWS_ARCHIVE_LOCK = threading.Lock()
+_NEWS_ARCHIVE_TTL = 300  # background archiver poll interval (matches RSS cache)
+
+# Tiny lexicon sentiment: enough to tag a headline+snippet positive/negative/
+# neutral without a model. Word-boundary anchored so "wins" matches but
+# "winsome" doesn't carry the wrong load.
+_SENT_POS = re.compile(
+    r"\b(win|wins|won|gain|gains|gained|surge|surges|soar|soars|rally|rallies|"
+    r"boost|boosts|breakthrough|record|records|success|successful|approve|"
+    r"approved|launch|launches|growth|grows|rise|rises|rose|profit|profits|"
+    r"recovery|recover|optimis|hope|hopeful|celebrat|award|awards|wins)\b", re.I)
+_SENT_NEG = re.compile(
+    r"\b(loss|losses|lost|crash|crashes|plunge|plunges|plummet|fall|falls|fell|"
+    r"decline|declines|crisis|fear|fears|fraud|scandal|lawsuit|sued|layoff|"
+    r"layoffs|cuts|cut|recession|warning|warn|warns|threat|threats|death|dead|"
+    r"kill|killed|attack|attacks|collapse|collapses|fail|fails|failure|ban|"
+    r"banned|outage|breach|hack|hacked|war|conflict|protest|backlash)\b", re.I)
+
+
+def _article_sentiment(text):
+    """Coarse positive/negative/neutral tag from a headline+snippet."""
+    s = text or ""
+    pos = len(_SENT_POS.findall(s))
+    neg = len(_SENT_NEG.findall(s))
+    if pos > neg:
+        return "positive"
+    if neg > pos:
+        return "negative"
+    return "neutral"
+
+
+def _news_url_hash(url):
+    """Stable short id for an article URL — the archive's dedup + record key."""
+    return _hashlib.sha1((url or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _archive_path_for(date_str):
+    return NEWS_ARCHIVE_DIR / f"{date_str}.json"
+
+
+def _load_archive_day(date_str):
+    """Load one day's archive file as a list of records. Fail-soft to []."""
+    path = _archive_path_for(date_str)
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [a for a in data if isinstance(a, dict) and a.get("url")]
+    except Exception:
+        pass
+    return []
+
+
+def _archive_day_files():
+    """All archive day files as (date_str, Path), newest day first."""
+    if not NEWS_ARCHIVE_DIR.exists():
+        return []
+    files = []
+    for p in NEWS_ARCHIVE_DIR.glob("*.json"):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", p.stem):
+            files.append((p.stem, p))
+    files.sort(key=lambda x: x[0], reverse=True)
+    return files
+
+
+def _archive_record_from_item(item):
+    """Project a live feed item into the persisted archive record schema."""
+    url = item.get("url") or ""
+    title = item.get("title") or ""
+    snippet = item.get("snippet") or ""
+    domain = item.get("source") or _extract_domain(url)
+    ts = item.get("ts") or 0.0
+    # published_at from the feed timestamp (UTC); empty when the feed gave none.
+    try:
+        published_at = (datetime.utcfromtimestamp(ts).isoformat() + "Z") if ts else ""
+    except (ValueError, OverflowError, OSError):
+        published_at = ""
+    return {
+        "id": _news_url_hash(url),
+        "title": title,
+        "url": url,
+        "source": domain,
+        "domain": domain,
+        "category": item.get("category") or "",
+        "snippet": snippet,
+        "published_at": published_at,
+        "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        "sentiment": _article_sentiment(f"{title} {snippet}"),
+        "relevance_score": item.get("score", _score_article(item)),
+        "read": False,
+        "bookmarked": False,
+    }
+
+
+def _archive_articles(items):
+    """Append newly-seen articles to today's archive file (dedup by URL hash).
+
+    Returns the number of new records written. Existing records in today's file
+    are preserved untouched (so any read/bookmarked flags survive)."""
+    items = [it for it in (items or []) if it.get("url")]
+    if not items:
+        return 0
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    with _NEWS_ARCHIVE_LOCK:
+        day = _load_archive_day(date_str)
+        existing = {a.get("id") for a in day}
+        added = 0
+        for it in items:
+            rec = _archive_record_from_item(it)
+            if not rec["id"] or rec["id"] in existing:
+                continue
+            existing.add(rec["id"])
+            day.append(rec)
+            added += 1
+        if added:
+            try:
+                NEWS_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+                _archive_path_for(date_str).write_text(
+                    json.dumps(day, indent=2), encoding="utf-8")
+            except Exception as e:
+                print(f"  [news-archive] write failed: {e}")
+                return 0
+        return added
+
+
+def _read_archive(category="", source="", date_from="", date_to=""):
+    """Flatten the archive into a single newest-first list, applying filters.
+
+    Day files are walked newest-first and each day is sorted newest-first
+    internally, so the concatenation is globally newest-first."""
+    out = []
+    for date_str, _path in _archive_day_files():
+        if date_from and date_str < date_from:
+            continue
+        if date_to and date_str > date_to:
+            continue
+        day = _load_archive_day(date_str)
+        day.sort(key=lambda a: (a.get("published_at") or "",
+                                a.get("fetched_at") or ""), reverse=True)
+        for a in day:
+            if category and a.get("category") != category:
+                continue
+            if source and source not in (a.get("source") or "").lower():
+                continue
+            out.append(a)
+    return out
+
+
+def _news_archiver_tick():
+    """One archiver pass: pull the broad pool and append anything new."""
+    pool = []
+    try:
+        pool, _ = _gather_front_page_pool(per_cat=14)
+    except Exception:
+        pool = []
+    if not pool:
+        try:
+            pool = _fetch_news_items(limit_per=8)
+        except Exception:
+            pool = []
+    if not pool:
+        return 0
+    added = _archive_articles(pool)
+    if added:
+        print(f"  [news-archive] +{added} new article(s)")
+    return added
+
+
+def _news_archiver_loop():
+    """Background thread: archive new articles every ~5 min, matching the RSS
+    cache TTL so a tick reuses freshly-cached feeds instead of re-pulling."""
+    print("  [FRIDAY] News archiver started.")
+    _time.sleep(12)  # let the server finish coming up
+    while True:
+        try:
+            _news_archiver_tick()
+        except Exception as e:
+            print(f"  [news-archive] {e}")
+        _time.sleep(_NEWS_ARCHIVE_TTL)
 
 
 def _extract_json_block(text):
@@ -5808,11 +6029,19 @@ def _extract_json_block(text):
     return None
 
 
-def _editorialize_front_page(pool):
+def _editorialize_front_page(pool, slot="morning", prev_stories=None,
+                             calendar_events=None):
     """Ask Claude to pick the lead + write editorial context. Fails soft to a
     deterministic pick (top-scored story) so the front page always renders.
 
-    Returns {lead_index, lead_note, section_context: {cat: str}, headline}.
+    Beyond the lead/sections it also asks Claude for: a "Your day in context"
+    cross-reference (morning only, when calendar events are present), a
+    Contrarian Corner item, a Competitor Watch list, and per-story thread
+    updates for stories carried over from the previous edition.
+
+    Returns {lead_index, lead_note, section_context, headline, day_in_context,
+    contrarian_corner, competitor_watch, thread_updates}. thread_updates is
+    keyed by story URL.
     """
     top = pool[:28]
     fallback = {
@@ -5821,6 +6050,10 @@ def _editorialize_front_page(pool):
                       "against your AI, politics, media, and Austin beats."),
         "section_context": {},
         "headline": "Your Front Page",
+        "day_in_context": "",
+        "contrarian_corner": None,
+        "competitor_watch": [],
+        "thread_updates": {},
     }
     if not top:
         return fallback
@@ -5830,7 +6063,60 @@ def _editorialize_front_page(pool):
             lines.append(f"[{i}] ({it['category']} · {it['source']} · "
                          f"score {it['score']}) {it['title']} — {it['snippet'][:140]}")
         cats_present = sorted({it["category"] for it in top})
+
+        tone = FRONT_PAGE_TONE.get(slot, FRONT_PAGE_TONE["morning"])
+
+        # ── Thread tracking: surface what carried over from last edition. ──
+        prev_block = ""
+        if prev_stories:
+            pv = "\n".join(f"- {s.get('title','')} ({s.get('source','')})"
+                           for s in prev_stories[:24])
+            prev_block = (
+                "\n\nThese stories appeared in the PREVIOUS edition. For any of "
+                "today's candidates that continue one of these threads, note "
+                "what's NEW about it today in `thread_updates` (keyed by the "
+                "candidate's index) rather than repeating the same context:\n"
+                + pv)
+
+        # ── Your day in context: cross-reference news with the schedule. ──
+        cal_block = ""
+        want_day_ctx = slot == "morning" and bool(calendar_events)
+        if want_day_ctx:
+            evs = []
+            for ev in calendar_events[:12]:
+                if not isinstance(ev, dict) or ev.get("error"):
+                    continue
+                who = ", ".join(ev.get("attendees", [])[:5])
+                evs.append(f"- {ev.get('title','(untitled)')}"
+                           + (f" — with {who}" if who else "")
+                           + (f" @ {ev.get('location')}" if ev.get('location') else ""))
+            if evs:
+                cal_block = (
+                    "\n\nTODAY'S SCHEDULE — cross-reference today's news with "
+                    "Stephen's calendar. If any news item relates to a "
+                    "company/person he's meeting with today, flag it in "
+                    "`day_in_context` (2-3 sentences, concrete). If nothing "
+                    "connects, give a one-line read on how the day's news sets "
+                    "up his schedule:\n" + "\n".join(evs))
+            else:
+                want_day_ctx = False
+
+        shape = (
+            '{\n  "lead_index": <int>,\n  "lead_note": "<2-3 sentences>",\n'
+            '  "headline": "<a 3-6 word front-page headline for the whole edition>",\n'
+            '  "section_context": {' +
+            ", ".join(f'"{c}": "<one sentence>"' for c in cats_present) + "},\n"
+            '  "contrarian_corner": {"index": <int candidate index, or -1 if a '
+            'pure perspective with no source>, "note": "<why this challenges '
+            "Stephen's likely assumptions and why it is worth considering>\"},\n"
+            '  "competitor_watch": [{"index": <int candidate index>, "note": '
+            '"<positioning implication for Friday/FutureSpeak>"}]'
+            + (',\n  "day_in_context": "<2-3 sentences>"' if want_day_ctx else "")
+            + (',\n  "thread_updates": {"<index>": "<what is new today>"}' if prev_block else "")
+            + "\n}")
+
         prompt = (
+            tone + "\n\n"
             "You are Friday, Stephen's personal news editor. Stephen is an AI "
             "executive and FutureSpeak founder in Austin, TX — a career "
             "journalist (former Raw Story editor) with progressive politics, "
@@ -5838,18 +6124,24 @@ def _editorialize_front_page(pool):
             "pre-scored.\n\n"
             "Choose the single LEAD story (the one Stephen should read first) "
             "and write a 2-3 sentence editorial note explaining why it leads — "
-            "in your voice, specific to him. Then write one punchy sentence of "
+            "in your voice, specific to him. Write one punchy sentence of "
             "context for each section.\n\n"
-            "Return ONLY JSON, no prose, in exactly this shape:\n"
-            '{\n  "lead_index": <int>,\n  "lead_note": "<2-3 sentences>",\n'
-            '  "headline": "<a 3-6 word front-page headline for the whole edition>",\n'
-            '  "section_context": {' +
-            ", ".join(f'"{c}": "<one sentence>"' for c in cats_present) +
-            "}\n}\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
+            "CONTRARIAN CORNER: include one item — a story or perspective that "
+            "challenges Stephen's likely assumptions (a conservative tech take, "
+            "a pro-regulation argument, or a counter-narrative). Prefer pointing "
+            "at one of the candidate stories by index; use -1 only if you must "
+            "supply a perspective with no matching source.\n\n"
+            "COMPETITOR WATCH: if any candidates mention OpenClaw, Hermes Agent, "
+            "Nous Research, personal AI assistants, sovereign AI, or AI agent "
+            "frameworks, list them with brief analysis of the positioning "
+            "implications for Friday/FutureSpeak. Empty list if none.\n"
+            + prev_block + cal_block + "\n\n"
+            "Return ONLY JSON, no prose, in exactly this shape:\n" + shape +
+            "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
         )
         system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
         raw = _call_claude([{"role": "user", "content": prompt}],
-                           system=system, max_tokens=1200)
+                           system=system, max_tokens=1800)
         data = _extract_json_block(raw)
         if not isinstance(data, dict):
             return fallback
@@ -5857,33 +6149,144 @@ def _editorialize_front_page(pool):
         if not isinstance(li, int) or not (0 <= li < len(top)):
             li = 0
         sc = data.get("section_context")
+
+        # Contrarian corner: resolve index → story so the UI gets a real link.
+        cc = data.get("contrarian_corner")
+        contrarian = None
+        if isinstance(cc, dict) and (cc.get("note") or "").strip():
+            idx = cc.get("index")
+            src = top[idx] if isinstance(idx, int) and 0 <= idx < len(top) else None
+            contrarian = {
+                "note": cc["note"].strip()[:600],
+                "title": (src or {}).get("title", "A contrarian perspective"),
+                "url": (src or {}).get("url", ""),
+                "source": (src or {}).get("source", ""),
+                "color": (src or {}).get("color", "media"),
+            }
+
+        # Competitor watch: resolve indices → stories + analysis.
+        watch = []
+        for w in (data.get("competitor_watch") or []):
+            if not isinstance(w, dict):
+                continue
+            idx = w.get("index")
+            if not (isinstance(idx, int) and 0 <= idx < len(top)):
+                continue
+            s = top[idx]
+            watch.append({
+                "title": s.get("title", ""),
+                "url": s.get("url", ""),
+                "source": s.get("source", ""),
+                "color": s.get("color", "tech"),
+                "analysis": (w.get("note") or "").strip()[:400],
+            })
+
+        # Thread updates: candidate index → story URL (string JSON keys → int).
+        thread_updates = {}
+        tu = data.get("thread_updates")
+        if isinstance(tu, dict):
+            for k, v in tu.items():
+                try:
+                    ki = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= ki < len(top) and (v or "").strip():
+                    thread_updates[top[ki].get("url", "")] = str(v).strip()[:300]
+
         return {
             "lead_index": li,
             "lead_note": (data.get("lead_note") or fallback["lead_note"]).strip()[:600],
             "section_context": sc if isinstance(sc, dict) else {},
             "headline": (data.get("headline") or fallback["headline"]).strip()[:80],
+            "day_in_context": (data.get("day_in_context") or "").strip()[:700] if want_day_ctx else "",
+            "contrarian_corner": contrarian,
+            "competitor_watch": watch,
+            "thread_updates": thread_updates,
         }
     except Exception:
         return fallback
+
+def _front_page_story_urls(edition):
+    """Every article URL in an edition (lead + all section articles)."""
+    urls = set()
+    if not isinstance(edition, dict):
+        return urls
+    lead = edition.get("lead") or {}
+    if lead.get("url"):
+        urls.add(lead["url"])
+    for sec in edition.get("sections") or []:
+        for a in sec.get("articles") or []:
+            if a.get("url"):
+                urls.add(a["url"])
+    return urls
+
+
+def _front_page_story_titles(edition):
+    """Compact [{title, source}] of an edition's stories, for prompt context."""
+    out = []
+    if not isinstance(edition, dict):
+        return out
+    lead = edition.get("lead") or {}
+    if lead.get("title"):
+        out.append({"title": lead["title"], "source": lead.get("source", "")})
+    for sec in edition.get("sections") or []:
+        for a in sec.get("articles") or []:
+            if a.get("title"):
+                out.append({"title": a["title"], "source": a.get("source", "")})
+    return out
+
+
+def _previous_front_page(current_id):
+    """The most recent saved edition that isn't current_id (the prior one)."""
+    for e in _list_front_pages():
+        if e.get("id") != current_id:
+            return _read_front_page(e["id"])
+    return None
 
 
 def _generate_front_page(slot="morning"):
     """Build + persist one Front Page edition. Returns the edition dict.
 
     Idempotent per (date, slot): regenerating overwrites that edition's file.
+    Diffs against the previous edition to badge NEW / continuing threads,
+    cross-references the morning calendar, and carries the Contrarian Corner +
+    Competitor Watch sections produced by the editor.
     """
     cnow = _front_page_central_now()
     date_str = cnow.strftime('%Y-%m-%d')
     slot = slot if slot in FRONT_PAGE_SLOTS else "morning"
     edition_id = f"{date_str}-{slot}"
 
+    # Previous edition powers the "What Changed" diff + thread tracking.
+    prev = _previous_front_page(edition_id)
+    prev_urls = _front_page_story_urls(prev)
+    prev_titles = _front_page_story_titles(prev)
+    have_prev = bool(prev_urls)
+
+    # Morning editions cross-reference today's schedule.
+    calendar_events = _fetch_calendar_today() if slot == "morning" else None
+
     pool, stats = _gather_front_page_pool()
-    editorial = _editorialize_front_page(pool)
+    editorial = _editorialize_front_page(
+        pool, slot=slot, prev_stories=prev_titles,
+        calendar_events=calendar_events)
     lead_idx = editorial["lead_index"] if pool else None
+    thread_updates = editorial.get("thread_updates") or {}
+
+    def _tag(story):
+        """Stamp new_since_last / continuing (+ any thread update) onto a story."""
+        u = story.get("url", "")
+        cont = have_prev and u in prev_urls
+        story["new_since_last"] = bool(have_prev and not cont)
+        story["continuing"] = bool(cont)
+        upd = thread_updates.get(u)
+        if cont and upd:
+            story["thread_update"] = upd
+        return story
 
     lead = None
     if pool:
-        lead = dict(pool[lead_idx])
+        lead = _tag(dict(pool[lead_idx]))
         lead["editorial_note"] = editorial["lead_note"]
 
     # Group remaining stories into sections by category, in interest order.
@@ -5892,7 +6295,7 @@ def _generate_front_page(slot="morning"):
     order = sorted(NEWS_CATEGORIES.keys(),
                    key=lambda c: _CATEGORY_WEIGHT.get(c, 0), reverse=True)
     for cat in order:
-        group = [p for p in rest if p["category"] == cat][:6]
+        group = [_tag(dict(p)) for p in rest if p["category"] == cat][:6]
         if not group:
             continue
         sections.append({
@@ -5901,6 +6304,23 @@ def _generate_front_page(slot="morning"):
             "context": (editorial["section_context"].get(cat) or "").strip(),
             "articles": group,
         })
+
+    # Continuing threads: every story carried over from the previous edition.
+    continuing_threads = []
+    if have_prev:
+        seen_ct = set()
+        carried = ([lead] if lead else []) + \
+            [a for s in sections for a in s["articles"]]
+        for a in carried:
+            u = a.get("url", "")
+            if a.get("continuing") and u and u not in seen_ct:
+                seen_ct.add(u)
+                continuing_threads.append({
+                    "title": a.get("title", ""),
+                    "url": u,
+                    "source": a.get("source", ""),
+                    "update": a.get("thread_update", ""),
+                })
 
     edition = {
         "id": edition_id,
@@ -5912,14 +6332,17 @@ def _generate_front_page(slot="morning"):
         "lead": lead,
         "sections": sections,
         "stats": stats,
+        "day_in_context": editorial.get("day_in_context", ""),
+        "contrarian_corner": editorial.get("contrarian_corner"),
+        "competitor_watch": editorial.get("competitor_watch") or [],
+        "continuing_threads": continuing_threads,
+        "prev_edition_id": (prev or {}).get("id") if prev else None,
     }
 
     FRONT_PAGES_DIR.mkdir(parents=True, exist_ok=True)
     (FRONT_PAGES_DIR / f"{edition_id}.json").write_text(
         json.dumps(edition, indent=2), encoding="utf-8")
     return edition
-
-
 def _list_front_pages():
     """All saved editions, newest first, as light summaries for the index."""
     if not FRONT_PAGES_DIR.exists():
@@ -5985,6 +6408,160 @@ def _run_front_page_job(slot):
     return edition
 
 
+def _gather_weekly_editions(days=7):
+    """Full edition dicts published in the past `days` days, newest first."""
+    cnow = _front_page_central_now()
+    cutoff = (cnow - timedelta(days=days)).strftime('%Y-%m-%d')
+    out = []
+    for e in _list_front_pages():
+        if e.get("date", "") >= cutoff:
+            full = _read_front_page(e["id"])
+            if full:
+                out.append(full)
+    return out
+
+
+def _list_weekly_digests():
+    """All saved weekly digests, newest week first."""
+    if not WEEKLY_DIGESTS_DIR.exists():
+        return []
+    out = []
+    for p in WEEKLY_DIGESTS_DIR.glob("*.json"):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            out.append(d)
+        except Exception:
+            continue
+    out.sort(key=lambda d: d.get("week") or d.get("id") or "", reverse=True)
+    return out
+
+
+def _generate_weekly_digest():
+    """Synthesize the week's Front Page editions into one digest. Persists to
+    ~/.friday/front_pages/weekly/YYYY-WNN.json and returns the digest dict."""
+    cnow = _front_page_central_now()
+    week_id = cnow.strftime('%G-W%V')
+    editions = _gather_weekly_editions(7)
+
+    # Compact, de-duplicated story list across the week for the prompt.
+    seen, lines = set(), []
+    dates = []
+    for ed in editions:
+        if ed.get("date"):
+            dates.append(ed["date"])
+        for s in _front_page_story_titles(ed):
+            key = (s.get("title") or "")[:80]
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {s['title']} ({s.get('source','')})")
+    story_block = "\n".join(lines[:120]) or "(no stories archived this week)"
+    date_range = (f"{min(dates)} – {max(dates)}" if dates
+                  else cnow.strftime('%Y-%m-%d'))
+
+    fallback = {
+        "top_stories": [],
+        "trends": [],
+        "editorial": ("A quieter week in the archive — not enough editions to "
+                      "synthesize a full trend read. Friday will have more to "
+                      "say once the week fills in."),
+    }
+    synth = fallback
+    try:
+        prompt = (
+            "You are Friday, Stephen's personal news editor, writing the WEEKLY "
+            "DIGEST. Stephen is an AI executive and FutureSpeak founder in "
+            "Austin, TX — a career journalist (former Raw Story editor) with "
+            "progressive politics, currently job searching.\n\n"
+            "Below are the stories that ran across this week's Front Page "
+            "editions. Synthesize the week's top 5 stories, identify the "
+            "through-line trends, and give an editorial take on what this means "
+            "for Stephen's career and FutureSpeak positioning.\n\n"
+            "Return ONLY JSON, no prose, in exactly this shape:\n"
+            '{\n  "top_stories": [{"title": "<story>", "why": "<one sentence on '
+            'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
+            '  "editorial": "<3-5 sentence editorial take on what the week means '
+            'for Stephen\'s career and FutureSpeak positioning>"\n}\n\n'
+            "Give exactly 5 top_stories when there is enough material.\n\n"
+            "THIS WEEK'S STORIES:\n" + story_block
+        )
+        system = _get_friday_system_prompt(keywords=prompt, workspace='briefing')
+        raw = _call_claude([{"role": "user", "content": prompt}],
+                           system=system, max_tokens=1600)
+        data = _extract_json_block(raw)
+        if isinstance(data, dict):
+            ts = data.get("top_stories")
+            tr = data.get("trends")
+            synth = {
+                "top_stories": [s for s in (ts or []) if isinstance(s, dict)][:5],
+                "trends": [str(t).strip()[:160] for t in (tr or []) if str(t).strip()][:6],
+                "editorial": (data.get("editorial") or fallback["editorial"]).strip()[:1400],
+            }
+    except Exception:
+        synth = fallback
+
+    digest = {
+        "id": week_id,
+        "week": week_id,
+        "generated_at": datetime.now().isoformat(timespec='seconds'),
+        "generated_central": cnow.strftime('%Y-%m-%d %H:%M %Z') or cnow.isoformat(timespec='minutes'),
+        "edition_count": len(editions),
+        "date_range": date_range,
+        "top_stories": synth["top_stories"],
+        "trends": synth["trends"],
+        "editorial": synth["editorial"],
+    }
+
+    WEEKLY_DIGESTS_DIR.mkdir(parents=True, exist_ok=True)
+    (WEEKLY_DIGESTS_DIR / f"{week_id}.json").write_text(
+        json.dumps(digest, indent=2), encoding="utf-8")
+    return digest
+
+
+def _run_weekly_digest_job():
+    """Scheduled entry point: only runs on Sundays. Generates the weekly digest
+    and pushes a notification."""
+    cnow = _front_page_central_now()
+    if cnow.weekday() != 6:  # Monday=0 … Sunday=6
+        return None
+    digest = _generate_weekly_digest()
+    try:
+        if _notif_engine and digest:
+            _notif_engine.push(
+                title="📅 Friday's Weekly Digest is ready",
+                body=(f"{digest.get('edition_count', 0)} editions synthesized · "
+                      + (digest.get("trends") or ["Your week in review"])[0]),
+                priority="medium",
+                source="front-page",
+                kind="weekly_digest",
+                actions=[{"label": "Open Front Page", "workspace": "news"}],
+                target={"workspace": "news", "tab": "weekly"},
+                dedupe_key=f"weekly-digest:{digest.get('id')}",
+                meta={"week": digest.get("id")},
+            )
+    except Exception as e:
+        print(f"  [weekly-digest] notification failed: {e}")
+    return digest
+
+
+@app.route('/api/news/front-page/weekly/latest')
+def front_page_weekly_latest():
+    """The most recent weekly digest (or null), plus the list of past weeks."""
+    digests = _list_weekly_digests()
+    if not digests:
+        return jsonify({"status": "ok", "digest": None, "digests": []})
+    return jsonify({"status": "ok", "digest": digests[0], "digests": digests})
+
+
+@app.route('/api/news/front-page/weekly/generate', methods=['POST'])
+def front_page_weekly_generate():
+    """Generate (or regenerate) this week's digest on demand."""
+    try:
+        digest = _generate_weekly_digest()
+        return jsonify({"status": "ok", "digest": digest})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/news/front-page/generate', methods=['POST'])
 def front_page_generate():
     """Generate (or regenerate) a Front Page edition on demand."""
@@ -6023,6 +6600,342 @@ def front_page_get(edition_id):
     if not edition:
         return jsonify({"status": "not_found"}), 404
     return jsonify({"status": "ok", "edition": edition})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  NEWS CROSS-CUTTING FEATURES
+#  1. Audio briefing  — narrate the Front Page via Gemini TTS
+#  2. Share-to-draft  — seed the Draft workspace from any article
+#  3. Annotation mode — personal notes attached to articles
+# ═══════════════════════════════════════════════════════════════
+
+DRAFTS_FROM_NEWS_DIR = FRIDAY_DIR / "drafts" / "from_news"
+NEWS_ANNOTATIONS_DIR = FRIDAY_DIR / "news" / "annotations"
+_ANNOTATION_LOCK = threading.Lock()
+
+
+def _front_page_narration_script(edition, max_words=780):
+    """Flatten a Front Page edition into a plain-text narration script.
+
+    Reads as a warm broadcast: masthead → lead (with Friday's note) →
+    each section's context + its top few headlines. Trimmed to ~max_words so
+    the TTS request stays within Gemini's single-shot synthesis budget.
+    """
+    if not edition:
+        return ""
+    parts = []
+    headline = (edition.get("headline") or "Friday's Front Page").strip()
+    slot = edition.get("slot")
+    label = "evening edition" if slot == "evening" else "morning edition"
+    parts.append(f"Here's your Friday Front Page, the {label}")
+    parts.append(headline)
+
+    lead = edition.get("lead") or {}
+    if lead.get("title"):
+        src = lead.get("source") or "the newsroom"
+        parts.append(f"Our lead story, from {src}: {lead['title']}")
+        if lead.get("snippet"):
+            parts.append(lead["snippet"].strip())
+        if lead.get("editorial_note"):
+            parts.append(f"Friday's take: {lead['editorial_note'].strip()}")
+
+    for sec in (edition.get("sections") or []):
+        title = (sec.get("title") or "").strip()
+        if title:
+            parts.append(f"In {title}")
+        ctx = (sec.get("context") or "").strip()
+        if ctx:
+            parts.append(ctx)
+        for art in (sec.get("articles") or [])[:3]:
+            t = (art.get("title") or "").strip()
+            if not t:
+                continue
+            if art.get("source"):
+                parts.append(f"{t}, from {art['source']}")
+            else:
+                parts.append(t)
+
+    parts.append("That's your Front Page. I'll have the next edition ready soon.")
+
+    # Join, giving each fragment terminal punctuation so the model paces it.
+    script = " ".join(
+        (p if p.endswith((".", "!", "?")) else p + ".") for p in parts if p
+    )
+    words = script.split()
+    if len(words) > max_words:
+        script = " ".join(words[:max_words]).rstrip(",.;:") + "."
+    return script
+
+
+@app.route('/api/news/front-page/audio', methods=['POST'])
+def front_page_audio():
+    """Synthesize an audio briefing of the latest (or a specified) Front Page.
+
+    Body (all optional): {edition_id, voice}. Returns a 24kHz mono WAV stream
+    that the browser plays through the News audio-player bar.
+    """
+    data = request.get_json(silent=True) or {}
+    edition_id = data.get("edition_id")
+    if edition_id:
+        edition = _read_front_page(edition_id)
+    else:
+        listing = _list_front_pages()
+        edition = _read_front_page(listing[0]["id"]) if listing else None
+    if not edition:
+        return jsonify({"status": "error",
+                        "message": "No Front Page yet — generate one first."}), 404
+    script = _front_page_narration_script(edition)
+    if not script:
+        return jsonify({"status": "error",
+                        "message": "This Front Page has no content to read."}), 400
+    try:
+        buf = _synthesize_tts_wav(script, voice=data.get("voice"), style="briefing")
+        return send_file(buf, mimetype='audio/wav')
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/news/share-to-draft', methods=['POST'])
+def news_share_to_draft():
+    """Seed the Draft workspace from a news article.
+
+    Body: {article_id?, article_title, article_url, article_snippet}.
+    Persists a draft seed at ~/.friday/drafts/from_news/<id>.json and returns
+    its draft_id. The seed carries a ready-to-run LinkedIn/blog prompt so the
+    Draft workspace can pre-populate and let the user hit Generate.
+    """
+    data = request.get_json(silent=True) or {}
+    title = (data.get("article_title") or "").strip()
+    url = (data.get("article_url") or "").strip()
+    snippet = (data.get("article_snippet") or "").strip()
+    if not title and not url:
+        return jsonify({"status": "error",
+                        "message": "article_title or article_url required"}), 400
+
+    raw_id = (data.get("article_id") or url or title)
+    draft_id = _hashlib.sha1(raw_id.encode("utf-8")).hexdigest()[:12]
+    quote = snippet[:280]
+    prompt = (
+        f'Help me draft a LinkedIn post (or a short blog response) reacting to this '
+        f'article: "{title}". '
+        f'{("Source: " + url + ". ") if url else ""}'
+        f'{("Key excerpt: " + chr(34) + quote + chr(34) + ". ") if quote else ""}'
+        f"Make it thoughtful and in my voice, with a clear point of view and a "
+        f"question at the end to spark discussion."
+    )
+    context = "\n".join(filter(None, [
+        f"Article: {title}" if title else "",
+        f"URL: {url}" if url else "",
+        f"Excerpt: {quote}" if quote else "",
+    ]))
+    seed = {
+        "draft_id": draft_id,
+        "article_id": raw_id,
+        "article_title": title,
+        "article_url": url,
+        "article_snippet": snippet,
+        "quote": quote,
+        "mode": "linkedin_post",
+        "prompt": prompt,
+        "context": context,
+        "created_at": datetime.now().isoformat(timespec='seconds'),
+    }
+    DRAFTS_FROM_NEWS_DIR.mkdir(parents=True, exist_ok=True)
+    (DRAFTS_FROM_NEWS_DIR / f"{draft_id}.json").write_text(
+        json.dumps(seed, indent=2), encoding="utf-8")
+    return jsonify({"status": "ok", "draft_id": draft_id, "seed": seed})
+
+
+@app.route('/api/news/share-to-draft/<draft_id>')
+def news_share_to_draft_get(draft_id):
+    """Fetch a stored draft seed by id (consumed by the Draft workspace)."""
+    safe = re.sub(r"[^0-9a-zA-Z]", "", draft_id)
+    path = DRAFTS_FROM_NEWS_DIR / f"{safe}.json"
+    if not path.exists():
+        return jsonify({"status": "not_found"}), 404
+    try:
+        return jsonify({"status": "ok",
+                        "seed": json.loads(path.read_text(encoding="utf-8"))})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _annotation_hash(article_id):
+    """Stable filename stem for an article's annotations."""
+    return _hashlib.sha1((article_id or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _annotation_path(article_id):
+    return NEWS_ANNOTATIONS_DIR / f"{_annotation_hash(article_id)}.json"
+
+
+def _load_annotation_record(article_id):
+    p = _annotation_path(article_id)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+@app.route('/api/news/annotate', methods=['POST', 'DELETE'])
+def news_annotate():
+    """Attach (or clear) personal notes on an article.
+
+    POST   {article_id, text, article_title?, article_url?} → append a note,
+           stored at ~/.friday/news/annotations/<url_hash>.json
+    DELETE {article_id} → remove every note for that article
+    """
+    data = request.get_json(silent=True) or {}
+    article_id = (data.get("article_id") or data.get("article_url") or "").strip()
+    if not article_id:
+        return jsonify({"status": "error", "message": "article_id required"}), 400
+
+    NEWS_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    with _ANNOTATION_LOCK:
+        if request.method == 'DELETE':
+            p = _annotation_path(article_id)
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+            return jsonify({"status": "ok", "article_id": article_id})
+
+        text = (data.get("text") or "").strip()
+        if not text:
+            return jsonify({"status": "error", "message": "text required"}), 400
+        rec = _load_annotation_record(article_id) or {
+            "article_id": article_id,
+            "article_title": data.get("article_title") or "",
+            "article_url": data.get("article_url") or article_id,
+            "url_hash": _annotation_hash(article_id),
+            "notes": [],
+        }
+        if data.get("article_title"):
+            rec["article_title"] = data["article_title"]
+        if data.get("article_url"):
+            rec["article_url"] = data["article_url"]
+        note = {"text": text[:2000],
+                "timestamp": datetime.now().isoformat(timespec='seconds')}
+        rec.setdefault("notes", []).append(note)
+        rec["updated_at"] = note["timestamp"]
+        _annotation_path(article_id).write_text(
+            json.dumps(rec, indent=2), encoding="utf-8")
+    return jsonify({"status": "ok", "annotation": note, "record": rec})
+
+
+@app.route('/api/news/annotations')
+def news_annotations_all():
+    """All annotations, newest first, plus the set of annotated ids/urls so the
+    feed can render the 📝 badge without a per-card lookup."""
+    out = []
+    if NEWS_ANNOTATIONS_DIR.exists():
+        for p in NEWS_ANNOTATIONS_DIR.glob("*.json"):
+            try:
+                rec = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for note in rec.get("notes", []):
+                out.append({
+                    "article_id": rec.get("article_id"),
+                    "article_title": rec.get("article_title") or "",
+                    "article_url": rec.get("article_url") or "",
+                    "text": note.get("text", ""),
+                    "timestamp": note.get("timestamp", ""),
+                })
+    out.sort(key=lambda n: n.get("timestamp", ""), reverse=True)
+    annotated = sorted(
+        {n.get("article_id") for n in out if n.get("article_id")}
+        | {n.get("article_url") for n in out if n.get("article_url")}
+    )
+    return jsonify({"status": "ok", "annotations": out, "annotated_ids": annotated})
+
+
+@app.route('/api/news/annotations/<path:article_id>')
+def news_annotations_for(article_id):
+    """Every note for a specific article (by article_id or its url)."""
+    rec = _load_annotation_record(article_id)
+    return jsonify({"status": "ok",
+                    "annotations": (rec or {}).get("notes", []),
+                    "record": rec})
+
+
+@app.route('/api/news/archive')
+def news_archive():
+    """Paginated access to the permanent article archive, newest first.
+
+    Query params: offset, limit (≤200), category, source (substring match),
+    date_from / date_to (YYYY-MM-DD, inclusive)."""
+    try:
+        offset = max(0, int(request.args.get('offset', 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 50))))
+    except (TypeError, ValueError):
+        limit = 50
+    category = (request.args.get('category') or '').strip()
+    source = (request.args.get('source') or '').strip().lower()
+    date_from = (request.args.get('date_from') or '').strip()
+    date_to = (request.args.get('date_to') or '').strip()
+    sort = (request.args.get('sort') or 'time').strip()
+    records = _read_archive(category=category, source=source,
+                            date_from=date_from, date_to=date_to)
+    # Banned sources never surface in the feed (they may still sit in the archive
+    # if banned after the fact) — mirror the live feed's exclusion.
+    banned = set(_load_banned_sources())
+    if banned:
+        records = [a for a in records if (a.get('source') or '') not in banned]
+    # _read_archive returns newest-first; re-sort for the other modes. Pagination
+    # stays correct because we sort the full filtered set before slicing.
+    if sort == 'relevance':
+        records.sort(key=lambda a: a.get('relevance_score') or 0, reverse=True)
+    elif sort == 'source':
+        records.sort(key=lambda a: (a.get('source') or '').lower())
+    total = len(records)
+    page = records[offset:offset + limit]
+    return jsonify({
+        "status": "ok",
+        "items": page,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+    })
+
+
+@app.route('/api/news/archive/stats')
+def news_archive_stats():
+    """Archive summary: total articles, date range, per-category, per-source."""
+    total = 0
+    per_cat, per_source, dates = {}, {}, []
+    for date_str, _path in _archive_day_files():
+        day = _load_archive_day(date_str)
+        if day:
+            dates.append(date_str)
+        for a in day:
+            total += 1
+            c = a.get("category") or "Uncategorized"
+            per_cat[c] = per_cat.get(c, 0) + 1
+            s = a.get("source") or "unknown"
+            per_source[s] = per_source.get(s, 0) + 1
+    dates.sort()
+    by_source = dict(sorted(per_source.items(),
+                            key=lambda kv: kv[1], reverse=True))
+    return jsonify({
+        "status": "ok",
+        "total": total,
+        "date_range": {
+            "from": dates[0] if dates else "",
+            "to": dates[-1] if dates else "",
+            "days": len(dates),
+        },
+        "by_category": per_cat,
+        "by_source": by_source,
+    })
 
 
 # Fixed loopback redirect for Desktop ("installed") OAuth clients. Google accepts
@@ -10433,75 +11346,81 @@ def ollama_pull():
 #  TEXT-TO-SPEECH & AUDIO
 # ═══════════════════════════════════════════════════════════════
 
+def _synthesize_tts_wav(text, voice=None, style='briefing'):
+    """Synthesize `text` to a 24kHz mono WAV (BytesIO at pos 0) via Gemini TTS.
+
+    Shared by /api/voice/tts and the News Front-Page audio briefing. Voice
+    priority: explicit arg > user setting > Aoede (warm female). The style is
+    wrapped as a natural-language delivery cue the model honors.
+    """
+    import wave
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=GEMINI_API_KEY)  # pragma: allowlist secret
+    if not voice:
+        try:
+            voice = (_load_settings() or {}).get('tts_voice') or 'Aoede'
+        except Exception:
+            voice = 'Aoede'
+
+    # Custom user-defined style prompt takes priority over the built-in styles.
+    custom_style = _get_voice_style_prompt()
+    if custom_style:
+        style_prefix = f"{custom_style}: "
+    else:
+        style_prefix = {
+            'briefing': "Read this aloud in a warm, conversational news-anchor voice — natural pacing, light intonation, no robotic flatness: ",
+            'chat': "Say this aloud in a calm, friendly tone, like a trusted assistant talking to a colleague: ",
+            'plain': "Say this aloud: ",
+        }.get(style, "Read this aloud in a warm, conversational voice: ")
+
+    speech_kwargs = {
+        "voice_config": types.VoiceConfig(
+            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+        )
+    }
+    language = _get_voice_language()
+    if language:
+        speech_kwargs["language_code"] = language
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-preview-tts",
+        contents=f"{style_prefix}{text}",
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(**speech_kwargs),
+        )
+    )
+
+    audio_data = response.candidates[0].content.parts[0].inline_data.data
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(audio_data)
+    buf.seek(0)
+    return buf
+
+
 @app.route('/api/voice/tts', methods=['POST'])
 def tts():
     """Text-to-speech using Gemini 2.5 Flash TTS model — returns WAV binary directly.
 
-    Default voice is "Puck" (warmer / more natural than "Kore"). Callers can
-    override via `voice` in the JSON body. The text is wrapped with a
-    conversational style hint so the model delivers it as a news anchor
-    rather than reading robotically.
+    Default voice is "Aoede" (warm female). Callers can override via `voice`
+    in the JSON body. The text is wrapped with a conversational style hint so
+    the model delivers it as a news anchor rather than reading robotically.
     """
     try:
-        import wave
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=GEMINI_API_KEY)
         text = request.json.get('text', '')
-        # Voice priority: explicit request param > user setting > Aoede (warm female).
-        voice = request.json.get('voice')
-        if not voice:
-            try:
-                voice = (_load_settings() or {}).get('tts_voice') or 'Aoede'
-            except Exception:
-                voice = 'Aoede'
-        style = request.json.get('style', 'briefing')
-
         if not text:
             return jsonify({"status": "error", "message": "No text provided"}), 400
-
-        # Custom user-defined style prompt takes priority over the built-in styles.
-        custom_style = _get_voice_style_prompt()
-        if custom_style:
-            style_prefix = f"{custom_style}: "
-        else:
-            # Conversational prefix — Gemini TTS responds to natural-language
-            # delivery cues in the prompt. "Briefing" gives a warm news-anchor read.
-            style_prefix = {
-                'briefing': "Read this aloud in a warm, conversational news-anchor voice — natural pacing, light intonation, no robotic flatness: ",
-                'chat': "Say this aloud in a calm, friendly tone, like a trusted assistant talking to a colleague: ",
-                'plain': "Say this aloud: ",
-            }.get(style, "Read this aloud in a warm, conversational voice: ")
-
-        # Build speech config with optional language code.
-        speech_kwargs = {
-            "voice_config": types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
-            )
-        }
-        language = _get_voice_language()
-        if language:
-            speech_kwargs["language_code"] = language
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-tts",
-            contents=f"{style_prefix}{text}",
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(**speech_kwargs),
-            )
+        buf = _synthesize_tts_wav(
+            text,
+            voice=request.json.get('voice'),
+            style=request.json.get('style', 'briefing'),
         )
-
-        audio_data = response.candidates[0].content.parts[0].inline_data.data
-
-        buf = io.BytesIO()
-        with wave.open(buf, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(24000)
-            wf.writeframes(audio_data)
-        buf.seek(0)
         return send_file(buf, mimetype='audio/wav')
 
     except Exception as e:
@@ -13823,6 +14742,10 @@ def _register_default_daily_jobs():
                        lambda: _run_front_page_job("morning"))
     register_daily_job("front-page-evening", FRONT_PAGE_SLOTS["evening"], 0,
                        lambda: _run_front_page_job("evening"))
+    # Friday's Weekly Digest — Sundays at 8 AM Central (the job itself
+    # no-ops on other weekdays).
+    register_daily_job("friday-weekly-digest", WEEKLY_DIGEST_HOUR, 0,
+                       _run_weekly_digest_job)
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central.
     register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
 
@@ -13867,6 +14790,11 @@ def _notification_trigger_loop():
 
 if _notif_engine:
     threading.Thread(target=_notification_trigger_loop, daemon=True).start()
+
+
+# Persistent news archive: grow the per-day article store on the RSS cache
+# cadence so the Feed UI always has a deep, scrollable backlog.
+threading.Thread(target=_news_archiver_loop, daemon=True).start()
 
 
 # ═══════════════════════════════════════════════════════════════

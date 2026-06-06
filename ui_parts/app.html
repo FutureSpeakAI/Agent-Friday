@@ -1720,9 +1720,33 @@ function editorialFor(it){
 }
 // Stream categories for the Feed filter tabs (All + each beat).
 const NEWS_STREAM_CATS=['All','AI/Tech','Politics','Business','Local','Science','Media'];
+// Infinite-scroll page size for the archive-backed Feed, and the category→color
+// key map the live feed used to carry inline (archive records don't store it).
+const ARCHIVE_PAGE=30;
+const NEWS_CAT_COLOR={'AI/Tech':'tech','Politics':'politics','Business':'business','Local':'local','Science':'science','Media':'media'};
+// Project a persisted archive record into the shape the news card expects
+// (color/score/ts/boosted/trust are derived, since the archive schema is lean).
+function archiveToCard(a,boostedSet){
+  const ts=a.published_at?Math.floor(Date.parse(a.published_at)/1000):0;
+  const boosted=boostedSet?boostedSet.has(a.source):false;
+  return Object.assign({},a,{
+    color:NEWS_CAT_COLOR[a.category]||'tech',
+    score:(a.relevance_score!=null?a.relevance_score:0),
+    ts:(isNaN(ts)?0:ts),
+    boosted:boosted,
+    trust:boosted?'green':'yellow',
+    reading_time:a.reading_time||0,
+    breaking:false,
+  });
+}
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
+  // Archive-backed infinite scroll: accumulated cards + pagination cursor.
+  const[feedTotal,setFeedTotal]=useState(0);const[feedHasMore,setFeedHasMore]=useState(false);const[feedMore,setFeedMore]=useState(false);
+  const[archStats,setArchStats]=useState(null);const[showTop,setShowTop]=useState(false);
+  const feedOffsetRef=useRef(0);const feedHasMoreRef=useRef(false);const feedBusyRef=useRef(false);
+  const feedTopRef=useRef(null);const feedSentinelRef=useRef(null);const loadFeedRef=useRef(null);
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
@@ -1736,22 +1760,76 @@ function NewsWS(){
   const[briefSearch,setBriefSearch]=useState('');const[expanded,setExpanded]=useState({});
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
   const ttsAudio=useRef(null);const[ttsLoading,setTtsLoading]=useState(false);const genTimer=useRef(null);
+  // Front Page audio briefing ("🔊 Listen") — mini player bar at the top.
+  const[fpAudio,setFpAudio]=useState(false);const[fpAudioLoading,setFpAudioLoading]=useState(false);
+  const[fpPlaying,setFpPlaying]=useState(false);const[fpProgress,setFpProgress]=useState(0);
+  const[fpDuration,setFpDuration]=useState(0);const[fpSpeed,setFpSpeed]=useState(1);
+  const fpAudioEl=useRef(null);const fpAudioCtx=useRef(null);
+  // Share-to-Draft + Annotation mode.
+  const[annById,setAnnById]=useState({});const[annotations,setAnnotations]=useState([]);
+  const[annotateFor,setAnnotateFor]=useState(null);const[annoText,setAnnoText]=useState('');const[annoBusy,setAnnoBusy]=useState(false);
+  const[shareBusy,setShareBusy]=useState(null);const[newsToast,setNewsToast]=useState('');
   // Deep-link: a notification target {workspace:'news', tab:'frontpage'|'briefings'|...}
   // switches to the requested tab and clears any open single-briefing reader.
   useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}});
 
-  const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
+  // Pull a page of the permanent archive (newest first). reset=true clears and
+  // refetches from offset 0 (category/sort change, manual refresh); reset=false
+  // appends the next page for infinite scroll. A busy ref guards against
+  // overlapping fetches firing from the IntersectionObserver.
+  const loadFeed=async(reset)=>{
+    if(feedBusyRef.current)return;feedBusyRef.current=true;
+    const offset=reset?0:feedOffsetRef.current;
+    if(reset)setFeedLoading(true);else setFeedMore(true);
+    try{
+      const params=new URLSearchParams({offset:String(offset),limit:String(ARCHIVE_PAGE),sort:sortBy});
+      if(streamCat!=='All')params.set('category',streamCat);
+      const r=await fetch('/api/news/archive?'+params.toString());const d=await r.json();
+      const boostedSet=new Set(sources.boosted||[]);
+      const cards=(d.items||[]).map(a=>archiveToCard(a,boostedSet));
+      feedOffsetRef.current=offset+cards.length;feedHasMoreRef.current=!!d.has_more;
+      setFeed(prev=>reset?cards:prev.concat(cards));
+      setFeedTotal(d.total||0);setFeedHasMore(!!d.has_more);setFeedAt(new Date().toISOString());
+    }catch(e){}
+    finally{setFeedLoading(false);setFeedMore(false);feedBusyRef.current=false;}
+  };
+  loadFeedRef.current=loadFeed;
+  const loadArchStats=()=>fetch('/api/news/archive/stats').then(r=>r.json()).then(d=>setArchStats(d)).catch(()=>{});
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
   const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
   const loadFpEdition=(id)=>{fetch('/api/news/front-page/'+encodeURIComponent(id)).then(r=>r.json()).then(d=>{if(d.edition)setFp(d.edition)}).catch(()=>{})};
   const loadReadLater=()=>{setRlLoading(true);fetch('/api/news/read-later').then(r=>r.json()).then(d=>{const it=d.items||[];setReadLater(it);setSavedUrls(Object.fromEntries(it.map(a=>[a.url,true])));setRlLoading(false)}).catch(()=>setRlLoading(false))};
+  const loadAnnotations=()=>fetch('/api/news/annotations').then(r=>r.json()).then(d=>{setAnnotations(d.annotations||[]);const m={};(d.annotated_ids||[]).forEach(id=>{if(id)m[id]=true});setAnnById(m)}).catch(()=>{});
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
-    loadFeed();loadSources();loadPrefs();loadFrontPage();loadReadLater();
-    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
+    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadArchStats();loadAnnotations();
+    return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading();stopFpAudio()};
   },[]);
+
+  // (Re)load the archive feed from the top whenever the category or sort changes
+  // (also fires once on mount so the Feed tab is warm before it's opened).
+  useEffect(()=>{feedOffsetRef.current=0;loadFeed(true);loadArchStats();},[streamCat,sortBy]);
+
+  // Infinite scroll: observe a sentinel below the list; when it enters view and
+  // there's more, append the next page. Re-attach after each load so the freshly
+  // mounted sentinel (which only renders once items exist) is observed.
+  useEffect(()=>{
+    if(tab!=='feed')return;const el=feedSentinelRef.current;if(!el)return;
+    const ob=new IntersectionObserver(es=>{
+      if(es[0].isIntersecting&&feedHasMoreRef.current&&!feedBusyRef.current&&loadFeedRef.current)loadFeedRef.current(false);
+    },{rootMargin:'300px'});
+    ob.observe(el);return()=>ob.disconnect();
+  },[tab,feedLoading,feed.length]);
+
+  // Back-to-top: show the floating button once the top of the feed scrolls away.
+  useEffect(()=>{
+    if(tab!=='feed'){setShowTop(false);return;}
+    const el=feedTopRef.current;if(!el)return;
+    const ob=new IntersectionObserver(es=>setShowTop(!es[0].isIntersecting),{rootMargin:'0px'});
+    ob.observe(el);return()=>ob.disconnect();
+  },[tab,feedLoading]);
 
   // Front Page generation + Read Later actions + background open.
   const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){alert('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
@@ -1761,9 +1839,9 @@ function NewsWS(){
   const openBg=(url)=>{if(!url)return;const w=window.open(url,'_blank','noopener');if(w){try{w.blur();window.focus()}catch(_){}}};
 
   const banSource=async(src)=>{setFeed(f=>f.filter(it=>it.source!==src));try{await fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources()}catch(e){}};
-  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
-  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
-  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
+  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
+  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
 
   const savePrefs=(next)=>{setPrefs(next);fetch('/api/briefing/preferences',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)}).catch(()=>{})};
   const moveSection=(i,dir)=>{if(!prefs)return;const o=[...prefs.section_order];const j=i+dir;if(j<0||j>=o.length)return;[o[i],o[j]]=[o[j],o[i]];savePrefs({...prefs,section_order:o})};
@@ -1774,6 +1852,63 @@ function NewsWS(){
   const openInTab=(b)=>{const file=b.html||b.name+'.html';window.open('/briefing/'+file,'_blank')};
   const readAloud=async()=>{if(!htmlContent||ttsLoading)return;stopReading();setTtsLoading(true);if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;try{const text=htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,' ').replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,8000);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,style:'briefing'})});if(!r.ok)throw new Error('TTS request failed');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=new Audio(url);ttsAudio.current=a;const _ttsCtx=new (window.AudioContext||window.webkitAudioContext)();const _ttsSrc=_ttsCtx.createMediaElementSource(a);const _ttsAn=_ttsCtx.createAnalyser();_ttsAn.fftSize=256;_ttsSrc.connect(_ttsCtx.destination);try{_ttsSrc.connect(_ttsAn)}catch(_){}const _ttsBuf=new Uint8Array(_ttsAn.frequencyBinCount);const _ttsAmpLoop=()=>{if(!ttsAudio.current){window._fridayHoloAmplitude=0;return}_ttsAn.getByteFrequencyData(_ttsBuf);let s=0;for(let i=0;i<_ttsBuf.length;i++)s+=_ttsBuf[i];window._fridayHoloAmplitude=Math.min(1,(s/_ttsBuf.length)/128);requestAnimationFrame(_ttsAmpLoop)};a.onended=()=>{URL.revokeObjectURL(url);ttsAudio.current=null;window._fridayHoloAmplitude=0;try{_ttsCtx.close()}catch(_){}if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;};a.play().then(()=>_ttsAmpLoop()).catch(e=>console.error('Audio play error:',e))}catch(e){console.error('TTS error:',e);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;}finally{setTtsLoading(false)}};
   const stopReading=()=>{if(ttsAudio.current){ttsAudio.current.pause();if(ttsAudio.current.src&&ttsAudio.current.src.startsWith('blob:'))URL.revokeObjectURL(ttsAudio.current.src);ttsAudio.current.currentTime=0;ttsAudio.current=null;window._fridayHoloAmplitude=0}};
+
+  // ── Front Page audio briefing ──
+  const flashNews=t=>{setNewsToast(t);setTimeout(()=>setNewsToast(''),2400)};
+  const stopFpAudio=()=>{const a=fpAudioEl.current;if(a){try{a.pause()}catch(_){}if(a.src&&a.src.startsWith('blob:'))URL.revokeObjectURL(a.src);fpAudioEl.current=null}try{if(fpAudioCtx.current)fpAudioCtx.current.close()}catch(_){}fpAudioCtx.current=null;setFpPlaying(false);setFpProgress(0);window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false};
+  const closeFpAudio=()=>{stopFpAudio();setFpAudio(false)};
+  const listenFrontPage=async()=>{
+    if(fpAudioLoading)return;stopReading();stopFpAudio();setFpAudioLoading(true);setFpAudio(true);
+    if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;
+    try{
+      const r=await fetch('/api/news/front-page/audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fp&&fp.id?{edition_id:fp.id}:{})});
+      if(!r.ok){let m='Audio generation failed';try{m=(await r.json()).message||m}catch(_){}throw new Error(m)}
+      const blob=await r.blob();const url=URL.createObjectURL(blob);
+      const a=new Audio(url);a.playbackRate=fpSpeed;fpAudioEl.current=a;
+      // Drive the holographic scene amplitude off the briefing audio (voice-mode pattern).
+      try{const ctx=new(window.AudioContext||window.webkitAudioContext)();fpAudioCtx.current=ctx;const srcN=ctx.createMediaElementSource(a);const an=ctx.createAnalyser();an.fftSize=256;srcN.connect(ctx.destination);try{srcN.connect(an)}catch(_){}const bufA=new Uint8Array(an.frequencyBinCount);const loop=()=>{if(!fpAudioEl.current){window._fridayHoloAmplitude=0;return}an.getByteFrequencyData(bufA);let s=0;for(let i=0;i<bufA.length;i++)s+=bufA[i];window._fridayHoloAmplitude=Math.min(1,(s/bufA.length)/128);requestAnimationFrame(loop)};a.addEventListener('play',()=>loop());}catch(_){}
+      a.ontimeupdate=()=>{if(a.duration)setFpProgress(a.currentTime/a.duration)};
+      a.onloadedmetadata=()=>setFpDuration(a.duration||0);
+      a.onplay=()=>setFpPlaying(true);a.onpause=()=>setFpPlaying(false);
+      a.onended=()=>{setFpPlaying(false);setFpProgress(1);window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false};
+      await a.play();
+    }catch(e){flashNews(e.message||'Audio failed');setFpAudio(false);if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false}
+    finally{setFpAudioLoading(false)}
+  };
+  const toggleFpPlay=()=>{const a=fpAudioEl.current;if(!a)return;if(a.paused)a.play();else a.pause()};
+  const seekFp=(frac)=>{const a=fpAudioEl.current;if(!a||!a.duration)return;a.currentTime=Math.max(0,Math.min(1,frac))*a.duration;setFpProgress(frac)};
+  const setFpRate=(rate)=>{setFpSpeed(rate);if(fpAudioEl.current)fpAudioEl.current.playbackRate=rate};
+
+  // ── Share to Draft ──
+  const shareToDraft=async(it)=>{
+    if(!it||shareBusy)return;setShareBusy(it.url);
+    try{
+      const r=await fetch('/api/news/share-to-draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:it.url,article_title:it.title,article_url:it.url,article_snippet:it.snippet})});
+      const d=await r.json();if(d.status!=='ok')throw new Error(d.message||'Failed');
+      flashNews('Opening Draft workspace…');
+      if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'draft',seedId:d.draft_id});
+      else fridayNavigate({workspace:'draft',seedId:d.draft_id});
+    }catch(e){flashNews('Share failed: '+(e.message||e))}
+    finally{setShareBusy(null)}
+  };
+
+  // ── Annotation mode ──
+  const openAnnotate=(it)=>{setAnnotateFor(annotateFor===it.url?null:it.url);setAnnoText('')};
+  const saveAnnotation=async(it)=>{
+    const txt=annoText.trim();if(!txt||annoBusy)return;setAnnoBusy(true);
+    try{await fetch('/api/news/annotate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:it.url,text:txt,article_title:it.title,article_url:it.url})});setAnnoText('');setAnnotateFor(null);flashNews('Note saved');loadAnnotations();}
+    catch(e){flashNews('Could not save note')}finally{setAnnoBusy(false)}
+  };
+  const removeAnnotations=async(articleId)=>{try{await fetch('/api/news/annotate',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:articleId})});loadAnnotations()}catch(e){}};
+  // Reusable: 📝 badge for annotated cards + the inline note panel.
+  const annoBadge=(it)=>annById[it.url]?<span className="badge-cyan" title="You annotated this" style={{fontSize:9,padding:'1px 6px'}}>📝</span>:null;
+  const annoBox=(it)=>annotateFor===it.url?(<div className="anno-box" onClick={e=>e.stopPropagation()} style={{marginTop:8,padding:8,background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:8}}>
+    <textarea className="input" autoFocus style={{width:'100%',height:54,resize:'vertical',fontSize:11}} value={annoText} onChange={e=>setAnnoText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))saveAnnotation(it)}} placeholder="Your note — commentary, reminder, insight… (Ctrl+Enter to save)"/>
+    <div style={{display:'flex',gap:4,marginTop:6}}>
+      <button className="btn" style={{fontSize:10,padding:'2px 8px'}} disabled={annoBusy||!annoText.trim()} onClick={()=>saveAnnotation(it)}>{annoBusy?'Saving…':'Save note'}</button>
+      <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px'}} onClick={()=>{setAnnotateFor(null);setAnnoText('')}}>Cancel</button>
+    </div>
+  </div>):null;
   const generateBriefing=async()=>{if(generating)return;setGenerating(true);setGenStep(0);setGenDone([]);
     let step=0;genTimer.current=setInterval(()=>{step=Math.min(step+1,NEWS_GEN_STEPS.length-1);setGenDone(NEWS_GEN_STEPS.slice(0,step));setGenStep(step)},1800);
     try{const r=await fetch('/api/briefing/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.content)throw new Error(d.message||'Generation failed');
@@ -1811,21 +1946,32 @@ function NewsWS(){
 
   // ── Feature (top story) gets a larger card + editorial note ──
   const filteredBriefs=briefings.filter(b=>!briefSearch||(b.date||'').includes(briefSearch.trim()));
-  // Stream view: filter by the selected category tab, then sort.
-  const streamItems=feed.filter(it=>streamCat==='All'||it.category===streamCat).slice().sort((a,b)=>{
-    if(sortBy==='time')return (b.ts||0)-(a.ts||0);
-    if(sortBy==='source')return (a.source||'').localeCompare(b.source||'');
-    return (b.score||0)-(a.score||0); // relevance (default)
-  });
+  // The archive feed arrives already filtered (category) and sorted server-side,
+  // so the accumulated pages render as-is; optimistic ban removal mutates `feed`.
+  const streamItems=feed;
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions=(it)=>(<div className="src-actions">
     <button className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
     <button className="src-btn bg" title="Open in background tab" onClick={e=>{e.stopPropagation();openBg(it.url)}}>⧉</button>
+    <button className="src-btn draft" title="Draft a LinkedIn post / blog response about this" onClick={e=>{e.stopPropagation();shareToDraft(it)}}>{shareBusy===it.url?'…':'✍️'}</button>
+    <button className={'src-btn note'+(annById[it.url]?' on':'')+(annotateFor===it.url?' active':'')} title={annById[it.url]?'Annotated — add another note':'Annotate'} onClick={e=>{e.stopPropagation();openAnnotate(it)}}>📝</button>
     <button className="src-btn boost" title={'Boost '+it.source} onClick={e=>{e.stopPropagation();boostSource(it.source)}}>⭐</button>
     <button className="src-btn ban" title={'Ban '+it.source} onClick={e=>{e.stopPropagation();banSource(it.source)}}>🚫</button>
   </div>);
 
   return(<div className="news-ws" style={{position:'relative'}}>
+    {/* Front Page audio briefing — mini player bar */}
+    {fpAudio&&<div className="fp-audio-bar">
+      <button className="fp-audio-btn" title={fpPlaying?'Pause':'Play'} onClick={toggleFpPlay} disabled={fpAudioLoading}>{fpAudioLoading?'⏳':(fpPlaying?'⏸':'▶')}</button>
+      <span className="fp-audio-label">🔊 {fpAudioLoading?'Generating audio…':'Front Page briefing'}</span>
+      <div className="fp-audio-track" onClick={e=>{const rect=e.currentTarget.getBoundingClientRect();seekFp((e.clientX-rect.left)/rect.width)}}>
+        <div className="fp-audio-fill" style={{width:(Math.round(fpProgress*1000)/10)+'%'}}></div>
+      </div>
+      <span className="fp-audio-time">{_fmtDur(fpProgress*fpDuration)} / {_fmtDur(fpDuration)}</span>
+      <div className="fp-audio-speed">{[1,1.5,2].map(s=><button key={s} className={'fp-spd'+(fpSpeed===s?' on':'')} onClick={()=>setFpRate(s)}>{s}x</button>)}</div>
+      <button className="fp-audio-btn close" title="Close player" onClick={closeFpAudio}>✕</button>
+    </div>}
+    {newsToast&&<div className="news-toast">{newsToast}</div>}
     {/* Live status strip */}
     <div className="status-strip">
       {status.map((c,i)=><div key={i} className="status-pill" title={c.detail}>
@@ -1846,7 +1992,7 @@ function NewsWS(){
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
-        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={loadFeed}>↻ Refresh</button>}
+        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={()=>{loadFeed(true);loadArchStats()}}>↻ Refresh</button>}
         {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
         {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
       </div>
@@ -1859,11 +2005,12 @@ function NewsWS(){
       <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
     </div>}
 
-    {/* ── FEED TAB (category stream + sort) ── */}
-    {tab==='feed'&&<div>
+    {/* ── FEED TAB (archive stream · infinite scroll · category + sort) ── */}
+    {tab==='feed'&&<div style={{position:'relative'}}>
+      <div ref={feedTopRef}></div>
       <div className="stream-bar">
         <div className="stream-tabs">
-          {NEWS_STREAM_CATS.map(c=><button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{c!=='All'&&feed.filter(it=>it.category===c).length>0?(' '+feed.filter(it=>it.category===c).length):''}</button>)}
+          {NEWS_STREAM_CATS.map(c=>{const n=c==='All'?(archStats&&archStats.total||0):(archStats&&archStats.by_category&&archStats.by_category[c]||0);return <button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{n>0?(' '+n):''}</button>})}
         </div>
         <div className="stream-sort">
           <span style={{fontSize:10,color:'#777'}}>Sort</span>
@@ -1872,10 +2019,11 @@ function NewsWS(){
         </div>
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontSize:11,color:'#888'}}>{streamItems.length} stor{streamItems.length===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
+        <div style={{fontSize:11,color:'#888'}}>{feedTotal.toLocaleString()} archived stor{feedTotal===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feed.length<feedTotal?(' · showing '+feed.length):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
       </div>
-      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Pulling live stories…</div>:
-       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories{streamCat!=='All'?(' in '+streamCat):''} right now. Try ↻ Refresh, another category, or your toggles in ⚙ Customize.</div>:
+      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your news archive…</div>:
+       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No archived stories{streamCat!=='All'?(' in '+streamCat):''} yet. Friday archives articles every few minutes as it fetches them — check back shortly, or open the 🗞 Front Page.</div>:
+       <div>
        <div className="news-masonry">
          {streamItems.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
            <div className="news-cardtop">
@@ -1888,17 +2036,26 @@ function NewsWS(){
            <div className="source-row">
              <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
              {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
+             {it.sentiment&&it.sentiment!=='neutral'&&<span className={it.sentiment==='positive'?'badge-cyan':'badge-amber'} style={{fontSize:9,padding:'1px 6px'}}>{it.sentiment==='positive'?'▲ Positive':'▼ Negative'}</span>}
              {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖 Saved</span>}
            </div>
            <div className="news-meta">
              {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
+             {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>openBg(it.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
            </div>
            {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
          </div>)}
+       </div>
+       {/* Infinite-scroll sentinel + loading spinner */}
+       <div ref={feedSentinelRef} style={{height:1}}></div>
+       {feedMore&&<div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,color:'#7fb6c9',padding:'18px 0',fontSize:12}}><span className="gen-spinner"></span> Loading more stories…</div>}
+       {!feedMore&&!feedHasMore&&feed.length>0&&<div style={{textAlign:'center',color:'#667',fontSize:11,padding:'16px 0'}}>— end of archive ({feed.length.toLocaleString()} loaded) —</div>}
        </div>}
+      {/* Back-to-top floating button (appears after the first page scrolls off) */}
+      {showTop&&<button className="btn" title="Back to top" onClick={()=>{if(feedTopRef.current)feedTopRef.current.scrollIntoView({behavior:'smooth',block:'start'})}} style={{position:'fixed',right:24,bottom:24,zIndex:50,borderRadius:'50%',width:44,height:44,fontSize:18,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>↑</button>}
     </div>}
 
     {/* ── FRONT PAGE TAB (AI-curated editorial) ── */}
@@ -2023,7 +2180,7 @@ function NewsWS(){
       {sources.boosted.length===0?<div style={{fontSize:11,color:'#777'}}>None boosted yet. Hit ⭐ on any story to prioritize that source.</div>:
        sources.boosted.map(s=><div key={s} className="manage-row"><span><span className="trust-dot green" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unboost(s)}>Remove</button></div>)}
       <div style={{marginTop:14,display:'flex',gap:4}}>
-        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed()})}}}/>
+        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed(true)})}}}/>
       </div>
     </div>}
     {panel==='customize'&&prefs&&<div className="news-side">
@@ -4233,6 +4390,9 @@ function App(){
   const cameraFrameRef=useRef(null);
   // Expose latest frame so external code (e.g. friday_live.html voice mode) can pull it.
   useEffect(()=>{window.fridayCamera={latestFrame:()=>cameraFrameRef.current,isOn:()=>cameraOn,source:()=>cameraSource,intervalSec:()=>cameraIntervalSec}},[cameraOn,cameraSource,cameraIntervalSec]);
+  // Global workspace opener — lets any child component (e.g. NewsWS "Share to
+  // Draft") open + deep-link a workspace without prop-drilling openWs.
+  useEffect(()=>{window.fridayOpenWorkspace=(t)=>{if(!t||!t.workspace)return;openWs(t.workspace);fridayNavigate(t)};return()=>{if(window.fridayOpenWorkspace)delete window.fridayOpenWorkspace}},[]);
   // Persist camera prefs through /api/settings (interval + auto-describe).
   useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
   const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};

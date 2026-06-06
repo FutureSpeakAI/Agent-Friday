@@ -5084,9 +5084,33 @@ function editorialFor(it){
 }
 // Stream categories for the Feed filter tabs (All + each beat).
 const NEWS_STREAM_CATS=['All','AI/Tech','Politics','Business','Local','Science','Media'];
+// Infinite-scroll page size for the archive-backed Feed, and the category→color
+// key map the live feed used to carry inline (archive records don't store it).
+const ARCHIVE_PAGE=30;
+const NEWS_CAT_COLOR={'AI/Tech':'tech','Politics':'politics','Business':'business','Local':'local','Science':'science','Media':'media'};
+// Project a persisted archive record into the shape the news card expects
+// (color/score/ts/boosted/trust are derived, since the archive schema is lean).
+function archiveToCard(a,boostedSet){
+  const ts=a.published_at?Math.floor(Date.parse(a.published_at)/1000):0;
+  const boosted=boostedSet?boostedSet.has(a.source):false;
+  return Object.assign({},a,{
+    color:NEWS_CAT_COLOR[a.category]||'tech',
+    score:(a.relevance_score!=null?a.relevance_score:0),
+    ts:(isNaN(ts)?0:ts),
+    boosted:boosted,
+    trust:boosted?'green':'yellow',
+    reading_time:a.reading_time||0,
+    breaking:false,
+  });
+}
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
+  // Archive-backed infinite scroll: accumulated cards + pagination cursor.
+  const[feedTotal,setFeedTotal]=useState(0);const[feedHasMore,setFeedHasMore]=useState(false);const[feedMore,setFeedMore]=useState(false);
+  const[archStats,setArchStats]=useState(null);const[showTop,setShowTop]=useState(false);
+  const feedOffsetRef=useRef(0);const feedHasMoreRef=useRef(false);const feedBusyRef=useRef(false);
+  const feedTopRef=useRef(null);const feedSentinelRef=useRef(null);const loadFeedRef=useRef(null);
   // Front Page (AI-curated editorial), Read Later store, and stream filters.
   const[fp,setFp]=useState(null);const[fpList,setFpList]=useState([]);const[fpLoading,setFpLoading]=useState(true);const[fpGen,setFpGen]=useState(false);
   const[readLater,setReadLater]=useState([]);const[rlLoading,setRlLoading]=useState(true);const[savedUrls,setSavedUrls]=useState({});
@@ -5104,7 +5128,28 @@ function NewsWS(){
   // switches to the requested tab and clears any open single-briefing reader.
   useNavTarget('news',t=>{if(t.tab){setTab(t.tab);setSelected(null);}});
 
-  const loadFeed=()=>{setFeedLoading(true);fetch('/api/news/feed').then(r=>r.json()).then(d=>{setFeed(d.items||[]);setFeedAt(d.generated_at||'');setSources({banned:d.banned||[],boosted:d.boosted||[]});setFeedLoading(false)}).catch(()=>setFeedLoading(false))};
+  // Pull a page of the permanent archive (newest first). reset=true clears and
+  // refetches from offset 0 (category/sort change, manual refresh); reset=false
+  // appends the next page for infinite scroll. A busy ref guards against
+  // overlapping fetches firing from the IntersectionObserver.
+  const loadFeed=async(reset)=>{
+    if(feedBusyRef.current)return;feedBusyRef.current=true;
+    const offset=reset?0:feedOffsetRef.current;
+    if(reset)setFeedLoading(true);else setFeedMore(true);
+    try{
+      const params=new URLSearchParams({offset:String(offset),limit:String(ARCHIVE_PAGE),sort:sortBy});
+      if(streamCat!=='All')params.set('category',streamCat);
+      const r=await fetch('/api/news/archive?'+params.toString());const d=await r.json();
+      const boostedSet=new Set(sources.boosted||[]);
+      const cards=(d.items||[]).map(a=>archiveToCard(a,boostedSet));
+      feedOffsetRef.current=offset+cards.length;feedHasMoreRef.current=!!d.has_more;
+      setFeed(prev=>reset?cards:prev.concat(cards));
+      setFeedTotal(d.total||0);setFeedHasMore(!!d.has_more);setFeedAt(new Date().toISOString());
+    }catch(e){}
+    finally{setFeedLoading(false);setFeedMore(false);feedBusyRef.current=false;}
+  };
+  loadFeedRef.current=loadFeed;
+  const loadArchStats=()=>fetch('/api/news/archive/stats').then(r=>r.json()).then(d=>setArchStats(d)).catch(()=>{});
   const loadSources=()=>fetch('/api/sources/preferences').then(r=>r.json()).then(d=>setSources({banned:d.banned||[],boosted:d.boosted||[]})).catch(()=>{});
   const loadPrefs=()=>fetch('/api/briefing/preferences').then(r=>r.json()).then(d=>{setPrefs(d.preferences);setCats(d.categories||[])}).catch(()=>{});
   const loadFrontPage=()=>{setFpLoading(true);fetch('/api/news/front-page/latest').then(r=>r.json()).then(d=>{setFp(d.edition||null);setFpList(d.editions||[]);setFpLoading(false)}).catch(()=>setFpLoading(false))};
@@ -5113,9 +5158,32 @@ function NewsWS(){
   useEffect(()=>{
     fetch('/api/briefing/status').then(r=>r.json()).then(d=>setStatus(d.connectors||[])).catch(()=>{});
     fetch('/api/briefings').then(r=>r.json()).then(d=>{const bs=d.briefings||[];setBriefings(bs);if(bs[0])setExpanded({[bs[0].date]:true});setLoading(false)}).catch(()=>setLoading(false));
-    loadFeed();loadSources();loadPrefs();loadFrontPage();loadReadLater();
+    loadSources();loadPrefs();loadFrontPage();loadReadLater();loadArchStats();
     return()=>{if(genTimer.current)clearInterval(genTimer.current);stopReading()};
   },[]);
+
+  // (Re)load the archive feed from the top whenever the category or sort changes
+  // (also fires once on mount so the Feed tab is warm before it's opened).
+  useEffect(()=>{feedOffsetRef.current=0;loadFeed(true);loadArchStats();},[streamCat,sortBy]);
+
+  // Infinite scroll: observe a sentinel below the list; when it enters view and
+  // there's more, append the next page. Re-attach after each load so the freshly
+  // mounted sentinel (which only renders once items exist) is observed.
+  useEffect(()=>{
+    if(tab!=='feed')return;const el=feedSentinelRef.current;if(!el)return;
+    const ob=new IntersectionObserver(es=>{
+      if(es[0].isIntersecting&&feedHasMoreRef.current&&!feedBusyRef.current&&loadFeedRef.current)loadFeedRef.current(false);
+    },{rootMargin:'300px'});
+    ob.observe(el);return()=>ob.disconnect();
+  },[tab,feedLoading,feed.length]);
+
+  // Back-to-top: show the floating button once the top of the feed scrolls away.
+  useEffect(()=>{
+    if(tab!=='feed'){setShowTop(false);return;}
+    const el=feedTopRef.current;if(!el)return;
+    const ob=new IntersectionObserver(es=>setShowTop(!es[0].isIntersecting),{rootMargin:'0px'});
+    ob.observe(el);return()=>ob.disconnect();
+  },[tab,feedLoading]);
 
   // Front Page generation + Read Later actions + background open.
   const genFrontPage=async()=>{if(fpGen)return;setFpGen(true);try{const r=await fetch('/api/news/front-page/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});const d=await r.json();if(d.status!=='ok'||!d.edition)throw new Error(d.message||'Generation failed');setFp(d.edition);loadFrontPage()}catch(e){alert('Front Page generation failed: '+(e.message||e))}finally{setFpGen(false)}};
@@ -5125,9 +5193,9 @@ function NewsWS(){
   const openBg=(url)=>{if(!url)return;const w=window.open(url,'_blank','noopener');if(w){try{w.blur();window.focus()}catch(_){}}};
 
   const banSource=async(src)=>{setFeed(f=>f.filter(it=>it.source!==src));try{await fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources()}catch(e){}};
-  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
-  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
-  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed()}catch(e){}};
+  const boostSource=async(src)=>{try{await fetch('/api/sources/boost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
+  const unban=async(src)=>{try{await fetch('/api/sources/ban',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
+  const unboost=async(src)=>{try{await fetch('/api/sources/boost',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src})});loadSources();loadFeed(true)}catch(e){}};
 
   const savePrefs=(next)=>{setPrefs(next);fetch('/api/briefing/preferences',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(next)}).catch(()=>{})};
   const moveSection=(i,dir)=>{if(!prefs)return;const o=[...prefs.section_order];const j=i+dir;if(j<0||j>=o.length)return;[o[i],o[j]]=[o[j],o[i]];savePrefs({...prefs,section_order:o})};
@@ -5175,12 +5243,9 @@ function NewsWS(){
 
   // ── Feature (top story) gets a larger card + editorial note ──
   const filteredBriefs=briefings.filter(b=>!briefSearch||(b.date||'').includes(briefSearch.trim()));
-  // Stream view: filter by the selected category tab, then sort.
-  const streamItems=feed.filter(it=>streamCat==='All'||it.category===streamCat).slice().sort((a,b)=>{
-    if(sortBy==='time')return (b.ts||0)-(a.ts||0);
-    if(sortBy==='source')return (a.source||'').localeCompare(b.source||'');
-    return (b.score||0)-(a.score||0); // relevance (default)
-  });
+  // The archive feed arrives already filtered (category) and sorted server-side,
+  // so the accumulated pages render as-is; optimistic ban removal mutates `feed`.
+  const streamItems=feed;
   // Reusable card-corner actions: Read Later (toggle) + Open in Background.
   const cardActions=(it)=>(<div className="src-actions">
     <button className={'src-btn save'+(savedUrls[it.url]?' on':'')} title={savedUrls[it.url]?'Saved to Read Later':'Save to Read Later'} onClick={e=>{e.stopPropagation();savedUrls[it.url]?removeLater(it.url):saveLater(it)}}>{savedUrls[it.url]?'🔖':'🏷'}</button>
@@ -5210,7 +5275,7 @@ function NewsWS(){
       <div style={{display:'flex',gap:4}}>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('sources');loadSources()}}>🛡 Manage Sources</button>
         <button className="btn" style={{fontSize:11}} onClick={()=>{setPanel('customize');loadPrefs()}}>⚙ Customize</button>
-        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={loadFeed}>↻ Refresh</button>}
+        {tab==='feed'&&<button className="btn" style={{fontSize:11}} onClick={()=>{loadFeed(true);loadArchStats()}}>↻ Refresh</button>}
         {tab==='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={genFrontPage} disabled={fpGen}>{fpGen?'Curating…':'✨ Generate Front Page'}</button>}
         {tab!=='frontpage'&&<button className="btn active" style={{fontSize:11}} onClick={generateBriefing} disabled={generating}>{generating?'Generating…':'✨ Generate Briefing'}</button>}
       </div>
@@ -5223,11 +5288,12 @@ function NewsWS(){
       <span className="gen-steps">{NEWS_GEN_STEPS.map((s,i)=><span key={i} className={'gen-step '+(genDone.includes(s)?'done':i===genStep?'active':'')}>{s}</span>)}</span>
     </div>}
 
-    {/* ── FEED TAB (category stream + sort) ── */}
-    {tab==='feed'&&<div>
+    {/* ── FEED TAB (archive stream · infinite scroll · category + sort) ── */}
+    {tab==='feed'&&<div style={{position:'relative'}}>
+      <div ref={feedTopRef}></div>
       <div className="stream-bar">
         <div className="stream-tabs">
-          {NEWS_STREAM_CATS.map(c=><button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{c!=='All'&&feed.filter(it=>it.category===c).length>0?(' '+feed.filter(it=>it.category===c).length):''}</button>)}
+          {NEWS_STREAM_CATS.map(c=>{const n=c==='All'?(archStats&&archStats.total||0):(archStats&&archStats.by_category&&archStats.by_category[c]||0);return <button key={c} className={'stream-tab'+(streamCat===c?' active':'')} onClick={()=>setStreamCat(c)}>{c}{n>0?(' '+n):''}</button>})}
         </div>
         <div className="stream-sort">
           <span style={{fontSize:10,color:'#777'}}>Sort</span>
@@ -5236,10 +5302,11 @@ function NewsWS(){
         </div>
       </div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontSize:11,color:'#888'}}>{streamItems.length} stor{streamItems.length===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
+        <div style={{fontSize:11,color:'#888'}}>{feedTotal.toLocaleString()} archived stor{feedTotal===1?'y':'ies'}{streamCat!=='All'?(' in '+streamCat):''}{feed.length<feedTotal?(' · showing '+feed.length):''}{feedAt?(' · updated '+new Date(feedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):''}{sources.banned.length?(' · '+sources.banned.length+' source'+(sources.banned.length>1?'s':'')+' banned'):''}</div>
       </div>
-      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Pulling live stories…</div>:
-       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No stories{streamCat!=='All'?(' in '+streamCat):''} right now. Try ↻ Refresh, another category, or your toggles in ⚙ Customize.</div>:
+      {feedLoading?<div style={{color:'#999',textAlign:'center',padding:40}}>Loading your news archive…</div>:
+       streamItems.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No archived stories{streamCat!=='All'?(' in '+streamCat):''} yet. Friday archives articles every few minutes as it fetches them — check back shortly, or open the 🗞 Front Page.</div>:
+       <div>
        <div className="news-masonry">
          {streamItems.map((it,i)=><div key={it.id||i} className={'news-card cat-'+(it.color||'tech')+(i===0?' feature':'')}>
            <div className="news-cardtop">
@@ -5252,17 +5319,26 @@ function NewsWS(){
            <div className="source-row">
              <span className="source-badge"><span className={'trust-dot '+(it.trust||'yellow')}></span>{it.source}</span>
              {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐ Boosted</span>}
+             {it.sentiment&&it.sentiment!=='neutral'&&<span className={it.sentiment==='positive'?'badge-cyan':'badge-amber'} style={{fontSize:9,padding:'1px 6px'}}>{it.sentiment==='positive'?'▲ Positive':'▼ Negative'}</span>}
              {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖 Saved</span>}
            </div>
            <div className="news-meta">
              {it.reading_time>0&&<span>⏱ {it.reading_time} min read</span>}
+             {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>openBg(it.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>it.url&&window.open(it.url,'_blank')}>↗ Open article</span>
            </div>
            {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
          </div>)}
+       </div>
+       {/* Infinite-scroll sentinel + loading spinner */}
+       <div ref={feedSentinelRef} style={{height:1}}></div>
+       {feedMore&&<div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,color:'#7fb6c9',padding:'18px 0',fontSize:12}}><span className="gen-spinner"></span> Loading more stories…</div>}
+       {!feedMore&&!feedHasMore&&feed.length>0&&<div style={{textAlign:'center',color:'#667',fontSize:11,padding:'16px 0'}}>— end of archive ({feed.length.toLocaleString()} loaded) —</div>}
        </div>}
+      {/* Back-to-top floating button (appears after the first page scrolls off) */}
+      {showTop&&<button className="btn" title="Back to top" onClick={()=>{if(feedTopRef.current)feedTopRef.current.scrollIntoView({behavior:'smooth',block:'start'})}} style={{position:'fixed',right:24,bottom:24,zIndex:50,borderRadius:'50%',width:44,height:44,fontSize:18,boxShadow:'0 4px 16px rgba(0,0,0,0.4)'}}>↑</button>}
     </div>}
 
     {/* ── FRONT PAGE TAB (AI-curated editorial) ── */}
@@ -5387,7 +5463,7 @@ function NewsWS(){
       {sources.boosted.length===0?<div style={{fontSize:11,color:'#777'}}>None boosted yet. Hit ⭐ on any story to prioritize that source.</div>:
        sources.boosted.map(s=><div key={s} className="manage-row"><span><span className="trust-dot green" style={{display:'inline-block',marginRight:7}}></span>{s}</span><button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>unboost(s)}>Remove</button></div>)}
       <div style={{marginTop:14,display:'flex',gap:4}}>
-        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed()})}}}/>
+        <input className="input" style={{flex:1,fontSize:11}} id="ban-add" placeholder="domain to ban (e.g. example.com)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){const v=e.target.value.trim();e.target.value='';fetch('/api/sources/ban',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:v})}).then(()=>{loadSources();loadFeed(true)})}}}/>
       </div>
     </div>}
     {panel==='customize'&&prefs&&<div className="news-side">
