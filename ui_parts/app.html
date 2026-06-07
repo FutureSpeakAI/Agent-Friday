@@ -108,23 +108,68 @@ function renderFridayMarkdown(mdText,opts){
 }
 if(typeof window!=='undefined'){window.renderFridayMarkdown=renderFridayMarkdown;}
 
+// ═══ VOICE TRANSCRIPT SANITIZER ═══
+// Live voice replies sometimes carry the personality engine's internal
+// scaffolding alongside the spoken words: affective stage directions
+// (*chuckles*, (softly)), mood/affect annotations ([mood: playful], Tone: warm),
+// and reasoning / system markers (<thinking>…</thinking>, [internal: …]). Those
+// steer HOW Friday speaks — they must never appear in the chat transcript. Strip
+// them here, leaving only the words Friday actually said. Conservative on purpose:
+// only bracketed/parenthetical fragments that read as cues are removed, so real
+// content like "(see your calendar)" survives.
+function sanitizeVoiceTranscript(raw){
+  if(raw==null)return'';
+  let t=String(raw);
+  const KIND='thinking|thought|reasoning|internal|mood|emotion|emotional|affect|tone|voice|persona|personality|system|meta|stage';
+  // 1. Reasoning / personality XML-ish blocks — drop tag AND contents.
+  t=t.replace(new RegExp('<('+KIND+')\\b[^>]*>[\\s\\S]*?<\\/\\1>','gi'),' ');
+  // 2. Orphan tags of the same kind (streamed / unclosed).
+  t=t.replace(new RegExp('<\\/?(?:'+KIND+')\\b[^>]*>','gi'),' ');
+  // 3. Asterisk stage directions: *chuckles*, *pauses warmly*.
+  t=t.replace(/\*[^*\n]{0,60}\*/g,' ');
+  // 4. Bracketed annotations that read as cues (not content).
+  const CUE=/\b(mood|tone|affect|emotion|emotional|feeling|internal|reasoning|thinking|system|persona|personality|voice|note|stage|aside|whisper|softly|warmly|gently|laugh|chuckle|sigh|pause|beat|smil|grin|wink|excited|playful|warm|calm|cheer|sarcas|dramatic|breath|nervous|teasing)\b/i;
+  t=t.replace(/\[[^\]\n]{0,80}\]/g,(m)=>CUE.test(m)?' ':m);
+  // 5. Parenthetical stage directions — short verb/adverb cues only.
+  const PCUE=/\b(mood|tone|affect|emotion|laugh|laughs|laughing|chuckle|chuckles|chuckling|sigh|sighs|pause|pauses|beat|smil|smiles|smiling|grin|grins|wink|winks|softly|warmly|gently|quietly|cheerfully|playfully|excitedly|teasingly|whisper|whispers|breath|breathes|exhal|inhal|nervously)\b/i;
+  t=t.replace(/\([^()\n]{0,40}\)/g,(m)=>PCUE.test(m)?' ':m);
+  // 6. Leading "label:" cue lines (Mood:/Tone:/Affect:/Internal:/Reasoning:…).
+  t=t.replace(/^[ \t]*(?:mood|tone|affect|emotion|emotional|feeling|internal|reasoning|thinking|persona|personality|voice|system|note|stage direction)[ \t]*[:\-–][ \t]*.*$/gim,' ');
+  // 7. Collapse whitespace the removals left behind.
+  t=t.replace(/[ \t]{2,}/g,' ').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/^\s+|\s+$/g,'');
+  return t;
+}
+if(typeof window!=='undefined'){window.sanitizeVoiceTranscript=sanitizeVoiceTranscript;}
+
 function FridayDoc({text,compact,style,className}){
   const html=renderFridayMarkdown(text||'',{compact:!!compact});
   return <div className={className} style={style} dangerouslySetInnerHTML={{__html:html}}/>;
 }
 
 function FWin({id,title,emoji,children,onClose,zIndex,onFocus}){
-  const[pos,setPos]=useState({x:60+Math.random()*300,y:40+Math.random()*80});
-  const[size,setSize]=useState({w:660,h:460});
+  // Size & position persist per workspace and are clamped to the viewport so a
+  // window can never be dragged or resized off-screen.
+  const LSK='friday_fwin_'+id;
+  const vw=()=>window.innerWidth||document.documentElement.clientWidth||1280;
+  const vh=()=>window.innerHeight||document.documentElement.clientHeight||800;
+  const clampW=w=>Math.max(400,Math.min(w,vw()-20));
+  const clampH=h=>Math.max(280,Math.min(h,vh()-50));
+  const clampX=x=>Math.max(0,Math.min(x,vw()-120));
+  const clampY=y=>Math.max(30,Math.min(y,vh()-60));
+  const saved=(()=>{try{return JSON.parse(localStorage.getItem(LSK))}catch(_){return null}})();
+  const[pos,setPos]=useState(saved&&saved.x!=null?{x:clampX(saved.x),y:clampY(saved.y)}:{x:60+Math.random()*300,y:40+Math.random()*80});
+  const[size,setSize]=useState(saved&&saved.w!=null?{w:clampW(saved.w),h:clampH(saved.h)}:{w:660,h:460});
   const[dragging,setDragging]=useState(false);const[resizing,setResizing]=useState(false);
   const dOff=useRef({x:0,y:0});const rStart=useRef({x:0,y:0,w:0,h:0});
-  useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:Math.max(0,e.clientX-dOff.current.x),y:Math.max(30,e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
-  useEffect(()=>{if(!resizing)return;const mv=e=>setSize({w:Math.max(400,rStart.current.w+e.clientX-rStart.current.x),h:Math.max(280,rStart.current.h+e.clientY-rStart.current.y)});const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
+  useEffect(()=>{if(!dragging)return;const mv=e=>setPos({x:clampX(e.clientX-dOff.current.x),y:clampY(e.clientY-dOff.current.y)});const up=()=>setDragging(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[dragging]);
+  useEffect(()=>{if(!resizing)return;const mv=e=>setSize({w:clampW(rStart.current.w+e.clientX-rStart.current.x),h:clampH(rStart.current.h+e.clientY-rStart.current.y)});const up=()=>setResizing(false);addEventListener('mousemove',mv);addEventListener('mouseup',up);return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[resizing]);
+  // Persist geometry whenever it settles.
+  useEffect(()=>{try{localStorage.setItem(LSK,JSON.stringify({x:pos.x,y:pos.y,w:size.w,h:size.h}))}catch(_){}},[pos.x,pos.y,size.w,size.h]);
   return(<div className="fwin" style={{left:pos.x,top:pos.y,width:size.w,height:size.h,zIndex}} onClick={onFocus}>
     <div className="fwin-bar" onMouseDown={e=>{if(e.target.closest('.fwin-btns'))return;setDragging(true);dOff.current={x:e.clientX-pos.x,y:e.clientY-pos.y};onFocus()}}>
       <span className="fwin-title">{emoji} {title}</span><div className="fwin-btns"><button onClick={onClose}>×</button></div>
     </div><div className="fwin-body">{children}</div>
-    <div className="resize-h" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
+    <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();setResizing(true);rStart.current={x:e.clientX,y:e.clientY,w:size.w,h:size.h};onFocus()}}/>
   </div>);
 }
 
@@ -3139,6 +3184,29 @@ function App(){
   const[focusWin,setFocusWin]=useState(null);
   const[zMap,setZMap]=useState({});const[zC,setZC]=useState(42);
   const[chatOpen,setChatOpen]=useState(false);const[chatMsgs,setChatMsgs]=useState([]);const[chatIn,setChatIn]=useState('');const[chatLoad,setChatLoad]=useState(false);
+  // ── Resizable chat panel ── drag the left edge for width, the top edge for
+  // height. Clamped to 300–80vw × 200–80vh, persisted across sessions.
+  const CHAT_MINW=300,CHAT_MINH=200;
+  // Guard against a transient 0 viewport (early mount / headless) collapsing the panel.
+  const vw=()=>window.innerWidth||document.documentElement.clientWidth||1280;
+  const vh=()=>window.innerHeight||document.documentElement.clientHeight||800;
+  const clampChatW=(w)=>Math.max(CHAT_MINW,Math.min(Math.round(vw()*0.8),w));
+  const clampChatH=(h)=>Math.max(CHAT_MINH,Math.min(Math.round(vh()*0.8),h));
+  const[chatW,setChatW]=useState(()=>{try{const v=parseInt(localStorage.getItem('friday_chat_w'),10);return v?clampChatW(v):320}catch(_){return 320}});
+  const[chatH,setChatH]=useState(()=>{try{const v=parseInt(localStorage.getItem('friday_chat_h'),10);return v?clampChatH(v):0}catch(_){return 0}});// 0 = auto (full height between top & dock)
+  const[chatResize,setChatResize]=useState(null);// 'w' | 'h' | null
+  const chatRStart=useRef({x:0,y:0,w:0,h:0});
+  useEffect(()=>{if(!chatResize)return;
+    // width: panel is right-anchored, so dragging the left edge LEFT (smaller clientX) grows it.
+    // height: panel is bottom-anchored, so dragging the top edge UP (smaller clientY) grows it.
+    const mv=e=>{if(chatResize==='w'){setChatW(clampChatW(chatRStart.current.w+(chatRStart.current.x-e.clientX)))}else{setChatH(clampChatH(chatRStart.current.h+(chatRStart.current.y-e.clientY)))}};
+    const up=()=>setChatResize(null);
+    addEventListener('mousemove',mv);addEventListener('mouseup',up);
+    return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[chatResize]);
+  useEffect(()=>{try{localStorage.setItem('friday_chat_w',String(Math.round(chatW)))}catch(_){}},[chatW]);
+  useEffect(()=>{try{if(chatH)localStorage.setItem('friday_chat_h',String(Math.round(chatH)))}catch(_){}},[chatH]);
+  // Keep within viewport when the window is resized.
+  useEffect(()=>{const on=()=>{setChatW(w=>clampChatW(w));setChatH(h=>h?clampChatH(h):0)};addEventListener('resize',on);return()=>removeEventListener('resize',on)},[]);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
   const[wikiPending,setWikiPending]=useState(0);
   const[msgActionable,setMsgActionable]=useState(0);
@@ -3726,7 +3794,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         setChatMsgs(p=>{
           const next=[...p];
           if(m.user_text)next.push({role:'user',text:m.user_text,time:stamp,via:'voice'});
-          if(m.agent_text)next.push({role:'friday',text:m.agent_text,time:stamp,via:'voice'});
+          // Strip personality/mood/reasoning scaffolding — only the spoken words
+          // belong in the transcript. Skip the bubble entirely if nothing remains.
+          if(m.agent_text){const clean=sanitizeVoiceTranscript(m.agent_text);if(clean)next.push({role:'friday',text:clean,time:stamp,via:'voice'});}
           return next;
         });
       }else if(m.type==='turn_end'){
@@ -4445,8 +4515,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     {/* Floating Windows */}
     {[...openWins].map(id=>{const w=wsInfo[id];if(!w)return null;return(<FWin key={id} id={id} title={w.label} emoji={w.ico} zIndex={zMap[id]||41} onClose={()=>close(id)} onFocus={()=>bringFront(id)}><Safe name={w.label}>{wsMap[id]||<div>Coming soon</div>}</Safe></FWin>)})}
 
-    {/* Chat Panel */}
-    <div className={`chat-panel ${chatOpen?'open':''}`}>
+    {/* Chat Panel — resizable: drag left edge for width, top edge for height. */}
+    <div className={`chat-panel ${chatOpen?'open':''}`} style={chatH?{width:chatW,height:chatH,top:'auto'}:{width:chatW}}>
+      {/* left-edge width handle */}
+      <div className="chat-resize-w" title="Drag to resize width" onMouseDown={e=>{e.preventDefault();chatRStart.current={...chatRStart.current,x:e.clientX,w:chatW};setChatResize('w')}}/>
+      {/* top-edge height handle */}
+      <div className="chat-resize-h" title="Drag to resize height" onMouseDown={e=>{e.preventDefault();const cur=chatH||(e.currentTarget.parentNode.getBoundingClientRect().height);chatRStart.current={...chatRStart.current,y:e.clientY,h:cur};setChatResize('h')}}/>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>

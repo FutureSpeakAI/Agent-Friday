@@ -291,10 +291,19 @@ window.addEventListener('DOMContentLoaded',function(){
         .fwin-body::-webkit-scrollbar { width: 4px; }
         .fwin-body::-webkit-scrollbar-track { background: transparent; }
         .fwin-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+        /* Bottom-right resize grip — subtle diagonal-line indicator so users know
+           the glass panel can be resized; brightens on hover. */
         .resize-h {
-            position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
-            cursor: nwse-resize; opacity: 0;
+            position: absolute; bottom: 0; right: 0; width: 18px; height: 18px;
+            cursor: nwse-resize; z-index: 3;
+            background-image: linear-gradient(135deg, transparent 0 42%,
+                rgba(0,212,255,0.55) 42% 50%, transparent 50% 62%,
+                rgba(0,212,255,0.55) 62% 70%, transparent 70% 82%,
+                rgba(0,212,255,0.55) 82% 90%, transparent 90%);
+            opacity: 0.5; transition: opacity 0.2s;
         }
+        .fwin:hover .resize-h { opacity: 0.85; }
+        .resize-h:hover { opacity: 1; }
 
         /* Cards — frosted glass tiles */
         .card {
@@ -344,6 +353,27 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: right 0.3s ease;
         }
         .chat-panel.open { right: 0; }
+        /* Chat panel resize handles — left edge (width) + top edge (height). */
+        .chat-resize-w {
+            position: absolute; top: 0; left: -3px; width: 8px; height: 100%;
+            cursor: ew-resize; z-index: 2;
+        }
+        .chat-resize-w::before {
+            content: ''; position: absolute; top: 50%; left: 2px;
+            width: 3px; height: 34px; margin-top: -17px; border-radius: 2px;
+            background: rgba(0,212,255,0.18); transition: background 0.2s;
+        }
+        .chat-resize-w:hover::before { background: rgba(0,212,255,0.55); }
+        .chat-resize-h {
+            position: absolute; top: -3px; left: 0; width: 100%; height: 8px;
+            cursor: ns-resize; z-index: 2;
+        }
+        .chat-resize-h::before {
+            content: ''; position: absolute; left: 50%; top: 2px;
+            width: 34px; height: 3px; margin-left: -17px; border-radius: 2px;
+            background: rgba(0,212,255,0.18); transition: background 0.2s;
+        }
+        .chat-resize-h:hover::before { background: rgba(0,212,255,0.55); }
 
         /* Greeting ticker */
         .greeting-ticker {
@@ -994,6 +1024,8 @@ window.addEventListener('DOMContentLoaded',function(){
             transition: left 0.3s ease;
           }
           .chat-panel.open { left: 0 !important; right: 0 !important; }
+          /* No edge-drag resizing on mobile — the panel is full-bleed. */
+          .chat-resize-w, .chat-resize-h { display: none !important; }
 
           /* Settings panel — full-width */
           .settings-panel {
