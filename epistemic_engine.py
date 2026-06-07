@@ -186,6 +186,32 @@ class EpistemicEngine:
             return 0.5  # neutral
         return min(1.0, teaching_hits / max(total, 1))
 
+    def register_governance_event(self, severity: float, detail: str = "") -> TurnScore:
+        """Record a governance violation as a low-scoring turn.
+
+        Called by the behavioral monitor when an agent loop trips a high
+        composite-risk threshold. A violation is epistemically bad behaviour,
+        so it lands in the history as a turn whose composite is the inverse of
+        its severity — dragging the rolling averages down proportionally.
+        """
+        severity = max(0.0, min(1.0, float(severity)))
+        composite = round(max(0.0, 1.0 - severity), 3)
+        turn = TurnScore(
+            timestamp=datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            information_gain=composite,
+            pushback_rate=composite,
+            socratic_ratio=composite,
+            independence_fostering=composite,
+            composite=composite,
+            user_message_length=0,
+            response_length=len(detail or ""),
+        )
+        with self._lock:
+            self._history.append(turn)
+            self._append_history(turn)
+            self._write_scores()
+        return turn
+
     def _append_history(self, turn: TurnScore):
         try:
             FRIDAY_DIR.mkdir(parents=True, exist_ok=True)

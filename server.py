@@ -85,6 +85,15 @@ except Exception as _tg_err:
     _HAS_TRUST_GRAPHS = False
     print(f"  [FRIDAY] WARNING: trust graphs unavailable ({_tg_err})")
 
+# Behavioral anomaly detection — internal-governance monitor that scores each
+# agent tool-use loop against the user's stated intent (inspired by Adrian).
+try:
+    from behavioral_monitor import get_behavioral_monitor
+    _HAS_BEHAVIORAL_MONITOR = True
+except Exception as _bm_err:
+    _HAS_BEHAVIORAL_MONITOR = False
+    print(f"  [FRIDAY] WARNING: behavioral_monitor unavailable ({_bm_err})")
+
 # Prevent console windows from flashing when spawning subprocesses on Windows.
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
@@ -2300,6 +2309,48 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     tool_trace = []
     convo = list(safe_messages)
 
+    # ── Behavioral monitor — open a governance session keyed to the user's
+    # latest message, log every tool call, and score the loop on completion. ──
+    _bmon = None
+    _bmon_sid = None
+    if _HAS_BEHAVIORAL_MONITOR:
+        try:
+            _bmon = get_behavioral_monitor()
+            _bmon_user_msg = ""
+            for _m in reversed(messages):
+                if _m.get("role") == "user":
+                    _c = _m.get("content")
+                    if isinstance(_c, str):
+                        _bmon_user_msg = _c
+                        break
+                    if isinstance(_c, list):
+                        _txt = " ".join(
+                            b.get("text", "") for b in _c
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                        if _txt.strip():
+                            _bmon_user_msg = _txt
+                            break
+            _bmon_sid = _bmon.begin_session(_bmon_user_msg, meta={
+                "is_background_task": bool((session_ctx or {}).get("is_background_task")),
+                "provider": (session_ctx or {}).get("provider", "cloud"),
+            })
+        except Exception:
+            _bmon = None
+            _bmon_sid = None
+
+    def _bmon_log(_name, _input, _result):
+        if _bmon is None or _bmon_sid is None:
+            return
+        try:
+            _bmon.log_action(
+                _bmon_sid, _name, _input,
+                ring_level=TOOL_RINGS.get(_name, 2),
+                result=_result,
+            )
+        except Exception:
+            pass
+
     # ── Process orb registration — frontend renders an orb per active agent. ──
     orb_id = f"agent-{uuid.uuid4().hex[:8]}"
     try:
@@ -2426,6 +2477,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     )
                     if not _zt_allowed:
                         tool_trace.append({"name": tu.name, "input": tu.input, "result": f"[VAULT-ZT DENY] {_zt_detail}"})
+                        _bmon_log(tu.name, tu.input, f"[VAULT-ZT DENY] {_zt_detail}")
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
@@ -2442,10 +2494,12 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                     img_block = _screenshot_result_to_block(tu.id, result)
                     if img_block is not None:
                         tool_trace.append({"name": tu.name, "input": tu.input, "result": "[screenshot image returned to model]"})
+                        _bmon_log(tu.name, tu.input, "[screenshot image returned to model]")
                         tool_results.append(img_block)
                         continue
 
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": result[:2000]})
+                _bmon_log(tu.name, tu.input, result)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,
@@ -2459,6 +2513,12 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         _orb_safe(process_update, orb_id, status='error', label='Error', progress=1.0)
         raise
     finally:
+        # ── Behavioral monitor — score this loop and fire response actions. ──
+        if _bmon is not None and _bmon_sid is not None:
+            try:
+                _bmon.evaluate(_bmon_sid)
+            except Exception:
+                pass
         # The frontend keeps a "completing" orb for ~2s, then auto-purges via
         # /api/processes server-side TTL once status is completed/error.
         if orb_id:
@@ -8132,6 +8192,41 @@ def get_epistemic():
     })
 
 
+@app.route('/api/security/behavioral-report')
+def get_behavioral_report():
+    """Latest behavioral anomaly analysis from the most recent agent loop."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"status": "unavailable",
+                        "message": "behavioral_monitor not loaded"}), 200
+    try:
+        return jsonify({"status": "ok", **get_behavioral_monitor().get_latest_report()})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/security/behavioral-history')
+def get_behavioral_history():
+    """Rolling 20-session behavioral summary, newest first."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"status": "unavailable", "count": 0, "sessions": []}), 200
+    try:
+        return jsonify({"status": "ok", **get_behavioral_monitor().get_history_summary()})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/security/risk-score')
+def get_behavioral_risk_score():
+    """Current composite behavioral risk level."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"status": "unavailable", "composite": 0.0,
+                        "risk_level": "none"}), 200
+    try:
+        return jsonify({"status": "ok", **get_behavioral_monitor().get_risk_score()})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route('/api/health')
 def friday_health():
     """Return server uptime and system health snapshot for the demo UI."""
@@ -8360,6 +8455,39 @@ def api_integrity_verify():
     )
     result = engine.verify_manifest(manifest_dict)
     return jsonify({"status": "ok", **result})
+
+
+# ── BUILD 5: Behavioral Anomaly Detection ──────────────────────
+#  Scores each completed agent loop against the user's stated intent:
+#  scope drift, privilege escalation, data-exfiltration shape, repetition.
+
+@app.route('/api/security/behavioral-report')
+@login_required
+def api_behavioral_report():
+    """Return the most recent behavioral risk report (latest scored loop)."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"error": "behavioral_monitor module not available"}), 501
+    report = get_behavioral_monitor().get_latest_report()
+    return jsonify({"status": "ok", "report": report})
+
+
+@app.route('/api/security/behavioral-history')
+@login_required
+def api_behavioral_history():
+    """Return the rolling 20-session behavioral trace summary (newest first)."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"error": "behavioral_monitor module not available"}), 501
+    summary = get_behavioral_monitor().get_history_summary()
+    return jsonify({"status": "ok", **summary})
+
+
+@app.route('/api/security/risk-score')
+@login_required
+def api_behavioral_risk_score():
+    """Return the current composite behavioral risk score + recent average."""
+    if not _HAS_BEHAVIORAL_MONITOR:
+        return jsonify({"error": "behavioral_monitor module not available"}), 501
+    return jsonify({"status": "ok", **get_behavioral_monitor().get_risk_score()})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -15027,6 +15155,16 @@ if __name__ == '__main__':
         _migrate_vault_plaintext()
     except Exception as _vk_err:
         print(f"  Vault encryption: skipped ({_vk_err})")
+
+    # Behavioral anomaly monitor — initialise the singleton so its audit
+    # directory exists and prior traces are loaded before the first request.
+    if _HAS_BEHAVIORAL_MONITOR:
+        try:
+            _bm = get_behavioral_monitor()
+            _bm_hist = _bm.get_history_summary()
+            print(f"  Behavioral monitor: ready ({_bm_hist.get('count', 0)} prior traces)")
+        except Exception as _bm_boot_err:
+            print(f"  Behavioral monitor: skipped ({_bm_boot_err})")
 
     # Bind 0.0.0.0 when tunnel/remote access is needed, else localhost only.
     # Port is configurable via FRIDAY_PORT to avoid conflicts (default 3000).
