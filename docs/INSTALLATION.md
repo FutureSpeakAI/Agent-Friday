@@ -28,8 +28,8 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/FutureSpeakAI/friday-desktop.git
-cd friday-desktop
+git clone https://github.com/FutureSpeakAI/Agent-Friday.git
+cd Agent-Friday
 ```
 
 ---

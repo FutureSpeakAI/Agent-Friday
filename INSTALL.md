@@ -3,18 +3,20 @@
 > **Platform:** Windows 10/11 (primary) · macOS/Linux (partial support)  
 > **Python:** 3.10 or later required
 
+> **Canonical guide:** [docs/INSTALLATION.md](docs/INSTALLATION.md) is the complete, up-to-date installation reference and is the one linked from the README. This document covers the CLI setup wizard and `start.bat` flow; if anything here conflicts with `docs/INSTALLATION.md`, that file wins.
+
 ---
 
 ## One-Line Install *(recommended)*
 
 **Linux / macOS / WSL2:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/asimovs-mind/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.sh | bash
 ```
 
 **Windows PowerShell:**
 ```powershell
-iex (irm https://raw.githubusercontent.com/FutureSpeakAI/asimovs-mind/main/scripts/install.ps1)
+iex (irm https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.ps1)
 ```
 
 This handles everything: Python check, repo clone, venv, pip install, `friday` command registration, and setup wizard. Jump straight to [Step 4 — Launch](#step-4--launch) after the one-liner completes.
@@ -39,8 +41,8 @@ Before installing, make sure you have:
 ## Step 1 — Clone the Repository
 
 ```bash
-git clone https://github.com/FutureSpeakAI/friday-desktop.git
-cd friday-desktop
+git clone https://github.com/FutureSpeakAI/Agent-Friday.git
+cd Agent-Friday
 ```
 
 ---
@@ -135,7 +137,7 @@ python server.py
 
 ### Option C — Web wizard (browser-based)
 
-If you skip the CLI wizard, launch the server and open `http://localhost:5000`. If setup has not been completed, the UI will show a glassmorphism setup overlay where you can enter your keys and preferences directly in the browser.
+If you skip the CLI wizard, launch the server and open `http://localhost:3000`. If setup has not been completed, the UI will show a glassmorphism setup overlay where you can enter your keys and preferences directly in the browser.
 
 ---
 
@@ -144,7 +146,7 @@ If you skip the CLI wizard, launch the server and open `http://localhost:5000`. 
 With the server running:
 
 ```
-http://localhost:5000
+http://localhost:3000
 ```
 
 On first load you'll see the holographic Three.js scene with the Agent Friday desktop.
@@ -212,7 +214,7 @@ To access Agent Friday from outside your home network (securely, without opening
 1. [Install cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
 2. Run a quick tunnel:
    ```bash
-   cloudflared tunnel --url http://localhost:5000
+   cloudflared tunnel --url http://localhost:3000
    ```
 3. Cloudflare prints a `https://something.trycloudflare.com` URL — open it on any device
 4. For a persistent domain, set up a named tunnel in your Cloudflare dashboard
@@ -251,7 +253,7 @@ The assembler concatenates `head.html`, `styles_and_scene.html`, and `app.html` 
 **pyautogui not working (Ring 3)**  
 → On Windows, pyautogui requires no additional setup. On macOS, grant accessibility permissions in System Preferences.
 
-**Port 5000 already in use**  
+**Port 3000 already in use**  
 → Change the port: `python server.py --port 5001` (or set `FLASK_RUN_PORT=5001`).
 
 **"google-genai not installed"**  

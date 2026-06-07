@@ -32,6 +32,58 @@ cd Agent-Friday
 chmod +x install.sh && ./install.sh
 ```
 
+### Manual setup (without the installer)
+
+Prefer to wire things up yourself? Clone the repo, install dependencies, set your API keys, and run the server directly.
+
+```bash
+git clone https://github.com/FutureSpeakAI/Agent-Friday.git
+cd Agent-Friday
+pip install -r requirements.txt
+```
+
+Set your API keys (no keys are stored in the repo). Use the syntax for your shell:
+
+```powershell
+# Windows (PowerShell)
+$env:ANTHROPIC_API_KEY = "your-key-here"
+$env:GEMINI_API_KEY    = "your-key-here"     # optional, for creative/voice
+$env:OPENAI_API_KEY    = "your-key-here"     # optional, OpenAI-compatible provider
+$env:OPENROUTER_API_KEY = "your-key-here"    # optional, alias for OpenRouter
+```
+
+```bat
+:: Windows (Command Prompt)
+set ANTHROPIC_API_KEY=your-key-here
+set GEMINI_API_KEY=your-key-here
+```
+
+```bash
+# Linux / macOS
+export ANTHROPIC_API_KEY=your-key-here
+export GEMINI_API_KEY=your-key-here          # optional, for creative/voice
+export OPENAI_API_KEY=your-key-here          # optional, OpenAI-compatible provider
+export OPENROUTER_API_KEY=your-key-here      # optional, alias for OpenRouter
+```
+
+Optional hardening (sensible defaults; override only if needed). PowerShell shown — use `set NAME=value` on cmd or `export NAME=value` on Linux/macOS:
+
+```powershell
+$env:FRIDAY_TRUST_LOOPBACK = "0"             # require login even on localhost
+$env:FRIDAY_WS_TOKEN       = "your-token"    # gate the /ws/live voice WebSocket
+$env:FRIDAY_COOKIE_SECURE  = "1"             # Secure cookie behind HTTPS / a tunnel
+$env:FRIDAY_SANDBOX_MODE   = "confine"       # off | confine (default) | strict
+$env:FRIDAY_SANDBOX_ROOT   = "$env:USERPROFILE"  # write-confinement root for tools
+```
+
+Then run the server:
+
+```bash
+python server.py
+```
+
+Open **http://localhost:3000** in your browser. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide.
+
 ### Requirements
 - **Python 3.10+**
 - **Anthropic API key** — required ([get one here](https://console.anthropic.com/settings/keys))
@@ -172,37 +224,6 @@ Friday can build and evolve its own skills:
 - **Closed-Loop Learning** (`skill_capture.py`) — Captures turn trajectories to Cognitive Memory and JSONL, feeding real chat usage straight into the SkillOpt optimizer. A nightly `skillopt-nightly` auto-research job turns lived experience into skill improvements.
 
 See [docs/SKILLS.md](docs/SKILLS.md) for the full skill system reference.
-
----
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/FutureSpeakAI/friday-desktop.git
-cd friday-desktop
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set API keys (no keys are stored in the repo)
-set ANTHROPIC_API_KEY=your-key-here
-set GEMINI_API_KEY=your-key-here        # optional, for creative/voice
-set OPENAI_API_KEY=your-key-here        # optional, for the OpenAI-compatible provider
-set OPENROUTER_API_KEY=your-key-here    # optional, alias for OpenRouter
-
-# Optional hardening (sensible defaults; override only if needed)
-set FRIDAY_TRUST_LOOPBACK=0             # require login even on localhost
-set FRIDAY_WS_TOKEN=your-token-here     # gate the /ws/live voice WebSocket
-set FRIDAY_COOKIE_SECURE=1              # Secure cookie behind HTTPS / a tunnel
-set FRIDAY_SANDBOX_MODE=confine         # off | confine (default) | strict
-set FRIDAY_SANDBOX_ROOT=%USERPROFILE%   # write-confinement root for tools
-
-# Run
-python server.py
-```
-
-Open `http://localhost:3000` in your browser. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide.
 
 ---
 
