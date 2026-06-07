@@ -3643,26 +3643,18 @@ const{useState,useEffect,useRef,useCallback}=React;
 const DOCK_GROUPS=[
   {name:'Life',items:[
     {id:'home',ico:'🏠',label:'Home'},
+    {id:'news',ico:'📰',label:'News'},
     {id:'messages',ico:'💬',label:'Messages'},
     {id:'calendar',ico:'📅',label:'Calendar'},
-    {id:'family',ico:'👪',label:'Family'},
-    {id:'coparent',ico:'👨‍👩‍👧',label:'Co-Parent'},
-    {id:'health',ico:'❤️',label:'Health'},
-    {id:'finance',ico:'💰',label:'Finance'},
   ]},
   {name:'Work',items:[
     {id:'career',ico:'💼',label:'Career'},
-    {id:'futurespeak',ico:'🚀',label:'FutureSpeak'},
     {id:'contacts',ico:'👥',label:'Contacts'},
-    {id:'draft',ico:'✍️',label:'Draft'},
-    {id:'content',ico:'📝',label:'Content'},
+    {id:'code',ico:'💻',label:'Code'},
+    {id:'futurespeak',ico:'🌐',label:'Sites'},
   ]},
   {name:'System',items:[
-    {id:'news',ico:'📰',label:'News'},
     {id:'wiki',ico:'📚',label:'Wiki'},
-    {id:'trust',ico:'🔗',label:'Trust'},
-    {id:'studio',ico:'🎨',label:'Studio'},
-    {id:'code',ico:'💻',label:'Code'},
     {id:'system',ico:'🖥️',label:'System'},
   ]},
 ];
@@ -4246,197 +4238,6 @@ function WikiWS(){
     </div>}
   </div>);
 }
-// ═══ CO-PARENT WORKSPACE ═══
-// Drafting principles enforced by the coparent_response system prompt (server.py).
-const COPARENT_PRINCIPLES=[
-  {k:'calm',label:'Calm',desc:'Never match their emotional register. Ignore bait.'},
-  {k:'factual',label:'Factual',desc:'State facts only. No interpretation, no accusation.'},
-  {k:'brief',label:'Brief',desc:'Answer only what needs answering. Short sentences.'},
-  {k:'airtight',label:'Airtight',desc:'Everything a family-court judge would call reasonable.'},
-];
-function CoparentWS(){
-  const now=new Date();const month=now.getMonth();const year=now.getFullYear();const daysInMonth=new Date(year,month+1,0).getDate();
-  const firstDay=new Date(year,month,1).getDay();const days=[];for(let i=0;i<firstDay;i++)days.push(null);for(let i=1;i<=daysInMonth;i++)days.push(i);
-  const isThursday=d=>d&&new Date(year,month,d).getDay()===4;
-  const isCustodyWeekend=d=>{if(!d)return false;const dow=new Date(year,month,d).getDay();if(dow!==0&&dow!==6)return false;let sunCount=0;for(let i=1;i<=d;i++){if(new Date(year,month,i).getDay()===0)sunCount++}return sunCount===1||sunCount===3||sunCount===5};
-  const nextThursday=()=>{const d=new Date();while(d.getDay()!==4)d.setDate(d.getDate()+1);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
-
-  const[view,setView]=useState('messages');
-  const[data,setData]=useState(null);const[loading,setLoading]=useState(true);
-  const[selected,setSelected]=useState(null);
-  // Drafting state
-  const[incoming,setIncoming]=useState('');const[instruction,setInstruction]=useState('');
-  const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);
-  const[taskId,setTaskId]=useState(null);const[copied,setCopied]=useState(false);
-  const[toast,setToast]=useState('');
-  const pollRef=useRef(null);
-
-  const loadMessages=()=>{setLoading(true);fetch('/api/coparent/messages').then(r=>r.json()).then(d=>{setData(d);setLoading(false)}).catch(()=>{setData({status:'error',messages:[],stats:{}});setLoading(false)})};
-  useEffect(()=>{loadMessages()},[]);
-  const showToast=(m)=>{setToast(m);setTimeout(()=>setToast(''),2200)};
-
-  // Poll the background draft task
-  useEffect(()=>{
-    if(!taskId)return;
-    pollRef.current=setInterval(async()=>{
-      try{const r=await fetch('/api/tasks/'+taskId);const t=await r.json();
-        if(t.status==='complete'){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft(t.result||'')}
-        else if(t.status==='failed'){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft('[Error] '+(t.result||'Generation failed'))}
-      }catch(e){clearInterval(pollRef.current);setTaskId(null);setDrafting(false);setDraft('[Error] '+e.message)}
-    },1500);
-    return()=>clearInterval(pollRef.current);
-  },[taskId]);
-
-  const generateDraft=async()=>{
-    if(drafting)return;if(!incoming.trim()&&!instruction.trim()){showToast('Paste the message or add an instruction first');return}
-    setDrafting(true);setDraft('');setCopied(false);
-    try{const r=await fetch('/api/coparent/draft',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({message:incoming,prompt:instruction||'Draft a calm, factual, brief, airtight reply to the message above.'})});
-      const d=await r.json();
-      if(d.status==='queued'&&d.task_id){setTaskId(d.task_id)}
-      else if(d.draft){setDraft(d.draft);setDrafting(false)}
-      else{setDraft('[Error] '+(d.message||'Generation failed'));setDrafting(false)}
-    }catch(e){setDraft('[Error] '+e.message);setDrafting(false)}
-  };
-  const copyDraft=async()=>{if(!draft)return;try{await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:draft,destination:'clipboard'})});setCopied(true);setTimeout(()=>setCopied(false),2000)}catch(e){showToast('Copy failed')}};
-  const draftReplyTo=(m)=>{setIncoming((m.subject&&m.subject!=='(no subject)'?('Re: '+m.subject+'\n\n'):'')+(m.body||''));setInstruction('');setDraft('');setView('draft')};
-  const generateWeeklySummary=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Generate a co-parent weekly summary: review recent OFW messages in ~/.friday/ofw, custody calendar, and outstanding items. Output a calm, factual brief.'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>showToast('Weekly summary launched in a Claude terminal')).catch(()=>showToast('Launch failed'))};
-
-  const stats=(data&&data.stats)||{};const messages=(data&&data.messages)||[];const timeline=(data&&data.timeline)||[];
-  const connected=stats.connected;
-  const maxTl=timeline.reduce((m,t)=>Math.max(m,t.count),0)||1;
-  const TABS=[{k:'messages',l:'📨 Messages'},{k:'draft',l:'✍️ Draft Reply'},{k:'patterns',l:'📊 Patterns'},{k:'calendar',l:'📅 Calendar'}];
-
-  return(<div>
-    <FridaySays text={`Next custody day: Thursday ${nextThursday()}. ${connected?(stats.unanswered+' message(s) awaiting a reply.'):'No co-parent messages synced yet — drop an inbox.json into ~/.friday/ofw/ to populate the log.'}`}/>
-
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-      <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-        {TABS.map(t=><button key={t.k} className="btn" onClick={()=>setView(t.k)}
-          style={{fontSize:11,padding:'4px 10px',background:view===t.k?'rgba(0,212,255,0.15)':'transparent',color:view===t.k?'#00d4ff':'#888',border:view===t.k?'1px solid rgba(0,212,255,0.35)':'1px solid rgba(255,255,255,0.08)'}}>{t.l}</button>)}
-      </div>
-      <button className="btn" style={{fontSize:11}} onClick={generateWeeklySummary}>⚡ Weekly Summary</button>
-    </div>
-    {toast&&<div style={{background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',borderRadius:6,padding:'6px 10px',marginBottom:10,fontSize:12,color:'#00d4ff'}}>{toast}</div>}
-
-    {/* ─── MESSAGES TAB ─── */}
-    {view==='messages'&&<div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#888'}}>OFW MESSAGE LOG · {messages.length} shown</span>
-        <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={loadMessages}>↻ Refresh</button>
-      </div>
-      {loading?<div className="card" style={{textAlign:'center',color:'#888',fontSize:12}}>Loading messages…</div>
-      :messages.length===0?<div className="card" style={{fontSize:12,color:'#a8a8b4',lineHeight:1.7}}>
-        <div style={{fontWeight:600,color:'#ccc',marginBottom:4}}>No messages yet</div>
-        Friday reads your co-parenting message log from <code style={{color:'#00d4ff'}}>~/.friday/ofw/inbox.json</code> (also accepts <code>messages.json</code> / <code>new_messages.json</code>). Export your OFW / TalkingParents thread to that path and hit Refresh. Each entry can include <code>from</code>, <code>subject</code>, <code>body</code>, <code>date</code>, and <code>answered</code>.
-      </div>
-      :messages.map(m=><div key={m.id} className="card" style={{marginBottom:6,padding:'8px 10px',cursor:'pointer',borderLeft:m.direction==='outbound'?'2px solid rgba(124,58,237,0.5)':(m.answered?'2px solid rgba(0,255,128,0.4)':'2px solid rgba(255,0,128,0.6)')}}
-          onClick={()=>setSelected(selected&&selected.id===m.id?null:m)}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span style={{fontSize:12,fontWeight:600,color:'#ddd'}}>{m.direction==='outbound'?'↗ ':''}{m.sender}</span>
-          <span style={{fontSize:10,color:'#777',fontFamily:'JetBrains Mono'}}>{m.date||''}{m.direction!=='outbound'&&!m.answered&&<span style={{color:'#ff0080',marginLeft:6}}>● unanswered</span>}</span>
-        </div>
-        <div style={{fontSize:12,color:'#bbb',marginTop:2}}>{m.subject}</div>
-        {selected&&selected.id===m.id&&<div style={{marginTop:8}}>
-          <div style={{fontSize:12,color:'#c8c8d0',whiteSpace:'pre-wrap',lineHeight:1.6,background:'rgba(0,0,0,0.25)',borderRadius:6,padding:8,maxHeight:200,overflowY:'auto'}}>{m.body||'(no body)'}</div>
-          <button className="btn btn-magenta" style={{fontSize:11,padding:'3px 8px',marginTop:6}} onClick={e=>{e.stopPropagation();draftReplyTo(m)}}>✍️ Draft Reply</button>
-        </div>}
-      </div>)}
-    </div>}
-
-    {/* ─── DRAFT TAB ─── */}
-    {view==='draft'&&<div>
-      <div className="card" style={{marginBottom:10}}>
-        <div className="card-title">Drafting Principles</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginTop:6}}>
-          {COPARENT_PRINCIPLES.map(p=><div key={p.k} style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.12)',borderRadius:6,padding:'6px 8px'}}>
-            <div style={{fontSize:12,fontWeight:700,color:'#00d4ff'}}>✓ {p.label}</div>
-            <div style={{fontSize:10.5,color:'#9a9aa6',marginTop:2,lineHeight:1.4}}>{p.desc}</div>
-          </div>)}
-        </div>
-      </div>
-      <div className="card" style={{marginBottom:10}}>
-        <div className="card-title">Their Message</div>
-        <textarea className="input" style={{width:'100%',height:90,resize:'vertical',fontSize:12,fontFamily:'JetBrains Mono',marginTop:4}}
-          value={incoming} onChange={e=>setIncoming(e.target.value)} placeholder="Paste the co-parent's message here (or pick one from the Messages tab)…"/>
-        <div style={{marginTop:8,fontSize:11,color:'#888',marginBottom:4}}>What do you need to say back? (optional — leave blank for a straight reply)</div>
-        <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:12,fontFamily:'JetBrains Mono'}}
-          value={instruction} onChange={e=>setInstruction(e.target.value)}
-          onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)generateDraft()}}
-          placeholder="e.g. Confirm the Thursday pickup time and decline the schedule change…"/>
-        <div style={{display:'flex',gap:6,marginTop:8}}>
-          <button className="btn" onClick={generateDraft} disabled={drafting} style={{fontWeight:600}}>{drafting?'Drafting…':'Generate Reply'}</button>
-          {draft&&!drafting&&<button className="btn" style={{fontSize:11}} onClick={generateDraft}>Regenerate</button>}
-        </div>
-      </div>
-      {draft&&<div className="card">
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>DRAFT REPLY</span>
-          <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={copyDraft}>{copied?'✓ Copied':'📋 Copy'}</button>
-        </div>
-        <textarea className="input" style={{width:'100%',minHeight:140,resize:'vertical',fontSize:13,lineHeight:1.6,color:'#e0e0e8',fontFamily:'JetBrains Mono'}}
-          value={draft} onChange={e=>setDraft(e.target.value)}/>
-        <div style={{fontSize:10.5,color:'#777',marginTop:4}}>Review before sending — Friday drafts but you decide. {draft.length} chars.</div>
-      </div>}
-    </div>}
-
-    {/* ─── PATTERNS TAB ─── */}
-    {view==='patterns'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:12}}>
-        <div className="card"><div className="stat">{stats.total||0}</div><div className="stat-label">total messages</div></div>
-        <div className="card"><div className="stat" style={{color:'#00d4ff'}}>{stats.inbound||0}</div><div className="stat-label">received</div></div>
-        <div className="card"><div className="stat" style={{color:'#7c3aed'}}>{stats.outbound||0}</div><div className="stat-label">sent</div></div>
-        <div className="card"><div className="stat" style={{color:(stats.unanswered||0)>0?'#ff0080':'#00ff80'}}>{stats.unanswered||0}</div><div className="stat-label">unanswered</div></div>
-      </div>
-      <div className="card" style={{marginBottom:12}}>
-        <div className="card-title">Message Volume Over Time</div>
-        {timeline.length===0?<div style={{fontSize:12,color:'#888',marginTop:4}}>No dated messages to chart yet.</div>
-        :<div style={{display:'flex',alignItems:'flex-end',gap:3,height:90,marginTop:8}}>
-          {timeline.slice(-30).map((t,i)=><div key={i} title={`${t.date}: ${t.count}`} style={{flex:1,minWidth:3,height:Math.max(3,(t.count/maxTl)*80),background:'linear-gradient(to top,#00d4ff,rgba(0,212,255,0.3))',borderRadius:'2px 2px 0 0'}}/>)}
-        </div>}
-        {timeline.length>0&&<div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'#666',marginTop:4,fontFamily:'JetBrains Mono'}}><span>{timeline.slice(-30)[0]&&timeline.slice(-30)[0].date}</span><span>{timeline[timeline.length-1]&&timeline[timeline.length-1].date}</span></div>}
-      </div>
-      <div className="card" style={{marginBottom:12}}>
-        <div className="card-title">Most Frequent Senders</div>
-        {(stats.top_senders||[]).length===0?<div style={{fontSize:12,color:'#888',marginTop:4}}>No data yet.</div>
-        :(stats.top_senders||[]).map((s,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:12,borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{color:'#ccc'}}>{s.sender}</span><span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{s.count}</span></div>)}
-      </div>
-      {stats.flags&&Object.keys(stats.flags).length>0&&<div className="card">
-        <div className="card-title">Flagged Patterns</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6}}>
-          {Object.entries(stats.flags).map(([f,c])=><span key={f} style={{fontSize:11,background:'rgba(245,158,11,0.1)',color:'#f59e0b',border:'1px solid rgba(245,158,11,0.25)',borderRadius:12,padding:'2px 10px'}}>{f} · {c}</span>)}
-        </div>
-      </div>}
-    </div>}
-
-    {/* ─── CALENDAR TAB ─── */}
-    {view==='calendar'&&<div>
-      <div className="card" style={{marginBottom:12}}><div className="card-title">Custody Calendar — {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][month]} {year}</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,fontSize:11,textAlign:'center'}}>
-          {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d=><div key={d} style={{color:'#999',fontFamily:'Orbitron',fontSize:11,padding:4}}>{d}</div>)}
-          {days.map((d,i)=>{const custody=isCustodyWeekend(d);const thurs=isThursday(d);const today=d===now.getDate();return <div key={i} style={{padding:4,borderRadius:4,background:today?'rgba(255,0,128,0.2)':custody?'rgba(0,212,255,0.12)':thurs?'rgba(124,58,237,0.12)':'transparent',color:d?(today?'#ff0080':custody||thurs?'#00d4ff':'#888'):'transparent',fontFamily:'JetBrains Mono',fontWeight:today?700:400}}>{d||'·'}</div>})}
-        </div>
-        <div style={{fontSize:11,color:'#999',marginTop:6}}>🔵 Custody weekends · 🟣 Thursdays · 🔴 Today</div>
-      </div>
-    </div>}
-  </div>);
-}
-
-// ═══ FUTURESPEAK STUDIO — portfolio project / deployment cockpit ═══
-// Project-management layer over the Dev Studio vibe-coding backend. Each
-// deployed site gets an interactive card with live git/deploy status, an
-// "Open in Replit" jump, scoped Quick Edit, and a one-click Apply+Deploy flow.
-const FS_DEPLOY_META={
-  green:{c:'#00ff80',label:'DEPLOYED'},
-  yellow:{c:'#f59e0b',label:'UNCOMMITTED'},
-  red:{c:'#ff0080',label:'ERROR'},
-  remote:{c:'#00d4ff',label:'REPLIT-ONLY'},
-};
-const FS_CAT_META={
-  company:{c:'#00d4ff',ico:'🚀'},
-  client:{c:'#f59e0b',ico:'🤝'},
-  personal:{c:'#7c3aed',ico:'💜'},
-};
 function FSProjectCard({p,onToast,onChanged}){
   const[expanded,setExpanded]=useState(false);
   const[editing,setEditing]=useState(false);
@@ -4529,13 +4330,13 @@ function FSStudio(){
     setScanning(false);
   };
   const addDiscovered=async(c)=>{
-    try{const r=await fetch('/api/futurespeak/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.repo,repo:c.repo,repo_path:c.repo_path,replit_url:'https://replit.com/@FutureSpeakAI/'+c.repo,description:(c.last_commit_msg||'').slice(0,80),category:'company'})}).then(r=>r.json());
+    try{const r=await fetch('/api/futurespeak/project',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:c.repo,repo:c.repo,repo_path:c.repo_path,replit_url:'',description:(c.last_commit_msg||'').slice(0,80),category:'company'})}).then(r=>r.json());
       if(r.status==='ok'){showToast(c.repo+' added to portfolio');setDiscovered(d=>d.filter(x=>x.repo!==c.repo));load()}else showToast(r.message||'Add failed')}
     catch(e){showToast('Add failed')}
   };
   const scaffold=async()=>{
     if(!wDesc.trim())return;setWBusy(true);
-    try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Scaffold a new FutureSpeak.AI web project: '+wDesc+'. Create a clean modern site, initialize a git repo, create a GitHub repo under the FutureSpeakAI org, push it, then print Replit connect instructions (Import from GitHub at replit.com).'],cwd:'~\\Projects'})});
+    try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Scaffold a new web project: '+wDesc+'. Create a clean modern site, initialize a git repo, create a GitHub repo, push it, then print deploy instructions.'],cwd:'~\\Projects'})});
       showToast('Scaffold launched in Claude Code — watch the Code workspace');setWDesc('');setWizard(false)}
     catch(e){showToast('Launch failed')}
     setWBusy(false);
@@ -4585,7 +4386,7 @@ function FSStudio(){
       </div>}
     </div>}
     {discovered.length>0&&<div className="card" style={{marginBottom:10,borderColor:'rgba(245,158,11,0.3)'}}>
-      <div className="card-title" style={{color:'#f59e0b'}}>Discovered — deployable FutureSpeakAI repos not in your portfolio</div>
+      <div className="card-title" style={{color:'#f59e0b'}}>Discovered — deployable repos not in your portfolio</div>
       <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:4}}>
         {discovered.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,padding:'3px 0'}}>
           <span style={{color:'#ccc'}}>{c.repo} <span style={{color:'#666'}}>· {c.last_commit_rel||''}</span></span>
@@ -4600,309 +4401,10 @@ function FSStudio(){
   </div>);
 }
 function FuturespeakWS(){
-  const[view,setView]=useState('sites');
-  const[pipe,setPipe]=useState(null);const[rev,setRev]=useState(null);const[legal,setLegal]=useState(null);const[assets,setAssets]=useState(null);
-  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');const[drafting,setDrafting]=useState(null);const[draft,setDraft]=useState('');
-  useEffect(()=>{Promise.all([
-    fetch('/api/futurespeak/pipeline').then(r=>r.json()).then(setPipe).catch(()=>null),
-    fetch('/api/futurespeak/revenue').then(r=>r.json()).then(setRev).catch(()=>null),
-    fetch('/api/futurespeak/legal').then(r=>r.json()).then(setLegal).catch(()=>null),
-    fetch('/api/futurespeak/assets').then(r=>r.json()).then(setAssets).catch(()=>null)
-  ]).then(()=>setLoading(false))},[]);
-  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(''),2000)};
-  const draftProposal=async(opp)=>{setDrafting(opp.id);setDraft('');
-    try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:opp.name,angle:'proposal',channel:'email',context:`Opportunity: ${opp.name}. Status: ${opp.status}. Value: $${opp.value_usd}. Next: ${opp.next_action}. ${opp.notes||''}`})});
-      const d=await r.json();setDraft(d.draft||'')}catch(e){setDraft('[Error] '+e.message)}setDrafting(null)};
-  const copyText=async(text,label)=>{try{await navigator.clipboard.writeText(text);showToast((label||'Text')+' copied')}catch(e){showToast('Copy failed')}};
-  const launchVibeCode=async(task,cwd)=>{try{await fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],cwd:cwd||'~\\Projects'})});showToast('Claude Code launched')}catch(e){showToast('Launch failed')}};
-  const draftBlog=()=>{fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'FutureSpeak.AI — Post Draft',type:'post',channel:'linkedin',notes:'Brand post from Creative Studio.',tags:['futurespeak','brand']})}).then(()=>showToast('Idea captured in Content pipeline')).catch(()=>showToast('Failed'))};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading FutureSpeak workspace...</div>;
-
-  const fmt=(n)=>n?'$'+(n>=1000?(n/1000).toFixed(n>=1000000?1:0)+(n>=1000000?'M':'K'):n.toFixed(0)):'—';
-  const maxRev=Math.max(...((rev?.months||[]).map(m=>Math.max(m.projected||0,m.actual||0))),1);
-  const STATUS_COLORS={discovery:'#888',qualified:'#00d4ff',proposal:'#f59e0b',executed:'#00ff80',closed:'#00ff80','in-review':'#f59e0b',active:'#00ff80'};
-
+  // Sites — general-purpose portfolio & deploy manager (wraps FSStudio).
   return(<div>
-    <FridaySays text={`FutureSpeak.AI · ${pipe?.total||0} opportunities · ${fmt(pipe?.weighted_value)} weighted pipeline · ${rev?.runway_months?rev.runway_months+' mo runway':'runway OK'}.`}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>{['sites','overview','pipeline','revenue','legal','website','discord','talent','demos','studio'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v==='sites'?'🚀 sites':v}</button>)}</div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
-
-    {view==='sites'&&<FSStudio/>}
-
-    {view==='overview'&&<div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">FutureSpeak.AI</div>
-        <div style={{fontSize:13,color:'#bbb'}}>AI product studio & strategic consultancy. Enterprise AI transformation, agentic system design, AI governance for regulated industries.</div>
-        <div style={{marginTop:6,display:'flex',gap:10}}><a href="https://futurespeak.ai" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>futurespeak.ai →</a><a href="https://innexenergy.com" target="_blank" rel="noopener" style={{color:'#00d4ff',fontSize:11,textDecoration:'none'}}>innexenergy.com →</a><a href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{color:'#7c3aed',fontSize:11,textDecoration:'none'}}>discord →</a></div>
-      </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6,marginBottom:10}}>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18}}>{pipe?.total||0}</div><div className="stat-label">opportunities</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#f59e0b'}}>{fmt(pipe?.total_value)}</div><div className="stat-label">pipeline value</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00d4ff'}}>{fmt(pipe?.weighted_value)}</div><div className="stat-label">weighted</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:18,color:'#00ff80'}}>{fmt(rev?.last_actual_month)}</div><div className="stat-label">last mo. actual</div></div>
-      </div>
-      <div className="card"><div className="card-title">Top Opportunities</div>
-        {(pipe?.opportunities||[]).slice(0,3).map((o,i)=>(<div key={o.id||i} style={{padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:'#ccc',fontWeight:600}}>{o.name}</span><span style={{fontFamily:'Orbitron',fontSize:11,color:'#f59e0b'}}>{fmt(o.value_usd)}</span></div>
-          <div style={{fontSize:11,color:'#a8a8b4'}}>{o.next_action}</div>
-        </div>))}
-      </div>
-    </div>}
-
-    {view==='pipeline'&&<div>
-      {(pipe?.opportunities||[]).length===0?<div style={{color:'#999',textAlign:'center',padding:20}}>No opportunities tracked.</div>:(pipe?.opportunities||[]).map((o,i)=>{const col=STATUS_COLORS[o.status]||'#888';const prob=Math.round((o.probability||0)*100);return(<div key={o.id||i} className="card" style={{marginBottom:6}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:4}}>
-          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>{o.name}</div><div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{(o.tags||[]).join(' · ')}</div></div>
-          <div style={{textAlign:'right'}}><div style={{fontFamily:'Orbitron',fontSize:14,color:'#f59e0b'}}>{fmt(o.value_usd)}</div><span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{o.status}</span></div>
-        </div>
-        <div className="progress-bar" style={{marginTop:4,marginBottom:4}}><div className="progress-fill" style={{width:prob+'%',background:col}}/></div>
-        <div style={{fontSize:11,color:'#aaa',marginBottom:4}}><strong style={{color:'#00d4ff'}}>Next:</strong> {o.next_action}</div>
-        {o.notes&&<div style={{fontSize:11,color:'#a8a8b4',fontStyle:'italic',marginBottom:6}}>{o.notes}</div>}
-        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <button className="btn" style={{fontSize:11}} onClick={()=>draftProposal(o)} disabled={drafting===o.id}>{drafting===o.id?'Drafting...':'📝 Draft Proposal'}</button>
-          <span style={{fontSize:11,color:'#a8a8b4',alignSelf:'center'}}>· Contacts: {(o.contacts||[]).join(', ')||'—'}</span>
-        </div>
-        {drafting===null&&draft&&i===0&&<pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',marginTop:6,background:'rgba(255,255,255,0.05)',padding:6,borderRadius:4,lineHeight:1.5}}>{draft}</pre>}
-      </div>)})}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>LAST DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Proposal')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
-    </div>}
-
-    {view==='revenue'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:10}}>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#00ff80'}}>{fmt(rev?.ytd_actual)}</div><div className="stat-label">ytd actual</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:'#f59e0b'}}>{fmt(rev?.ytd_projected)}</div><div className="stat-label">ytd projected</div></div>
-        <div className="card" style={{textAlign:'center'}}><div className="stat" style={{fontSize:16,color:rev?.runway_months&&rev.runway_months<6?'#ff0080':'#00d4ff'}}>{rev?.runway_months?rev.runway_months+' mo':'∞'}</div><div className="stat-label">runway</div></div>
-      </div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">Monthly Revenue</div>
-        <div style={{display:'flex',gap:4,alignItems:'flex-end',height:100,marginTop:8,marginBottom:4}}>
-          {(rev?.months||[]).map((m,i)=>{const pH=(m.projected||0)/maxRev*100;const aH=(m.actual||0)/maxRev*100;return(<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
-            <div style={{display:'flex',gap:2,alignItems:'flex-end',height:80}}>
-              <div style={{width:10,height:pH+'%',background:'rgba(245,158,11,0.4)',borderRadius:'2px 2px 0 0'}} title={'Projected: '+fmt(m.projected)}/>
-              <div style={{width:10,height:aH+'%',background:m.actual?'#00ff80':'rgba(255,255,255,0.1)',borderRadius:'2px 2px 0 0'}} title={'Actual: '+(m.actual?fmt(m.actual):'—')}/>
-            </div>
-            <div style={{fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{(m.month||'').slice(5)}</div>
-          </div>)})}
-        </div>
-        <div style={{fontSize:11,color:'#a8a8b4',display:'flex',gap:10,marginTop:4}}><span><span style={{display:'inline-block',width:8,height:8,background:'rgba(245,158,11,0.4)',marginRight:4}}/>projected</span><span><span style={{display:'inline-block',width:8,height:8,background:'#00ff80',marginRight:4}}/>actual</span></div>
-      </div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">Quarterly</div>
-        {(rev?.quarters||[]).map((q,i)=>(<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:12}}>
-          <span style={{fontFamily:'JetBrains Mono',color:'#aaa'}}>{q.quarter}</span>
-          <span style={{color:'#f59e0b'}}>{fmt(q.projected)}</span>
-          <span style={{color:q.actual?'#00ff80':'#555'}}>{q.actual?fmt(q.actual):'pending'}</span>
-        </div>))}
-      </div>
-      <div className="card"><div className="card-title">Cash + Burn</div>
-        <div style={{display:'flex',justifyContent:'space-around',fontSize:12}}>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#00d4ff'}}>{fmt(rev?.cash_on_hand)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>cash on hand</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:'#ff0080'}}>{fmt(rev?.monthly_burn)}</div><div style={{fontSize:11,color:'#a8a8b4'}}>monthly burn</div></div>
-          <div style={{textAlign:'center'}}><div style={{fontFamily:'Orbitron',fontSize:16,color:(rev?.net_monthly||0)>=0?'#00ff80':'#ff0080'}}>{fmt(Math.abs(rev?.net_monthly||0))}</div><div style={{fontSize:11,color:'#a8a8b4'}}>net/mo</div></div>
-        </div>
-      </div>
-    </div>}
-
-    {view==='legal'&&<div>
-      {(legal?.items||[]).length===0?<div style={{color:'#999',textAlign:'center',padding:20}}>No legal items.</div>:(legal?.items||[]).map((it,i)=>{const col=STATUS_COLORS[it.status]||'#888';return(<div key={it.id||i} className="card" style={{marginBottom:6}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:'#ccc'}}>{it.title}</div><div style={{fontSize:11,color:'#a8a8b4'}}>{it.counterparty} · {it.type}</div></div>
-          <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{it.status}</span>
-        </div>
-        <div style={{fontSize:11,color:'#a8a8b4',marginTop:4}}>{it.effective?'Effective '+it.effective:''}{it.renewal?' · Renewal '+it.renewal:''}</div>
-        {it.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4,fontStyle:'italic'}}>{it.notes}</div>}
-      </div>)})}
-    </div>}
-
-    {view==='website'&&<div>
-      <div className="card" style={{marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>futurespeak.ai</div><div style={{fontSize:11,color:'#a8a8b4'}}>Primary brand site · Replit-hosted</div></div>
-          <span className="badge-green" style={{fontSize:11}}>LIVE</span>
-        </div>
-        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://futurespeak.ai" target="_blank" rel="noopener">🌐 Visit</a>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
-          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update futurespeak.ai website','~\\Projects\\futurespeak-site')}>💻 Open in Claude Code</button>
-        </div>
-      </div>
-      <div className="card" style={{marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-          <div><div style={{fontSize:13,fontWeight:600,color:'#ccc'}}>innexenergy.com</div><div style={{fontSize:11,color:'#a8a8b4'}}>Portfolio site · Replit-hosted</div></div>
-          <span className="badge-green" style={{fontSize:11}}>LIVE</span>
-        </div>
-        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://innexenergy.com" target="_blank" rel="noopener">🌐 Visit</a>
-          <a className="btn" style={{fontSize:11,textDecoration:'none'}} href="https://replit.com/@FutureSpeakAI" target="_blank" rel="noopener">⚡ Open in Replit</a>
-          <button className="btn" style={{fontSize:11}} onClick={()=>launchVibeCode('Update innexenergy.com website','~\\Projects\\innex-site')}>💻 Open in Claude Code</button>
-        </div>
-      </div>
-      <div className="card"><div className="card-title">Site Health</div><div style={{fontSize:11,color:'#a8a8b4'}}>Last check: manual · use Claude Code for deploy actions.</div></div>
-    </div>}
-
-    {view==='discord'&&<div>
-      <div className="card" style={{textAlign:'center',padding:20}}>
-        <div style={{fontSize:32,marginBottom:8}}>💬</div>
-        <div style={{fontSize:16,fontWeight:600,color:'#7c3aed',marginBottom:4}}>FutureSpeak.AI Discord</div>
-        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Community server · member activity · announcements</div>
-        <a className="btn" href="https://discord.gg/f2VM6qNk" target="_blank" rel="noopener" style={{fontSize:12,padding:'8px 16px',textDecoration:'none',fontWeight:600}}>🚀 Open Discord</a>
-        <div style={{fontSize:11,color:'#999',marginTop:10,fontFamily:'JetBrains Mono'}}>discord.gg/f2VM6qNk</div>
-      </div>
-    </div>}
-
-    {view==='talent'&&<div>
-      <div className="card" style={{textAlign:'center',padding:30,borderStyle:'dashed',borderColor:'rgba(255,255,255,0.08)'}}>
-        <div style={{fontSize:32,marginBottom:8}}>🎯</div>
-        <div style={{fontSize:14,fontWeight:600,color:'#888',marginBottom:4}}>Talent Pipeline</div>
-        <span className="badge-amber" style={{fontSize:11}}>Coming Soon</span>
-        <div style={{fontSize:11,color:'#999',marginTop:12,lineHeight:1.5}}>Recruiting · network sourcing · contractor bench.<br/>Placeholder · backend not yet built.</div>
-      </div>
-    </div>}
-
-    {view==='demos'&&<div>
-      <div style={{fontSize:11,color:'#999',marginBottom:8,fontFamily:'JetBrains Mono'}}>{assets?.path}</div>
-      {(!assets||assets.total===0)?<div className="card" style={{textAlign:'center',padding:20,color:'#999',fontSize:12}}>No demo assets yet. Drop files into ~/.friday/futurespeak/demo-assets/</div>:<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-        {(assets.assets||[]).filter(a=>a.kind!=='dir'&&a.name!=='README.md').map((a,i)=>{const ICONS={mp4:'🎬',mov:'🎬',pdf:'📄',pptx:'📊',key:'📊',png:'🖼️',jpg:'🖼️',svg:'🎨',md:'📝'};const icon=ICONS[a.ext]||'📎';return(<div key={i} className="card" style={{padding:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><span style={{fontSize:18}}>{icon}</span><span style={{fontSize:11,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span></div>
-          <div style={{fontSize:11,color:'#999',marginBottom:6}}>{(a.size/1024).toFixed(1)}KB · {(a.modified||'').slice(0,10)}</div>
-          <div style={{display:'flex',gap:3}}>
-            <button className="btn" style={{fontSize:11,padding:'2px 6px'}} onClick={()=>copyText('futurespeak-asset://'+a.name,'Link')}>📋 Link</button>
-            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 6px'}} onClick={async()=>{try{const r=await fetch('/api/outreach/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:'[Prospect]',angle:'follow-up',channel:'email',context:`Sharing demo asset: ${a.name}`})});const d=await r.json();setDraft(d.draft||'');showToast('Follow-up drafted — see below')}catch(e){showToast('Draft failed')}}}>✉️ Draft Follow-up</button>
-          </div>
-        </div>)})}
-      </div>}
-      {draft&&<div className="card" style={{marginTop:10}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><span style={{fontSize:11,color:'#00d4ff',fontFamily:'Orbitron'}}>FOLLOW-UP DRAFT</span><button className="btn" style={{fontSize:11}} onClick={()=>copyText(draft,'Draft')}>📋 Copy</button></div><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#ccc',fontFamily:'Inter',lineHeight:1.5}}>{draft}</pre></div>}
-    </div>}
-
-    {view==='studio'&&<div>
-      <div className="card" style={{marginBottom:8}}>
-        <div className="card-title">Creative Studio — Brand Assets</div>
-        <div style={{fontSize:11,color:'#888',marginBottom:10}}>On-brand FutureSpeak.AI asset creation hub. Outputs route to Studio + Content pipelines.</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
-          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Generate on-brand FutureSpeak social graphic','~\\Projects\\friday-desktop')}>
-            <span style={{fontSize:20}}>🎨</span><span>Generate Social Graphic</span>
-          </button>
-          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={draftBlog}>
-            <span style={{fontSize:20}}>📝</span><span>Draft Blog Post</span>
-          </button>
-          <button className="btn" style={{fontSize:11,padding:'8px',height:70,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4}} onClick={()=>launchVibeCode('Create a FutureSpeak.AI one-pager for the current top opportunity','~\\Projects\\friday-desktop')}>
-            <span style={{fontSize:20}}>📄</span><span>Create One-Pager</span>
-          </button>
-        </div>
-      </div>
-      <div className="card"><div className="card-title">Brand Anchors</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,color:'#aaa'}}>
-          <div><strong style={{color:'#00d4ff'}}>Colors</strong><br/>Cyan #00d4ff · Magenta #ff0080 · Amber #f59e0b</div>
-          <div><strong style={{color:'#00d4ff'}}>Type</strong><br/>Orbitron (display) · Inter (body) · JetBrains Mono (code)</div>
-          <div><strong style={{color:'#00d4ff'}}>Voice</strong><br/>Direct · technical · contrarian · credible</div>
-          <div><strong style={{color:'#00d4ff'}}>Positioning</strong><br/>Enterprise AI · agentic systems · AI governance</div>
-        </div>
-      </div>
-    </div>}
-  </div>);
-}
-function FamilyWS(){
-  const[cd,setCd]=useState(null);
-  useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
-  const familyCountdown=cd?.countdowns?.[0];
-  return(<div>
-    <FridaySays text={familyCountdown?`Next family event in ${familyCountdown.days||familyCountdown.days_until} days`:'Family dashboard loaded.'}/>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">🎂 Family Member</div><div style={{fontSize:13}}>Add family members in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
-      <div className="card"><div className="card-title">❤️ Partner</div><div style={{fontSize:13}}>Add partner details in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
-      <div className="card"><div className="card-title">🐾 Pets</div><div style={{fontSize:12,lineHeight:1.8}}>Add pet info in your family wiki</div></div>
-      <div className="card"><div className="card-title">👨‍👩‍👧 Extended Family</div><div style={{fontSize:12,color:'#aaa'}}>Add family members in ~/.friday/wiki/family/</div></div>
-      <div className="card"><div className="card-title">🚗 Vehicles</div><div style={{fontSize:11,color:'#aaa'}}>Add vehicles in your wiki</div></div>
-      <div className="card"><div className="card-title">📅 Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'📅'} {c.label||c.name} — <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days||c.days_until}d</span></div>)||<span style={{color:'#999'}}>Loading...</span>}</div>
-    </div>
-  </div>);
-}
-function StudioWS(){
-  const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);
-  const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
-  const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);
-  const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'};
-  const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
-  useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{})},[]);
-  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});loadCreations()}catch(e){}setGen(false)};
-  const createNow=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Daily creation launched')).catch(()=>{})};
-  const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
-  const filtered=filter==='all'?creations:creations.filter(f=>f.type===filter);
-  if(selected){
-    const ext=(selected.name||'').split('.').pop().toLowerCase();const url='/api/creations/'+selected.name;
-    return(<div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" onClick={()=>{setSelected(null);setPreview('')}} style={{fontSize:11}}>Back to Gallery</button>
-        <div style={{display:'flex',gap:4,alignItems:'center'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:'#999'}}>{selected.name}</span>
-          <button className="btn" onClick={()=>window.open(url,'_blank')} style={{fontSize:11}}>Open in Tab</button>
-        </div>
-      </div>
-      {ext==='html'&&<iframe src={url} style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
-      {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
-      {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
-      {ext==='md'&&(preview?<FridayDoc text={preview} style={{padding:'4px 8px'}}/>:<div style={{color:'#888',fontSize:12,textAlign:'center',padding:20}}>Loading…</div>)}
-      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
-    </div>);
-  }
-  return(<div>
-    <FridaySays text={creations.length+' creations in the gallery. Daily creation runs at 2 PM.'}/>
-    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
-      <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what to create..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
-      <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
-    </div>
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
-      {['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:11}}>{gen?'Creating...':t}</button>)}
-      {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
-    </div>
-    {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
-    <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
-    </div>
-    {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
-      {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-        return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
-          <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
-          <div style={{fontSize:11,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
-          <div style={{fontSize:11,color:'#999',marginTop:2}}>{date}</div>
-          <button className="btn" style={{fontSize:11,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/api/creations/'+f.name,'_blank')}}>Open in Tab</button>
-        </div>);
-      })}
-    </div>}
-  </div>);
-}
-function TrustWS(){
-  const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
-  useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading trust graph...</div>;
-  if(error)return <div style={{color:'#ff0080',textAlign:'center',padding:40}}>⚠️ Unable to load trust data<br/><button className="btn" style={{marginTop:8}} onClick={()=>{setError(false);setLoading(true);fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})}}>Retry</button></div>;
-  // API returns people as object keyed by name, convert to array
-  const rawPeople=trust?.people||{};
-  const people=(Array.isArray(rawPeople)?rawPeople:Object.values(rawPeople)).sort((a,b)=>((b.scores?.overall)||0)-((a.scores?.overall)||0));
-  const dims=['reliability','information_quality','emotional_trust','timeliness','domain_expertise'];
-  return(<div>
-    <FridaySays text={`${people.length} entities tracked. Click any person to see dimension breakdown.`}/>
-    <div className="card-title">Trust Graph — {people.length} Entities</div>
-    {people.map((p,i)=>{
-      const overall=p&&p.scores&&typeof p.scores.overall==='number'?p.scores.overall:0.5;
-      const pct=Math.round(overall*100);const col=pct>70?'#00ff80':pct>40?'#f59e0b':'#ff0080';
-      return(<div key={i} className="card" style={{marginBottom:6,cursor:'pointer'}} onClick={()=>setExpanded(expanded===i?null:i)}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><span style={{fontWeight:600}}>{(p.name||p.Name||'unknown')||'Unknown'}</span>{p.aliases&&p.aliases.length>0&&<span style={{fontSize:11,color:'#999',marginLeft:6}}>({p.aliases.join(', ')})</span>}</div>
-          <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <span style={{fontFamily:'Orbitron',fontSize:14,color:col}}>{pct}%</span>
-            <SendTo content={()=>JSON.stringify(p,null,2)} personName={p.name||p.Name} dataType="contact_research" options={[{label:'Send to Calendar',dest:'calendar_notes',ico:'📅',needsEvent:true},{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Add to Briefing',dest:'briefing',ico:'📰'}]}/>
-          </div>
-        </div>
-        <div className="progress-bar" style={{marginTop:4}}><div className="progress-fill" style={{width:pct+'%',background:col}}/></div>
-        {expanded===i&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.04)'}}>
-          {dims.map(d=>{const val=p.scores&&typeof p.scores[d]==='number'?p.scores[d]:0.5;const v=Math.round(val*100);const dc=v>70?'#00ff80':v>40?'#f59e0b':'#ff0080';
-            return(<div key={d} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
-              <span style={{width:120,fontSize:11,color:'#a8a8b4'}}>{d.replace(/_/g,' ')}</span>
-              <div className="progress-bar" style={{flex:1}}><div className="progress-fill" style={{width:v+'%',background:dc}}/></div>
-              <span style={{fontSize:11,fontFamily:'JetBrains Mono',color:dc,width:30,textAlign:'right'}}>{v}%</span>
-            </div>)})}
-          <div style={{fontSize:11,color:'#999',marginTop:4}}>Evidence: {(p.evidence&&Array.isArray(p.evidence))?p.evidence.length:0} records</div>
-        </div>}
-      </div>)})}
+    <FridaySays text="Your sites & projects — portfolio status, deploy state, and one-click scaffolding via Claude Code."/>
+    <FSStudio/>
   </div>);
 }
 function SystemWS(){
@@ -5350,15 +4852,14 @@ function CodeWS(){
 }
 // ═══ NEWS WORKSPACE — magazine layout, source trust, live status ═══
 const NEWS_GEN_STEPS=['Fetching news…','Checking calendar…','Scanning email…','Writing briefing…'];
-// "Why Friday Picked This" — pure keyword matching against Stephen's profile.
-// Each card gets one subtle relevance tag; the profile with the most keyword
-// hits wins. No model call — title + snippet substring match only.
+// "Why Friday Picked This" — pure keyword matching against a generic reader
+// profile. Each card gets one subtle relevance tag; the profile with the most
+// keyword hits wins. No model call — title + snippet substring match only.
 const NEWS_PROFILE=[
-  {key:'job_search',label:'AI Leadership',kw:['AI','director','CAIO','leadership','remote']},
-  {key:'futurespeak',label:'FutureSpeak',kw:['agent','sovereign','MCP','LLM','framework']},
-  {key:'austin',label:'Austin Local',kw:['Austin','Texas','ATX']},
-  {key:'politics',label:'Policy & Regulation',kw:['regulation','policy','FTC','antitrust']},
-  {key:'media',label:'Media',kw:['journalism','newsroom','media']},
+  {key:'ai',label:'AI & Tech',kw:['AI','LLM','agent','model','machine learning','openai','anthropic']},
+  {key:'policy',label:'Policy & Regulation',kw:['regulation','policy','FTC','antitrust','congress']},
+  {key:'media',label:'Media',kw:['journalism','newsroom','media','press']},
+  {key:'business',label:'Business',kw:['startup','funding','market','revenue','IPO']},
 ];
 function relevanceFor(it){
   const text=((it.title||'')+' '+(it.snippet||'')).toLowerCase();
@@ -5368,7 +4869,7 @@ function relevanceFor(it){
     if(n>bestN){bestN=n;best=p;}
   }
   if(best)return (it.boosted?'⭐ ':'')+'Matches: '+best.label;
-  const m={'AI/Tech':'AI/Tech priority','Politics':'Politics watchlist','Local':'Austin local','Business':'Markets & business','Science':'Science signal','Media':'Media & journalism'};
+  const m={'AI/Tech':'AI/Tech priority','Politics':'Politics watchlist','Local':'Local news','Business':'Markets & business','Science':'Science signal','Media':'Media & journalism'};
   return (it.boosted?'⭐ Boosted source · ':'')+'Relevant: '+(m[it.category]||'your interests');
 }
 // Lexicon sentiment dot — server attaches it.sentiment (positive/neutral/negative).
@@ -6236,9 +5737,9 @@ function BriefPreview({b,onFull}){
 //  expansion, Friday-drafted replies, and archive/snooze/flag actions.
 // ═══════════════════════════════════════════════════════════════
 const MSG_LANE_META={
-  all:{label:'All',ico:'📥'},coparent:{label:'Co-Parent',ico:'👨‍👩‍👧'},
+  all:{label:'All',ico:'📥'},
   career:{label:'Career',ico:'💼'},finance:{label:'Finance',ico:'💰'},
-  innex:{label:'INNEX',ico:'⚡'},futurespeak:{label:'FutureSpeak',ico:'🚀'},
+  futurespeak:{label:'Projects',ico:'🚀'},
   family:{label:'Family',ico:'👪'},subscriptions:{label:'Subscriptions',ico:'📰'},
   noise:{label:'Noise',ico:'🔇'},
 };
@@ -6403,7 +5904,7 @@ function MessagesWS(){
 // ═══════════════════════════════════════════════════════════════
 //  CALENDAR — "Friday's Time Intelligence"
 //  Today timeline (6AM→midnight) with a live now-line, gap labels,
-//  custody countdowns + interview prep badges, a 7-day week strip,
+//  interview prep badges, a 7-day week strip,
 //  tomorrow preview, and natural-language quick-add.
 // ═══════════════════════════════════════════════════════════════
 const CAL_START_HOUR=6, CAL_END_HOUR=24, CAL_HOUR_PX=52;
@@ -6464,7 +5965,7 @@ function CalendarWS(){
 
     {/* Week strip */}
     <div className="cal-week">
-      {week.map(d=><div key={d.date} className={'cal-day'+(d.is_today?' today':'')+((sel===d.date||(!sel&&d.is_today))?' selected':'')+(d.has_custody?' custody':'')+(d.has_career?' career':'')} onClick={()=>pickDay(d.date,d.is_today)}>
+      {week.map(d=><div key={d.date} className={'cal-day'+(d.is_today?' today':'')+((sel===d.date||(!sel&&d.is_today))?' selected':'')+(d.has_career?' career':'')} onClick={()=>pickDay(d.date,d.is_today)}>
         <div className="cal-dow">{d.weekday}</div>
         <div className="cal-daynum">{d.day}</div>
         <div className="cal-dots">{d.count>0&&[...Array(Math.min(3,d.count))].map((_,i)=><span key={i} className={'dd '+d.density}></span>)}</div>
@@ -6538,7 +6039,7 @@ function CalendarWS(){
 
 // ═══ DRAFT PREVIEW HELPERS ═══
 function buildDraftHtml(text,mode,promptText){
-  const ML={linkedin_post:'LinkedIn Post',email_reply:'Email Reply',slack_message:'Slack Message',tweet:'Tweet',coparent_response:'Co-Parent Response',freeform:'Freeform Draft'};
+  const ML={linkedin_post:'LinkedIn Post',email_reply:'Email Reply',slack_message:'Slack Message',tweet:'Tweet',freeform:'Freeform Draft'};
   const label=ML[mode]||mode;
   const now=new Date().toLocaleString('en-US',{month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
   const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -6590,7 +6091,6 @@ const DRAFT_MODES=[
   {id:'email_reply',label:'Email',ico:'📧'},
   {id:'slack_message',label:'Slack',ico:'💬'},
   {id:'tweet',label:'Tweet',ico:'🐦'},
-  {id:'coparent_response',label:'Co-Parent',ico:'⚖️'},
   {id:'freeform',label:'Freeform',ico:'📝'},
 ];
 const ORCHESTRATOR_MODELS=[
@@ -6699,7 +6199,7 @@ function DraftWS(){
     <textarea className="input" style={{width:'100%',height:60,resize:'vertical',marginBottom:8,fontFamily:'JetBrains Mono',fontSize:12}}
       value={prompt} onChange={e=>setPrompt(e.target.value)}
       onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey)generate()}}
-      placeholder={mode==='linkedin_post'?'Write a LinkedIn post about...':mode==='email_reply'?'Reply to this email saying...':mode==='tweet'?'Tweet about...':mode==='coparent_response'?'Respond to this co-parent message...':'Describe what to write...'}/>
+      placeholder={mode==='linkedin_post'?'Write a LinkedIn post about...':mode==='email_reply'?'Reply to this email saying...':mode==='tweet'?'Tweet about...':'Describe what to write...'}/>
 
     {/* Context toggle */}
     <div style={{marginBottom:8}}>
@@ -6764,116 +6264,6 @@ function DraftWS(){
   </div>);
 }
 
-function FinanceWS(){
-  const[portfolio,setPortfolio]=useState(null);const[perks,setPerks]=useState(null);const[loading,setLoading]=useState(true);
-  const[view,setView]=useState('overview');
-  useEffect(()=>{Promise.all([
-    fetch('/api/finance/portfolio').then(r=>r.json()).then(setPortfolio).catch(()=>null),
-    fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)
-  ]).then(()=>setLoading(false))},[]);
-  const copyText=(t)=>{navigator.clipboard.writeText(t)};
-  const refreshFinance=()=>{setLoading(true);Promise.all([fetch('/api/finance/portfolio').then(r=>r.json()).then(setPortfolio).catch(()=>null),fetch('/api/finance/perks').then(r=>r.json()).then(setPerks).catch(()=>null)]).then(()=>setLoading(false))};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading finance data...</div>;
-  const positions=portfolio?.positions||[];const perksList=perks?.perks||[];
-  const unusedPerks=perksList.filter(p=>!p.used);const expiringPerks=perksList.filter(p=>{if(!p.expires)return false;const d=new Date(p.expires);const now=new Date();const diff=(d-now)/(1000*60*60*24);return diff>=0&&diff<=60});
-  const totalPerkValue=perksList.reduce((s,p)=>{const m=p.value?.match(/\$(\d+)/);return s+(m?parseInt(m[1]):0)},0);
-  const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
-  return(<div>
-    <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
-    {view==='overview'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-        <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
-        <div className="card"><div className="card-title">Card Perks</div><div className="stat" style={{color:'#00ff80'}}>${totalPerkValue}</div><div className="stat-label">{unusedPerks.length} unused of {perksList.length} perks</div>{expiringPerks.length>0&&<div style={{marginTop:4}}><span className="badge-amber" style={{fontSize:11}}>⚠ {expiringPerks.length} expiring soon</span></div>}</div>
-      </div>
-      <div className="card" style={{marginBottom:10}}><div className="card-title">Positions</div>{positions.length===0?<div style={{color:'#999',fontSize:11}}>No positions configured. Edit ~/.friday/finance/portfolio.json</div>:positions.map((p,i)=>{const hasGain=p.shares>0&&p.cost_basis>0;return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><div><span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.ticker}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{p.shares} shares</span></div>{hasGain&&<span style={{fontSize:11,color:'#888'}}>basis: ${p.cost_basis.toLocaleString()}</span>}</div>})}</div>
-      <div className="card"><div className="card-title">Unused Perks</div>{unusedPerks.slice(0,5).map((p,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:12,color:'#aaa'}}>{p.name}</span><span className="badge-green" style={{fontSize:11}}>{p.value}</span></div>)}</div>
-    </div>}
-    {view==='portfolio'&&<div>
-      <div className="card-title">Portfolio Positions</div>
-      {positions.map((p,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{p.ticker}</span></div><div style={{textAlign:'right'}}><div style={{fontSize:12,color:'#aaa'}}>{p.shares} shares</div>{p.cost_basis>0&&<div style={{fontSize:11,color:'#a8a8b4'}}>Cost basis: ${p.cost_basis.toLocaleString()}</div>}</div></div></div>)}
-      <div style={{fontSize:11,color:'#999',marginTop:8}}>Accounts: {(portfolio?.accounts||[]).join(' · ')}</div>
-      <div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/finance/portfolio.json to update positions</div>
-    </div>}
-    {view==='perks'&&<div>
-      <div className="card-title">Credit Card Perks</div>
-      {perksList.map((p,i)=>{const expiring=p.expires&&((new Date(p.expires)-new Date())/(1000*60*60*24))<60;return <div key={i} className="card" style={{marginBottom:6,borderColor:p.used?'rgba(255,255,255,0.02)':expiring?'rgba(245,158,11,0.2)':'rgba(0,255,128,0.1)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{fontSize:13,color:p.used?'#555':'#ddd'}}>{p.name}</span>{p.used&&<span className="badge-cyan" style={{fontSize:11,marginLeft:6}}>USED</span>}{!p.used&&expiring&&<span className="badge-amber" style={{fontSize:11,marginLeft:6}}>EXPIRING</span>}</div><span style={{fontFamily:'Orbitron',fontSize:12,color:p.used?'#444':'#00ff80'}}>{p.value}</span></div>
-        {p.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:3}}>{p.notes}</div>}
-        {p.expires&&<div style={{fontSize:11,color:'#999',marginTop:2}}>Expires: {p.expires}</div>}
-      </div>})}
-    </div>}
-    {view==='contacts'&&<div>
-      <div className="card-title">Financial Contacts</div>
-      <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
-      <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
-    </div>}
-    {view==='quickref'&&<div>
-      <div className="card-title">Quick Reference</div>
-      {[{name:'Your Bank',type:'Banking',ico:'🏦'},{name:'Your Insurance Provider',type:'Insurance',ico:'🏥'},{name:'Primary Card',type:'Credit Card',ico:'💳'},{name:'Secondary Card',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
-    </div>}
-  </div>);
-}
-function HealthWS(){
-  const[meds,setMeds]=useState(null);const[appts,setAppts]=useState(null);const[insurance,setInsurance]=useState(null);const[vehicles,setVehicles]=useState(null);
-  const[loading,setLoading]=useState(true);const[view,setView]=useState('overview');
-  useEffect(()=>{Promise.all([
-    fetch('/api/health/medications').then(r=>r.json()).then(setMeds).catch(()=>null),
-    fetch('/api/health/appointments').then(r=>r.json()).then(setAppts).catch(()=>null),
-    fetch('/api/health/insurance').then(r=>r.json()).then(setInsurance).catch(()=>null),
-    fetch('/api/health/vehicles').then(r=>r.json()).then(setVehicles).catch(()=>null)
-  ]).then(()=>setLoading(false))},[]);
-  const copyText=(t)=>{navigator.clipboard.writeText(t)};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading health data...</div>;
-  const medList=meds?.medications||[];const apptList=appts?.appointments||[];const ins=insurance?.insurance||{};const vehList=vehicles?.vehicles||[];const mechList=vehicles?.mechanics||[];
-  const insight=`${medList.length} medications · ${apptList.length} providers · ${vehList.length} vehicles in fleet`;
-  return(<div>
-    <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>{['overview','medications','appointments','insurance','vehicles'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div>
-    {view==='overview'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
-        <div className="card"><div className="card-title">Medications</div><div className="stat">{medList.length}</div><div className="stat-label">active medications</div>{medList.slice(0,3).map((m,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{m.name}{m.dose?' — '+m.dose:''}</div>)}</div>
-        <div className="card"><div className="card-title">Appointments</div><div className="stat">{apptList.length}</div><div className="stat-label">providers</div>{apptList.slice(0,3).map((a,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{a.provider}{a.type?' — '+a.type:''}</div>)}</div>
-        <div className="card"><div className="card-title">Insurance</div><div style={{fontSize:13,color:'#00d4ff'}}>{ins.provider||'Not configured'}</div><div style={{fontSize:11,color:'#888',marginTop:4}}>{ins.plan||'Add plan details'}</div></div>
-        <div className="card"><div className="card-title">Fleet Health</div><div className="stat">{vehList.length}</div><div className="stat-label">vehicles</div>{vehList.slice(0,2).map((v,i)=><div key={i} style={{fontSize:11,color:'#aaa',padding:'2px 0'}}>{v.name}</div>)}</div>
-      </div>
-    </div>}
-    {view==='medications'&&<div>
-      <div className="card-title">Medications</div>
-      {medList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{m.name}</div>{m.dose&&<div style={{fontSize:11,color:'#00d4ff',marginTop:2}}>Dose: {m.dose}</div>}{m.frequency&&<div style={{fontSize:11,color:'#888'}}>Frequency: {m.frequency}</div>}{m.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{m.notes}</div>}</div>)}
-      <div style={{fontSize:11,color:'#888',marginTop:8}}>Edit ~/.friday/health/medications.json to update</div>
-    </div>}
-    {view==='appointments'&&<div>
-      <div className="card-title">Appointments & Providers</div>
-      {apptList.map((a,i)=><div key={i} className="card" style={{marginBottom:6}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{a.provider}</div>{a.type&&<div style={{fontSize:11,color:'#00d4ff'}}>{a.type}</div>}</div>{a.email&&<button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.email)}>Copy Email</button>}</div>
-        {a.frequency&&<div style={{fontSize:11,color:'#888',marginTop:2}}>Frequency: {a.frequency}</div>}
-        {a.next&&<div style={{fontSize:11,color:'#f59e0b',marginTop:2}}>Next: {a.next}</div>}
-        {a.email&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>{a.email}</div>}
-      </div>)}
-    </div>}
-    {view==='insurance'&&<div>
-      <div className="card-title">Insurance</div>
-      <div className="card" style={{marginBottom:8}}>
-        <div style={{fontSize:16,fontFamily:'Orbitron',color:'#00d4ff',marginBottom:8}}>{ins.provider||'Your Insurance Provider'}</div>
-        {[['Plan',ins.plan],['Policy #',ins.policy_number],['Group #',ins.group_number],['Member Services',ins.member_services]].map(([l,v],i)=>v?<div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}><span style={{fontSize:11,color:'#888'}}>{l}</span><div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:12,fontFamily:'JetBrains Mono'}}>{v}</span><button className="btn" style={{fontSize:11,padding:'1px 5px'}} onClick={()=>copyText(v)}>Copy</button></div></div>:null)}
-        {ins.notes&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:6}}>{ins.notes}</div>}
-      </div>
-      <div style={{fontSize:11,color:'#888'}}>Edit ~/.friday/health/insurance.json to add your details</div>
-    </div>}
-    {view==='vehicles'&&<div>
-      <div className="card-title">Fleet Health</div>
-      {vehList.map((v,i)=><div key={i} className="card" style={{marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{fontWeight:600,fontSize:13}}>{['🔵','🔴','🚐'][i]||'🚗'} {v.name}</div>{v.miles&&<span className="badge-cyan" style={{fontSize:11}}>{v.miles} mi</span>}</div>
-        {v.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:4}}>{v.notes}</div>}
-        {v.mechanic&&<div style={{fontSize:11,color:'#a8a8b4',marginTop:2}}>🔧 {v.mechanic}</div>}
-        {v.service_history&&v.service_history.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid rgba(255,255,255,0.04)'}}><div style={{fontSize:11,color:'#999',marginBottom:2}}>Service History:</div>{v.service_history.map((s,j)=><div key={j} style={{fontSize:11,color:'#a8a8b4',padding:'1px 0'}}>{s.date} — {s.description}</div>)}</div>}
-      </div>)}
-      <div className="card-title" style={{marginTop:12}}>Mechanics</div>
-      {mechList.map((m,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:12}}>🔧 {m.name}</div><div style={{fontSize:11,color:'#888'}}>{m.specialty}</div></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(m.name)}>Copy</button></div></div>)}
-    </div>}
-  </div>);
-}
 function ContactsWS(){
   const[contacts,setContacts]=useState([]);const[loading,setLoading]=useState(true);const[q,setQ]=useState('');
   const[selected,setSelected]=useState(null);const[detail,setDetail]=useState(null);const[detailLoad,setDetailLoad]=useState(false);
@@ -6949,107 +6339,6 @@ function ContactsWS(){
           <div style={{fontSize:11,color:'#999',marginTop:3,fontFamily:'JetBrains Mono'}}>{c.evidence_count||0} evidence</div>
         </div>);
       })}
-    </div>}
-  </div>);
-}
-function ContentWS(){
-  const[pipe,setPipe]=useState(null);const[loading,setLoading]=useState(true);
-  const[showNew,setShowNew]=useState(false);const[newTitle,setNewTitle]=useState('');const[newType,setNewType]=useState('post');const[newChannel,setNewChannel]=useState('linkedin');const[newNotes,setNewNotes]=useState('');
-  const[selected,setSelected]=useState(null);const[draft,setDraft]=useState('');const[drafting,setDrafting]=useState(false);const[toast,setToast]=useState('');
-  const[savedDrafts,setSavedDrafts]=useState([]);const[view,setView]=useState('pipeline');
-  const STAGES=['idea','drafting','review','scheduled','published'];
-  const STAGE_COLORS={idea:'#888',drafting:'#f59e0b',review:'#00d4ff',scheduled:'#7c3aed',published:'#00ff80'};
-  const load=()=>{setLoading(true);fetch('/api/content/pipeline').then(r=>r.json()).then(d=>{setPipe(d);setLoading(false)}).catch(()=>setLoading(false))};
-  const loadDrafts=()=>fetch('/api/content/drafts').then(r=>r.json()).then(d=>setSavedDrafts(d.drafts||[])).catch(()=>{});
-  useEffect(()=>{load();loadDrafts()},[]);
-  const addIdea=async()=>{if(!newTitle.trim())return;
-    try{await fetch('/api/content/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:newTitle,type:newType,channel:newChannel,notes:newNotes})});
-      setNewTitle('');setNewNotes('');setShowNew(false);load();setToast('Idea added')}catch(e){setToast('Add failed')}
-    setTimeout(()=>setToast(''),1500)};
-  const openItem=(it)=>{setSelected(it);setDraft(it.draft||'')};
-  const doDraft=async(advance)=>{if(!selected||drafting)return;setDrafting(true);
-    try{const r=await fetch('/api/content/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:selected.id,advance_stage:!!advance})});
-      const d=await r.json();setDraft(d.draft||'');setToast(advance?'Drafted · advanced stage':'Drafted');load();
-      if(advance&&d.stage)setSelected({...selected,draft:d.draft,stage:d.stage})}catch(e){setToast('Draft failed')}
-    setDrafting(false);setTimeout(()=>setToast(''),2000)};
-  const doCopy=async()=>{if(!draft)return;try{await navigator.clipboard.writeText(draft);setToast('Copied')}catch(e){setToast('Copy failed')}setTimeout(()=>setToast(''),1500)};
-  if(loading)return <div style={{color:'#999',textAlign:'center',padding:40}}>Loading content pipeline...</div>;
-  if(selected){
-    const col=STAGE_COLORS[selected.stage]||'#888';
-    return(<div>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <button className="btn" style={{fontSize:11}} onClick={()=>{setSelected(null);setDraft('')}}>← Back</button>
-        <div style={{display:'flex',gap:4}}>
-          <button className="btn" onClick={()=>doDraft(false)} disabled={drafting} style={{fontSize:11,fontWeight:600}}>{drafting?'Drafting...':'Draft'}</button>
-          <button className="btn btn-magenta" onClick={()=>doDraft(true)} disabled={drafting} style={{fontSize:11}}>Draft + Advance</button>
-          {draft&&<button className="btn" onClick={doCopy} style={{fontSize:11}}>📋 Copy</button>}
-        </div>
-      </div>
-      {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
-      <div className="card" style={{marginBottom:10}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-          <span style={{fontSize:13,fontWeight:600}}>{selected.title}</span>
-          <span className="badge-cyan" style={{fontSize:11,background:col+'22',color:col,border:'1px solid '+col+'44'}}>{selected.stage}</span>
-        </div>
-        <div style={{fontSize:11,color:'#a8a8b4'}}>{selected.type} · {selected.channel} · {(selected.tags||[]).join(' · ')}</div>
-        {selected.notes&&<div style={{fontSize:11,color:'#aaa',marginTop:6,fontStyle:'italic'}}>{selected.notes}</div>}
-      </div>
-      {draft?<pre style={{whiteSpace:'pre-wrap',fontSize:12,color:'#ccc',fontFamily:'Inter',background:'rgba(255,255,255,0.05)',padding:12,borderRadius:8,lineHeight:1.6}}>{draft}</pre>:<div style={{color:'#999',fontSize:11,textAlign:'center',padding:20}}>No draft yet. Click Draft to generate.</div>}
-    </div>);
-  }
-  const by=pipe?.by_stage||{};
-  return(<div>
-    <FridaySays text={`${pipe?.total||0} items in pipeline · ${savedDrafts.length} saved drafts. Click + to capture an idea.`}/>
-    <div style={{display:'flex',gap:4,marginBottom:10}}>
-      <button className={'btn '+(view==='pipeline'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('pipeline')}>Pipeline</button>
-      <button className={'btn '+(view==='drafts'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>{setView('drafts');loadDrafts()}}>Saved Drafts {savedDrafts.length>0&&`(${savedDrafts.length})`}</button>
-    </div>
-    {view==='drafts'&&<div>
-      {savedDrafts.length===0
-        ?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:30}}>No saved drafts yet. Generate a draft from the Draft workspace or Quick Draft panel — they auto-save here.</div>
-        :savedDrafts.map((d,i)=><div key={i} className="card" style={{marginBottom:4,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px'}} onClick={()=>window.open('/api/content/drafts/'+d.filename,'_blank')}>
-          <div>
-            <div style={{fontSize:12,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{d.filename}</div>
-            <div style={{fontSize:11,color:'#999',marginTop:2}}>{(d.modified||'').slice(0,16).replace('T',' ')} · {Math.round((d.size||0)/1024*10)/10}KB</div>
-          </div>
-          <span style={{fontSize:11,color:'#888'}}>🔗 open</span>
-        </div>)
-      }
-    </div>}
-    {view==='pipeline'&&<div>
-    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center',justifyContent:'space-between'}}>
-      <div style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{pipe?.total||0} total</div>
-      <div style={{display:'flex',gap:4}}>
-        <button className="btn" style={{fontSize:11}} onClick={load}>↻</button>
-        <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={()=>setShowNew(!showNew)}>{showNew?'× Cancel':'+ Idea'}</button>
-      </div>
-    </div>
-    {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8}}>{toast}</div>}
-    {showNew&&<div className="card" style={{marginBottom:10}}>
-      <div className="card-title">New Idea</div>
-      <input className="input" style={{width:'100%',marginBottom:6,fontSize:12}} value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="Title / hook..."/>
-      <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['post','article','thread','newsletter','video'].map(t=><button key={t} className={'btn '+(newType===t?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewType(t)}>{t}</button>)}
-      </div>
-      <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-        {['linkedin','twitter','blog','substack','youtube'].map(c=><button key={c} className={'btn '+(newChannel===c?'':'btn-magenta')} style={{fontSize:11,padding:'2px 6px'}} onClick={()=>setNewChannel(c)}>{c}</button>)}
-      </div>
-      <textarea className="input" style={{width:'100%',height:50,resize:'vertical',fontSize:11,marginBottom:6}} value={newNotes} onChange={e=>setNewNotes(e.target.value)} placeholder="Notes, angle, references..."/>
-      <button className="btn" style={{fontSize:11,fontWeight:600}} onClick={addIdea}>Capture</button>
-    </div>}
-    <div style={{display:'grid',gridTemplateColumns:'repeat(5, 1fr)',gap:6,minHeight:200}}>
-      {STAGES.map(stage=>{const items=by[stage]||[];const col=STAGE_COLORS[stage];return(<div key={stage} style={{background:'rgba(255,255,255,0.05)',borderRadius:6,padding:6,border:'1px solid rgba(255,255,255,0.04)'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,paddingBottom:4,borderBottom:'1px solid '+col+'22'}}>
-          <span style={{fontFamily:'Orbitron',fontSize:11,color:col,letterSpacing:'.05em',textTransform:'uppercase'}}>{stage}</span>
-          <span style={{fontSize:11,color:'#999',fontFamily:'JetBrains Mono'}}>{items.length}</span>
-        </div>
-        {items.length===0?<div style={{fontSize:11,color:'#888',textAlign:'center',padding:'8px 0'}}>—</div>:items.map((it,i)=>(<div key={it.id||i} className="card" style={{marginBottom:4,padding:6,cursor:'pointer',borderColor:col+'22'}} onClick={()=>openItem(it)}>
-          <div style={{fontSize:11,color:'#ccc',fontWeight:600,lineHeight:1.3,marginBottom:2}}>{it.title}</div>
-          <div style={{fontSize:11,color:'#a8a8b4'}}>{it.type} · {it.channel}</div>
-          {it.tags&&it.tags.length>0&&<div style={{fontSize:11,color:'#999',marginTop:2}}>{(it.tags||[]).slice(0,3).join(' · ')}</div>}
-        </div>))}
-      </div>)})}
-    </div>
     </div>}
   </div>);
 }
@@ -7547,8 +6836,8 @@ function App(){
     return()=>document.removeEventListener('keydown',onKey);
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
-  const NEWS_TOPICS=['AI/Tech','Politics','Media','Austin Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:''};
+  const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -7773,8 +7062,8 @@ function App(){
   flushPlaybackRef.current=(caller)=>{
     const v=voiceRef.current;
     const _stopped=v.activeSources?v.activeSources.length:0;
-    console.log('VOICE_DEBUG: FLUSH called from: '+(caller||'unknown')+' (stopping '+_stopped+' active sources)');
-    console.log('VOICE_DEBUG: playbackCancelled set TRUE by: '+(caller||'unknown'));
+    window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: FLUSH called from: '+(caller||'unknown')+' (stopping '+_stopped+' active sources)');
+    window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playbackCancelled set TRUE by: '+(caller||'unknown'));
     v.playbackCancelled=true;
     // Worklet path: empty the ring buffer instantly so interrupted/old-turn audio
     // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
@@ -7786,7 +7075,7 @@ function App(){
     }
     if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
-    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv){vv.playbackCancelled=false;console.log('VOICE_DEBUG: 2s safety timer fired — playbackCancelled reset to FALSE (caller was: '+(caller||'unknown')+')')}},2000);
+    v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv){vv.playbackCancelled=false;window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: 2s safety timer fired — playbackCancelled reset to FALSE (caller was: '+(caller||'unknown')+')')}},2000);
   };
   voiceStartRef.current=async()=>{
     if(voiceOn)return;
@@ -7861,7 +7150,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       // Diagnostic: confirm the 24kHz pin actually took. If pinned=false the
       // browser ignored the hint and every chunk is being resampled 24k->ctxRate,
       // which is the usual source of progressive rasp over a long conversation.
-      console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
+      window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: AudioContext created sampleRate='+v.audioCtx.sampleRate+' (requested '+PCM_OUT_RATE+', pinned='+(v.audioCtx.sampleRate===PCM_OUT_RATE)+', state='+v.audioCtx.state+')');
       if(v.audioCtx.state==='suspended')await v.audioCtx.resume();
       v.holoAnalyser=v.audioCtx.createAnalyser();v.holoAnalyser.fftSize=256;v.holoAmpBuf=new Uint8Array(v.holoAnalyser.frequencyBinCount);
       // Preferred playback path: a single AudioWorklet ring-buffer player on the
@@ -7889,7 +7178,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             else if(t==='drained'){if(v._drainT)clearTimeout(v._drainT);v._drainT=setTimeout(()=>{v.fridaySpeaking=false;v._drainT=null},250)}
           };
           v.usePlayerWorklet=true;
-          console.log('VOICE_DEBUG: AudioWorklet PCM player active (ctxRate='+v.audioCtx.sampleRate+', srcRate='+PCM_OUT_RATE+') — continuous resampling + jitter buffer on the audio thread; no per-chunk scheduling drift');
+          window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: AudioWorklet PCM player active (ctxRate='+v.audioCtx.sampleRate+', srcRate='+PCM_OUT_RATE+') — continuous resampling + jitter buffer on the audio thread; no per-chunk scheduling drift');
         }
       }catch(err){
         v.usePlayerWorklet=false;
@@ -7955,7 +7244,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           const _speaking=v.usePlayerWorklet?!!v.fridaySpeaking:(v.activeSources&&v.activeSources.length>0);
           if(_speaking){
             v.micMuteLogN=(v.micMuteLogN||0)+1;
-            if(v.micMuteLogN%20===1)console.log('VOICE_DEBUG: mic MUTED (Friday speaking, worklet='+(!!v.usePlayerWorklet)+', activeSources='+(v.activeSources?v.activeSources.length:0)+')');
+            if(v.micMuteLogN%20===1)window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: mic MUTED (Friday speaking, worklet='+(!!v.usePlayerWorklet)+', activeSources='+(v.activeSources?v.activeSources.length:0)+')');
             return;
           }
           const pcm16=f2pcm(input,PCM_IN_RATE,v.audioCtx.sampleRate);
@@ -8037,10 +7326,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       if(m.type==='audio'){
         const _approxBytes=m.data?Math.floor(m.data.length*3/4):0;
-        console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
+        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
         // Drop chunks that arrive after a barge-in / disconnect flushed the
         // queue — these are trailing audio from the turn the user interrupted.
-        if(v.playbackCancelled){console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
+        if(v.playbackCancelled){window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
         if(!v.audioCtx||v.audioCtx.state==='closed')return;
         const int16=b64ToI16(m.data);
         if(v.usePlayerWorklet&&v.playerNode){
@@ -8060,9 +7349,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // self-evict from the queue when it finishes cleanly.
         if(!v.activeSources)v.activeSources=[];
         v.activeSources.push(src);
-        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
+        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
         src.start(startAt);
-        console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
+        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
       }else if(m.type==='input_transcript'){
@@ -8078,13 +7367,13 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           return next;
         });
       }else if(m.type==='turn_end'){
-        console.log('VOICE_DEBUG: turn_end received');
+        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: turn_end received');
         // Old turn is over — re-open the playback gate for the next response.
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
-        console.log('VOICE_DEBUG: SERVER INTERRUPTED received');
+        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: SERVER INTERRUPTED received');
         // Gemini acknowledged the interruption: stop any in-flight old audio,
         // then re-open the gate so the fresh turn's audio plays.
         flushPlaybackRef.current?.('WS interrupted message');
@@ -8107,7 +7396,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }
     };
     ws.onerror=(e)=>{
-      console.log('VOICE_DEBUG: WS close/error: error '+(e&&e.message?e.message:'(no message)'));
+      window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: WS close/error: error '+(e&&e.message?e.message:'(no message)'));
       console.warn('[voice] WebSocket error',e);
       // Only surface "socket error" when the WS never managed to open. Once
       // the connection is established, any subsequent failure is reported via
@@ -8116,7 +7405,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if(!wsOpened)setVoiceStatus('socket error — is the server running?');
     };
     ws.onclose=(e)=>{
-      console.log('VOICE_DEBUG: WS close/error: '+e.code+' '+(e.reason||'(no reason)'));
+      window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: WS close/error: '+e.code+' '+(e.reason||'(no reason)'));
       console.log('[voice] WebSocket closed, code='+e.code+' reason='+e.reason);
       // Stop mic tracks so Chrome clears the recording indicator
       const v2=voiceRef.current;
@@ -8538,7 +7827,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   };
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
 
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,coparent:<CoparentWS/>,futurespeak:<FuturespeakWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:<FuturespeakWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,contacts:<ContactsWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -9487,31 +8776,42 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             </div>
             <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:14}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
 
-            {/* Computer Control — kept inside Account & Security as it's a high-trust permission. */}
+            {/* Computer Control — EXPERIMENTAL, opt-in. Off by default for new
+                users. Even once the feature is enabled here, each runtime grant
+                is a separate Ring-3 step and is revoked on every restart. */}
             <div style={{border:'1px solid rgba(255,50,50,0.2)',borderRadius:6,padding:10,background:'rgba(255,50,50,0.02)'}}>
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
                 <div className="settings-section-title" style={{margin:0,color:'rgba(255,100,100,0.85)'}}>Computer Control</div>
+                <span style={{fontSize:10,fontFamily:'Orbitron',color:'#f59e0b',padding:'1px 6px',borderRadius:4,background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.3)'}}>EXPERIMENTAL</span>
                 {ccGranted&&<span style={{fontSize:10,fontFamily:'Orbitron',color:'#ff3333',padding:'1px 6px',borderRadius:4,background:'rgba(255,0,0,0.12)',border:'1px solid rgba(255,0,0,0.3)'}}>ACTIVE</span>}
               </div>
-              {!ccAvailable&&<div style={{fontSize:11,color:'#f59e0b',padding:'6px 8px',background:'rgba(245,158,11,0.08)',borderRadius:4,marginBottom:10}}>pyautogui not installed. Run <code style={{color:'#00d4ff'}}>pip install pyautogui</code> in the venv and restart the server.</div>}
               <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
-                When enabled, Friday can move your mouse, click, type, and take screenshots.<br/>
-                <strong style={{color:'#ff6060'}}>Permission is revoked on every server restart.</strong>
+                When enabled, Friday can move your mouse, click, type, and take screenshots — driving your computer like a person would. This is a powerful, high-risk capability. Leave it off unless you specifically need it.
               </div>
-              <div className="settings-toggle" onClick={()=>{
-                if(ccGranted){
-                  fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'revoke'})}).then(()=>setCcGranted(false)).catch(()=>{});
-                }else{
-                  fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'grant'})}).then(r=>r.json()).then(d=>setCcGranted(!!d.granted)).catch(()=>{});
-                }
-              }} style={{borderColor:ccGranted?'rgba(255,50,50,0.4)':'undefined'}}>
-                <span className="settings-toggle-label" style={{color:ccGranted?'#ff6060':undefined}}>{ccGranted?'🔴 Computer Control ACTIVE':'🟢 Computer Control OFF'}</span>
-                <div className={`settings-toggle-switch ${ccGranted?'on':''}`} style={ccGranted?{background:'linear-gradient(90deg,#cc0000,#ff2222)'}:{}}/>
+              <div className="settings-toggle" onClick={()=>saveAgentSettings({computer_control_enabled:!agentSettings.computer_control_enabled})}>
+                <span className="settings-toggle-label">{agentSettings.computer_control_enabled?'Computer Control feature enabled':'Enable Computer Control feature'}</span>
+                <div className={`settings-toggle-switch ${agentSettings.computer_control_enabled?'on':''}`}/>
               </div>
-              {ccGranted&&<div style={{marginTop:10,padding:'10px 12px',background:'rgba(255,0,0,0.06)',border:'1px solid rgba(255,0,0,0.2)',borderRadius:6}}>
-                <div style={{fontFamily:'Orbitron',fontSize:11,color:'#ff4444',marginBottom:6,letterSpacing:'.05em'}}>&#x26D4; KILL SWITCH</div>
-                <div style={{fontSize:11,color:'rgba(255,200,200,0.8)',marginBottom:8}}>Immediately stop all computer control. Also available via <code style={{color:'#ff9999'}}>Ctrl+Shift+Q</code>.</div>
-                <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
+              {agentSettings.computer_control_enabled&&<div style={{marginTop:12,paddingTop:10,borderTop:'1px solid rgba(255,50,50,0.15)'}}>
+                {!ccAvailable&&<div style={{fontSize:11,color:'#f59e0b',padding:'6px 8px',background:'rgba(245,158,11,0.08)',borderRadius:4,marginBottom:10}}>pyautogui not installed. Run <code style={{color:'#00d4ff'}}>pip install pyautogui</code> in the venv and restart the server.</div>}
+                <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
+                  Granting control is a separate, deliberate step. <strong style={{color:'#ff6060'}}>Permission is revoked on every server restart.</strong>
+                </div>
+                <div className="settings-toggle" onClick={()=>{
+                  if(ccGranted){
+                    fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'revoke'})}).then(()=>setCcGranted(false)).catch(()=>{});
+                  }else{
+                    fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'grant'})}).then(r=>r.json()).then(d=>setCcGranted(!!d.granted)).catch(()=>{});
+                  }
+                }} style={{borderColor:ccGranted?'rgba(255,50,50,0.4)':'undefined'}}>
+                  <span className="settings-toggle-label" style={{color:ccGranted?'#ff6060':undefined}}>{ccGranted?'🔴 Computer Control ACTIVE':'🟢 Grant computer control'}</span>
+                  <div className={`settings-toggle-switch ${ccGranted?'on':''}`} style={ccGranted?{background:'linear-gradient(90deg,#cc0000,#ff2222)'}:{}}/>
+                </div>
+                {ccGranted&&<div style={{marginTop:10,padding:'10px 12px',background:'rgba(255,0,0,0.06)',border:'1px solid rgba(255,0,0,0.2)',borderRadius:6}}>
+                  <div style={{fontFamily:'Orbitron',fontSize:11,color:'#ff4444',marginBottom:6,letterSpacing:'.05em'}}>&#x26D4; KILL SWITCH</div>
+                  <div style={{fontSize:11,color:'rgba(255,200,200,0.8)',marginBottom:8}}>Immediately stop all computer control. Also available via <code style={{color:'#ff9999'}}>Ctrl+Shift+Q</code>.</div>
+                  <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
+                </div>}
               </div>}
             </div>
           </div>
@@ -9528,7 +8828,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           <div style={{padding:'0 16px 14px'}}>
             <div style={{textAlign:'center',marginBottom:14,padding:'14px 8px',background:'linear-gradient(135deg,rgba(245,158,11,0.06),rgba(0,212,255,0.04))',borderRadius:8,border:'1px solid rgba(245,158,11,0.15)'}}>
               <div style={{fontFamily:'Orbitron',fontSize:18,color:'#f59e0b',letterSpacing:'0.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 14px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
-              <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:8}}>v1.0 · Desktop OS</div>
+              <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:8}}>v4.5.0 · Desktop OS</div>
               <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.18em'}}>BY FUTURESPEAK.AI</div>
             </div>
 

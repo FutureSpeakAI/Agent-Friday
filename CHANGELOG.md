@@ -7,13 +7,62 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ## [Unreleased]
 
+---
+
+## [4.5.0] — 2026-06-06
+
+The public-release hardening pass. Prunes the surface area down to the core
+general-purpose workspaces, makes the powerful-but-risky subsystems opt-in, and
+strips the founder's personal content out of source so a fresh user starts clean.
+
+### Removed
+
+- **Stub workspaces.** `FinanceWS` and `HealthWS` (vault-gated placeholders with
+  no real integrations) are removed, UI + routes (`/api/finance/*`,
+  `/api/health/*`). They can return later as Seeds/plugins.
+- **Co-Parent workspace, removed entirely.** The `CoparentWS` component, the
+  `/api/coparent/*` routes, the OFW message loader + notification monitor, the
+  calendar custody-detection keywords, the `coparent` message-classification lane,
+  and the `coparent_response` draft mode are all gone. (Sensitive co-parenting
+  data was always gitignored and never shipped.)
+- **Redundant dock entries.** `FamilyWS`, `TrustWS` (trust is now a tab in
+  News + Contacts), and `StudioWS` (functions live in Dev Studio and the Sites
+  workspace) are no longer separate dock entries.
+- **Content workspace pipeline.** `ContentWS` and its kanban endpoints
+  (`/api/content/pipeline|idea|draft`) are removed; writing is consolidated into
+  the Draft workspace (reachable via News → Share to Draft) and the chat pipeline.
+  The draft library serving routes (`/api/content/drafts*`) stay.
+- **FutureSpeak business pipeline.** The personal-CRM endpoints
+  (`/api/futurespeak/{pipeline,revenue,legal,assets}`) and their UI tabs are
+  removed. The workspace remains as a general-purpose **Sites** portfolio/deploy
+  manager (projects + scan + scaffold).
+
+### Changed
+
+- **Dock pruned to 10 core icons:** Home, News, Messages, Calendar, Career, Code,
+  Wiki, Contacts, Sites, System. (Settings remains the gear-button slide-out.)
+- **Computer Control is now opt-in.** New setting `computer_control_enabled`
+  defaults to **false**. The feature is surfaced under Settings as **Experimental**
+  with a clear warning; the Ring-3 runtime grant and the kill switch are unchanged,
+  and the grant endpoint now refuses unless the feature is enabled.
+- **SkillOpt nightly job disabled.** The 3:30 AM auto-research job is commented
+  out for general release (marginal value while the skill library is small); the
+  infrastructure stays for when there are 50+ skills.
+- **Voice debug logging gated.** Per-chunk voice logs are off by default — client
+  logs behind `window.FRIDAY_VOICE_DEBUG`, server `_vlog` behind the
+  `FRIDAY_VOICE_DEBUG` env var.
+- **De-personalized for new users.** Hardcoded founder-specific content (name,
+  family/pets, bio, Austin-local feeds, NVIDIA/Amex/Henry-Meds keywords, INNEX
+  client lane, seeded personal portfolio sites) has been replaced with generic,
+  settings-driven defaults across the news editor, draft, and message subsystems.
+
 ### Security
 
 - **Vault encryption-at-rest, wired into the running app.** The `vault_crypto.py`
   primitives (AES-256-GCM + Argon2id, already present and tested) are now actually
   used by `server.py`. A vault key is derived once from `FRIDAY_PASSWORD` at startup
-  (`_get_vault_key`); sensitive files (finance, health, co-parent/OFW, and
-  `vault/{legal,coparenting,finances,family}`) are transparently encrypted on write
+  (`_get_vault_key`); sensitive files (finance, health, and
+  `vault/{legal,finances,family}`) are transparently encrypted on write
   and decrypted on read (`_vault_write_text` / `_vault_read_text`); and any existing
   plaintext is encrypted in place on first boot (`_migrate_vault_plaintext`, verifies
   a decrypt round-trip before replacing each file). With no `FRIDAY_PASSWORD` set the

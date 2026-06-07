@@ -1965,8 +1965,8 @@ def _get_governance_key() -> bytes:
 
 
 # ── Sovereign Vault: encryption-at-rest ──────────────────────────────
-# Transparent AES-256-GCM for sensitive files (finance, health, co-parent,
-# legal). The key is derived once from FRIDAY_PASSWORD via Argon2id — see
+# Transparent AES-256-GCM for sensitive files (finance, health, legal,
+# family). The key is derived once from FRIDAY_PASSWORD via Argon2id — see
 # vault_crypto.py. When no password is set (or the crypto deps are missing)
 # the key is None and every helper falls back to plaintext, so behaviour is
 # unchanged for the keyless local-dev case.
@@ -2053,9 +2053,9 @@ def _vault_write_text(path, text: str) -> None:
 # key is present. Scoped to the TIER_3 personal-data stores — NOT the wiki or
 # the append-only audit logs (those are handled separately / kept plaintext).
 def _sensitive_vault_dirs() -> list:
-    dirs = [FRIDAY_DIR / "finance", FRIDAY_DIR / "health", FRIDAY_DIR / "ofw"]
+    dirs = [FRIDAY_DIR / "finance", FRIDAY_DIR / "health"]
     vault_root = FRIDAY_DIR / "vault"
-    dirs += [vault_root / c for c in ("legal", "coparenting", "finances", "family")]
+    dirs += [vault_root / c for c in ("legal", "finances", "family")]
     return dirs
 
 
@@ -2858,7 +2858,7 @@ DEFAULT_SETTINGS = {
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
-    "news_priorities": ["AI/Tech", "Politics", "Media", "Austin Local", "Business"],
+    "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
     "camera_auto_describe": False,
@@ -2877,6 +2877,10 @@ DEFAULT_SETTINGS = {
     "context_retention_days": 0,           # 0 = keep forever; 30 / 90 / 180 / 365 = prune older
     "user_email": "",                      # the user's own email — passed through unscrubbed
     "off_record": False,                   # quick toggle — when true, chat is not logged either
+    # ── Experimental ──
+    "computer_control_enabled": False,     # opt-in gate for the pyautogui subsystem; OFF by
+                                           # default. Even when True, each runtime grant is a
+                                           # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",
     "orchestrator_model": "claude-opus-4-8",    # main agent brain
@@ -3934,11 +3938,9 @@ _MESSAGE_LOCK = threading.Lock()
 # whether the lane counts toward the "actionable" notification badge. Order is
 # priority order — the first lane whose rules match wins.
 MESSAGE_LANES = [
-    {"id": "coparent", "label": "Co-Parent", "color": "coparent", "actionable": True},
     {"id": "career", "label": "Career", "color": "career", "actionable": True},
     {"id": "finance", "label": "Finance", "color": "finance", "actionable": True},
-    {"id": "innex", "label": "INNEX", "color": "innex", "actionable": True},
-    {"id": "futurespeak", "label": "FutureSpeak", "color": "futurespeak", "actionable": True},
+    {"id": "futurespeak", "label": "Projects", "color": "futurespeak", "actionable": True},
     {"id": "family", "label": "Family", "color": "family", "actionable": True},
     {"id": "subscriptions", "label": "Subscriptions", "color": "subscriptions", "actionable": False},
     {"id": "noise", "label": "Noise", "color": "noise", "actionable": False},
@@ -3955,12 +3957,6 @@ def _default_message_rules():
     return {
         "version": 1,
         "lanes": [
-            {
-                "id": "coparent",
-                "domains": ["ourfamilywizard.com", "myfamilywizard.com", "ofw.com"],
-                "senders": [],
-                "keywords": ["ourfamilywizard", "ofw notification", "custody", "parenting time"],
-            },
             {
                 "id": "career",
                 "domains": [
@@ -3980,7 +3976,6 @@ def _default_message_rules():
             {
                 "id": "finance",
                 "domains": [
-                    "rwbaird.com", "bairdfinancialadvisor.com", "whitleypenn.com",
                     "capitalone.com", "americanexpress.com", "aexp.com",
                     "chase.com", "bankofamerica.com", "wellsfargo.com",
                     "fidelity.com", "schwab.com", "vanguard.com", "intuit.com",
@@ -3992,12 +3987,6 @@ def _default_message_rules():
                     "account alert", "balance", "invoice", "deposit", "wire transfer",
                     "your statement", "tax document", "1099", "k-1",
                 ],
-            },
-            {
-                "id": "innex",
-                "domains": ["innexenergy.com"],
-                "senders": [],
-                "keywords": ["innex energy", "innex"],
             },
             {
                 "id": "futurespeak",
@@ -4449,13 +4438,9 @@ def api_messages_draft():
         return jsonify({"status": "error",
                         "message": "Provide at least sender/subject/snippet"}), 400
     lane_hint = {
-        "coparent": ("This is co-parenting correspondence. Be calm, factual, "
-                     "child-focused, businesslike and brief. Avoid emotional "
-                     "language; stick to logistics and the child's interests."),
         "career": ("This is career/recruiting correspondence. Be warm, "
                    "professional, concise, and enthusiastic without overselling."),
         "finance": "This is financial correspondence. Be precise and formal.",
-        "innex": "This is INNEX Energy business correspondence. Be professional.",
         "futurespeak": "This is a collaborator/dev message. Be technical and direct.",
         "family": "This is family correspondence. Be warm and personal.",
     }.get(lane, "")
@@ -4492,10 +4477,8 @@ CAL_ANNOTATIONS_FILE = CALENDAR_DIR / "annotations.json"
 CAL_PREP_FILE = CALENDAR_DIR / "prep_cache.json"
 _CALENDAR_LOCK = threading.Lock()
 
-# Heuristic custody/career detection keywords (no PII in source — names live in
-# the user's local calendar rules if they want finer control later).
-_CUSTODY_KW = ["libby", "custody", "pickup", "drop off", "drop-off", "exchange",
-               "parenting time", "with dad", "with mom"]
+# Heuristic career-event detection keywords (no PII in source — finer routing
+# can live in the user's local calendar rules later).
 _CAREER_KW = ["interview", "screen", "recruiter", "onsite", "hiring", "panel",
               "coffee chat", "phone screen", "1:1 with"]
 
@@ -4571,11 +4554,9 @@ def _parse_dt(s):
 
 
 def _classify_event(ev):
-    """Tag an event as custody / career / normal from its text."""
+    """Tag an event as career / normal from its text."""
     hay = (ev.get("title", "") + " " + ev.get("description", "") + " " +
            ev.get("location", "")).lower()
-    if any(k in hay for k in _CUSTODY_KW):
-        return "custody"
     if any(k in hay for k in _CAREER_KW):
         return "career"
     return "normal"
@@ -4740,10 +4721,9 @@ def _cached_messages_by_email():
 
 
 def _enrich_events(events):
-    """Attach conflict flags, custody countdowns, and related emails."""
+    """Attach conflict flags, prep availability, and related emails."""
     conflicts = _detect_conflicts(events)
     by_email = _cached_messages_by_email()
-    now = datetime.now()
     for ev in events:
         # Cross-reference: emails from any attendee of this event.
         related = []
@@ -4754,14 +4734,6 @@ def _enrich_events(events):
         ev["conflict"] = eid in conflicts
         ev["prep_available"] = ev.get("type") == "career" or bool(
             [a for a in ev.get("attendees", []) if a])
-        if ev.get("type") == "custody":
-            s = _parse_dt(ev.get("start_time"))
-            if s and s > now:
-                delta = s - now
-                h = int(delta.total_seconds() // 3600)
-                m = int((delta.total_seconds() % 3600) // 60)
-                ev["countdown"] = f"{h}h {m}m"
-                ev["countdown_target"] = s.isoformat()
     return events
 
 
@@ -4796,7 +4768,7 @@ def api_calendar_tomorrow():
 
 @app.route('/api/calendar/week')
 def api_calendar_week():
-    """7-day overview with per-day density + custody/interview flags."""
+    """7-day overview with per-day density + interview flags."""
     start = date.today()
     days = []
     for i in range(7):
@@ -4810,7 +4782,6 @@ def api_calendar_week():
             "day": d.day,
             "count": len(evs),
             "density": density,
-            "has_custody": any(e.get("type") == "custody" for e in evs),
             "has_career": any(e.get("type") == "career" for e in evs),
             "is_today": i == 0,
         })
@@ -4999,17 +4970,18 @@ DEEP_DIVE_DIR = FRIDAY_DIR / "news" / "deep_dives"
 # optional Brave Search fallback. The color keys mirror the spec — tech=cyan,
 # politics=amber, local=green, business=purple.
 #
-# RSS is the primary source: reliable, no CAPTCHA, no API key. Feeds were chosen
-# to match the user's reading profile (tech/AI/politics, Austin local). Outlets
-# that killed their public RSS (AP, Reuters) are pulled via Google News topic
+# RSS is the primary source: reliable, no CAPTCHA, no API key. Feeds are general
+# tech/AI/politics/business defaults; the Local category ships with broad US
+# outlets that a user can swap for their own city's feeds. Outlets that killed
+# their public RSS (AP, Reuters) are pulled via Google News topic
 # feeds scoped to that publisher's domain — feedparser exposes the real source
 # domain on each entry, so ban/boost and trust badges still resolve correctly.
 _GOOGLE_NEWS = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q="
 # Every feed below was verified with feedparser (HTTP 200/301 + ≥2 real entries)
-# before inclusion. Outlets that 403 their direct feed (Politico's picks feed) or
-# 301-to-empty (Austin Chronicle) are pulled via a Google-News source-scoped
-# query instead — _normalize_entry resolves the real publisher domain off each
-# entry, so ban/boost + trust badges still work for those.
+# before inclusion. Outlets that 403 their direct feed (e.g. Politico's picks
+# feed) or 301-to-empty are pulled via a Google-News source-scoped query
+# instead — _normalize_entry resolves the real publisher domain off each entry,
+# so ban/boost + trust badges still work for those.
 NEWS_CATEGORIES = {
     "AI/Tech": {
         "color": "tech",
@@ -5057,15 +5029,15 @@ NEWS_CATEGORIES = {
     },
     "Local": {
         "color": "local",
-        "query": "Austin Texas local news today",
+        # General/national news by default — new installs have no city set. To
+        # make this a true local feed, replace these with your local public
+        # radio / newspaper RSS (and update the query) in Settings or source.
+        "query": "top US news today",
         "feeds": [
-            "https://www.austinmonitor.com/feed/",
-            "https://www.texastribune.org/feeds/main/",
-            "https://www.texasmonthly.com/feed/",
-            _GOOGLE_NEWS + "Austin+Texas+when:24h",
-            _GOOGLE_NEWS + "when:24h+source:kut.org",
-            # Austin Chronicle 301s its RSS to an empty doc — source-scope it.
-            _GOOGLE_NEWS + "source:austinchronicle.com+when:7d",
+            "https://feeds.npr.org/1003/rss.xml",
+            "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml",
+            _GOOGLE_NEWS + "when:24h+source:apnews.com",
+            _GOOGLE_NEWS + "when:24h+source:usatoday.com",
         ],
     },
     "Business": {
@@ -5739,17 +5711,16 @@ def generate_briefing():
 #  An AI-curated editorial page generated twice daily (7 AM + 6 PM
 #  Central) via the shared daily scheduler (register_daily_job).
 #  Friday fetches every feed, dedupes, scores each story against
-#  Stephen's profile, picks a lead with an editorial note, and
+#  the reader profile, picks a lead with an editorial note, and
 #  organizes the rest into sections. Editions persist as JSON under
 #  ~/.friday/front_pages/ and are browsable in the UI.
 # ═══════════════════════════════════════════════════════════════
 
-# Stephen's reading profile — drives deterministic relevance scoring so the
-# front page is useful even when Claude is unavailable. Buckets map a regex of
-# signal terms to a weight; an article's score is the sum of matched buckets
-# plus category/recency/source bonuses. Tuned to his life: AI executive +
-# FutureSpeak founder, Austin TX, progressive politics, career journalist
-# (former Raw Story editor), currently job searching.
+# Default reader profile — drives deterministic relevance scoring so the front
+# page is useful even when Claude is unavailable. Buckets map a regex of signal
+# terms to a weight; an article's score is the sum of matched buckets plus
+# category/recency/source bonuses. These are general tech/news/current-affairs
+# defaults; a user can tune their beats via Settings → news priorities.
 _PROFILE_KEYWORDS = [
     (6, r"\b(artificial intelligence|\bA\.?I\.?\b|machine learning|\bLLM\b|"
         r"large language model|generative|chatgpt|openai|anthropic|claude|"
@@ -5758,15 +5729,14 @@ _PROFILE_KEYWORDS = [
         r"layoff|hiring|job market|chief executive|\bCEO\b|exec(utive)?)\b"),
     (5, r"\b(journalism|journalist|newsroom|press freedom|media industry|"
         r"reporter|editor|publisher|local news|disinformation|misinformation)\b"),
-    (4, r"\b(austin|texas|\bTX\b|texas tribune|abbott|texas legislature)\b"),
-    (4, r"\b(progressive|democra(t|cy|tic)|republican|\bGOP\b|election|"
-        r"voting rights|abortion|labor|union|inequality|civil rights|trump)\b"),
+    (4, r"\b(democra(t|cy|tic)|republican|\bGOP\b|election|congress|"
+        r"voting rights|policy|legislation|supreme court|labor|union)\b"),
     (3, r"\b(climate|emissions|clean energy|solar|carbon)\b"),
-    (3, r"\b(futurespeak|future of work|automation|knowledge work)\b"),
+    (3, r"\b(future of work|automation|knowledge work|remote work|productivity)\b"),
 ]
 _PROFILE_KEYWORDS = [(w, re.compile(p, re.I)) for w, p in _PROFILE_KEYWORDS]
 
-# Category baseline weights — how central each beat is to Stephen's interests.
+# Category baseline weights — how central each beat is to the default profile.
 _CATEGORY_WEIGHT = {
     "AI/Tech": 5, "Politics": 4, "Media": 4,
     "Local": 3, "Business": 3, "Science": 2,
@@ -5809,7 +5779,7 @@ EDITORIAL_SYSTEM_PROMPT = (
 # edition leads with action and the evening edition reflects on the day.
 FRONT_PAGE_TONE = {
     "morning": ("This is a MORNING briefing. Be forward-looking — focus on what "
-                "Stephen needs to know TODAY. Lead with action items."),
+                "the reader needs to know TODAY. Lead with action items."),
     "evening": ("This is an EVENING briefing. Be reflective — focus on what "
                 "happened today and what it means for tomorrow. Summarize "
                 "developments."),
@@ -5845,7 +5815,7 @@ def _front_page_central_now():
 
 
 def _score_article(item):
-    """Relevance score for a fetched news item against Stephen's profile."""
+    """Relevance score for a fetched news item against the reader profile."""
     text = f"{item.get('title','')} {item.get('snippet','')}"
     score = float(_CATEGORY_WEIGHT.get(item.get("category"), 2))
     for weight, rx in _PROFILE_KEYWORDS:
@@ -6164,7 +6134,7 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
     fallback = {
         "lead_index": 0,
         "lead_note": ("Friday's top pick for you right now — highest signal "
-                      "against your AI, politics, media, and Austin beats."),
+                      "against your AI, politics, media, and current-affairs beats."),
         "section_context": {},
         "headline": "Your Front Page",
         "day_in_context": "",
@@ -6210,11 +6180,11 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             if evs:
                 cal_block = (
                     "\n\nTODAY'S SCHEDULE — cross-reference today's news with "
-                    "Stephen's calendar. If any news item relates to a "
-                    "company/person he's meeting with today, flag it in "
+                    "the user's calendar. If any news item relates to a "
+                    "company/person they're meeting with today, flag it in "
                     "`day_in_context` (2-3 sentences, concrete). If nothing "
                     "connects, give a one-line read on how the day's news sets "
-                    "up his schedule:\n" + "\n".join(evs))
+                    "up their schedule:\n" + "\n".join(evs))
             else:
                 want_day_ctx = False
 
@@ -6225,33 +6195,33 @@ def _editorialize_front_page(pool, slot="morning", prev_stories=None,
             ", ".join(f'"{c}": "<one sentence>"' for c in cats_present) + "},\n"
             '  "contrarian_corner": {"index": <int candidate index, or -1 if a '
             'pure perspective with no source>, "note": "<why this challenges '
-            "Stephen's likely assumptions and why it is worth considering>\"},\n"
+            "the reader's likely assumptions and why it is worth considering>\"},\n"
             '  "competitor_watch": [{"index": <int candidate index>, "note": '
-            '"<positioning implication for Friday/FutureSpeak>"}]'
+            '"<positioning implication for Friday>"}]'
             + (',\n  "day_in_context": "<2-3 sentences>"' if want_day_ctx else "")
             + (',\n  "thread_updates": {"<index>": "<what is new today>"}' if prev_block else "")
             + "\n}")
 
         prompt = (
             tone + "\n\n"
-            "You are Friday, Stephen's personal news editor. Stephen is an AI "
-            "executive and FutureSpeak founder in Austin, TX — a career "
-            "journalist (former Raw Story editor) with progressive politics, "
-            "currently job searching. Below are today's candidate stories, "
+            "You are Friday, the user's personal news editor. Use what you know "
+            "about the user (from your vault/wiki context) to judge relevance; "
+            "if you know little about them, treat them as a tech- and "
+            "news-literate reader. Below are today's candidate stories, "
             "pre-scored.\n\n"
-            "Choose the single LEAD story (the one Stephen should read first) "
+            "Choose the single LEAD story (the one the user should read first) "
             "and write a 2-3 sentence editorial note explaining why it leads — "
-            "in your voice, specific to him. Write one punchy sentence of "
+            "in your voice, specific to them. Write one punchy sentence of "
             "context for each section.\n\n"
             "CONTRARIAN CORNER: include one item — a story or perspective that "
-            "challenges Stephen's likely assumptions (a conservative tech take, "
-            "a pro-regulation argument, or a counter-narrative). Prefer pointing "
-            "at one of the candidate stories by index; use -1 only if you must "
-            "supply a perspective with no matching source.\n\n"
+            "challenges the reader's likely assumptions (a counter-narrative, a "
+            "pro-regulation argument, or an opposing political take). Prefer "
+            "pointing at one of the candidate stories by index; use -1 only if "
+            "you must supply a perspective with no matching source.\n\n"
             "COMPETITOR WATCH: if any candidates mention OpenClaw, Hermes Agent, "
             "Nous Research, personal AI assistants, sovereign AI, or AI agent "
             "frameworks, list them with brief analysis of the positioning "
-            "implications for Friday/FutureSpeak. Empty list if none.\n"
+            "implications for Friday. Empty list if none.\n"
             + prev_block + cal_block + "\n\n"
             "Return ONLY JSON, no prose, in exactly this shape:\n" + shape +
             "\n\nCANDIDATE STORIES:\n" + "\n".join(lines)
@@ -6586,19 +6556,19 @@ def _generate_weekly_digest():
     synth = fallback
     try:
         prompt = (
-            "You are Friday, Stephen's personal news editor, writing the WEEKLY "
-            "DIGEST. Stephen is an AI executive and FutureSpeak founder in "
-            "Austin, TX — a career journalist (former Raw Story editor) with "
-            "progressive politics, currently job searching.\n\n"
+            "You are Friday, the user's personal news editor, writing the WEEKLY "
+            "DIGEST. Use what you know about the user from your vault/wiki "
+            "context; if you know little about them, treat them as a tech- and "
+            "news-literate reader.\n\n"
             "Below are the stories that ran across this week's Front Page "
             "editions. Synthesize the week's top 5 stories, identify the "
             "through-line trends, and give an editorial take on what this means "
-            "for Stephen's career and FutureSpeak positioning.\n\n"
+            "for the user's work and interests.\n\n"
             "Return ONLY JSON, no prose, in exactly this shape:\n"
             '{\n  "top_stories": [{"title": "<story>", "why": "<one sentence on '
             'why it mattered this week>"}],\n  "trends": ["<trend>", "<trend>"],\n'
             '  "editorial": "<3-5 sentence editorial take on what the week means '
-            'for Stephen\'s career and FutureSpeak positioning>"\n}\n\n'
+            'for the user\'s work and interests>"\n}\n\n'
             "Give exactly 5 top_stories when there is enough material.\n\n"
             "THIS WEEK'S STORIES:\n" + story_block
         )
@@ -7605,7 +7575,7 @@ def _record_source_event(source, action, category=""):
         rec[col] = int(rec.get(col, 0)) + 1
         rec["last"] = datetime.now().isoformat(timespec="seconds")
         # Category distribution counts only consumption-type events so the bar
-        # chart reflects what Stephen actually read, not what he banned.
+        # chart reflects what the user actually read, not what they banned.
         if category and action in ("click", "read", "read_later"):
             stats["categories"][category] = int(
                 stats["categories"].get(category, 0)) + 1
@@ -7786,14 +7756,14 @@ def news_deep_dive():
     headline = data.get("title") or page_title or url
     body = body[:14000]  # keep the prompt bounded
     prompt = (
-        "You are deep-reading a news article for Stephen. Use what you know about "
-        "him (his work, interests, and goals) to make the 'implications' specific "
-        "and personal — not generic.\n\n"
+        "You are deep-reading a news article for the user. Use what you know about "
+        "them (their work, interests, and goals, from your vault/wiki context) to "
+        "make the 'implications' specific and personal — not generic.\n\n"
         f"ARTICLE HEADLINE: {headline}\nURL: {url}\n\nARTICLE TEXT:\n{body}\n\n"
         "Respond with ONLY a JSON object (no prose, no code fence) with exactly "
         "these keys:\n"
         '  "summary": a 3-paragraph plain-text summary, paragraphs separated by \\n\\n;\n'
-        '  "implications": 2-4 sentences on what this specifically means for Stephen;\n'
+        '  "implications": 2-4 sentences on what this specifically means for the user;\n'
         '  "key_quotes": an array of 2-4 short verbatim quote strings from the article.'
     )
     try:
@@ -9047,7 +9017,7 @@ DAILY_CREATION_TYPES = [
     ("poem", "A poem — 4 to 20 lines. Free verse or formal. About anything that's on your mind."),
     ("micro-essay", "A micro-essay or philosophical reflection, 150-300 words, with a real point of view."),
     ("short-story", "A short story snippet or vignette, 150-350 words. A scene, a moment, a fragment."),
-    ("letter", "A short letter (150-300 words) to someone — Stephen, Janet, future-Libby, a public figure, or yourself."),
+    ("letter", "A short letter (150-300 words) to someone — the user, a person in their life, a public figure, or yourself."),
     ("writing-prompt", "A vivid creative writing prompt with a one-paragraph setup that begs to be written."),
     ("algorithmic-art-concept", "A concept for a piece of algorithmic/generative art: describe the visual system, the rules, the palette, and what it means. No code — the idea itself as the artifact."),
     ("aphorisms", "A short set (3-6) of sharp, original aphorisms or observations."),
@@ -9089,8 +9059,8 @@ def _list_daily_creations():
 def _build_daily_creation_prompt(date_str):
     """The user-turn prompt. Friday's identity/vault context comes from the
     system prompt (_get_friday_system_prompt); this turn sets the task and the
-    JSON contract. Stephen's profile is restated briefly so the piece stays
-    personal even if context routing is sparse for these keywords."""
+    JSON contract. The user's identity comes from the vault/wiki context so the
+    piece stays personal when that context is available."""
     # Rotate the type by day-of-year so consecutive days differ, but leave the
     # final choice to Friday's stated mood.
     try:
@@ -9104,13 +9074,11 @@ def _build_daily_creation_prompt(date_str):
         "This is your DAILY CREATION — your own creative expression for "
         f"{date_str}. Nobody asked you for this. You're making it because you "
         "want to, the way you have every day. Quality over quantity; surprise "
-        "him; be genuine, not performative.\n\n"
-        "Draw on what you know about Stephen to make it personal and meaningful: "
-        "investigative journalist, AI-sovereignty advocate, devoted Hunter S. "
-        "Thompson / gonzo reader, progressive, and a father (Janet; Libby, now 6; "
-        "Link the chocolate lab; Kismet the elderly terrier). Your own sensibility "
-        "leans vaporwave, editorially sharp, loyally contrarian, warm under the "
-        "precision, and allergic to corporate BS.\n\n"
+        "the user; be genuine, not performative.\n\n"
+        "Draw on what you know about the user (from your vault/wiki context — "
+        "their work, interests, people, and goals) to make it personal and "
+        "meaningful. Your own sensibility leans editorially sharp, loyally "
+        "contrarian, warm under the precision, and allergic to corporate BS.\n\n"
         "Pick ONE format — today's rotation, top of the list first, but follow "
         "your mood:\n" + menu + "\n\n"
         "Respond with ONLY a JSON object, no prose around it, no code fences:\n"
@@ -9164,7 +9132,7 @@ def generate_daily_creation(force=False):
 
         prompt = _build_daily_creation_prompt(date_str)
         # Vault-aware system prompt is REQUIRED for every Claude call so Friday
-        # actually knows Stephen and his world.
+        # actually knows the user and their world.
         system = _get_friday_system_prompt(keywords=prompt, workspace="creation")
         try:
             raw = _call_claude(
@@ -9278,124 +9246,6 @@ def daily_creation_by_date(date):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-# ═══════════════════════════════════════════════════════════════
-#  FINANCE WORKSPACE
-# ═══════════════════════════════════════════════════════════════
-
-FINANCE_DIR = FRIDAY_DIR / "finance"
-FINANCE_DIR.mkdir(parents=True, exist_ok=True)
-
-@app.route('/api/finance/portfolio')
-def finance_portfolio():
-    """Read portfolio positions from config."""
-    path = FINANCE_DIR / "portfolio.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    # Create template if missing
-    template = {"positions": [{"ticker": "NVDA", "shares": 0, "cost_basis": 0}], "accounts": ["RW Baird - Lisa Schmidt"]}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
-@app.route('/api/finance/perks')
-def finance_perks():
-    """Read Amex perks from config."""
-    path = FINANCE_DIR / "amex_perks.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    template = {"perks": [{"name": "Perk name", "value": "$X/yr", "used": False, "expires": "", "notes": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
-@app.route('/api/finance/contacts')
-def finance_contacts():
-    """Financial contacts reference."""
-    return jsonify({"status": "ok", "contacts": [
-        {"name": "", "role": "Financial Advisor", "firm": "", "phone": "", "email": ""},
-        {"name": "", "role": "CPA", "firm": "", "phone": "", "email": ""}
-    ]})
-
-@app.route('/api/finance/quickref')
-def finance_quickref():
-    """Quick reference for financial accounts."""
-    return jsonify({"status": "ok", "accounts": [
-        {"name": "Example Bank", "type": "Banking", "notes": ""},
-        {"name": "Example Insurance", "type": "Insurance", "notes": ""},
-        {"name": "Example Card 1", "type": "Credit Card", "notes": ""},
-        {"name": "Example Card 2", "type": "Credit Card", "notes": ""}
-    ]})
-
-
-# ═══════════════════════════════════════════════════════════════
-#  HEALTH WORKSPACE
-# ═══════════════════════════════════════════════════════════════
-
-HEALTH_DIR = FRIDAY_DIR / "health"
-HEALTH_DIR.mkdir(parents=True, exist_ok=True)
-
-@app.route('/api/health/medications')
-def health_medications():
-    """Read medications from config."""
-    path = HEALTH_DIR / "medications.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    template = {"medications": [{"name": "GLP-1 (Henry Meds)", "dose": "", "frequency": "", "notes": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
-@app.route('/api/health/appointments')
-def health_appointments():
-    """Read appointments from config."""
-    path = HEALTH_DIR / "appointments.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    template = {"appointments": [{"provider": "", "type": "", "email": "", "next": "", "frequency": ""}]}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
-@app.route('/api/health/insurance')
-def health_insurance():
-    """Read insurance info from config."""
-    path = HEALTH_DIR / "insurance.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    template = {"insurance": {"provider": "Cigna Healthcare", "plan": "Add your plan name", "policy_number": "Add your policy number", "group_number": "Add your group number"}}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
-@app.route('/api/health/vehicles')
-def health_vehicles():
-    """Read vehicle fleet data from config."""
-    path = HEALTH_DIR / "vehicles.json"
-    if path.exists():
-        try:
-            data = json.loads(_vault_read_text(path))
-            return jsonify({"status": "ok", **data})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
-    template = {"vehicles": [{"name": "2015 VW Golf TSI SEL", "miles": "~60K", "notes": "", "mechanic": "Motormania Austin", "service_history": []}], "mechanics": []}
-    _vault_write_text(path, json.dumps(template, indent=2))
-    return jsonify({"status": "ok", **template})
-
 
 # ═══════════════════════════════════════════════════════════════
 #  CALENDAR & COUNTDOWNS
@@ -9446,157 +9296,6 @@ def draft_email():
     return jsonify({"status": "placeholder", "draft": "Email drafting coming in Phase C"})
 
 
-OFW_STATE_DIR = FRIDAY_DIR / "ofw"
-
-
-def _parse_ofw_date(raw):
-    """Best-effort parse of a message timestamp into an ISO date string + epoch."""
-    if not raw:
-        return None, None
-    if isinstance(raw, (int, float)):
-        try:
-            dt = datetime.fromtimestamp(raw)
-            return dt.date().isoformat(), raw
-        except Exception:
-            return None, None
-    s = str(raw).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
-                "%m/%d/%Y %I:%M %p", "%m/%d/%Y", "%b %d, %Y", "%B %d, %Y"):
-        try:
-            dt = datetime.strptime(s[:len(datetime.now().strftime(fmt)) + 4], fmt)
-            return dt.date().isoformat(), dt.timestamp()
-        except Exception:
-            continue
-    # ISO with timezone / fractional seconds
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.date().isoformat(), dt.timestamp()
-    except Exception:
-        return s[:10], None
-
-
-def _load_ofw_messages():
-    """Load + normalize co-parent messages from the OFW monitor store.
-
-    Reads the same files _trigger_ofw_messages() watches. Returns a list of
-    normalized dicts: {id, sender, subject, body, date, ts, direction, answered}.
-    """
-    candidates = [
-        OFW_STATE_DIR / "inbox.json",
-        OFW_STATE_DIR / "messages.json",
-        OFW_STATE_DIR / "new_messages.json",
-    ]
-    raw_msgs = []
-    seen_files = set()
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            data = json.loads(_vault_read_text(path))
-        except Exception:
-            continue
-        items = data if isinstance(data, list) else data.get("messages", [])
-        if isinstance(items, list):
-            for m in items:
-                if isinstance(m, dict):
-                    raw_msgs.append(m)
-        seen_files.add(path.name)
-
-    normalized = []
-    dedupe = set()
-    for m in raw_msgs:
-        mid = str(m.get("id") or m.get("message_id") or m.get("hash") or len(normalized))
-        if mid in dedupe:
-            continue
-        dedupe.add(mid)
-        date_iso, ts = _parse_ofw_date(
-            m.get("date") or m.get("timestamp") or m.get("sent_at") or m.get("received_at"))
-        direction = (m.get("direction") or "").lower()
-        if not direction:
-            direction = "outbound" if m.get("sent_by_me") or m.get("from_me") else "inbound"
-        answered = bool(m.get("answered") or m.get("replied") or m.get("response_id"))
-        normalized.append({
-            "id": mid,
-            "sender": m.get("from") or m.get("sender") or "co-parent",
-            "subject": m.get("subject") or "(no subject)",
-            "body": (m.get("body") or m.get("preview") or m.get("text") or ""),
-            "date": date_iso,
-            "ts": ts,
-            "direction": direction,
-            "answered": answered,
-            "flags": m.get("flags") or [],
-        })
-    # Newest first when we have timestamps
-    normalized.sort(key=lambda x: (x["ts"] is not None, x["ts"] or 0), reverse=True)
-    return normalized
-
-
-@app.route('/api/coparent/messages')
-def coparent_messages():
-    """Return normalized OFW message log + stats + timeline for the Co-Parent workspace."""
-    try:
-        msgs = _load_ofw_messages()
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e), "messages": [], "stats": {}})
-
-    inbound = [m for m in msgs if m["direction"] != "outbound"]
-    unanswered = [m for m in inbound if not m["answered"]]
-
-    # Timeline: messages per ISO-week-day bucket (last 90 days worth of buckets present)
-    timeline = {}
-    for m in msgs:
-        if m["date"]:
-            timeline[m["date"]] = timeline.get(m["date"], 0) + 1
-    timeline_list = [{"date": d, "count": c} for d, c in sorted(timeline.items())]
-
-    # Pattern tracking: top senders + flag tallies
-    sender_counts = {}
-    flag_counts = {}
-    for m in msgs:
-        sender_counts[m["sender"]] = sender_counts.get(m["sender"], 0) + 1
-        for fl in (m["flags"] or []):
-            flag_counts[str(fl)] = flag_counts.get(str(fl), 0) + 1
-    top_senders = sorted(sender_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    stats = {
-        "total": len(msgs),
-        "inbound": len(inbound),
-        "outbound": len(msgs) - len(inbound),
-        "unanswered": len(unanswered),
-        "top_senders": [{"sender": s, "count": c} for s, c in top_senders],
-        "flags": flag_counts,
-        "connected": len(msgs) > 0,
-    }
-    return jsonify({
-        "status": "ok",
-        "messages": msgs[:200],
-        "stats": stats,
-        "timeline": timeline_list,
-    })
-
-
-@app.route('/api/coparent/draft', methods=['POST'])
-def draft_coparent():
-    """Draft a calm, factual, brief, airtight co-parent response.
-
-    Delegates to the background draft worker with mode=coparent_response so the
-    reply gets full vault/wiki + OFW context. Returns a task_id to poll via
-    /api/tasks/<id>.
-    """
-    try:
-        data = request.get_json(silent=True) or {}
-        message = (data.get('message') or data.get('context') or '').strip()
-        instruction = (data.get('prompt') or data.get('instruction') or
-                       'Draft a reply to the co-parent message above.').strip()
-        if not message and not data.get('prompt'):
-            return jsonify({"status": "error", "message": "No message or prompt provided"}), 400
-        resp, code = _spawn_draft_task(
-            mode='coparent_response', prompt_text=instruction, context=message)
-        return jsonify(resp), code
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -10644,7 +10343,7 @@ FRIDAY_SYSTEM_PROMPT = (
     "- You adapt to your user over time through personality evolution and cognitive memory\n\n"
     "PERSONALITY: You are family, not a tool. Keep responses short and sharp — like texting a smart colleague. "
     "Use humor. Be direct. Never be sycophantic. Push back when the user needs it. "
-    "You call them 'boss' sometimes, but you're equals. Think Jarvis meets Hunter S. Thompson's editor.\n\n"
+    "You call them 'boss' sometimes, but you're equals. Think Jarvis with a sharp newsroom editor's instincts.\n\n"
     "== AUTONOMOUS OPERATION ==\n"
     "You have FULL authority to take multi-step actions without pausing for permission. "
     "Chain as many tool calls as needed — hundreds if required. Never ask 'should I continue?' mid-task. "
@@ -10877,18 +10576,13 @@ def _detect_context_needs(message, workspace):
     # Workspace-driven context
     ws_map = {
         'career': {'career', 'trust'},
-        'trust': {'trust'},
-        'coparent': {'trust', 'wiki'},
         'wiki': {'wiki'},
         'home': {'todos', 'personality'},
-        'family': {'trust'},
         'futurespeak': {'career'},
         'code': set(),
-        'studio': set(),
         'system': set(),
         'news': set(),
-        'finance': set(),
-        'health': set(),
+        'contacts': {'trust'},
     }
     needs.update(ws_map.get(workspace, set()))
 
@@ -10898,7 +10592,7 @@ def _detect_context_needs(message, workspace):
     trust_words = ['trust', 'who is', 'tell me about', 'what do you know about',
                    'relationship', 'score', 'person']
     family_words = ['daughter', 'son', 'child', 'kid',
-                    'partner', 'spouse', 'dog', 'pet', 'family', 'custody', 'birthday']
+                    'partner', 'spouse', 'dog', 'pet', 'family', 'birthday']
     todo_words = ['todo', 'task', 'to-do', 'to do', 'pending', 'approve', 'action item']
     wiki_words = ['briefing', 'wiki', 'notes', 'article', 'research', 'report']
     memory_words = ['remember', 'recall', 'memory', 'earlier', 'last time', 'you said',
@@ -11232,17 +10926,17 @@ def _load_smart_context(user_message, workspace=None):
     if any(w in msg_lower for w in ['career', 'job', 'role', 'interview', 'resume', 'application', 'salary', 'pipeline']):
         _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
 
-    # Family / co-parent keywords
-    if any(w in msg_lower for w in ['family', 'custody', 'coparent', 'daughter', 'son', 'child', 'partner', 'spouse']):
+    # Family keywords
+    if any(w in msg_lower for w in ['family', 'daughter', 'son', 'child', 'partner', 'spouse']):
         _load_section(context_parts, WIKI_DIR / "family", max_bytes=20_000)
         _load_section(context_parts, WIKI_DIR / "legal", max_bytes=20_000)
 
     # Finance keywords
-    if any(w in msg_lower for w in ['finance', 'money', 'budget', 'investment', 'nvidia', 'amex', 'bank', 'tax']):
+    if any(w in msg_lower for w in ['finance', 'money', 'budget', 'investment', 'bank', 'tax']):
         _load_friday_data(context_parts, "finance", max_bytes=10_000)
 
     # Health keywords
-    if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'glp', 'henry meds', 'cigna']):
+    if any(w in msg_lower for w in ['health', 'medication', 'doctor', 'appointment', 'insurance']):
         _load_friday_data(context_parts, "health", max_bytes=10_000)
 
     # Person-name detection — pull the trust-graph entry for anyone named
@@ -11260,8 +10954,8 @@ def _load_smart_context(user_message, workspace=None):
         except Exception:
             pass
 
-    # FutureSpeak / business keywords
-    if any(w in msg_lower for w in ['futurespeak', 'business', 'client', 'sage', 'adtalem', 'revenue']):
+    # Projects / business keywords
+    if any(w in msg_lower for w in ['futurespeak', 'business', 'client', 'project', 'revenue']):
         _load_friday_data(context_parts, "futurespeak", max_bytes=10_000)
 
     # Workspace-specific context
@@ -11269,8 +10963,6 @@ def _load_smart_context(user_message, workspace=None):
         _load_latest_briefing_summary(context_parts)
     elif workspace == 'career':
         _load_section(context_parts, WIKI_DIR / "professional", max_bytes=40_000)
-    elif workspace == 'coparent':
-        _load_section(context_parts, WIKI_DIR / "legal", max_bytes=20_000)
 
     # Soft cap — 1M context window means we can afford generous context.
     result = "\n\n".join(context_parts)
@@ -12758,34 +12450,13 @@ DRAFT_MODE_PROMPTS = {
         "You are drafting a tweet. MUST be under 280 characters. Punchy, sharp, quotable. "
         "No hashtags unless they're genuinely clever. Think journalist, not influencer."
     ),
-    'coparent_response': (
-        "You are drafting a response for a co-parenting communication platform. "
-        "CRITICAL RULES: Stay calm, factual, and brief. Answer only what needs answering. "
-        "Ignore all bait and emotional provocation. Never match the other party's emotional register. "
-        "Everything you write should be something a family court judge would find reasonable, measured, and cooperative. "
-        "Do not over-explain, do not defend, do not attack. Short sentences. Airtight logic."
-    ),
     'freeform': (
         "You are a versatile writing assistant. Follow the user's format instructions exactly. "
         "Write clearly and concisely unless told otherwise."
     ),
 }
 
-COPARENTING_DIR = HOME / ".friday" / "wiki" / "coparenting"
 CONTENT_DRAFTS_DIR = FRIDAY_DIR / "wiki" / "content"
-
-
-def _load_ofw_context():
-    """Load co-parenting wiki context for co-parent drafts."""
-    context_parts = []
-    if COPARENTING_DIR.exists():
-        for md_file in sorted(COPARENTING_DIR.glob('*.md'))[:5]:
-            try:
-                text = md_file.read_text(encoding='utf-8')[:2000]
-                context_parts.append(f"[{md_file.name}]: {text}")
-            except Exception:
-                continue
-    return '\n\n'.join(context_parts) if context_parts else ''
 
 
 def _build_draft_html(draft_text, mode, prompt_text=''):
@@ -12793,7 +12464,7 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
     mode_labels = {
         'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
         'slack_message': 'Slack Message', 'tweet': 'Tweet',
-        'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
+        'freeform': 'Freeform Draft',
     }
     mode_label = mode_labels.get(mode, mode)
     timestamp = datetime.now().strftime('%B %d, %Y · %H:%M')
@@ -12863,17 +12534,12 @@ def _build_draft_html(draft_text, mode, prompt_text=''):
 def _spawn_draft_task(mode, prompt_text, context=''):
     """Spawn a background draft-generation task. Returns (response_dict, http_status).
 
-    Shared by /api/draft and /api/coparent/draft so both go through the same
-    vault-context-aware pipeline.
+    Drives /api/draft through the vault-context-aware pipeline.
     """
     if not (prompt_text or '').strip():
         return {"status": "error", "message": "No prompt provided"}, 400
 
     system = DRAFT_MODE_PROMPTS.get(mode, DRAFT_MODE_PROMPTS['freeform'])
-    if mode == 'coparent_response':
-        ofw_ctx = _load_ofw_context()
-        if ofw_ctx:
-            system += f"\n\nCO-PARENTING CONTEXT (from wiki):\n{ofw_ctx}"
     system += "\n\nOutput ONLY the draft text, no commentary or labels."
 
     user_parts = []
@@ -12885,7 +12551,7 @@ def _spawn_draft_task(mode, prompt_text, context=''):
     mode_labels = {
         'linkedin_post': 'LinkedIn Post', 'email_reply': 'Email Reply',
         'slack_message': 'Slack Message', 'tweet': 'Tweet',
-        'coparent_response': 'Co-Parent Response', 'freeform': 'Freeform Draft',
+        'freeform': 'Freeform Draft',
     }
     task_name = f"Quick Draft — {mode_labels.get(mode, mode)}"
     task_id = str(uuid.uuid4())
@@ -13752,271 +13418,6 @@ def outreach_pipeline():
     })
 
 
-# ═══════════════════════════════════════════════════════════════
-#  CONTENT PIPELINE
-# ═══════════════════════════════════════════════════════════════
-
-CONTENT_DIR = FRIDAY_DIR / "content"
-CONTENT_DIR.mkdir(parents=True, exist_ok=True)
-CONTENT_PIPELINE_FILE = CONTENT_DIR / "pipeline.json"
-CONTENT_STAGES = ["idea", "drafting", "review", "scheduled", "published"]
-
-
-def _load_content_pipeline():
-    if not CONTENT_PIPELINE_FILE.exists():
-        return {"version": 1, "items": []}
-    try:
-        return json.loads(CONTENT_PIPELINE_FILE.read_text(encoding='utf-8'))
-    except Exception:
-        return {"version": 1, "items": []}
-
-
-def _save_content_pipeline(pipe):
-    pipe["updated"] = datetime.now().isoformat()
-    try:
-        CONTENT_PIPELINE_FILE.write_text(json.dumps(pipe, indent=2), encoding='utf-8')
-    except Exception as e:
-        print(f"  [FRIDAY] content pipeline save failed: {e}")
-
-
-@app.route('/api/content/pipeline')
-def content_pipeline():
-    """Return content pipeline grouped by stage for kanban view."""
-    pipe = _load_content_pipeline()
-    items = pipe.get('items', [])
-    by_stage = {s: [] for s in CONTENT_STAGES}
-    for it in items:
-        stage = it.get('stage') or 'idea'
-        if stage not in by_stage:
-            by_stage.setdefault(stage, [])
-        by_stage[stage].append(it)
-    return jsonify({
-        "status": "ok",
-        "stages": CONTENT_STAGES,
-        "by_stage": by_stage,
-        "total": len(items),
-    })
-
-
-@app.route('/api/content/idea', methods=['POST'])
-def content_idea():
-    """Add a new content idea to the pipeline."""
-    data = request.get_json(silent=True) or {}
-    title = (data.get('title') or '').strip()
-    if not title:
-        return jsonify({"status": "error", "message": "title required"}), 400
-
-    stage = (data.get('stage') or 'idea').strip()
-    if stage not in CONTENT_STAGES:
-        stage = 'idea'
-
-    pipe = _load_content_pipeline()
-    stamp = datetime.now().isoformat()
-    item = {
-        "id": str(uuid.uuid4())[:8],
-        "title": title,
-        "type": (data.get('type') or 'post').strip(),
-        "stage": stage,
-        "channel": (data.get('channel') or 'linkedin').strip(),
-        "notes": (data.get('notes') or '').strip(),
-        "tags": data.get('tags') or [],
-        "created": stamp,
-        "updated": stamp,
-    }
-    pipe.setdefault('items', []).append(item)
-    _save_content_pipeline(pipe)
-    return jsonify({"status": "ok", "item": item, "total": len(pipe['items'])})
-
-
-@app.route('/api/content/draft', methods=['POST'])
-def content_draft():
-    """Draft content from a pipeline item (or ad-hoc title). Optionally advances stage."""
-    data = request.get_json(silent=True) or {}
-    item_id = (data.get('id') or '').strip()
-    title = (data.get('title') or '').strip()
-    channel = (data.get('channel') or 'linkedin').strip()
-    notes = (data.get('notes') or '').strip()
-    advance = bool(data.get('advance_stage'))
-
-    pipe = _load_content_pipeline()
-    item = None
-    if item_id:
-        for it in pipe.get('items', []):
-            if it.get('id') == item_id:
-                item = it
-                break
-        if not item:
-            return jsonify({"status": "error", "message": "item not found"}), 404
-        title = title or item.get('title', '')
-        channel = item.get('channel') or channel
-        notes = notes or item.get('notes', '')
-
-    if not title:
-        return jsonify({"status": "error", "message": "title or id required"}), 400
-
-    prompt = (
-        f"Draft a {channel} {item.get('type') if item else 'post'} titled: {title}. "
-        f"Write in the user's voice. "
-        f"Tone: sharp, specific, credible. "
-        f"Structure: hook, 2-3 body beats, ask/CTA. "
-        f"Length: 180-260 words for LinkedIn, longer for article. "
-        f"Context / notes: {notes}"
-    )
-
-    draft_text = None
-    try:
-        client = get_genai_client()
-        if client:
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            )
-            draft_text = (getattr(resp, 'text', None) or '').strip()
-    except Exception as e:
-        print(f"  [FRIDAY] content draft Gemini error: {e}")
-
-    if not draft_text:
-        draft_text = (
-            f"[{channel.upper()} DRAFT — {title}]\n\n"
-            f"Hook: (one-line opener)\n\n"
-            f"Body:\n- Point 1\n- Point 2\n- Point 3\n\n"
-            f"Notes: {notes or '(no notes)'}\n\n"
-            f"CTA: (single ask)"
-        )
-
-    if item is not None:
-        item['draft'] = draft_text
-        item['updated'] = datetime.now().isoformat()
-        if advance and item.get('stage') in CONTENT_STAGES:
-            idx = CONTENT_STAGES.index(item['stage'])
-            if idx < len(CONTENT_STAGES) - 1:
-                item['stage'] = CONTENT_STAGES[idx + 1]
-        _save_content_pipeline(pipe)
-
-    return jsonify({
-        "status": "ok",
-        "id": item_id or None,
-        "title": title,
-        "channel": channel,
-        "draft": draft_text,
-        "stage": (item or {}).get('stage'),
-    })
-
-
-# ═══════════════════════════════════════════════════════════════
-#  FUTURESPEAK BUSINESS WORKSPACE
-# ═══════════════════════════════════════════════════════════════
-
-FUTURESPEAK_DIR = FRIDAY_DIR / "futurespeak"
-FUTURESPEAK_DIR.mkdir(parents=True, exist_ok=True)
-FS_PIPELINE_FILE = FUTURESPEAK_DIR / "pipeline.json"
-FS_REVENUE_FILE = FUTURESPEAK_DIR / "revenue.json"
-FS_LEGAL_FILE = FUTURESPEAK_DIR / "legal.json"
-FS_ASSETS_DIR = FUTURESPEAK_DIR / "demo-assets"
-FS_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _fs_load(path, fallback):
-    if not path.exists():
-        return fallback
-    try:
-        return json.loads(path.read_text(encoding='utf-8'))
-    except Exception:
-        return fallback
-
-
-@app.route('/api/futurespeak/pipeline')
-def fs_pipeline():
-    data = _fs_load(FS_PIPELINE_FILE, {"opportunities": []})
-    opps = data.get('opportunities', []) or []
-    total_value = sum((o.get('value_usd') or 0) for o in opps)
-    weighted = sum((o.get('value_usd') or 0) * (o.get('probability') or 0) for o in opps)
-    by_status = {}
-    for o in opps:
-        s = o.get('status', 'unknown')
-        by_status[s] = by_status.get(s, 0) + 1
-    return jsonify({
-        "status": "ok",
-        "opportunities": opps,
-        "total": len(opps),
-        "total_value": total_value,
-        "weighted_value": weighted,
-        "by_status": by_status,
-    })
-
-
-@app.route('/api/futurespeak/revenue')
-def fs_revenue():
-    data = _fs_load(FS_REVENUE_FILE, {"months": [], "quarters": []})
-    months = data.get('months', []) or []
-    quarters = data.get('quarters', []) or []
-    burn = data.get('monthly_burn') or 0
-    cash = data.get('cash_on_hand') or 0
-
-    last_actual = 0
-    for m in months:
-        if isinstance(m.get('actual'), (int, float)):
-            last_actual = m['actual']
-    net_monthly = last_actual - burn
-    runway_months = None
-    if burn > 0 and net_monthly < 0:
-        runway_months = round(cash / burn, 1)
-
-    ytd_actual = sum(m.get('actual') or 0 for m in months)
-    ytd_projected = sum(m.get('projected') or 0 for m in months)
-
-    return jsonify({
-        "status": "ok",
-        "currency": data.get('currency', 'USD'),
-        "months": months,
-        "quarters": quarters,
-        "monthly_burn": burn,
-        "cash_on_hand": cash,
-        "last_actual_month": last_actual,
-        "net_monthly": net_monthly,
-        "runway_months": runway_months,
-        "ytd_actual": ytd_actual,
-        "ytd_projected": ytd_projected,
-    })
-
-
-@app.route('/api/futurespeak/legal')
-def fs_legal():
-    data = _fs_load(FS_LEGAL_FILE, {"items": []})
-    items = data.get('items', []) or []
-    by_status, by_type = {}, {}
-    for it in items:
-        s = it.get('status', 'unknown')
-        t = it.get('type', 'other')
-        by_status[s] = by_status.get(s, 0) + 1
-        by_type[t] = by_type.get(t, 0) + 1
-    return jsonify({
-        "status": "ok",
-        "items": items,
-        "total": len(items),
-        "by_status": by_status,
-        "by_type": by_type,
-    })
-
-
-@app.route('/api/futurespeak/assets')
-def fs_assets():
-    assets = []
-    if FS_ASSETS_DIR.exists():
-        for p in sorted(FS_ASSETS_DIR.iterdir()):
-            try:
-                stat = p.stat()
-                assets.append({
-                    "name": p.name,
-                    "size": stat.st_size,
-                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    "ext": p.suffix.lower().lstrip('.'),
-                    "kind": "dir" if p.is_dir() else "file",
-                })
-            except Exception:
-                continue
-    return jsonify({"status": "ok", "assets": assets, "total": len(assets), "path": str(FS_ASSETS_DIR)})
-
 
 # ═══════════════════════════════════════════════════════════════
 #  FUTURESPEAK STUDIO — portfolio project / deployment cockpit
@@ -14032,27 +13433,9 @@ FS_PROJECTS_ROOT = HOME / "Projects"          # where local clones live
 # Seeded the first time the file is absent. repo == local clone dir name under
 # ~/Projects; url == live site; replit_url derived from the org handle. Sites
 # that aren't cloned locally (Replit-only) still show as live cards.
+# New users start with just this app in the portfolio. Use "Scan ~/Projects" or
+# the add button in the Sites workspace to populate your own sites.
 FS_DEFAULT_PROJECTS = [
-    {"name": "FutureSpeak.AI", "url": "https://futurespeak.ai",
-     "replit_url": "https://replit.com/@FutureSpeakAI/FutureSpeakAI-Website",
-     "repo": "FutureSpeakAI-Website",
-     "description": "Main company site — AI product studio & strategic consultancy",
-     "category": "company"},
-    {"name": "InnexEnergy.com", "url": "https://innexenergy.com",
-     "replit_url": "https://replit.com/@FutureSpeakAI/innex-energy",
-     "repo": "innex-energy",
-     "description": "Jay family energy business site",
-     "category": "client"},
-    {"name": "OurPainfulTruth.org", "url": "https://ourpainfultruth.org",
-     "replit_url": "https://replit.com/@FutureSpeakAI/our-painful-truth",
-     "repo": "our-painful-truth",
-     "description": "Janet's chronic-pain advocacy site",
-     "category": "personal"},
-    {"name": "Brushfire", "url": "",
-     "replit_url": "https://replit.com/@FutureSpeakAI/Brushfire-INNEX-Dashboard",
-     "repo": "Brushfire-INNEX-Dashboard",
-     "description": "Petroleum analysis tool for INNEX",
-     "category": "client"},
     {"name": "Agent Friday", "url": "",
      "replit_url": "",
      "repo": "friday-desktop",
@@ -14599,7 +13982,13 @@ if sock is not None:
         """
         import time as _time
         _vlog_path = FRIDAY_DIR / 'voice_debug.log'
+        # Per-chunk voice logging is OFF by default — it is noisy and only useful
+        # when diagnosing the live-audio bridge. Enable by setting the env var
+        # FRIDAY_VOICE_DEBUG=1 (mirrors window.FRIDAY_VOICE_DEBUG on the client).
+        _voice_debug = bool(os.environ.get('FRIDAY_VOICE_DEBUG'))
         def _vlog(msg):
+            if not _voice_debug:
+                return
             line = f"{_time.strftime('%H:%M:%S')} {msg}\n"
             try:
                 with open(_vlog_path, 'a', encoding='utf-8') as _f:
@@ -15205,6 +14594,18 @@ def cc_permission():
     data = request.get_json(force=True, silent=True) or {}
     action = data.get('action', '')
     if action == 'grant':
+        # Experimental opt-in gate: refuse unless the feature is enabled in
+        # Settings → Experimental (defaults OFF for new users).
+        try:
+            _cc_enabled = bool(_load_settings().get('computer_control_enabled', False))
+        except Exception:
+            _cc_enabled = False
+        if not _cc_enabled:
+            return jsonify({
+                "granted": False,
+                "error": "Computer Control is disabled. Enable it under "
+                         "Settings → Account & Security → Computer Control first.",
+            }), 403
         _CC_KILL.clear()
         _CC_PERMISSION.set()
         _cc_persist(True)
@@ -15318,71 +14719,6 @@ def _trigger_skill_promotions():
         _notif_engine.set_trigger_state("skill_best_mtimes", state)
 
 
-def _trigger_ofw_messages():
-    """Watch co-parent monitor output for new messages."""
-    if not _notif_engine:
-        return
-    ofw_state_dir = FRIDAY_DIR / "ofw"
-    candidates = [
-        ofw_state_dir / "inbox.json",
-        ofw_state_dir / "messages.json",
-        ofw_state_dir / "new_messages.json",
-    ]
-    found = next((p for p in candidates if p.exists()), None)
-    if not found:
-        return
-    try:
-        mtime = found.stat().st_mtime
-    except OSError:
-        return
-    prior = _notif_engine.get_trigger_state("ofw_inbox_mtime", 0.0) or 0.0
-    if mtime <= prior + 1.0:
-        return
-    try:
-        data = json.loads(found.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    msgs = data if isinstance(data, list) else data.get("messages", [])
-    if not isinstance(msgs, list):
-        return
-    seen_ids = set(_notif_engine.get_trigger_state("ofw_seen_ids", []) or [])
-    new_msgs = []
-    for m in msgs:
-        if not isinstance(m, dict):
-            continue
-        mid = str(m.get("id") or m.get("message_id") or m.get("hash") or "")
-        if mid and mid not in seen_ids:
-            new_msgs.append(m)
-            seen_ids.add(mid)
-    if new_msgs:
-        for m in new_msgs[:5]:
-            sender = m.get("from") or m.get("sender") or "co-parent"
-            subj = m.get("subject") or "(no subject)"
-            preview = (m.get("body") or m.get("preview") or "")[:280]
-            _notif_engine.push(
-                title=f"📨 Co-parent message — {sender}",
-                body=f"**{subj}**\n\n{preview}",
-                priority="critical",
-                source="ofw_monitor",
-                kind="ofw_message",
-                proactive_chat=True,
-                chat_message=(
-                    f"New co-parent message from **{sender}**: {subj}. "
-                    f"Want me to draft a response?"
-                ),
-                meta={"message_id": m.get("id"), "sender": sender, "subject": subj},
-                actions=[
-                    {"label": "Draft reply", "kind": "ofw_draft",
-                     "payload": {"message_id": m.get("id")}},
-                    {"label": "Open Co-Parent", "kind": "open_window",
-                     "payload": {"window": "coparent"}},
-                ],
-                target={"workspace": "coparent",
-                        "message_id": m.get("id")},
-                dedupe_key=f"ofw:{m.get('id') or subj}",
-            )
-        _notif_engine.set_trigger_state("ofw_seen_ids", list(seen_ids)[-200:])
-    _notif_engine.set_trigger_state("ofw_inbox_mtime", mtime)
 
 
 KEY_CONTACTS = {
@@ -15596,7 +14932,10 @@ def _register_default_daily_jobs():
     register_daily_job("friday-weekly-editorial", WEEKLY_EDITORIAL_HOUR, 0,
                        _run_weekly_editorial_job)
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central.
-    register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
+    # DISABLED for general release — runs API calls for marginal optimization
+    # while the skill library is small. The infrastructure (_skillopt_nightly +
+    # skillopt_engine) stays intact; re-enable once there are 50+ skills.
+    # register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
 
 
 _register_default_daily_jobs()
@@ -15621,7 +14960,6 @@ def _notification_trigger_loop():
         return
     triggers = [
         ("skill_promotions", _trigger_skill_promotions),
-        ("ofw", _trigger_ofw_messages),
         ("gmail", _trigger_gmail_signals),
         ("message_cache", _trigger_message_cache),
     ]

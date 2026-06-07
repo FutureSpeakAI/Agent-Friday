@@ -4,7 +4,7 @@
 
 Agent Friday is a privacy-first, self-improving AI assistant that runs as a local Flask application backed by Anthropic Claude (cloud) and optionally Ollama (local). It features a holographic Three.js interface, a tiered data vault that keeps sensitive information off the cloud, and a skill evolution engine inspired by Microsoft SkillOpt and Karpathy's auto-research loop.
 
-> Think Jarvis meets Hunter S. Thompson's editor.
+> Think Jarvis with a sharp newsroom editor's instincts.
 
 ---
 

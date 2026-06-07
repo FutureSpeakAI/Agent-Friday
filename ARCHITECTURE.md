@@ -1,7 +1,7 @@
 # Architecture — Agent Friday / Asimov's Mind
 
 > Technical reference for the Friday Desktop system.  
-> Last updated: 2026-06-06 · v4.4
+> Last updated: 2026-06-06 · v4.5
 
 ---
 
