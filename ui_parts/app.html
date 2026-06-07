@@ -90,19 +90,44 @@ function fridayFallbackMd(md){
   if(inCode)html+='<pre><code>'+fridayEscapeHtml(codeBuf.join('\n'))+'</code></pre>';
   return html;
 }
+// Source Production System — turn inline citation tokens into clickable chips.
+// Friday emits [wiki:page], [news:outlet/date/title], [memory:date/"quote"],
+// [conversation:date/"quote"], and [web:https://url#:~:text=...]. We rewrite
+// these to styled HTML *before* the markdown parser runs, so (a) gfm autolink
+// won't mangle the raw URL inside a [web:...] token, and (b) the chips survive
+// as inline HTML. Web citations become real links that open in a new tab (the
+// #:~:text= fragment highlights the cited passage on the page); the rest render
+// as labelled chips with the full source string in the tooltip.
+function fridayCitationize(src){
+  if(!src||src.indexOf('[')<0)return src;
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const base='display:inline-block;font-size:0.82em;line-height:1.45;padding:0 5px;margin:0 1px;border-radius:4px;font-family:JetBrains Mono,monospace;vertical-align:baseline;white-space:nowrap;';
+  const chip=(bg,bd,fg,label,title)=>'<span class="friday-cite" title="'+esc(title)+'" style="'+base+'background:'+bg+';border:1px solid '+bd+';color:'+fg+';cursor:help;">'+esc(label)+'</span>';
+  let out=src;
+  out=out.replace(/\[web:(https?:\/\/[^\]\s]+)\]/g,(_,url)=>{
+    let host='link';try{host=url.replace(/^https?:\/\//,'').split('/')[0]}catch(e){}
+    return '<a href="'+esc(url)+'" target="_blank" rel="noopener" class="friday-cite" title="'+esc(url)+'" style="'+base+'background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.4);color:#00d4ff;text-decoration:none;">🔗 '+esc(host)+'</a>';
+  });
+  out=out.replace(/\[wiki:([^\]]+)\]/g,(_,p)=>chip('rgba(124,58,237,0.14)','rgba(124,58,237,0.45)','#b794f6','📄 '+p.trim(),'Wiki · '+p.trim()));
+  out=out.replace(/\[news:([^\]]+)\]/g,(_,p)=>{const outlet=p.split('/')[0].trim();return chip('rgba(245,158,11,0.14)','rgba(245,158,11,0.45)','#fbbf24','📰 '+outlet,'News · '+p.trim())});
+  out=out.replace(/\[(?:memory|conversation):([^\]]+)\]/g,(_,p)=>{const when=p.split('/')[0].trim();return chip('rgba(52,211,153,0.14)','rgba(52,211,153,0.45)','#34d399','💬 '+when,'From a past conversation · '+p.trim())});
+  return out;
+}
+if(typeof window!=='undefined'){window.fridayCitationize=fridayCitationize;}
 function renderFridayMarkdown(mdText,opts){
   const compact=!!(opts&&opts.compact);
   const src=mdText==null?'':String(mdText);
   if(!src.trim())return'<div class="friday-doc'+(compact?' compact':'')+'"></div>';
   if(/^\s*<(?:!DOCTYPE|html|head|body)\b/i.test(src))return src;
+  const psrc=fridayCitationize(src);
   let body;
   try{
     if(typeof marked!=='undefined'&&marked&&typeof marked.parse==='function'){
-      body=marked.parse(src,{breaks:true,gfm:true});
+      body=marked.parse(psrc,{breaks:true,gfm:true});
     }else{
-      body=fridayFallbackMd(src);
+      body=fridayFallbackMd(psrc);
     }
-  }catch(e){body=fridayFallbackMd(src);}
+  }catch(e){body=fridayFallbackMd(psrc);}
   body=body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi,'<a target="_blank" rel="noopener" $1>');
   return'<div class="friday-doc'+(compact?' compact':'')+'">'+body+'</div>';
 }
@@ -4248,7 +4273,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 
   const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
     try{
-      const body={message:m,voice_mode:voiceOn};
+      const body={message:m,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
       if(focusWin)body.workspace=focusWin;
       const frame=cameraOn?cameraFrameRef.current?.primary:null;
       if(frame)body.image=frame;
@@ -4259,6 +4284,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     setChatLoad(false)
   };
   const sendPrompt=()=>{if(!promptText.trim())return;setChatOpen(true);sendChat(promptText);setPromptText('')};
+  // Source Production System — "📎 Cite Sources" toggle persists through settings;
+  // "📋 Show Sources" fetches the dossier for today's conversation and drops it
+  // into the chat as a branded, copyable Friday message.
+  const toggleCiteSources=()=>saveAgentSettings({cite_sources:!agentSettings.cite_sources});
+  const showSources=async()=>{
+    setChatLoad(true);
+    try{
+      const r=await fetch('/api/sources/dossier/current');
+      const d=await r.json();
+      const md=d.markdown||('[Dossier error] '+(d.error||'no sources'));
+      setChatMsgs(p=>[...p,{role:'friday',text:md,time:new Date().toLocaleTimeString()}]);
+    }catch(e){setChatMsgs(p=>[...p,{role:'friday',text:'[Could not generate source dossier]',time:new Date().toLocaleTimeString()}])}
+    setChatLoad(false);
+  };
 
   const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:<FuturespeakWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,contacts:<ContactsWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
@@ -4554,6 +4593,21 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           <span>LIVE · {voiceStatus||'connecting…'}</span>
         </div>}
         {!voiceOn&&voiceStatus&&<div style={{fontSize:10,color:'#ff6699',marginBottom:4,fontFamily:'JetBrains Mono'}}>{voiceStatus}</div>}
+        {/* Source Production controls — cite-every-claim toggle + dossier generator */}
+        <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}>
+          <button onClick={toggleCiteSources} title={agentSettings.cite_sources?'Cited mode ON — Friday cites every factual claim. Click to turn off.':'Turn on Source Production Mode — Friday cites every factual claim inline.'}
+            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
+              background:agentSettings.cite_sources?'rgba(52,211,153,0.14)':'rgba(255,255,255,0.03)',
+              border:'1px solid '+(agentSettings.cite_sources?'rgba(52,211,153,0.5)':'rgba(255,255,255,0.1)'),
+              color:agentSettings.cite_sources?'#34d399':'#888',transition:'all .15s'}}>
+            📎 Cite Sources{agentSettings.cite_sources?' · ON':''}
+          </button>
+          <button onClick={showSources} title="Generate a source dossier for this conversation — every claim, its source, confidence, and link"
+            style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',letterSpacing:'0.03em',padding:'3px 8px',borderRadius:5,
+              background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',transition:'all .15s'}}>
+            📋 Show Sources
+          </button>
+        </div>
         <div style={{display:'flex',gap:6,minWidth:0}}>
           <button className="btn" onClick={toggleVoice} title={voiceOn?'Stop voice mode':'Start voice mode (Gemini Live)'}
             style={{background:voiceOn?'rgba(255,0,128,0.18)':'rgba(0,212,255,0.08)',border:'1px solid '+(voiceOn?'rgba(255,0,128,0.55)':'rgba(0,212,255,0.3)'),color:voiceOn?'#ff6699':'#00d4ff',minWidth:42,flexShrink:0}}>

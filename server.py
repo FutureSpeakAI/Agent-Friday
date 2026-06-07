@@ -2905,6 +2905,166 @@ def _get_context_compressor(cfg):
         return _CONTEXT_COMPRESSOR
 
 
+# ── Persistent Conversation Memory (ChromaDB, cross-session RAG) ──────
+# Long-horizon memory: every chat turn is embedded (all-MiniLM-L6-v2, the same
+# model the context pruner uses) and stored on disk at
+# ~/.friday/memory/conversations/. Later turns retrieve semantically relevant
+# past exchanges and can cite them inline ([conversation:DATE:"quote"]).
+# Built lazily on first use; degrades to a safe no-op if chromadb is absent.
+_CONVERSATION_MEMORY = None
+_CONVERSATION_MEMORY_LOCK = threading.Lock()
+
+
+def _get_conversation_memory():
+    """Return the process-wide ConversationMemory, building it lazily."""
+    global _CONVERSATION_MEMORY
+    if _CONVERSATION_MEMORY is None:
+        with _CONVERSATION_MEMORY_LOCK:
+            if _CONVERSATION_MEMORY is None:
+                from conversation_memory import get_conversation_memory
+                _CONVERSATION_MEMORY = get_conversation_memory()
+    return _CONVERSATION_MEMORY
+
+
+def _current_session_id():
+    """A conversation id for grouping turns. Friday uses the calendar date so it
+    lines up with the [conversation:YYYY-MM-DD:"quote"] citation format and the
+    /api/sources/dossier/<session_id> endpoint."""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None):
+    """Best-effort: persist a user/assistant exchange into ChromaDB memory.
+
+    Called from a daemon thread off the chat hot path. Never raises.
+    """
+    try:
+        mem = _get_conversation_memory()
+        mem.index_exchange(
+            message, reply, session_id=session_id,
+            user_msg_id=user_msg_id, assistant_msg_id=friday_msg_id,
+        )
+    except Exception as _me:
+        print(f"  [MEMORY] turn indexing skipped: {_me}")
+
+
+def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
+                                max_chars=1800):
+    """Retrieve relevant PAST conversations and format them as a prompt block.
+
+    Returns '' when memory is unavailable, empty, or nothing clears the
+    relevance floor. The block is provider-independent text — the caller appends
+    it to the system prompt (and it is PII-scrubbed for cloud like the rest).
+    """
+    try:
+        if not _load_settings().get('memory_recall_enabled', True):
+            return ""
+        mem = _get_conversation_memory()
+        if not mem.available():
+            return ""
+        hits = mem.search(message, n=n)
+        kept = []
+        for h in hits:
+            rel = h.get("relevance")
+            if rel is not None and rel < min_relevance:
+                continue
+            text = (h.get("text") or "").strip()
+            if not text:
+                continue
+            kept.append(h)
+        if not kept:
+            return ""
+        lines = [
+            "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==",
+            "These are real excerpts from earlier conversations with this user. "
+            "Use them for continuity. When you rely on one to make a factual "
+            "claim, you may cite it as [conversation:DATE:\"short quote\"].",
+        ]
+        used = 0
+        for h in kept:
+            date = h.get("date") or (h.get("timestamp") or "")[:10]
+            role = "You" if h.get("role") == "friday" else "User"
+            snippet = " ".join((h.get("text") or "").split())
+            if len(snippet) > 320:
+                snippet = snippet[:317] + "..."
+            entry = f"- [{date}] {role}: {snippet}"
+            if used + len(entry) > max_chars:
+                break
+            lines.append(entry)
+            used += len(entry)
+        return "\n".join(lines) + "\n"
+    except Exception as _e:
+        return ""
+
+
+# Instructions injected when the chat request sets cite_sources=true. Friday is
+# told to attribute every factual claim using the inline citation grammar the UI
+# knows how to render (renderFridayMarkdown turns these into clickable chips).
+CITATION_INSTRUCTIONS = (
+    "\n== SOURCE PRODUCTION MODE (cite every factual claim) ==\n"
+    "You are in cited mode. EVERY factual claim — anything a skeptical reader "
+    "could ask 'how do you know that?' about — must end with an inline citation "
+    "using EXACTLY one of these bracket forms:\n"
+    "  [wiki:page-name]                     — a fact from the user's wiki/briefing\n"
+    "  [news:source/YYYY-MM-DD/headline]    — a news article (source = the outlet domain, e.g. reuters.com)\n"
+    "  [memory:YYYY-MM-DD/\"short quote\"]     — something established in a past conversation\n"
+    "  [conversation:YYYY-MM-DD/\"short quote\"] — same as memory; either form is fine\n"
+    "  [web:https://full-url]               — a public web page\n"
+    "Rules:\n"
+    "  • Put the citation immediately after the sentence it supports.\n"
+    "  • Cite ONLY sources actually present in your context or tool results — "
+    "never invent a citation, URL, date, or outlet. If you cannot source a "
+    "claim, say so plainly rather than fabricating a citation.\n"
+    "  • For [web:...] prefer a URL that includes a text fragment "
+    "(url#:~:text=exact%20passage) so the cited passage is highlighted when "
+    "opened — build it from the exact words you are citing.\n"
+    "  • Opinions, reasoning, and conversational glue do not need citations — "
+    "only verifiable factual claims.\n"
+)
+
+
+def _factcheck_news_citations(reply):
+    """Annotate low-trust [news:source/...] citations with a reliability warning.
+
+    For each distinct news outlet cited, look up its SourceTrustGraph composite
+    score; if < 0.5, append the standard warning once after each citation of
+    that outlet. Best-effort — returns the reply unchanged on any failure.
+    """
+    if not reply or "[news:" not in reply:
+        return reply
+    try:
+        from source_trust_graph import get_source_trust_graph
+        stg = get_source_trust_graph()
+    except Exception:
+        return reply
+    # Capture the outlet token (between 'news:' and the first '/' or ']').
+    pattern = re.compile(r"\[news:([^/\]]+)[^\]]*\]")
+    scores = {}
+
+    def _annotate(m):
+        cite = m.group(0)
+        outlet = (m.group(1) or "").strip()
+        if not outlet:
+            return cite
+        key = outlet.lower()
+        if key not in scores:
+            try:
+                scores[key] = float(stg.score_for(outlet))
+            except Exception:
+                scores[key] = None
+        score = scores[key]
+        if score is not None and score < 0.5:
+            # Don't double-annotate if a warning already trails this citation.
+            warn = f" ⚠️ Low trust score ({score:.1f}) — verify independently"
+            return cite + warn
+        return cite
+
+    try:
+        return pattern.sub(_annotate, reply)
+    except Exception:
+        return reply
+
+
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
@@ -2920,6 +3080,8 @@ DEFAULT_SETTINGS = {
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
+    "cite_sources": False,                # Source Production Mode — inline citations on every factual claim
+    "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     "communication_style": "professional",  # professional | casual | technical
     "camera_interval_sec": 3,              # 1 | 3 | 5
@@ -8282,7 +8444,12 @@ def friday_health():
 
 @app.route('/api/memory/stats')
 def get_memory_stats():
-    """Return enriched memory tier counts."""
+    """Return enriched memory tier counts.
+
+    Includes the persistent ChromaDB conversation index (size, session count,
+    date range) under the `conversations` key — the Source Production System's
+    long-horizon memory.
+    """
     mem_dir = FRIDAY_DIR / "memory"
     stats = {"working": 0, "episodic": 0, "semantic": 0, "total": 0,
              "episodes": 0, "last_consolidation": None}
@@ -8296,6 +8463,11 @@ def get_memory_stats():
                 stats["semantic"] += 1
             else:
                 stats["working"] += 1
+    # Persistent conversation memory (ChromaDB) — index size + date range.
+    try:
+        stats["conversations"] = _get_conversation_memory().stats()
+    except Exception as _cm_err:
+        stats["conversations"] = {"available": False, "error": str(_cm_err)}
     return jsonify({"status": "ok", **stats})
 
 
@@ -11367,6 +11539,13 @@ def chat():
         workspace_context = data.get('workspaceContext', None)
         include_vision = data.get('includeVision', False)
         voice_mode = bool(data.get('voice_mode', False))
+        # Source Production Mode — when true, Friday cites every factual claim
+        # inline. Falls back to the persisted settings toggle so the preference
+        # survives across turns even if the client omits the flag.
+        settings_early = _load_settings()
+        cite_sources = bool(data.get('cite_sources',
+                                     settings_early.get('cite_sources', False)))
+        session_id = _current_session_id()
         vision_description = None
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
@@ -11549,6 +11728,15 @@ def chat():
         # Local: raw vault content flows and the PII scrubber is SKIPPED entirely
         # (the data never leaves the device). Returns the per-request lookup used
         # to rehydrate PII tags out of the cloud model's reply.
+        # ── Persistent memory recall + citation instructions ──
+        # Provider-independent text appended to the system prompt. Memory recall
+        # gives Friday cross-session continuity (RAG over past conversations);
+        # the citation block (only in cite_sources mode) tells Friday to
+        # attribute every factual claim. Both are PII-scrubbed for cloud below.
+        _extra_system = _build_memory_context_block(message, session_id)
+        if cite_sources:
+            _extra_system += CITATION_INSTRUCTIONS
+
         def _prep_for(provider):
             vc = _get_vault_control() if _vault_local_only() else None
             sp, src = _build_context_prompt(
@@ -11557,6 +11745,8 @@ def chat():
                 vault_fallback=_vault_cloud_fallback(),
             )
             sp = _settings_system_prefix(settings, personality) + (sp or '')
+            if _extra_system:
+                sp = sp + "\n" + _extra_system
             if voice_mode:
                 sp = (
                     "=== VOICE MODE ACTIVE ===\n"
@@ -11658,6 +11848,12 @@ def chat():
                 if isinstance(entry.get('result'), str):
                     entry['result'] = _rehydrate_pii(entry['result'], pii_lookup)
 
+        # ── Fact-check: flag low-trust news citations. ──
+        # When Friday cites a news outlet, consult its Source Trust Graph score
+        # and append a verify-independently warning for anything below 0.5.
+        # Cheap and self-gating (no-op unless the reply contains a [news:...]).
+        reply = _factcheck_news_citations(reply)
+
         # Store in history with IDs, timestamps, and context metadata
         user_msg = {
             'id': str(uuid.uuid4()),
@@ -11713,6 +11909,19 @@ def chat():
         except Exception:
             pass
 
+        # Persistent conversation memory — index both turns into ChromaDB in the
+        # background so future sessions can recall and cite this exchange. Skip
+        # when the user is off-record. Best-effort; never blocks the response.
+        if not settings.get('off_record'):
+            try:
+                threading.Thread(
+                    target=_index_chat_turn,
+                    args=(message, reply, session_id, user_msg['id'], friday_msg['id']),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
+
         # Prune: keep pinned forever, others for 30 days, cap at 500 messages
         cutoff = (datetime.now() - timedelta(days=30)).isoformat()
         CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if m.get('pinned') or m.get('timestamp', '') >= cutoff][-500:]
@@ -11724,6 +11933,8 @@ def chat():
             "friday_msg": friday_msg,
             "sources": sources,
             "tool_trace": tool_trace,
+            "cite_sources": cite_sources,
+            "session_id": session_id,
         })
     except Exception as e:
         traceback.print_exc()
@@ -11881,6 +12092,135 @@ def chat_clear():
         CHAT_HISTORY.clear()
     _save_chat_history(CHAT_HISTORY)
     return jsonify({"status": "ok", "removed": before - len(CHAT_HISTORY), "remaining": len(CHAT_HISTORY)})
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PERSISTENT MEMORY & SOURCE PRODUCTION ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/api/memory/search', methods=['POST'])
+def memory_search():
+    """Semantic search over persistent conversation memory (ChromaDB).
+
+    Body: {query, n?, session_id?, roles?}
+    Returns: {status, query, results: [{text, role, timestamp, date,
+              session_id, topic_keywords, relevance}], available}
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        query = (data.get('query') or '').strip()
+        if not query:
+            return jsonify({"status": "error", "error": "query is required",
+                            "results": []}), 400
+        n = int(data.get('n', 5) or 5)
+        session_id = data.get('session_id') or None
+        roles = data.get('roles') or None
+        mem = _get_conversation_memory()
+        results = mem.search(query, n=n, session_id=session_id, roles=roles)
+        return jsonify({
+            "status": "ok",
+            "query": query,
+            "results": results,
+            "count": len(results),
+            "available": mem.available(),
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e), "results": []}), 500
+
+
+@app.route('/api/sources/dossier/<session_id>', methods=['GET'])
+def sources_dossier(session_id):
+    """Generate a source sheet for one conversation.
+
+    Walks every Friday turn in the session, then asks Claude to extract each
+    factual claim, its source, a confidence level, and a link — rendered as
+    branded, exportable markdown. ``session_id`` may be a date (YYYY-MM-DD) or
+    the literal 'current' for today's conversation.
+    """
+    try:
+        if session_id in ('current', 'today', ''):
+            session_id = _current_session_id()
+
+        # Prefer the persistent memory store (it spans restarts); fall back to
+        # the in-process CHAT_HISTORY when memory is unavailable.
+        turns = []
+        try:
+            mem = _get_conversation_memory()
+            if mem.available():
+                turns = mem.get_session(session_id)
+        except Exception:
+            turns = []
+        if not turns:
+            # Fallback: today's CHAT_HISTORY (no session grouping there).
+            for m in CHAT_HISTORY:
+                if (m.get('timestamp', '')[:10] == session_id):
+                    turns.append({
+                        "role": 'friday' if m.get('role') == 'friday' else 'user',
+                        "text": m.get('text', ''),
+                        "timestamp": m.get('timestamp'),
+                        "date": m.get('timestamp', '')[:10],
+                    })
+
+        friday_turns = [t for t in turns if t.get('role') == 'friday' and t.get('text')]
+        if not friday_turns:
+            return jsonify({
+                "status": "empty",
+                "session_id": session_id,
+                "markdown": (
+                    f"# 📋 Source Dossier — {session_id}\n\n"
+                    "_No Friday responses found for this conversation yet._\n"
+                ),
+            })
+
+        transcript = "\n\n".join(
+            f"[{t.get('timestamp') or session_id}] {t.get('text')}"
+            for t in friday_turns
+        )[:24000]
+
+        dossier_prompt = (
+            "Produce a SOURCE DOSSIER for the conversation below. The dossier is "
+            "a fact-check sheet: for every verifiable factual claim Friday made, "
+            "extract one row.\n\n"
+            "Output STRICTLY as branded markdown in this shape:\n\n"
+            f"# 📋 Source Dossier — {session_id}\n\n"
+            "> Generated by Agent Friday · Source Production System\n\n"
+            "| # | Claim | Source | Confidence | Link |\n"
+            "|---|-------|--------|------------|------|\n"
+            "| 1 | <the claim, one sentence> | <wiki/news/memory/web + name> | "
+            "High / Medium / Low | <url or — if none> |\n\n"
+            "Then a short '## Notes' section flagging any claim that lacked a "
+            "clear source or carried a low-trust warning.\n\n"
+            "Rules: include ONLY claims actually present below; do not invent "
+            "sources or links; if a claim cited an inline tag like "
+            "[wiki:...]/[news:...]/[web:...], use that as the source. If Friday "
+            "made no verifiable factual claims, say so plainly.\n\n"
+            "=== CONVERSATION (Friday's turns) ===\n"
+            f"{transcript}\n"
+            "=== END ===\n"
+        )
+
+        # Vault-aware system prompt per the all-_call_claude-uses-vault rule.
+        system_prompt = _get_friday_system_prompt(
+            keywords='source dossier', workspace='chat')
+        markdown = _call_claude(
+            [{"role": "user", "content": dossier_prompt}],
+            system=system_prompt,
+            model=_load_settings().get('subagent_model') or 'claude-sonnet-4-6',
+        )
+        # Fact-check pass so low-trust news sources in the sheet get flagged too.
+        markdown = _factcheck_news_citations(markdown)
+
+        return jsonify({
+            "status": "ok",
+            "session_id": session_id,
+            "claim_turns": len(friday_turns),
+            "markdown": markdown,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e),
+                        "session_id": session_id}), 500
 
 
 # ═══════════════════════════════════════════════════════════════
