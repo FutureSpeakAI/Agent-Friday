@@ -1692,12 +1692,14 @@ def _cc_persist(granted: bool):
         print(f"  [FRIDAY] CC permission persist failed: {_e}")
 
 
-# Restore a previously-granted permission on startup so the user doesn't have to
-# re-enable it every launch. Requires pyautogui to actually be importable.
+# Public-release hardening: Computer Control starts DISABLED on every launch.
+# We do NOT auto-restore a previous runtime grant — this experimental, high-trust
+# capability is opt-in per session — and we clear any stale persisted grant so the
+# default is genuinely off (matches the Settings promise that permission is revoked
+# on every server restart).
 try:
-    if _HAS_PYAUTOGUI and _CC_PERM_FILE.exists():
-        _CC_PERMISSION.set()
-        print("  [FRIDAY] Computer Control permission restored from previous session")
+    if _CC_PERM_FILE.exists():
+        _CC_PERM_FILE.unlink()
 except Exception:
     pass
 

@@ -3640,6 +3640,9 @@ document.addEventListener('keydown', function(e) {
 
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback}=React;
+// Voice debug logging is OFF by default. Enable from the console with
+// `window.FRIDAY_VOICE_DEBUG = true` to surface VOICE_DEBUG diagnostics.
+window.FRIDAY_VOICE_DEBUG = window.FRIDAY_VOICE_DEBUG || false;
 const DOCK_GROUPS=[
   {name:'Life',items:[
     {id:'home',ico:'🏠',label:'Home'},
