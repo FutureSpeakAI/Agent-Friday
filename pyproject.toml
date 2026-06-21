@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-friday"
+version = "4.5.0"
+description = "Agent Friday by FutureSpeak.AI — a sovereign, provider-agnostic desktop AI agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "FutureSpeak.AI" }]
+
+# ── Core dependencies ────────────────────────────────────────────────────────
+# Cross-platform, always required to run the server + UI + settings + the default
+# Anthropic/Gemini provider paths. NO Windows-only packages here (they live in the
+# [windows] extra) so `pip install -e .` works cleanly on macOS and Linux too.
+dependencies = [
+    "flask>=3.0",
+    "flask-sock>=0.7",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "beautifulsoup4>=4.12",
+    "feedparser>=6.0",
+    "tzdata>=2024.1",
+    "rich>=13.0",
+    "colorama>=0.4",
+    "cryptography>=44",
+    "psutil>=5.9",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+]
+
+# ── Optional capability groups — install only what you need ───────────────────
+[project.optional-dependencies]
+# Live voice + creative (image/video) both ride the core google-genai SDK; these
+# extras add the trimmings each capability needs beyond it.
+voice = ["pyttsx3>=2.90"]              # offline TTS fallback when Gemini is unreachable
+creative = ["pillow>=10.0"]            # image post-processing / thumbnails
+google = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0"]  # Gmail/Calendar/Drive
+local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings + memory (Ollama itself is an external binary)
+compression = ["headroom-ai[all]>=0.22"]  # context compression (degrades to passthrough if absent)
+federation = ["pynacl>=1.5"]           # Ed25519 attestation + source-trust federation
+windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0"]  # computer control + global kill-switch + tray icon
+all = [
+    "pyttsx3>=2.90",
+    "pillow>=10.0",
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+    "sentence-transformers>=2.2",
+    "chromadb>=0.5",
+    "headroom-ai[all]>=0.22",
+    "pynacl>=1.5",
+    "pyautogui>=0.9",
+    "pynput>=1.7",
+]
+
+[project.scripts]
+friday = "friday_cli:main"
+
+# ── Packaging (flat app layout) ───────────────────────────────────────────────
+# Explicit lists disable setuptools auto-discovery (which would error on the many
+# top-level modules). An editable install (`pip install -e .`) adds the project
+# root to sys.path, so every other top-level module imports normally too.
+[tool.setuptools]
+py-modules = ["server", "core", "friday_cli", "model_router", "build_ui"]
+packages = ["routes", "services"]

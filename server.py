@@ -166,6 +166,38 @@ if not _TESTING:
     threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
 
 
+def _resolve_bind_port():
+    """Resolve the port to bind, tolerating an already-in-use port.
+
+    Honours FRIDAY_PORT (default 3000). If that port is busy, scan the next
+    few ports for a free one so a second launch (or a leftover process) does
+    not crash with a raw traceback. Returns (port, requested, fell_back).
+    """
+    import socket as _socket
+    try:
+        requested = int(os.environ.get('FRIDAY_PORT', '3000'))
+    except ValueError:
+        requested = 3000
+
+    def _free(p):
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', p))
+                return True
+            except OSError:
+                return False
+
+    if _free(requested):
+        return requested, requested, False
+    for candidate in range(requested + 1, requested + 11):
+        if _free(candidate):
+            return candidate, requested, True
+    # Nothing free in the scan window — return the requested port and let the
+    # caller surface a clean message after the bind fails.
+    return requested, requested, True
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
@@ -176,15 +208,20 @@ if __name__ == '__main__':
             _stream.reconfigure(encoding='utf-8', errors='replace')
         except Exception:
             pass
+    _port, _requested, _fell_back = _resolve_bind_port()
+    _url = f"http://localhost:{_port}"
     print()
     print("  ╔══════════════════════════════════════════════╗")
     print("  ║   FRIDAY Desktop v4.4 — Phase B OS          ║")
     print("  ╠══════════════════════════════════════════════╣")
-    print("  ║  http://localhost:3000                       ║")
+    print(f"  ║  {_url:<42}║")
     print("  ║  Flask + Gemini API + Three.js Holographic   ║")
     print("  ║  Dock · Floating Windows · Persistent Chat   ║")
     print("  ║  Press Ctrl+C to stop                        ║")
     print("  ╚══════════════════════════════════════════════╝")
+    if _fell_back:
+        print(f"  Note: port {_requested} was busy — using {_port} instead.")
+        print(f"        Set FRIDAY_PORT to pick a specific port.")
     print()
     print(f"  Wiki:      {WIKI_DIR}")
     print(f"  Friday:    {FRIDAY_DIR}")
@@ -226,7 +263,10 @@ if __name__ == '__main__':
     # Bind 0.0.0.0 when remote access is needed (password set), else localhost only.
     bind_host = '0.0.0.0' if FRIDAY_PASSWORD else '127.0.0.1'
     try:
-        _port = int(os.environ.get('FRIDAY_PORT', '3000'))
-    except ValueError:
-        _port = 3000
-    app.run(host=bind_host, port=_port, debug=False, threaded=True)
+        app.run(host=bind_host, port=_port, debug=False, threaded=True)
+    except OSError as _bind_err:
+        print()
+        print(f"  Could not start the server on port {_port}: {_bind_err}")
+        print(f"  Another program may be using it. Free the port or set a")
+        print(f"  different one, e.g.  FRIDAY_PORT=3010 python server.py")
+        sys.exit(1)
