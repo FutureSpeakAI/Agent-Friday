@@ -732,7 +732,7 @@ def _launch():
     console.print()
     console.print(Panel(
         "[bold cyan]Starting Agent Friday...[/bold cyan]\n\n"
-        "[dim]Open [bold]http://localhost:5000[/bold] in your browser.[/dim]\n"
+        "[dim]Open [bold]http://localhost:3000[/bold] in your browser.[/dim]\n"
         "[dim]Press Ctrl+C to stop.[/dim]",
         border_style="cyan", padding=(1, 4),
     ))

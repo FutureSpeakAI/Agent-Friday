@@ -1,0 +1,12 @@
+# Line-ending policy (scoped to script types so the rest of the tree is left
+# byte-for-byte as committed — no repo-wide renormalization).
+#
+# Shell scripts MUST be LF. A bash script checked out with CRLF fails on
+# Linux/macOS with "bad interpreter: /usr/bin/env bash^M". Forcing eol=lf
+# means a Windows-authored install.sh still runs on a fresh Unix clone.
+*.sh   text eol=lf
+
+# Windows scripts stay CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

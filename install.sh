@@ -79,11 +79,20 @@ VENV_PIP="$INSTALL_DIR/venv/bin/pip"
 # ── Dependencies ────────────────────────────────────────────
 echo "[4/8] Installing dependencies..."
 "$VENV_PIP" install --upgrade pip --quiet
-if [ -f "requirements.txt" ]; then
+if [ -f "pyproject.toml" ]; then
+    # Editable install with all optional capability groups (voice, creative,
+    # google, local, compression, federation). Falls back to requirements.txt.
+    if "$VENV_PIP" install -e ".[all]" --quiet; then
+        echo "  Agent Friday + optional capabilities installed (pyproject)."
+    else
+        echo "  pyproject install failed — falling back to requirements.txt."
+        [ -f "requirements.txt" ] && "$VENV_PIP" install -r requirements.txt --quiet
+    fi
+elif [ -f "requirements.txt" ]; then
     "$VENV_PIP" install -r requirements.txt --quiet
     echo "  Core dependencies installed."
 else
-    echo "  No requirements.txt found — skipping pip install."
+    echo "  No dependency manifest found — skipping pip install."
 fi
 
 # ── API keys ────────────────────────────────────────────────
@@ -159,6 +168,12 @@ else
     echo "  build_ui.py not found — skipping UI build."
 fi
 
+# ── Post-install health check ───────────────────────────────
+if [ -f "friday_cli.py" ]; then
+    echo "  Running post-install health check..."
+    "$VENV_PYTHON" friday_cli.py health || true
+fi
+
 # ── Start script ────────────────────────────────────────────
 echo "[8/8] Creating start script..."
 START_SCRIPT="$INSTALL_DIR/start.sh"
@@ -198,6 +213,8 @@ echo "  To start Agent Friday:"
 echo "    cd $INSTALL_DIR && ./start.sh"
 echo ""
 echo "  Friday will open at http://localhost:3000"
+echo "  (If port 3000 is busy, Friday picks the next free port and prints the URL.)"
+echo "  No API keys yet? Friday opens in DEMO MODE so you can explore the UI."
 echo ""
 echo "  First run? The setup wizard will guide you through"
 echo "  API keys, model selection, and voice configuration."

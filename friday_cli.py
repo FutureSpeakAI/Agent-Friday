@@ -58,7 +58,9 @@ CONFIG_YAML = FRIDAY_DIR / "config.yaml"
 SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
 SKILLS_DIR = FRIDAY_DIR / "skills"
 
-SERVER_PORT = int(os.environ.get("FRIDAY_PORT", "5000"))
+# Must match server.py's default bind port (3000). The CLI also exports
+# FRIDAY_PORT to the server subprocess below so the two can never disagree.
+SERVER_PORT = int(os.environ.get("FRIDAY_PORT", "3000"))
 SERVER_URL = f"http://localhost:{SERVER_PORT}"
 
 # ── Config I/O ────────────────────────────────────────────────────
@@ -183,6 +185,9 @@ def cmd_start():
     console.print()
 
     env = os.environ.copy()
+    # Pin the server to the same port the CLI probes/opens, so readiness checks
+    # and the browser launch can never target a different port than the bind.
+    env["FRIDAY_PORT"] = str(SERVER_PORT)
     cfg = _load_config()
     if cfg.get("anthropic_api_key") and not env.get("ANTHROPIC_API_KEY"):
         env["ANTHROPIC_API_KEY"] = cfg["anthropic_api_key"]
@@ -744,6 +749,9 @@ examples:
     for alias in ("status", "doctor", "check"):
         sub.add_parser(alias, help="System health check")
 
+    # health (post-install subsystem check, no server)
+    sub.add_parser("health", help="Post-install subsystem health check")
+
     # update
     sub.add_parser("update", help="Update to latest version")
 
@@ -752,6 +760,71 @@ examples:
     p_skills.add_argument("--delete", metavar="NAME", help="Delete a skill by name")
 
     return p
+
+
+def cmd_health():
+    """Post-install subsystem health check — runs WITHOUT starting the server."""
+    os.environ.setdefault("FRIDAY_TESTING", "1")  # keep `import` side effects inert
+    console.print(Rule("[bold cyan]Agent Friday - Health Check[/bold cyan]"))
+
+    def _have(mod):
+        try:
+            import importlib.util
+            return importlib.util.find_spec(mod) is not None
+        except Exception:
+            return False
+
+    try:
+        from services import provider_health
+        t = Table(box=box.SIMPLE)
+        t.add_column("Provider"); t.add_column("Status"); t.add_column("Detail")
+        for p in provider_health.check_all():
+            color = {"ok": "green", "missing": "yellow", "down": "red",
+                     "error": "red"}.get(p.get("status"), "white")
+            t.add_row(p.get("provider", "?"), f"[{color}]{p.get('status')}[/{color}]",
+                      p.get("detail", ""))
+        console.print(Panel(t, title="AI Providers", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]providers: {e}[/red]")
+
+    try:
+        from services import capability_router
+        t = Table(box=box.SIMPLE)
+        t.add_column("Capability"); t.add_column("Provider"); t.add_column("Model"); t.add_column("Ready")
+        for c in capability_router.route_table():
+            t.add_row(c.get("label", ""), c.get("provider") or "-", c.get("model") or "-",
+                      "[green]yes[/green]" if c.get("available") else "[yellow]no[/yellow]")
+        console.print(Panel(t, title="Capability Routing", border_style="cyan"))
+    except Exception as e:
+        console.print(f"[red]capabilities: {e}[/red]")
+
+    try:
+        from services import demo_mode
+        on = demo_mode.demo_status().get("demo_mode")
+        console.print(f"Demo mode: [bold]{'ON (no provider configured)' if on else 'off'}[/bold]")
+    except Exception as e:
+        console.print(f"[red]demo: {e}[/red]")
+
+    try:
+        from ollama_manager import get_manager
+        mgr = get_manager()
+        hw = mgr.detect_hardware()
+        console.print(f"Hardware: GPU={hw.get('gpu') or 'none'} | RAM={hw.get('ram_gb')}GB "
+                      f"| VRAM={hw.get('vram_gb')}GB | Ollama={'up' if mgr.is_available() else 'down'}")
+    except Exception as e:
+        console.print(f"[yellow]hardware: {e}[/yellow]")
+
+    groups = {"voice": ["google.genai"], "creative": ["google.genai"],
+              "local": ["sentence_transformers"], "memory": ["chromadb"]}
+    deps = " | ".join(f"{g}:{'yes' if all(_have(m) for m in mods) else 'no'}"
+                          for g, mods in groups.items())
+    console.print(f"Optional groups: {deps}")
+
+    try:
+        from services import credential_store
+        console.print(f"Credential encryption: [bold]{credential_store.protection_method()}[/bold]")
+    except Exception as e:
+        console.print(f"[yellow]vault: {e}[/yellow]")
 
 
 def main():
@@ -772,6 +845,8 @@ def main():
         cmd_config(args)
     elif cmd in ("status", "doctor", "check"):
         cmd_status()
+    elif cmd == "health":
+        cmd_health()
     elif cmd == "update":
         cmd_update()
     elif cmd == "skills":

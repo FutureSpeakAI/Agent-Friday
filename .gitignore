@@ -5,6 +5,7 @@ friday_startup.vbs
 launch_now.bat
 do_commit.bat
 *.bat
+!install.bat
 *.vbs
 .env
 *.env
