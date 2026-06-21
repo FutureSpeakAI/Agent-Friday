@@ -180,8 +180,11 @@ def _resolve_bind_port():
         requested = 3000
 
     def _free(p):
+        # NOTE: do NOT set SO_REUSEADDR here. On Windows SO_REUSEADDR lets a
+        # socket bind a port another socket is actively using, which would make
+        # this probe report a busy port as free. A plain bind fails cleanly with
+        # EADDRINUSE when the port is taken — exactly what we want to detect.
         with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
-            s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
             try:
                 s.bind(('127.0.0.1', p))
                 return True
