@@ -1,0 +1,156 @@
+# ─── Secrets — startup scripts contain API keys + passwords ──────────────
+start.bat
+friday_startup.bat
+friday_startup.vbs
+launch_now.bat
+do_commit.bat
+*.bat
+*.vbs
+.env
+*.env
+.env.*
+
+# ─── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+
+# ─── Friday runtime artifacts ────────────────────────────────────────────
+server_out.log
+server_err.log
+server.out.log
+server.err.log
+cloudflared.log
+commit_log.txt
+test_tts*.wav
+verify_tts.wav
+.setup_complete
+
+# Per-user generated config — stays out of source
+# (NOTE: ~/.friday/settings.json holds API keys, never commit project copies)
+# Match only at project root — skill default configs under skills/*/config.yaml ship.
+/settings.json
+/config.yaml
+secrets.json
+credentials.json
+
+# Friday skill state (bandit, counters, rotator)
+.friday-state.json
+*.bandit.json
+*.daily.json
+*.state.json
+
+# ─── Editor / IDE backups ────────────────────────────────────────────────
+*.bak
+*.backup
+*.orig
+*.swp
+*.swo
+index.html.*.bak
+ui_parts/*.bak
+
+# ─── OS / IDE ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-*
+
+# ─── Asimov's Mind ephemeral state ───────────────────────────────────────
+.asimovs-mind/vault/bridge-token
+.asimovs-mind/vault/port
+asimovs-mind/
+
+# ─── Claude Code worktrees / artifacts ───────────────────────────────────
+.claude/
+.claude/worktrees/
+
+# ─── Node ────────────────────────────────────────────────────────────────
+node_modules/
+npm-install.log
+npm-debug.log*
+yarn-debug.log*
+pw-install.log
+package-lock.json.bak
+
+# ─── Test artifacts ──────────────────────────────────────────────────────
+test-results/
+test-results.log
+playwright-report/
+tests/screenshots/
+tests/audit_screenshots/
+tests/report.html
+tests/last_run.log
+tests/console_errors.log
+
+# ─── Build outputs the user wanted excluded ──────────────────────────────
+assets/palette/
+assets/splash/
+
+# ─── PyInstaller build artifacts (the .exe is shipped via GitHub Releases) ─
+dist/
+build/
+build_pyi/
+*.manifest
+# NOTE: AgentFriday.spec IS tracked on purpose — it's the build recipe.
+
+# ─── Private user data — NEVER commit (PII / minors / family-court) ───────
+# VOICE_DEMO.md — now tracked: rewritten as product spec sheet (70% features).
+# Loaded by server.py (_load_voice_demo) into Gemini Live system prompt.
+data/coparenting-intel.json
+data/*-intel.json
+data/ofw-*.json
+data/*.json
+voice_debug.log
+*voice_debug*.log
+# Runtime health/appointment caches if ever generated in-repo
+appointments.json
+insurance.json
+# Vault / federation secrets anywhere in the tree
+**/bridge-token
+**/node-identity.json
+*.key
+*.pem
+*.pfx
+
+# ─── Credentials / connected-account tokens — NEVER commit ───────────────
+*.credentials*
+*credentials*.json
+google_token.json
+google_accounts/
+**/google_accounts/
+token.json
+*oauth*token*.json
+
+# ─── Local conversation memory / vector store (ChromaDB) ─────────────────
+chroma/
+chroma_db/
+**/chroma/
+*.chroma
+chromadb/
+*.sqlite3
+memory_db/
+
+# ─── Per-user wiki / vault / runtime content (lives under ~/.friday) ─────
+# If any of these ever materialize inside the repo tree, keep them out.
+wiki/
+vault/
+.friday/
+creations/
+self_improvement/
+
+# scratch
+_commitmsg.txt
+_scrub*.py
+
+# Internal scrub report — keep local, do not publish (contains the PII terms it documents)
+SCRUB_REPORT.md
+/openai

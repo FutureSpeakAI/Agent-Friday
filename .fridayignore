@@ -1,0 +1,41 @@
+# .fridayignore — user-data directories and files that Agent Friday must treat
+# as private. These hold personal content (wiki notes, vault data, connected-
+# account tokens, conversation memory, generated creations). They are never part
+# of the public source tree, must never be committed, and tooling that scans the
+# project should skip them.
+#
+# Patterns follow .gitignore syntax. This file is shipped intentionally so a
+# fresh install starts with sane privacy defaults.
+
+# Personal knowledge base & private vault (normally under ~/.friday)
+wiki/
+vault/
+.friday/
+
+# Connected-account credentials & OAuth tokens
+*.credentials*
+credentials*.json
+google_token.json
+google_accounts/
+token.json
+
+# Conversation memory / vector store
+chroma/
+chroma_db/
+*.chroma
+*.sqlite3
+
+# Generated user content
+creations/
+self_improvement/
+
+# Co-parenting / legal / family-court exports (never in-repo)
+data/*-intel.json
+data/ofw-*.json
+data/*.json
+
+# Local startup scripts (hold API keys)
+*.bat
+*.vbs
+.env
+.env.*
