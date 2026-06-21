@@ -1,0 +1,21 @@
+{
+  "name": "Friday Live",
+  "short_name": "Friday",
+  "description": "Live voice and vision assistant — ride-along mode.",
+  "start_url": "/friday-live",
+  "scope": "/friday-live",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#05060c",
+  "theme_color": "#05060c",
+  "categories": ["productivity", "utilities"],
+  "permissions": ["microphone", "camera"],
+  "features": ["background-audio"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "/assets/icons/home.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/assets/icons/home.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/assets/icons/home.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

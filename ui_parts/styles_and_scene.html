@@ -1,0 +1,1591 @@
+<body>
+    <style>
+    /* Offline-first: desaturate the holographic scene when the network monitor
+       reports we're offline, so the environment visibly (but calmly) reflects
+       the degraded state. Eased in/out so the transition isn't jarring. */
+    #friday-scene-canvas{transition:filter 1s ease}
+    body.net-offline #friday-scene-canvas{filter:saturate(0.45) brightness(0.82)}
+    body.net-degraded #friday-scene-canvas{filter:saturate(0.78) brightness(0.93)}
+    </style>
+    <!-- Hand Cursor -->
+    <div id="hand-cursor" class="hidden">
+        <svg id="pinch-progress">
+            <circle class="pinch-circle" cx="17" cy="17" r="15" />
+        </svg>
+    </div>
+
+    <!-- Parallax Tracker Dot -->
+    <div id="camera-indicator"></div>
+
+    <div id="hud-overlay">
+        <!-- Minimalist Optical Arcs -->
+        <div class="hud-corner top-left"><div class="dot"></div></div>
+        <div class="hud-corner top-right"><div class="dot"></div></div>
+        <div class="hud-corner bottom-left"><div class="dot"></div></div>
+        <div class="hud-corner bottom-right"><div class="dot"></div></div>
+        
+
+        <!-- State / mood indicator: FIXED HTML overlay, anchored above the dock. Never drifts with the camera. -->
+        <div id="state-indicator" style="position:fixed;bottom:130px;left:20px;z-index:80;display:inline-flex;align-items:center;font-family:'Orbitron',sans-serif;font-size:11px;font-weight:600;letter-spacing:2px;pointer-events:none;padding:6px 12px;border-radius:10px;background:rgba(8,16,28,0.55);border:1px solid rgba(0,212,255,0.25);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 2px 12px rgba(0,0,0,0.45),inset 0 0 0 1px rgba(255,255,255,0.04);text-shadow:0 0 8px rgba(0,0,0,0.9),0 1px 2px rgba(0,0,0,0.9);">
+            <span id="mood-text" style="color:rgba(0,212,255,0.95);">STATE: LISTENING</span>
+        </div>
+
+    </div>
+
+    <!-- Friday OS React UI Layer -->
+    <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+    </div>
+
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" integrity="sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js" integrity="sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" integrity="sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2" crossorigin="anonymous"></script>
+
+    <!-- Three.js + Post-Processing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js" integrity="sha384-GkidzTYmQg24v13sa3xhBBbvOLbVLO1QxfyKLdOWweQqNqS/iWwUst2T1fER2Xrg" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js" integrity="sha384-2EpLreWSFuZsk4hcSplXLhlHd/wzvDNF907bTGIXSXM0SlhJNzy4YK0DhBFvkFEs" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js" integrity="sha384-I3lsvPeDJYFrEAzn/TA0yhc/SCYKwpyfyq8lKzHYKohu43H9f7xc/Q9ZWgSVUDl3" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js" integrity="sha384-nhO9toQuMo5osCuA0l+YFpSqscZWxDu251Bnho2gD3kSPv1neEwHg0LyEmrA+mPj" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js" integrity="sha384-mY+ii969jnDCI2HjRHftH2NZVkIO5ZGUkcnGCg3oVJ3kVstWQXwerYWBg+nbUG4R" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js" integrity="sha384-aVQ2QnWkoxhOefDB0YZB64OPVzujvccydpcC7UqMDJUK0ChwA382zOHmrWHGDRRa" crossorigin="anonymous"></script>
+
+    <script>
+        // --- UI INTERACTION LOGIC ---
+
+        // Mouse Tracker Fallback
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', (e) => {
+            // Mouse responsiveness reduced 50% (range *2.0 -> *1.0): the camera
+            // parallax and HUD tilt both derive from mouseX/mouseY, so halving the
+            // normalized range here halves the scene's reaction to mouse movement.
+            mouseX = (e.clientX / window.innerWidth - 0.5) * 1.0;
+            mouseY = (e.clientY / window.innerHeight - 0.5) * 1.0;
+        });
+
+        // --- COMPUTER VISION ENGINE (MediaPipe Shared Camera) ---
+        let cameraMP = null;
+        let videoElement = document.createElement('video');
+        videoElement.setAttribute('autoplay', ''); videoElement.setAttribute('playsinline', '');
+        
+        // Hologram (Face) State
+        let isHologramMode = false;
+        let faceDetectionMP = null;
+        let rawFaceX = 0, rawFaceY = 0, rawFaceZ = 0; 
+        let currFaceX = 0, currFaceY = 0, currFaceZ = 0; 
+        let isFaceVisible = false;
+        let faceLostTimeout = null;
+
+        // Hands State
+        let isHandTrackingMode = false;
+        let handsMP = null;
+        let rawHandX = window.innerWidth/2, rawHandY = window.innerHeight/2;
+        let currHandX = window.innerWidth/2, currHandY = window.innerHeight/2;
+        let isPinching = false, wasPinching = false;
+        let pinchStartTime = 0;
+        let rightClickFired = false;
+        let handVisible = false;
+        const PINCH_HOLD_TIME = 1000; // ms for right click
+
+        async function startSharedCamera() {
+            if (!cameraMP) {
+                cameraMP = new Camera(videoElement, {
+                    onFrame: async () => { 
+                        if (isHologramMode && faceDetectionMP) await faceDetectionMP.send({image: videoElement}); 
+                        if (isHandTrackingMode && handsMP) await handsMP.send({image: videoElement});
+                    },
+                    width: 320, height: 240
+                });
+                await cameraMP.start();
+            }
+        }
+
+        // --- HAND TRACKING (Minority Report) ---
+        async function toggleHands() {
+            isHandTrackingMode = !isHandTrackingMode;
+            const cursor = document.getElementById('hand-cursor');
+            if (isHandTrackingMode) {
+                if (cursor) cursor.classList.add('active');
+                if (!handsMP) {
+                    handsMP = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                    handsMP.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                    handsMP.onResults(onHandsResults);
+                }
+                await startSharedCamera();
+            } else {
+                if (cursor) cursor.classList.remove('active');
+            }
+        }
+
+        function onHandsResults(results) {
+            const cursor = document.getElementById('hand-cursor');
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const indexTip = landmarks[8]; const thumbTip = landmarks[4];
+                const targetX = (1.0 - (indexTip.x + thumbTip.x) / 2) * window.innerWidth;
+                const targetY = ((indexTip.y + thumbTip.y) / 2) * window.innerHeight;
+                const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                isPinching = dist < 0.06;
+                const isApproachingPinch = dist < 0.1;
+                if (!handVisible) {
+                    currHandX = targetX; currHandY = targetY;
+                    rawHandX = targetX; rawHandY = targetY;
+                    handVisible = true;
+                    cursor.classList.remove('hidden');
+                } else {
+                    if (!isApproachingPinch) {
+                        rawHandX = targetX; rawHandY = targetY;
+                    } else {
+                        rawHandX += (targetX - rawHandX) * 0.05;
+                        rawHandY += (targetY - rawHandY) * 0.05;
+                    }
+                }
+            } else {
+                isPinching = false; handVisible = false;
+                cursor.classList.add('hidden');
+            }
+        }
+
+        function spawnRipple(x, y, color) {
+            const r = document.createElement('div');
+            r.className = 'ripple'; r.style.left = x + 'px'; r.style.top = y + 'px'; r.style.setProperty('--r-color', color);
+            document.body.appendChild(r);
+            setTimeout(() => r.remove(), 600);
+        }
+
+        // --- FACE TRACKING (Parallax) ---
+        async function toggleHologram() {
+            isHologramMode = !isHologramMode;
+            if (isHologramMode) {
+                if (!faceDetectionMP) {
+                    faceDetectionMP = new FaceDetection({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`});
+                    faceDetectionMP.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+                    faceDetectionMP.onResults(onFaceResults);
+                }
+                await startSharedCamera();
+            } else {
+                isFaceVisible = false; updateCameraIndicator(false);
+            }
+            updateCameraIndicator(isHologramMode && isFaceVisible);
+        }
+
+        function onFaceResults(results) {
+            if (results.detections.length > 0) {
+                const bbox = results.detections[0].boundingBox;
+                rawFaceX = (bbox.xCenter - 0.5) * 2.0; 
+                rawFaceY = (bbox.yCenter - 0.5) * 2.0;
+                let fw = Math.max(0.05, Math.min(bbox.width, 0.4)); 
+                let targetZ = (fw - 0.18) * 3.0; 
+                rawFaceZ += (targetZ - rawFaceZ) * 0.1;
+                isFaceVisible = true; updateCameraIndicator(true);
+                clearTimeout(faceLostTimeout);
+                faceLostTimeout = setTimeout(() => { isFaceVisible = false; updateCameraIndicator(false); }, 2000); 
+            }
+        }
+
+        function updateCameraIndicator(active) {
+            const ind = document.getElementById('camera-indicator');
+            if (!ind) return;
+            if (active && isHologramMode) { ind.classList.add('holo-active'); }
+            else { ind.classList.remove('holo-active'); }
+        }
+
+        // --- AESTHETIC CONFIGURATION ---
+        const MOODS = {
+            LISTENING: { baseColor: 0x00d2ff, accentColor: 0x8a2be2, rotationSpeed: 0.001, bloomStrength: 0.8, particleSpeedScale: 1.0, grain: 0.035 },
+            REASONING: { baseColor: 0x4b0082, accentColor: 0x00ffff, rotationSpeed: 0.006, bloomStrength: 1.1, particleSpeedScale: 1.3, grain: 0.045 },
+            SPEAKING:  { baseColor: 0x00ff80, accentColor: 0x00d4ff, rotationSpeed: 0.005, bloomStrength: 1.4, particleSpeedScale: 2.0, grain: 0.04 },
+            CREATING:  { baseColor: 0xff00aa, accentColor: 0xff6600, rotationSpeed: 0.006, bloomStrength: 1.6, particleSpeedScale: 1.5, grain: 0.06 },
+            IDLE:      { baseColor: 0x1e54c7, accentColor: 0x5fa8ff, rotationSpeed: 0.0003, bloomStrength: 1.3,  particleSpeedScale: 0.25, grain: 0.015 },
+            EXECUTING: { baseColor: 0xffaa00, accentColor: 0xff3300, rotationSpeed: 0.008, bloomStrength: 1.2, particleSpeedScale: 1.8, grain: 0.05 },
+            EXCITED:   { baseColor: 0xffffff, accentColor: 0x00e5ff, rotationSpeed: 0.015, bloomStrength: 1.8, particleSpeedScale: 2.5, grain: 0.08 },
+            CALM:      { baseColor: 0x001133, accentColor: 0x0055aa, rotationSpeed: 0.0002, bloomStrength: 0.4, particleSpeedScale: 0.2, grain: 0.05 },
+            CURIOUS:   { baseColor: 0x00b3b3, accentColor: 0x00ffff, rotationSpeed: 0.003, bloomStrength: 1.0, particleSpeedScale: 1.2, grain: 0.03 },
+            CREATIVE:  { baseColor: 0x9b30ff, accentColor: 0xff00ff, rotationSpeed: 0.005, bloomStrength: 1.5, particleSpeedScale: 1.6, grain: 0.055 },
+            PROTECTIVE:{ baseColor: 0x228b22, accentColor: 0x00ff80, rotationSpeed: 0.001, bloomStrength: 0.7, particleSpeedScale: 0.6, grain: 0.025 },
+            FOCUSED:   { baseColor: 0x0a1e6e, accentColor: 0x1e90ff, rotationSpeed: 0.002, bloomStrength: 0.6, particleSpeedScale: 0.4, grain: 0.02 },
+            SOCIAL:    { baseColor: 0xd4910a, accentColor: 0xffbf00, rotationSpeed: 0.004, bloomStrength: 1.2, particleSpeedScale: 1.3, grain: 0.04 },
+            REFLECTIVE:{ baseColor: 0x8888aa, accentColor: 0xddeeff, rotationSpeed: 0.0005, bloomStrength: 0.5, particleSpeedScale: 0.3, grain: 0.015 }
+        };
+
+        const EVOLUTION_PATH = [
+            { id: 'CUBES', name: 'GENESIS LATTICE' }, { id: 'ICOSAHEDRON', name: 'SACRED SPHERE' }, { id: 'NETWORK', name: 'SHANNON NETWORK' },
+            { id: 'DOME', name: 'GEODESIC CATHEDRAL' }, { id: 'ASTROLABE', name: 'LOVELACE ASTROLABE' }, { id: 'TESSERACT', name: 'VON NEUMANN TESSERACT' },
+            { id: 'QUANTUM', name: 'DIRAC PROBABILITY' }, { id: 'MANDELBROT', name: 'MANDELBROT SET' }, { id: 'MOBIUS', name: 'TURING MOBIUS' },
+            { id: 'GRID', name: 'OCEAN OF LIGHT' }, { id: 'CABLES', name: 'FIBONACCI NERVE' }, { id: 'NONE', name: 'TRANSCENDENCE' },
+            { id: 'EDEN', name: 'GIGA EARTH (REZ)' }
+        ];
+
+        const HolographicShader = {
+            uniforms: { "tDiffuse": { value: null }, "time": { value: 0.0 }, "amount": { value: 0.003 }, "angle": { value: 0.0 }, "grainAmount": { value: 0.04 } },
+            vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+            fragmentShader: `
+                uniform sampler2D tDiffuse; uniform float time; uniform float amount; uniform float angle; uniform float grainAmount; varying vec2 vUv;
+                float rand(vec2 co) { return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
+                void main() {
+                    vec2 offset = amount * vec2(cos(angle + vUv.y * 2.0), sin(angle + vUv.x * 2.0));
+                    vec4 cr = texture2D(tDiffuse, vUv + offset); vec4 cga = texture2D(tDiffuse, vUv); vec4 cb = texture2D(tDiffuse, vUv - offset);
+                    vec4 finalColor = vec4(cr.r, cga.g, cb.b, cga.a);
+                    finalColor.rgb += (rand(vUv + time) - 0.5) * grainAmount;
+                    finalColor.rgb -= sin(vUv.y * 800.0 + time * 2.0) * 0.01;
+                    gl_FragColor = finalColor;
+                }
+            `
+        };
+
+        // --- THREE.JS ENGINE ---
+        let scene, camera, renderer, composer, bloomPass, holoPass;
+        let particleSystem, energyLines = [], starField, nebulaClouds = [];
+        let clock = new THREE.Clock();
+        let glowTexture, cloudTexture;
+        
+        let structures = {};
+        let currentEvolutionIdx = 0;
+        let currentStructure = EVOLUTION_PATH[0].id;
+        let targetStructure = EVOLUTION_PATH[0].id;
+        let transitionProgress = 1.0;
+        let metamorphosisFlash = 0.0; 
+        let currentMood = 'LISTENING';
+        let moodOverride = null;
+        let timeLapseActive = false;
+        let timeLapseTimer = 0;
+        
+        let coreCubes = [], matrixLines = [], gridOcean = null, mandelbrotSystem = null;
+        let tesseractLines = null, astrolabeRings = [], shannonNodes = [], shannonLines = null;
+        let mobiusSystem = null, quantumRings = [], abyssParticles = null, cathedralRings = [];
+        let edenDebris = [], edenPlayer = null, edenLady = null; 
+        
+        let audioContext, analyser, dataArray;
+        let micActive = false;
+        let lastSoundTime = 0;
+        let audioData = { low: 0, mid: 0, high: 0, total: 0 };
+        let idleFactor = 0.4;
+        
+        let moodLerpValues = { ...MOODS.LISTENING };
+        moodLerpValues.baseColor = new THREE.Color(MOODS.LISTENING.baseColor);
+        moodLerpValues.accentColor = new THREE.Color(MOODS.LISTENING.accentColor);
+
+        let targetCamPos = new THREE.Vector3(0, 5, 15);
+        let targetCamLook = new THREE.Vector3(0, 0, 0);
+        let baseCamPos = new THREE.Vector3(0, 5, 15);
+
+        // --- HOLOGRAPHIC REACTIVITY (Layer 1) ---
+        let holoAmplitude = 0;
+        let holoTargetAmplitude = 0;
+        let holoState = 'idle';
+        let holoStateIntensity = 0;
+        let processOrbManager = null;
+
+        // --- PROCESS ORB MANAGER (Layer 2) ---
+        class ProcessOrbManager {
+            constructor(scn, cam, rend) {
+                this.scene = scn; this.camera = cam; this.renderer = rend;
+                this.orbs = new Map();
+                this.maxOrbs = 8;
+                this.labelContainer = document.createElement('div');
+                this.labelContainer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:55;';
+                document.body.appendChild(this.labelContainer);
+                this.raycaster = new THREE.Raycaster();
+                this.mouse = new THREE.Vector2();
+                this.mouseScreen = { x: -10000, y: -10000 };
+                this.hoveredOrbId = null;
+                // Cursor velocity (px/sec) — drives the snap-off / snap-to behaviour.
+                // Orbs gravitate toward a slow/hovering cursor and break away from a
+                // fast one. Computed from position delta over time on each move.
+                this.mouseVel = 0;
+                this._lastMove = { x: -10000, y: -10000, t: 0 };
+                this._lastMoveT = 0;
+                rend.domElement.addEventListener('click', (e) => this._onClick(e));
+                rend.domElement.addEventListener('mousemove', (e) => {
+                    const rect = rend.domElement.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+                    const lm = this._lastMove;
+                    if (lm.t && lm.x > -1000) {
+                        const dt = Math.max(1, now - lm.t) / 1000;       // seconds
+                        const dist = Math.hypot(x - lm.x, y - lm.y);     // px
+                        const inst = dist / dt;                          // px/sec
+                        // Light smoothing so a single jittery sample doesn't snap-off everything.
+                        this.mouseVel = this.mouseVel * 0.5 + inst * 0.5;
+                    }
+                    this._lastMove = { x, y, t: now };
+                    this._lastMoveT = now;
+                    this.mouseScreen.x = x;
+                    this.mouseScreen.y = y;
+                });
+                rend.domElement.addEventListener('mouseleave', () => {
+                    this.mouseScreen.x = -10000; this.mouseScreen.y = -10000;
+                    this.mouseVel = 0;
+                });
+            }
+            _catColor(cat) {
+                return {search:0x8b5cf6,communication:0xec4899,monitoring:0x06b6d4,completed:0x22c55e}[cat] || 0x00d4ff;
+            }
+            addOrb({id, label, category, icon, model, color: explicitColor}) {
+                if (this.orbs.has(id)) return;
+                if (this.orbs.size >= this.maxOrbs) {
+                    let oldest = null;
+                    for (const [oid, o] of this.orbs) {
+                        if (o.status === 'completed' && (!oldest || o.createdAt < oldest.t)) oldest = {id: oid, t: o.createdAt};
+                    }
+                    if (oldest) this._cleanup(oldest.id); else return;
+                }
+                const isLocal = !!(model && (id.startsWith('local-') || model.indexOf('claude') === -1));
+                // An explicit color (e.g. the green vault-access orb) wins over the
+                // local/category default.
+                const color = (explicitColor != null) ? explicitColor : (isLocal ? 0xf59e0b : this._catColor(category));
+                const group = new THREE.Group();
+                const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
+                const sphereMat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0.7, blending:THREE.AdditiveBlending, depthWrite:false});
+                const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+                group.add(sphere);
+                const glowMat = new THREE.SpriteMaterial({map:glowTexture, color, transparent:true, opacity:0.4, blending:THREE.AdditiveBlending, depthWrite:false});
+                const glow = new THREE.Sprite(glowMat); glow.scale.set(1.8,1.8,1); group.add(glow);
+                const ringSegs = 64;
+                const ringPos = new Float32Array(ringSegs * 3);
+                const ringGeo = new THREE.BufferGeometry(); ringGeo.setAttribute('position', new THREE.BufferAttribute(ringPos, 3));
+                const ringMat = new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false});
+                const ring = new THREE.Line(ringGeo, ringMat); group.add(ring);
+                // Outer-ring orbit so orbs stay clear of the centre UI (greeting, Ask Friday bar, chat panel).
+                // Slow drift: ~30–60s per revolution. Vertical scatter so orbs form a cloud, not a flat ring.
+                const oAngle = Math.random()*Math.PI*2;
+                const oRadius = 10 + Math.random()*2.5;
+                const oHeight = (Math.random()-0.5)*6;
+                const oSpeed = 0.10 + Math.random()*0.10;
+                group.position.set(Math.cos(oAngle)*oRadius, oHeight, Math.sin(oAngle)*oRadius);
+                group.scale.set(0.01,0.01,0.01);
+                this.scene.add(group);
+                const labelEl = document.createElement('div');
+                labelEl.className = 'orb-label';
+                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+(isLocal?'🏠 ':'☁️ ')+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
+                labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
+                this.labelContainer.appendChild(labelEl);
+                this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,
+                    oAngle,oRadius,oHeight,oSpeed, progress:0, status:'running',
+                    birthTime:0, birthDone:false, deathTime:-1, dying:false, createdAt:Date.now(), steps:[],
+                    hoverScale:1.0, baseGlowOpacity:0.4, snapping:false});
+            }
+            updateOrb(id, upd) {
+                const o = this.orbs.get(id); if (!o) return;
+                if (upd.progress !== undefined) o.progress = Math.max(0,Math.min(1,upd.progress));
+                if (upd.status !== undefined) o.status = upd.status;
+                if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
+                if (upd.status === 'completed') { o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e); }
+                else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
+            }
+            removeOrb(id) {
+                const o = this.orbs.get(id); if (!o || o.dying) return;
+                o.dying = true; o.deathTime = 0;
+                o.sphere.material.color.setHex(0x22c55e); o.glow.material.color.setHex(0x22c55e);
+            }
+            getOrbs() {
+                const out = [];
+                for (const [,o] of this.orbs) out.push({id:o.id,label:o.label,category:o.category,icon:o.icon,model:o.model,progress:o.progress,status:o.status,steps:o.steps});
+                return out;
+            }
+            _onClick(ev) {
+                // Screen-space hit test rather than raycasting: at orbit distance the
+                // 0.35-unit sphere is only ~12px wide, which is far too finicky to click.
+                // Project each orb to screen and pick the nearest within a generous radius —
+                // the same forgiving approach the hover/snap detection uses.
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                const mx = ev.clientX - rect.left;
+                const my = ev.clientY - rect.top;
+                let bestDist = 50, hit = null;
+                for (const [id, o] of this.orbs) {
+                    if (o.dying) continue;
+                    const p3 = o.group.position.clone().project(this.camera);
+                    if (p3.z >= 1) continue;
+                    const sx = (p3.x*0.5+0.5)*window.innerWidth;
+                    const sy = (-p3.y*0.5+0.5)*window.innerHeight;
+                    const d = Math.hypot(sx - mx, sy - my);
+                    if (d < bestDist) { bestDist = d; hit = o; }
+                }
+                if (hit) {
+                    window.dispatchEvent(new CustomEvent('fridayOrbClicked', {detail:{id:hit.id,label:hit.label,category:hit.category,icon:hit.icon,progress:hit.progress,status:hit.status,steps:hit.steps,sx:ev.clientX,sy:ev.clientY}}));
+                }
+            }
+            _cleanup(id) {
+                const o = this.orbs.get(id); if (!o) return;
+                this.scene.remove(o.group); o.labelEl.remove();
+                o.sphere.geometry.dispose(); o.sphere.material.dispose(); o.glow.material.dispose(); o.ringGeo.dispose(); o.ring.material.dispose();
+                this.orbs.delete(id);
+            }
+            update(dt, elapsed) {
+                const amp = holoAmplitude;
+                const dead = [];
+
+                // Pre-pass: project every live orb to screen so we can both clamp the label
+                // and run a screen-space hit test for hover. Screen-space hover is much more
+                // forgiving than raycasting against the 0.35-unit sphere — at orbit distance
+                // the sphere is only ~12px wide, which is finicky to point at.
+                const projected = new Map();
+                for (const [id, o] of this.orbs) {
+                    const p3 = o.group.position.clone().project(this.camera);
+                    projected.set(id, {
+                        p3,
+                        sx: (p3.x*0.5+0.5)*window.innerWidth,
+                        sy: (-p3.y*0.5+0.5)*window.innerHeight,
+                        onScreen: p3.z < 1
+                    });
+                }
+
+                let hoveredId = null;
+                if (this.mouseScreen.x > -1000) {
+                    let bestDist = 40; // px hit-radius, generous so labelled orbs are easy to grab
+                    for (const [id, o] of this.orbs) {
+                        if (o.dying) continue;
+                        const pr = projected.get(id);
+                        if (!pr.onScreen) continue;
+                        const d = Math.hypot(pr.sx - this.mouseScreen.x, pr.sy - this.mouseScreen.y);
+                        if (d < bestDist) { bestDist = d; hoveredId = id; }
+                    }
+                }
+                this.hoveredOrbId = hoveredId;
+
+                // Cursor gravity: an orb within ~150px of the cursor is gently pulled
+                // toward it — but ONLY while the cursor is moving slowly or hovering.
+                // Whip the cursor past quickly and orbs snap off / refuse to follow;
+                // slow down or hover and they gravitate and "stick". Velocity bleeds to
+                // zero when the cursor stops (no mousemove fires) so a resting cursor
+                // always wins the orbs over. Hysteresis (engage 150 / release 200) plus
+                // the velocity gate stops it buzzing at the boundary.
+                const _now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+                if (_now - this._lastMoveT > 60) {
+                    this.mouseVel *= Math.max(0, 1 - dt*8);   // cursor at rest → bleed velocity
+                    if (this.mouseVel < 5) this.mouseVel = 0;
+                }
+                const vel = this.mouseVel;
+                const FAST_VEL = 1100;   // px/s — above this the cursor is whipping past → snap-off
+                const SLOW_VEL = 450;    // px/s — below this the cursor is hovering → orbs grab on
+                const ENGAGE_PX = 150, RELEASE_PX = 200;
+                const mouseScreenX = this.mouseScreen.x, mouseScreenY = this.mouseScreen.y;
+                const hasMouse = mouseScreenX > -1000;
+                let anyInSnapRange = false;
+
+                for (const [id, o] of this.orbs) {
+                    const isHovered = (id === hoveredId);
+
+                    // --- Magnetic snap range check (uses the pre-pass projection) ---
+                    let screenDist = Infinity;
+                    if (hasMouse) {
+                        const pr = projected.get(id);
+                        if (pr && pr.onScreen) screenDist = Math.hypot(pr.sx - mouseScreenX, pr.sy - mouseScreenY);
+                    }
+                    if (o.dying || !hasMouse) {
+                        o.snapping = false;
+                    } else if (o.snapping) {
+                        // Release if the cursor moves out of range OR flicks away fast (snap-off).
+                        if (screenDist > RELEASE_PX || vel > FAST_VEL) o.snapping = false;
+                    } else if (screenDist < ENGAGE_PX && vel < SLOW_VEL) {
+                        o.snapping = true;                          // engage: slow cursor nearby
+                    }
+                    if (o.snapping) anyInSnapRange = true;
+
+                    // Scale: birth > death > hover. Use mutually exclusive branches so they don't fight.
+                    if (!o.birthDone) {
+                        o.birthTime += dt;
+                        const t = Math.min(1, o.birthTime/0.6);
+                        o.group.scale.setScalar(1-Math.pow(1-t,3));
+                        if (t>=1) o.birthDone = true;
+                    } else if (o.dying) {
+                        o.deathTime += dt;
+                        const t = Math.min(1, o.deathTime/0.5);
+                        o.group.scale.setScalar(1-t);
+                        o.labelEl.style.opacity = String(1-t);
+                        if (t>=1) { dead.push(id); continue; }
+                    } else {
+                        const target = isHovered ? 1.2 : 1.0;
+                        o.hoverScale += (target - o.hoverScale) * Math.min(1, dt*8);
+                        o.group.scale.setScalar(o.hoverScale);
+                    }
+
+                    // Freeze the orbit angle while snapped so the orb's resting position
+                    // doesn't drift out from under the cursor; resume orbiting otherwise.
+                    if (!o.snapping) {
+                        o.oAngle += o.oSpeed*dt*(1+amp*0.5);
+                    }
+                    const orbitalX = Math.cos(o.oAngle)*o.oRadius;
+                    const orbitalY = o.oHeight+Math.sin(elapsed*1.5+o.oAngle)*0.5;
+                    const orbitalZ = Math.sin(o.oAngle)*o.oRadius;
+
+                    if (o.snapping && hasMouse && !o.dying) {
+                        // Soft magnetic pull: unproject the cursor onto the orb's current depth
+                        // plane to get a world-space target, then lerp gently toward it (0.08).
+                        // The orb never attaches — it just drifts toward the cursor and eases
+                        // back to its orbit once the mouse leaves the release radius.
+                        const depth = o.group.position.clone().project(this.camera).z;
+                        const target = new THREE.Vector3(
+                            (mouseScreenX/window.innerWidth)*2-1,
+                            -(mouseScreenY/window.innerHeight)*2+1,
+                            depth
+                        ).unproject(this.camera);
+                        o.group.position.lerp(target, 0.14);
+                    } else {
+                        // Ease back to the orbital position with the same gentle factor.
+                        o.group.position.lerp(new THREE.Vector3(orbitalX, orbitalY, orbitalZ), 0.08);
+                    }
+                    o.glow.material.opacity = o.baseGlowOpacity-0.1 + amp*0.3 + Math.sin(elapsed*3+o.oAngle)*0.1 + ((isHovered || o.snapping) ? 0.45 : 0);
+
+                    const segs = Math.max(2, Math.floor(o.ringSegs*o.progress));
+                    const pos = o.ringGeo.attributes.position.array;
+                    for (let i=0;i<o.ringSegs;i++) {
+                        const th = (i/o.ringSegs)*Math.PI*2, r=0.55;
+                        if (i<segs) { pos[i*3]=Math.cos(th)*r; pos[i*3+1]=Math.sin(th)*r; pos[i*3+2]=0; }
+                        else { const lt=((segs-1)/o.ringSegs)*Math.PI*2; pos[i*3]=Math.cos(lt)*r; pos[i*3+1]=Math.sin(lt)*r; pos[i*3+2]=0; }
+                    }
+                    o.ringGeo.attributes.position.needsUpdate = true;
+                    o.ring.lookAt(this.camera.position);
+
+                    // Re-project after we moved the orb (position changed above).
+                    const p3 = o.group.position.clone().project(this.camera);
+                    const sx = (p3.x*0.5+0.5)*window.innerWidth;
+                    const sy = (-p3.y*0.5+0.5)*window.innerHeight;
+                    if (p3.z < 1) {
+                        o.labelEl.style.display='block';
+                        // Clamp label inside viewport so perimeter orbs don't push their text off-screen.
+                        const lw = o.labelEl.offsetWidth || 80;
+                        const lh = o.labelEl.offsetHeight || 18;
+                        const margin = 8;
+                        const halfW = lw/2;
+                        const clampedX = Math.max(halfW + margin, Math.min(window.innerWidth - halfW - margin, sx));
+                        const clampedY = Math.max(lh/2 + margin, Math.min(window.innerHeight - lh/2 - margin, sy - 28));
+                        o.labelEl.style.transform = 'translate(-50%,-50%) translate('+clampedX+'px,'+clampedY+'px)';
+                    } else {
+                        o.labelEl.style.display='none';
+                    }
+                }
+                // Pointer cursor for the whole snap zone, not just the tight hover radius.
+                this.renderer.domElement.style.cursor = (hoveredId || anyInSnapRange) ? 'pointer' : '';
+                for (const id of dead) this._cleanup(id);
+            }
+        }
+
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)'); gradient.addColorStop(0.2, 'rgba(255, 255, 255, 0.8)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+        
+        function createCloudTexture() {
+            const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.05)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 128, 128);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const MOOD_META = {
+            LISTENING:  {emoji:'👂', color:'#00d2ff'},
+            REASONING:  {emoji:'🧠', color:'#7b68ee'},
+            SPEAKING:   {emoji:'🗣️', color:'#00ff80'},
+            CREATING:   {emoji:'🎨', color:'#ff00aa'},
+            IDLE:       {emoji:'💤', color:'#5fa8ff'},
+            EXECUTING:  {emoji:'⚡', color:'#ffaa00'},
+            EXCITED:    {emoji:'✨', color:'#ffffff'},
+            CALM:       {emoji:'🌊', color:'#0055aa'},
+            CURIOUS:    {emoji:'🔍', color:'#00e5cc'},
+            CREATIVE:   {emoji:'💡', color:'#bf5fff'},
+            PROTECTIVE: {emoji:'🛡️', color:'#00cc55'},
+            FOCUSED:    {emoji:'🎯', color:'#1e90ff'},
+            SOCIAL:     {emoji:'🤝', color:'#ffbf00'},
+            REFLECTIVE: {emoji:'🪞', color:'#c0c8e0'},
+        };
+
+        function _applyMoodText(m) {
+            const el = document.getElementById('mood-text');
+            if (!el) return;
+            const meta = MOOD_META[m] || {emoji:'', color:'#00d2ff'};
+            el.innerText = meta.emoji + ' STATE: ' + m;
+            el.style.color = meta.color;
+        }
+        window.fridayApplyMoodText = _applyMoodText;
+
+        function setMood(m, isManualOverride) {
+            if (isManualOverride) moodOverride = m;
+            currentMood = m;
+            _applyMoodText(m);
+        }
+
+        function setSystemMood(m) {
+            if (!moodOverride) {
+                currentMood = m;
+                _applyMoodText(m);
+            }
+        }
+
+        function clearMoodOverride() {
+            moodOverride = null;
+        }
+
+        function setEvolution(idx) {
+            if (idx === currentEvolutionIdx && transitionProgress === 1.0) return;
+            currentEvolutionIdx = idx;
+            currentStructure = targetStructure; targetStructure = EVOLUTION_PATH[idx].id;
+            transitionProgress = 0.0; metamorphosisFlash = 1.0;
+            if (structures[targetStructure]) structures[targetStructure].visible = true;
+            const dayText = document.getElementById('evolution-day-text');
+            if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
+        }
+
+        function toggleTimeLapse() {
+            timeLapseActive = !timeLapseActive;
+            if (timeLapseActive) { timeLapseTimer = 0; }
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000205, 0.012);
+            glowTexture = createGlowTexture(); cloudTexture = createCloudTexture();
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.copy(targetCamPos); camera.lookAt(targetCamLook);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setClearColor(0x000103, 1);
+            renderer.domElement.id = 'friday-scene-canvas';
+            document.body.appendChild(renderer.domElement);
+
+            buildBackgroundEnvironment(); buildAllStructures();
+
+            const renderScene = new THREE.RenderPass(scene, camera);
+            // Bloom: wider radius + lower threshold so the holographic geometry visibly
+            // glows at rest, not just the rare bright pixels. Strength is modulated below.
+            bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.9, 0.55, 0.25);
+            holoPass = new THREE.ShaderPass(HolographicShader);
+            composer = new THREE.EffectComposer(renderer);
+            composer.addPass(renderScene); composer.addPass(bloomPass); composer.addPass(holoPass);
+
+            window.addEventListener('resize', onWindowResize);
+
+            // Audio visualizer deliberately disabled — mic is reserved for voice mode.
+            // setupAudio() uses getUserMedia which would show the mic indicator on page load.
+
+            Object.values(structures).forEach(g => { if(g) { scene.add(g); g.visible = false; setGroupOpacity(g, 0); }});
+            if (structures['CUBES']) { structures['CUBES'].visible = true; setGroupOpacity(structures['CUBES'], 1); }
+
+            const _evo = document.getElementById('evolution-day-text');
+            if (_evo) _evo.innerText = `DAY 1: ${EVOLUTION_PATH[0].name}`;
+
+            processOrbManager = new ProcessOrbManager(scene, camera, renderer);
+            animate();
+        }
+
+        function buildBackgroundEnvironment() {
+            const particleCount = 800; const positions = new Float32Array(particleCount * 3); const colors = new Float32Array(particleCount * 3);
+            const particleData = [];
+            for (let i = 0; i < particleCount; i++) {
+                const radius = 8 + Math.random() * 15; const theta = Math.random() * Math.PI * 2; const phi = Math.acos((Math.random() * 2) - 1);
+                positions[i*3] = radius * Math.sin(phi) * Math.cos(theta); positions[i*3+1] = radius * Math.sin(phi) * Math.sin(theta); positions[i*3+2] = radius * Math.cos(phi);
+                particleData.push({ radius, baseRadius: radius, theta, basePhi: phi, phi: phi, speed: 0.01 + Math.random() * 0.04 });
+            }
+            const pGeom = new THREE.BufferGeometry(); pGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3)); pGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            particleSystem = new THREE.Points(pGeom, new THREE.PointsMaterial({ size: 0.4, map: glowTexture, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+            particleSystem.userData.data = particleData; scene.add(particleSystem);
+
+            for (let i = 0; i < 20; i++) createEnergyFlare();
+
+            for (let i = 0; i < 15; i++) {
+                const material = new THREE.SpriteMaterial({ map: cloudTexture, color: 0x00ffff, transparent: true, opacity: 0.1, blending: THREE.AdditiveBlending, depthWrite: false });
+                const sprite = new THREE.Sprite(material);
+                const scale = 30 + Math.random() * 50; sprite.scale.set(scale, scale, 1);
+                sprite.position.set((Math.random()-0.5)*100, (Math.random()-0.5)*100, -50 - Math.random()*80);
+                sprite.userData = { isAccent: Math.random() > 0.5, speed: (Math.random()-0.5)*0.001 };
+                scene.add(sprite); nebulaClouds.push(sprite);
+            }
+        }
+
+        function createEnergyFlare() {
+            const start = new THREE.Vector3((Math.random()-0.5)*8, (Math.random()-0.5)*8, (Math.random()-0.5)*8);
+            const end = new THREE.Vector3((Math.random()-0.5)*30, (Math.random()-0.5)*30, (Math.random()-0.5)*30);
+            const mid1 = start.clone().lerp(end, 0.3).add(new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10));
+            const mid2 = start.clone().lerp(end, 0.7).add(new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10));
+            const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3([start, mid1, mid2, end]).getPoints(50)), new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, linewidth: 2 }));
+            line.userData = { pulse: Math.random()*Math.PI, pulseSpeed: 0.05+Math.random()*0.1, intensity: 0 }; 
+            scene.add(line); energyLines.push(line);
+        }
+
+
+        function createMaterial(type, color, opacity, additive = true, wireframe = false, dashed = false) {
+            let mat;
+            if (dashed) mat = new THREE.LineDashedMaterial({ color: color, dashSize: 0.2, gapSize: 0.1 });
+            else mat = type === 'line' ? new THREE.LineBasicMaterial() : new THREE.MeshBasicMaterial();
+            mat.color.setHex(color); mat.transparent = true; mat.opacity = opacity; mat.wireframe = wireframe;
+            mat.userData = { baseOpacity: opacity, isAccent: false };
+            if (additive) { mat.blending = THREE.AdditiveBlending; mat.depthWrite = false; }
+            return mat;
+        }
+
+        function buildAllStructures() {
+            // 1. CUBES (Genesis Lattice)
+            const gCubes = new THREE.Group();
+            const boxMat = createMaterial('mesh', 0x00ffff, 0.85, false);
+            const edgeMat = createMaterial('line', 0x00ffff, 0.8, true); edgeMat.userData.isAccent = true;
+            const boxGeo = new THREE.BoxGeometry(1.4, 1.4, 1.4); const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+            const gridSize = 3; const spacing = 1.6; const offset = (gridSize * spacing) / 2 - (spacing / 2);
+            for(let x=0; x<gridSize; x++) { for(let y=0; y<gridSize; y++) { for(let z=0; z<gridSize; z++) {
+                if (Math.random() > 0.85) continue;
+                const mesh = new THREE.Mesh(boxGeo, boxMat); 
+                mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
+                const posX = (x * spacing) - offset; const posY = (y * spacing) - offset; const posZ = (z * spacing) - offset;
+                mesh.position.set(posX, posY, posZ); 
+                const dir = new THREE.Vector3(posX, posY, posZ).normalize();
+                if(dir.length() === 0) dir.set(0,1,0);
+                mesh.userData = { baseX: posX, baseY: posY, baseZ: posZ, dir: dir, rx: Math.random()*Math.PI*2, speed: 0.5+Math.random()*0.5 };
+                gCubes.add(mesh); coreCubes.push(mesh);
+            }}}
+            gCubes.scale.set(1.5, 1.5, 1.5);
+            structures['CUBES'] = gCubes;
+
+            // 2. ICOSAHEDRON
+            const gIco = new THREE.Group();
+            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(5.0, 3), createMaterial('mesh', 0x00ffff, 0.15, true, true)));
+            const midIco = createMaterial('mesh', 0x00ffff, 0.3, true, true); midIco.userData.isAccent = true;
+            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(3.5, 2), midIco));
+            gIco.add(new THREE.Mesh(new THREE.IcosahedronGeometry(2.0, 1), createMaterial('mesh', 0xffffff, 0.6, true, true)));
+            structures['ICOSAHEDRON'] = gIco;
+
+            // 3. DOME (Cathedral)
+            const gDome = new THREE.Group();
+            const dMat = createMaterial('mesh', 0x00ffff, 0.1, true, true);
+            gDome.add(new THREE.Mesh(new THREE.SphereGeometry(35, 48, 32, 0, Math.PI*2, 0, Math.PI/2), dMat));
+            for(let i=0; i<8; i++) {
+                const angle = (i/8)*Math.PI*2; const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.8, 50, 8), createMaterial('mesh', 0x00ffff, 0.15, true, true));
+                pillar.position.set(Math.cos(angle)*18, -10, Math.sin(angle)*18); gDome.add(pillar);
+            }
+            const chMat = createMaterial('mesh', 0xffffff, 0.5, true, true); chMat.userData.isAccent = true;
+            for(let i=0; i<6; i++) {
+                const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(4 - i*0.5, 1), chMat);
+                crystal.position.y = 25 - i*4; crystal.rotation.y = i * Math.PI/4; gDome.add(crystal); cathedralRings.push(crystal);
+            }
+            const abyssGeo = new THREE.BufferGeometry(); const aPts = [];
+            for(let i=0; i<2000; i++) {
+                const r = Math.random() * 40; const theta = Math.random() * Math.PI * 2; const depth = -10 - Math.pow(r, 1.2) * 0.4; 
+                aPts.push(r * Math.cos(theta), depth, r * Math.sin(theta));
+            }
+            abyssGeo.setAttribute('position', new THREE.Float32BufferAttribute(aPts, 3));
+            abyssParticles = new THREE.Points(abyssGeo, new THREE.PointsMaterial({ size: 0.5, map: glowTexture, color: 0x00ffff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+            abyssParticles.userData = { isAccent: true }; gDome.add(abyssParticles);
+            structures['DOME'] = gDome;
+
+            // 4. CABLES
+            const gCables = new THREE.Group();
+            const cableMat = createMaterial('mesh', 0x00ffff, 0.15, true, false); cableMat.userData.isAccent = true;
+            const phiFib = Math.PI * (3.0 - Math.sqrt(5.0)); 
+            for(let i=0; i<80; i++) {
+                const y = 1 - (i / 79) * 2; const radius = Math.sqrt(1 - y * y); const theta = phiFib * i;
+                const start = new THREE.Vector3(Math.cos(theta)*radius*30, y*30, Math.sin(theta)*radius*30);
+                const end = new THREE.Vector3(0,0,0); const mid = start.clone().lerp(end, 0.5).applyAxisAngle(new THREE.Vector3(0,1,0), Math.PI/1.5);
+                gCables.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([start, mid, end]), 50, 0.15, 6, false), cableMat));
+            }
+            structures['CABLES'] = gCables;
+
+            // 5. GRID
+            const gGrid = new THREE.Group();
+            const oceanGeo = new THREE.PlaneGeometry(100, 100, 80, 80); oceanGeo.rotateX(-Math.PI / 2);
+            gridOcean = new THREE.Points(oceanGeo, new THREE.PointsMaterial({ size: 0.35, map: glowTexture, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+            gridOcean.material.userData = { baseOpacity: 0.5, isAccent: true }; gridOcean.userData.baseY = new Float32Array(oceanGeo.attributes.position.count);
+            for(let i=0; i<oceanGeo.attributes.position.count; i++) gridOcean.userData.baseY[i] = oceanGeo.attributes.position.getY(i);
+            gGrid.add(gridOcean); structures['GRID'] = gGrid;
+
+            // 6. MANDELBROT SET
+            const gMandel = new THREE.Group();
+            const mPts = [], mCols = [], mData = [];
+            const maxIter = 40;
+            for(let x = -2.1; x < 0.8; x += 0.012) {
+                for(let y = -1.2; y < 1.2; y += 0.012) {
+                    let cx = x, cy = y, zx = 0, zy = 0, iter = 0;
+                    while(zx*zx + zy*zy < 4 && iter < maxIter) { let tmp = zx*zx - zy*zy + cx; zy = 2*zx*zy + cy; zx = tmp; iter++; }
+                    if(iter < maxIter && iter > 2) {
+                        let smooth = iter + 1 - Math.log(Math.log(Math.sqrt(zx*zx + zy*zy))) / Math.log(2);
+                        let height = (smooth / maxIter) * 6.0; 
+                        mPts.push((x + 0.65) * 10, height - 3.0, y * 10); mCols.push(1, 1, 1); 
+                        mData.push({ baseX: (x+0.65)*10, baseZ: y*10, baseY: height - 3.0, iterRatio: smooth/maxIter });
+                    }
+                }
+            }
+            const mGeom = new THREE.BufferGeometry(); mGeom.setAttribute('position', new THREE.Float32BufferAttribute(mPts, 3)); mGeom.setAttribute('color', new THREE.Float32BufferAttribute(mCols, 3));
+            mandelbrotSystem = new THREE.Points(mGeom, new THREE.PointsMaterial({ size: 0.25, map: glowTexture, vertexColors: true, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+            mandelbrotSystem.userData.data = mData; gMandel.add(mandelbrotSystem);
+            structures['MANDELBROT'] = gMandel;
+
+            // 7. ASTROLABE
+            const gAstrolabe = new THREE.Group();
+            const astroMatSolid = createMaterial('mesh', 0x00ffff, 0.15, true, false); const astroMatDash = createMaterial('line', 0x00ffff, 0.6, true, false, true); astroMatDash.userData.isAccent = true;
+            for(let i=1; i<=8; i++) {
+                const ringGroup = new THREE.Group(); const radius = i * 2.0;
+                ringGroup.add(new THREE.Mesh(new THREE.TorusGeometry(radius, 0.05, 8, 80), astroMatSolid));
+                const dashedEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.TorusGeometry(radius, 0.2, 4, 40)), astroMatDash);
+                dashedEdges.computeLineDistances(); ringGroup.add(dashedEdges);
+                ringGroup.rotation.x = Math.random() * Math.PI; ringGroup.rotation.y = Math.random() * Math.PI;
+                ringGroup.userData = { rxSpeed: (Math.random()-0.5)*0.015, rySpeed: (Math.random()-0.5)*0.015 };
+                gAstrolabe.add(ringGroup); astrolabeRings.push(ringGroup);
+            }
+            structures['ASTROLABE'] = gAstrolabe;
+
+            // 8. TESSERACT
+            const gTesseract = new THREE.Group();
+            const tessMat = createMaterial('line', 0x00ffff, 0.8, true, false); tessMat.userData.isAccent = true;
+            const tessNodesMat = new THREE.PointsMaterial({ size: 1.0, map: glowTexture, color: 0x00ffff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+            const tPts4D = []; for(let i=0; i<16; i++) tPts4D.push({ x: (i&1)?1:-1, y: (i&2)?1:-1, z: (i&4)?1:-1, w: (i&8)?1:-1 });
+            const tEdges = [];
+            for(let i=0; i<16; i++) { for(let j=i+1; j<16; j++) { if(Math.abs(tPts4D[i].x-tPts4D[j].x) + Math.abs(tPts4D[i].y-tPts4D[j].y) + Math.abs(tPts4D[i].z-tPts4D[j].z) + Math.abs(tPts4D[i].w-tPts4D[j].w) === 2) tEdges.push(i, j); } }
+            const tessGeo = new THREE.BufferGeometry(); tessGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(tEdges.length*3), 3));
+            tesseractLines = new THREE.LineSegments(tessGeo, tessMat); tesseractLines.userData = { pts4D: tPts4D, edges: tEdges, angleXW: 0, angleYW: 0 };
+            const tessNodesGeo = new THREE.BufferGeometry(); tessNodesGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(16*3), 3));
+            const tessNodes = new THREE.Points(tessNodesGeo, tessNodesMat); tessNodes.userData.isAccent = true;
+            gTesseract.add(tesseractLines); gTesseract.add(tessNodes); gTesseract.scale.set(3,3,3);
+            structures['TESSERACT'] = gTesseract;
+
+            // 9. NETWORK
+            const gNet = new THREE.Group();
+            const netNodeMat = new THREE.PointsMaterial({ size: 0.6, map: glowTexture, color: 0x00ffff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+            const netLineMat = createMaterial('line', 0x00ffff, 0.2, true, false); netLineMat.userData.isAccent = true;
+            const netPts = [];
+            for(let i=0; i<120; i++) {
+                let p = new THREE.Vector3((Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20);
+                netPts.push(p); shannonNodes.push({ pos: p, velocity: new THREE.Vector3((Math.random()-0.5)*0.015, (Math.random()-0.5)*0.015, (Math.random()-0.5)*0.015) });
+            }
+            gNet.add(new THREE.Points(new THREE.BufferGeometry().setFromPoints(netPts), netNodeMat));
+            shannonLines = new THREE.LineSegments(new THREE.BufferGeometry(), netLineMat); gNet.add(shannonLines);
+            structures['NETWORK'] = gNet;
+
+            // 10. MOBIUS
+            const gMobius = new THREE.Group();
+            const mobPts = [];
+            for(let u=0; u<Math.PI*2; u+=0.04) { for(let v=-1; v<=1; v+=0.15) mobPts.push({u: u, v: v}); }
+            const mobGeo = new THREE.BufferGeometry(); mobGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(mobPts.length*3), 3));
+            mobiusSystem = new THREE.Points(mobGeo, new THREE.PointsMaterial({ size: 0.25, map: glowTexture, color: 0x00ffff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+            mobiusSystem.userData = { data: mobPts, isAccent: true }; gMobius.add(mobiusSystem); gMobius.scale.set(4,4,4);
+            structures['MOBIUS'] = gMobius;
+
+            // 11. QUANTUM
+            const gQuantum = new THREE.Group();
+            gQuantum.add(new THREE.Points(new THREE.SphereGeometry(3.5, 64, 64), new THREE.PointsMaterial({ size: 0.4, map: glowTexture, color: 0xffffff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false })));
+            const numQRings = 30;
+            for(let i=0; i<numQRings; i++) {
+                const qLineMat = createMaterial('line', 0xffffff, 0.5, true, false); qLineMat.userData.isAccent = true;
+                const qGeo = new THREE.BufferGeometry(); qGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(300 * 3), 3));
+                const qLine = new THREE.LineLoop(qGeo, qLineMat);
+                qLine.rotation.x = Math.random()*Math.PI; qLine.rotation.y = Math.random()*Math.PI;
+                qLine.userData = { radius: 6 + (i*0.4), waveSpeed: 2 + Math.random()*4, colorPhase: i/numQRings };
+                gQuantum.add(qLine); quantumRings.push(qLine);
+            }
+            structures['QUANTUM'] = gQuantum;
+
+            // 12. NONE (Transcendence)
+            const gNone = new THREE.Group();
+            const lineMat = createMaterial('line', 0x00ffff, 0.2, true, false); lineMat.userData.isAccent = true;
+            for(let i=0; i<100; i++) {
+                const x = (Math.random()-0.5)*40; const z = (Math.random()-0.5)*40; const y = (Math.random()-0.5)*40;
+                const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, y-5, z), new THREE.Vector3(x, y+5, z)]), lineMat);
+                line.userData = { speed: 0.01 + Math.random()*0.02, baseY: y }; 
+                gNone.add(line); matrixLines.push(line);
+            }
+            structures['NONE'] = gNone;
+
+            // 13. EDEN TRANCE (Giga Earth Rez Tribute)
+            const gEden = new THREE.Group();
+            const tunnelGroup = new THREE.Group();
+            const tunnelGeo = new THREE.BoxGeometry(40, 40, 200, 4, 4, 20);
+            const tunnelWireMat = createMaterial('line', 0xff00ff, 0.3, true, false); tunnelWireMat.userData.isAccent = true;
+            const tunnelWire = new THREE.LineSegments(new THREE.EdgesGeometry(tunnelGeo), tunnelWireMat);
+            const tunnelSolidMat = new THREE.MeshBasicMaterial({ color: 0x050515, side: THREE.BackSide });
+            tunnelSolidMat.userData = { isTunnelSolid: true };
+            const tunnelSolid = new THREE.Mesh(tunnelGeo, tunnelSolidMat);
+            tunnelGroup.add(tunnelWire); tunnelGroup.add(tunnelSolid);
+            gEden.add(tunnelGroup);
+
+            const sphereGeo = new THREE.SphereGeometry(6, 24, 16, 0, Math.PI*2, 0.2, Math.PI - 0.4);
+            const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.9 });
+            sphereMat.userData = { isBossSphere: true };
+            edenLady = new THREE.Mesh(sphereGeo, sphereMat);
+            const sphereWire = new THREE.WireframeGeometry(sphereGeo);
+            const sphereWireMat = new THREE.LineBasicMaterial({ color: 0x550000, transparent: true, opacity: 0.6 });
+            sphereWireMat.userData = { isBossWire: true };
+            edenLady.add(new THREE.LineSegments(sphereWire, sphereWireMat));
+            gEden.add(edenLady);
+
+            const spineGroup = new THREE.Group();
+            const spineMat = createMaterial('line', 0xff3300, 0.8, true, false); spineMat.userData.isAccent = true;
+            for(let i=0; i<15; i++) {
+                const x = (Math.random() - 0.5) * 4; const z = (Math.random() - 0.5) * 4;
+                const pts = [new THREE.Vector3(x, -50, z), new THREE.Vector3(x, 50, z)];
+                spineGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), spineMat));
+            }
+            gEden.add(spineGroup);
+
+            edenPlayer = new THREE.Group();
+            const pBodyMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); pBodyMat.userData = { isPlayerBody: true };
+            const pBody = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.3, 1.5, 8), pBodyMat);
+            const pHead = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), pBodyMat);
+            pHead.position.y = 0.9;
+            const ringPts = [];
+            for(let i=0; i<=32; i++) { const th = (i/32) * Math.PI * 2; ringPts.push(new THREE.Vector3(Math.cos(th)*1.5, Math.sin(th)*1.5, 0)); }
+            const pRingMat = createMaterial('line', 0x00ffff, 0.8, true, false); pRingMat.userData.isAccent = true;
+            const pRing = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), pRingMat);
+            pRing.rotation.x = Math.PI / 2;
+            edenPlayer.add(pBody); edenPlayer.add(pHead); edenPlayer.add(pRing);
+            gEden.add(edenPlayer);
+
+            edenDebris = [];
+            const debrisMat = createMaterial('mesh', 0x00ffff, 0.4, true, true);
+            for(let i=0; i<60; i++) {
+                const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0, -2 - Math.random()*3)]);
+                const mesh = new THREE.Line(geo, debrisMat);
+                mesh.position.set((Math.random()-0.5)*35, (Math.random()-0.5)*35, (Math.random()-0.5)*100);
+                mesh.userData = { speed: 1.0 + Math.random()*3.0 };
+                gEden.add(mesh); edenDebris.push(mesh);
+            }
+            structures['EDEN'] = gEden;
+        }
+
+        function setGroupOpacity(group, opacityMultiplier) {
+            if(!group) return;
+            group.traverse(child => {
+                if (child && child.material && child.material.userData && child.material.userData.baseOpacity !== undefined) {
+                    child.material.opacity = child.material.userData.baseOpacity * opacityMultiplier;
+                }
+            });
+        }
+
+        function updateGroupColors(group) {
+            if(!group) return;
+            group.traverse(child => {
+                if (child && child.material && child.material.userData) {
+                    const targetColor = child.material.userData.isAccent || (child.userData && child.userData.isAccent) ? moodLerpValues.accentColor : moodLerpValues.baseColor;
+                    
+                    if (child === mandelbrotSystem && mandelbrotSystem && mandelbrotSystem.geometry && mandelbrotSystem.geometry.attributes.color) {
+                        const colors = child.geometry.attributes.color.array; const mData = child.userData.data;
+                        for(let i=0; i<mData.length; i++) {
+                            const c = new THREE.Color().copy(moodLerpValues.baseColor).lerp(moodLerpValues.accentColor, mData[i].iterRatio);
+                            colors[i*3] = c.r; colors[i*3+1] = c.g; colors[i*3+2] = c.b;
+                        }
+                        child.geometry.attributes.color.needsUpdate = true;
+                    } else if (child.material.userData.isTunnelSolid) {
+                        child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.05);
+                    } else if (child.material.userData.isBossSphere) {
+                        child.material.color.copy(moodLerpValues.baseColor);
+                    } else if (child.material.userData.isBossWire) {
+                        child.material.color.copy(moodLerpValues.accentColor).multiplyScalar(0.3);
+                    } else if (child.material.userData.isPlayerBody) {
+                        child.material.color.setHex(0xffffff); 
+                    } else if (child.material.color && targetStructure !== 'QUANTUM') {
+                        child.material.color.copy(targetColor);
+                        if(child.geometry && child.geometry.type === 'BoxGeometry' && !child.material.wireframe && (currentStructure === 'CUBES' || targetStructure === 'CUBES')) {
+                            child.material.color.copy(moodLerpValues.baseColor).multiplyScalar(0.15); 
+                        }
+                    }
+                }
+            });
+        }
+
+        async function setupAudio() {
+            if (audioContext) return;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') await audioContext.resume();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser(); analyser.fftSize = 256;
+                source.connect(analyser); dataArray = new Uint8Array(analyser.frequencyBinCount);
+                micActive = true; lastSoundTime = clock.getElapsedTime(); 
+            } catch (err) { console.warn("Using procedural heartbeat."); }
+        }
+
+        function onWindowResize() {
+            if(!camera || !renderer || !composer) return;
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function smoothstep(x) { return x * x * (3 - 2 * x); }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(clock.getDelta(), 0.1); 
+            const elapsed = clock.getElapsedTime() * 0.5;
+
+            // --- HAND CURSOR LOGIC (Minority Report) ---
+            const cursor = document.getElementById('hand-cursor');
+            const pRing = document.querySelector('.pinch-circle');
+            if (isHandTrackingMode) {
+                currHandX += (rawHandX - currHandX) * 0.25; 
+                currHandY += (rawHandY - currHandY) * 0.25; 
+                cursor.style.left = `${currHandX}px`; cursor.style.top = `${currHandY}px`;
+                
+                if (isPinching) {
+                    if(!wasPinching) { pinchStartTime = performance.now(); rightClickFired = false; cursor.classList.add('pinching'); }
+                    const duration = performance.now() - pinchStartTime;
+                    if (duration > 200) {
+                        document.getElementById('pinch-progress').style.opacity = 1;
+                        const progress = Math.min(1.0, (duration - 200) / PINCH_HOLD_TIME);
+                        pRing.style.strokeDashoffset = 95 * (1.0 - progress);
+                        if (progress >= 1.0 && !rightClickFired) {
+                            rightClickFired = true; spawnRipple(currHandX, currHandY, '#ff00ff');
+                        }
+                    }
+                } else {
+                    if (wasPinching) {
+                        const duration = performance.now() - pinchStartTime;
+                        cursor.classList.remove('pinching');
+                        document.getElementById('pinch-progress').style.opacity = 0; pRing.style.strokeDashoffset = 95;
+                        if (duration < 500) {
+                            spawnRipple(currHandX, currHandY, '#00ffff');
+                            cursor.style.display = 'none'; 
+                            let el = document.elementFromPoint(currHandX, currHandY);
+                            cursor.style.display = 'flex';
+                            if (el && typeof el.click === 'function') el.click();
+                        }
+                    }
+                }
+                wasPinching = isPinching;
+            }
+
+            // --- STABILIZED TRUE 3D HOLOGRAPHIC PARALLAX OFFSET ---
+            if (isHologramMode && isFaceVisible) {
+                currFaceX += (rawFaceX - currFaceX) * 0.08; 
+                currFaceY += (rawFaceY - currFaceY) * 0.08;
+                currFaceZ += (rawFaceZ - currFaceZ) * 0.05; 
+            } else {
+                currFaceX += (mouseX - currFaceX) * 0.04; 
+                currFaceY += (mouseY - currFaceY) * 0.04; 
+                currFaceZ += (0 - currFaceZ) * 0.04;
+            }
+
+            // --- TIME LAPSE LOGIC ---
+            if (timeLapseActive) {
+                timeLapseTimer += delta;
+                if (timeLapseTimer > 10.0) { timeLapseTimer = 0; setEvolution((currentEvolutionIdx + 1) % EVOLUTION_PATH.length); }
+            }
+
+            if (metamorphosisFlash > 0) metamorphosisFlash = Math.max(0, metamorphosisFlash - delta * 0.3);
+
+            // --- AUDIO PROCESSING ---
+            const heartbeat = (Math.sin(elapsed * Math.PI) + 1) / 2;
+            if (micActive && analyser && dataArray) {
+                analyser.getByteFrequencyData(dataArray);
+                let low = 0, mid = 0, high = 0;
+                for(let i=0; i<8; i++) low += dataArray[i]; for(let i=8; i<40; i++) mid += dataArray[i]; for(let i=40; i<100; i++) high += dataArray[i];
+                audioData.low = (low / 8 / 255) + (heartbeat * 0.05); audioData.mid = mid / 32 / 255; audioData.high = high / 60 / 255;
+                audioData.total = (audioData.low + audioData.mid + audioData.high) / 3;
+                if (audioData.total > 0.02) lastSoundTime = elapsed;
+            } else {
+                audioData.low = heartbeat * 0.15; audioData.mid = heartbeat * 0.05; audioData.high = 0; audioData.total = audioData.low;
+            }
+
+            // Design rule: the scene only ANIMATES (elevated energy / motion)
+            // while Friday is actually SPEAKING (audio playing back). Thinking /
+            // executing / running a task is a color + state shift at the calm idle
+            // baseline — so energy is gated on speaking, NOT on _fridayBusy.
+            const _speaking = !!(window._fridayMoodSignals && window._fridayMoodSignals.ttsActive)
+                              || (window._fridayHoloAmplitude || 0) > 0.12;
+            const isQuiet = (elapsed - lastSoundTime > 6.0) && !_speaking;
+            // Floor at 0.6 (was 0.2): quiet idle should still feel luminous, not dead.
+            const targetIdle = _speaking ? 1.2 : (isQuiet ? 0.6 : 1.0);
+            idleFactor = THREE.MathUtils.lerp(idleFactor, targetIdle, delta * (isQuiet ? 0.3 : 2.0));
+
+            // --- MOOD LERPING ---
+            const moodLerp = delta * 0.5; const tMood = MOODS[currentMood];
+            if(tMood) {
+                // Color + glow track every mood (the state indicator, always on).
+                moodLerpValues.baseColor.lerp(new THREE.Color(tMood.baseColor), moodLerp);
+                moodLerpValues.accentColor.lerp(new THREE.Color(tMood.accentColor), moodLerp);
+                moodLerpValues.bloomStrength = THREE.MathUtils.lerp(moodLerpValues.bloomStrength, tMood.bloomStrength, moodLerp);
+                moodLerpValues.grain = THREE.MathUtils.lerp(moodLerpValues.grain, tMood.grain, moodLerp);
+                // MOTION — spin speed + particle speed — only follows the mood while
+                // SPEAKING; otherwise it holds the calm IDLE baseline, so a state like
+                // EXECUTING shifts color without adding any movement.
+                const _motionMood = _speaking ? tMood : MOODS.IDLE;
+                moodLerpValues.rotationSpeed = THREE.MathUtils.lerp(moodLerpValues.rotationSpeed, _motionMood.rotationSpeed, moodLerp);
+                moodLerpValues.particleSpeedScale = THREE.MathUtils.lerp(moodLerpValues.particleSpeedScale, _motionMood.particleSpeedScale, moodLerp);
+            }
+
+            // --- HUD UPDATES ---
+            const hudEl = document.getElementById('hud-overlay');
+            if (hudEl) {
+                hudEl.style.setProperty('--hud-r', Math.floor(moodLerpValues.baseColor.r * 255));
+                hudEl.style.setProperty('--hud-g', Math.floor(moodLerpValues.baseColor.g * 255));
+                hudEl.style.setProperty('--hud-b', Math.floor(moodLerpValues.baseColor.b * 255));
+                hudEl.style.setProperty('--hud-opacity', Math.min(0.8, 0.2 + (audioData.total * 1.5) + (metamorphosisFlash * 0.5)));
+                hudEl.style.transform = `perspective(1000px) rotateY(${currFaceX * -2}deg) rotateX(${currFaceY * 2}deg) translateZ(0px)`;
+            }
+
+
+            nebulaClouds.forEach(cloud => {
+                if(cloud && cloud.material && cloud.userData && cloud.rotation) {
+                    const targetColor = cloud.userData.isAccent ? moodLerpValues.accentColor : moodLerpValues.baseColor;
+                    cloud.material.color.copy(targetColor);
+                    cloud.material.opacity = 0.03 + audioData.low * 0.05 + (metamorphosisFlash * 0.1);
+                    cloud.rotation.z += cloud.userData.speed;
+                    cloud.position.z += delta * 0.5; if(cloud.position.z > 0) cloud.position.z = -100;
+                }
+            });
+
+            // --- STRUCTURE TRANSITIONS ---
+            if (transitionProgress < 1.0) transitionProgress = Math.min(1.0, transitionProgress + delta * 0.125);
+            const ease = smoothstep(transitionProgress); 
+            const scatterIntensity = Math.sin(transitionProgress * Math.PI) + (metamorphosisFlash * 1.5); 
+
+            Object.keys(structures).forEach(key => {
+                const g = structures[key];
+                if(g) {
+                    updateGroupColors(g);
+                    if (key === targetStructure) { g.visible = true; setGroupOpacity(g, ease); g.scale.setScalar(1.2 - ease * 0.2); }
+                    else if (key === currentStructure && transitionProgress < 1.0) { setGroupOpacity(g, 1 - ease); g.scale.setScalar(1.0 + ease * 0.5); }
+                    else g.visible = false;
+                }
+            });
+            if (transitionProgress >= 1.0 && currentStructure !== targetStructure) currentStructure = targetStructure;
+
+            // --- CINEMATIC TRUE-3D CAMERA PARALLAX ---
+            if(camera) {
+                if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(elapsed*0.2)*2, 18); targetCamLook.set(0, 5, 0); } 
+                else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(elapsed*0.2)*1, 15 - (elapsed*2) % 10); targetCamLook.set(0, 1, 0); } 
+                else if (targetStructure === 'CABLES' || targetStructure === 'ASTROLABE') { targetCamPos.set(Math.sin(elapsed*0.1)*12, Math.cos(elapsed*0.1)*12, 15 + Math.sin(elapsed*0.2)*5); targetCamLook.set(0, 0, 0); } 
+                else if (targetStructure === 'MANDELBROT') { targetCamPos.set(Math.sin(elapsed*0.2)*14, 8 + Math.sin(elapsed*0.3)*3, Math.cos(elapsed*0.2)*14); targetCamLook.set(0, 0, 0); } 
+                else if (targetStructure === 'NETWORK') { targetCamPos.set(Math.sin(elapsed*0.2)*10, Math.sin(elapsed*0.3)*6, Math.cos(elapsed*0.2)*10); targetCamLook.set(0, 0, 0); } 
+                else if (targetStructure === 'EDEN') { targetCamPos.set(Math.sin(elapsed*0.5)*2, Math.cos(elapsed*0.3)*1.5, 28); targetCamLook.set(0, 0, 0); } 
+                else { targetCamPos.set(Math.sin(elapsed*0.15)*6, 5 + Math.cos(elapsed*0.2)*2, 18 + Math.sin(elapsed*0.1)*3); targetCamLook.set(0, 0, 0); }
+
+                baseCamPos.lerp(targetCamPos, delta * 0.8);
+
+                const parallaxX = currFaceX * 5.0; 
+                const parallaxY = currFaceY * -5.0; 
+                const parallaxZ = currFaceZ * -8.0; 
+
+                camera.position.x = baseCamPos.x + parallaxX;
+                camera.position.y = baseCamPos.y + parallaxY;
+                camera.position.z = baseCamPos.z + parallaxZ;
+
+                const lookTarget = targetCamLook.clone();
+                lookTarget.x += parallaxX * 0.15; 
+                lookTarget.y += parallaxY * 0.15;
+
+                const currentLook = new THREE.Vector3(); camera.getWorldDirection(currentLook);
+                const idealLook = lookTarget.sub(camera.position).normalize();
+                currentLook.lerp(idealLook, delta * 2.0); 
+                camera.lookAt(camera.position.clone().add(currentLook));
+            }
+
+            // --- ANIMATE ACTIVE STRUCTURES ---
+            const activeGroup = structures[targetStructure];
+            const interactionForce = Math.min(1.0, Math.abs(currFaceX) + Math.abs(currFaceY) + Math.abs(currFaceZ));
+
+            // Voice-reactive breath factor: SPEAKING/EXECUTING push geometry outward.
+            // Declared BEFORE the structure loop below — these consts are read inside it
+            // (e.g. breathScale uses idlePulse), and a `const` read before its declaration
+            // throws a TDZ ReferenceError that would kill the whole animate() frame before
+            // composer.render(), freezing the scene on certain structures.
+            const voiceBreathRaw = holoAmplitude * 3.0 + audioData.low * 2.0;
+            const isExecutingMood = currentMood === 'EXECUTING';
+            const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
+            const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
+
+            if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN'].includes(targetStructure)) {
+                activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
+                if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
+                // Voice-reactive scale breathing for all structures without custom vertex displacement
+                if (!['CUBES','DOME','ASTROLABE'].includes(targetStructure) && activeGroup.scale) {
+                    const breathScale = 1.0 + holoAmplitude * 0.15 + idlePulse * 0.2;
+                    activeGroup.scale.setScalar(breathScale);
+                }
+            }
+
+            if (structures['CUBES'] && structures['CUBES'].visible && coreCubes.length > 0) {
+                coreCubes.forEach(c => {
+                    if (c && c.rotation && c.position && c.userData) {
+                        c.rotation.x += 0.01 * c.userData.speed * idleFactor; c.rotation.y += 0.012 * c.userData.speed * idleFactor;
+                        const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
+                        // Genesis Lattice cohesion: the voice/active drive (audio + voiceBreath +
+                        // face interaction) used to blast the cubes out so far the cube-of-cubes
+                        // lost its form while speaking. Scale that active spread to ~65% so the
+                        // lattice still visibly energizes but stays cohesive — which also makes
+                        // the mood/color state-shift far easier to read. organicBreathe + idlePulse
+                        // (the calm resting breath) are kept at full strength.
+                        const LATTICE_SPREAD = 0.65;
+                        const activeExpansion = ((audioData.low * 1.5) + (interactionForce * 1.5) + voiceBreath) * LATTICE_SPREAD;
+                        const expansion = organicBreathe + activeExpansion + idlePulse;
+                        c.position.set(
+                            c.userData.baseX + c.userData.dir.x * expansion,
+                            c.userData.baseY + c.userData.dir.y * expansion,
+                            c.userData.baseZ + c.userData.dir.z * expansion
+                        );
+                        // Vertex displacement: scale cubes with voice amplitude
+                        const vScale = 1.0 + holoAmplitude * 0.3 + audioData.mid * 0.15;
+                        c.scale.setScalar(vScale);
+                    }
+                });
+            }
+
+            if (structures['DOME'] && structures['DOME'].visible) {
+                if(abyssParticles && abyssParticles.rotation && abyssParticles.scale) {
+                    abyssParticles.rotation.y -= 0.005 * idleFactor;
+                    abyssParticles.scale.setScalar(1.0 + audioData.low * 0.3 * idleFactor + voiceBreath * 0.2);
+                }
+                cathedralRings.forEach((c, i) => {
+                    if(c && c.rotation && c.scale) {
+                        c.rotation.y += 0.002 * (i%2==0?1:-1) * idleFactor;
+                        c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5);
+                    }
+                });
+            }
+
+            if (structures['GRID'] && structures['GRID'].visible && gridOcean && gridOcean.geometry && gridOcean.geometry.attributes.position && gridOcean.userData) {
+                const positions = gridOcean.geometry.attributes.position.array; const baseYs = gridOcean.userData.baseY;
+                for(let i=0; i<gridOcean.geometry.attributes.position.count; i++) {
+                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6;
+                }
+                gridOcean.geometry.attributes.position.needsUpdate = true;
+            }
+
+            if (structures['MANDELBROT'] && structures['MANDELBROT'].visible && mandelbrotSystem && mandelbrotSystem.rotation && mandelbrotSystem.geometry && mandelbrotSystem.geometry.attributes.position && mandelbrotSystem.userData) {
+                mandelbrotSystem.rotation.y = elapsed * 0.05;
+                const positions = mandelbrotSystem.geometry.attributes.position.array; const mData = mandelbrotSystem.userData.data;
+                const colors = mandelbrotSystem.geometry.attributes.color.array;
+                for(let i=0; i<mData.length; i++) {
+                    const wave = Math.sin(mData[i].baseX*0.5 + elapsed) * Math.cos(mData[i].baseZ*0.5 + elapsed) * (audioData.low * 3.0);
+                    positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave + voiceBreath * mData[i].iterRatio;
+                    const c = new THREE.Color().copy(moodLerpValues.baseColor).lerp(moodLerpValues.accentColor, mData[i].iterRatio + audioData.mid);
+                    colors[i*3] = c.r; colors[i*3+1] = c.g; colors[i*3+2] = c.b;
+                }
+                mandelbrotSystem.geometry.attributes.position.needsUpdate = true;
+                mandelbrotSystem.geometry.attributes.color.needsUpdate = true;
+            }
+
+            if (structures['ASTROLABE'] && structures['ASTROLABE'].visible && astrolabeRings.length > 0) {
+                astrolabeRings.forEach((ring, i) => {
+                    if (ring && ring.rotation && ring.userData) {
+                        ring.rotation.x += ring.userData.rxSpeed * (1 + audioData.mid*3);
+                        ring.rotation.y += ring.userData.rySpeed * (1 + audioData.mid*3);
+                        if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3);
+                    }
+                });
+            }
+
+            if (structures['TESSERACT'] && structures['TESSERACT'].visible && tesseractLines && tesseractLines.userData && tesseractLines.geometry && tesseractLines.geometry.attributes.position) {
+                const tessGroup = structures['TESSERACT'];
+                if (tessGroup && tessGroup.children.length > 1) {
+                    const tessNodes = tessGroup.children[1];
+                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0) * delta * idleFactor;
+                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0) * delta * idleFactor;
+                    const cosXW = Math.cos(tesseractLines.userData.angleXW), sinXW = Math.sin(tesseractLines.userData.angleXW);
+                    const cosYW = Math.cos(tesseractLines.userData.angleYW), sinYW = Math.sin(tesseractLines.userData.angleYW);
+                    const pts3D = [];
+                    if (tesseractLines.userData.pts4D) {
+                        tesseractLines.userData.pts4D.forEach(p => {
+                            let x = p.x, y = p.y, z = p.z, w = p.w;
+                            let nx = x*cosXW - w*sinXW; let nw = x*sinXW + w*cosXW; x = nx; w = nw;
+                            let ny = y*cosYW - w*sinYW; nw = y*sinYW + w*cosYW; y = ny; w = nw;
+                            let w_factor = 2 / (4 - w);
+                            pts3D.push(new THREE.Vector3(x*w_factor, y*w_factor, z*w_factor));
+                        });
+                    }
+                    const lPositions = tesseractLines.geometry.attributes.position.array;
+                    const edges = tesseractLines.userData.edges;
+                    if (edges && pts3D.length > 0) {
+                        for(let i=0; i<edges.length; i+=2) {
+                            let idx = (i/2)*6; let e1 = edges[i]; let e2 = edges[i+1];
+                            if (pts3D[e1] && pts3D[e2]) {
+                                lPositions[idx] = pts3D[e1].x; lPositions[idx+1] = pts3D[e1].y; lPositions[idx+2] = pts3D[e1].z;
+                                lPositions[idx+3] = pts3D[e2].x; lPositions[idx+4] = pts3D[e2].y; lPositions[idx+5] = pts3D[e2].z;
+                            }
+                        }
+                    }
+                    tesseractLines.geometry.attributes.position.needsUpdate = true;
+                    if (tessNodes && tessNodes.geometry && tessNodes.geometry.attributes.position) {
+                        const nPositions = tessNodes.geometry.attributes.position.array;
+                        pts3D.forEach((p, i) => { if(p) { nPositions[i*3] = p.x; nPositions[i*3+1] = p.y; nPositions[i*3+2] = p.z; } });
+                        tessNodes.geometry.attributes.position.needsUpdate = true;
+                    }
+                }
+            }
+
+            if (structures['NETWORK'] && structures['NETWORK'].visible && shannonLines && shannonLines.geometry && shannonNodes.length > 0) {
+                const netGroup = structures['NETWORK'];
+                if (netGroup && netGroup.children.length > 0 && netGroup.children[0].geometry && netGroup.children[0].geometry.attributes.position) {
+                    const nodePos = netGroup.children[0].geometry.attributes.position.array;
+                    const linePts = [];
+                    for(let i=0; i<120; i++) {
+                        if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
+                        let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
+                        p.add(v); if(p.length() > 20) v.multiplyScalar(-1);
+                        const nDir = p.clone().normalize();
+                        nodePos[i*3] = p.x + nDir.x * voiceBreath * 0.5; nodePos[i*3+1] = p.y + nDir.y * voiceBreath * 0.5; nodePos[i*3+2] = p.z + nDir.z * voiceBreath * 0.5;
+                        let connected = 0;
+                        for(let j=i+1; j<120; j++) {
+                            if(connected > 3 || !shannonNodes[j] || !shannonNodes[j].pos) break;
+                            if(p.distanceTo(shannonNodes[j].pos) < 6 + (audioData.high * 6)) { 
+                                linePts.push(p, shannonNodes[j].pos); connected++; 
+                            }
+                        }
+                    }
+                    netGroup.children[0].geometry.attributes.position.needsUpdate = true;
+                    if(linePts.length > 0) shannonLines.geometry.setFromPoints(linePts);
+                    else shannonLines.geometry.setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+                }
+            }
+
+            if (structures['MOBIUS'] && structures['MOBIUS'].visible && mobiusSystem && mobiusSystem.geometry && mobiusSystem.geometry.attributes.position && mobiusSystem.userData) {
+                const positions = mobiusSystem.geometry.attributes.position.array; const mData = mobiusSystem.userData.data;
+                const flowOffset = elapsed * (2 + audioData.mid * 4);
+                if (mData) {
+                    for(let i=0; i<mData.length; i++) {
+                        const u = mData[i].u + flowOffset; const v = mData[i].v; const R = 3.0, r = 1.5;
+                        const breathR = R + voiceBreath * 0.3;
+                        positions[i*3] = (breathR + r * v * Math.cos(u/2)) * Math.cos(u);
+                        positions[i*3+1] = (breathR + r * v * Math.cos(u/2)) * Math.sin(u);
+                        positions[i*3+2] = r * v * Math.sin(u/2);
+                    }
+                }
+                mobiusSystem.geometry.attributes.position.needsUpdate = true;
+            }
+
+            if (structures['QUANTUM'] && structures['QUANTUM'].visible && quantumRings.length > 0) {
+                quantumRings.forEach(qLine => {
+                    if(qLine && qLine.geometry && qLine.geometry.attributes.position && qLine.userData) {
+                        const positions = qLine.geometry.attributes.position.array;
+                        for(let i=0; i<300; i++) {
+                            const theta = (i/300) * Math.PI * 2;
+                            const wave = Math.sin(theta * 10 + elapsed * qLine.userData.waveSpeed) * (audioData.high * 4.0);
+                            const r = qLine.userData.radius + wave + voiceBreath * 0.4;
+                            positions[i*3] = Math.cos(theta) * r; positions[i*3+1] = Math.sin(theta) * r; positions[i*3+2] = 0;
+                        }
+                        qLine.geometry.attributes.position.needsUpdate = true;
+                        if (qLine.material && qLine.material.color) {
+                            qLine.material.color.setHSL((qLine.userData.colorPhase + elapsed*0.1 + audioData.mid) % 1.0, 1.0, 0.5);
+                        }
+                    }
+                });
+            }
+
+            if (structures['EDEN'] && structures['EDEN'].visible) {
+                if (edenLady) {
+                    edenLady.rotation.y += moodLerpValues.rotationSpeed * 5.0 * idleFactor;
+                    edenLady.scale.setScalar(1.0 + audioData.low * 0.5 * moodLerpValues.bloomStrength + holoAmplitude * 0.2);
+                }
+                if (edenPlayer) {
+                    const r = 8 + audioData.mid * 5 * moodLerpValues.particleSpeedScale;
+                    edenPlayer.position.x = Math.cos(elapsed * 2.0) * r + currFaceX * 3.0;
+                    edenPlayer.position.z = Math.sin(elapsed * 2.0) * r;
+                    edenPlayer.position.y = -3 + Math.sin(elapsed * 4.0) * 2 + currFaceY * 3.0;
+                    edenPlayer.rotation.y = -elapsed * 2.0;
+                    edenPlayer.rotation.z = Math.sin(elapsed * 1.5) * 0.1 - currFaceX * 0.2;
+                    edenPlayer.rotation.x = 0.2;
+                }
+                edenDebris.forEach(d => {
+                    if(d && d.position && d.userData) {
+                        d.position.z += (d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5);
+                        if(d.position.z > 30) {
+                            d.position.z = -100;
+                            d.position.x = (Math.random()-0.5)*35;
+                            d.position.y = (Math.random()-0.5)*35;
+                        }
+                    }
+                });
+            }
+
+            if (structures['NONE'] && structures['NONE'].visible && matrixLines.length > 0) {
+                matrixLines.forEach(line => { 
+                    if(line && line.position && line.userData) {
+                        line.position.y += line.userData.speed * (1 + audioData.mid * 3); 
+                        if (line.position.y > 20) line.position.y = -20; 
+                    }
+                });
+            }
+
+            // --- GLOBAL PARTICLES (Galactic Supernova Logic) ---
+            if (particleSystem && particleSystem.geometry && particleSystem.geometry.attributes.position && particleSystem.geometry.attributes.color && particleSystem.userData) {
+                const positions = particleSystem.geometry.attributes.position.array;
+                const pData = particleSystem.userData.data; const colors = particleSystem.geometry.attributes.color.array;
+                const targetPhiIsHorizontal = (targetStructure === 'DOME' || targetStructure === 'GRID');
+
+                if (pData) {
+                    for (let i = 0; i < pData.length; i++) {
+                        const p = pData[i];
+                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * idleFactor;
+                        if (scatterIntensity > 0) { 
+                            speed += scatterIntensity * 3.0; 
+                            p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
+                        }
+                        p.theta += speed * delta;
+                        if (scatterIntensity === 0) {
+                            const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (Math.random()-0.5)*0.1) : p.basePhi;
+                            p.phi = THREE.MathUtils.lerp(p.phi, targetPhi, delta * 1.0);
+                        }
+                        const moodRadialForce = tMood && tMood.radialForce !== undefined ? tMood.radialForce : 0;
+                        let radTarget = p.baseRadius + (moodRadialForce * 5.0) + (scatterIntensity * 10.0) + (holoAmplitude * 2.0);
+                        if (targetStructure === 'GRID') radTarget += 8.0;
+                        p.radius = THREE.MathUtils.lerp(p.radius, radTarget, delta * 1.5);
+                        positions[i*3] = p.radius * Math.sin(p.phi) * Math.cos(p.theta); positions[i*3+1] = p.radius * Math.sin(p.phi) * Math.sin(p.theta); positions[i*3+2] = p.radius * Math.cos(p.phi);
+                        colors[i*3] = moodLerpValues.accentColor.r; colors[i*3+1] = moodLerpValues.accentColor.g; colors[i*3+2] = moodLerpValues.accentColor.b;
+                    }
+                }
+                particleSystem.geometry.attributes.position.needsUpdate = true; particleSystem.geometry.attributes.color.needsUpdate = true;
+                if(particleSystem.rotation) {
+                    particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * idleFactor;
+                }
+            }
+
+            // --- ENERGY LINES ---
+            energyLines.forEach((line) => {
+                if (line && line.userData && line.material && line.material.color) {
+                    if (audioData.high > 0.3 && Math.random() > 0.98) line.userData.intensity = 1.0;
+                    line.userData.intensity *= 0.95; 
+                    const pulse = (Math.sin(elapsed * line.userData.pulseSpeed) + 1) / 2;
+                    line.material.opacity = (0.01 + line.userData.intensity * 0.4 + pulse * 0.03) * idleFactor;
+                    line.material.color.copy(moodLerpValues.accentColor);
+                    if (line.userData.intensity > 0.1) line.material.color.lerp(new THREE.Color(0xffffff), line.userData.intensity);
+                }
+            });
+
+            // --- HOLOGRAPHIC REACTIVITY UPDATE ---
+            holoTargetAmplitude = window._fridayHoloAmplitude || 0;
+            holoAmplitude += (holoTargetAmplitude - holoAmplitude) * 0.15;
+            if (processOrbManager) processOrbManager.update(delta, elapsed);
+
+            // --- POST PROCESSING ---
+            if (bloomPass && holoPass && holoPass.uniforms) {
+                const bloomIdle = 0.75 + idleFactor * 0.25;
+                const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5 + holoAmplitude * 0.8) * bloomIdle;
+                bloomPass.strength = Math.max(0.7, currentBloom) + (metamorphosisFlash * 4.0);
+                if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.003 + Math.sin(elapsed * 0.5) * 0.002 + (metamorphosisFlash * 0.01);
+                if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
+                if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
+                if(holoPass.uniforms.time) holoPass.uniforms.time.value = elapsed;
+            }
+            
+            if (starField && starField.rotation) starField.rotation.y += 0.0001;
+            if (composer) composer.render();
+        }
+
+        window.onload = init;
+    </script>
+
+<script>
+// === FRIDAY VIBE API ===
+// Wire window.fridayVibe to Gemini's actual scene functions
+window.fridayVibe = {
+    setMood: function(m) {
+        if (typeof setMood === 'function') setMood(m, true);
+    },
+    setSystemMood: function(m) {
+        if (typeof setSystemMood === 'function') setSystemMood(m);
+    },
+    clearMoodOverride: function() {
+        if (typeof clearMoodOverride === 'function') clearMoodOverride();
+    },
+    isMicActive: function() {
+        return typeof micActive !== 'undefined' ? micActive : false;
+    },
+    nextStructure: function() {
+        if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {
+            setEvolution((currentEvolutionIdx + 1) % EVOLUTION_PATH.length);
+        }
+    },
+    prevStructure: function() {
+        if (typeof setEvolution === 'function' && typeof currentEvolutionIdx !== 'undefined' && typeof EVOLUTION_PATH !== 'undefined') {
+            setEvolution((currentEvolutionIdx - 1 + EVOLUTION_PATH.length) % EVOLUTION_PATH.length);
+        }
+    },
+    setStructure: function(i) {
+        if (typeof setEvolution === 'function') setEvolution(i);
+    },
+    getStructure: function() {
+        return {
+            index: typeof currentEvolutionIdx !== 'undefined' ? currentEvolutionIdx : 0,
+            name: typeof EVOLUTION_PATH !== 'undefined' && typeof currentEvolutionIdx !== 'undefined'
+                ? EVOLUTION_PATH[currentEvolutionIdx].name
+                : 'Unknown'
+        };
+    },
+    getStructures: function() {
+        return typeof EVOLUTION_PATH !== 'undefined' ? EVOLUTION_PATH : [];
+    },
+    getMood: function() {
+        return typeof currentMood !== 'undefined' ? currentMood : 'LISTENING';
+    },
+    getMoods: function() {
+        return typeof MOODS !== 'undefined' ? Object.keys(MOODS) : ['LISTENING','REASONING','EXECUTING','EXCITED','CALM'];
+    },
+    toggleHologram: function() {
+        if (typeof toggleHologram === 'function') toggleHologram();
+    },
+    isHologramOn: function() {
+        return typeof isHologramMode !== 'undefined' ? isHologramMode : false;
+    },
+    toggleHands: function() {
+        if (typeof toggleHands === 'function') toggleHands();
+    },
+    isHandsOn: function() {
+        return typeof isHandTrackingMode !== 'undefined' ? isHandTrackingMode : false;
+    },
+    toggleTimeLapse: function() {
+        if (typeof toggleTimeLapse === 'function') toggleTimeLapse();
+    },
+    isTimeLapseOn: function() {
+        return typeof timeLapseActive !== 'undefined' ? timeLapseActive : false;
+    }
+};
+
+// === GLOBAL MOOD SETTER (exposed for server/task-type mapping) ===
+window.fridaySetMood = function(mood) {
+    if (typeof setMood === 'function') setMood(mood.toUpperCase(), true);
+};
+
+// === HOLOGRAPHIC REACTIVITY API (Layer 1) ===
+window.fridaySetHoloState = function(state, intensity) {
+    if (typeof holoState !== 'undefined') holoState = state || 'idle';
+    if (typeof holoStateIntensity !== 'undefined') holoStateIntensity = intensity || 0;
+    var moodMap = {idle:'IDLE', speaking:'SPEAKING', executing:'EXECUTING', listening:'LISTENING',
+                   curious:'CURIOUS', creative:'CREATIVE', protective:'PROTECTIVE',
+                   focused:'FOCUSED', social:'SOCIAL', reflective:'REFLECTIVE'};
+    var m = moodMap[state] || 'LISTENING';
+    if (typeof setSystemMood === 'function') setSystemMood(m);
+};
+
+// === PROCESS ORB API (Layer 2) ===
+window.fridayAddOrb = function(opts) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.addOrb(opts);
+};
+window.fridayUpdateOrb = function(id, upd) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.updateOrb(id, upd);
+};
+window.fridayRemoveOrb = function(id) {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) processOrbManager.removeOrb(id);
+};
+window.fridayGetOrbs = function() {
+    if (typeof processOrbManager !== 'undefined' && processOrbManager) return processOrbManager.getOrbs();
+    return [];
+};
+
+// === REASONING THREAD API (Layer 3) ===
+window._fridayThreads = {};
+window.fridayUpdateThread = function(orbId, steps) {
+    window._fridayThreads[orbId] = steps || [];
+    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:steps||[]}}));
+};
+window.fridayAddThreadStep = function(orbId, step) {
+    if (!window._fridayThreads[orbId]) window._fridayThreads[orbId] = [];
+    window._fridayThreads[orbId].push(step);
+    window.dispatchEvent(new CustomEvent('fridayThreadUpdate', {detail:{orbId:orbId, steps:window._fridayThreads[orbId]}}));
+};
+
+// === KEYBOARD CONTROLS ===
+document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
+    if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+</script>

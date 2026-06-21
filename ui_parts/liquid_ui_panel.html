@@ -1,0 +1,680 @@
+<!--
+  Liquid UI Panel — Friday's self-evolving interface management
+  FutureSpeak.AI · Asimov's Mind
+
+  Self-contained React page. Talks to:
+    GET  /api/liquid/state
+    POST /api/liquid/wish          { user_text, workspace }
+    POST /api/liquid/<id>/shelve
+    POST /api/liquid/snapshot/<id>/revert
+    GET  /api/liquid/<workspace>/suggestions
+
+  Theme: matches skills_observatory — holographic dark.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Liquid UI — Agent Friday</title>
+<script src="https://cdn.tailwindcss.com" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg-deep: #0a0e1a;
+    --bg-card: rgba(6, 12, 24, 0.92);
+    --border-faint: rgba(0, 212, 255, 0.14);
+    --border-strong: rgba(0, 212, 255, 0.4);
+    --cyan: #00d4ff;
+    --blue: #3b82f6;
+    --magenta: #ff0080;
+    --violet: #7b61ff;
+    --green: #00ff80;
+    --amber: #f59e0b;
+    --text-primary: rgba(255, 255, 255, 0.92);
+    --text-muted: rgba(255, 255, 255, 0.55);
+  }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  body {
+    background:
+      radial-gradient(ellipse at top, rgba(123, 97, 255, 0.08) 0%, transparent 60%),
+      radial-gradient(ellipse at bottom left, rgba(0, 212, 255, 0.06) 0%, transparent 55%),
+      var(--bg-deep);
+    background-attachment: fixed;
+  }
+  .glass {
+    background: var(--bg-card);
+    border: 1px solid var(--border-faint);
+    border-radius: 12px;
+    backdrop-filter: blur(20px) saturate(1.2);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  .glass:hover { border-color: var(--border-strong); }
+  .orbitron { font-family: 'Orbitron', monospace; letter-spacing: 0.08em; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .text-muted { color: var(--text-muted); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .pill-cyan    { background: rgba(0,212,255,0.08);  color: var(--cyan);    border: 1px solid rgba(0,212,255,0.22); }
+  .pill-violet  { background: rgba(123,97,255,0.1);  color: #b3a4ff;        border: 1px solid rgba(123,97,255,0.3); }
+  .pill-green   { background: rgba(0,255,128,0.08);  color: var(--green);   border: 1px solid rgba(0,255,128,0.22); }
+  .pill-amber   { background: rgba(245,158,11,0.08); color: var(--amber);   border: 1px solid rgba(245,158,11,0.22); }
+  .pill-magenta { background: rgba(255,0,128,0.08);  color: var(--magenta); border: 1px solid rgba(255,0,128,0.22); }
+
+  .stat-num {
+    font-family: 'Orbitron', monospace; font-weight: 700;
+    font-size: 24px; letter-spacing: 0.04em;
+    background: linear-gradient(90deg, #00d4ff, #7b61ff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .stat-label {
+    font-size: 10px; color: var(--text-muted);
+    letter-spacing: 0.15em; text-transform: uppercase;
+    margin-top: 4px;
+  }
+  .section-title {
+    font-family: 'Orbitron', monospace; font-size: 11px;
+    color: var(--cyan); letter-spacing: 0.16em;
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.18); border-radius: 3px; }
+
+  /* Tier badges */
+  .tier-trivial { background: rgba(0,255,128,0.08);  color: var(--green);   border: 1px solid rgba(0,255,128,0.22); }
+  .tier-simple  { background: rgba(0,212,255,0.08);  color: var(--cyan);    border: 1px solid rgba(0,212,255,0.22); }
+  .tier-medium  { background: rgba(123,97,255,0.1);  color: #b3a4ff;        border: 1px solid rgba(123,97,255,0.3); }
+  .tier-complex { background: rgba(245,158,11,0.08); color: var(--amber);   border: 1px solid rgba(245,158,11,0.22); }
+  .tier-epic    { background: rgba(255,0,128,0.08);  color: var(--magenta); border: 1px solid rgba(255,0,128,0.22); }
+
+  /* Status badges */
+  .status-built   { background: rgba(0,212,255,0.08);  color: var(--cyan); }
+  .status-live    { background: rgba(0,255,128,0.12);  color: var(--green); }
+  .status-shelved { background: rgba(245,158,11,0.08); color: var(--amber); }
+  .status-reverted{ background: rgba(255,0,128,0.08);  color: var(--magenta); }
+
+  .feature-card { transition: all 0.2s ease; }
+  .feature-card:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+
+  .sparkle-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(123,97,255,0.1));
+    border: 1px solid rgba(123,97,255,0.4);
+    color: #d4cdfd; font-family: 'Orbitron', monospace;
+    font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    transition: all 0.2s ease;
+  }
+  .sparkle-btn:hover {
+    background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(123,97,255,0.18));
+    box-shadow: 0 0 24px rgba(123,97,255,0.18);
+    color: #fff;
+  }
+
+  .queue-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 12px; align-items: center;
+    padding: 10px 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.05);
+    transition: border-color 0.18s;
+  }
+  .queue-row:hover { border-color: var(--border-strong); }
+
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    width: min(560px, 92vw); max-height: 80vh; overflow-y: auto;
+    background: rgba(8,14,30,0.97); border: 1px solid var(--border-strong);
+    border-radius: 12px; padding: 24px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  }
+  .input {
+    width: 100%; background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border-faint); border-radius: 8px;
+    padding: 10px 12px; color: var(--text-primary);
+    font-family: 'Inter', sans-serif; font-size: 13px;
+    outline: none; transition: border-color 0.18s;
+  }
+  .input:focus { border-color: var(--cyan); }
+
+  /* Loading shimmer */
+  @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+  .skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%,
+                                       rgba(0,212,255,0.08) 50%,
+                                       rgba(255,255,255,0.04) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
+    border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useCallback } = React;
+const API_BASE = (window.__FRIDAY_API__ || "");
+
+// ──────────────────────────────────────────────────────────────────────
+//  Helpers
+// ──────────────────────────────────────────────────────────────────────
+
+function relTime(iso) {
+  if (!iso) return "—";
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return `${Math.round(diff)}s ago`;
+  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+  return `${Math.round(diff / 86400)}d ago`;
+}
+
+function shortHash(s) {
+  return (s || "").slice(0, 10);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    ...opts,
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (r.headers.get("content-type")?.includes("application/json")) return r.json();
+  return r.text();
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Hook: fleet state
+// ──────────────────────────────────────────────────────────────────────
+
+function useLiquidState(refreshMs = 20000) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const j = await api("/api/liquid/state");
+      setState(j); setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    if (!refreshMs) return;
+    const id = setInterval(load, refreshMs);
+    return () => clearInterval(id);
+  }, [load, refreshMs]);
+
+  return { state, error, loading, reload: load };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Header
+// ──────────────────────────────────────────────────────────────────────
+
+function Header({ state, onSuggest, onRefresh }) {
+  const total = state?.feature_count || 0;
+  const live = state?.live_count || 0;
+  const shelved = state?.shelved_count || 0;
+  const open = state?.open_suggestions || 0;
+  return (
+    <div className="px-6 py-5 border-b border-cyan-900/30 sticky top-0 z-30
+                    backdrop-blur-lg bg-[#0a0e1a]/85">
+      <div className="flex items-center justify-between gap-6 flex-wrap">
+        <div className="flex items-center gap-4">
+          <div className="orbitron text-2xl font-black text-cyan-300">
+            LIQUID · UI
+          </div>
+          <div className="pill pill-violet">self-evolving interface</div>
+        </div>
+        <div className="flex items-center gap-6">
+          <Stat label="Features" value={total} />
+          <Stat label="Live" value={live} accent="green" />
+          <Stat label="Shelved" value={shelved} accent="amber" />
+          <Stat label="Suggestions" value={open} accent="violet" />
+          <button className="sparkle-btn" onClick={onSuggest}>
+            ✨ Wish for something
+          </button>
+          <button onClick={onRefresh}
+                  className="pill pill-cyan hover:bg-cyan-500/15 cursor-pointer
+                             border-cyan-500/40 px-3 py-1.5 transition-colors">
+            ⟳  refresh
+          </button>
+        </div>
+      </div>
+      <div className="text-muted text-xs mono mt-2">
+        last updated · {relTime(state?.generated_at)}
+        {state?.generated_at && <span className="ml-3 opacity-60">{state.generated_at}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, accent = "cyan" }) {
+  const color = accent === "amber" ? "var(--amber)" :
+                accent === "green" ? "var(--green)" :
+                accent === "violet"? "#b3a4ff" :
+                "var(--cyan)";
+  return (
+    <div className="flex flex-col items-end leading-tight">
+      <div className="stat-num" style={{ color }}>{value}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Feature card
+// ──────────────────────────────────────────────────────────────────────
+
+function FeatureCard({ data, onShelve, onRevert }) {
+  const spec = data.spec || {};
+  const art = data.artifact || {};
+  const tier = (spec.complexity_tier || "medium").toLowerCase();
+  const status = (art.status || "spec_only").toLowerCase();
+
+  return (
+    <div className="glass feature-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="orbitron text-sm text-cyan-200 font-bold truncate">
+            {spec.title || "(untitled)"}
+          </div>
+          <div className="text-muted text-xs mono mt-0.5 truncate">
+            {spec.feature_id} {spec.workspace_target && <span> · {spec.workspace_target}</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <span className={`pill tier-${tier}`}>{tier}</span>
+          <span className={`pill status-${status}`}>{status}</span>
+        </div>
+      </div>
+
+      {spec.description && (
+        <div className="text-sm text-white/80 mt-2 line-clamp-2">
+          {spec.description}
+        </div>
+      )}
+
+      <div className="mt-3 grid grid-cols-3 gap-2 text-xs mono">
+        <KV label="components" value={(spec.ui_components || []).length} />
+        <KV label="routes" value={(spec.backend_routes || []).length} />
+        <KV label="integrations" value={(spec.integrations || []).length} />
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="text-muted text-xs mono truncate">
+          built {art.built_at ? relTime(art.built_at) : "—"}
+          {art.snapshot_id && <span className="ml-2 opacity-60">snap @{shortHash(art.snapshot_id)}</span>}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {art.snapshot_id && (
+            <button className="pill pill-amber cursor-pointer hover:bg-amber-500/20"
+                    onClick={() => onRevert(art.snapshot_id)}>
+              ↶ revert
+            </button>
+          )}
+          {status === "live" && (
+            <button className="pill pill-magenta cursor-pointer hover:bg-magenta-500/20"
+                    onClick={() => onShelve(spec.feature_id)}>
+              shelve
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KV({ label, value }) {
+  return (
+    <div className="flex flex-col p-2 rounded-md bg-white/3 border border-white/5">
+      <span className="text-cyan-300 orbitron text-sm font-bold">{value}</span>
+      <span className="text-muted stat-label">{label}</span>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Build queue (awaiting review)
+// ──────────────────────────────────────────────────────────────────────
+
+function BuildQueue({ features, onBuild }) {
+  const queue = features.filter(f => !(f.artifact || {}).status
+                                  || (f.artifact || {}).status === "built");
+  if (queue.length === 0) {
+    return (
+      <div className="glass p-4">
+        <div className="section-title">Build Queue</div>
+        <div className="text-muted text-sm mono">Empty — no pending features.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Build Queue  ·  {queue.length}</div>
+      <div className="space-y-2">
+        {queue.map(f => {
+          const spec = f.spec || {};
+          const tier = (spec.complexity_tier || "medium").toLowerCase();
+          return (
+            <div className="queue-row" key={spec.feature_id}>
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate">{spec.title}</div>
+                <div className="text-muted text-xs mono truncate">{spec.feature_id}</div>
+              </div>
+              <span className={`pill tier-${tier}`}>{tier}</span>
+              <span className="text-muted mono text-xs">
+                ~{Math.ceil((spec.estimated_seconds || 600) / 60)} min
+              </span>
+              <button className="pill pill-cyan cursor-pointer hover:bg-cyan-500/20"
+                      onClick={() => onBuild(spec.feature_id)}>
+                build →
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Suggestions panel
+// ──────────────────────────────────────────────────────────────────────
+
+function Suggestions({ suggestions, onAccept, onDismiss }) {
+  if (!suggestions || suggestions.length === 0) {
+    return (
+      <div className="glass p-4">
+        <div className="section-title">Proactive Suggestions</div>
+        <div className="text-muted text-sm mono">
+          No suggestions yet — keep using Friday and the SuggestEngine will spot patterns.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Proactive Suggestions  ·  {suggestions.length}</div>
+      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-2">
+        {suggestions.map(s => (
+          <div key={s.suggestion_id}
+               className="p-3 rounded-lg border border-violet-400/30 bg-violet-500/5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-medium text-violet-200 truncate">
+                  {s.title}
+                </span>
+                {s.workspace && <span className="pill pill-cyan">{s.workspace}</span>}
+              </div>
+              <span className="pill pill-violet">
+                conf {(s.confidence * 100).toFixed(0)}%
+              </span>
+            </div>
+            <div className="text-xs text-white/75 mt-1.5">{s.rationale}</div>
+            <div className="flex gap-2 mt-2">
+              <button className="pill pill-green cursor-pointer hover:bg-green-500/20"
+                      onClick={() => onAccept(s)}>
+                ✓ accept
+              </button>
+              <button className="pill pill-magenta cursor-pointer hover:bg-magenta-500/20"
+                      onClick={() => onDismiss(s.suggestion_id)}>
+                dismiss
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Snapshot history (rollback)
+// ──────────────────────────────────────────────────────────────────────
+
+function SnapshotHistory({ snapshots, onRevert }) {
+  if (!snapshots || snapshots.length === 0) {
+    return (
+      <div className="glass p-4">
+        <div className="section-title">Snapshot History</div>
+        <div className="text-muted text-sm mono">No snapshots yet.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Snapshot History</div>
+      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-2">
+        {snapshots.map(s => (
+          <div key={s.snapshot_id}
+               className="p-2.5 bg-white/3 border border-white/5 rounded-lg">
+            <div className="flex items-center justify-between gap-2">
+              <div className="mono text-xs text-cyan-200">
+                {s.snapshot_id.slice(0, 22)}…
+              </div>
+              <button className="pill pill-amber cursor-pointer hover:bg-amber-500/20"
+                      onClick={() => onRevert(s.snapshot_id)}>
+                ↶ revert
+              </button>
+            </div>
+            <div className="text-xs text-muted mt-1 truncate">
+              {s.note || "(no note)"}
+            </div>
+            <div className="text-xs text-muted mono mt-1 flex justify-between">
+              <span>{(s.files || []).length} file(s)</span>
+              <span>{relTime(s.created_at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Wish modal
+// ──────────────────────────────────────────────────────────────────────
+
+function WishModal({ onClose, onSubmit }) {
+  const [text, setText] = useState("");
+  const [workspace, setWorkspace] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    try { await onSubmit({ user_text: text, workspace }); onClose(); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="orbitron text-lg text-cyan-200 mb-1">✨ Wish for something</div>
+        <div className="text-muted text-xs mono mb-4">
+          "I wish I could …" — Friday will spec it, classify the tier, and either
+          auto-build or surface a review.
+        </div>
+        <textarea className="input mb-3" rows={4}
+                  placeholder="I wish I could see all unread Slack threads from the last 24h…"
+                  value={text} onChange={e => setText(e.target.value)} />
+        <input className="input mb-4"
+               placeholder="Workspace (optional) — Messages / Career / Studio…"
+               value={workspace} onChange={e => setWorkspace(e.target.value)} />
+        <div className="flex items-center justify-end gap-2">
+          <button className="pill pill-magenta cursor-pointer" onClick={onClose}>
+            cancel
+          </button>
+          <button className="sparkle-btn" onClick={submit} disabled={busy}>
+            {busy ? "submitting…" : "submit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  App shell
+// ──────────────────────────────────────────────────────────────────────
+
+function App() {
+  const { state, error, loading, reload } = useLiquidState(20000);
+  const [showWish, setShowWish] = useState(false);
+
+  const submitWish = useCallback(async ({ user_text, workspace }) => {
+    try {
+      await api("/api/liquid/wish", {
+        method: "POST",
+        body: JSON.stringify({ user_text, workspace }),
+      });
+    } catch (e) {
+      alert("Could not submit wish: " + e.message);
+    } finally {
+      reload();
+    }
+  }, [reload]);
+
+  const onShelve = useCallback(async (id) => {
+    if (!confirm("Shelve this feature?")) return;
+    try {
+      await api(`/api/liquid/${id}/shelve`, { method: "POST" });
+    } catch (e) { alert("Shelve failed: " + e.message); }
+    finally { reload(); }
+  }, [reload]);
+
+  const onRevert = useCallback(async (snap_id) => {
+    if (!confirm("Revert to this snapshot? Your current files will be overwritten.")) return;
+    try {
+      await api(`/api/liquid/snapshot/${snap_id}/revert`, { method: "POST" });
+    } catch (e) { alert("Revert failed: " + e.message); }
+    finally { reload(); }
+  }, [reload]);
+
+  const onBuild = useCallback(async (id) => {
+    try {
+      await api(`/api/liquid/${id}/build`, { method: "POST" });
+    } catch (e) { alert("Build failed: " + e.message); }
+    finally { reload(); }
+  }, [reload]);
+
+  const onAcceptSuggestion = useCallback(async (s) => {
+    await submitWish({
+      user_text: s.title + " — " + s.rationale,
+      workspace: s.workspace || "",
+    });
+  }, [submitWish]);
+
+  const onDismissSuggestion = useCallback(async (id) => {
+    try { await api(`/api/liquid/suggestion/${id}/dismiss`, { method: "POST" }); }
+    catch { /* allow */ }
+    finally { reload(); }
+  }, [reload]);
+
+  if (loading && !state) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="glass px-8 py-6">
+          <div className="orbitron text-cyan-300">LOADING LIQUID UI...</div>
+          <div className="skeleton h-2 mt-4 w-64"></div>
+        </div>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="glass px-8 py-6 max-w-md">
+          <div className="orbitron text-magenta-300">CONNECTION ERROR</div>
+          <div className="mono text-sm text-muted mt-2">{error}</div>
+          <button onClick={reload}
+                  className="pill pill-cyan mt-4 cursor-pointer hover:bg-cyan-500/15">
+            ⟳ retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const features = state?.recent_features || [];
+  const suggestions = state?.recent_suggestions || [];
+  const snapshots = state?.recent_snapshots || [];
+
+  return (
+    <div>
+      <Header state={state} onSuggest={() => setShowWish(true)} onRefresh={reload} />
+
+      <div className="px-6 py-6 grid grid-cols-12 gap-4">
+        {/* Left column: feature fleet + queue */}
+        <div className="col-span-12 lg:col-span-8 space-y-4">
+          <BuildQueue features={features} onBuild={onBuild} />
+
+          <div>
+            <div className="section-title px-1">Recent Features</div>
+            {features.length === 0 ? (
+              <div className="glass p-8 text-center text-muted mono">
+                No features yet. Use ✨ <em>Wish for something</em> to start.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {features.map(f => (
+                  <FeatureCard key={(f.spec || {}).feature_id} data={f}
+                               onShelve={onShelve} onRevert={onRevert} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right column: suggestions + snapshots */}
+        <div className="col-span-12 lg:col-span-4 space-y-4">
+          <Suggestions suggestions={suggestions}
+                       onAccept={onAcceptSuggestion}
+                       onDismiss={onDismissSuggestion} />
+          <SnapshotHistory snapshots={snapshots} onRevert={onRevert} />
+        </div>
+      </div>
+
+      <footer className="px-6 py-6 text-center mono text-xs text-muted">
+        Liquid UI  ·  the interface reshapes itself around you  ·  built by
+        <span className="text-cyan-400 ml-1">FutureSpeak.AI</span>
+      </footer>
+
+      {showWish && (
+        <WishModal onClose={() => setShowWish(false)}
+                   onSubmit={submitWish} />
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>

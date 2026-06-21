@@ -1,0 +1,24 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="40%" stop-color="#7b61ff"/>
+      <stop offset="100%" stop-color="#ff00ff"/>
+    </linearGradient>
+    <linearGradient id="hg2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00ffcc"/>
+      <stop offset="50%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#7b61ff"/>
+    </linearGradient>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="0.7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="16" cy="16" r="11" stroke="url(#hg)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#gl)" />
+  <circle cx="11" cy="11" r="2.5" stroke="#00d4ff" stroke-width="1.2" fill="none" filter="url(#gl)"/>
+  <circle cx="21" cy="11" r="2.5" stroke="#7b61ff" stroke-width="1.2" fill="none" filter="url(#gl)"/>
+  <circle cx="11" cy="21" r="2.5" stroke="#ff00ff" stroke-width="1.2" fill="none" filter="url(#gl)"/>
+  <circle cx="21" cy="21" r="2.5" stroke="#00ff88" stroke-width="1.2" fill="none" filter="url(#gl)"/>
+  <circle cx="16" cy="16" r="1" stroke="url(#hg)" stroke-width="1" fill="none"/>
+</svg>

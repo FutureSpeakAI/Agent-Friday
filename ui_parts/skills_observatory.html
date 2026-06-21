@@ -1,0 +1,777 @@
+<!--
+  Skills Observatory — Agent Friday self-improvement workspace
+  FutureSpeak.AI · Asimov's Mind
+
+  Self-contained React + Recharts page. Fetches /api/skillopt/state on load.
+  Designed to be served at /skills/observatory or inlined into the holographic
+  desktop as a floating window.
+
+  Theme: Friday holographic dark
+    background  #0a0e1a
+    cyan        #00d4ff
+    blue        #3b82f6
+    magenta     #ff0080
+    glass cards: rgba(6,6,11,0.92) + backdrop-blur
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Skills Observatory — Agent Friday</title>
+<script src="https://cdn.tailwindcss.com" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/prop-types@15/prop-types.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg-deep: #0a0e1a;
+    --bg-card: rgba(6, 12, 24, 0.92);
+    --border-faint: rgba(0, 212, 255, 0.14);
+    --border-strong: rgba(0, 212, 255, 0.4);
+    --cyan: #00d4ff;
+    --blue: #3b82f6;
+    --magenta: #ff0080;
+    --green: #00ff80;
+    --amber: #f59e0b;
+    --text-primary: rgba(255, 255, 255, 0.92);
+    --text-muted: rgba(255, 255, 255, 0.55);
+  }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  body {
+    background:
+      radial-gradient(ellipse at top, rgba(0, 212, 255, 0.06) 0%, transparent 60%),
+      radial-gradient(ellipse at bottom right, rgba(255, 0, 128, 0.04) 0%, transparent 50%),
+      var(--bg-deep);
+    background-attachment: fixed;
+  }
+  .glass {
+    background: var(--bg-card);
+    border: 1px solid var(--border-faint);
+    border-radius: 12px;
+    backdrop-filter: blur(20px) saturate(1.2);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  .glass:hover { border-color: var(--border-strong); }
+  .orbitron { font-family: 'Orbitron', monospace; letter-spacing: 0.08em; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .text-cyan { color: var(--cyan); }
+  .text-magenta { color: var(--magenta); }
+  .text-green { color: var(--green); }
+  .text-amber { color: var(--amber); }
+  .text-muted { color: var(--text-muted); }
+
+  .skill-card { transition: all 0.2s ease; cursor: pointer; }
+  .skill-card:hover { transform: translateY(-2px);
+    border-color: var(--border-strong);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.6), 0 0 24px rgba(0,212,255,0.1); }
+  .skill-card.selected {
+    border-color: var(--cyan);
+    box-shadow: 0 0 24px rgba(0,212,255,0.18), inset 0 0 24px rgba(0,212,255,0.04);
+  }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.04em;
+  }
+  .pill-cyan { background: rgba(0,212,255,0.08); color: var(--cyan); border: 1px solid rgba(0,212,255,0.22); }
+  .pill-green { background: rgba(0,255,128,0.08); color: var(--green); border: 1px solid rgba(0,255,128,0.22); }
+  .pill-amber { background: rgba(245,158,11,0.08); color: var(--amber); border: 1px solid rgba(245,158,11,0.22); }
+  .pill-magenta { background: rgba(255,0,128,0.08); color: var(--magenta); border: 1px solid rgba(255,0,128,0.22); }
+
+  .stat-num {
+    font-family: 'Orbitron', monospace; font-weight: 700;
+    font-size: 24px; letter-spacing: 0.04em;
+    background: linear-gradient(90deg, #00d4ff, #7b61ff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .stat-label {
+    font-size: 10px; color: var(--text-muted);
+    letter-spacing: 0.15em; text-transform: uppercase;
+    margin-top: 4px;
+  }
+  .section-title {
+    font-family: 'Orbitron', monospace; font-size: 11px;
+    color: var(--cyan); letter-spacing: 0.16em;
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+  /* Diff blocks */
+  .diff-add { background: rgba(0, 255, 128, 0.08); color: #b6fbcf; }
+  .diff-rem { background: rgba(255, 0, 128, 0.08); color: #ffb6d6; }
+  .diff-ctx { color: var(--text-muted); }
+  pre.diff {
+    background: rgba(0,0,0,0.5); border: 1px solid var(--border-faint);
+    border-radius: 8px; padding: 12px; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; line-height: 1.55; overflow-x: auto; white-space: pre;
+  }
+  /* Custom scrollbars */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.18); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.35); }
+
+  .header-grid {
+    background:
+      linear-gradient(to bottom, rgba(0,212,255,0.06), transparent 40%),
+      radial-gradient(circle at top center, rgba(0,212,255,0.04) 0%, transparent 70%);
+  }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 12px rgba(0,212,255,0.25), inset 0 0 8px rgba(0,212,255,0.06); }
+    50%      { box-shadow: 0 0 24px rgba(0,212,255,0.4),  inset 0 0 12px rgba(0,212,255,0.1); }
+  }
+  .glow { animation: glow 3s ease-in-out infinite; }
+
+  /* sparkline tweaks */
+  .sparkline { stroke: var(--cyan); fill: none; stroke-width: 1.6; }
+  .sparkline-area { fill: url(#sparklineGrad); }
+
+  /* loading shimmer */
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%,
+                                       rgba(0,212,255,0.08) 50%,
+                                       rgba(255,255,255,0.04) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
+    border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+const REC = window.Recharts || {};
+const {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ScatterChart, Scatter, ZAxis,
+  BarChart, Bar, ReferenceLine,
+} = REC;
+
+const API_BASE = (window.__FRIDAY_API__ || "");
+
+// ──────────────────────────────────────────────────────────────────────
+//  Hook: fetch fleet state
+// ──────────────────────────────────────────────────────────────────────
+
+function useFleetState(refreshMs = 30000) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/skillopt/state`, { cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      setState(j);
+      setError(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    if (!refreshMs) return;
+    const id = setInterval(load, refreshMs);
+    return () => clearInterval(id);
+  }, [load, refreshMs]);
+
+  return { state, error, loading, reload: load };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Helpers
+// ──────────────────────────────────────────────────────────────────────
+
+function fmt(n, d = 3) {
+  if (n == null || isNaN(n)) return "—";
+  return Number(n).toFixed(d);
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return "—";
+  return `${(n * 100).toFixed(0)}%`;
+}
+function relTime(iso) {
+  if (!iso) return "—";
+  try {
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return `${Math.round(diff)}s ago`;
+    if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+    return `${Math.round(diff / 86400)}d ago`;
+  } catch { return iso; }
+}
+
+function colorForScore(s) {
+  if (s >= 0.85) return "var(--green)";
+  if (s >= 0.65) return "var(--cyan)";
+  if (s >= 0.45) return "var(--amber)";
+  return "var(--magenta)";
+}
+
+// Inline SVG sparkline — works without Recharts loaded
+function Sparkline({ points, width = 140, height = 40, color = "#00d4ff" }) {
+  if (!points || points.length < 2) {
+    return <div className="text-muted text-xs mono">no trend yet</div>;
+  }
+  const xs = points.map((p, i) => i);
+  const ys = points.map(p => p.score);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const span = (maxY - minY) || 1;
+  const stepX = width / (xs.length - 1 || 1);
+  const path = ys.map((y, i) =>
+    `${i === 0 ? "M" : "L"} ${i * stepX} ${height - ((y - minY) / span) * height}`
+  ).join(" ");
+  const area = `${path} L ${width} ${height} L 0 ${height} Z`;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <defs>
+        <linearGradient id="sparklineGrad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#sparklineGrad)" />
+      <path d={path} fill="none" stroke={color} strokeWidth="1.5" />
+      <circle cx={width} cy={height - ((ys[ys.length - 1] - minY) / span) * height}
+              r="2.5" fill={color} />
+    </svg>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Components
+// ──────────────────────────────────────────────────────────────────────
+
+function Header({ fleet, onRefresh }) {
+  const total = fleet?.skill_count || 0;
+  const totalRuns = (fleet?.skills || []).reduce((a, s) => a + (s.execution_count || 0), 0);
+  const avgScore = total === 0 ? 0 :
+    (fleet.skills.reduce((a, s) => a + (s.best_score || 0), 0) / total);
+  const findings = (fleet?.skills || []).reduce((a, s) => a + (s.open_findings || 0), 0);
+
+  return (
+    <div className="header-grid border-b border-cyan-900/30 px-6 py-5 sticky top-0 z-30
+                    backdrop-blur-lg bg-[#0a0e1a]/85">
+      <div className="flex items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="orbitron text-2xl font-black text-cyan-300 tracking-widest">
+            SKILLS · OBSERVATORY
+          </div>
+          <div className="pill pill-cyan glow">FutureSpeak.AI</div>
+        </div>
+        <div className="flex items-center gap-6">
+          <Stat label="Skills" value={total} />
+          <Stat label="Executions" value={totalRuns.toLocaleString()} />
+          <Stat label="Avg best" value={fmt(avgScore)} />
+          <Stat label="Open findings" value={findings} accent={findings > 0 ? "amber" : "cyan"} />
+          <button onClick={onRefresh}
+                  className="pill pill-cyan hover:bg-cyan-500/15 transition-colors cursor-pointer
+                             border-cyan-500/40 hover:border-cyan-300 px-3 py-1.5">
+            ⟳  refresh
+          </button>
+        </div>
+      </div>
+      <div className="text-muted text-xs mono mt-2">
+        Last updated  ·  {relTime(fleet?.generated_at)}
+        {fleet?.generated_at && (
+          <span className="ml-3 opacity-60">{fleet.generated_at}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, accent = "cyan" }) {
+  const color = accent === "amber" ? "var(--amber)" :
+                accent === "green" ? "var(--green)" :
+                "var(--cyan)";
+  return (
+    <div className="flex flex-col items-end leading-tight">
+      <div className="stat-num" style={{ color }}>{value}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  );
+}
+
+function SkillCard({ skill, selected, onSelect }) {
+  const score = skill.best_score || 0;
+  const rolling = skill.rolling_mean || 0;
+  const trend = (skill.trend || []).slice(-30);
+  const delta = rolling - score;
+  const deltaColor = delta >= -0.01 ? "var(--green)" : delta >= -0.05 ? "var(--amber)" : "var(--magenta)";
+
+  return (
+    <div className={`glass skill-card p-4 ${selected ? "selected" : ""}`}
+         onClick={() => onSelect(skill.skill_name)}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="orbitron text-sm text-cyan-200 font-bold tracking-wider">
+            {skill.skill_name}
+          </div>
+          <div className="text-muted text-xs mono mt-0.5">
+            best  ·  {skill.best_version || "—"}  ·  hash @{skill.versions?.[skill.versions.length - 1]?.short_hash?.slice(0, 6) || "—"}
+          </div>
+        </div>
+        <div className="pill pill-cyan">{skill.version_count} v</div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <div>
+          <div className="orbitron font-bold text-lg" style={{ color: colorForScore(score) }}>
+            {fmt(score, 3)}
+          </div>
+          <div className="stat-label">best score</div>
+        </div>
+        <div>
+          <div className="orbitron font-bold text-lg" style={{ color: colorForScore(rolling) }}>
+            {fmt(rolling, 3)}
+          </div>
+          <div className="stat-label">rolling 10</div>
+        </div>
+        <div>
+          <div className="orbitron font-bold text-lg" style={{ color: deltaColor }}>
+            {delta >= 0 ? "+" : ""}{fmt(delta, 3)}
+          </div>
+          <div className="stat-label">drift</div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between">
+        <Sparkline points={trend}
+                   color={colorForScore(rolling)} width={150} height={36} />
+        <div className="flex flex-col items-end gap-1">
+          <div className="text-muted text-xs mono">
+            {skill.execution_count} runs
+          </div>
+          {skill.open_findings > 0 && (
+            <div className="pill pill-amber">{skill.open_findings} open</div>
+          )}
+        </div>
+      </div>
+
+      <div className="text-muted text-xs mono mt-2">
+        last run  ·  {relTime(skill.last_execution)}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Detail panes
+// ──────────────────────────────────────────────────────────────────────
+
+function VersionHistory({ skill, selectedVersion, onSelectVersion }) {
+  if (!skill?.versions) return null;
+  const versions = [...skill.versions].reverse(); // newest first
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Version History</div>
+      <div className="max-h-[280px] overflow-y-auto space-y-2 pr-2">
+        {versions.map((v) => {
+          const isSel = v.version_id === selectedVersion;
+          const score = v.metrics_summary?.composite || 0;
+          return (
+            <div key={v.version_id}
+                 onClick={() => onSelectVersion(v.version_id)}
+                 className={`p-2.5 rounded-lg cursor-pointer transition-all
+                             ${isSel ? "bg-cyan-500/10 border border-cyan-400/50"
+                                     : "bg-white/3 border border-white/5 hover:border-cyan-400/30"}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="orbitron text-sm text-cyan-200 font-bold">{v.version_id}</span>
+                  {v.promoted && <span className="pill pill-green">best</span>}
+                  <span className={`pill ${v.edit_source === "autoresearch" ? "pill-magenta" : "pill-cyan"}`}>
+                    {v.edit_source}
+                  </span>
+                </div>
+                <div className="mono text-xs" style={{ color: colorForScore(score) }}>
+                  {fmt(score)}
+                </div>
+              </div>
+              <div className="text-xs text-muted mt-1.5 truncate">
+                {v.edit_summary || <span className="italic opacity-50">no summary</span>}
+              </div>
+              <div className="text-xs mono text-muted mt-1 flex justify-between">
+                <span>{v.execution_count || 0} runs  ·  hash @{(v.short_hash || "").slice(0,8)}</span>
+                <span>{relTime(v.created_at)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DiffViewer({ a, b }) {
+  if (!a || !b) {
+    return <div className="text-muted text-sm mono">Select two versions to diff.</div>;
+  }
+  // Naive line-based diff inline (server-side endpoint provides authoritative one)
+  const aLines = (a.content || "").split("\n");
+  const bLines = (b.content || "").split("\n");
+  const lines = [];
+  let i = 0, j = 0;
+  while (i < aLines.length || j < bLines.length) {
+    if (i < aLines.length && j < bLines.length && aLines[i] === bLines[j]) {
+      lines.push({ kind: "ctx", text: aLines[i] });
+      i++; j++;
+    } else {
+      if (i < aLines.length) lines.push({ kind: "rem", text: aLines[i++] });
+      if (j < bLines.length) lines.push({ kind: "add", text: bLines[j++] });
+    }
+  }
+  return (
+    <pre className="diff max-h-[420px] overflow-y-auto">
+      {lines.map((l, idx) => (
+        <div key={idx} className={l.kind === "add" ? "diff-add"
+                                  : l.kind === "rem" ? "diff-rem"
+                                                     : "diff-ctx"}>
+          {l.kind === "add" ? "+ " : l.kind === "rem" ? "- " : "  "}{l.text}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function ScoreScatter({ trend }) {
+  if (!trend || trend.length === 0) {
+    return <div className="text-muted text-sm mono">No execution data yet.</div>;
+  }
+  if (!ScatterChart) {
+    // graceful fallback — render dots in SVG
+    return (
+      <svg width="100%" height="240" viewBox="0 0 600 240" preserveAspectRatio="none">
+        {trend.map((p, i) => {
+          const x = (i / Math.max(trend.length - 1, 1)) * 580 + 10;
+          const y = 230 - (p.score * 220);
+          return <circle key={i} cx={x} cy={y} r="3" fill={colorForScore(p.score)} opacity="0.85" />;
+        })}
+      </svg>
+    );
+  }
+  const data = trend.map((p, i) => ({ i, score: p.score, t: p.t }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ScatterChart margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+        <CartesianGrid strokeDasharray="2 4" stroke="rgba(0,212,255,0.08)" />
+        <XAxis type="number" dataKey="i" stroke="rgba(255,255,255,0.4)" tick={{ fontSize: 10 }} />
+        <YAxis type="number" dataKey="score" domain={[0, 1]}
+               stroke="rgba(255,255,255,0.4)" tick={{ fontSize: 10 }} />
+        <Tooltip contentStyle={{
+          background: "rgba(6,12,24,0.95)", border: "1px solid rgba(0,212,255,0.3)",
+          borderRadius: 8, fontSize: 11,
+        }} cursor={{ stroke: "rgba(0,212,255,0.25)" }} />
+        <ReferenceLine y={0.8} stroke="rgba(0,255,128,0.35)" strokeDasharray="3 3" />
+        <ReferenceLine y={0.5} stroke="rgba(245,158,11,0.25)" strokeDasharray="3 3" />
+        <Scatter data={data} fill="#00d4ff" />
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ExperimentsPanel({ skill }) {
+  // We don't have explicit "experiments" in the engine yet — surface in-flight
+  // candidates (non-promoted versions with no rejection) + recent autoresearch.
+  const candidates = (skill?.versions || []).filter(v => !v.promoted &&
+    v.edit_source !== "manual" || (!v.promoted && (skill.versions || []).length > 1));
+  const recent = candidates.slice(-3);
+  if (recent.length === 0) {
+    return (
+      <div className="glass p-4">
+        <div className="section-title">Active Experiments</div>
+        <div className="text-muted text-sm mono">No experiments in flight.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Active Experiments</div>
+      <div className="space-y-2">
+        {recent.map(v => (
+          <div key={v.version_id}
+               className="p-2.5 bg-magenta-500/5 border border-magenta-500/20 rounded-lg">
+            <div className="flex justify-between items-center">
+              <span className="orbitron text-sm text-magenta-300">{v.version_id}</span>
+              <span className="pill pill-magenta">{v.edit_source}</span>
+            </div>
+            <div className="text-xs text-muted mt-1">{v.edit_summary}</div>
+            <div className="mono text-xs mt-1.5">
+              candidate score:
+              <span className="ml-1.5" style={{ color: colorForScore(v.metrics_summary?.composite || 0) }}>
+                {fmt(v.metrics_summary?.composite || 0)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResearchLog({ skill }) {
+  const findings = skill?.research || [];
+  if (findings.length === 0) {
+    return (
+      <div className="glass p-4">
+        <div className="section-title">Research Log</div>
+        <div className="text-muted text-sm mono">No findings yet.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Research Log</div>
+      <div className="max-h-[320px] overflow-y-auto space-y-2 pr-2">
+        {findings.slice().reverse().map((f, i) => (
+          <div key={i}
+               className="p-3 bg-magenta-500/5 border border-magenta-500/20 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="orbitron text-xs text-magenta-300">{f.finding_id}</span>
+                <span className="pill pill-magenta">{f.trigger_reason}</span>
+                {f.applied && <span className="pill pill-green">applied → {f.applied_version}</span>}
+              </div>
+              <span className="mono text-xs text-muted">{relTime(f.triggered_at)}</span>
+            </div>
+            <div className="text-xs mono text-muted mt-1">
+              rolling {fmt(f.rolling_mean)}  ·  best {fmt(f.best_score)}
+            </div>
+            {f.hypotheses?.length > 0 && (
+              <ul className="mt-2 text-xs space-y-1 list-disc list-inside text-white/80">
+                {f.hypotheses.map((h, idx) => <li key={idx}>{h}</li>)}
+              </ul>
+            )}
+            {f.proposed_edits?.length > 0 && (
+              <div className="mt-2 text-xs">
+                <div className="text-muted mono mb-1">proposed edits</div>
+                {f.proposed_edits.slice(0, 3).map((e, idx) => (
+                  <div key={idx} className="mono text-xs text-cyan-200">
+                    [{e.op}] {e.summary}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BestVsExperiment({ skill }) {
+  const best = (skill?.versions || []).find(v => v.promoted);
+  const exp = (skill?.versions || []).filter(v => !v.promoted).slice(-1)[0];
+  if (!best && !exp) return null;
+  const bScore = best?.metrics_summary?.composite || 0;
+  const eScore = exp?.metrics_summary?.composite || 0;
+  return (
+    <div className="glass p-4">
+      <div className="section-title">Best  ·  Experimental Variant</div>
+      <div className="grid grid-cols-2 gap-3">
+        <Panel name="Champion" version={best?.version_id} score={bScore}
+               color="var(--green)" summary={best?.edit_summary} />
+        <Panel name="Challenger" version={exp?.version_id} score={eScore}
+               color="var(--magenta)" summary={exp?.edit_summary} />
+      </div>
+      {best && exp && (
+        <div className="mt-3 text-xs mono text-muted">
+          delta · <span style={{
+            color: (eScore - bScore) >= 0 ? "var(--green)" : "var(--magenta)"
+          }}>
+            {(eScore - bScore) >= 0 ? "+" : ""}{fmt(eScore - bScore)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Panel({ name, version, score, color, summary }) {
+  return (
+    <div className="p-3 rounded-lg border" style={{ borderColor: color, background: "rgba(0,0,0,0.3)" }}>
+      <div className="orbitron text-xs" style={{ color }}>{name}</div>
+      <div className="orbitron text-2xl font-bold mt-1" style={{ color }}>
+        {fmt(score)}
+      </div>
+      <div className="text-muted text-xs mono mt-1">{version || "—"}</div>
+      <div className="text-xs text-white/80 mt-2 leading-snug">
+        {summary || <span className="italic opacity-50">no summary</span>}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  App shell
+// ──────────────────────────────────────────────────────────────────────
+
+function App() {
+  const { state, error, loading, reload } = useFleetState(30000);
+  const [selectedSkill, setSelectedSkill] = useState(null);
+  const [versionA, setVersionA] = useState(null);
+  const [versionB, setVersionB] = useState(null);
+
+  // Auto-select first skill on first load
+  useEffect(() => {
+    if (state?.skills?.length && !selectedSkill) {
+      setSelectedSkill(state.skills[0].skill_name);
+    }
+  }, [state, selectedSkill]);
+
+  const skill = useMemo(() => {
+    if (!state) return null;
+    return (state.skills || []).find(s => s.skill_name === selectedSkill);
+  }, [state, selectedSkill]);
+
+  // Default diff selection — champion vs latest experiment
+  useEffect(() => {
+    if (!skill) return;
+    const best = skill.versions.find(v => v.promoted);
+    const latest = skill.versions[skill.versions.length - 1];
+    setVersionA(best?.version_id || latest?.version_id || null);
+    setVersionB(latest?.version_id || null);
+  }, [selectedSkill]); // eslint-disable-line
+
+  const a = skill?.versions?.find(v => v.version_id === versionA);
+  const b = skill?.versions?.find(v => v.version_id === versionB);
+
+  if (loading && !state) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="glass px-8 py-6">
+          <div className="orbitron text-cyan-300">LOADING SKILLS OBSERVATORY...</div>
+          <div className="skeleton h-2 mt-4 w-64"></div>
+        </div>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="glass px-8 py-6 max-w-md">
+          <div className="orbitron text-magenta-300">CONNECTION ERROR</div>
+          <div className="mono text-sm text-muted mt-2">{error}</div>
+          <button onClick={reload}
+                  className="pill pill-cyan mt-4 cursor-pointer hover:bg-cyan-500/15">
+            ⟳ retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <Header fleet={state} onRefresh={reload} />
+
+      <div className="px-6 py-6 grid grid-cols-12 gap-4">
+        {/* Skill grid (left) */}
+        <div className="col-span-12 lg:col-span-4 space-y-3">
+          <div className="section-title px-1">Skill Fleet</div>
+          {(state?.skills || []).map(s => (
+            <SkillCard key={s.skill_name}
+                       skill={s}
+                       selected={s.skill_name === selectedSkill}
+                       onSelect={setSelectedSkill} />
+          ))}
+          {(!state?.skills || state.skills.length === 0) && (
+            <div className="glass p-6 text-center text-muted mono">
+              No skills registered yet. Use
+              <code className="mx-1 px-1.5 py-0.5 rounded bg-white/5 text-cyan-300">
+                friday skills
+              </code>
+              or have Friday learn one.
+            </div>
+          )}
+        </div>
+
+        {/* Detail (right) */}
+        <div className="col-span-12 lg:col-span-8 space-y-4">
+          {skill ? (
+            <>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="glass p-4">
+                  <div className="section-title">Score Trajectory</div>
+                  <ScoreScatter trend={skill.trend} />
+                </div>
+                <BestVsExperiment skill={skill} />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <VersionHistory skill={skill}
+                                selectedVersion={versionB}
+                                onSelectVersion={(v) => setVersionB(v)} />
+                <ExperimentsPanel skill={skill} />
+              </div>
+
+              <div className="glass p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="section-title m-0">Version Diff</div>
+                  <div className="flex items-center gap-2 mono text-xs text-muted">
+                    <select className="bg-white/5 border border-white/10 rounded px-2 py-1
+                                       text-cyan-200 outline-none"
+                            value={versionA || ""}
+                            onChange={e => setVersionA(e.target.value)}>
+                      {skill.versions.map(v => (
+                        <option key={v.version_id} value={v.version_id}>{v.version_id}</option>
+                      ))}
+                    </select>
+                    <span className="opacity-60">→</span>
+                    <select className="bg-white/5 border border-white/10 rounded px-2 py-1
+                                       text-cyan-200 outline-none"
+                            value={versionB || ""}
+                            onChange={e => setVersionB(e.target.value)}>
+                      {skill.versions.map(v => (
+                        <option key={v.version_id} value={v.version_id}>{v.version_id}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <DiffViewer a={a} b={b} />
+              </div>
+
+              <ResearchLog skill={skill} />
+            </>
+          ) : (
+            <div className="glass p-12 text-center text-muted mono">
+              Select a skill from the fleet to view detail.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <footer className="px-6 py-6 text-center mono text-xs text-muted">
+        Skills Observatory  ·  Agent Friday  ·  built by
+        <span className="text-cyan-400 ml-1">FutureSpeak.AI</span>
+      </footer>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
