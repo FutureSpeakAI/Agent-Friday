@@ -34,6 +34,52 @@ cd Agent-Friday
 
 ---
 
+## Unsigned-script warnings (Windows SmartScreen · PowerShell · macOS Gatekeeper)
+
+Agent Friday's installers are open-source scripts, not code-signed binaries, so
+a fresh OS may warn you before running them. This is expected for any unsigned
+script — here's how to proceed safely. (Always read a script before running it;
+ours are short and plain-text.)
+
+### Windows — PowerShell execution policy
+
+If `.\install.ps1` fails with *"running scripts is disabled on this system"*,
+run it once with a bypass scoped to that single command (it does **not** change
+your machine's policy):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+If you downloaded the repo as a ZIP, Windows may mark files as "blocked." Clear
+that flag first:
+
+```powershell
+Get-ChildItem -Recurse . | Unblock-File
+```
+
+### Windows — SmartScreen ("Windows protected your PC")
+
+If you run a packaged executable (a PyInstaller build) and SmartScreen shows a
+blue dialog, click **More info → Run anyway**. SmartScreen flags any executable
+that hasn't yet built up download reputation; running from source with
+`python server.py` avoids the prompt entirely.
+
+### macOS — Gatekeeper ("cannot be opened because the developer cannot be verified")
+
+For the `install.sh` script there is no Gatekeeper prompt — run it normally. If
+you ever run a downloaded **app bundle** and Gatekeeper blocks it, either
+right-click the app → **Open** (then confirm), or clear the quarantine flag:
+
+```bash
+xattr -d com.apple.quarantine /path/to/AgentFriday
+```
+
+When in doubt, the source install (`python server.py`) never triggers any of
+these warnings, because you're running your own Python on scripts you can read.
+
+---
+
 ## Step 2: Create a Virtual Environment (Recommended)
 
 ```bash
@@ -50,11 +96,27 @@ source .venv/bin/activate
 
 ## Step 3: Install Dependencies
 
+The recommended path uses `pyproject.toml`, which also installs the `friday`
+console command and every optional capability group (voice, creative, Google,
+local embeddings/memory, compression, federation):
+
+```bash
+pip install -e ".[all]"
+```
+
+Prefer a leaner install? `pip install -e .` lands just the core dependencies
+(server + UI + Anthropic/Gemini paths); the heavier extras stay out and the
+features that need them degrade gracefully. The one-line installers
+(`install.ps1` / `install.bat` / `install.sh`) run the `.[all]` path for you
+and fall back to `requirements.txt` automatically if it errors.
+
+`requirements.txt` remains as a direct fallback:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-This installs:
+The core install includes:
 
 | Package | Purpose |
 |---------|---------|
@@ -221,12 +283,25 @@ The context pruner downloads the `all-MiniLM-L6-v2` model (~80MB) on first use. 
 
 ### Port 3000 already in use
 
-Set a different port:
+Friday handles this automatically: if port 3000 is busy, it scans the next ten
+ports, binds the first free one, and prints the actual URL it chose, e.g.
+`Note: port 3000 was busy — using 3001 instead.` Open the URL it prints.
+
+To pin a specific port yourself, set `FRIDAY_PORT` before launching:
 
 ```bash
-set FRIDAY_PORT=3001
-python server.py
+# Windows (Command Prompt)
+set FRIDAY_PORT=3001 && python server.py
+
+# Windows (PowerShell)
+$env:FRIDAY_PORT = "3001"; python server.py
+
+# macOS / Linux
+FRIDAY_PORT=3001 python server.py
 ```
+
+If no port in the 3000–3010 range is free, Friday exits with a clear message
+rather than a raw traceback.
 
 ### flask-sock not installed
 

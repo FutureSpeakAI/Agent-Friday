@@ -39,8 +39,13 @@ Prefer to wire things up yourself? Clone the repo, install dependencies, set you
 ```bash
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
-pip install -r requirements.txt
+pip install -e ".[all]"        # installs the `friday` command + every capability
 ```
+
+`pip install -e .` (without `[all]`) installs just the core dependencies and
+still runs; the optional extras degrade gracefully. `pip install -r requirements.txt`
+also works as a direct fallback. If Windows blocks `install.ps1`, see
+[Unsigned-script warnings](docs/INSTALLATION.md#unsigned-script-warnings-windows-smartscreen--powershell--macos-gatekeeper).
 
 Set your API keys (no keys are stored in the repo). Use the syntax for your shell:
 
@@ -79,15 +84,18 @@ $env:FRIDAY_SANDBOX_ROOT   = "$env:USERPROFILE"  # write-confinement root for to
 Then run the server:
 
 ```bash
-python server.py
+python server.py        # or just `friday` if you installed via pyproject
 ```
 
-Open **http://localhost:3000** in your browser. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide.
+Open **http://localhost:3000** in your browser. If port 3000 is busy, Friday
+binds the next free port and prints the URL it chose. See
+[docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide.
 
 ### Requirements
 - **Python 3.10+**
-- **Anthropic API key** — required ([get one here](https://console.anthropic.com/settings/keys))
-- **Google Gemini API key** — required for voice mode and creative features ([get one here](https://aistudio.google.com/apikey))
+- **No API key?** Friday boots in **demo mode** so you can explore the full UI; connect a provider any time in Settings to go live.
+- **Anthropic API key** — for live Claude reasoning ([get one here](https://console.anthropic.com/settings/keys))
+- **Google Gemini API key** — for voice mode and creative features ([get one here](https://aistudio.google.com/apikey))
 - **OpenAI-compatible API key** — optional, for the third provider (OpenRouter or any `/v1` endpoint) via `OPENAI_API_KEY` / `OPENROUTER_API_KEY` ([OpenRouter keys](https://openrouter.ai/keys))
 - **Ollama** — optional, for local models and vault privacy ([ollama.com](https://ollama.com))
 - **GPU** — optional, for local model acceleration
