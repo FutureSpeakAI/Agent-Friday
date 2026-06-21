@@ -90,6 +90,18 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
 
     Returns (text, tool_trace) — uniform across all three primitives.
     """
+    # Demo mode: no provider configured (no keys + no local Ollama) → return a
+    # labelled placeholder instead of exhausting every primitive and raising
+    # RuntimeError("No model provider could run the agent"). This is the agentic
+    # twin of the guard in _generate_text(); without it /api/chat/send and the
+    # background-task workers hard-fail with HTTP 500 on a fresh keyless install.
+    try:
+        from services.demo_mode import is_demo, demo_response
+        if is_demo():
+            return demo_response('generic'), []
+    except Exception:
+        pass
+
     settings = _load_settings()
     routing_cfg = settings.get('model_routing') or {}
     provider, routed_model = 'cloud', model
