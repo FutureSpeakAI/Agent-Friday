@@ -36,6 +36,20 @@ dependencies = [
 # Live voice + creative (image/video) both ride the core google-genai SDK; these
 # extras add the trimmings each capability needs beyond it.
 voice = ["pyttsx3>=2.90"]              # offline TTS fallback when Gemini is unreachable
+# Tier-1 LOCAL voice (the DEFAULT engine): faster-whisper ASR + Piper TTS, CPU
+# only, NO torch/CUDA. ~150-300MB of wheels; the ASR/TTS model checkpoints
+# download lazily on first voice activation, not at install. Safe for [all].
+voice-local-lite = [
+    "faster-whisper>=1.0",   # CTranslate2 backend, CPU INT8 ASR (no torch)
+    "piper-tts>=1.2",        # ONNX TTS, ~30MB/voice
+    "onnxruntime>=1.17",     # CPU inference for Piper (+ optional Silero VAD)
+]
+# Tier-2 GPU premium voice (NVIDIA NeMo). HEAVY (torch-CUDA + NeMo, 3-6GB) and
+# version-fragile — opt-in ONLY, NEVER in [all]. torch+CUDA must be installed via
+# a dedicated installer step with the correct CUDA index URL, not a blind pip dep.
+voice-local-gpu = [
+    "nemo_toolkit[asr,tts]>=2.6",
+]
 creative = ["pillow>=10.0"]            # image post-processing / thumbnails
 google = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0"]  # Gmail/Calendar/Drive
 local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings + memory (Ollama itself is an external binary)
@@ -53,6 +67,11 @@ all = [
     "pynacl>=1.5",
     "pyautogui>=0.9",
     "pynput>=1.7",
+    # Tier-1 local voice is cheap + universal, so it rides [all]. The heavy GPU
+    # voice group (voice-local-gpu) is deliberately EXCLUDED — opt-in only.
+    "faster-whisper>=1.0",
+    "piper-tts>=1.2",
+    "onnxruntime>=1.17",
 ]
 
 [project.scripts]

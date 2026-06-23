@@ -64,6 +64,9 @@ def provider_family(model_id):
         return "openai"
     if m.startswith("gemini") or "nano-banana" in m or m.startswith("veo"):
         return "gemini"
+    # Local voice models (Tier-1 Piper/Whisper, Tier-2 NeMo) are on-device.
+    if m.startswith(("piper-", "whisper-", "nemo-", "nemotron-")):
+        return "local"
     # Ollama tags carry a ":" (gemma4:latest) or a known local family prefix.
     if ":" in m or m.startswith(("gemma", "llama", "mistral", "qwen", "phi",
                                  "deepseek", "codellama", "mixtral")):

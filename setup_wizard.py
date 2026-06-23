@@ -421,10 +421,41 @@ def step_api_keys(total: int, existing_anthro: str, existing_gemini: str) -> tup
     return anthro, gemini
 
 
+def step_voice_engine(total: int, existing_engine: str) -> str:
+    """Choose the voice ENGINE: local (default, private) vs cloud (Gemini Live).
+
+    Local is recommended for everyone — it runs on-device (faster-whisper +
+    Piper), works offline, and keeps audio private. Cloud is the opt-in for the
+    most expressive delivery. Mirrors the ethos: local default, cloud opt-in."""
+    _clear()
+    _header(6, total, "VOICE ENGINE")
+    # Hardware hint — local Tier-1 runs on any CPU; note GPU as a future premium.
+    try:
+        from ollama_manager import get_manager
+        hw = get_manager().detect_hardware()
+        gpu = hw.get("gpu") or hw.get("has_gpu")
+    except Exception:
+        gpu = None
+    console.print(
+        "  How should Friday listen and speak?\n\n"
+        "  [bold cyan]1[/bold cyan].  [bold white]Local[/bold white]  "
+        "[dim](recommended — on-device, private, works offline; faster-whisper + Piper)[/dim]\n"
+        "  [bold cyan]2[/bold cyan].  [bold white]Cloud[/bold white]  "
+        "[dim](Gemini Live — most expressive; needs a Gemini key + network)[/dim]\n"
+    )
+    if gpu:
+        console.print("  [dim]An NVIDIA GPU was detected — a premium local voice tier "
+                      "(NeMo) can be added later in Settings.[/dim]\n")
+    default_idx = "2" if str(existing_engine).lower() == "gemini" else "1"
+    choice = Prompt.ask("  [cyan]Engine (1–2)[/cyan]", default=default_idx)
+    return "gemini" if str(choice).strip() == "2" else "local"
+
+
 def step_voice(total: int, existing_voice: str) -> str:
     _clear()
     _header(6, total, "VOICE PERSONA")
-    console.print("  Choose the TTS voice Friday uses when speaking aloud.\n")
+    console.print("  Choose the TTS voice Friday uses when speaking aloud "
+                  "(applies to cloud Gemini Live).\n")
 
     for i, (vid, vdesc) in enumerate(VOICE_PERSONAS):
         star = "[bold cyan]●[/bold cyan]" if vid == existing_voice else " "
@@ -524,6 +555,8 @@ def step_summary(config: dict, quick: bool) -> bool:
     t.add_row("Orchestrator", config["orchestrator_model"])
     if not quick:
         t.add_row("Creative engine", config.get("creative_model", "gemini-nano-banana-2"))
+        _ve = config.get("voice_engine", "local")
+        t.add_row("Voice engine", "Local (on-device)" if _ve == "local" else "Cloud (Gemini Live)")
         t.add_row("Voice persona", config.get("tts_voice", "Aoede"))
         scene_idx = config.get("preferred_scene_index", -1)
         scene_name = (
@@ -679,7 +712,9 @@ def main():
     )
 
     if not quick:
-        # Step 6: Voice
+        # Step 6: Voice — engine (local default / cloud opt-in) + TTS persona.
+        config["voice_engine"] = step_voice_engine(
+            total_steps, config.get("voice_engine", "local"))
         config["tts_voice"] = step_voice(total_steps, config.get("tts_voice", "Aoede"))
 
         # Step 7: Scene
@@ -692,6 +727,7 @@ def main():
             total_steps, config.get("connectors", {})
         )
     else:
+        config.setdefault("voice_engine", "local")
         config.setdefault("tts_voice", "Aoede")
         config.setdefault("preferred_scene_index", 0)
         config.setdefault("connectors", {})

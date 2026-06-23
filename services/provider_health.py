@@ -57,6 +57,29 @@ def _check(name, deep=False) -> dict:
         except Exception as e:
             return {"provider": name, "status": "down", "detail": str(e)[:120]}
 
+    if ptype == "local-voice":
+        # Tier-1 on-device voice. "ok" only when deps are importable AND the
+        # ASR/TTS checkpoints are downloaded; else an actionable missing/needs.
+        try:
+            from services.local_voice import get_local_voice_engine
+            h = get_local_voice_engine().health()
+            return {"provider": name, "status": h.get("status", "unknown"),
+                    "detail": h.get("detail", "")}
+        except Exception as e:
+            return {"provider": name, "status": "missing", "detail": str(e)[:120]}
+
+    if ptype == "nemo-local":
+        # Tier-2 GPU premium voice. "ok" only when torch+NeMo are installed AND a
+        # CUDA GPU with enough VRAM is present AND the checkpoints are downloaded;
+        # else an actionable missing/down/needs status from services.nemo_voice.
+        try:
+            from services.nemo_voice import nemo_health
+            h = nemo_health()
+            return {"provider": name, "status": h.get("status", "unknown"),
+                    "detail": h.get("detail", "")}
+        except Exception as e:
+            return {"provider": name, "status": "missing", "detail": str(e)[:120]}
+
     if not _has_key(prov):
         return {"provider": name, "status": "missing", "detail": "no API key"}
 

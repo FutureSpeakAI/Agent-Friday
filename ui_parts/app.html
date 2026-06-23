@@ -1326,6 +1326,100 @@ function GeneratePanel({onCreated}){
     </div>}
   </div>);
 }
+// ── Studio › Creative Project Manager ──────────────────────────────────────
+// Per-project Series Bible (cast/locations/continuity/style) + multi-stage
+// creative pipelines with milestone progress and checkpoint resume. Wired to
+// /api/projects/* and /api/pipelines/*. Characters added here propagate their
+// visual description into every downstream generation.
+function ProjectsPanel(){
+  const[projects,setProjects]=useState([]);const[activeId,setActiveId]=useState('');
+  const[bible,setBible]=useState(null);const[name,setName]=useState('');const[ptype,setPtype]=useState('video-series');
+  const[cName,setCName]=useState('');const[cDesc,setCDesc]=useState('');const[cVoice,setCVoice]=useState('');
+  const[templates,setTemplates]=useState([]);const[pipeId,setPipeId]=useState('research-brief-draft-review');
+  const[topic,setTopic]=useState('');const[runs,setRuns]=useState([]);const[busy,setBusy]=useState(false);
+  const loadProjects=()=>fetch('/api/projects').then(r=>r.json()).then(d=>{setProjects(d.projects||[]);}).catch(()=>{});
+  const loadActive=()=>fetch('/api/projects/active').then(r=>r.json()).then(d=>{setActiveId(d.active_id||'');setBible(d.project||null);}).catch(()=>{});
+  const loadRuns=()=>fetch('/api/pipelines/runs').then(r=>r.json()).then(d=>setRuns(d.runs||[])).catch(()=>{});
+  useEffect(()=>{loadProjects();loadActive();loadRuns();fetch('/api/pipelines/templates').then(r=>r.json()).then(d=>setTemplates(d.templates||[])).catch(()=>{});},[]);
+  const createProject=async()=>{if(!name.trim())return;await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,type:ptype})});setName('');loadProjects();loadActive();};
+  const activate=async(id)=>{await fetch('/api/projects/'+id+'/activate',{method:'POST'});loadActive();};
+  const delProject=async(id)=>{await fetch('/api/projects/'+id,{method:'DELETE'});loadProjects();loadActive();};
+  const addChar=async()=>{if(!activeId||!cName.trim())return;await fetch('/api/projects/'+activeId+'/characters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:cName,visual_description:cDesc,voice_profile:cVoice})});setCName('');setCDesc('');setCVoice('');loadActive();};
+  const rmChar=async(nm)=>{await fetch('/api/projects/'+activeId+'/characters/'+encodeURIComponent(nm),{method:'DELETE'});loadActive();};
+  const runPipeline=async()=>{if(!topic.trim())return;setBusy(true);try{await fetch('/api/pipelines/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline_id:pipeId,input:{topic,logline:topic},project_id:activeId,start:true})});setTopic('');setTimeout(loadRuns,400);}finally{setBusy(false);}};
+  const resumeRun=async(rid)=>{await fetch('/api/pipelines/runs/'+rid+'/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_to_end:false})});setTimeout(loadRuns,400);};
+  const stateColor={completed:'#22c55e',awaiting_checkpoint:'#f59e0b',running:'#00d4ff',failed:'#ff0080',pending:'#888'};
+  return(<div>
+    <FridaySays text="Creative projects keep a Series Bible — cast, locations, continuity, style — so every generation stays consistent. Chain workspaces into pipelines that pause for your review."/>
+    <div className="card" style={{marginBottom:8}}>
+      <div className="card-title">New Project</div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+        <input className="input" style={{flex:1,minWidth:140}} value={name} onChange={e=>setName(e.target.value)} placeholder="Project name (e.g. Neon Saga)" onKeyDown={e=>e.key==='Enter'&&createProject()}/>
+        <select className="input" value={ptype} onChange={e=>setPtype(e.target.value)} style={{maxWidth:140}}>
+          {['video-series','short-film','card','album','music','storybook','comic','campaign','brand','general'].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <button className="btn btn-magenta" style={{fontSize:11}} onClick={createProject}>+ Create</button>
+      </div>
+    </div>
+    <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:8}}>
+      {projects.length===0&&<span style={{fontSize:11,color:'#999'}}>No projects yet.</span>}
+      {projects.map(p=>(
+        <button key={p.id} className={'btn '+(p.id===activeId?'':'btn-magenta')} style={{fontSize:11}} title={p.type+' · '+p.characters+' cast · '+p.assets+' assets'} onClick={()=>activate(p.id)}>
+          {p.id===activeId?'● ':''}{p.name}
+        </button>
+      ))}
+    </div>
+    {bible&&(<div>
+      <div className="card" style={{marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div className="card-title" style={{margin:0}}>📖 {bible.name} — Series Bible</div>
+          <button className="btn" style={{fontSize:11}} onClick={()=>delProject(bible.id)}>🗑 Delete</button>
+        </div>
+        <div style={{fontSize:11,color:'#888',margin:'4px 0 8px'}}>{bible.type} · {(bible.characters||[]).length} cast · {(bible.locations||[]).length} locations · {(bible.assets||[]).length} assets</div>
+        <div className="settings-subtitle" style={{marginTop:4}}>Cast</div>
+        {(bible.characters||[]).map((c,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:6,padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+            <div style={{fontSize:12}}><strong style={{color:'#00d4ff'}}>{c.name}</strong>{c.visual_description?<span style={{color:'#bbb'}}> — {c.visual_description}</span>:''}{c.voice_profile?<span style={{color:'#888'}}> · 🎙 {c.voice_profile}</span>:''}</div>
+            <button className="btn" style={{fontSize:10,padding:'1px 6px'}} onClick={()=>rmChar(c.name)}>×</button>
+          </div>
+        ))}
+        <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:6}}>
+          <input className="input" style={{width:110}} value={cName} onChange={e=>setCName(e.target.value)} placeholder="Name"/>
+          <input className="input" style={{flex:1,minWidth:160}} value={cDesc} onChange={e=>setCDesc(e.target.value)} placeholder="Visual description (propagates to every render)"/>
+          <input className="input" style={{width:120}} value={cVoice} onChange={e=>setCVoice(e.target.value)} placeholder="Voice profile"/>
+          <button className="btn" style={{fontSize:11}} onClick={addChar}>+ Cast</button>
+        </div>
+      </div>
+    </div>)}
+    <div className="card" style={{marginBottom:8}}>
+      <div className="card-title">🧩 Run a Pipeline</div>
+      <div style={{fontSize:11,color:'#888',marginBottom:6}}>{(templates.find(t=>t.id===pipeId)||{}).description||'Chain workspaces with checkpoints.'}</div>
+      <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6}}>
+        {templates.map(t=><button key={t.id} className={'btn '+(t.id===pipeId?'':'btn-magenta')} style={{fontSize:11}} title={(t.stages||[]).join(' → ')} onClick={()=>setPipeId(t.id)}>{t.name}</button>)}
+      </div>
+      <div style={{display:'flex',gap:4,marginBottom:6}}>
+        <span style={{fontSize:10,color:'#666',alignSelf:'center'}}>{((templates.find(t=>t.id===pipeId)||{}).stages||[]).join(' → ')}</span>
+      </div>
+      <div style={{display:'flex',gap:6}}>
+        <input className="input" style={{flex:1}} value={topic} onChange={e=>setTopic(e.target.value)} placeholder="Topic / logline to seed the first stage…" onKeyDown={e=>e.key==='Enter'&&runPipeline()}/>
+        <button className="btn btn-magenta" style={{fontSize:11}} disabled={busy} onClick={runPipeline}>{busy?'Starting…':'▶ Run'}</button>
+        <button className="btn" style={{fontSize:11}} onClick={loadRuns}>↻</button>
+      </div>
+    </div>
+    {runs.length>0&&(<div className="card">
+      <div className="card-title">Pipeline Runs</div>
+      {runs.slice(0,8).map(r=>(
+        <div key={r.run_id} style={{padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:12,color:'#ccc'}}>{r.name} <span style={{fontSize:10,color:'#777'}}>· stage {Math.min(r.stage_index+ (r.state==='completed'?0:1),r.total_stages)}/{r.total_stages}</span></span>
+            <span style={{fontSize:10,fontFamily:'Orbitron',color:stateColor[r.state]||'#888'}}>{r.state}</span>
+          </div>
+          {r.state==='awaiting_checkpoint'&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px',marginTop:3}} onClick={()=>resumeRun(r.run_id)}>Approve & Continue →</button>}
+        </div>
+      ))}
+    </div>)}
+  </div>);
+}
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
@@ -1377,8 +1471,11 @@ function StudioWS(){
     <div style={{display:'flex',gap:6,marginBottom:10}}>
       <button className={'btn '+(view==='generate'?'':'btn-magenta')} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
       <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
+      <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
     </div>
+    {view==='projects'&&<ProjectsPanel/>}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
+    {view!=='projects'&&(<React.Fragment>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe a quick text/code creation..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
       <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
@@ -1402,6 +1499,7 @@ function StudioWS(){
         </div>);
       })}
     </div>}
+    </React.Fragment>)}
   </div>);
 }
 function TrustWS(){
@@ -4964,7 +5062,18 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       return;
     }
     const proto=location.protocol==='https:'?'wss:':'ws:';
-    const ws=new WebSocket(proto+'//'+location.host+'/ws/live');
+    // Resolve the engine + WebSocket URL the server wants us to use. LOCAL voice
+    // (/ws/voice-local) is the default; cloud Gemini Live (/ws/live) is opt-in.
+    // Same audio plumbing + message contract on both, so only the URL changes.
+    let _wsUrl='/ws/voice-local',_engine='local';
+    try{
+      const _si=await fetch('/api/voice/session-info').then(r=>r.json());
+      if(_si&&_si.ws_url){_wsUrl=_si.ws_url;_engine=_si.engine||'local';}
+      if(_si&&_si.engine==='demo'){setVoiceStatus('voice unavailable — install local voice or connect a cloud key');try{voiceStopRef.current?.()}catch(_){}return;}
+      if(_engine==='local'&&_si&&_si.models_ready===false)setVoiceStatus('preparing local voice…');
+    }catch(_){/* default to local */}
+    v.engine=_engine;
+    const ws=new WebSocket(proto+'//'+location.host+_wsUrl);
     v.ws=ws;
     let wsOpened=false;
     setVoiceStatus('connecting…');
@@ -6280,6 +6389,30 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         </div>
         <div className={`settings-coll-body ${openSections.audio?'open':''}`}>
           <div style={{padding:'0 16px 14px'}}>
+            <div className="settings-subtitle">Voice Engine</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>
+              Local (CPU) runs fully on-device (private, offline-capable). Local GPU (NeMo) is the premium tier for NVIDIA cards — lower latency, higher fidelity. Cloud uses Gemini Live (most expressive, needs a key + network). Auto picks GPU when ready, else CPU. Local is the default — cloud is always opt-in.
+            </div>
+            <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
+              {[{k:'local',label:'🔒 Local (CPU)'},{k:'local-gpu',label:'⚡ Local GPU'},{k:'gemini',label:'☁ Cloud'},{k:'auto',label:'Auto'}].map(o=>(
+                <button key={o.k}
+                  className={`settings-btn ${(agentSettings.voice_engine||'local')===o.k?'active':''}`}
+                  style={{fontSize:11,padding:'5px 9px',flex:'1 1 22%',textAlign:'center'}}
+                  onClick={()=>saveAgentSettings({voice_engine:o.k})}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {hwFull&&hwFull.local_voice&&<div style={{fontSize:11,marginBottom:6,fontFamily:'JetBrains Mono',
+              color:hwFull.local_voice.status==='ok'?'#00ff80':hwFull.local_voice.status==='missing'?'#ff5588':'#f59e0b'}}>
+              Local voice (CPU): {hwFull.local_voice.status==='ok'?'✅ ready':hwFull.local_voice.status==='needs_download'?'⬇ models download on first use':hwFull.local_voice.status==='missing'?'❌ not installed — pip install -e .[voice-local-lite]':(hwFull.local_voice.detail||hwFull.local_voice.status)}
+            </div>}
+            {hwFull&&hwFull.local_voice&&hwFull.local_voice.gpu&&<div style={{fontSize:11,marginBottom:14,fontFamily:'JetBrains Mono',
+              color:hwFull.local_voice.gpu.status==='ok'?'#00ff80':hwFull.local_voice.gpu.status==='needs_download'?'#f59e0b':'rgba(255,255,255,0.4)'}}>
+              Local voice (GPU · NeMo): {hwFull.local_voice.gpu.status==='ok'?'✅ ready':hwFull.local_voice.gpu.status==='needs_download'?'⬇ models download on first use':(hwFull.local_voice.gpu.detail||hwFull.local_voice.gpu.status)}
+              {hwFull.local_voice.perf&&(hwFull.local_voice.perf.asr_ms||hwFull.local_voice.perf.tts_ms)?<span style={{color:'rgba(255,255,255,0.4)'}}>{` · tier ${hwFull.local_voice.perf.tier} · ASR ${hwFull.local_voice.perf.asr_ms??'—'}ms · TTS ${hwFull.local_voice.perf.tts_ms??'—'}ms`}</span>:null}
+            </div>}
+
             <div className="settings-subtitle">Microphone (Input)</div>
             <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>
             <select value={agentSettings.audio_input_device_id||''} onChange={e=>saveAgentSettings({audio_input_device_id:e.target.value})}
@@ -6522,6 +6655,67 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
             style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
           <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginTop:4,marginBottom:14}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
+
+          {/* ── Per-workspace temperature profiles (creative pipeline) ── */}
+          <div className="settings-subtitle">Workspace Creativity</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
+            Each workspace gets its own creativity level. Studio runs hot for bold ideas; Research runs cold for precision. Applied automatically per workspace.
+          </div>
+          {[
+            {ws:'studio',label:'🎨 Creative Studio',def:0.75},
+            {ws:'research',label:'🔬 Research',def:0.25},
+            {ws:'code',label:'💻 Code / Dev',def:0.45},
+            {ws:'content',label:'✍️ Content Writing',def:0.6},
+            {ws:'chat',label:'💬 Conversation',def:0.5},
+          ].map(row=>{
+            const wt=agentSettings.workspace_temperatures||{};
+            const val=(wt[row.ws]!=null?wt[row.ws]:row.def);
+            return(
+              <div key={row.ws} style={{marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
+                  <span style={{fontSize:12,color:'rgba(255,255,255,0.8)'}}>{row.label}</span>
+                  <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff'}}>{Number(val).toFixed(2)}</span>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" value={val}
+                  onChange={e=>{const v=parseFloat(e.target.value);setAgentSettings(s=>({...s,workspace_temperatures:{...(s.workspace_temperatures||{}),[row.ws]:v}}));}}
+                  onMouseUp={e=>saveAgentSettings({workspace_temperatures:{...(agentSettings.workspace_temperatures||{}),[row.ws]:parseFloat(e.target.value)}})}
+                  onTouchEnd={e=>saveAgentSettings({workspace_temperatures:{...(agentSettings.workspace_temperatures||{}),[row.ws]:parseFloat(e.target.value)}})}
+                  style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
+              </div>
+            );
+          })}
+
+          {/* ── Self-Evaluation (QA) Gates ── */}
+          <div className="settings-subtitle" style={{marginTop:12}}>Self-Evaluation Gates</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
+            Before presenting significant generated content, Friday scores it against your intent and silently improves (or flags) anything below the bar. Turn off for raw speed.
+          </div>
+          <div className="settings-toggle" onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),enabled:!((agentSettings.qa_gates||{}).enabled)}})}>
+            <span className="settings-toggle-label">QA gates enabled</span>
+            <div className={`settings-toggle-switch ${((agentSettings.qa_gates||{}).enabled)?'on':''}`}/>
+          </div>
+          {((agentSettings.qa_gates||{}).enabled)&&(<div style={{marginTop:8}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
+              <span style={{fontSize:12,color:'rgba(255,255,255,0.8)'}}>Quality threshold</span>
+              <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff'}}>{Number((agentSettings.qa_gates||{}).threshold??0.7).toFixed(2)}</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.05" value={(agentSettings.qa_gates||{}).threshold??0.7}
+              onChange={e=>{const v=parseFloat(e.target.value);setAgentSettings(s=>({...s,qa_gates:{...(s.qa_gates||{}),threshold:v}}));}}
+              onMouseUp={e=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),threshold:parseFloat(e.target.value)}})}
+              style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
+            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr',marginTop:8,marginBottom:6}}>
+              {[{v:'improve',l:'Silently improve'},{v:'flag',l:'Flag the gap'}].map(m=>
+                <button key={m.v} className={`settings-btn ${((agentSettings.qa_gates||{}).mode||'improve')===m.v?'active':''}`}
+                  style={{textAlign:'center'}}
+                  onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),mode:m.v}})}>{m.l}</button>
+              )}
+            </div>
+            <div className="settings-toggle" onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),vision_for_images:!((agentSettings.qa_gates||{}).vision_for_images)}})}>
+              <span className="settings-toggle-label">Score images with a vision model</span>
+              <div className={`settings-toggle-switch ${((agentSettings.qa_gates||{}).vision_for_images)?'on':''}`}/>
+            </div>
+          </div>)}
+          <div style={{height:14}}/>
 
           {/* Default Model — configured in Agent Identity section above */}
           <div className="settings-subtitle">Configured Models</div>

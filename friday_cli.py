@@ -774,6 +774,7 @@ def cmd_health():
         except Exception:
             return False
 
+    from rich.markup import escape as _esc  # detail strings can contain .[extras]
     try:
         from services import provider_health
         t = Table(box=box.SIMPLE)
@@ -782,7 +783,7 @@ def cmd_health():
             color = {"ok": "green", "missing": "yellow", "down": "red",
                      "error": "red"}.get(p.get("status"), "white")
             t.add_row(p.get("provider", "?"), f"[{color}]{p.get('status')}[/{color}]",
-                      p.get("detail", ""))
+                      _esc(p.get("detail", "")))
         console.print(Panel(t, title="AI Providers", border_style="cyan"))
     except Exception as e:
         console.print(f"[red]providers: {e}[/red]")
@@ -814,7 +815,29 @@ def cmd_health():
     except Exception as e:
         console.print(f"[yellow]hardware: {e}[/yellow]")
 
-    groups = {"voice": ["google.genai"], "creative": ["google.genai"],
+    try:
+        from services.local_voice import local_voice_health
+        lv = local_voice_health()
+        _vcolor = {"ok": "green", "needs_download": "yellow", "down": "yellow",
+                   "missing": "yellow", "error": "red"}
+        color = _vcolor.get(lv.get("status"), "white")
+        console.print(f"Local voice (Tier-1): [{color}]{lv.get('status')}[/{color}] "
+                      f"— {_esc(lv.get('detail', ''))}")
+        perf = lv.get("perf") or {}
+        if perf.get("asr_ms") is not None or perf.get("tts_ms") is not None:
+            console.print(f"  active tier: {perf.get('tier', 'cpu')} | "
+                          f"ASR {perf.get('asr_ms', '—')}ms | TTS {perf.get('tts_ms', '—')}ms")
+        gpu = lv.get("gpu") or {}
+        if gpu:
+            gcolor = _vcolor.get(gpu.get("status"), "white")
+            console.print(f"Local voice (Tier-2 · NeMo GPU): [{gcolor}]{gpu.get('status')}[/{gcolor}] "
+                          f"— {_esc(gpu.get('detail', ''))}")
+    except Exception as e:
+        console.print(f"[yellow]local voice: {e}[/yellow]")
+
+    groups = {"voice": ["google.genai"], "voice-local": ["faster_whisper", "piper"],
+              "voice-local-gpu": ["torch", "nemo"],
+              "creative": ["google.genai"],
               "local": ["sentence_transformers"], "memory": ["chromadb"]}
     deps = " | ".join(f"{g}:{'yes' if all(_have(m) for m in mods) else 'no'}"
                           for g, mods in groups.items())

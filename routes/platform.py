@@ -265,6 +265,8 @@ def _optional_dep_status() -> dict:
     import importlib.util
     groups = {
         "voice": ["google.genai"],
+        "voice-local": ["faster_whisper", "piper"],
+        "voice-local-gpu": ["torch", "nemo"],
         "creative": ["google.genai"],
         "local": ["requests"],
         "memory": ["chromadb", "sentence_transformers"],
@@ -326,6 +328,20 @@ def api_health_full():
         out["vault"] = {"credential_protection": credential_store.protection_method()}
     except Exception as e:
         out["vault"] = {"error": str(e)}
+
+    # Local voice (Tier-1) readiness: deps installed + models downloaded + the
+    # resolved engine the mic button will use. Sourced from services.local_voice.
+    try:
+        from services.local_voice import local_voice_health
+        lv = local_voice_health()
+        try:
+            from routes.voice import _resolve_voice_engine
+            lv["resolved_engine"] = _resolve_voice_engine(settings)
+        except Exception:
+            pass
+        out["local_voice"] = lv
+    except Exception as e:
+        out["local_voice"] = {"error": str(e)}
 
     out["dependencies"] = _optional_dep_status()
 

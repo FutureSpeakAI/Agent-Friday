@@ -362,6 +362,36 @@ IMAGE_STYLES = {
 }
 
 
+def _compose_scene_dna_prompt(prompt: str, scene_dna: Optional[dict],
+                              project_id: Optional[str]) -> str:
+    """Fold a Scene DNA (layered prompt) and the project's Series Bible into the
+    flat prompt. Character names in the DNA are expanded to their canonical
+    visual descriptions from the Bible so a named character renders consistently.
+
+    Returns the combined prompt (the explicit ``prompt`` is appended as an extra
+    constraint when both are present). Best-effort: a malformed DNA or a missing
+    project never breaks generation — it just falls back to the plain prompt.
+    """
+    if not scene_dna:
+        return prompt
+    try:
+        from services import scene_dna as _sd
+        char_desc = {}
+        names = _sd.SceneDNA.from_dict(scene_dna).character_names()
+        if project_id and names:
+            try:
+                from services import creative_memory
+                char_desc = creative_memory.character_context(project_id, names)
+            except Exception:
+                char_desc = {}
+        rendered = _sd.render(scene_dna, character_descriptions=char_desc)
+        if rendered and prompt.strip():
+            return f"{rendered} {prompt.strip()}"
+        return rendered or prompt
+    except Exception:
+        return prompt
+
+
 def _compose_image_prompt(prompt: str, style: Optional[str], aspect_ratio: str) -> str:
     parts = [prompt.strip()]
     style_text = IMAGE_STYLES.get((style or "none").strip().lower())
@@ -389,12 +419,21 @@ def _image_config(types, aspect_ratio: str):
 
 def generate_image(prompt: str, *, model: Optional[str] = None,
                    aspect_ratio: str = "1:1", style: Optional[str] = None,
-                   n: int = 1, session_ctx: Optional[dict] = None) -> Dict[str, Any]:
+                   n: int = 1, session_ctx: Optional[dict] = None,
+                   scene_dna: Optional[dict] = None,
+                   project_id: Optional[str] = None) -> Dict[str, Any]:
     """Generate one or more images from a text prompt via a Gemini image model.
+
+    scene_dna: an optional layered Scene DNA (services/scene_dna) — its setting/
+        characters/action/mood/style layers compose into the prompt, and named
+        characters are expanded to their Series-Bible looks (via project_id).
+    project_id: when given, generated files are also attached to that creative
+        project's asset gallery (services/creative_memory).
 
     Returns {status:'ok', files:[...], model, api_model, prompt, ...} on success,
     or {status:'blocked'|'unavailable'|'error', ...}. Never raises.
     """
+    prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
     allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
@@ -442,6 +481,14 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                 "aspect_ratio": aspect_ratio, "style": style or "none",
                 "created": created,
             })
+        # Attach to the creative project's asset gallery when one is targeted.
+        if project_id:
+            try:
+                from services import creative_memory
+                for f in files:
+                    creative_memory.add_asset(project_id, f["filename"])
+            except Exception:
+                pass
         # Complete the orb and notify per file (notification handles its own UX).
         _orb_update(orb, status="completed", progress=1.0, label="Done")
         _defer(3.0, _safe_remove, orb)
@@ -504,12 +551,17 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                    aspect_ratio: str = "16:9", duration_seconds: Optional[int] = None,
                    image_path: Optional[str] = None, image_bytes: Optional[bytes] = None,
                    image_mime: Optional[str] = None,
-                   session_ctx: Optional[dict] = None) -> Dict[str, Any]:
+                   session_ctx: Optional[dict] = None,
+                   scene_dna: Optional[dict] = None,
+                   project_id: Optional[str] = None) -> Dict[str, Any]:
     """Generate a video from a text prompt (and optionally a seed image) via Veo.
 
-    Pass image_path or image_bytes for image-to-video. Returns the same envelope
-    shape as generate_image(). Never raises.
+    Pass image_path or image_bytes for image-to-video. scene_dna/project_id are
+    handled exactly as in generate_image() — the layered prompt + Series Bible
+    compose into the prompt, and outputs attach to the project gallery. Returns
+    the same envelope shape as generate_image(). Never raises.
     """
+    prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
     allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
@@ -587,6 +639,13 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                 "seed_image": Path(image_path).name if image_path else None,
                 "created": created,
             })
+        if project_id:
+            try:
+                from services import creative_memory
+                for f in files:
+                    creative_memory.add_asset(project_id, f["filename"])
+            except Exception:
+                pass
         _orb_update(orb, status="completed", progress=1.0, label="Done")
         _defer(3.0, _safe_remove, orb)
         for f in files:

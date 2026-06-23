@@ -85,11 +85,14 @@ from routes.jobs import jobs_bp
 from routes.connectors import connectors_bp
 from routes.platform import platform_bp
 from routes.workspace_studio import ws_studio_bp
+from routes.projects import projects_bp
+from routes.creative_pipeline import creative_pipeline_bp
 
 for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, calendar_bp,
             messages_bp, wiki_bp, context_bp, creations_bp, fh_bp, code_bp, fs_bp, contacts_bp,
             insights_bp, todos_bp, workflows_bp, google_bp, google_accounts_bp, skills_bp, notif_bp,
-            control_bp, ambient_bp, jobs_bp, connectors_bp, platform_bp, ws_studio_bp):
+            control_bp, ambient_bp, jobs_bp, connectors_bp, platform_bp, ws_studio_bp,
+            projects_bp, creative_pipeline_bp):
     app.register_blueprint(_bp)
 
 
