@@ -83,6 +83,30 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     return "".join(parts).strip()
 
 
+def resolve_workspace_temperature(workspace, explicit=None):
+    """Resolve the sampling temperature for a workspace (creative pipeline).
+
+    An explicit caller-supplied temperature always wins. Otherwise the value
+    comes from settings.workspace_temperatures[<workspace>]; an unknown
+    workspace (or a null entry) yields None so the provider's own default is
+    used. Providers that reject the param (newer Claude models) ignore it
+    regardless — see _call_claude.
+    """
+    if explicit is not None:
+        return explicit
+    ws = (workspace or '').strip().lower()
+    if not ws:
+        return None
+    try:
+        temps = (_load_settings() or {}).get('workspace_temperatures') or {}
+        val = temps.get(ws)
+        if val is None:
+            return None
+        return max(0.0, min(1.0, float(val)))
+    except Exception:
+        return None
+
+
 def _generate_text(messages, system=None, model=None, max_tokens=16384,
                    temperature=None, orb_label=None, workspace=None):
     """Single-shot text generation via the user's CONFIGURED provider.
@@ -106,6 +130,11 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     # default and then failing every provider primitive the same way.
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
+
+    # Per-workspace temperature profile: when the caller didn't pin a
+    # temperature, derive one from the active workspace (Studio≈0.75,
+    # Research≈0.25, …). Honored by the Ollama/OpenAI primitives; Claude ignores.
+    temperature = resolve_workspace_temperature(workspace, temperature)
 
     # Demo mode: no provider configured → return a labelled placeholder instead of
     # hard-failing every provider primitive below.
@@ -958,7 +987,22 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
             vault_control=vault_control, vault_fallback=vault_fallback)
     except Exception:
         system_prompt = FRIDAY_SYSTEM_PROMPT
-    return prefix + (system_prompt or FRIDAY_SYSTEM_PROMPT)
+
+    # Context-injection middleware: automatically fold in the active creative
+    # project (Series Bible), user preferences, and workspace state so callers
+    # never have to remind Friday "we're working on X". Built here at the single
+    # system-prompt funnel so every provider call inherits it. Best-effort.
+    auto_context = ''
+    try:
+        from services.context_injection import build_injected_context
+        auto_context = build_injected_context(workspace=workspace, message=keywords or '')
+    except Exception:
+        auto_context = ''
+
+    base = prefix + (system_prompt or FRIDAY_SYSTEM_PROMPT)
+    if auto_context:
+        base += "\n\n" + auto_context
+    return base
 
 
 

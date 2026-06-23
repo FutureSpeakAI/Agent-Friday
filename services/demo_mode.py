@@ -30,6 +30,10 @@ def _any_provider_available() -> bool:
         reg = get_provider_registry()
         for p in reg.get_enabled_providers():
             name = p.get("name", "")
+            # Voice-only providers (local-voice / nemo-local) are not a reasoning
+            # brain — they must not lift demo mode on their own.
+            if p.get("type") in ("local-voice", "nemo-local"):
+                continue
             if not reg.is_provider_available(name):
                 continue
             if p.get("type") == "ollama":
@@ -74,8 +78,11 @@ _CANNED = {
         "/ Veo). Connect Google Gemini to generate real images and video from a prompt."
     ),
     "voice": (
-        "[DEMO] Live voice needs a voice-capable provider (Gemini Live). Connect Google "
-        "Gemini to talk with Friday out loud."
+        "[DEMO] Voice is built in. The default is fully LOCAL (on-device): install "
+        "`.[voice-local-lite]` and Friday talks with you offline — faster-whisper "
+        "for listening, Piper for speaking, no cloud. Prefer the cloud? Connect "
+        "Google Gemini for Gemini Live. Connect a reasoning provider to give the "
+        "voice a brain."
     ),
     "generic": (
         "[DEMO] This is a placeholder response. Connect an AI provider in Settings to "

@@ -102,6 +102,15 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     except Exception:
         pass
 
+    # Per-workspace temperature profile (creative pipeline): derive a sampling
+    # temperature from the active workspace when the caller didn't pin one.
+    # Honored by Ollama/OpenAI primitives; newer Claude models ignore it.
+    try:
+        from services.model_router import resolve_workspace_temperature
+        temperature = resolve_workspace_temperature(workspace, temperature)
+    except Exception:
+        pass
+
     settings = _load_settings()
     routing_cfg = settings.get('model_routing') or {}
     provider, routed_model = 'cloud', model
@@ -2318,6 +2327,181 @@ TOOL_RINGS: dict[str, int] = {
     "screenshot":           3,
     "scroll":               3,
 }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  CREATIVE PIPELINE TOOLS — Series Bible, multi-stage pipelines, take compare.
+#  Let Friday manage creative projects and run pipelines from chat. Registered
+#  late (after the registries above exist) via append/update, like MCP tools.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _tool_creative_project(inp):
+    """Manage the active creative project's Series Bible (create / add cast /
+    locations / continuity / list / activate)."""
+    from services import creative_memory as cm
+    inp = inp or {}
+    action = (inp.get("action") or "").strip().lower()
+    pid = (inp.get("project_id") or "").strip() or cm.get_active_project_id()
+    try:
+        if action == "create":
+            b = cm.create_project(inp.get("name") or "Untitled Project",
+                                  inp.get("type") or "general")
+            return json.dumps({"status": "ok", "project_id": b["id"],
+                               "message": f"Created project '{b['name']}' and made it active."})
+        if action == "activate" and pid:
+            cm.set_active_project(pid)
+            return f"Activated project {pid}."
+        if action in ("list", "list_projects"):
+            return json.dumps({"status": "ok", "projects": cm.list_projects()}, default=str)
+        if not pid:
+            return "No active project. Create one first (action='create')."
+        if action == "add_character":
+            rec = cm.add_character(pid, inp.get("name") or "",
+                                   visual_description=inp.get("visual_description") or "",
+                                   voice_profile=inp.get("voice_profile") or "")
+            return (f"Added/updated character {rec['name']}." if rec
+                    else "Could not add character (name required).")
+        if action == "add_location":
+            rec = cm.add_location(pid, inp.get("name") or "",
+                                  description=inp.get("description") or "")
+            return (f"Added location {rec['name']}." if rec
+                    else "Could not add location (name required).")
+        if action == "add_continuity":
+            e = cm.add_continuity(pid, inp.get("note") or "", scene=inp.get("scene") or "")
+            return ("Logged continuity note." if e else "Note required.")
+        if action in ("show", "get", "bible"):
+            return json.dumps(cm.get_project(pid) or {}, default=str)[:4000]
+        return f"Unknown action '{action}'. Try create/activate/add_character/add_location/add_continuity/show/list."
+    except Exception as e:
+        return f"creative_project error: {e}"
+
+
+def _tool_start_creative_pipeline(inp):
+    """Kick off a multi-stage creative pipeline (e.g. Research→Brief→Draft→Review)."""
+    from services import creative_pipeline as cp
+    from services import creative_memory as cm
+    inp = inp or {}
+    pipeline_id = (inp.get("pipeline_id") or "research-brief-draft-review").strip()
+    pipe_input = inp.get("input")
+    if not isinstance(pipe_input, dict):
+        # Convenience: a bare topic/logline string.
+        topic = inp.get("topic") or inp.get("input") or ""
+        pipe_input = {"topic": topic, "logline": topic}
+    project_id = (inp.get("project_id") or "").strip() or cm.get_active_project_id()
+    run = cp.create_run(pipeline_id, pipe_input, project_id=project_id)
+    if run.get("status") == "error":
+        return json.dumps(run)
+    cp.start_async(run["run_id"])
+    fresh = cp.get_run(run["run_id"]) or run
+    return json.dumps({
+        "status": "ok", "run_id": run["run_id"], "state": fresh.get("state"),
+        "milestones": fresh.get("milestones", []),
+        "message": (f"Started pipeline '{fresh.get('name')}'. A progress orb is "
+                    f"tracking it; it will pause at the first checkpoint for your "
+                    f"review. Check status with the run_id."),
+    }, default=str)
+
+
+def _tool_compare_image_takes(inp):
+    """Generate several image candidates and recommend the best (take comparison)."""
+    from services import take_comparison as tc
+    inp = inp or {}
+    prompt = (inp.get("prompt") or "").strip()
+    if not prompt:
+        return "compare_image_takes error: 'prompt' is required."
+    res = tc.compare_images(prompt, n=inp.get("n", 3), style=inp.get("style"),
+                            aspect_ratio=inp.get("aspect_ratio") or "1:1",
+                            intent=inp.get("intent") or prompt)
+    if res.get("status") != "ok":
+        return res.get("message") or res.get("reason") or f"take comparison {res.get('status')}"
+    rec = res.get("recommended") or {}
+    lines = [f"Generated {len(res.get('takes', []))} takes. "
+             f"Recommended: take {rec.get('take')} "
+             f"(score {rec.get('score')}) — {rec.get('filename')}."]
+    for t in res.get("takes", []):
+        if t.get("status") == "ok":
+            lines.append(f"  • take {t['take']}: {t.get('filename')} "
+                         f"(score {t.get('score')}) {t.get('critique') or ''}")
+    return "\n".join(lines)
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "creative_project",
+        "description": (
+            "Manage the user's creative project Series Bible — persistent memory "
+            "for a video series, card deck, album, storybook, etc. Characters you "
+            "add here (with a visual description) automatically propagate their "
+            "look to every image/video you generate, so the same character stays "
+            "consistent. Actions: create, activate, add_character, add_location, "
+            "add_continuity, show, list."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "create | activate | add_character | add_location | add_continuity | show | list"},
+                "name": {"type": "string", "description": "Project/character/location name."},
+                "type": {"type": "string", "description": "Project type (video-series, card, album, storybook, …) for action=create."},
+                "visual_description": {"type": "string", "description": "Canonical look of a character (action=add_character)."},
+                "voice_profile": {"type": "string", "description": "Voice/tone profile of a character (action=add_character)."},
+                "description": {"type": "string", "description": "Location description (action=add_location)."},
+                "note": {"type": "string", "description": "Continuity fact to log (action=add_continuity)."},
+                "scene": {"type": "string", "description": "Optional scene label for a continuity note."},
+                "project_id": {"type": "string", "description": "Target project id; defaults to the active project."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "name": "start_creative_pipeline",
+        "description": (
+            "Run a multi-stage creative pipeline that chains workspaces with typed "
+            "hand-offs and shows milestone progress (e.g. 'research-brief-draft-"
+            "review' or 'concept-storyboard-shots'). It pauses at checkpoints so "
+            "the user can steer. Use when the user asks to take something from idea "
+            "to finished piece in stages, or asks for a 'pipeline'/'workflow'."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pipeline_id": {"type": "string", "description": "Pipeline template id (default 'research-brief-draft-review')."},
+                "topic": {"type": "string", "description": "The topic/logline to seed the first stage (convenience for simple pipelines)."},
+                "input": {"type": "object", "description": "Typed initial context object matching the pipeline's first-stage input schema."},
+                "project_id": {"type": "string", "description": "Optional creative project to attach the run to."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "compare_image_takes",
+        "description": (
+            "Generate 2–4 image candidates for one prompt, have Friday score each, "
+            "and recommend the best. Use for important visual decisions when the "
+            "user wants options ('give me a few', 'show me some takes', 'pick the "
+            "best one')."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "What to generate."},
+                "n": {"type": "integer", "description": "How many takes (2–4, default 3)."},
+                "style": {"type": "string", "description": "Optional style preset."},
+                "aspect_ratio": {"type": "string", "description": "Optional aspect ratio (default 1:1)."},
+                "intent": {"type": "string", "description": "Optional explicit success criteria used to score takes."},
+            },
+            "required": ["prompt"],
+        },
+    },
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "creative_project": _tool_creative_project,
+    "start_creative_pipeline": _tool_start_creative_pipeline,
+    "compare_image_takes": _tool_compare_image_takes,
+})
+
+TOOL_RINGS.update({
+    "creative_project":        1,   # local Series-Bible state mutation
+    "start_creative_pipeline": 2,   # drives generation/LLM calls (network)
+    "compare_image_takes":     2,   # calls the Gemini image API (network)
+})
 
 _GOVERNANCE_KEY: bytes | None = None
 

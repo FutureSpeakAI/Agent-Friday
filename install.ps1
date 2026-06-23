@@ -210,6 +210,40 @@ if ($hasGpu) {
     Write-Host "  Cloud models will handle all requests."
 }
 
+# -- Optional: premium GPU voice (NVIDIA NeMo, Tier-2) -------
+# Tier-1 local voice (faster-whisper + Piper, CPU) is already installed via [all]
+# and works on every machine. On an NVIDIA GPU we OFFER the premium NeMo tier
+# (streaming Nemotron ASR + FastPitch/HiFi-GAN TTS). It's a large, version-fragile
+# torch-CUDA + NeMo download, so it is strictly opt-in and never gates the app.
+if ($hasGpu -and $gpuInfo[0].Name -match "NVIDIA") {
+    Write-Host ""
+    Write-Host "  Detected NVIDIA GPU. Friday can use PREMIUM on-device voice:"
+    Write-Host "    NVIDIA NeMo - streaming Nemotron ASR + FastPitch/HiFi-GAN TTS, GPU-accelerated,"
+    Write-Host "    lower latency and higher fidelity than the default CPU voice."
+    Write-Host "  This is a large optional download (torch-CUDA + NeMo, ~4 GB)."
+    $installNemo = Read-Host "  Install premium local voice (NeMo GPU)? (y/N)"
+    if ($installNemo -eq "y" -or $installNemo -eq "Y") {
+        try {
+            Write-Host "  Installing torch with CUDA 12.4 support (this is the big download)..."
+            & $venvPip install "torch>=2.2" --index-url https://download.pytorch.org/whl/cu124
+            Write-Host "  Installing NeMo toolkit (.[voice-local-gpu])..."
+            & $venvPip install -e ".[voice-local-gpu]"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Color "  Premium GPU voice installed. Models download on first use (~1.5 GB)." Green
+                Write-Host  "  Enable it: Settings -> Audio & Voice -> Voice Engine -> Local GPU (NeMo)."
+            } else {
+                Write-Color "  NeMo install hit an error (non-fatal). Friday uses Tier-1 CPU voice." Yellow
+            }
+        } catch {
+            Write-Color "  NeMo install failed (non-fatal). Tier-1 CPU voice still works." Yellow
+        }
+    } else {
+        Write-Host "  Skipped. Install later in Settings, or manually with:"
+        Write-Host "    venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cu124"
+        Write-Host "    venv\Scripts\pip.exe install -e .[voice-local-gpu]"
+    }
+}
+
 # -- Build UI ------------------------------------------------
 Write-Host "[7/8] Building UI..."
 if (Test-Path "build_ui.py") {

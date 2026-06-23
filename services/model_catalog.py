@@ -75,7 +75,7 @@ def _model_entries_for(provider: dict, registry) -> list:
     meta = provider.get("model_meta") or {}
     costs = provider.get("cost_per_1k") or {}
     available = registry.is_provider_available(pname)
-    is_local = ptype == "ollama"
+    is_local = ptype in ("ollama", "local-voice", "nemo-local")
 
     ids = list(provider.get("models") or [])
     if is_local:

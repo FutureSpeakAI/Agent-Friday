@@ -42,7 +42,13 @@ from core import (
     sock,
 )  # noqa: E501
 from services.agent import (
+    _generate_agent,
     _voice_actions_for,
+)  # noqa: E501
+from services.local_voice import (
+    VADEndpointer,
+    get_local_voice_engine,
+    split_sentences,
 )  # noqa: E501
 from services.model_router import (
     _build_emotional_tone_block,
@@ -70,6 +76,11 @@ from services.voice_engine import (
 )  # noqa: E501
 
 voice_bp = Blueprint('voice', __name__)
+
+# Local-voice playback chunk size: ~0.2 s of 24 kHz mono PCM16 per WS frame.
+# Small frames keep the friday-pcm-player ring buffer fed smoothly (it absorbs
+# bursts), matching how the Gemini path streams audio back.
+PLAYBACK_CHUNK_BYTES = 9600
 
 
 def _build_realtime_input_config(types, interruption_mode="speaker"):
@@ -189,7 +200,322 @@ def voice_fallback_status():
     })
 
 
+def _resolve_voice_engine(settings=None):
+    """Resolve which voice engine a session should use, honoring the ethos:
+    LOCAL is the default, cloud (Gemini Live) is the opt-in.
+
+    Reads ``settings.voice_engine`` ∈ {"local","gemini","auto"} (default "local")
+    and degrades gracefully through a strict, no-dead-ends order:
+      local-lite (deps present) → Gemini cloud (key + online) → demo/text.
+
+    Returns ``{engine, ws_url, label, models_ready, reason}``. ``engine`` is one
+    of "local" | "gemini" | "demo"; the browser connects the mic to ``ws_url``.
+    """
+    settings = settings if settings is not None else (_load_settings() or {})
+    pref = str(settings.get("voice_engine") or "local").strip().lower()
+    net = _network_status()
+    cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    tier = "cpu"
+    eng = None
+    try:
+        eng = get_local_voice_engine()
+        local_ok = eng.available()
+        models_ready = eng.models_ready() if local_ok else False
+    except Exception:
+        local_ok = False
+        models_ready = False
+    # Which tier the /ws/voice-local handler will actually run (gpu falls back to
+    # cpu automatically when NeMo/CUDA aren't ready). Guarded separately so it
+    # never affects local availability resolution.
+    try:
+        tier = eng.resolve_tier(settings) if eng is not None else "cpu"
+    except Exception:
+        tier = "cpu"
+
+    def _pick(engine):
+        if engine == "local":
+            label = ("Local GPU (NeMo, private)" if tier == "gpu"
+                     else "Local (private, on-device)")
+            return {"engine": "local", "ws_url": "/ws/voice-local",
+                    "label": label, "tier": tier,
+                    "models_ready": models_ready}
+        if engine == "gemini":
+            return {"engine": "gemini", "ws_url": "/ws/live",
+                    "label": "Cloud (Gemini Live)", "models_ready": True}
+        return {"engine": "demo", "ws_url": None,
+                "label": "Text only", "models_ready": False}
+
+    # Explicit opt-in to cloud.
+    if pref == "gemini":
+        if cloud_ok:
+            return {**_pick("gemini"), "reason": "user selected cloud"}
+        if local_ok:
+            return {**_pick("local"), "reason": "cloud unavailable, using local"}
+        return {**_pick("demo"), "reason": "no voice engine available"}
+
+    # Default + auto both prefer local (the ethos).
+    if local_ok:
+        return {**_pick("local"), "reason": "local default"}
+    if cloud_ok:
+        return {**_pick("gemini"), "reason": "local deps missing, using cloud"}
+    return {**_pick("demo"), "reason": "install .[voice-local-lite] or connect a cloud key"}
+
+
+@voice_bp.route('/api/voice/session-info')
+def voice_session_info():
+    """Tell the browser which engine + WebSocket URL to use for this session.
+
+    The mic button reads ``ws_url`` and connects there — ``/ws/voice-local``
+    (default) or ``/ws/live`` (cloud opt-in). One toggle, one branch; the audio
+    plumbing and event contract are identical on both paths."""
+    info = _resolve_voice_engine()
+    return jsonify({"status": "ok", **info})
+
+
 if sock is not None:
+
+    @sock.route('/ws/voice-local')
+    def ws_voice_local(ws):
+        """Tier-1 LOCAL voice: mic → VAD → faster-whisper → LLM brain → Piper → speaker.
+
+        Speaks the SAME browser↔server contract as ``/ws/live`` so the client
+        audio plumbing, the friday-pcm-player worklet, and the holographic cube
+        signals are reused unchanged:
+
+          browser → server:  {type:'audio', data:<b64 PCM16@16k>} | {type:'text'} | {type:'end'}
+          server → browser:  {type:'status'} {type:'input_transcript'} {type:'text'}
+                             {type:'audio', data:<b64 PCM16@24k>} {type:'turn_end'}
+                             {type:'voice_turn_done',user_text,agent_text} {type:'error'}
+
+        The brain is the EXISTING agentic pipeline (`_generate_agent`) — the same
+        code path a typed chat turn uses — so tools, vault gating, and provider
+        routing all behave identically to text chat.
+        """
+        # ── Auth (mirror /ws/live: loopback trusted, else token/password) ──
+        if FRIDAY_WS_TOKEN:
+            _tok = request.args.get('token', '')
+            if not _hmac.compare_digest(_tok, FRIDAY_WS_TOKEN):
+                try:
+                    ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+                except Exception:
+                    pass
+                return
+        if FRIDAY_PASSWORD and not session.get("authenticated") and not _loopback_trusted():
+            try:
+                ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
+            except Exception:
+                pass
+            return
+
+        done = threading.Event()
+
+        def _send(obj):
+            if done.is_set():
+                return False
+            try:
+                ws.send(json.dumps(obj))
+                return True
+            except ConnectionClosed:
+                done.set()
+                return False
+            except Exception:
+                return False
+
+        engine = get_local_voice_engine()
+        if not engine.available():
+            # Deps not installed — degrade to text with an actionable message so
+            # the client can fall back instead of hanging on a dead socket.
+            _send({"type": "error",
+                   "error": "local_voice_unavailable",
+                   "detail": "Local voice needs the Tier-1 deps. Install with "
+                             "`pip install -e .[voice-local-lite]`, then reload."})
+            return
+
+        # Resolve + select the tier for this session (cpu Tier-1 / gpu Tier-2).
+        # Hot-swaps backends without a server restart; a gpu pick that can't run
+        # gracefully degrades to cpu inside ensure_ready below.
+        tier = engine.select_tier_from_settings()
+        _send({"type": "status",
+               "text": ("starting local GPU voice (NeMo)" if tier == "gpu"
+                        else "starting local voice")})
+
+        # Lazy, one-time model download/load with a visible progress orb.
+        if tier == "gpu":
+            _send({"type": "status",
+                   "text": "Downloading NeMo voice models… (one-time setup, ~1.5GB)"})
+        elif not engine.models_ready():
+            _send({"type": "status", "text": "Downloading voice models… (one-time setup)"})
+        if not engine.ensure_ready(progress=lambda m: _send({"type": "status", "text": m})):
+            _send({"type": "error", "error": "local_voice_load_failed",
+                   "detail": "Could not load the local voice models."})
+            return
+        # The tier may have changed (gpu → cpu fallback) during ensure_ready.
+        _send({"type": "status",
+               "text": ("live (GPU/NeMo)" if engine.active_tier() == "gpu" else "live")})
+
+        # ── Brain wiring: build the spoken-style system prompt once. Vault
+        # gating follows the brain's provider (a LOCAL Ollama brain keeps full
+        # vault fidelity; a cloud brain redacts TIER_2/3 exactly like text). ──
+        settings = _load_settings() or {}
+        try:
+            cr = (settings.get("capability_routing") or {}).get("reasoning") or {}
+            brain_provider = cr.get("provider") or ""
+        except Exception:
+            brain_provider = ""
+        _is_local_brain = brain_provider in ("ollama-local", "local") or not brain_provider
+        _prov = "local" if _is_local_brain else "cloud"
+        _vault_control = None if _is_local_brain else (
+            _get_vault_control() if _vault_local_only() else None)
+
+        voice_prefix = (
+            "You are Agent Friday, a sovereign personal AI assistant in a LIVE "
+            "VOICE conversation running fully ON-DEVICE (local speech-to-text and "
+            "text-to-speech). Speak like a person: natural, warm, contractions.\n"
+            "NEVER use markdown — no asterisks, headers, or bullets; this is read "
+            "aloud. Keep replies conversational and reasonably concise; use short, "
+            "clear sentences with natural pauses. Go deeper only when asked to "
+            "explain or 'tell me about' something.\n"
+            "Because this runs locally, you CAN discuss private vault content — it "
+            "never leaves the machine.\n\n"
+        )
+        try:
+            full_ctx = _get_friday_system_prompt(
+                provider=_prov, vault_control=_vault_control,
+                vault_fallback=_vault_cloud_fallback())
+        except Exception as e:
+            full_ctx = f"(context load failed: {e})"
+        try:
+            full_ctx += _build_session_continuity_block() + _build_emotional_tone_block()
+        except Exception:
+            pass
+        system_prompt = voice_prefix + full_ctx
+
+        vad = VADEndpointer(silence_ms=int(settings.get("voice_silence_ms") or 800))
+        turn_log = []
+        _turn_lock = threading.Lock()
+
+        def _speak(text):
+            """Synthesize `text` sentence-by-sentence → 24 kHz PCM16 → audio frames.
+
+            Per-sentence so Friday starts speaking the first sentence while later
+            ones are still being synthesized (the key latency mitigation)."""
+            for sentence in split_sentences(text):
+                if done.is_set():
+                    return
+                try:
+                    pcm = engine.synthesize(sentence)
+                except Exception as e:
+                    print(f"[voice-local] TTS failed: {e}")
+                    continue
+                if not pcm:
+                    continue
+                # Chunk to keep frames small (the worklet ring buffer absorbs bursts).
+                step = PLAYBACK_CHUNK_BYTES
+                for off in range(0, len(pcm), step):
+                    if done.is_set():
+                        return
+                    _send({"type": "audio",
+                           "data": base64.b64encode(pcm[off:off + step]).decode("ascii")})
+
+        def _handle_turn(user_text):
+            user_text = (user_text or "").strip()
+            if not user_text or done.is_set():
+                return
+            with _turn_lock:
+                _send({"type": "input_transcript", "text": user_text})
+                _send({"type": "status", "text": "thinking"})
+                # The brain — same agentic dispatcher as text chat. Blocking call
+                # in this worker thread; no fake amplitude is emitted during the
+                # gap, so the cube color-shifts (processing) without motion.
+                try:
+                    reply, _trace = _generate_agent(
+                        [{"role": "user", "content": user_text}],
+                        system=system_prompt,
+                        temperature=settings.get("temperature"),
+                        workspace=settings.get("active_workspace") or "",
+                    )
+                except Exception as e:
+                    reply = f"Sorry, I hit an error thinking that through: {e}"
+                reply = (reply or "").strip()
+                if reply:
+                    _send({"type": "text", "text": reply})
+                    _speak(reply)
+                _send({"type": "turn_end"})
+                _send({"type": "voice_turn_done",
+                       "user_text": user_text, "agent_text": reply})
+                turn_log.append((user_text, reply))
+                try:
+                    _persist_voice_turn(user_text, reply)
+                except Exception:
+                    pass
+                # Deterministic voice actions (open/navigate), same as the Gemini path.
+                try:
+                    _vacts = _voice_actions_for(user_text)
+                    if _vacts:
+                        _send({"type": "action", "actions": _vacts})
+                except Exception:
+                    pass
+
+        try:
+            while not done.is_set():
+                try:
+                    raw = ws.receive(timeout=1.0)
+                except ConnectionClosed:
+                    break
+                except Exception:
+                    continue
+                if raw is None:
+                    continue
+                if isinstance(raw, bytes):
+                    try:
+                        raw = raw.decode("utf-8")
+                    except Exception:
+                        continue
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                t = msg.get("type")
+                if t == "audio" and msg.get("data"):
+                    try:
+                        pcm = base64.b64decode(msg["data"])
+                    except Exception:
+                        continue
+                    utterance = vad.feed(pcm)
+                    if utterance:
+                        text = ""
+                        try:
+                            text = engine.transcribe(utterance)
+                        except Exception as e:
+                            print(f"[voice-local] ASR failed: {e}")
+                        if text:
+                            _handle_turn(text)
+                elif t == "text" and msg.get("text"):
+                    # Typed/queued turn (e.g. News Anchor "read me the Front Page").
+                    _handle_turn(msg["text"])
+                elif t == "end":
+                    # Flush any buffered speech, then close.
+                    utterance = vad.flush()
+                    if utterance:
+                        try:
+                            text = engine.transcribe(utterance)
+                            if text:
+                                _handle_turn(text)
+                        except Exception:
+                            pass
+                    done.set()
+                    break
+        finally:
+            done.set()
+            if turn_log:
+                try:
+                    _spawn_voice_distill(turn_log)
+                except Exception:
+                    pass
+            try:
+                ws.close()
+            except Exception:
+                pass
 
     @sock.route('/ws/live')
     def ws_live(ws):

@@ -51,6 +51,13 @@ if errorlevel 1 (
   )
 )
 
+REM Tier-1 local voice (CPU) is included above. Premium GPU voice (NVIDIA NeMo,
+REM Tier-2) is a large opt-in download not installed here - use install.ps1 for
+REM the guided GPU prompt, or install manually:
+REM   venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cu124
+REM   venv\Scripts\pip.exe install -e .[voice-local-gpu]
+REM Then pick Settings -^> Audio ^& Voice -^> Voice Engine -^> Local GPU (NeMo).
+
 echo [3/4] Building the UI ^(index.html^)...
 python build_ui.py
 

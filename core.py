@@ -847,6 +847,24 @@ DEFAULT_SETTINGS = {
     # START_OF_ACTIVITY_INTERRUPTS (true barge-in; only safe when there's no
     # speaker bleed). Default speaker-safe because most users are on speakers.
     "voice_interruption_mode": "speaker",  # "speaker" (no-interruption) | "headphones" (barge-in)
+    # ── Voice engine selection ──
+    # LOCAL is the default; cloud (Gemini Live) is the opt-in. The mic button
+    # resolves this via GET /api/voice/session-info → /ws/voice-local (local) or
+    # /ws/live (gemini), degrading gracefully when an engine is unavailable.
+    #   "local"     — Tier-1 on-device voice (faster-whisper + Piper, CPU), private/offline
+    #   "local-gpu" — Tier-2 on-device voice (NVIDIA NeMo, GPU); auto-falls back to
+    #                 Tier-1 CPU when no CUDA GPU / NeMo deps are present
+    #   "gemini"    — Gemini Live cloud voice (most expressive; needs a key + network)
+    #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
+    "voice_engine": "local",
+    "local_voice_asr_model": "small",      # Tier-1 faster-whisper size: tiny|base|small|medium
+    "local_voice_tts_voice": "en_US-amy-medium",  # Tier-1 Piper voice id
+    # Tier-2 (NeMo GPU) models — used only when voice_engine resolves to the GPU
+    # tier. Override the ASR id to a sibling (e.g. the English-only streaming
+    # model) if desired; the TTS pair (FastPitch+HiFi-GAN) is fixed for v1.
+    "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "local_voice_gpu_tts": "fastpitch-hifigan",
+    "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
     # ── Offline-first resilience ──
     # When the network monitor reports OFFLINE, _load_settings overlays
     # model_routing.mode='local_only' so every provider consumer auto-switches
@@ -882,6 +900,33 @@ DEFAULT_SETTINGS = {
     # ── Semantic Context Pruning (RAG over our own conversation history) ──
     # When chat history exceeds max_turns, embedding-based retrieval keeps the
     # most relevant past turns instead of truncating from the oldest.
+    # ── Per-workspace temperature profiles (creative pipeline) ──
+    # The model router applies a sampling temperature based on the active
+    # workspace so each surface gets the right creativity/determinism balance.
+    # Only providers that accept `temperature` honor it (newer Claude models
+    # ignore the param — see model_router._call_claude). Keys are workspace ids
+    # (lowercase); values are 0.0–1.0 or null to use the provider default.
+    "workspace_temperatures": {
+        "studio": 0.75,        # Creative Studio — bold, vivid
+        "creative": 0.75,
+        "research": 0.25,      # Research — precise, conservative
+        "news": 0.3,
+        "code": 0.45,          # Code / Dev — exact
+        "dev": 0.45,
+        "content": 0.6,        # Content writing — balanced
+        "chat": 0.5,           # Conversation — natural
+        "review": 0.2,         # QA / review — strict
+    },
+    # ── Self-Evaluation (QA) gates (creative pipeline) ──
+    # Before presenting significant generated content, Friday scores it against
+    # intent and either silently improves it or flags the gap. Turn off for speed.
+    "qa_gates": {
+        "enabled": True,
+        "threshold": 0.7,          # 0–1; below this the gate intervenes
+        "max_retries": 1,          # silent-improve attempts in "improve" mode
+        "mode": "improve",         # "improve" (regenerate) | "flag" (surface gap)
+        "vision_for_images": True, # score images with a Gemini vision model
+    },
     "context_pruning": {
         "enabled": True,
         "max_turns": 50,        # threshold (in turn pairs) before pruning kicks in
@@ -958,6 +1003,12 @@ DEFAULT_SETTINGS = {
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
         "voice":          {"provider": "google-gemini", "model": "gemini-3.1-flash-live-preview"},
+        # Local voice splits into asr + tts; both default to the on-device Tier-1
+        # engine (the cloud "voice" entry above is used only when the user opts
+        # into Gemini Live). A single user-facing `voice_engine` selector drives
+        # these under the hood; power users can override each independently.
+        "asr":            {"provider": "local-voice-lite", "model": "whisper-small"},
+        "tts":            {"provider": "local-voice-lite", "model": "piper-en_US-amy-medium"},
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
         "local":          {"provider": "ollama-local",  "model": "gemma4:latest"},
     },

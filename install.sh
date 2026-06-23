@@ -159,6 +159,37 @@ else
     echo "  Cloud models will handle all requests."
 fi
 
+# ── Optional: premium GPU voice (NVIDIA NeMo, Tier-2) ───────
+# Tier-1 local voice (faster-whisper + Piper, CPU) is already installed via [all]
+# and runs everywhere. On an NVIDIA/CUDA box we OFFER the premium NeMo tier
+# (streaming Nemotron ASR + FastPitch/HiFi-GAN TTS). Heavy + version-fragile
+# (torch-CUDA + NeMo, ~4 GB) so it is strictly opt-in and never gates the app.
+# NeMo is Linux-first; on Windows use install.ps1 / WSL2 (see VOICE_INTEGRATION_SPEC §14).
+if command_exists nvidia-smi; then
+    echo ""
+    echo "  Detected NVIDIA GPU. Friday can use PREMIUM on-device voice:"
+    echo "    NVIDIA NeMo - streaming Nemotron ASR + FastPitch/HiFi-GAN TTS, GPU-accelerated,"
+    echo "    lower latency and higher fidelity than the default CPU voice."
+    echo "  Large optional download (torch-CUDA + NeMo, ~4 GB)."
+    read -rp "  Install premium local voice (NeMo GPU)? (y/N): " install_nemo
+    if [[ "$install_nemo" =~ ^[yY]$ ]]; then
+        echo "  Installing torch with CUDA 12.4 support (the big download)..."
+        "$VENV_PIP" install "torch>=2.2" --index-url https://download.pytorch.org/whl/cu124 || \
+            echo "  torch-CUDA install failed (non-fatal) — Tier-1 CPU voice still works."
+        echo "  Installing NeMo toolkit (.[voice-local-gpu])..."
+        if "$VENV_PIP" install -e ".[voice-local-gpu]"; then
+            echo "  Premium GPU voice installed. Models download on first use (~1.5 GB)."
+            echo "  Enable it: Settings -> Audio & Voice -> Voice Engine -> Local GPU (NeMo)."
+        else
+            echo "  NeMo install hit an error (non-fatal). Friday uses Tier-1 CPU voice."
+        fi
+    else
+        echo "  Skipped. Install later in Settings, or manually with:"
+        echo "    $VENV_PIP install torch --index-url https://download.pytorch.org/whl/cu124"
+        echo "    $VENV_PIP install -e .[voice-local-gpu]"
+    fi
+fi
+
 # ── Build UI ────────────────────────────────────────────────
 echo "[7/8] Building UI..."
 if [ -f "build_ui.py" ]; then

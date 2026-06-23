@@ -141,6 +141,58 @@ DEFAULT_PROVIDERS = [
         },
         "enabled": True,
     },
+    # ── Local voice (Tier-1, CPU) — the DEFAULT voice engine ──────────────────
+    # faster-whisper ASR + Piper TTS, no torch/CUDA. Fulfills the asr + tts
+    # capabilities. auth:none → registry reports it "available"; real readiness
+    # (deps installed + models downloaded) is reported by services.provider_health
+    # and services.local_voice.health(). Cloud Gemini Live stays the opt-in.
+    {
+        "name": "local-voice-lite",
+        "label": "Local Voice (CPU)",
+        "type": "local-voice",
+        "base_url": "",
+        "auth": {"type": "none"},
+        "models": ["whisper-small", "piper-en_US-amy-medium"],
+        "capabilities": ["asr", "tts"],
+        "roles": [ROLE_VOICE],
+        "cost_per_1k": {},
+        "model_meta": {
+            "whisper-small": {"label": "Whisper Small (ASR · local)",
+                               "short": "Whisper S", "roles": [ROLE_VOICE],
+                               "modalities": ["audio"]},
+            "piper-en_US-amy-medium": {"label": "Piper Amy (TTS · local)",
+                                        "short": "Piper Amy", "roles": [ROLE_VOICE],
+                                        "modalities": ["audio"]},
+        },
+        "enabled": True,
+    },
+    # ── Local voice (Tier-2, GPU premium) — NeMo. Opt-in install only. ─────────
+    # Registered + ENABLED so the UI surfaces it as a discoverable upgrade, but
+    # its *availability* is gated by services.nemo_voice.gpu_tier_ready() (torch +
+    # NeMo installed AND a CUDA GPU with enough VRAM). Without that stack it shows
+    # as an unavailable upgrade with an install hint — it never gates Tier-1.
+    # The heavy torch/CUDA + NeMo deps are a separate opt-in install step
+    # (`.[voice-local-gpu]` + a torch-CUDA wheel). See VOICE_INTEGRATION_SPEC §13.
+    {
+        "name": "nvidia-nemo",
+        "label": "NVIDIA NeMo (GPU · premium)",
+        "type": "nemo-local",
+        "base_url": "",
+        "auth": {"type": "none"},
+        "models": ["nemotron-3.5-asr-streaming-0.6b", "nemo-fastpitch-hifigan"],
+        "capabilities": ["asr", "tts"],
+        "roles": [ROLE_VOICE],
+        "cost_per_1k": {},
+        "model_meta": {
+            "nemotron-3.5-asr-streaming-0.6b": {
+                "label": "Nemotron 3.5 Streaming ASR (GPU)", "short": "Nemotron",
+                "roles": [ROLE_VOICE], "modalities": ["audio"]},
+            "nemo-fastpitch-hifigan": {
+                "label": "NeMo FastPitch + HiFi-GAN (TTS · GPU)", "short": "FastPitch",
+                "roles": [ROLE_VOICE], "modalities": ["audio"]},
+        },
+        "enabled": True,
+    },
 ]
 
 # Commonly requested providers users can add via JSON drop
@@ -256,6 +308,23 @@ class ProviderRegistry:
         p = self._providers.get(name)
         if not p or not p.get("enabled", True):
             return False
+        # Local voice (Tier-1): "available" = the CPU deps are importable. Real
+        # model-download readiness is reported separately by provider_health.
+        if p.get("type") == "local-voice":
+            try:
+                from services.local_voice import deps_installed
+                return deps_installed()
+            except Exception:
+                return False
+        # Local voice (Tier-2, NeMo GPU): "available" only when the full GPU
+        # stack can actually run (torch + NeMo + CUDA GPU + enough VRAM). Without
+        # it the provider shows as an unavailable upgrade, never blocking Tier-1.
+        if p.get("type") == "nemo-local":
+            try:
+                from services.nemo_voice import gpu_tier_ready
+                return gpu_tier_ready()
+            except Exception:
+                return False
         auth = p.get("auth", {})
         if auth.get("type") == "env_var":
             if os.environ.get(auth.get("key", "")):
