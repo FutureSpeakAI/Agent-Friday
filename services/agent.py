@@ -57,6 +57,7 @@ from services.model_router import (
     _get_friday_system_prompt,
     _get_vault_control,
 )  # noqa: E501
+from services import tool_hooks as _hooks
 from services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -2863,76 +2864,218 @@ def _confirmation_question(name, tool_input):
 
 
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
-    """Run a Claude tool through the governance gate.
+    """Run a Claude tool through the lifecycle-hook chain.
+
+    Every native and MCP tool call passes through here — the single choke point.
+    The gate sequence (confirmation → governance → vault → sandbox → rate limit)
+    is the PreToolUse chain; the audit log, PII scrub, and cost attribution are
+    the PostToolUse chain. All are registered built-in hooks (see just below);
+    skills can register additional hooks via services.tool_hooks.
 
     pii_lookup: if a dict, scrub PII into it instead of destructively redacting.
-    session_ctx: passed to _governance_check for ring-2/3 policy evaluation.
+    session_ctx: ring-2/3 policy evaluation + hook attribution (workspace/run).
     """
     handler = CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         return f"Unknown tool: {name}"
 
-    # ── Ask-first permission gate (interactive chat only). ──
+    ctx = _hooks.HookContext(
+        tool_name=name,
+        input=tool_input or {},
+        session_ctx=session_ctx,
+        pii_lookup=pii_lookup,
+    )
+    ctx.meta["t_start"] = _time.time()
+
+    # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
+    # A DENY short-circuits; the deny message is what the model sees as the result.
+    verdict = _hooks.run_pre_hooks(ctx)
+    if verdict.action == "deny":
+        return verdict.reason
+
+    try:
+        result = handler(ctx.input)
+        if not isinstance(result, str):
+            result = json.dumps(result, default=str)
+    except Exception as e:
+        traceback.print_exc()
+        return f"Tool error ({name}): {e}"
+
+    # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
+    return _hooks.run_post_hooks(ctx, result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  BUILT-IN LIFECYCLE HOOKS (Part B). Refactored out of _execute_tool's former
+#  hard-coded gate sequence into named, reorderable, per-settings-toggleable
+#  hooks. This is behaviour-preserving — same checks, same order — but the chain
+#  is now extensible (skills can register their own) and visible in Settings.
+#  Built-ins occupy priority 0–99; user/skill hooks default to 100 so they run
+#  after the critical gates and can only tighten, never loosen, governance.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _hook_confirmation_gate(ctx):
+    """Ask-first permission gate (interactive chat only). Pre, priority 10."""
+    name = ctx.tool_name
+    session_ctx = ctx.session_ctx
     _sid = (session_ctx or {}).get("session_id")
     if (name in TOOL_REQUIRES_CONFIRMATION and _sid
             and not _confirmation_bypassed(session_ctx)):
         if (session_ctx or {}).get("confirm_granted"):
-            # User approved on this turn — clear the marker and fall through.
+            # User approved on this turn — clear the marker and allow.
             with _PENDING_LOCK:
                 _PENDING_CONFIRMATIONS.pop(_sid, None)
-        else:
-            _record_pending_confirmation(_sid, name, tool_input)
-            _q = _confirmation_question(name, tool_input)
-            return (
-                f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
-                f"approval before it runs, so it was NOT executed. Do NOT call "
-                f"this tool again on this turn. Instead, ask the user this exact "
-                f"yes/no question and then stop and wait for their reply: \"{_q}\""
-            )
+            return _hooks.ALLOW
+        _record_pending_confirmation(_sid, name, ctx.input)
+        _q = _confirmation_question(name, ctx.input)
+        return _hooks.DENY(
+            f"[CONFIRMATION REQUIRED] The '{name}' action needs the user's "
+            f"approval before it runs, so it was NOT executed. Do NOT call "
+            f"this tool again on this turn. Instead, ask the user this exact "
+            f"yes/no question and then stop and wait for their reply: \"{_q}\""
+        )
+    return _hooks.ALLOW
 
-    allowed, reason = _governance_check(name, tool_input, session_ctx=session_ctx)
+
+def _hook_governance_rings(ctx):
+    """Ring 0–3 cLaw governance (critical, fail-closed). Pre, priority 20."""
+    allowed, reason = _governance_check(ctx.tool_name, ctx.input,
+                                        session_ctx=ctx.session_ctx)
     if not allowed:
-        return f"[GOVERNANCE DENY] {reason}"
+        return _hooks.DENY(f"[GOVERNANCE DENY] {reason}")
+    return _hooks.ALLOW
 
-    sb_allowed, sb_reason = _sandbox_policy(name, tool_input)
-    if not sb_allowed:
+
+def _hook_vault_zt(ctx):
+    """Vault zero-trust: network/vault-tier tools need an authenticated (or
+    background-task) session. Critical. Pre, priority 25.
+
+    A strict subset of the governance ring-2 check above (which runs first and
+    short-circuits), so this never independently changes an outcome — it is
+    defence-in-depth and a first-class, visible governance seam.
+    """
+    ring = TOOL_RINGS.get(ctx.tool_name, 2)
+    sc = ctx.session_ctx or {}
+    authed = sc.get("authenticated") or sc.get("is_background_task")
+    if ring == 2 and not authed:
+        return _hooks.DENY(
+            "[VAULT DENY] network/vault-tier tool requires an authenticated session")
+    return _hooks.ALLOW
+
+
+def _hook_sandbox_policy(ctx):
+    """Filesystem/command sandbox confinement. Pre, priority 30."""
+    ok, reason = _sandbox_policy(ctx.tool_name, ctx.input)
+    if not ok:
         try:
-            _log_context("sandbox_deny", {"name": name, "reason": sb_reason})
+            _log_context("sandbox_deny", {"name": ctx.tool_name, "reason": reason})
         except Exception:
             pass
-        return f"[SANDBOX DENY] {sb_reason}"
+        return _hooks.DENY(f"[SANDBOX DENY] {reason}")
+    return _hooks.ALLOW
 
+
+def _hook_rate_limiter(ctx):
+    """Token-bucket cap on Ring-2/3 tool frequency. Pre, priority 40.
+
+    Stops a runaway agent loop from hammering a network API or burning spend.
+    Ring 0/1 (local reads/writes) are never limited.
+    """
+    ring = TOOL_RINGS.get(ctx.tool_name, 2)
+    if ring < 2:
+        return _hooks.ALLOW
     try:
-        result = handler(tool_input or {})
-        if not isinstance(result, str):
-            result = json.dumps(result, default=str)
-        # Screenshots are base64 image payloads: never PII-scrub (the regex pass
-        # would be slow and could corrupt the data) and never log the full blob.
-        # The agent loop turns this into a real vision block (see _screenshot_result_to_block).
-        if name == 'screenshot':
-            try:
-                _log_context("tool_call", {"name": name, "input": tool_input, "result_preview": "[screenshot image]"})
-            except Exception:
-                pass
-            return result
-        # Log every tool execution to the context log.
-        try:
+        cfg = (_load_settings().get("rate_limiter") or {})
+    except Exception:
+        cfg = {}
+    if cfg.get("enabled") is False:
+        return _hooks.ALLOW
+    per_min = cfg.get("ring3_per_min", 20) if ring >= 3 else cfg.get("ring2_per_min", 60)
+    if not _hooks.rate_limit_check(f"ring{ring}", per_min):
+        return _hooks.DENY(
+            f"[RATE LIMIT] ring-{ring} tool calls exceeded {per_min}/min; "
+            f"pause briefly before retrying.")
+    return _hooks.ALLOW
+
+
+def _hook_audit_log(ctx, result):
+    """Structured tool-execution entry to the context log. Post, priority 90.
+
+    Screenshots are base64 image payloads: log a placeholder, never the blob.
+    """
+    try:
+        if ctx.tool_name == 'screenshot':
             _log_context("tool_call", {
-                "name": name,
-                "input": tool_input,
+                "name": ctx.tool_name, "input": ctx.input,
+                "result_preview": "[screenshot image]",
+            })
+        else:
+            _log_context("tool_call", {
+                "name": ctx.tool_name,
+                "input": ctx.input,
                 "result_preview": result[:2000],
                 "result_len": len(result),
+                "workspace": ctx.workspace or None,
+                "run_id": ctx.run_id,
             })
-        except Exception:
-            pass
-        if isinstance(pii_lookup, dict):
-            scrubbed, sub = _scrub_pii(result)
-            pii_lookup.update(sub)
-            return scrubbed
-        return _pii_redact(result)
-    except Exception as e:
-        traceback.print_exc()
-        return f"Tool error ({name}): {e}"
+    except Exception:
+        pass
+    return result
+
+
+def _hook_pii_scrub(ctx, result):
+    """Scrub PII from tool results. Post, priority 95.
+
+    Screenshots pass through untouched (a regex pass over base64 would be slow
+    and could corrupt the image). Otherwise: scrub into pii_lookup for later
+    rehydration when one is supplied, else destructively redact.
+    """
+    if ctx.tool_name == 'screenshot':
+        return result
+    if isinstance(ctx.pii_lookup, dict):
+        scrubbed, sub = _scrub_pii(result)
+        ctx.pii_lookup.update(sub)
+        return scrubbed
+    return _pii_redact(result)
+
+
+def _hook_cost_attribution(ctx, result):
+    """Attribute spend to the active workspace / scheduled run. Post, priority 80.
+
+    The Part D cost meter records token usage at the model-call sites; this hook
+    is the seam that makes per-workspace / per-schedule attribution available for
+    tool-driven turns. It hands the call's attribution to the cost store when one
+    is present (no-op until Part D is wired) and never raises.
+    """
+    try:
+        from services import cost_meter as _cm
+        note = getattr(_cm, "note_tool_attribution", None)
+        if callable(note):
+            note(ctx)
+    except Exception:
+        pass
+    return result
+
+
+def _register_builtin_tool_hooks():
+    """Register the built-in hooks once, at import time."""
+    _hooks.register_pre_hook(_hook_confirmation_gate, name="confirmation_gate",
+                             priority=10)
+    _hooks.register_pre_hook(_hook_governance_rings, name="governance_rings",
+                             priority=20, critical=True)
+    _hooks.register_pre_hook(_hook_vault_zt, name="vault_zt",
+                             priority=25, critical=True)
+    _hooks.register_pre_hook(_hook_sandbox_policy, name="sandbox_policy",
+                             priority=30)
+    _hooks.register_pre_hook(_hook_rate_limiter, name="rate_limiter",
+                             priority=40)
+    _hooks.register_post_hook(_hook_cost_attribution, name="cost_attribution",
+                              priority=80)
+    _hooks.register_post_hook(_hook_audit_log, name="audit_log", priority=90)
+    _hooks.register_post_hook(_hook_pii_scrub, name="pii_scrub", priority=95)
+
+
+_register_builtin_tool_hooks()
 
 
 # ── MCP (Model Context Protocol) Client ────────────────────────────────────
@@ -3220,6 +3363,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     tool_trace = []
     convo = list(safe_messages)
 
+    # ── Auto-compaction (Part C): summarize the middle of a long transcript
+    # (head + tail preserved) before dispatch so a long session/task can't
+    # overflow the context window. No-op below threshold. ──
+    try:
+        from services import compaction as _compaction
+        convo = _compaction.maybe_compact(convo, model=model)
+    except Exception:
+        pass
+
     # ── Behavioral monitor — open a governance session keyed to the user's
     # latest message, log every tool call, and score the loop on completion. ──
     _bmon = None
@@ -3331,7 +3483,20 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # models (Opus 4.8+, Sonnet 4.6+) 400 on the deprecated param.
             # Kept in the signature for backward-compat; model defaults are used.
 
+            _t0 = _time.time()
             resp = client.messages.create(**kwargs)
+            # Cost metering (Part D): the Anthropic tool loop used to discard
+            # resp.usage — capture input+output tokens with run/workspace
+            # attribution from session_ctx.
+            try:
+                from services import cost_meter as _cm
+                _cm.meter("anthropic", kwargs.get("model"),
+                          getattr(resp, "usage", None),
+                          duration_ms=int((_time.time() - _t0) * 1000),
+                          session_ctx=session_ctx,
+                          kind=(session_ctx or {}).get("kind"))
+            except Exception:
+                pass
 
             # Collect text and tool_use blocks
             text_parts = []
@@ -3469,6 +3634,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     """
     _orb = orb or (lambda **kw: None)
     tool_trace = []
+    # Auto-compaction (Part C): condense a long transcript before the loop.
+    try:
+        from services import compaction as _compaction
+        convo = _compaction.maybe_compact(convo, model=model)
+    except Exception:
+        pass
     loops = max_iters if oai_tools else 1
     for _ in range(loops):
         resp = send_fn(convo, oai_tools)
@@ -3481,6 +3652,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
             )
+        except Exception:
+            pass
+        # Cost metering (Part D): durable per-direction ledger with attribution.
+        try:
+            from services import cost_meter as _cm
+            _cm.meter(provider, model, usage, session_ctx=session_ctx)
         except Exception:
             pass
 

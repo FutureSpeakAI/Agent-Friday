@@ -8252,7 +8252,7 @@ function App(){
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false});
+  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
   // Mic / Speaker test state (used by the Audio & Voice section).
   const[micTestActive,setMicTestActive]=useState(false);
@@ -8444,6 +8444,45 @@ function App(){
     try{await fetch('/api/google/accounts/'+a.id+'/services',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({services:next})});}catch(e){}
     refreshGoogleAccounts();
   };
+  // ══ Self-Sufficient Friday: Scheduled Tasks / Cost & Usage / Active Hooks ══
+  // ── Scheduler (Part A) ──
+  const[schedules,setSchedules]=useState([]);
+  const[schedBuiltins,setSchedBuiltins]=useState([]);
+  const[schedHistory,setSchedHistory]=useState({});   // id -> [runs] (expanded)
+  const[schedMsg,setSchedMsg]=useState('');
+  const[schedForm,setSchedForm]=useState(null);        // null=closed; else draft
+  const refreshSchedules=()=>fetch('/api/schedules').then(r=>r.json()).then(d=>{if(d&&d.schedules){setSchedules(d.schedules);setSchedBuiltins(d.builtin_tasks||[])}}).catch(()=>{});
+  useEffect(()=>{if(settingsOpen&&openSections.scheduler){refreshSchedules();const id=setInterval(refreshSchedules,5000);return()=>clearInterval(id)}},[settingsOpen,openSections.scheduler]);
+  const toggleSchedule=(s)=>{fetch('/api/schedules/'+s.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!s.enabled})}).then(()=>refreshSchedules()).catch(()=>{});};
+  const runScheduleNow=(s)=>{setSchedMsg('Running '+s.name+'…');fetch('/api/schedules/'+s.id+'/run-now',{method:'POST'}).then(r=>r.json()).then(d=>{setSchedMsg(d.status==='ok'?(s.name+' started'):'Run failed');setTimeout(()=>setSchedMsg(''),4000);setTimeout(refreshSchedules,1500);}).catch(()=>{setSchedMsg('Run failed');});};
+  const deleteSchedule=(s)=>{if(!window.confirm('Delete schedule "'+s.name+'"?'))return;fetch('/api/schedules/'+s.id,{method:'DELETE'}).then(()=>refreshSchedules()).catch(()=>{});};
+  const loadHistory=(s)=>{if(schedHistory[s.id]){setSchedHistory(h=>{const n={...h};delete n[s.id];return n});return;}fetch('/api/schedules/'+s.id+'/history?limit=10').then(r=>r.json()).then(d=>setSchedHistory(h=>({...h,[s.id]:d.history||[]}))).catch(()=>{});};
+  const saveNewSchedule=()=>{const f=schedForm;if(!f.name){setSchedMsg('Name required');return;}
+    const spec=f.trigger==='interval'?{every_minutes:parseInt(f.every||60,10)}:(f.trigger==='weekly'?{weekday:parseInt(f.weekday??6,10),hour:parseInt(f.hour||9,10),minute:parseInt(f.minute||0,10)}:{hour:parseInt(f.hour||9,10),minute:parseInt(f.minute||0,10)});
+    const task=f.kind==='builtin'?{kind:'builtin',ref:f.ref||(schedBuiltins[0]||'')}:{kind:'agent_prompt',prompt:f.prompt||'',model:f.model||undefined,workspace:f.workspace||undefined};
+    if(f.kind==='agent_prompt'&&!f.prompt){setSchedMsg('Prompt required for an agent task');return;}
+    fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:f.name,trigger:f.trigger,spec,task,notify:f.notify||'on_complete',enabled:true})}).then(r=>r.json()).then(d=>{if(d.status==='ok'){setSchedForm(null);setSchedMsg('Task added');setTimeout(()=>setSchedMsg(''),3000);refreshSchedules();}else{setSchedMsg(d.message||'Create failed');}}).catch(()=>setSchedMsg('Create failed'));};
+  const fmtTrigger=(s)=>{const sp=s.spec||{};if(s.trigger==='interval')return'every '+(sp.every_minutes||60)+' min';const hm=String(sp.hour??9).padStart(2,'0')+':'+String(sp.minute||0).padStart(2,'0');if(s.trigger==='weekly'){const wd=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][sp.weekday??6];return wd+' '+hm;}return'daily '+hm;};
+  const fmtTime=(ts)=>{if(!ts)return'—';try{return new Date(ts*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){return'—';}};
+  const schedStatusColor=(s)=>s.last_status==='failed'?'#ef4444':(s.running?'#00d4ff':(s.enabled?'#34d399':'rgba(255,255,255,0.3)'));
+
+  // ── Cost & Usage (Part D) ──
+  const[costSummary,setCostSummary]=useState(null);
+  const[costSeries,setCostSeries]=useState([]);
+  const[costSched,setCostSched]=useState([]);
+  const[costBudget,setCostBudget]=useState({daily:5,monthly:50,daily_enabled:false,monthly_enabled:false});
+  const[costRange,setCostRange]=useState('month');
+  const refreshCosts=()=>{fetch('/api/costs/summary?range='+costRange).then(r=>r.json()).then(d=>setCostSummary(d.summary||null)).catch(()=>{});fetch('/api/costs/timeseries?range=month').then(r=>r.json()).then(d=>setCostSeries(d.series||[])).catch(()=>{});fetch('/api/costs/scheduled?range=month').then(r=>r.json()).then(d=>setCostSched(d.scheduled||[])).catch(()=>{});fetch('/api/costs/budget').then(r=>r.json()).then(d=>{if(d.budget)setCostBudget(d.budget)}).catch(()=>{});};
+  useEffect(()=>{if(settingsOpen&&openSections.costs){refreshCosts();const id=setInterval(refreshCosts,8000);return()=>clearInterval(id)}},[settingsOpen,openSections.costs,costRange]);
+  const saveBudget=(patch)=>{setCostBudget(b=>({...b,...patch}));fetch('/api/costs/budget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)}).catch(()=>{});};
+  const usd=(n)=>'$'+(Number(n||0)).toFixed(2);
+
+  // ── Active Hooks (Part B) ──
+  const[hooksList,setHooksList]=useState([]);
+  const refreshHooks=()=>fetch('/api/hooks').then(r=>r.json()).then(d=>setHooksList(d.hooks||[])).catch(()=>{});
+  useEffect(()=>{if(settingsOpen&&openSections.hooks)refreshHooks();},[settingsOpen,openSections.hooks]);
+  const toggleHook=(h)=>{if(h.critical)return;fetch('/api/hooks/'+h.name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!h.enabled})}).then(()=>refreshHooks()).catch(()=>{});};
+
   const saveAgentSettings=async(patch,opts={})=>{
     const next={...agentSettings,...patch};
     setAgentSettings(next);
@@ -10852,7 +10891,158 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
               <option value="on">Always on (canned responses)</option>
               <option value="off">Always off</option>
             </select>
+            <div className="settings-subtitle" style={{marginTop:14}}>Auto-compaction</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.5}}>Summarize the middle of very long sessions so they don't overflow the model's context window. Full history stays searchable.</div>
+              <span className={'toggle-pill '+((agentSettings.compaction?.enabled!==false)?'on':'')} onClick={()=>saveAgentSettings({compaction:{...(agentSettings.compaction||{}),enabled:!(agentSettings.compaction?.enabled!==false)}})}>{(agentSettings.compaction?.enabled!==false)?'On':'Off'}</span>
+            </div>
+            <div style={{display:'flex',gap:10,marginTop:8,alignItems:'center'}}>
+              <label style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>trigger at</label>
+              <input type="number" min="0.3" max="0.95" step="0.05" value={agentSettings.compaction?.trigger_ratio??0.70}
+                onChange={e=>saveAgentSettings({compaction:{...(agentSettings.compaction||{}),trigger_ratio:parseFloat(e.target.value)||0.70}})}
+                style={{width:70,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
+              <span style={{fontSize:10,color:'rgba(255,255,255,0.4)'}}>of context window · keep first {agentSettings.compaction?.keep_head??3} / last {agentSettings.compaction?.keep_tail??10} turns</span>
+            </div>
             <button className="settings-btn" style={{width:'100%',marginTop:12}} onClick={()=>{setSettingsOpen(false);setWizStep(0);setSetupDone(false);}}>Re-run setup wizard</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SCHEDULED TASKS (Part A) ── Friday's internal cron: list, add, edit, run-now, history. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.scheduler?'open':''}`} onClick={()=>toggleSection('scheduler')}>
+          <div className="settings-section-title" style={{margin:0}}>Scheduled Tasks</div>
+          <span className="chev">{openSections.scheduler?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.scheduler?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:10,lineHeight:1.5}}>Friday runs all her recurring work herself — heartbeat, briefings, creations, repo sync, self-improvement. Add your own recurring agent jobs with no code.</div>
+            {schedMsg&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8,fontFamily:'JetBrains Mono'}}>{schedMsg}</div>}
+            {(schedules||[]).map(s=>(
+              <div key={s.id} style={{borderRadius:7,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)',padding:'9px 11px',marginBottom:7}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{width:8,height:8,borderRadius:'50%',background:schedStatusColor(s),flexShrink:0,boxShadow:s.running?'0 0 6px '+schedStatusColor(s):'none'}}></span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,color:'#ddd',fontFamily:'Orbitron',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name} {s.task?.kind==='agent_prompt'&&<span style={{fontSize:8,color:'rgba(0,212,255,0.6)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginLeft:4}}>AGENT</span>}</div>
+                    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{fmtTrigger(s)} · last {fmtTime(s.last_run_ts)}{s.last_status?(' '+(s.last_status==='complete'?'✓':s.last_status==='failed'?'✕':s.last_status)):''} · next {fmtTime(s.next_run)}</div>
+                    {s.last_summary&&<div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.last_summary}</div>}
+                  </div>
+                  <span className={'toggle-pill '+(s.enabled?'on':'')} onClick={()=>toggleSchedule(s)} style={{flexShrink:0}}>{s.enabled?'On':'Off'}</span>
+                </div>
+                <div style={{display:'flex',gap:8,marginTop:7,flexWrap:'wrap'}}>
+                  <button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto'}} onClick={()=>runScheduleNow(s)}>Run now</button>
+                  <button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto'}} onClick={()=>loadHistory(s)}>{schedHistory[s.id]?'Hide history':'History'}</button>
+                  {s.source!=='builtin'&&<button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto',color:'#ef9a9a'}} onClick={()=>deleteSchedule(s)}>Delete</button>}
+                </div>
+                {schedHistory[s.id]&&<div style={{marginTop:7,borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6}}>
+                  {(schedHistory[s.id].length?schedHistory[s.id]:[{run_id:'_',status:'(no runs yet)'}]).map((r,i)=>(
+                    <div key={r.run_id||i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.45)',padding:'2px 0'}}>
+                      <span style={{color:r.status==='failed'?'#ef9a9a':r.status==='complete'?'#86efac':'rgba(255,255,255,0.5)'}}>{r.status}</span>
+                      <span>{r.started?fmtTime(r.started):''}{r.duration_ms?(' · '+(r.duration_ms/1000).toFixed(1)+'s'):''}</span>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            ))}
+            {!schedForm&&<button className="settings-btn" style={{width:'100%',marginTop:6}} onClick={()=>setSchedForm({trigger:'daily',kind:'agent_prompt',notify:'on_complete',hour:9,minute:0,every:60,weekday:6})}>+ Add scheduled task</button>}
+            {schedForm&&<div style={{marginTop:8,borderRadius:7,border:'1px solid rgba(0,212,255,0.25)',background:'rgba(0,212,255,0.04)',padding:11}}>
+              <input placeholder="Task name" value={schedForm.name||''} onChange={e=>setSchedForm(f=>({...f,name:e.target.value}))}
+                style={{width:'100%',boxSizing:'border-box',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'7px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11,marginBottom:7}}/>
+              <div style={{display:'flex',gap:7,marginBottom:7}}>
+                <select value={schedForm.trigger} onChange={e=>setSchedForm(f=>({...f,trigger:e.target.value}))} style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
+                  <option value="interval">Interval</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
+                </select>
+                {schedForm.trigger==='interval'&&<input type="number" min="1" value={schedForm.every} onChange={e=>setSchedForm(f=>({...f,every:e.target.value}))} placeholder="minutes" style={{width:90,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>}
+                {schedForm.trigger==='weekly'&&<select value={schedForm.weekday} onChange={e=>setSchedForm(f=>({...f,weekday:e.target.value}))} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=><option key={i} value={i}>{d}</option>)}</select>}
+                {schedForm.trigger!=='interval'&&<><input type="number" min="0" max="23" value={schedForm.hour} onChange={e=>setSchedForm(f=>({...f,hour:e.target.value}))} style={{width:54,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/><input type="number" min="0" max="59" value={schedForm.minute} onChange={e=>setSchedForm(f=>({...f,minute:e.target.value}))} style={{width:54,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/></>}
+              </div>
+              <div style={{display:'flex',gap:7,marginBottom:7}}>
+                <select value={schedForm.kind} onChange={e=>setSchedForm(f=>({...f,kind:e.target.value}))} style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
+                  <option value="agent_prompt">Agent prompt (any recurring job)</option><option value="builtin">Built-in task</option>
+                </select>
+                <select value={schedForm.notify} onChange={e=>setSchedForm(f=>({...f,notify:e.target.value}))} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
+                  <option value="on_complete">Notify on complete</option><option value="on_change">Notify on change</option><option value="silent">Silent</option>
+                </select>
+              </div>
+              {schedForm.kind==='agent_prompt'?
+                <textarea placeholder="What should Friday do, on this schedule?" value={schedForm.prompt||''} onChange={e=>setSchedForm(f=>({...f,prompt:e.target.value}))} rows={3} style={{width:'100%',boxSizing:'border-box',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'7px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11,resize:'vertical'}}/>:
+                <select value={schedForm.ref||''} onChange={e=>setSchedForm(f=>({...f,ref:e.target.value}))} style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}><option value="">— pick a built-in —</option>{schedBuiltins.map(b=><option key={b} value={b}>{b}</option>)}</select>}
+              <div style={{display:'flex',gap:8,marginTop:9}}>
+                <button className="settings-btn" style={{flex:1}} onClick={saveNewSchedule}>Save task</button>
+                <button className="settings-btn" style={{flex:1,opacity:0.7}} onClick={()=>setSchedForm(null)}>Cancel</button>
+              </div>
+            </div>}
+          </div>
+        </div>
+      </div>
+
+      {/* ── COST & USAGE (Part D) ── per-call spend, breakdowns, budget alerts. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.costs?'open':''}`} onClick={()=>toggleSection('costs')}>
+          <div className="settings-section-title" style={{margin:0}}>Cost &amp; Usage</div>
+          <span className="chev">{openSections.costs?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.costs?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            {(()=>{const s=costSummary;const peak=Math.max(1,...costSeries.map(p=>p.usd||0));return(<>
+              <div style={{display:'flex',gap:8,marginBottom:8}}>
+                {['today','7d','month'].map(r=>(<span key={r} onClick={()=>setCostRange(r)} style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:'3px 9px',borderRadius:5,border:'1px solid '+(costRange===r?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),color:costRange===r?'#00d4ff':'rgba(255,255,255,0.5)'}}>{r}</span>))}
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                <div style={{fontSize:24,color:'#fff',fontFamily:'Orbitron'}}>{usd(s?.total_usd)}</div>
+                <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{s?s.total_calls:0} calls · {((s?.input_tokens||0)+(s?.output_tokens||0)).toLocaleString()} tok</div>
+              </div>
+              {/* daily sparkline */}
+              <div style={{display:'flex',alignItems:'flex-end',gap:2,height:34,marginTop:8}}>
+                {costSeries.slice(-30).map((p,i)=>(<div key={i} title={p.date+': '+usd(p.usd)} style={{flex:1,minWidth:2,height:Math.max(2,(p.usd/peak)*34)+'px',background:'rgba(0,212,255,0.5)',borderRadius:'1px 1px 0 0'}}></div>))}
+                {!costSeries.length&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)'}}>No spend recorded yet.</div>}
+              </div>
+              {s&&<>
+                <div className="settings-subtitle" style={{marginTop:14}}>By provider</div>
+                {Object.entries(s.by_provider||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span>{k}</span><span style={{color:'#00d4ff'}}>{usd(v.usd)} · {v.calls}</span></div>))}
+                <div className="settings-subtitle" style={{marginTop:10}}>By workspace</div>
+                {Object.entries(s.by_workspace||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span>{k||'—'}</span><span style={{color:'#00d4ff'}}>{usd(v.usd)}</span></div>))}
+                <div className="settings-subtitle" style={{marginTop:10}}>By model</div>
+                {Object.entries(s.by_model||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{k||'—'}</span><span style={{color:'#00d4ff',flexShrink:0,marginLeft:8}}>{usd(v.usd)}</span></div>))}
+                {!!(costSched&&costSched.length)&&<><div className="settings-subtitle" style={{marginTop:10}}>Scheduled jobs (month)</div>
+                  {costSched.map(r=>(<div key={r.schedule_id} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.schedule_id}</span><span style={{color:'#00d4ff',flexShrink:0,marginLeft:8}}>{usd(r.usd)}</span></div>))}</>}
+              </>}
+            </>)})()}
+            <div className="settings-subtitle" style={{marginTop:14}}>Budget alerts</div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span className={'toggle-pill '+(costBudget.daily_enabled?'on':'')} onClick={()=>saveBudget({daily_enabled:!costBudget.daily_enabled})}>Daily</span>
+              <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>$</span>
+              <input type="number" min="0" step="0.5" value={costBudget.daily} onChange={e=>saveBudget({daily:parseFloat(e.target.value)||0})} style={{width:80,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span className={'toggle-pill '+(costBudget.monthly_enabled?'on':'')} onClick={()=>saveBudget({monthly_enabled:!costBudget.monthly_enabled})}>Monthly</span>
+              <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>$</span>
+              <input type="number" min="0" step="1" value={costBudget.monthly} onChange={e=>saveBudget({monthly:parseFloat(e.target.value)||0})} style={{width:80,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
+            </div>
+            <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',marginTop:8,fontFamily:'JetBrains Mono'}}>Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ACTIVE HOOKS (Part B) ── read-only tool lifecycle hook list + toggles. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.hooks?'open':''}`} onClick={()=>toggleSection('hooks')}>
+          <div className="settings-section-title" style={{margin:0}}>Active Hooks</div>
+          <span className="chev">{openSections.hooks?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.hooks?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:10,lineHeight:1.5}}>Every tool call passes through these PreToolUse / PostToolUse hooks. Critical security gates can't be disabled.</div>
+            {(hooksList||[]).map(h=>(
+              <div key={h.name} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+                <span style={{fontSize:8,color:h.phase==='pre'?'#fbbf24':'#a78bfa',border:'1px solid '+(h.phase==='pre'?'rgba(251,191,36,0.3)':'rgba(167,139,250,0.3)'),borderRadius:3,padding:'1px 4px',fontFamily:'JetBrains Mono',flexShrink:0}}>{h.phase.toUpperCase()}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,color:'#ddd',fontFamily:'JetBrains Mono'}}>{h.name} {h.critical&&<span style={{color:'#ef9a9a',fontSize:9}}>· critical</span>}</div>
+                  <div style={{fontSize:9,color:'rgba(255,255,255,0.35)'}}>priority {h.priority} · {Array.isArray(h.scope)?h.scope.join(','):h.scope} · {h.source}</div>
+                </div>
+                <span className={'toggle-pill '+(h.enabled?'on':'')} onClick={()=>toggleHook(h)} style={{flexShrink:0,opacity:h.critical?0.45:1,cursor:h.critical?'not-allowed':'pointer'}}>{h.enabled?'On':'Off'}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

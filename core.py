@@ -883,6 +883,58 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # ── Tool lifecycle hooks (Part B) ──
+    # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
+    # hooks (governance_rings, vault_zt) ignore the toggle — they can't be
+    # disabled from the UI. See services/tool_hooks.py + the built-ins registered
+    # in services/agent.py (_register_builtin_tool_hooks).
+    "tool_hooks": {
+        "confirmation_gate": {"enabled": True},
+        "governance_rings": {"enabled": True},
+        "vault_zt": {"enabled": True},
+        "sandbox_policy": {"enabled": True},
+        "rate_limiter": {"enabled": True},
+        "cost_attribution": {"enabled": True},
+        "audit_log": {"enabled": True},
+        "pii_scrub": {"enabled": True},
+    },
+    # Token-bucket caps for the rate_limiter hook (per ring, per minute). 0
+    # disables limiting for that ring. Ring 0/1 (local reads/writes) are never
+    # limited regardless.
+    "rate_limiter": {
+        "enabled": True,
+        "ring2_per_min": 60,   # network ops (web/email/image/video/run_command…)
+        "ring3_per_min": 20,   # full OS control (clicks, install_package…)
+    },
+    # ── Cost metering / budget alerts (Part D) ──
+    # Per-call spend is recorded to ~/.friday/costs.db. These thresholds (USD)
+    # drive budget-alert notifications: crossing 80% warns, 100% alerts. v1 is
+    # alert-only — Friday is never silently blocked from working.
+    "cost_budget": {
+        "daily": 5.0,
+        "monthly": 50.0,
+        "daily_enabled": False,
+        "monthly_enabled": False,
+    },
+    # ── Auto-compaction (Part C) ──
+    # When the assembled transcript exceeds trigger_ratio × the model's context
+    # window, the middle turns are summarized into a single "[Context Summary]"
+    # note (head + tail preserved verbatim). Full history stays in ChromaDB.
+    "compaction": {
+        "enabled": True,
+        "trigger_ratio": 0.70,    # fraction of the context window that triggers
+        "context_window": 200000, # assumed model window for the ratio test
+        "keep_head": 3,           # first N messages preserved (system + intent)
+        "keep_tail": 10,          # last N messages preserved verbatim
+        "summary_max_tokens": 400,
+    },
+    # ── Scheduler (Part A) ──
+    # The schedule registry itself lives in ~/.friday/schedules.json (user-
+    # editable from Settings → Scheduled Tasks). repo_sync.repos is the list of
+    # absolute git-working-tree paths the deterministic repo-sync task pulls.
+    "repo_sync": {
+        "repos": [],
+    },
     # ── Experimental ──
     "computer_control_enabled": False,     # opt-in gate for the pyautogui subsystem; OFF by
                                            # default. Even when True, each runtime grant is a

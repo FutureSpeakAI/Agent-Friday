@@ -43,11 +43,10 @@ from services.news_engine import (
     _news_archiver_loop,
 )  # noqa: E501
 from services.notifications import (
-    _daily_scheduler_loop,
     _network_monitor_loop,
     _notification_trigger_loop,
-    _register_default_daily_jobs,
 )  # noqa: E501
+from services.scheduler import start_scheduler
 from services.predictive_workspaces import (
     _predictive_prewarm_loop,
     _prewarm_predicted_boot,
@@ -87,12 +86,15 @@ from routes.platform import platform_bp
 from routes.workspace_studio import ws_studio_bp
 from routes.projects import projects_bp
 from routes.creative_pipeline import creative_pipeline_bp
+from routes.hooks import hooks_bp
+from routes.scheduler import scheduler_bp
+from routes.costs import costs_bp
 
 for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, calendar_bp,
             messages_bp, wiki_bp, context_bp, creations_bp, fh_bp, code_bp, fs_bp, contacts_bp,
             insights_bp, todos_bp, workflows_bp, google_bp, google_accounts_bp, skills_bp, notif_bp,
             control_bp, ambient_bp, jobs_bp, connectors_bp, platform_bp, ws_studio_bp,
-            projects_bp, creative_pipeline_bp):
+            projects_bp, creative_pipeline_bp, hooks_bp, scheduler_bp, costs_bp):
     app.register_blueprint(_bp)
 
 
@@ -142,8 +144,12 @@ if not _TESTING:
     # disabled for general release; re-enable once there are 50+ skills.
     # register_daily_job("skillopt-nightly", 3, 30, _skillopt_nightly)
 
-    _register_default_daily_jobs()
-    threading.Thread(target=_daily_scheduler_loop, daemon=True).start()
+    # Internal scheduler (Part A) — generalizes the old daily-only loop to
+    # interval/daily/weekly triggers with a user-editable registry, run history,
+    # and retries. Registers built-ins, seeds/reconciles schedules.json, and
+    # starts the 60s tick thread (replaces _register_default_daily_jobs +
+    # _daily_scheduler_loop).
+    start_scheduler()
 
     if _notif_engine:
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()
