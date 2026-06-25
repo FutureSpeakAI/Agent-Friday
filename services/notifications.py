@@ -295,11 +295,20 @@ _daily_state_lock = threading.Lock()
 def register_daily_job(name, hour, minute, fn):
     """Register a function to run once per day at hour:minute Central.
 
-    Public so other subsystems (e.g. the Front Page news refresh) can hook
-    into the same scheduler instead of spawning their own thread.
+    Back-compat shim: the daily-only loop was promoted to the generalized
+    scheduler in services/scheduler.py. This now delegates to
+    ``register_builtin_task(..., default_trigger="daily")`` so anything still
+    calling the legacy API lands in the new scheduler. The old in-process
+    _DAILY_JOBS list + _daily_scheduler_loop are retained below for reference but
+    are no longer started at boot.
     """
-    _DAILY_JOBS.append({"name": name, "hour": int(hour),
-                        "minute": int(minute), "fn": fn})
+    try:
+        from services import scheduler as _sched
+        _sched.register_daily_job(name, hour, minute, fn)
+    except Exception as e:
+        print(f"  [daily-scheduler] shim delegate failed ({e}); using legacy list")
+        _DAILY_JOBS.append({"name": name, "hour": int(hour),
+                            "minute": int(minute), "fn": fn})
 
 
 def _daily_state_read():

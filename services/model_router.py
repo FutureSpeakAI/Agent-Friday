@@ -78,7 +78,15 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     # (Opus 4.8+, Sonnet 4.6+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
     # backward-compat with callers; the model's default sampling is used.
+    _t0 = _time.time()
     resp = client.messages.create(**kwargs)
+    # Cost metering (Part D): capture input AND output tokens for this call.
+    try:
+        from services import cost_meter as _cm
+        _cm.meter("anthropic", model, getattr(resp, "usage", None),
+                  duration_ms=int((_time.time() - _t0) * 1000), kind="text")
+    except Exception:
+        pass
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
     return "".join(parts).strip()
 
