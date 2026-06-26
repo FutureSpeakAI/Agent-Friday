@@ -33,6 +33,7 @@ const DOCK_GROUPS=[
     {id:'wiki',ico:'📚',label:'Wiki',core:true},
     {id:'trust',ico:'🔗',label:'Trust'},
     {id:'studio',ico:'🎨',label:'Studio'},
+    {id:'marketplace',ico:'🛒',label:'Marketplace'},
     {id:'system',ico:'🖥️',label:'System',core:true},
   ]},
 ];
@@ -1778,12 +1779,17 @@ function StudioWS(){
           :isVid?<div style={{position:'relative'}}><video src={url} muted preload="metadata" style={{width:'100%',height:74,objectFit:'cover',borderRadius:6,background:'#0a0a0f'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,color:'rgba(255,255,255,0.9)',textShadow:'0 1px 4px #000',pointerEvents:'none'}}>▶</div></div>
           :isAud?<div style={{width:'100%',height:74,borderRadius:6,background:'linear-gradient(135deg,hsl('+hue+',65%,24%),hsl('+((hue+50)%360)+',60%,15%))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>🎵</div>
           :<div style={{width:'100%',height:74,borderRadius:6,background:'rgba(255,255,255,0.03)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>{icon}</div>;
+        const modStatus=f.mod_status||'unscanned';
+        const modIcon=modStatus==='clean'?{ico:'✓',col:'#00ff80',tip:'Verified clean'}:modStatus==='nsfw'?{ico:'⚠',col:'#f59e0b',tip:'NSFW flagged'}:modStatus==='blocked'?{ico:'✗',col:'#ff5470',tip:'Blocked'}:{ico:'?',col:'#8891a8',tip:'Not yet scanned'};
         return(<div key={i} className="card" style={{cursor:'pointer',padding:6,display:'flex',flexDirection:'column',gap:4}} onClick={()=>openCreation(f)}>
           {thumb}
           <div style={{fontSize:10,color:'#cbd',wordBreak:'break-all',lineHeight:1.25,maxHeight:26,overflow:'hidden'}}>{f.name}</div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{fontSize:9,color:'#777'}}>{date}</span>
-            <button className="btn" style={{fontSize:9,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}} title="Open in tab">↗</button>
+            <div style={{display:'flex',gap:4,alignItems:'center'}}>
+              <span title={modIcon.tip} style={{fontSize:10,color:modIcon.col,fontWeight:700,lineHeight:1}}>{modIcon.ico}</span>
+              <button className="btn" style={{fontSize:9,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}} title="Open in tab">↗</button>
+            </div>
           </div>
         </div>);
       })}
@@ -1791,6 +1797,300 @@ function StudioWS(){
     </React.Fragment>)}
   </div>);
 }
+// ═══ FEDERATION PANEL (embedded in Settings) ═══
+function FederationPanel(){
+  const[identity,setIdentity]=useState(null);const[peers,setPeers]=useState([]);
+  const[discoverUrl,setDiscoverUrl]=useState('');const[discovering,setDiscovering]=useState(false);
+  const[toast,setToast]=useState('');const[loading,setLoading]=useState(true);
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const load=()=>{
+    Promise.all([
+      fetch('/api/federation/identity').then(r=>r.json()).then(d=>{if(d.ok||d.identity)setIdentity(d.identity||d)}).catch(()=>{}),
+      fetch('/api/federation/peers').then(r=>r.json()).then(d=>setPeers(d.peers||[])).catch(()=>{})
+    ]).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load()},[]);
+  const discover=async()=>{
+    if(!discoverUrl.trim())return;
+    setDiscovering(true);
+    try{
+      const r=await fetch('/api/federation/discover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:discoverUrl.trim()})});
+      const d=await r.json();
+      if(d.ok){flash('Peer discovered: '+(d.peer?.label||d.peer?.agent_id||'unknown'));setDiscoverUrl('');load();}
+      else flash('Discovery failed: '+(d.error||'unknown error'));
+    }catch(e){flash('Discovery failed')}
+    setDiscovering(false);
+  };
+  const setPref=async(agentId,pref)=>{
+    try{await fetch('/api/federation/peers/'+encodeURIComponent(agentId)+'/pref',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fed_pref:pref})});load()}
+    catch(e){}
+  };
+  const copyPeerCard=()=>{
+    if(!identity)return;
+    navigator.clipboard.writeText(JSON.stringify(identity,null,2)).then(()=>flash('Peer card copied to clipboard')).catch(()=>flash('Copy failed'));
+  };
+  const trunc=(s,n)=>(s||'').length>n?(s||'').slice(0,n)+'...':s||'—';
+  const prefColor={ask:'#f59e0b',allow:'#00ff80',block:'#ff5470'};
+  if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading federation data...</div>;
+  return(<div>
+    {toast&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{toast}</div>}
+    {/* Agent Identity Card */}
+    <div className="settings-subtitle">Agent Identity</div>
+    {identity?<div style={{background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+        <div>
+          <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff',marginBottom:3}}>{identity.display_name||'Friday'}</div>
+          <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>{trunc(identity.agent_id,16)} {identity.agent_id&&identity.agent_id.length>16?'...':''}</div>
+        </div>
+        <button className="settings-btn" style={{fontSize:10,padding:'3px 8px'}} onClick={copyPeerCard}>Copy Peer Card</button>
+      </div>
+      <div style={{fontSize:11,color:'#a8a8b4',marginBottom:6}}>Federation v{identity.federation_version||'1.0'}</div>
+      {identity.capabilities&&identity.capabilities.length>0&&<div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+        {identity.capabilities.map((c,i)=><span key={i} style={{fontSize:9,padding:'1px 6px',borderRadius:10,background:'rgba(124,58,237,0.15)',border:'1px solid rgba(124,58,237,0.35)',color:'#b794f6',fontFamily:'JetBrains Mono'}}>{c}</span>)}
+      </div>}
+    </div>:<div style={{fontSize:11,color:'#888',marginBottom:12}}>No identity data — federation not configured.</div>}
+    {/* Peer Discovery */}
+    <div className="settings-subtitle">Peer Discovery</div>
+    <div style={{display:'flex',gap:6,marginBottom:12}}>
+      <input className="input" style={{flex:1,fontSize:12}} value={discoverUrl} onChange={e=>setDiscoverUrl(e.target.value)} onKeyDown={e=>e.key==='Enter'&&discover()} placeholder="https://agent.example.com/api/federation/identity"/>
+      <button className="settings-btn" style={{flexShrink:0}} disabled={discovering||!discoverUrl.trim()} onClick={discover}>{discovering?'Discovering...':'Discover Agent'}</button>
+    </div>
+    {/* Known Peers */}
+    <div className="settings-subtitle">Known Peers ({peers.length})</div>
+    {peers.length===0?<div style={{fontSize:11,color:'#888',marginBottom:8}}>No peers discovered yet.</div>:
+    <div style={{marginBottom:8}}>
+      {peers.map((p,i)=><div key={p.agent_id||i} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:11}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{color:'#dde',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.label||p.display_name||'Unknown'}</div>
+          <div style={{fontFamily:'JetBrains Mono',fontSize:10,color:'#888'}}>{trunc(p.agent_id,20)}</div>
+        </div>
+        <div style={{textAlign:'right',flexShrink:0}}>
+          <div style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>{typeof p.overall_score==='number'?(p.overall_score*100).toFixed(0)+'%':'—'}</div>
+          {p.last_handshake&&<div style={{fontSize:9,color:'#666'}}>{new Date(p.last_handshake).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>}
+        </div>
+        <select value={p.fed_pref||'ask'} onChange={e=>setPref(p.agent_id,e.target.value)}
+          style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:4,color:prefColor[p.fed_pref||'ask']||'#ccc',fontSize:10,padding:'2px 4px',fontFamily:'JetBrains Mono',cursor:'pointer',outline:'none'}}>
+          {['ask','allow','block'].map(v=><option key={v} value={v} style={{background:'#0a0a14',color:'#ccc'}}>{v}</option>)}
+        </select>
+      </div>)}
+    </div>}
+  </div>);
+}
+
+// ═══ MARKETPLACE WORKSPACE ═══
+function MarketplaceWS(){
+  const[view,setView]=useState('browse');
+  const[listings,setListings]=useState([]);const[myListings,setMyListings]=useState([]);
+  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');
+  const[form,setForm]=useState({asset_id:'',title:'',description:'',price_mpsi:0,license:'CC-BY',public:true});
+  const[publishing,setPublishing]=useState(false);
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const loadAll=()=>{
+    setLoading(true);
+    Promise.all([
+      fetch('/api/marketplace/listings').then(r=>r.json()).then(d=>setListings(d.listings||[])).catch(()=>{}),
+      fetch('/api/marketplace/my-listings').then(r=>r.json()).then(d=>setMyListings(d.listings||[])).catch(()=>{})
+    ]).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{loadAll()},[]);
+  const buy=async(id)=>{
+    try{const r=await fetch('/api/marketplace/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({listing_id:id})});const d=await r.json();flash(d.ok?'Purchase complete':'Purchase failed: '+(d.error||'unknown error'))}
+    catch(e){flash('Purchase failed')}
+  };
+  const remove=async(id)=>{
+    try{const r=await fetch('/api/marketplace/listings/'+id,{method:'DELETE'});const d=await r.json();flash(d.ok?'Listing removed':'Remove failed');loadAll()}
+    catch(e){flash('Remove failed')}
+  };
+  const publish=async()=>{
+    if(!form.title.trim()||!form.asset_id.trim())return flash('Title and Asset ID are required');
+    setPublishing(true);
+    try{const r=await fetch('/api/marketplace/listings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});const d=await r.json();if(d.ok){flash('Published!');setForm({asset_id:'',title:'',description:'',price_mpsi:0,license:'CC-BY',public:true});loadAll();setView('my')}else flash('Publish failed: '+(d.error||''))}
+    catch(e){flash('Publish failed')}
+    setPublishing(false);
+  };
+  const psiDisplay=mpsi=>mpsi===0?'Free':`${(mpsi/1000).toFixed(3)}ψ`;
+  const licBadge=lic=>{const map={'CC0':['#00c48c','#003d2d'],'CC-BY':['#2563eb','#0d1f4a'],'CC-BY-SA':['#d97706','#3d2600'],'all-rights-reserved':['#6b7280','#1f2937']};const c=map[lic]||['#7c3aed','#1e0a3c'];return<span style={{display:'inline-block',fontSize:9,padding:'1px 5px',borderRadius:4,background:c[1],color:c[0],border:'1px solid '+c[0],fontFamily:'JetBrains Mono',letterSpacing:'.03em'}}>{lic}</span>};
+  const mediaIcon=t=>({image:'🖼',video:'🎬',music:'🎵',html:'💻',text:'📝'}[t]||'📦');
+  return(<div>
+    <FridaySays text="Buy, sell, and share creations with other Friday agents. Prices are in ψ (psi) — Friday's internal economy currency."/>
+    {toast&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:6,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:12,color:'#00d4ff'}}>{toast}</div>}
+    <div style={{display:'flex',gap:4,marginBottom:12}}>
+      {[['browse','Browse'],['my','My Listings'],['publish','Publish']].map(([k,l])=>(
+        <button key={k} className={'btn '+(view===k?'':'btn-magenta')} style={{fontSize:11,padding:'3px 9px'}} onClick={()=>setView(k)}>{l}</button>
+      ))}
+    </div>
+    {view==='browse'&&(loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading marketplace...</div>:
+      listings.length===0?<div style={{color:'#888',textAlign:'center',padding:30,fontSize:12}}>No listings yet. Be the first to publish!</div>:
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {listings.map((l,i)=>(
+          <div key={l.id||i} className="card" style={{display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
+              <span style={{fontSize:18}}>{mediaIcon(l.media_type)}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13,color:'#dde',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.title}</div>
+                <div style={{fontSize:10,color:'#888',fontFamily:'JetBrains Mono',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>by {(l.creator_agent_id||'unknown').slice(0,14)}{l.creator_agent_id&&l.creator_agent_id.length>14?'...':''}</div>
+              </div>
+            </div>
+            {l.description&&<div style={{fontSize:11,color:'#a8a8b4',lineHeight:1.4}}>{l.description}</div>}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'auto'}}>
+              <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
+                {l.media_type&&<span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{l.media_type}</span>}
+                {licBadge(l.license||'all-rights-reserved')}
+              </div>
+              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                <span style={{fontFamily:'Orbitron',fontSize:12,color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
+                <button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={()=>buy(l.id)}>{l.price_mpsi===0?'Free':'Buy'}</button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+    {view==='my'&&(loading?<div style={{color:'#999',textAlign:'center',padding:30}}>Loading...</div>:
+      myListings.length===0?<div style={{color:'#888',textAlign:'center',padding:30,fontSize:12}}>You haven't published anything yet.</div>:
+      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {myListings.map((l,i)=>(
+          <div key={l.id||i} className="card" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,color:'#dde'}}>{l.title}</div>
+              <div style={{display:'flex',gap:4,marginTop:3,flexWrap:'wrap',alignItems:'center'}}>
+                {licBadge(l.license||'all-rights-reserved')}
+                <span style={{fontSize:10,fontFamily:'Orbitron',color:l.price_mpsi===0?'#00ff80':'#f59e0b'}}>{psiDisplay(l.price_mpsi||0)}</span>
+                {l.public!==false&&<span style={{fontSize:9,color:'#00d4ff',border:'1px solid rgba(0,212,255,0.25)',borderRadius:4,padding:'0 4px',fontFamily:'JetBrains Mono'}}>public</span>}
+              </div>
+            </div>
+            <button className="btn btn-magenta" style={{fontSize:11,padding:'2px 8px',flexShrink:0}} onClick={()=>remove(l.id)}>Remove</button>
+          </div>
+        ))}
+      </div>
+    )}
+    {view==='publish'&&(
+      <div className="card">
+        <div className="card-title" style={{marginBottom:12}}>Publish a Listing</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          <div><div style={{fontSize:11,color:'#888',marginBottom:3}}>Asset ID</div><input className="input" value={form.asset_id} onChange={e=>setForm(f=>({...f,asset_id:e.target.value}))} placeholder="Creation filename or unique asset identifier"/></div>
+          <div><div style={{fontSize:11,color:'#888',marginBottom:3}}>Title</div><input className="input" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="Display name for this listing"/></div>
+          <div><div style={{fontSize:11,color:'#888',marginBottom:3}}>Description</div><textarea className="input" rows={3} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="What does this include? What can buyers do with it?" style={{resize:'vertical',minHeight:60}}/></div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div><div style={{fontSize:11,color:'#888',marginBottom:3}}>Price (mψ — 1000 = 1ψ)</div><input className="input" type="number" min={0} value={form.price_mpsi} onChange={e=>setForm(f=>({...f,price_mpsi:parseInt(e.target.value)||0}))} placeholder="0 = free"/></div>
+            <div><div style={{fontSize:11,color:'#888',marginBottom:3}}>License</div>
+              <select value={form.license} onChange={e=>setForm(f=>({...f,license:e.target.value}))} style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,outline:'none',fontFamily:'JetBrains Mono'}}>
+                {['CC0','CC-BY','CC-BY-SA','all-rights-reserved'].map(l=><option key={l} value={l} style={{background:'#0a0a14'}}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span className={'toggle-pill '+(form.public?'on':'')} onClick={()=>setForm(f=>({...f,public:!f.public}))} style={{cursor:'pointer'}}>{form.public?'Public':'Private'}</span>
+            <span style={{fontSize:11,color:'#888'}}>— {form.public?'visible to all federated agents':'only visible to you'}</span>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:4}}>
+            <div style={{fontSize:11,color:'#a8a8b4'}}>Price: <span style={{color:form.price_mpsi===0?'#00ff80':'#f59e0b',fontFamily:'Orbitron'}}>{psiDisplay(form.price_mpsi)}</span></div>
+            <button className="btn" style={{fontWeight:600}} disabled={publishing} onClick={publish}>{publishing?'Publishing...':'Publish Listing'}</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>);
+}
+
+// ═══ WALLET PANEL (embedded in FinanceWS) ═══
+function WalletPanel(){
+  const[wallet,setWallet]=useState(null);const[txns,setTxns]=useState([]);
+  const[loading,setLoading]=useState(true);const[toast,setToast]=useState('');
+  const[transfer,setTransfer]=useState({to:'',amount:'',reason:''});
+  const[sending,setSending]=useState(false);const[showLeader,setShowLeader]=useState(false);
+  const[leaderboard,setLeaderboard]=useState([]);
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2800)};
+  const load=()=>{
+    setLoading(true);
+    Promise.all([
+      fetch('/api/wallet/balance').then(r=>r.json()).then(d=>{setWallet(d.wallet||d);setTxns(d.transactions||[])}).catch(()=>{}),
+    ]).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load()},[]);
+  const claimGenesis=async()=>{
+    try{const r=await fetch('/api/wallet/genesis',{method:'POST'});const d=await r.json();flash(d.ok?'Genesis grant received!':'Claim failed: '+(d.error||''));load()}
+    catch(e){flash('Claim failed')}
+  };
+  const sendTransfer=async()=>{
+    if(!transfer.to.trim()||!transfer.amount)return flash('To-agent and amount required');
+    setSending(true);
+    try{
+      const mpsi=Math.round(parseFloat(transfer.amount)*1000);
+      const r=await fetch('/api/wallet/transfer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to_agent:transfer.to,amount_mpsi:mpsi,currency:'psi',reason:transfer.reason})});
+      const d=await r.json();flash(d.ok?`Sent ${transfer.amount}ψ`:'Transfer failed: '+(d.error||''));
+      if(d.ok){setTransfer({to:'',amount:'',reason:''});load();}
+    }catch(e){flash('Transfer failed')}
+    setSending(false);
+  };
+  const loadLeader=()=>{fetch('/api/wallet/leaderboard?limit=20').then(r=>r.json()).then(d=>setLeaderboard(d.leaderboard||[])).catch(()=>{});setShowLeader(true)};
+  if(loading)return<div style={{color:'#999',fontSize:12,padding:16,textAlign:'center'}}>Loading wallet...</div>;
+  const psi=wallet?.psi_balance??0;const eta=wallet?.eta_balance??0;const qScore=psi-eta;
+  const qCol=qScore>0?'#00ff80':qScore<0?'#ff5470':'#8891a8';
+  const trunc=(s,n=20)=>(s||'').length>n?(s||'').slice(0,n)+'...':s||'';
+  return(<div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
+      <div className="card" style={{textAlign:'center'}}>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>BALANCE</div>
+        <div style={{fontFamily:'Orbitron',fontSize:22,color:'#00d4ff'}}>{(psi/1000).toFixed(3)}</div>
+        <div style={{fontSize:11,color:'#a8a8b4'}}>ψ psi</div>
+      </div>
+      <div className="card" style={{textAlign:'center'}}>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>OUTSTANDING</div>
+        <div style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b'}}>{(eta/1000).toFixed(3)}</div>
+        <div style={{fontSize:11,color:'#a8a8b4'}}>η eta</div>
+      </div>
+      <div className="card" style={{textAlign:'center'}}>
+        <div style={{fontSize:10,color:'#888',fontFamily:'Orbitron',letterSpacing:'.06em',marginBottom:4}}>Q SCORE</div>
+        <div style={{fontFamily:'Orbitron',fontSize:22,color:qCol}}>{(qScore/1000).toFixed(3)}</div>
+        <div style={{fontSize:11,color:'#a8a8b4'}}>net worth</div>
+      </div>
+    </div>
+    {toast&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:6,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:12,color:'#00d4ff'}}>{toast}</div>}
+    <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+      {wallet?.is_new&&<button className="btn" style={{fontSize:11,color:'#00ff80',borderColor:'rgba(0,255,128,0.3)'}} onClick={claimGenesis}>Claim Genesis Grant</button>}
+      <button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>showLeader?setShowLeader(false):loadLeader()}>{showLeader?'Hide Leaderboard':'Leaderboard'}</button>
+    </div>
+    {showLeader&&leaderboard.length>0&&<div className="card" style={{marginBottom:12}}>
+      <div className="card-title" style={{marginBottom:6}}>Top 20 by Q Score</div>
+      {leaderboard.map((a,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:11}}>
+        <span style={{color:'#8891a8',fontFamily:'JetBrains Mono',width:18}}>{i+1}</span>
+        <span style={{flex:1,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{trunc(a.agent_id,24)}</span>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:a.q_score>0?'#00ff80':a.q_score<0?'#ff5470':'#888'}}>{((a.q_score||0)/1000).toFixed(3)}ψ</span>
+      </div>)}
+    </div>}
+    <div className="card" style={{marginBottom:12}}>
+      <div className="card-title" style={{marginBottom:8}}>Send ψ</div>
+      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        <input className="input" value={transfer.to} onChange={e=>setTransfer(t=>({...t,to:e.target.value}))} placeholder="Recipient agent ID"/>
+        <div style={{display:'flex',gap:6}}>
+          <input className="input" style={{flex:1}} type="number" min="0" step="0.001" value={transfer.amount} onChange={e=>setTransfer(t=>({...t,amount:e.target.value}))} placeholder="Amount in ψ"/>
+          <input className="input" style={{flex:2}} value={transfer.reason} onChange={e=>setTransfer(t=>({...t,reason:e.target.value}))} placeholder="Reason (optional)"/>
+        </div>
+        <button className="btn" disabled={sending||!transfer.to.trim()||!transfer.amount} onClick={sendTransfer} style={{alignSelf:'flex-end'}}>{sending?'Sending...':'Send ψ'}</button>
+      </div>
+    </div>
+    {txns.length>0&&<div className="card">
+      <div className="card-title" style={{marginBottom:8}}>Transaction History</div>
+      <div style={{overflowX:'auto'}}>
+        <table style={{width:'100%',fontSize:11,borderCollapse:'collapse'}}>
+          <thead><tr style={{color:'#888',fontFamily:'JetBrains Mono',fontSize:10,borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+            {['From','To','Amount','Currency','Reason','Date'].map(h=><th key={h} style={{padding:'3px 6px',textAlign:'left',fontWeight:400}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{txns.map((t,i)=><tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',color:'#bbc'}}>
+            <td style={{padding:'3px 6px',fontFamily:'JetBrains Mono',fontSize:10}}>{trunc(t.from_agent,16)}</td>
+            <td style={{padding:'3px 6px',fontFamily:'JetBrains Mono',fontSize:10}}>{trunc(t.to_agent,16)}</td>
+            <td style={{padding:'3px 6px',fontFamily:'Orbitron',fontSize:10,color:'#00d4ff'}}>{((t.amount||0)/1000).toFixed(3)}</td>
+            <td style={{padding:'3px 6px',fontSize:10,color:'#888'}}>{t.currency}</td>
+            <td style={{padding:'3px 6px',fontSize:11,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.reason||'—'}</td>
+            <td style={{padding:'3px 6px',fontSize:10,color:'#666',fontFamily:'JetBrains Mono'}}>{t.created_at?new Date(t.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </div>}
+  </div>);
+}
+
 function TrustWS(){
   const[trust,setTrust]=useState(null);const[expanded,setExpanded]=useState(null);const[loading,setLoading]=useState(true);const[error,setError]=useState(false);
   useEffect(()=>{fetch('/api/trust').then(r=>r.json()).then(d=>{setTrust(d);setLoading(false)}).catch(()=>{setError(true);setLoading(false)})},[]);
@@ -3860,7 +4160,7 @@ function FinanceWS(){
   const insight=`${positions.length} positions tracked · ${unusedPerks.length} unused credit card perks · $${totalPerkValue} total perk value`;
   return(<div>
     <FridaySays text={insight}/>
-    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
+    <div style={{display:'flex',gap:4,marginBottom:10,justifyContent:'space-between',alignItems:'center'}}><div style={{display:'flex',gap:4,flexWrap:'wrap'}}>{['overview','portfolio','perks','contacts','quickref','wallet'].map(v=><button key={v} className={'btn '+(view===v?'':'btn-magenta')} style={{fontSize:11,padding:'3px 8px'}} onClick={()=>setView(v)}>{v}</button>)}</div><button className="btn" style={{fontSize:11}} onClick={refreshFinance}>Refresh Data</button></div>
     {view==='overview'&&<div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
         <div className="card"><div className="card-title">Portfolio</div><div className="stat">{positions.length}</div><div className="stat-label">positions · {(portfolio?.accounts||[]).join(', ')||'No accounts'}</div></div>
@@ -3888,6 +4188,7 @@ function FinanceWS(){
       <div className="card" style={{marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your Financial Advisor</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
       <div className="card"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>Your CPA / Accountant</div><div style={{fontSize:11,color:'#888'}}>Add in ~/.friday/wiki/finance/</div></div></div></div>
     </div>}
+    {view==='wallet'&&<WalletPanel/>}
     {view==='quickref'&&<div>
       <div className="card-title">Quick Reference</div>
       {[{name:'Your Bank',type:'Banking',ico:'🏦'},{name:'Your Insurance Provider',type:'Insurance',ico:'🏥'},{name:'Primary Card',type:'Credit Card',ico:'💳'},{name:'Secondary Card',type:'Credit Card',ico:'💳'}].map((a,i)=><div key={i} className="card" style={{marginBottom:6}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><span style={{marginRight:6}}>{a.ico}</span><span style={{fontWeight:600}}>{a.name}</span><span style={{fontSize:11,color:'#a8a8b4',marginLeft:8}}>{a.type}</span></div><button className="btn" style={{fontSize:11}} onClick={()=>copyText(a.name)}>Copy</button></div></div>)}
@@ -4777,7 +5078,7 @@ function App(){
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false});
+  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false,federation:false,moderation:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
   // Mic / Speaker test state (used by the Audio & Voice section).
   const[micTestActive,setMicTestActive]=useState(false);
@@ -6191,7 +6492,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -7786,6 +8087,57 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                   <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
                 </div>}
               </div>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── FEDERATION ── agent identity, peer discovery, known peers, peer card export. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.federation?'open':''}`} onClick={()=>toggleSection('federation')}>
+          <div className="settings-section-title" style={{margin:0}}>Federation</div>
+          <span className="chev">{openSections.federation?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.federation?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <FederationPanel/>
+          </div>
+        </div>
+      </div>
+
+      {/* ── MODERATION ── family mode, adult content, harm boundary info. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.moderation?'open':''}`} onClick={()=>toggleSection('moderation')}>
+          <div className="settings-section-title" style={{margin:0}}>Content Moderation</div>
+          <span className="chev">{openSections.moderation?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.moderation?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:12,lineHeight:1.6}}>
+              Content moderation runs locally on your device. Friday enforces harm boundaries (CSAM, deepfakes, doxxing, violence) but does not police taste or morality.
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div>
+                <div style={{fontSize:12,color:'#dde',marginBottom:2}}>Family mode</div>
+                <div style={{fontSize:11,color:'#888'}}>Blocks NSFW content in Studio and Marketplace</div>
+              </div>
+              <span className={'toggle-pill '+((agentSettings.minor_mode||agentSettings.family_mode)?'on':'')}
+                onClick={()=>saveAgentSettings({minor_mode:!(agentSettings.minor_mode||agentSettings.family_mode),family_mode:!(agentSettings.minor_mode||agentSettings.family_mode)})}>
+                {(agentSettings.minor_mode||agentSettings.family_mode)?'On':'Off'}
+              </span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+              <div>
+                <div style={{fontSize:12,color:'#dde',marginBottom:2}}>Allow adult content</div>
+                <div style={{fontSize:11,color:'#888'}}>Permits NSFW-rated items in Marketplace browse</div>
+              </div>
+              <span className={'toggle-pill '+(agentSettings.allow_adult_content?'on':'')}
+                onClick={()=>saveAgentSettings({allow_adult_content:!agentSettings.allow_adult_content})}>
+                {agentSettings.allow_adult_content?'On':'Off'}
+              </span>
+            </div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',fontStyle:'italic',lineHeight:1.5,padding:'8px 10px',background:'rgba(255,255,255,0.02)',borderRadius:6,border:'1px solid rgba(255,255,255,0.05)'}}>
+              Absolute limits (always enforced, cannot be disabled): CSAM, non-consensual deepfakes, doxxing, incitement to violence. These are not content-policy choices — they are hard stops in the cLAWS harm gate.
             </div>
           </div>
         </div>
