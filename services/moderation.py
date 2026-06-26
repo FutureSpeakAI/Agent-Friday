@@ -264,6 +264,38 @@ def scan(
                 "scan_id": scan_id,
             }
 
+        # Content policy pack evaluation (additive tags/warnings, can block)
+        try:
+            from services.content_policies import evaluate_content, get_subscribed_packs
+            packs = get_subscribed_packs()
+            meta: Dict[str, Any] = {
+                "title": content_text or "",
+                "categories": [],
+                "severity": 0.5 if is_nsfw else 0.0,
+                "tags": list(tags),
+            }
+            if is_nsfw:
+                meta["nsfw"] = True
+            if meta_nsfw:
+                meta["adult_content"] = True
+            policy_result = evaluate_content(meta, subscribed_packs=packs)
+            if policy_result.get("blocked"):
+                return {
+                    "ok": True,
+                    "blocked": True,
+                    "verdict": "blocked",
+                    "harm_level": None,
+                    "tags": policy_result.get("tags", tags),
+                    "reason": policy_result.get("reason", "blocked by content policy"),
+                    "scan_id": scan_id,
+                    "policy_blocking_rule": policy_result.get("blocking_rule"),
+                }
+            for t in policy_result.get("tags", []):
+                if t not in tags:
+                    tags.append(t)
+        except Exception:
+            pass
+
         verdict = "nsfw_flagged" if is_nsfw else "clean"
         return {
             "ok": True,
