@@ -289,7 +289,11 @@ def search_listings(
     limit: int = 50,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """WHERE-clause search; only public listings; ORDER BY created_at DESC."""
+    """WHERE-clause search; only public listings; ORDER BY created_at DESC.
+
+    Results are filtered through the subscribed content policy packs —
+    blocked listings are excluded; tags/warnings from packs are attached.
+    """
     try:
         clauses = ["visibility='public'", "price_mpsi >= ?"]
         params: List[Any] = [int(min_price)]
@@ -312,7 +316,29 @@ def search_listings(
                 f"SELECT * FROM listings WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 params,
             ).fetchall()
-            return [_row_to_dict(r) for r in rows]
+            results = [_row_to_dict(r) for r in rows]
+
+        # Filter through content policy packs
+        try:
+            from services.content_policies import evaluate_content, get_subscribed_packs
+            packs = get_subscribed_packs()
+            filtered: List[Dict[str, Any]] = []
+            for listing in results:
+                meta = {
+                    "title": listing.get("title") or "",
+                    "description": listing.get("description") or "",
+                    "categories": [listing.get("media_type") or ""] if listing.get("media_type") else [],
+                    "price_mpsi": listing.get("price_mpsi") or 0,
+                    "severity": 0.0,
+                }
+                verdict = evaluate_content(meta, subscribed_packs=packs)
+                if not verdict.get("blocked"):
+                    listing["policy_tags"] = verdict.get("tags", [])
+                    listing["policy_warnings"] = verdict.get("warnings", [])
+                    filtered.append(listing)
+            return filtered
+        except Exception:
+            return results
     except Exception as e:
         print(f"  [marketplace] search_listings failed: {e}")
         return []

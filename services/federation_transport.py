@@ -313,6 +313,19 @@ def decrypt_message(envelope_dict: Dict[str, Any]) -> Dict[str, Any]:
         sig = env.pop("signature", "")
         sender_pub = env.get("sender_pubkey", "")
 
+        # Reject messages from defederated agents at the transport layer
+        if sender_pub:
+            try:
+                from services.defederation import is_defederated
+                if is_defederated(sender_pub):
+                    return {
+                        "ok": False,
+                        "error": "sender_defederated",
+                        "sender_pubkey": sender_pub,
+                    }
+            except Exception:
+                pass
+
         # Signature verification
         if sig and sender_pub:
             sig_data = json.dumps(env, sort_keys=True).encode()
