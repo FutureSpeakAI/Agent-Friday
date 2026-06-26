@@ -948,7 +948,21 @@ DEFAULT_SETTINGS = {
     "orchestrator_model": "claude-opus-4-8",      # main agent brain
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-nano-banana-2",   # image/creative generation (Nano Banana); video uses Veo
+    "music_model": "lyria-clip",                # music generation (Lyria 3): 'lyria-clip' (≤30s) | 'lyria-pro' (full song)
     "voice_model": "gemini-3.1-flash-live-preview",  # live audio (3.1 Flash Live: server-side VAD barge-in; affective/proactive auto-stripped). Gemini 2.5 Flash is the voice family; Pro is text/reasoning, NOT voice/creative.
+    # ── Creator Economy / Production (Layer 1) ──
+    # Daily creation now chooses FREELY across all media (text/code/image/music/
+    # video/full production), weighted by recent work + ambient mood + budget —
+    # not a fixed rotation. The budget ceiling keeps "free choice" from ever
+    # meaning "unbounded spend": expensive media are filtered out when the
+    # remaining daily creative budget is low.
+    "daily_creation_free_choice": True,         # False reverts to the legacy text rotation
+    "daily_creation_budget_usd": 0.50,          # soft ceiling on a day's creation spend
+    # ── Family / Minor mode (§7) ──
+    # When on, generation runs an age-appropriate filter ON TOP of the adult harm
+    # floor, and adult content is hidden in the gallery. This filters what the
+    # minor sees, not what exists — a parent toggles it off in Settings.
+    "minor_mode": False,
     # ── Semantic Context Pruning (RAG over our own conversation history) ──
     # When chat history exceeds max_turns, embedding-based retrieval keeps the
     # most relevant past turns instead of truncating from the oldest.
@@ -1054,6 +1068,7 @@ DEFAULT_SETTINGS = {
         "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-4-6"},
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
+        "creative_music": {"provider": "google-gemini", "model": "lyria-clip"},
         "voice":          {"provider": "google-gemini", "model": "gemini-3.1-flash-live-preview"},
         # Local voice splits into asr + tts; both default to the on-device Tier-1
         # engine (the cloud "voice" entry above is used only when the user opts
@@ -1071,6 +1086,7 @@ _CAP_FLAT_MAP = {
     "reasoning": "orchestrator_model",
     "subagent": "subagent_model",
     "creative_image": "creative_model",
+    "creative_music": "music_model",
     "voice": "voice_model",
 }
 

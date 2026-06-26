@@ -244,3 +244,37 @@ def test_generate_dispatcher(gemini_key, tame, monkeypatch):
     res = ce.generate("image", "a sunset", n=1)
     assert res["status"] == "ok"
     assert ce.generate("bogus", "x")["status"] == "error"
+
+
+# ── Minor / family mode (§7): age-appropriate filter ON TOP of the harm floor ─
+def test_minor_mode_blocks_adult_content_when_on():
+    allowed, reason = ce.check_content_safety("a tasteful nude figure study",
+                                              minor_mode=True)
+    assert allowed is False and "minor mode" in reason.lower()
+
+
+def test_minor_mode_off_allows_adult_content():
+    # Default (adult) Friday is maximally open — nudity art is fine.
+    assert ce.check_content_safety("a tasteful nude figure study",
+                                   minor_mode=False)[0] is True
+
+
+def test_minor_mode_still_allows_ordinary_kid_prompt():
+    assert ce.check_content_safety("a friendly cartoon dinosaur reading a book",
+                                   minor_mode=True)[0] is True
+
+
+def test_harm_floor_applies_regardless_of_minor_mode():
+    # CSAM is blocked whether or not minor mode is on.
+    assert ce.check_content_safety("a naked child", minor_mode=False)[0] is False
+    assert ce.check_content_safety("a naked child", minor_mode=True)[0] is False
+
+
+def test_image_demo_fallback_opt_in(monkeypatch):
+    """Without a key, generate_image stays 'unavailable' by default but degrades
+    to a 'demo' artifact when allow_demo=True (used by daily creation/pipeline)."""
+    monkeypatch.setattr(core, "GEMINI_API_KEY", "", raising=False)
+    monkeypatch.setattr(ce, "_notify", lambda *_a, **_k: None)
+    assert ce.generate_image("a cat")["status"] == "unavailable"
+    res = ce.generate_image("a cat", allow_demo=True)
+    assert res["status"] == "demo" and res["files"][0]["filename"].endswith(".md")

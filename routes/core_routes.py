@@ -390,6 +390,7 @@ def api_setup_complete():
     # 2) Settings delta (NO secrets) → _save_settings keeps routing congruent.
     delta = {}
     for k in ('agent_name', 'orchestrator_model', 'subagent_model', 'creative_model',
+              'music_model', 'minor_mode', 'daily_creation_free_choice',
               'voice_model', 'tts_voice', 'temperature', 'communication_style',
               'distribution', 'demo_mode', 'capability_routing'):
         if k in data:

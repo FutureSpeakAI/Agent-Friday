@@ -142,15 +142,22 @@ class TestCreateImage:
 
 
 class TestCreateMusic:
-    """POST /api/create/music — Lyria path; stub returns no candidates."""
+    """POST /api/create/music — Lyria 3 path (services/music_engine).
+
+    The installed google-genai has no batch Lyria surface, so without a real key
+    the engine returns a {status:'demo'} preview rather than failing — that's the
+    graceful-degradation contract. With a cloud key + SDK it would be 'ok'."""
 
     def test_returns_structured_response(self, client, mock_gemini):
         resp = client.post("/api/create/music", json={"prompt": "Lo-fi hip hop"})
         assert resp.status_code < 500
         data = resp.get_json()
-        assert data.get("status") in ("ok", "error")
+        assert data.get("status") in ("ok", "demo", "blocked", "unavailable", "error")
         if data["status"] == "error":
             assert "message" in data
+        if data["status"] == "demo":
+            # demo mode still produces a real artifact + a message
+            assert data.get("files") and data.get("message")
 
     def test_malformed_json_not_500(self, client, mock_gemini):
         resp = client.post("/api/create/music", data="not json", content_type="application/json")
@@ -605,3 +612,64 @@ class TestOutreachPipeline:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+class TestCreateTimeline:
+    """POST /api/create/timeline — FFmpeg assembly (services/timeline_engine)."""
+
+    def test_requires_clips(self, client, mock_gemini):
+        resp = client.post("/api/create/timeline", json={})
+        assert resp.status_code < 500
+        assert resp.get_json()["status"] == "error"
+
+    def test_structured_response_with_clips(self, client, mock_gemini, creations_dir):
+        # A clip that doesn't exist → validation error (structured, not a 500).
+        resp = client.post("/api/create/timeline",
+                           json={"clips": ["nope.mp4"], "exports": ["mp4-1080p"]})
+        assert resp.status_code < 500
+        assert resp.get_json().get("status") in ("ok", "demo", "error")
+
+    def test_malformed_json_not_500(self, client, mock_gemini):
+        resp = client.post("/api/create/timeline", data="x", content_type="application/json")
+        assert resp.status_code < 500
+
+
+class TestTimelineFormats:
+    def test_lists_export_presets(self, client):
+        resp = client.get("/api/timeline/formats")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "ok" and "mp4-1080p" in data["formats"]
+
+
+class TestProvenanceRoutes:
+    def test_provenance_by_file_missing(self, client):
+        resp = client.get("/api/provenance/by-file/does-not-exist.png")
+        assert resp.status_code < 500
+        assert resp.get_json()["status"] == "error"
+
+    def test_provenance_unknown_hash(self, client):
+        resp = client.get("/api/provenance/deadbeef")
+        assert resp.status_code < 500
+        assert resp.get_json()["status"] == "error"
+
+
+class TestProvenanceLicense:
+    def test_license_options_listed(self, client):
+        resp = client.get("/api/provenance/license-options")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "ok"
+        assert "CC-BY-4.0" in data["terms"] and "priced" in data["terms"]
+
+    def test_set_license_missing_file(self, client):
+        resp = client.post("/api/provenance/by-file/nope.png/license",
+                           json={"license": {"terms": "CC0"}})
+        assert resp.status_code < 500
+        assert resp.get_json()["status"] == "error"
+
+    def test_create_music_accepts_license(self, client, mock_gemini, creations_dir):
+        resp = client.post("/api/create/music",
+                           json={"prompt": "calm piano", "license": {"terms": "CC0"}})
+        assert resp.status_code < 500
+        assert resp.get_json().get("status") in ("ok", "demo", "error")

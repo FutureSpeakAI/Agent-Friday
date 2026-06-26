@@ -299,6 +299,7 @@ def create_image():
         style=data.get('style'),
         aspect_ratio=data.get('aspect_ratio') or '1:1',
         n=data.get('n', 1),
+        license=data.get('license'),
     )
     # The body carries status ('ok'|'blocked'|'unavailable'|'error'); these create
     # routes return HTTP 200 by convention (clients branch on the body's status).
@@ -307,32 +308,126 @@ def create_image():
 
 @creations_bp.route('/api/create/music', methods=['POST'])
 def create_music():
-    """Generate music via Gemini Lyria."""
-    try:
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-        prompt = request.json.get('prompt', 'Ambient electronic')
-        _orb = _creation_orb_start('Music')
+    """Generate music via Lyria 3 (services/music_engine). Text-to-music,
+    image-to-music, custom lyrics, instrumental/song modes. When cloud music is
+    unavailable the engine returns a {status:'demo'} preview rather than failing.
+    Returns the standard creative envelope; HTTP 200 by convention."""
+    from services import music_engine
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get('prompt') or 'Ambient electronic, warm, slow').strip()
+    result = music_engine.generate_music(
+        prompt,
+        model=data.get('model'),
+        mode=data.get('mode') or 'instrumental',
+        lyrics=data.get('lyrics'),
+        duration_seconds=data.get('duration_seconds'),
+        language=data.get('language') or 'en',
+        negative_prompt=data.get('negative_prompt'),
+        seed_image_path=data.get('seed_image_path'),
+        seed_image_paths=data.get('seed_image_paths'),
+        project_id=data.get('project_id'),
+        license=data.get('license'),
+    )
+    return jsonify(_flatten_first_file(result))
 
-        response = client.models.generate_content(
-            model='lyria',
-            contents=prompt,
-            config=types.GenerateContentConfig(response_modalities=['AUDIO'])
-        )
 
-        for part in response.candidates[0].content.parts:
-            if part.inline_data and 'audio' in part.inline_data.mime_type:
-                filename = f"friday-music-{datetime.now().strftime('%Y%m%d-%H%M%S')}.wav"
-                filepath = CREATIONS_DIR / filename
-                filepath.write_bytes(part.inline_data.data)
-                _notify_creation(filename, _orb)
-                return jsonify({"status": "ok", "filename": filename, "url": f"/api/creations/{filename}"})
+@creations_bp.route('/api/create/timeline', methods=['POST'])
+@creations_bp.route('/api/creations/compose', methods=['POST'])
+def create_timeline():
+    """Assemble clips + music into an exported production (services/timeline_
+    engine). Accepts either a full {timeline:{...}} contract or the simpler
+    {clips:[...], music, transition, title, exports} shorthand the Studio panel
+    posts. HTTP 200 by convention; body carries status (ok|demo|error)."""
+    from services import timeline_engine
+    data = request.get_json(silent=True) or {}
+    timeline = data.get('timeline')
+    if not isinstance(timeline, dict):
+        clips = data.get('clips') or []
+        if not clips:
+            return jsonify({"status": "error",
+                            "message": "Provide 'clips' (a list of clip filenames) "
+                                       "or a 'timeline' object."})
+        transition = (data.get('transition') or 'cut').lower()
+        clip_seconds = data.get('clip_seconds') or 6
+        tracks = [{"kind": "video", "clips": [
+            {"file": c, "in": 0.0, "out": clip_seconds,
+             "transition_in": {"type": transition, "dur": 0.5}} for c in clips]}]
+        if data.get('music'):
+            tracks.append({"kind": "audio", "clips": [
+                {"file": data['music'], "role": "music", "gain_db": -4.0,
+                 "fade_out": 1.5}]})
+        if data.get('title'):
+            tracks.append({"kind": "overlay", "clips": [
+                {"text": data['title'], "t": 0.5, "dur": 3.0, "style": "title-card"}]})
+        timeline = {"fps": 30, "resolution": [1920, 1080], "tracks": tracks,
+                    "exports": data.get('exports') or ["mp4-1080p"]}
+    result = timeline_engine.compose(timeline, project_id=data.get('project_id'),
+                                     license=data.get('license'))
+    return jsonify(_flatten_first_file(result))
 
-        return jsonify({"status": "error", "message": "No audio generated"})
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)})
+
+@creations_bp.route('/api/timeline/formats')
+def timeline_formats():
+    """The available timeline export presets (for the Studio composition panel)."""
+    from services import timeline_engine
+    return jsonify({"status": "ok", "formats": timeline_engine.export_formats(),
+                    "ffmpeg_available": timeline_engine.is_available()})
+
+
+@creations_bp.route('/api/provenance/<path:content_hash>')
+def provenance_verify(content_hash):
+    """Verify + trace the signed Content Credential for an artifact (Layer 2)."""
+    from services import provenance
+    ch = content_hash if content_hash.startswith('sha256:') else f'sha256:{content_hash}'
+    manifest = provenance.get_manifest(ch)
+    if not manifest:
+        return jsonify({"status": "error", "message": "No provenance for that hash."})
+    return jsonify({"status": "ok", "verification": provenance.verify_manifest(manifest),
+                    "manifest": manifest, "trace": provenance.trace(ch)})
+
+
+@creations_bp.route('/api/provenance/license-options')
+def provenance_license_options():
+    """The license terms a creator can pick per piece (for the UI selector)."""
+    from services import provenance
+    return jsonify({"status": "ok", "terms": list(provenance.LICENSE_TERMS),
+                    "default": provenance.DEFAULT_LICENSE_TERMS})
+
+
+@creations_bp.route('/api/provenance/by-file/<path:filename>/license', methods=['POST'])
+def provenance_set_license(filename):
+    """Owner changes a creation's license terms (append-only edit, re-signed)."""
+    from services import provenance
+    p = CREATIONS_DIR / Path(filename).name
+    if not p.exists():
+        return jsonify({"status": "error", "message": "Creation not found."})
+    manifest = provenance.manifest_for_file(p)
+    if not manifest:
+        return jsonify({"status": "error",
+                        "message": "No signed provenance for this file yet."})
+    data = request.get_json(silent=True) or {}
+    ch = (manifest.get("artifact") or {}).get("content_hash")
+    updated = provenance.set_license(ch, data.get("license") or {})
+    if not updated:
+        return jsonify({"status": "error", "message": "Could not update license."})
+    return jsonify({"status": "ok", "license": updated.get("license")})
+
+
+@creations_bp.route('/api/provenance/by-file/<path:filename>')
+def provenance_by_file(filename):
+    """Verify provenance for a creation by filename (hashes the file, reads its
+    sidecar)."""
+    from services import provenance
+    p = CREATIONS_DIR / Path(filename).name
+    if not p.exists():
+        return jsonify({"status": "error", "message": "Creation not found."})
+    manifest = provenance.manifest_for_file(p)
+    if not manifest:
+        return jsonify({"status": "ok", "provenance": None,
+                        "message": "No signed provenance for this file yet."})
+    ch = (manifest.get("artifact") or {}).get("content_hash")
+    return jsonify({"status": "ok", "verification": provenance.verify_manifest(manifest),
+                    "manifest": manifest, "trace": provenance.trace(ch) if ch else []})
 
 
 @creations_bp.route('/api/create/code-art', methods=['POST'])
@@ -404,5 +499,6 @@ def create_video():
         aspect_ratio=data.get('aspect_ratio') or '16:9',
         duration_seconds=data.get('duration_seconds'),
         image_path=data.get('image_path'),
+        license=data.get('license'),
     )
     return jsonify(_flatten_first_file(result))

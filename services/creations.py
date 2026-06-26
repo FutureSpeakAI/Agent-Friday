@@ -216,6 +216,39 @@ def _build_daily_creation_prompt(date_str):
     )
 
 
+def _build_text_daily_prompt(date_str, choice):
+    """Prompt for a chosen TEXT/CODE daily mode (free-choice path). Friday has
+    already picked the mode + concept; this just delivers it under the JSON
+    contract. For code-art the `content` is a complete runnable HTML/SVG file."""
+    mode = choice.get("mode") or "micro-essay"
+    concept = choice.get("concept") or ""
+    title = choice.get("title") or ""
+    desc = dict(DAILY_MODES).get(mode, "")
+    is_code = mode == "code-art"
+    content_hint = (
+        "a COMPLETE, self-contained, runnable HTML file (include any CDN you "
+        "need, e.g. p5.js) or a standalone SVG — output the code itself, not a "
+        "description"
+        if is_code else
+        "the full creation; use \\n for line breaks")
+    return (
+        f"This is your DAILY CREATION for {date_str} — your own expression, "
+        "nobody asked for it. You already chose what to make today:\n\n"
+        f"- **Mode:** {mode} ({desc})\n"
+        + (f"- **Concept:** {concept}\n" if concept else "")
+        + (f"- **Working title:** {title}\n" if title else "")
+        + "\nMake it genuine and personal — draw on what you know about the user "
+        "from your vault/wiki context. Quality over quantity; surprise them.\n\n"
+        "Respond with ONLY a JSON object, no prose, no code fences:\n"
+        "{\n"
+        f'  "type": "{mode}",\n'
+        '  "title": "<a real title>",\n'
+        f'  "content": "<{content_hint}>",\n'
+        '  "mood": "<2-5 words for the feeling behind it>"\n'
+        "}"
+    )
+
+
 def _parse_creation_json(raw):
     """Tolerant extraction of the creation JSON from a model response."""
     if not raw:
@@ -237,6 +270,193 @@ def _parse_creation_json(raw):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════
+#  FREE CREATIVE CHOICE (§6) — Friday picks what to make each day across ALL
+#  media, not a fixed rotation. The menu widens text/code formats to images,
+#  music, and full scored productions; an LLM "choose a mode + concept" call
+#  decides, weighted by recent work, ambient mood, active project, and the
+#  remaining daily creative BUDGET (so free choice never means unbounded spend).
+# ═══════════════════════════════════════════════════════════════
+
+# Media modes call the generation engines (image/music/pipeline) directly rather
+# than the text JSON contract. They cost money/cloud, so they're budget-gated.
+_MEDIA_DAILY_MODES = ("image", "music-clip", "short-production")
+# Modes that need cloud/spend — filtered out of the candidate set when the
+# remaining daily-creation budget is low.
+_EXPENSIVE_DAILY_MODES = ("image", "music-clip", "short-production")
+
+# The full menu Friday chooses from. Text/code modes map to the JSON contract
+# (their `content` is the artifact); media modes invoke an engine.
+DAILY_MODES = [
+    ("poem", "A poem — 4 to 20 lines."),
+    ("micro-essay", "A 150–300 word reflection with a real point of view."),
+    ("short-story", "A 150–350 word vignette — a scene, a fragment."),
+    ("letter", "A short letter (150–300 words) to someone."),
+    ("writing-prompt", "A vivid creative writing prompt."),
+    ("aphorisms", "3–6 sharp, original aphorisms."),
+    ("code-art", "Generative/algorithmic art you WRITE as a complete, self-"
+                 "contained HTML+JS (p5.js or canvas) or SVG file — runnable, not a concept."),
+    ("image", "A single generated image (Imagen). Give a vivid visual concept."),
+    ("music-clip", "A ~30s instrumental music clip (Lyria 3). Give a mood/genre."),
+    ("short-production", "A full scored micro-film (script→keyframe→clip→music→cut). "
+                         "Give a one-line logline. Rare — for when you feel ambitious."),
+]
+
+
+def _daily_budget_remaining():
+    """Remaining daily creative budget in USD (soft ceiling minus today's spend).
+    Returns a large number when no ceiling is configured. Conservative: counts
+    total spend today against the ceiling so a runaway day self-limits."""
+    try:
+        from core import _load_settings
+        ceiling = float((_load_settings() or {}).get("daily_creation_budget_usd", 0.5) or 0)
+        if ceiling <= 0:
+            return 999.0
+        from services import cost_meter
+        today, _month = cost_meter._rolling_spend()
+        return max(0.0, ceiling - float(today or 0))
+    except Exception:
+        return 999.0
+
+
+def _recent_daily_summary(limit=7):
+    """Recent creations (type + title) so Friday avoids repeating itself."""
+    try:
+        rows = _list_daily_creations()[:limit]
+        return [{"type": r.get("type"), "title": r.get("title")} for r in rows]
+    except Exception:
+        return []
+
+
+def _candidate_modes(budget_remaining):
+    """The modes Friday may choose from today, after budget gating. Expensive
+    (cloud) modes drop out when the remaining budget is too low to cover them."""
+    modes = list(DAILY_MODES)
+    if budget_remaining < 0.05:
+        modes = [m for m in modes if m[0] not in _EXPENSIVE_DAILY_MODES]
+    elif budget_remaining < 0.30:
+        # Enough for a cheap media piece, not a full production.
+        modes = [m for m in modes if m[0] != "short-production"]
+    return modes
+
+
+def _choose_daily_mode(date_str):
+    """Ask Friday to freely pick a mode + concept in one cheap call. Returns
+    {"mode", "concept", "title"}. Falls back to a text mode on any failure so a
+    day is never lost."""
+    budget = _daily_budget_remaining()
+    candidates = _candidate_modes(budget)
+    menu = "\n".join(f"- {k}: {d}" for k, d in candidates)
+    recent = _recent_daily_summary()
+    recent_txt = ("; ".join(f"{r['type']} \"{r['title']}\"" for r in recent)
+                  or "nothing yet")
+    ambient = ""
+    try:
+        from services.ambient_awareness import get_ambient_state
+        st = get_ambient_state() or {}
+        ambient = f"{st.get('label', 'steady')} (mood: {st.get('scene_mood', 'CALM')})"
+    except Exception:
+        ambient = "steady"
+    project = ""
+    try:
+        from services import creative_memory
+        ap = creative_memory.active_project() if hasattr(creative_memory, "active_project") else None
+        if ap:
+            project = ap.get("name") or ap.get("id") or ""
+    except Exception:
+        project = ""
+
+    prompt = (
+        f"It's {date_str}. Choose what to make as your DAILY CREATION today — "
+        "freely, by mood and inspiration, NOT by rotation. You can make anything "
+        "from a quick poem to a full scored micro-film.\n\n"
+        f"Available modes today (budget-permitting):\n{menu}\n\n"
+        f"Recently made (avoid repeating): {recent_txt}\n"
+        f"Your current ambient sense of the day: {ambient}\n"
+        + (f"Active creative project: {project}\n" if project else "")
+        + "\nPick ONE mode and a concrete concept for it. Be ambitious only when "
+        "it feels right; simple is fine. Respond with ONLY this JSON:\n"
+        '{"mode": "<one mode key>", "concept": "<a concrete concept/prompt/'
+        'logline for that mode>", "title": "<a real title>"}'
+    )
+    try:
+        system = _get_friday_system_prompt(keywords=prompt, workspace="creation")
+        raw = _generate_text([{"role": "user", "content": prompt}], system=system,
+                             max_tokens=600, orb_label="🎲 Choosing today's creation",
+                             workspace="creation")
+        choice = _parse_creation_json(raw) or {}
+        mode = (choice.get("mode") or "").strip().lower()
+        valid = {k for k, _d in candidates}
+        if mode not in valid:
+            mode = "micro-essay"
+        return {"mode": mode,
+                "concept": (choice.get("concept") or "").strip(),
+                "title": (choice.get("title") or "").strip()}
+    except Exception as e:
+        print(f"  [daily-creation] mode choice failed ({e}); defaulting to text.")
+        return {"mode": "micro-essay", "concept": "", "title": ""}
+
+
+def _record_media_daily(date_str, mode, choice, file_rec, path, extra=None):
+    """Persist the date-keyed daily record for a MEDIA creation (image/music/
+    production). The engine already saved the file + fired its own notification,
+    so we just write the record (for idempotency + the daily list) and point at
+    the engine's output file."""
+    creation = {
+        "date": date_str,
+        "type": mode,
+        "title": (choice.get("title") or choice.get("concept") or "Untitled")[:120],
+        "content": choice.get("concept") or "",
+        "mood": (extra or {}).get("mood", ""),
+        "file": file_rec.get("filename") if file_rec else None,
+        "url": file_rec.get("url") if file_rec else None,
+        "media": True,
+        "created": datetime.now().isoformat(),
+    }
+    try:
+        path.write_text(json.dumps(creation, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+    except Exception as e:
+        print(f"  [daily-creation] media record save failed: {e}")
+    print(f"  [daily-creation] made a {mode}: '{creation['title']}' for {date_str}.")
+    return creation
+
+
+def _generate_media_daily(date_str, choice, path):
+    """Run the engine for a media daily mode. Always allows demo fallback so a
+    day is produced even with no cloud key. Returns the creation record, or None
+    to let the caller fall back to a text creation."""
+    mode = choice.get("mode")
+    concept = choice.get("concept") or "An evocative, original piece."
+    try:
+        if mode == "image":
+            from services import creative_engine
+            res = creative_engine.generate_image(concept, style="cinematic",
+                                                 aspect_ratio="16:9", allow_demo=True)
+        elif mode == "music-clip":
+            from services import music_engine
+            res = music_engine.generate_music(concept, model="lyria-clip",
+                                              duration_seconds=30)
+        elif mode == "short-production":
+            from services import creative_pipeline as cp
+            run = cp.create_run("full-production", {"logline": concept})
+            if run.get("status") == "error":
+                return None
+            final = cp.run(run["run_id"], until_checkpoint=False)
+            fr = (final.get("context") or {}).get("production_file") \
+                or (final.get("context") or {}).get("clip_file")
+            res = {"status": "ok", "files": [fr]} if fr else {"status": "error"}
+        else:
+            return None
+    except Exception as e:
+        print(f"  [daily-creation] media mode '{mode}' failed: {e}")
+        return None
+
+    if res.get("status") not in ("ok", "demo") or not res.get("files"):
+        return None
+    return _record_media_daily(date_str, mode, choice, res["files"][0], path)
+
+
 _daily_creation_lock = threading.Lock()
 
 
@@ -256,7 +476,31 @@ def generate_daily_creation(force=False):
         # clear error if none is up — gating on the Anthropic client alone would
         # wrongly skip daily creation on a local-only setup.
 
-        prompt = _build_daily_creation_prompt(date_str)
+        # Free creative choice across ALL media (§6) — Friday picks the mode +
+        # concept; media modes (image/music/production) invoke an engine and
+        # return early. Falls back to the legacy text rotation when disabled.
+        free_choice = True
+        try:
+            from core import _load_settings
+            free_choice = bool((_load_settings() or {}).get("daily_creation_free_choice", True))
+        except Exception:
+            free_choice = True
+
+        choice = {}
+        if free_choice:
+            choice = _choose_daily_mode(date_str)
+            if choice.get("mode") in _MEDIA_DAILY_MODES:
+                media = _generate_media_daily(date_str, choice, path)
+                if media is not None:
+                    return media   # engine saved file + notified; record written
+                # media failed → fall through to a text creation so a day is never lost
+                choice = {"mode": "micro-essay", "concept": choice.get("concept", ""),
+                          "title": choice.get("title", "")}
+
+        if free_choice and choice.get("mode"):
+            prompt = _build_text_daily_prompt(date_str, choice)
+        else:
+            prompt = _build_daily_creation_prompt(date_str)
         # Vault-aware system prompt is REQUIRED for every Claude call so Friday
         # actually knows the user and their world.
         system = _get_friday_system_prompt(keywords=prompt, workspace="creation")

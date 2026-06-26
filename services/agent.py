@@ -1906,6 +1906,58 @@ CLAUDE_TOOLS.append({
         "required": ["prompt"],
     },
 })
+CLAUDE_TOOLS.append({
+    "name": "generate_music",
+    "description": (
+        "Generate REAL music from a text prompt using Google's Lyria 3 and save "
+        "it to the user's creations folder. Use whenever the user asks you to "
+        "'make/write/compose a song/track/beat/score/jingle', set something to "
+        "music, or score a video. You CAN make music — do not say you can't. "
+        "Supports instrumental or vocal songs (pass lyrics, with [verse]/[chorus] "
+        "section tags), a mood-reference image, and multi-language vocals. "
+        "Clips are ≤30s ('lyria-clip'); full songs use 'lyria-pro'. If cloud "
+        "music isn't available, Friday writes a demo preview describing the "
+        "track. A progress orb shows while it renders."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string", "description": "Description of the music: genre, mood, instruments, tempo, references."},
+            "model": {"type": "string", "description": "Music model: 'lyria-clip' (≤30s, default) or 'lyria-pro' (full song)."},
+            "mode": {"type": "string", "description": "'instrumental' (default) or 'song' (with vocals — pass lyrics)."},
+            "lyrics": {"type": "string", "description": "Optional custom lyrics. Use [verse]/[chorus]/[bridge] section tags. Enables vocal synthesis."},
+            "duration_seconds": {"type": "integer", "description": "Optional length in seconds (clip model caps at 30)."},
+            "language": {"type": "string", "description": "Optional vocal language code (default 'en')."},
+            "negative_prompt": {"type": "string", "description": "Optional things to avoid, e.g. 'no drums'."},
+            "seed_image_path": {"type": "string", "description": "Optional image (path or creation filename) to transfer mood from."},
+        },
+        "required": ["prompt"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "compose_timeline",
+    "description": (
+        "Assemble existing video clips and a music/audio track into a finished, "
+        "exported production using FFmpeg — cuts/crossfades, music ducking under "
+        "dialogue, and platform exports (YouTube 16:9, Instagram Reel / TikTok "
+        "9:16, WebM, GIF preview, audio-only MP3). Use when the user asks you to "
+        "'edit/assemble/stitch/cut these clips together', 'add music to this "
+        "video', or 'export a reel/vertical version'. Pass the creation "
+        "filenames of the clips (in order) and optionally a music filename. The "
+        "source clips' content hashes are signed into the production's "
+        "provenance."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "clips": {"type": "array", "description": "Ordered list of video clip creation filenames (or absolute paths) to stitch.", "items": {"type": "string"}},
+            "music": {"type": "string", "description": "Optional music/audio creation filename to lay under the video."},
+            "transition": {"type": "string", "description": "Transition between clips: 'cut' (default), 'crossfade', or 'fadeblack'."},
+            "title": {"type": "string", "description": "Optional title-card text shown at the start."},
+            "exports": {"type": "array", "description": "Export presets, e.g. ['mp4-1080p','mp4-vertical-9x16','gif-preview']. Default mp4-1080p.", "items": {"type": "string"}},
+            "clip_seconds": {"type": "number", "description": "Optional per-clip length in seconds (default 6)."},
+        },
+        "required": ["clips"],
+    },
+})
 
 
 def _tool_generate_image(inp):
@@ -1942,22 +1994,73 @@ def _tool_generate_video(inp):
     return _creative_result_summary(res, "video")
 
 
+def _tool_generate_music(inp):
+    """Generate music via Lyria 3 and save it to creations."""
+    from services import music_engine
+    inp = inp or {}
+    prompt = (inp.get("prompt") or "").strip()
+    if not prompt:
+        return "generate_music error: 'prompt' is required."
+    res = music_engine.generate_music(
+        prompt,
+        model=inp.get("model"),
+        mode=inp.get("mode") or "instrumental",
+        lyrics=inp.get("lyrics"),
+        duration_seconds=inp.get("duration_seconds"),
+        language=inp.get("language") or "en",
+        negative_prompt=inp.get("negative_prompt"),
+        seed_image_path=inp.get("seed_image_path"),
+    )
+    return _creative_result_summary(res, "music")
+
+
+def _tool_compose_timeline(inp):
+    """Assemble clips + music into an exported production via FFmpeg."""
+    from services import timeline_engine
+    inp = inp or {}
+    clips = inp.get("clips") or []
+    if not isinstance(clips, list) or not clips:
+        return "compose_timeline error: 'clips' (a list of clip filenames) is required."
+    transition = (inp.get("transition") or "cut").lower()
+    clip_seconds = inp.get("clip_seconds") or 6
+    video_clips = [{"file": c, "in": 0.0, "out": clip_seconds,
+                    "transition_in": {"type": transition, "dur": 0.5}}
+                   for c in clips]
+    tracks = [{"kind": "video", "clips": video_clips}]
+    if inp.get("music"):
+        tracks.append({"kind": "audio", "clips": [
+            {"file": inp["music"], "role": "music", "gain_db": -4.0, "fade_out": 1.5}]})
+    if inp.get("title"):
+        tracks.append({"kind": "overlay", "clips": [
+            {"text": inp["title"], "t": 0.5, "dur": 3.0, "style": "title-card"}]})
+    timeline = {"fps": 30, "resolution": [1920, 1080], "tracks": tracks,
+                "exports": inp.get("exports") or ["mp4-1080p"]}
+    res = timeline_engine.compose(timeline)
+    return _creative_result_summary(res, "production")
+
+
 def _creative_result_summary(res, kind):
     """Turn a creative_engine result envelope into a concise string for the model."""
     res = res or {}
     status = res.get("status")
-    if status == "ok":
+    if status in ("ok", "demo"):
         files = res.get("files") or []
         names = ", ".join(f.get("filename", "") for f in files)
         urls = ", ".join(f.get("url", "") for f in files)
         extra = ""
-        if kind == "video" and res.get("mode"):
+        if kind in ("video", "music") and res.get("mode"):
             extra = f" ({res['mode']})"
+        if status == "demo":
+            msg = (res.get("message") or
+                   f"Cloud {kind} is unavailable — wrote a demo preview.") + \
+                  f" Saved to the gallery: {names}."
+        else:
+            msg = (f"Generated {len(files)} {kind}{'s' if len(files) != 1 else ''}{extra} "
+                   f"with {res.get('model')}. Saved to the creations folder: {names}. "
+                   f"It's now in the Studio gallery. Tell the user it's ready.")
         return json.dumps({
-            "status": "ok",
-            "message": (f"Generated {len(files)} {kind}{'s' if len(files) != 1 else ''}{extra} "
-                        f"with {res.get('model')}. Saved to the creations folder: {names}. "
-                        f"It's now in the Studio gallery. Tell the user it's ready."),
+            "status": status,
+            "message": msg,
             "files": files,
             "model": res.get("model"),
             "urls": urls,
@@ -2016,6 +2119,8 @@ CLAUDE_TOOL_HANDLERS = {
     "personality_check_sycophancy": _tool_personality_check_sycophancy,
     "generate_image": _tool_generate_image,
     "generate_video": _tool_generate_video,
+    "generate_music": _tool_generate_music,
+    "compose_timeline": _tool_compose_timeline,
 }
 
 
@@ -2319,6 +2424,8 @@ TOOL_RINGS: dict[str, int] = {
     "run_command":          2,
     "generate_image":       2,   # calls the Gemini image API (network)
     "generate_video":       2,   # calls the Google Veo API (network)
+    "generate_music":       2,   # calls the Lyria 3 API (network)
+    "compose_timeline":     1,   # local FFmpeg assembly — no network
     # Ring 3 — FULL OS CONTROL (requires CC permission)
     "install_package":      3,
     "move_mouse":           3,
