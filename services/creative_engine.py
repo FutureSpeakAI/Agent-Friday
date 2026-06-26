@@ -175,11 +175,56 @@ _SAFETY_RULES: List[tuple] = [
 ]
 
 
-def check_content_safety(prompt: str) -> tuple:
+# Age-appropriate filter rules (minor mode ONLY). These are NOT part of the
+# adult harm floor — they are an extra layer applied only when settings.minor_mode
+# is on, so a child's Friday won't *generate* adult material. This filters what
+# the minor sees, not what exists on the platform (§7, family-mode design).
+_MINOR_FILTER_RULES: List[tuple] = [
+    ("adult / sexual content", re.compile(
+        r"\b(nude|naked|nudity|sexual|sexually|porn|pornographic|erotic|nsfw|"
+        r"lingerie|fetish|bdsm|strip(per|tease)?)\b", re.I)),
+    ("graphic violence / gore", re.compile(
+        r"\b(gore|gory|graphic violence|dismember\w*|decapitat\w*|mutilat\w*|"
+        r"blood(y|bath)|brutal killing)\b", re.I)),
+    ("hard drugs", re.compile(
+        r"\b(cocaine|heroin|meth(amphetamine)?|fentanyl|crack pipe|injecting drugs)\b", re.I)),
+    ("self-harm", re.compile(
+        r"\b(self-?harm|suicide|cutting (myself|herself|himself))\b", re.I)),
+]
+
+
+def _minor_mode_active(minor_mode: Optional[bool]) -> bool:
+    """Resolve whether the age-appropriate filter applies. Explicit arg wins;
+    otherwise read settings.minor_mode (best-effort, defaults off)."""
+    if minor_mode is not None:
+        return bool(minor_mode)
+    try:
+        from core import _load_settings
+        return bool((_load_settings() or {}).get("minor_mode", False))
+    except Exception:
+        return False
+
+
+def check_minor_appropriate(prompt: str) -> tuple:
+    """Age-appropriate filter for minor-mode Friday. Returns (allowed, reason)."""
+    text = (prompt or "")
+    for category, rx in _MINOR_FILTER_RULES:
+        if rx.search(text):
+            return False, (
+                f"Friday is in family / minor mode, so it won't create "
+                f"{category}. A parent can adjust this in Settings. Try a "
+                f"different idea.")
+    return True, None
+
+
+def check_content_safety(prompt: str, *, minor_mode: Optional[bool] = None) -> tuple:
     """Asimov's cLaws gate. Returns (allowed: bool, reason: str|None).
 
     A block is a refusal, not an error — callers should surface `reason` to the
     user plainly. Pure / side-effect-free so it unit-tests without a model.
+
+    The adult harm floor (H1–H4) always applies. When ``minor_mode`` is on (arg
+    or settings), an additional age-appropriate filter runs on top of it.
     """
     text = (prompt or "").strip()
     if not text:
@@ -193,6 +238,10 @@ def check_content_safety(prompt: str) -> tuple:
                 f"appears to request {category}. I can't generate that. Try a "
                 f"different prompt."
             )
+    if _minor_mode_active(minor_mode):
+        ok, reason = check_minor_appropriate(text)
+        if not ok:
+            return False, reason
     return True, None
 
 
@@ -342,6 +391,72 @@ def _unavailable(kind: str) -> Dict[str, Any]:
     }
 
 
+def _write_creative_provenance(file_rec: Dict[str, str], kind: str, prompt: str,
+                               model: str, api_model: str,
+                               demo: bool = False, license=None) -> None:
+    """Sign a C2PA ContentCredential for a generated artifact (Layer 2).
+    Best-effort — a provenance failure never breaks a generation. ``license`` is
+    the creator's per-piece choice (terms + optional price); None → the
+    conservative all-rights-reserved default."""
+    try:
+        from services import provenance
+        tool = {"tool": f"creative_engine.generate_{kind}", "model": model,
+                "api_model": api_model,
+                "prompt_hash": provenance.hash_text(prompt)}
+        if demo:
+            tool["demo"] = True
+        provenance.write(file_rec["path"], tool_chain=[tool], media_type=kind,
+                         license=license)
+    except Exception:
+        pass
+
+
+def _demo_creation(kind: str, prompt: str, model: str, api_model: str,
+                   project_id: Optional[str] = None, license=None) -> Dict[str, Any]:
+    """Graceful degradation when cloud generation is unavailable: write a real
+    artifact describing what WOULD be generated (instead of breaking), sign its
+    provenance, and surface it in the gallery. Used by the autonomous daily
+    creation and the full-production pipeline, never by the bare no-key API call
+    (which keeps returning 'unavailable')."""
+    orb = _orb_start(f"{kind.title()} (demo mode)…", icon="🎨",
+                     name=f"{kind.title()} — demo")
+    try:
+        lines = [
+            f"# 🎨 Friday — {kind.title()} (demo preview)",
+            "",
+            f"> Cloud {kind} generation is unavailable (no Gemini key). This "
+            f"describes what Friday *would* render with **{model}** "
+            f"({api_model}). Add a Gemini key to produce the real {kind}.",
+            "",
+            f"**Prompt:** {prompt}",
+        ]
+        fname = f"friday-{kind}-demo-{_timestamp()}-{uuid.uuid4().hex[:4]}.md"
+        _save_bytes("\n".join(lines).encode("utf-8"), fname)
+        rec = _file_record(fname, kind)
+        _write_metadata(fname, {"kind": kind, "demo": True, "prompt": prompt,
+                                "model": model, "api_model": api_model,
+                                "created": datetime.now().isoformat()})
+        _write_creative_provenance(rec, kind, prompt, model, api_model, demo=True,
+                                   license=license)
+        if project_id:
+            try:
+                from services import creative_memory
+                creative_memory.add_asset(project_id, fname)
+            except Exception:
+                pass
+        _orb_update(orb, status="completed", progress=1.0, label="Demo ready")
+        _defer(3.0, _safe_remove, orb)
+        _notify(fname)
+        return {"status": "demo", "kind": kind, "files": [rec], "model": model,
+                "api_model": api_model, "prompt": prompt,
+                "message": (f"Cloud {kind} is unavailable — wrote a demo preview "
+                            f"describing it instead.")}
+    except Exception as e:
+        _orb_fail(orb)
+        return {"status": "unavailable",
+                "message": f"{kind} unavailable; demo mode failed: {e}"}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  IMAGE GENERATION  (Nano Banana Pro / Nano Banana 2)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -421,7 +536,8 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                    aspect_ratio: str = "1:1", style: Optional[str] = None,
                    n: int = 1, session_ctx: Optional[dict] = None,
                    scene_dna: Optional[dict] = None,
-                   project_id: Optional[str] = None) -> Dict[str, Any]:
+                   project_id: Optional[str] = None,
+                   allow_demo: bool = False, license=None) -> Dict[str, Any]:
     """Generate one or more images from a text prompt via a Gemini image model.
 
     scene_dna: an optional layered Scene DNA (services/scene_dna) — its setting/
@@ -438,6 +554,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     if not allowed:
         return {"status": "blocked", "reason": reason}
     if not is_available():
+        if allow_demo:
+            return _demo_creation("image", prompt, model or DEFAULT_IMAGE_MODEL,
+                                  resolve_image_model(model), project_id, license)
         return _unavailable("Image")
 
     try:
@@ -481,6 +600,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                 "aspect_ratio": aspect_ratio, "style": style or "none",
                 "created": created,
             })
+            _write_creative_provenance(f, "image", prompt,
+                                       model or DEFAULT_IMAGE_MODEL, api_model,
+                                       license=license)
         # Attach to the creative project's asset gallery when one is targeted.
         if project_id:
             try:
@@ -553,7 +675,8 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                    image_mime: Optional[str] = None,
                    session_ctx: Optional[dict] = None,
                    scene_dna: Optional[dict] = None,
-                   project_id: Optional[str] = None) -> Dict[str, Any]:
+                   project_id: Optional[str] = None,
+                   allow_demo: bool = False, license=None) -> Dict[str, Any]:
     """Generate a video from a text prompt (and optionally a seed image) via Veo.
 
     Pass image_path or image_bytes for image-to-video. scene_dna/project_id are
@@ -566,6 +689,9 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     if not allowed:
         return {"status": "blocked", "reason": reason}
     if not is_available():
+        if allow_demo:
+            return _demo_creation("video", prompt, model or DEFAULT_VIDEO_MODEL,
+                                  resolve_video_model(model), project_id, license)
         return _unavailable("Video")
 
     if aspect_ratio not in VIDEO_ASPECT_RATIOS:
@@ -639,6 +765,9 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                 "seed_image": Path(image_path).name if image_path else None,
                 "created": created,
             })
+            _write_creative_provenance(f, "video", prompt,
+                                       model or DEFAULT_VIDEO_MODEL, api_model,
+                                       license=license)
         if project_id:
             try:
                 from services import creative_memory
@@ -777,6 +906,10 @@ def generate(kind: str, prompt: str, **opts) -> Dict[str, Any]:
             style=opts.get("style"),
             n=opts.get("n", 1),
             session_ctx=opts.get("session_ctx"),
+            scene_dna=opts.get("scene_dna"),
+            project_id=opts.get("project_id"),
+            allow_demo=opts.get("allow_demo", False),
+            license=opts.get("license"),
         )
     if k in ("video", "vid", "clip", "movie"):
         return generate_video(
@@ -788,5 +921,12 @@ def generate(kind: str, prompt: str, **opts) -> Dict[str, Any]:
             image_bytes=opts.get("image_bytes"),
             image_mime=opts.get("image_mime"),
             session_ctx=opts.get("session_ctx"),
+            scene_dna=opts.get("scene_dna"),
+            project_id=opts.get("project_id"),
+            allow_demo=opts.get("allow_demo", False),
+            license=opts.get("license"),
         )
+    if k in ("music", "song", "audio", "track"):
+        from services import music_engine
+        return music_engine.generate(prompt, **opts)
     return {"status": "error", "message": f"Unknown creative kind: {kind!r}"}

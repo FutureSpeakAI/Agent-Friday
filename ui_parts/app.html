@@ -1256,6 +1256,70 @@ function FamilyWS(){
     </div>
   </div>);
 }
+// ── Shared: per-creation license selector (Layer 2 §10) ────────────────────
+// The creator sets terms PER PIECE at creation — there is no account default.
+// Commons (CC*) vs commerce (priced → a price in milli-Positrons, mψ). The
+// chosen license is signed into the artifact's Content Credential.
+const LICENSE_TERMS=[
+  {id:'all-rights-reserved',label:'All rights reserved',hint:'you keep every right'},
+  {id:'CC-BY-4.0',label:'CC BY 4.0',hint:'free · credit required'},
+  {id:'CC-BY-SA-4.0',label:'CC BY-SA 4.0',hint:'free · credit + share-alike'},
+  {id:'CC0',label:'CC0 / public domain',hint:'free · no rights reserved'},
+  {id:'priced',label:'Priced (sell it)',hint:'commerce · set a price'},
+];
+const LIC_LBL={'all-rights-reserved':'All rights reserved','CC-BY-4.0':'CC BY 4.0','CC-BY-SA-4.0':'CC BY-SA 4.0','CC0':'CC0','priced':'Priced','custom':'Custom'};
+function LicensePicker({value,onChange,label='License'}){
+  const v=value||{terms:'all-rights-reserved'};
+  const set=patch=>onChange&&onChange(Object.assign({},v,patch));
+  const cur=LICENSE_TERMS.find(t=>t.id===v.terms)||LICENSE_TERMS[0];
+  const price=(v.market&&v.market.price)||'';
+  return(<div style={{marginBottom:10}}>
+    <div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{label} <span style={{textTransform:'none',color:'#5a7a86'}}>· {cur.hint}</span></div>
+    <div style={{display:'flex',gap:8}}>
+      <select className="input" style={{flex:1}} value={v.terms} onChange={e=>set({terms:e.target.value})}>
+        {LICENSE_TERMS.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+      </select>
+      {v.terms==='priced'&&<div style={{display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>
+        <input className="input" type="number" min="0" style={{width:96}} value={price} onChange={e=>set({market:{price:Number(e.target.value)||0}})} placeholder="price"/>
+        <span style={{fontSize:11,color:'#7fb6c9'}} title="milli-Positrons">mψ</span>
+      </div>}
+    </div>
+  </div>);
+}
+// Small chip that shows a creation's current license (commons=teal, priced=gold).
+function LicenseChip({terms,price}){
+  if(!terms)return null;
+  const free=['CC-BY-4.0','CC-BY-SA-4.0','CC0'].includes(terms);
+  const priced=terms==='priced';
+  const col=priced?'#f59e0b':free?'#22c55e':'#7fb6c9';
+  return(<span style={{fontSize:9,fontFamily:'JetBrains Mono',color:col,border:'1px solid '+col+'55',background:col+'14',borderRadius:4,padding:'1px 5px',whiteSpace:'nowrap'}}>{LIC_LBL[terms]||terms}{priced&&price?` · ${price}mψ`:''}</span>);
+}
+// Provenance + license bar for the creation viewer. Shows the signed Content
+// Credential (verification + creator) and lets the owner change the per-piece
+// license (POST → re-signed). Self-contained: fetches its own provenance.
+function ProvenanceBar({filename}){
+  const[data,setData]=useState(null);const[edit,setEdit]=useState(false);
+  const[lic,setLic]=useState(null);const[saving,setSaving]=useState(false);
+  const load=()=>fetch('/api/provenance/by-file/'+encodeURIComponent(filename)).then(r=>r.json()).then(d=>{setData(d);const L=d&&d.manifest&&d.manifest.license;if(L)setLic({terms:L.terms,market:L.market});}).catch(()=>setData(null));
+  useEffect(()=>{setData(null);setEdit(false);load();},[filename]);
+  if(!data)return null;
+  if(data.status!=='ok'||!data.manifest)return <div style={{fontSize:10,color:'#5a7a86',fontFamily:'JetBrains Mono',marginBottom:8}}>No signed provenance for this file yet.</div>;
+  const m=data.manifest;const v=data.verification||{};const L=m.license||{};
+  const verified=v.valid;const sig=v.checks&&v.checks.signature_ok;
+  const save=async()=>{setSaving(true);try{await fetch('/api/provenance/by-file/'+encodeURIComponent(filename)+'/license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({license:lic})});await load();setEdit(false);}catch(e){}setSaving(false);};
+  return(<div style={{marginBottom:10,padding:'8px 10px',borderRadius:8,background:'rgba(127,182,201,0.05)',border:'1px solid rgba(127,182,201,0.14)'}}>
+    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+      <span title="Ed25519-signed Content Credential" style={{fontSize:10,fontFamily:'JetBrains Mono',color:verified?'#22c55e':sig===false?'#ff0080':'#7fb6c9'}}>{verified?'🔏 Signed & verified':sig===false?'⚠ signature mismatch':'🔏 Signed'}</span>
+      <LicenseChip terms={L.terms} price={L.market&&L.market.price}/>
+      {(m.media_type)&&<span style={{fontSize:9,color:'#5a7a86'}}>{m.media_type}</span>}
+      <button className="btn btn-magenta" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setEdit(!edit)}>{edit?'Close':'Change license'}</button>
+    </div>
+    {edit&&lic&&<div style={{marginTop:8}}>
+      <LicensePicker value={lic} onChange={setLic} label="Set license for this piece"/>
+      <button className="btn" style={{fontSize:11,fontWeight:700,width:'100%'}} disabled={saving} onClick={save}>{saving?'Saving…':'Save license'}</button>
+    </div>}
+  </div>);
+}
 // ── Studio › Generate panel ────────────────────────────────────────────────
 // Real image (Nano Banana Pro / Nano Banana 2) + video (Veo) generation. Model
 // list is backend-driven via useModelCatalog() (role 'creative'), filtered by
@@ -1270,7 +1334,7 @@ function GeneratePanel({onCreated}){
   const[imgModel,setImgModel]=useState('');const[vidModel,setVidModel]=useState('');
   const[style,setStyle]=useState('none');const[aspect,setAspect]=useState('1:1');const[vAspect,setVAspect]=useState('16:9');
   const[count,setCount]=useState(1);const[duration,setDuration]=useState('');const[seed,setSeed]=useState('');
-  const[seedFiles,setSeedFiles]=useState([]);
+  const[seedFiles,setSeedFiles]=useState([]);const[lic,setLic]=useState({terms:'all-rights-reserved'});
   const creative=mc.creative||[];
   const imageModels=creative.filter(m=>(m.modalities||[]).includes('image'));
   const videoModels=creative.filter(m=>(m.modalities||[]).includes('video'));
@@ -1282,6 +1346,7 @@ function GeneratePanel({onCreated}){
     const body=modality==='image'
       ?{kind:'image',prompt:prompt.trim(),model:imgModel||undefined,style:style==='none'?undefined:style,aspect_ratio:aspect,n:Number(count)||1}
       :{kind:'video',prompt:prompt.trim(),model:vidModel||undefined,aspect_ratio:vAspect,duration_seconds:duration?Number(duration):undefined,image_path:seed||undefined};
+    body.license=lic;
     try{
       const r=await fetch('/api/creations/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
@@ -1311,6 +1376,7 @@ function GeneratePanel({onCreated}){
         <div><Lbl>Seed image (image→video)</Lbl><select className="input" style={{width:'100%'}} value={seed} onChange={e=>setSeed(e.target.value)}><option value="">none (text→video)</option>{seedFiles.map(f=><option key={f.name} value={f.name}>{f.name}</option>)}</select></div>
       </div>
     )}
+    <LicensePicker value={lic} onChange={setLic}/>
     <div style={{display:'flex',gap:8,alignItems:'center'}}>
       <button className="btn" disabled={busy||!prompt.trim()} onClick={go} style={{fontSize:12,fontWeight:700,flex:1}}>{busy?(modality==='video'?'Rendering… (1-3 min)':'Generating…'):('✨ Generate '+(modality==='image'?'Image':'Video'))}</button>
     </div>
@@ -1323,6 +1389,206 @@ function GeneratePanel({onCreated}){
           ?<video key={i} controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>
           :<img key={i} src={f.url} alt={f.filename} style={{width:'100%',borderRadius:8}}/>)}
       </div>
+    </div>}
+  </div>);
+}
+// ── Studio › Music panel (Lyria 3) ─────────────────────────────────────────
+// Text-to-music + custom lyrics. Posts to /api/create/music. When cloud music
+// is unavailable the backend returns a {status:'demo'} preview describing the
+// track (a .md), so the panel never dead-ends.
+const MUSIC_GENRES=['lo-fi hip-hop','cinematic orchestral','synthwave','ambient','jazz','lush pop','trap','folk acoustic','epic trailer','house','drum & bass','classical piano'];
+function MusicPanel({onCreated}){
+  const[prompt,setPrompt]=useState('');const[model,setModel]=useState('lyria-clip');
+  const[mode,setMode]=useState('instrumental');const[lyrics,setLyrics]=useState('');
+  const[duration,setDuration]=useState('');const[neg,setNeg]=useState('');const[genre,setGenre]=useState('');
+  const[lic,setLic]=useState({terms:'all-rights-reserved'});
+  const[busy,setBusy]=useState(false);const[result,setResult]=useState(null);const[err,setErr]=useState('');
+  const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
+  const go=async()=>{
+    if(!prompt.trim()||busy)return;setBusy(true);setErr('');setResult(null);
+    const fullPrompt=(genre?genre+' — ':'')+prompt.trim();
+    const body={prompt:fullPrompt,model,mode,lyrics:mode==='song'&&lyrics.trim()?lyrics.trim():undefined,duration_seconds:duration?Number(duration):undefined,negative_prompt:neg.trim()||undefined,license:lic};
+    try{const r=await fetch('/api/create/music',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();
+      if(d.status==='ok'||d.status==='demo'){setResult(d);onCreated&&onCreated();}
+      else setErr(d.reason||d.message||'Music generation failed.');
+    }catch(e){setErr('Request failed: '+e);}setBusy(false);
+  };
+  const f=result&&result.files&&result.files[0];const fx=f?(f.filename||f.url||'').split('.').pop().toLowerCase():'';
+  return(<div className="card" style={{marginBottom:12,padding:14}}>
+    <div style={{display:'flex',gap:6,marginBottom:12,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎵 Compose music — Lyria 3</span><span style={{fontSize:9,color:'#5a7a86',fontFamily:'JetBrains Mono'}}>44.1kHz stereo</span></div>
+    <Lbl>Prompt</Lbl>
+    <textarea className="input" style={{width:'100%',minHeight:56,resize:'vertical',marginBottom:8}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Warm lo-fi hip-hop with mellow Rhodes, vinyl crackle, ~80 BPM…"/>
+    <Lbl>Style / genre</Lbl>
+    <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:10}}>
+      {MUSIC_GENRES.map(g=><button key={g} className={'btn '+(genre===g?'':'btn-magenta')} style={{fontSize:10,padding:'2px 7px'}} onClick={()=>setGenre(genre===g?'':g)}>{g}</button>)}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+      <div><Lbl>Model</Lbl><select className="input" style={{width:'100%'}} value={model} onChange={e=>setModel(e.target.value)}><option value="lyria-clip">Lyria 3 Clip (≤30s)</option><option value="lyria-pro">Lyria 3 Pro (full song)</option></select></div>
+      <div><Lbl>Duration (sec)</Lbl><select className="input" style={{width:'100%'}} value={duration} onChange={e=>setDuration(e.target.value)}><option value="">auto</option>{[15,30,60,120,180].map(n=><option key={n} value={n}>{n}s</option>)}</select></div>
+      <div><Lbl>Avoid</Lbl><input className="input" style={{width:'100%'}} value={neg} onChange={e=>setNeg(e.target.value)} placeholder="no drums"/></div>
+      <div style={{display:'flex',alignItems:'flex-end'}}>
+        <button className={'btn '+(mode==='instrumental'?'':'btn-magenta')} style={{fontSize:11,width:'100%'}} onClick={()=>setMode(mode==='instrumental'?'song':'instrumental')} title="Toggle vocals">{mode==='instrumental'?'🎹 Instrumental':'🎤 Song (vocals)'}</button>
+      </div>
+    </div>
+    {mode==='song'&&<div style={{marginBottom:10}}><Lbl>Lyrics (use [verse]/[chorus] tags)</Lbl><textarea className="input" style={{width:'100%',minHeight:64,resize:'vertical'}} value={lyrics} onChange={e=>setLyrics(e.target.value)} placeholder={'[verse]\nNeon rivers in the rain…\n[chorus]\n…'}/></div>}
+    <LicensePicker value={lic} onChange={setLic}/>
+    <button className="btn" disabled={busy||!prompt.trim()} onClick={go} style={{fontSize:12,fontWeight:700,width:'100%'}}>{busy?'Composing…':'✨ Generate Music'}</button>
+    {busy&&<div style={{height:3,borderRadius:3,marginTop:8,overflow:'hidden',background:'rgba(127,182,201,0.12)'}}><div className="liq-indet" style={{height:'100%',width:'40%',background:'linear-gradient(90deg,transparent,#00d4ff,transparent)'}}/></div>}
+    {err&&<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11}}>{err}</div>}
+    {result&&f&&<div style={{marginTop:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><Lbl>{result.status==='demo'?'Demo preview — saved':'Result — saved to creations'}</Lbl><LicenseChip terms={lic.terms} price={lic.market&&lic.market.price}/></div>
+      {(fx==='mp3'||fx==='wav')?<AlbumArtPlayer name={f.filename} url={f.url}/>:<div style={{fontSize:11,color:'#aaa'}}>{result.message||f.filename} — <a href={'/creation/'+f.filename} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>open</a></div>}
+    </div>}
+  </div>);
+}
+// Album-art-style audio player — gradient art keyed off the filename + controls.
+function AlbumArtPlayer({name,url,big}){
+  const hue=Math.abs((name||'x').split('').reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7))%360;
+  const g=`linear-gradient(135deg,hsl(${hue},70%,22%),hsl(${(hue+50)%360},65%,14%))`;
+  const sz=big?160:96;
+  return(<div style={{display:'flex',gap:12,alignItems:'center',padding:10,borderRadius:10,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(127,182,201,0.12)'}}>
+    <div style={{width:sz,height:sz,flexShrink:0,borderRadius:10,background:g,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 18px rgba(0,0,0,0.4),inset 0 0 30px rgba(255,255,255,0.05)'}}>
+      <div style={{fontSize:big?44:30,filter:'drop-shadow(0 2px 6px rgba(0,0,0,0.5))'}}>🎵</div>
+    </div>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontSize:12,color:'#e8f4f8',fontWeight:600,wordBreak:'break-all',marginBottom:6}}>{name}</div>
+      <audio controls src={url} style={{width:'100%'}}/>
+    </div>
+  </div>);
+}
+// ── Studio › Timeline composition panel (FFmpeg) ───────────────────────────
+// Assemble video clips + a music track into an exported production. Posts to
+// /api/create/timeline. Export presets + ffmpeg availability come from
+// /api/timeline/formats. Source clips' hashes are signed into provenance.
+function TimelinePanel({onCreated}){
+  const[files,setFiles]=useState([]);const[clips,setClips]=useState([]);const[music,setMusic]=useState('');
+  const[transition,setTransition]=useState('crossfade');const[title,setTitle]=useState('');const[clipSec,setClipSec]=useState(6);
+  const[formats,setFormats]=useState([]);const[exp,setExp]=useState(['mp4-1080p']);const[ffmpeg,setFfmpeg]=useState(true);
+  const[lic,setLic]=useState({terms:'all-rights-reserved'});const[drag,setDrag]=useState(null);
+  const[busy,setBusy]=useState(false);const[result,setResult]=useState(null);const[err,setErr]=useState('');
+  const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
+  const reload=()=>fetch('/api/creations').then(r=>r.json()).then(d=>setFiles(d.files||[])).catch(()=>{});
+  useEffect(()=>{reload();fetch('/api/timeline/formats').then(r=>r.json()).then(d=>{setFormats(d.formats||[]);setFfmpeg(d.ffmpeg_available!==false)}).catch(()=>{});},[]);
+  const ext=n=>(n||'').split('.').pop().toLowerCase();
+  const videoFiles=files.filter(f=>['mp4','webm','mov'].includes(ext(f.name)));
+  const audioFiles=files.filter(f=>['mp3','wav','ogg','m4a'].includes(ext(f.name)));
+  const available=videoFiles.filter(f=>!clips.includes(f.name));
+  const addClip=n=>setClips(c=>[...c,n]);
+  const removeClip=n=>setClips(c=>c.filter(x=>x!==n));
+  const reorder=(from,to)=>setClips(c=>{const a=[...c];const[m]=a.splice(from,1);a.splice(to,0,m);return a;});
+  const toggleExp=k=>setExp(e=>e.includes(k)?e.filter(x=>x!==k):[...e,k]);
+  const go=async()=>{
+    if(!clips.length||busy)return;setBusy(true);setErr('');setResult(null);
+    const body={clips,music:music||undefined,transition,title:title.trim()||undefined,clip_seconds:Number(clipSec)||6,exports:exp.length?exp:['mp4-1080p'],license:lic};
+    try{const r=await fetch('/api/create/timeline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();
+      if(d.status==='ok'||d.status==='demo'){setResult(d);onCreated&&onCreated();reload();}
+      else setErr(d.reason||d.message||'Composition failed.');
+    }catch(e){setErr('Request failed: '+e);}setBusy(false);
+  };
+  const f=result&&result.files&&result.files[0];const fx=f?ext(f.filename||f.url):'';
+  const trackBox={display:'flex',gap:6,alignItems:'center',padding:8,minHeight:54,borderRadius:8,background:'rgba(0,0,0,0.25)',border:'1px solid rgba(127,182,201,0.12)',overflowX:'auto'};
+  return(<div className="card" style={{marginBottom:12,padding:14}}>
+    <div style={{display:'flex',gap:6,marginBottom:12,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎞️ Compose timeline</span>{!ffmpeg&&<span style={{fontSize:10,color:'#f59e0b'}}>ffmpeg missing — will export a signed timeline + description</span>}</div>
+    {/* ── Visual timeline: video lane (drag to reorder) + audio lane ── */}
+    <Lbl>Video track — drag clips to reorder</Lbl>
+    <div style={Object.assign({},trackBox,{marginBottom:8})} onDragOver={e=>e.preventDefault()}>
+      {clips.length===0?<span style={{fontSize:11,color:'#7a8a90'}}>Add clips below ↓</span>:
+       clips.map((n,i)=>{const fr=videoFiles.find(x=>x.name===n);const u='/api/creations/'+n;return(
+        <div key={n} draggable onDragStart={()=>setDrag(i)} onDragOver={e=>e.preventDefault()} onDrop={()=>{if(drag!=null&&drag!==i)reorder(drag,i);setDrag(null);}}
+          style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0a0f',position:'relative'}}>
+          <video src={u} muted style={{width:88,height:50,objectFit:'cover',display:'block',pointerEvents:'none'}}/>
+          <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
+          <div onClick={()=>removeClip(n)} title="remove" style={{position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</div>
+          {i<clips.length-1&&<div style={{position:'absolute',right:-1,top:'50%',transform:'translateY(-50%)',fontSize:9,color:'#7fb6c9'}}>›</div>}
+        </div>);})}
+    </div>
+    <Lbl>Audio track</Lbl>
+    <div style={Object.assign({},trackBox,{marginBottom:8,minHeight:40})}>
+      {music?<div style={{display:'flex',alignItems:'center',gap:8,width:'100%'}}><span style={{fontSize:16}}>🎵</span><span style={{fontSize:11,color:'#cfe8f0',wordBreak:'break-all',flex:1}}>{music}</span><div onClick={()=>setMusic('')} style={{fontSize:12,color:'#ff7ab8',cursor:'pointer'}}>×</div></div>
+        :<span style={{fontSize:11,color:'#7a8a90'}}>No music — pick one below (optional)</span>}
+    </div>
+    {/* ── Add clips palette ── */}
+    {available.length>0&&<div style={{marginBottom:10}}><Lbl>Add a clip</Lbl>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {available.slice(0,12).map(fr=><button key={fr.name} className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}} onClick={()=>addClip(fr.name)}>+ {fr.name.replace(/^friday-/,'').slice(0,18)}</button>)}
+      </div></div>}
+    {videoFiles.length===0&&<div style={{fontSize:11,color:'#888',marginBottom:10}}>No video clips yet — generate some in ✨ Generate.</div>}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:10}}>
+      <div><Lbl>Music</Lbl><select className="input" style={{width:'100%'}} value={music} onChange={e=>setMusic(e.target.value)}><option value="">none</option>{audioFiles.map(f=><option key={f.name} value={f.name}>{f.name.replace(/^friday-/,'').slice(0,16)}</option>)}</select></div>
+      <div><Lbl>Transition</Lbl><select className="input" style={{width:'100%'}} value={transition} onChange={e=>setTransition(e.target.value)}>{['cut','crossfade','fadeblack'].map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+      <div><Lbl>Clip secs</Lbl><select className="input" style={{width:'100%'}} value={clipSec} onChange={e=>setClipSec(e.target.value)}>{[3,4,5,6,8,10].map(n=><option key={n} value={n}>{n}s</option>)}</select></div>
+    </div>
+    <Lbl>Title card (optional)</Lbl>
+    <input className="input" style={{width:'100%',marginBottom:10}} value={title} onChange={e=>setTitle(e.target.value)} placeholder="THE WANDERER"/>
+    <Lbl>Export formats</Lbl>
+    <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:10}}>
+      {(formats.length?formats:['mp4-1080p','mp4-vertical-9x16','gif-preview']).map(k=><button key={k} className={'btn '+(exp.includes(k)?'':'btn-magenta')} style={{fontSize:10,padding:'2px 6px'}} onClick={()=>toggleExp(k)}>{k}</button>)}
+    </div>
+    <LicensePicker value={lic} onChange={setLic}/>
+    <button className="btn" disabled={busy||!clips.length} onClick={go} style={{fontSize:12,fontWeight:700,width:'100%'}}>{busy?'Exporting…':'✨ Export Production'}</button>
+    {busy&&<div style={{height:3,borderRadius:3,marginTop:8,overflow:'hidden',background:'rgba(127,182,201,0.12)'}}><div className="liq-indet" style={{height:'100%',width:'40%',background:'linear-gradient(90deg,transparent,#00d4ff,transparent)'}}/></div>}
+    {busy&&<div style={{fontSize:10,color:'#7fb6c9',marginTop:6,textAlign:'center'}}>ffmpeg is rendering {exp.length} export{exp.length!==1?'s':''} — watch the orb in the scene for progress.</div>}
+    {err&&<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11}}>{err}</div>}
+    {result&&f&&<div style={{marginTop:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}><Lbl>{result.status==='demo'?'Demo (no ffmpeg) — signed timeline saved':'Result — '+(result.files.length)+' export'+(result.files.length!==1?'s':'')}</Lbl><LicenseChip terms={lic.terms} price={lic.market&&lic.market.price}/></div>
+      {['mp4','webm','mov'].includes(fx)?<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:<div style={{fontSize:11,color:'#aaa'}}>{result.message||f.filename} — <a href={'/creation/'+f.filename} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>open</a></div>}
+      {result.files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{result.files.map((x,i)=><a key={i} href={'/creation/'+x.filename} target="_blank" rel="noopener" className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px'}}>{x.profile||x.filename}</a>)}</div>}
+    </div>}
+  </div>);
+}
+// ── Studio › Full production pipeline tracker ──────────────────────────────
+// Starts the built-in 'full-production' pipeline (script→sceneDNA→keyframe→clip
+// →music→cut) and shows a VISUAL stage tracker polling the run — milestones, the
+// active stage, and Approve-&-Continue at cost-gate checkpoints.
+const PIPE_STATE_COL={completed:'#22c55e',running:'#00d4ff',awaiting_checkpoint:'#f59e0b',failed:'#ff0080',pending:'#5a7a86'};
+function ProductionPanel({onCreated}){
+  const[logline,setLogline]=useState('');const[runId,setRunId]=useState('');const[run,setRun]=useState(null);
+  const[busy,setBusy]=useState(false);const[err,setErr]=useState('');
+  const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
+  const poll=(id)=>fetch('/api/pipelines/runs/'+id).then(r=>r.json()).then(d=>{const rn=d.run||d;setRun(rn);return rn;}).catch(()=>null);
+  useEffect(()=>{if(!runId)return;let stop=false;const tick=async()=>{if(stop)return;const rn=await poll(runId);if(rn&&['completed','failed'].includes(rn.state)){onCreated&&onCreated();return;}setTimeout(tick,2000);};tick();return()=>{stop=true;};},[runId]);
+  const start=async()=>{
+    if(!logline.trim()||busy)return;setBusy(true);setErr('');setRun(null);
+    try{const r=await fetch('/api/pipelines/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pipeline_id:'full-production',input:{logline:logline.trim()},start:true})});
+      const d=await r.json();const id=(d.run&&d.run.run_id)||d.run_id;
+      if(id){setRunId(id);poll(id);}else setErr(d.message||'Could not start production.');
+    }catch(e){setErr('Request failed: '+e);}setBusy(false);
+  };
+  const approve=async()=>{if(!runId)return;await fetch('/api/pipelines/runs/'+runId+'/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_to_end:false})});setTimeout(()=>poll(runId),400);};
+  const stages=(run&&run.stages)||[];const idx=run?run.stage_index:0;const state=run&&run.state;
+  const prodFile=run&&run.context&&(run.context.production_file||run.context.clip_file);
+  return(<div className="card" style={{marginBottom:12,padding:14}}>
+    <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎬 Full production</span><span style={{fontSize:9,color:'#5a7a86',fontFamily:'JetBrains Mono'}}>script → video → music → cut</span></div>
+    <div style={{fontSize:10,color:'#7a8a90',marginBottom:10}}>One logline becomes a scored micro-film. Cost-gate checkpoints pause for your OK before the expensive steps; without a cloud key each stage produces a demo preview.</div>
+    <div style={{display:'flex',gap:6,marginBottom:12}}>
+      <input className="input" style={{flex:1}} value={logline} onChange={e=>setLogline(e.target.value)} placeholder="A lighthouse keeper races a storm to signal a lost ship…" onKeyDown={e=>e.key==='Enter'&&start()}/>
+      <button className="btn" style={{fontSize:12,fontWeight:700,whiteSpace:'nowrap'}} disabled={busy||!logline.trim()} onClick={start}>{busy?'Starting…':'▶ Produce'}</button>
+    </div>
+    {err&&<div style={{padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11,marginBottom:10}}>{err}</div>}
+    {stages.length>0&&<div>
+      {/* horizontal stage stepper */}
+      <div style={{display:'flex',alignItems:'stretch',gap:0,marginBottom:12,flexWrap:'wrap'}}>
+        {stages.map((s,i)=>{const done=i<idx||state==='completed';const active=i===idx&&state!=='completed';const checkpoint=active&&state==='awaiting_checkpoint';
+          const col=state==='failed'&&active?'#ff0080':done?'#22c55e':checkpoint?'#f59e0b':active?'#00d4ff':'#5a7a86';
+          return(<div key={i} style={{flex:'1 1 90px',minWidth:80}}>
+            <div style={{display:'flex',alignItems:'center',gap:4}}>
+              <div style={{width:22,height:22,borderRadius:'50%',flexShrink:0,border:'2px solid '+col,color:col,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,boxShadow:active?'0 0 10px '+col+'88':'none',background:done?col+'22':'transparent'}}>{done?'✓':i+1}</div>
+              {i<stages.length-1&&<div style={{flex:1,height:2,background:done?'#22c55e':'rgba(127,182,201,0.2)'}}/>}
+            </div>
+            <div style={{fontSize:9,color:col,marginTop:4,fontFamily:'JetBrains Mono',lineHeight:1.2}}>{s.name}{checkpoint&&' ⏸'}</div>
+          </div>);})}
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <span style={{fontSize:11,color:'#ccc'}}>Stage {Math.min(idx+(state==='completed'?0:1),stages.length)}/{stages.length}</span>
+        <span style={{fontSize:10,fontFamily:'Orbitron',color:PIPE_STATE_COL[state]||'#888'}}>{state}</span>
+      </div>
+      {state==='awaiting_checkpoint'&&<button className="btn" style={{fontSize:11,fontWeight:700,width:'100%',marginBottom:8}} onClick={approve}>Approve &amp; Continue →</button>}
+      {/* milestone log */}
+      {(run.milestones||[]).length>0&&<div style={{maxHeight:120,overflowY:'auto',background:'rgba(0,0,0,0.25)',borderRadius:6,padding:'6px 8px',marginBottom:8}}>
+        {run.milestones.slice(-8).map((m,i)=><div key={i} style={{fontSize:10,color:'#9fb4bd',fontFamily:'JetBrains Mono',lineHeight:1.5}}>{m}</div>)}
+      </div>}
+      {prodFile&&prodFile.url&&['mp4','webm','mov'].includes((prodFile.filename||'').split('.').pop().toLowerCase())&&
+        <video controls src={prodFile.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f',marginTop:4}}/>}
     </div>}
   </div>);
 }
@@ -1423,10 +1689,10 @@ function ProjectsPanel(){
 function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
-  const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);
-  const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',mp3:'🎵',wav:'🔊',mp4:'🎬'};
+  const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);const[minor,setMinor]=useState(false);
+  const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🔊',ogg:'🔊',m4a:'🔊',mp4:'🎬',webm:'🎬',mov:'🎬'};
   const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
-  useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{})},[]);
+  useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{});fetch('/api/settings').then(r=>r.json()).then(d=>{const s=d.settings||d;setMinor(!!(s&&s.minor_mode))}).catch(()=>{})},[]);
   const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});loadCreations()}catch(e){}setGen(false)};
   const createNow=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Daily creation launched')).catch(()=>{})};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
@@ -1459,23 +1725,35 @@ function StudioWS(){
           <button className="btn" onClick={()=>window.open('/creation/'+selected.name,'_blank')} style={{fontSize:11}}>↗ Open in Tab</button>
         </div>
       </div>
-      {ext==='html'&&<iframe src={url} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 200px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
-      {(ext==='png'||ext==='jpg'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
-      {(ext==='mp3'||ext==='wav')&&<div style={{padding:20,textAlign:'center'}}><div style={{fontSize:40,marginBottom:12}}>{ICONS[ext]||'🔊'}</div><div style={{fontSize:12,color:'#aaa',marginBottom:12}}>{selected.name}</div><audio controls src={url} style={{width:'100%'}}/></div>}
+      <ProvenanceBar filename={selected.name}/>
+      {ext==='html'&&<iframe src={url} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+      {(ext==='png'||ext==='jpg'||ext==='jpeg'||ext==='webp'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
+      {(ext==='mp4'||ext==='webm'||ext==='mov')&&<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
+      {(ext==='mp3'||ext==='wav'||ext==='ogg'||ext==='m4a')&&<AlbumArtPlayer name={selected.name} url={url} big/>}
       {ext==='md'&&(preview?<FridayDoc text={preview} style={{padding:'4px 8px'}}/>:<div style={{color:'#888',fontSize:12,textAlign:'center',padding:20}}>Loading…</div>)}
-      {!['html','png','jpg','svg','mp3','wav','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={'/creation/'+selected.name} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
+      {!['html','png','jpg','jpeg','webp','svg','mp4','webm','mov','mp3','wav','ogg','m4a','md'].includes(ext)&&<div style={{color:'#999',fontSize:12,textAlign:'center',padding:40}}>No preview available. <a href={'/creation/'+selected.name} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>Open file →</a></div>}
     </div>);
   }
   return(<div>
-    <FridaySays text={creations.length+' creations in the gallery. Generate images & video with Gemini, or let the daily creation run at 2 PM.'}/>
-    <div style={{display:'flex',gap:6,marginBottom:10}}>
+    <FridaySays text={creations.length+' creations in the gallery. Generate images, video & music, compose timelines, or run a full production.'}/>
+    {minor&&<div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,padding:'5px 10px',borderRadius:8,background:'rgba(34,197,94,0.08)',border:'1px solid rgba(34,197,94,0.3)'}}>
+      <span style={{fontSize:13}}>👨‍👧</span><span style={{fontSize:11,color:'#7fe0a8',fontWeight:600}}>Family mode</span>
+      <span style={{fontSize:10,color:'#5a8a6a'}}>— age-appropriate filtering is on for everything Friday creates here.</span>
+    </div>}
+    <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>
       <button className={'btn '+(view==='generate'?'':'btn-magenta')} style={{fontSize:11,fontWeight:700}} onClick={()=>setView('generate')}>✨ Generate</button>
+      <button className={'btn '+(view==='music'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('music')}>🎵 Music</button>
+      <button className={'btn '+(view==='timeline'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('timeline')}>🎞️ Timeline</button>
+      <button className={'btn '+(view==='production'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('production')}>🎬 Production</button>
       <button className={'btn '+(view==='gallery'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('gallery')}>🖼️ Gallery</button>
       <button className={'btn '+(view==='projects'?'':'btn-magenta')} style={{fontSize:11}} onClick={()=>setView('projects')}>📁 Projects</button>
     </div>
     {view==='projects'&&<ProjectsPanel/>}
     {view==='generate'&&<GeneratePanel onCreated={loadCreations}/>}
-    {view!=='projects'&&(<React.Fragment>
+    {view==='music'&&<MusicPanel onCreated={loadCreations}/>}
+    {view==='timeline'&&<TimelinePanel onCreated={loadCreations}/>}
+    {view==='production'&&<ProductionPanel onCreated={loadCreations}/>}
+    {view!=='projects'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
     <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
       <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe a quick text/code creation..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
       <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
@@ -1486,16 +1764,27 @@ function StudioWS(){
     </div>
     {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
-      {['all','html','md','png','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
+      {['all','html','md','png','mp4','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
     </div>
     {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
-      {filtered.map((f,i)=>{const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-        return(<div key={i} className="card" style={{cursor:'pointer',padding:8,display:'flex',flexDirection:'column',alignItems:'center'}} onClick={()=>openCreation(f)}>
-          <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
-          <div style={{fontSize:11,color:'#ccc',wordBreak:'break-all',textAlign:'center',lineHeight:1.3}}>{f.name}</div>
-          <div style={{fontSize:11,color:'#999',marginTop:2}}>{date}</div>
-          <button className="btn" style={{fontSize:11,padding:'2px 6px',marginTop:6}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}}>↗ Open in Tab</button>
+      {filtered.map((f,i)=>{
+        const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';
+        const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+        const url='/api/creations/'+f.name;
+        const isImg=['png','jpg','jpeg','webp','svg'].includes(ext),isVid=['mp4','webm','mov'].includes(ext),isAud=['mp3','wav','ogg','m4a'].includes(ext);
+        const hue=Math.abs((f.name||'x').split('').reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7))%360;
+        const thumb=isImg?<img src={url} alt="" loading="lazy" style={{width:'100%',height:74,objectFit:'cover',borderRadius:6,background:'#0a0a0f'}}/>
+          :isVid?<div style={{position:'relative'}}><video src={url} muted preload="metadata" style={{width:'100%',height:74,objectFit:'cover',borderRadius:6,background:'#0a0a0f'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,color:'rgba(255,255,255,0.9)',textShadow:'0 1px 4px #000',pointerEvents:'none'}}>▶</div></div>
+          :isAud?<div style={{width:'100%',height:74,borderRadius:6,background:'linear-gradient(135deg,hsl('+hue+',65%,24%),hsl('+((hue+50)%360)+',60%,15%))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>🎵</div>
+          :<div style={{width:'100%',height:74,borderRadius:6,background:'rgba(255,255,255,0.03)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>{icon}</div>;
+        return(<div key={i} className="card" style={{cursor:'pointer',padding:6,display:'flex',flexDirection:'column',gap:4}} onClick={()=>openCreation(f)}>
+          {thumb}
+          <div style={{fontSize:10,color:'#cbd',wordBreak:'break-all',lineHeight:1.25,maxHeight:26,overflow:'hidden'}}>{f.name}</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:9,color:'#777'}}>{date}</span>
+            <button className="btn" style={{fontSize:9,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}} title="Open in tab">↗</button>
+          </div>
         </div>);
       })}
     </div>}
@@ -4186,6 +4475,19 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
                     style={{padding:'10px 14px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.55)':'rgba(255,255,255,0.07)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s'}}>
                     <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:sel?'#00d4ff':'rgba(255,255,255,0.65)',fontWeight:sel?700:400,letterSpacing:'.03em'}}>{sc.name}</div>
                     <div style={{fontSize:10,color:'rgba(255,255,255,0.28)',marginTop:3}}>{sc.desc}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',margin:'22px 0 10px',letterSpacing:'.05em',fontFamily:'JetBrains Mono'}}>WHO IS THIS FRIDAY FOR?</div>
+            <div style={{display:'flex',gap:8}}>
+              {[{id:false,label:'For me',desc:'Full, unfiltered creative range'},{id:true,label:'For my child',desc:'Family mode — age-appropriate filtering'}].map(opt=>{
+                const sel=(!!data.minor_mode)===opt.id;
+                return(
+                  <div key={String(opt.id)} onClick={()=>onChange({minor_mode:opt.id})}
+                    style={{flex:1,padding:'12px',borderRadius:8,border:'1px solid '+(sel?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),background:sel?'rgba(0,212,255,0.07)':'rgba(255,255,255,0.02)',cursor:'pointer',transition:'all .15s',textAlign:'center'}}>
+                    <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:sel?'#00d4ff':'#aaa',fontWeight:sel?700:400}}>{opt.label}</div>
+                    <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:3}}>{opt.desc}</div>
                   </div>
                 );
               })}

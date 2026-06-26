@@ -148,8 +148,86 @@ _STORYBOARD = {
     ],
 }
 
+# The full production chain (§4): script → scene DNA → keyframe → clip → score →
+# timeline → export. Each stage reads the structured layers; the two cost-heavy
+# steps (video gen, final export) are checkpoints so the user confirms spend.
+# Without a cloud key the image/video/music stages produce demo previews and the
+# timeline stage notes there's nothing to render — the chain never hard-fails.
+_FULL_PRODUCTION = {
+    "id": "full-production",
+    "name": "Full Production — Script → Video → Music → Cut",
+    "description": "The complete chain: a logline becomes a scored micro-film. "
+                   "Script, then a Scene DNA, then a keyframe (Imagen), a video "
+                   "clip seeded by that keyframe (Veo), a score (Lyria 3) driven "
+                   "by the audio layer, then a timeline assembly + export (FFmpeg).",
+    "stages": [
+        {
+            "id": "script", "name": "Script", "workspace": "studio",
+            "mode": "text", "output_key": "script",
+            "instruction": "Write a tight 4–6 beat micro-film script (≤200 words) "
+                           "for this logline. Give it a clear arc and a strong "
+                           "opening image.\n\nLOGLINE: {{logline}}",
+            "input_schema": {"required": ["logline"]},
+            "output_schema": {"required": ["script"]},
+            "checkpoint": False,
+        },
+        {
+            "id": "scene", "name": "Scene DNA", "workspace": "studio",
+            "mode": "text", "output_key": "scene_dna",
+            "instruction": "Return ONLY a JSON object (no prose) describing the "
+                           "OPENING shot as a Scene DNA with these keys: setting, "
+                           "characters (list), action, mood, audio, style, "
+                           "technical. The 'audio' layer must describe the score "
+                           "(instruments, tempo, feel) — it drives music "
+                           "generation.\n\nSCRIPT:\n{{script}}",
+            "input_schema": {"required": ["script"]},
+            "output_schema": {"required": ["scene_dna"]},
+            "checkpoint": True,    # human reviews the look before any spend
+        },
+        {
+            "id": "keyframe", "name": "Keyframe", "workspace": "studio",
+            "mode": "image", "output_key": "keyframe", "style": "cinematic",
+            "aspect_ratio": "16:9",
+            "instruction": "A single cinematic keyframe for the opening shot.\n\n"
+                           "{{scene_dna}}",
+            "input_schema": {"required": ["scene_dna"]},
+            "output_schema": {"required": ["keyframe"]},
+            "checkpoint": False,
+        },
+        {
+            "id": "clip", "name": "Video clip", "workspace": "studio",
+            "mode": "video", "output_key": "clip", "seed_from": "keyframe_file",
+            "aspect_ratio": "16:9", "duration_seconds": 6,
+            "instruction": "Animate the opening shot with subtle, cinematic "
+                           "motion.\n\n{{scene_dna}}",
+            "input_schema": {"required": ["keyframe"]},
+            "output_schema": {"required": ["clip"]},
+            "checkpoint": True,    # cost gate — video is the expensive call
+        },
+        {
+            "id": "score", "name": "Music", "workspace": "studio",
+            "mode": "music", "output_key": "score", "duration_seconds": 30,
+            "instruction": "An original short score for this film.\n\n"
+                           "SCRIPT:\n{{script}}",
+            "input_schema": {"required": ["clip"]},
+            "output_schema": {"required": ["score"]},
+            "checkpoint": False,
+        },
+        {
+            "id": "cut", "name": "Timeline", "workspace": "studio",
+            "mode": "timeline", "output_key": "production",
+            "exports": ["mp4-1080p", "mp4-vertical-9x16"],
+            "instruction": "Assemble the clip and score into a finished, exported "
+                           "cut.",
+            "input_schema": {"required": ["score"]},
+            "output_schema": {"required": ["production"]},
+            "checkpoint": True,    # final review before the work is published
+        },
+    ],
+}
+
 _BUILTIN_TEMPLATES = {t["id"]: t for t in (
-    _RESEARCH_BRIEF_DRAFT_REVIEW, _STORYBOARD)}
+    _RESEARCH_BRIEF_DRAFT_REVIEW, _STORYBOARD, _FULL_PRODUCTION)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -362,7 +440,33 @@ def _stage_executor(mode: str) -> Callable:
         "text": _exec_text_stage,
         "agent": _exec_agent_stage,
         "image": _exec_image_stage,
+        "music": _exec_music_stage,        # NEW — Lyria 3 score (reads SceneDNA.audio)
+        "video": _exec_video_stage,        # NEW — Veo clip (image→video continuity)
+        "timeline": _exec_timeline_stage,  # NEW — FFmpeg assembly + export
     }.get((mode or "text").lower(), _exec_text_stage)
+
+
+# Media file extensions a timeline stage can actually render (excludes the .md
+# demo artifacts a no-cloud stage produces, so the cut never feeds ffmpeg junk).
+_REAL_VIDEO_EXT = (".mp4", ".webm", ".mov")
+_REAL_AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
+
+
+def _scene_dna_from_context(context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Pull a Scene DNA dict out of the run context. A storyboard stage may have
+    produced it as a JSON string (possibly fenced) — parse it best-effort so the
+    keyframe/clip/music stages get a real layered prompt + the audio layer."""
+    sd = context.get("scene_dna")
+    if isinstance(sd, dict):
+        return sd
+    if isinstance(sd, str) and sd.strip():
+        m = re.search(r"\{.*\}", sd, re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                return None
+    return None
 
 
 def _exec_text_stage(stage, prompt, context):
@@ -400,13 +504,95 @@ def _exec_image_stage(stage, prompt, context):
     """Generate an image for the stage; returns a short descriptor string and
     stashes the file record into the context under '<output_key>_file'."""
     from services import creative_engine
-    res = creative_engine.generate_image(prompt, style=stage.get("style"),
-                                         aspect_ratio=stage.get("aspect_ratio") or "1:1")
-    if res.get("status") == "ok" and res.get("files"):
+    res = creative_engine.generate_image(
+        prompt, style=stage.get("style"),
+        aspect_ratio=stage.get("aspect_ratio") or "1:1",
+        scene_dna=_scene_dna_from_context(context),
+        project_id=context.get("project_id") or None,
+        allow_demo=True)
+    if res.get("status") in ("ok", "demo") and res.get("files"):
         f = res["files"][0]
         context[f"{stage['output_key']}_file"] = f
         return f"Generated image: {f.get('filename')} ({f.get('url')})"
     return f"[image generation {res.get('status')}] {res.get('message') or res.get('reason') or ''}"
+
+
+def _exec_video_stage(stage, prompt, context):
+    """Generate a Veo clip. For cross-scene continuity, seeds from an upstream
+    keyframe (image→video) when ``seed_from`` names a file record in context."""
+    from services import creative_engine
+    seed_key = stage.get("seed_from")
+    seed = None
+    if seed_key and isinstance(context.get(seed_key), dict):
+        seed = context[seed_key].get("filename")
+    res = creative_engine.generate_video(
+        prompt, model=stage.get("model"),
+        aspect_ratio=stage.get("aspect_ratio") or "16:9",
+        duration_seconds=stage.get("duration_seconds"),
+        image_path=seed,
+        scene_dna=_scene_dna_from_context(context),
+        project_id=context.get("project_id") or None,
+        allow_demo=True)
+    if res.get("status") in ("ok", "demo") and res.get("files"):
+        f = res["files"][0]
+        context[f"{stage['output_key']}_file"] = f
+        return f"Generated video: {f.get('filename')} ({f.get('url')})"
+    return f"[video generation {res.get('status')}] {res.get('message') or res.get('reason') or ''}"
+
+
+def _exec_music_stage(stage, prompt, context):
+    """Generate a Lyria 3 score. Reads the EXISTING SceneDNA.audio layer as the
+    seed (zero new fields), so a storyboard's 'audio:' clause drives the score."""
+    from services import music_engine
+    res = music_engine.generate_music(
+        prompt, model=stage.get("model"),
+        mode=stage.get("music_mode") or "instrumental",
+        lyrics=context.get("lyrics") or stage.get("lyrics"),
+        duration_seconds=stage.get("duration_seconds"),
+        scene_dna=_scene_dna_from_context(context),
+        project_id=context.get("project_id") or None)
+    if res.get("status") in ("ok", "demo") and res.get("files"):
+        f = res["files"][0]
+        context[f"{stage['output_key']}_file"] = f
+        return f"Generated music: {f.get('filename')} ({f.get('url')})"
+    return f"[music generation {res.get('status')}] {res.get('message') or res.get('reason') or ''}"
+
+
+def _exec_timeline_stage(stage, prompt, context):
+    """Assemble every real video clip + music track accumulated in the context
+    into a finished cut and export it (FFmpeg). The edge list of source clips is
+    signed into the production's provenance (Layer 2)."""
+    from services import timeline_engine
+    video_clips, music_clips = [], []
+    for k, v in context.items():
+        if not (k.endswith("_file") and isinstance(v, dict) and v.get("filename")):
+            continue
+        ext = ("." + v["filename"].rsplit(".", 1)[-1]).lower()
+        if v.get("kind") == "video" and ext in _REAL_VIDEO_EXT:
+            video_clips.append(v)
+        elif v.get("kind") == "music" and ext in _REAL_AUDIO_EXT:
+            music_clips.append(v)
+    tracks = []
+    if video_clips:
+        tracks.append({"kind": "video", "clips": [
+            {"file": v["filename"], "in": 0.0,
+             "out": stage.get("clip_seconds", 6),
+             "transition_in": {"type": "crossfade", "dur": 0.5}} for v in video_clips]})
+    if music_clips:
+        tracks.append({"kind": "audio", "clips": [
+            {"file": music_clips[0]["filename"], "role": "music",
+             "gain_db": -4.0, "fade_out": 1.5}]})
+    if not tracks:
+        return ("[timeline] no renderable clips/music in context yet — the "
+                "upstream image/video stages produced demo previews (no cloud key).")
+    timeline = {"fps": 30, "resolution": [1920, 1080], "tracks": tracks,
+                "exports": stage.get("exports") or ["mp4-1080p"]}
+    res = timeline_engine.compose(timeline, project_id=context.get("project_id") or None)
+    if res.get("status") in ("ok", "demo") and res.get("files"):
+        f = res["files"][0]
+        context[f"{stage['output_key']}_file"] = f
+        return f"Composed production: {f.get('filename')} ({f.get('url')})"
+    return f"[timeline {res.get('status')}] {res.get('message') or ''}"
 
 
 def _run_one_stage(run: Dict[str, Any], idx: int,
