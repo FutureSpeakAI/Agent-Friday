@@ -90,12 +90,14 @@ from routes.hooks import hooks_bp
 from routes.scheduler import scheduler_bp
 from routes.costs import costs_bp
 from routes.ownership import ownership_bp
+from routes.federation import federation_bp
 
 for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, calendar_bp,
             messages_bp, wiki_bp, context_bp, creations_bp, fh_bp, code_bp, fs_bp, contacts_bp,
             insights_bp, todos_bp, workflows_bp, google_bp, google_accounts_bp, skills_bp, notif_bp,
             control_bp, ambient_bp, jobs_bp, connectors_bp, platform_bp, ws_studio_bp,
-            projects_bp, creative_pipeline_bp, hooks_bp, scheduler_bp, costs_bp, ownership_bp):
+            projects_bp, creative_pipeline_bp, hooks_bp, scheduler_bp, costs_bp, ownership_bp,
+            federation_bp):
     app.register_blueprint(_bp)
 
 
