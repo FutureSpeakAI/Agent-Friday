@@ -6,12 +6,14 @@ All configuration lives in `~/.friday/settings.json`. Settings can be updated vi
 
 ## API Keys
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `anthropic_api_key` | string | Anthropic API key for Claude (`sk-ant-...`). Required. |
-| `gemini_api_key` | string | Google AI Studio key (`AIza...`). Optional — enables TTS, creative tools, and voice mode. |
+API keys are stored encrypted in Friday's credential store (`~/.friday/credential_store.enc`), never as plaintext in `settings.json`. The recommended way to add keys is through the **setup wizard** (first-run) or **Settings → API Keys** in the UI.
 
-Keys can also be set via environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the settings file.
+You can also supply keys as environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`), which take precedence over the stored credentials.
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude (`sk-ant-...`). Required for cloud reasoning. |
+| `GEMINI_API_KEY` | Google AI Studio key (`AIza...`). Optional — enables TTS, creative tools, and voice mode. |
 
 When the OpenAI-compatible cloud provider is enabled (see [Model Routing](#model-routing)), an API key may also be supplied via environment variables:
 
@@ -26,7 +28,7 @@ When the OpenAI-compatible cloud provider is enabled (see [Model Routing](#model
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-sonnet-4-6` | Default Claude model for chat. Options: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`. |
+| `orchestrator_model` | string | `claude-opus-4-8` | Default Claude model for chat. Options: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`. |
 | `default_cloud_model` | string | `claude-opus-4-8` | Cloud model used by the router when no override is specified. |
 
 ---

@@ -63,7 +63,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
+            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → API Keys) or as an environment variable, then restart the server."
         )
     if model is None:
         model = _load_settings().get("orchestrator_model") or ANTHROPIC_MODEL_DEFAULT
@@ -217,9 +217,10 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
             errors.append(f"{name}: {e}")
     raise RuntimeError(
         "No model provider could generate text (tried "
-        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY (start.bat / "
-        "launch_now.bat), configure an OpenAI-compatible endpoint in Settings, "
-        "or run Ollama locally, then restart the server."
+        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
+        "wizard (Settings → API Keys) or as an environment variable, configure "
+        "an OpenAI-compatible endpoint in Settings, or run Ollama locally, then "
+        "restart the server."
     )
 
 

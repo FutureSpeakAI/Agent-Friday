@@ -20,7 +20,7 @@ On-disk layout (all under ~/.friday/google_accounts/):
 
 The OAuth *client* secrets (client_id/secret) are NOT stored here — they are
 discovered from disk/env by calendar_engine._google_client_config(), which keeps
-them in the gitignored start.bat / credential files, never in source.
+them in environment variables or credential files, never in source.
 """
 
 from __future__ import annotations

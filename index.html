@@ -5185,6 +5185,8 @@ function MusicPanel({onCreated}){
   const[duration,setDuration]=useState('');const[neg,setNeg]=useState('');const[genre,setGenre]=useState('');
   const[lic,setLic]=useState({terms:'all-rights-reserved'});
   const[busy,setBusy]=useState(false);const[result,setResult]=useState(null);const[err,setErr]=useState('');
+  const[cloudAvail,setCloudAvail]=useState(null);
+  useEffect(()=>{fetch('/api/create/music/available').then(r=>r.json()).then(d=>setCloudAvail(d)).catch(()=>{});},[]);
   const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
   const go=async()=>{
     if(!prompt.trim()||busy)return;setBusy(true);setErr('');setResult(null);
@@ -5198,6 +5200,7 @@ function MusicPanel({onCreated}){
   const f=result&&result.files&&result.files[0];const fx=f?(f.filename||f.url||'').split('.').pop().toLowerCase():'';
   return(<div className="card" style={{marginBottom:12,padding:14}}>
     <div style={{display:'flex',gap:6,marginBottom:12,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎵 Compose music — Lyria 3</span><span style={{fontSize:9,color:'#5a7a86',fontFamily:'JetBrains Mono'}}>44.1kHz stereo</span></div>
+    {cloudAvail&&!cloudAvail.available&&<div style={{marginBottom:10,padding:'7px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',color:'#ffd166',fontSize:10,fontFamily:'JetBrains Mono'}}>⚠ Cloud music unavailable — demo mode only. {cloudAvail.reason||'SDK update required.'} Generations will save a text preview.</div>}
     <Lbl>Prompt</Lbl>
     <textarea className="input" style={{width:'100%',minHeight:56,resize:'vertical',marginBottom:8}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Warm lo-fi hip-hop with mellow Rhodes, vinyl crackle, ~80 BPM…"/>
     <Lbl>Style / genre</Lbl>

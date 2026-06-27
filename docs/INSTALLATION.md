@@ -138,9 +138,15 @@ If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — c
 
 ## Step 4: Configure API Keys
 
-Friday needs at least one API key. **Never commit keys to the repository.**
+Friday needs at least one API key. **Keys are stored encrypted in `~/.friday/credential_store.enc` — never as plaintext in `settings.json` or source files.**
 
-### Option A: Environment Variables
+### Option A: Setup Wizard (Recommended)
+
+On first run, Friday opens a setup wizard in your browser. Enter your API keys there — they are immediately encrypted and stored in the credential store. This is the safest path.
+
+### Option B: Environment Variables
+
+Set keys as environment variables before starting the server. Friday reads them at startup and (optionally) stores them in the encrypted credential store.
 
 ```bash
 # Windows (cmd)
@@ -156,21 +162,6 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export GEMINI_API_KEY=AIza...
 ```
 
-### Option B: Setup Wizard
-
-On first run, Friday's setup wizard (in-browser) lets you enter API keys. They are saved to `~/.friday/settings.json` (local only, never committed).
-
-### Option C: Settings File
-
-Create or edit `~/.friday/settings.json`:
-
-```json
-{
-  "anthropic_api_key": "sk-ant-...",
-  "gemini_api_key": "AIza..."
-}
-```
-
 ### Key Sources
 
 | Key | Source | Required |
@@ -178,13 +169,27 @@ Create or edit `~/.friday/settings.json`:
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Yes |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/) | Optional (for TTS, creative, voice) |
 
+### Vault Encryption with FRIDAY_PASSWORD
+
+Friday's sovereign vault stores private notes, contacts, and sensitive data. By default the vault is encrypted with a machine key. For stronger protection, set `FRIDAY_PASSWORD` before the first run:
+
+```bash
+# Windows (cmd)
+set FRIDAY_PASSWORD=your-passphrase
+
+# macOS / Linux
+export FRIDAY_PASSWORD=your-passphrase
+```
+
+Without `FRIDAY_PASSWORD`, vault data is protected by a machine-local key (adequate for personal use on a trusted machine). With it, the vault is encrypted with Argon2id-derived AES-256-GCM using your passphrase — stronger against physical access scenarios.
+
 ### Optional: Authentication for Remote Access
 
 If you plan to expose Friday via a tunnel (e.g., Cloudflare):
 
 ```bash
 set FRIDAY_USERNAME=your-email
-set FRIDAY_PASSWORD=your-password
+set FRIDAY_PASSWORD=your-password   # also encrypts the vault
 set FRIDAY_SECRET_KEY=a-random-secret-string
 ```
 

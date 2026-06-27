@@ -104,7 +104,7 @@ except ImportError:
     _HAS_SOCK = False
     print("  [FRIDAY] WARNING: flask-sock not installed. /ws/live disabled.")
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+app = Flask(__name__, static_folder=None)
 
 # When set, the module imports cleanly for the test suite: the background daemon
 # loops (kill-hotkey, daily scheduler, notification triggers, news archiver) are
@@ -320,7 +320,8 @@ FRIDAY_DIR = HOME / ".friday"
 # first run. Drives the `show_all_workspaces` default — existing installs keep
 # the full dock; fresh installs get the trimmed core set from the setup wizard.
 _FRESH_INSTALL = not FRIDAY_DIR.exists()
-CREATIONS_DIR = HOME / "Desktop" / "friday-creations"
+_desktop = HOME / "Desktop"
+CREATIONS_DIR = (_desktop / "friday-creations") if _desktop.exists() else (FRIDAY_DIR / "friday-creations")
 # Daily Creation archive — JSON artifacts Friday generates once a day on a
 # background schedule (distinct from the Desktop media gallery above).
 DAILY_CREATIONS_DIR = FRIDAY_DIR / "creations"
@@ -1484,7 +1485,7 @@ def check_auth():
         return None
     if not FRIDAY_PASSWORD:
         return None
-    if request.endpoint in ('login', 'static', 'serve_static_asset', 'serve_favicon'):
+    if request.endpoint in ('login', 'serve_static_asset', 'serve_favicon'):
         return None
     if request.path.startswith('/ws/'):
         return None  # WebSocket upgrade handled inside ws_live (can't send HTTP redirect)
@@ -1544,14 +1545,11 @@ def _is_existing_install() -> bool:
     """True if this looks like an existing installation that should skip the wizard."""
     if _SETUP_MARKER.exists():
         return True
-    # API keys in environment (set by start.bat) → definitely configured
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY"):
-        return True
-    # settings.json exists with real content
+    # settings.json exists with setup_complete flag
     if SETTINGS_FILE.exists():
         try:
             data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
-            if data.get('anthropic_api_key') or data.get('setup_complete'):
+            if data.get('setup_complete'):
                 return True
         except Exception:
             pass

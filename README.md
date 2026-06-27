@@ -1,5 +1,7 @@
 # Agent Friday
 
+> **Note:** Agent Friday Desktop is the standalone desktop application (this repo). It is distinct from the [Asimov's Mind Claude Code plugin](https://futurespeak.ai/asimovs-mind), which is a separate product built for the Claude Code environment.
+
 **A sovereign personal AI built by [FutureSpeak.AI](https://futurespeak.ai)**
 
 Agent Friday is a privacy-first, self-improving AI assistant that runs as a local Flask application backed by Anthropic Claude (cloud) and optionally Ollama (local). It features a holographic Three.js interface, a tiered data vault that keeps sensitive information off the cloud, and a skill evolution engine inspired by Microsoft SkillOpt and Karpathy's auto-research loop.
@@ -215,7 +217,7 @@ The interface is a holographic visualization built in Three.js with:
 Real-time voice interaction powered by Google Gemini's multimodal Live API:
 
 - WebSocket-based streaming audio pipeline
-- Gemini `gemini-2.5-flash-preview-native-audio-dialog` model for natural speech
+- Gemini `gemini-3.1-flash-live-preview` model for natural speech
 - Vault-gated: voice requests touching private data suggest switching to a local voice pipeline
 - Configurable TTS via Gemini's text-to-speech endpoint
 

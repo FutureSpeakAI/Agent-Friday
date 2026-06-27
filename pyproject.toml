@@ -64,6 +64,7 @@ local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings 
 compression = ["headroom-ai[all]>=0.22"]  # context compression (degrades to passthrough if absent)
 federation = ["pynacl>=1.5"]           # Ed25519 attestation + source-trust federation
 windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0"]  # computer control + global kill-switch + tray icon
+pdf = ["pdfplumber>=0.10"]  # PDF text extraction (routes/core_routes.py)
 all = [
     "pyttsx3>=2.90",
     "pillow>=10.0",
@@ -75,8 +76,10 @@ all = [
     "chromadb>=0.5",
     "headroom-ai[all]>=0.22",
     "pynacl>=1.5",
-    "pyautogui>=0.9",
-    "pynput>=1.7",
+    "pdfplumber>=0.10",
+    # Computer control + kill-switch: Windows-only (needs X11 headers on Linux)
+    "pyautogui>=0.9; sys_platform == 'win32'",
+    "pynput>=1.7; sys_platform == 'win32'",
     # Tier-1 local voice is cheap + universal, so it rides [all]. The heavy GPU
     # voice group (voice-local-gpu) is deliberately EXCLUDED — opt-in only.
     "faster-whisper>=1.0",

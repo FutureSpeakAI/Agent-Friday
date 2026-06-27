@@ -21,7 +21,7 @@ Design rules (consistent with the rest of the codebase):
   • The google-genai SDK and the Gemini client are imported LAZILY inside the
     call sites, so importing this module never requires the SDK or a key — it
     stays import-safe under FRIDAY_TESTING and offline.
-  • The API key is read from core.GEMINI_API_KEY (loaded from env / start.bat).
+  • The API key is read from core.GEMINI_API_KEY (loaded from env / credential store).
     No keys in source.
   • Every generation surfaces a holographic process orb (register → progress →
     complete → fade) exactly like the self-improvement / daily-creation loops.
@@ -378,7 +378,7 @@ def _client():
     if not is_available():
         raise RuntimeError(
             "No Gemini API key configured. Creative generation needs GEMINI_API_KEY "
-            "(set in start.bat or Settings).")
+            "(set via Settings → API Keys or as an environment variable).")
     from google import genai  # lazy — import-safe without the SDK
     return genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
 
@@ -386,8 +386,8 @@ def _client():
 def _unavailable(kind: str) -> Dict[str, Any]:
     return {
         "status": "unavailable",
-        "message": (f"{kind} generation needs a Gemini API key. Add GEMINI_API_KEY "
-                    f"to start.bat (or Settings → API keys) and try again."),
+        "message": (f"{kind} generation needs a Gemini API key. Set GEMINI_API_KEY "
+                    f"via Settings → API Keys or as an environment variable, then try again."),
     }
 
 
