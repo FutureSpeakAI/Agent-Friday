@@ -1,4 +1,4 @@
-"""Unit tests for people_graph.py — the human-contact trust graph.
+﻿"""Unit tests for people_graph.py — the human-contact trust graph.
 
 Tests cover:
   - _key_for: name normalisation / deduplication key
@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from people_graph import PeopleGraph, PEOPLE_DIMENSIONS
+from agent_friday.people_graph import PeopleGraph, PEOPLE_DIMENSIONS
 
 
 # ── Fixture ────────────────────────────────────────────────────────────────────

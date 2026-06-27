@@ -1,4 +1,4 @@
-"""
+﻿"""
 Routes — Creative Project Manager + Series Bible.
 
 CRUD over creative projects and their Series Bible (characters, locations,
@@ -11,7 +11,7 @@ envelope; genuine server faults still surface as 500.
 import traceback
 from flask import Blueprint, jsonify, request
 
-from services import creative_memory as cm
+from agent_friday.services import creative_memory as cm
 
 projects_bp = Blueprint('projects', __name__)
 

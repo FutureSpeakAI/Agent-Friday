@@ -1,4 +1,4 @@
-"""Unit tests for epistemic_engine.py — the four _score_* methods,
+﻿"""Unit tests for epistemic_engine.py — the four _score_* methods,
 composite/score computation, register_governance_event, and score clamping.
 
 All tests use synthetic data only. No disk writes from the test side;
@@ -15,7 +15,7 @@ import math
 import threading
 import pytest
 
-from epistemic_engine import (
+from agent_friday.epistemic_engine import (
     EpistemicEngine,
     TurnScore,
     PUSHBACK_PHRASES,

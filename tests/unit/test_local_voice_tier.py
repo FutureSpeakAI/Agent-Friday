@@ -1,4 +1,4 @@
-"""Tier-1 ⇄ Tier-2 selection, hot-swap, graceful fallback, and perf monitoring.
+﻿"""Tier-1 ⇄ Tier-2 selection, hot-swap, graceful fallback, and perf monitoring.
 
 Exercises the LocalVoiceEngine tier machinery (services/local_voice.py) plus the
 provider/health/capability wiring for NeMo — all with mock backends, no GPU, no
@@ -7,9 +7,9 @@ the GPU stack is absent (the headline coexistence requirement).
 """
 import array
 
-from services import local_voice as lv
-from services import nemo_voice as nv
-from services.local_voice import LocalVoiceEngine
+from agent_friday.services import local_voice as lv
+from agent_friday.services import nemo_voice as nv
+from agent_friday.services.local_voice import LocalVoiceEngine
 
 
 # ── mock backends (interface-compatible with both tiers) ─────────────────────
@@ -193,7 +193,7 @@ def test_health_unaffected_by_gpu_active_backend(monkeypatch):
 # ── provider / health / capability wiring ────────────────────────────────────
 
 def test_nemo_provider_registered_and_enabled():
-    from services.provider_registry import get_provider_registry
+    from agent_friday.services.provider_registry import get_provider_registry
     p = get_provider_registry().get_provider("nvidia-nemo")
     assert p is not None
     assert p["enabled"] is True
@@ -202,7 +202,7 @@ def test_nemo_provider_registered_and_enabled():
 
 
 def test_nemo_provider_availability_gated_on_gpu(monkeypatch):
-    from services.provider_registry import get_provider_registry
+    from agent_friday.services.provider_registry import get_provider_registry
     reg = get_provider_registry()
     monkeypatch.setattr(nv, "gpu_tier_ready", lambda: False)
     assert reg.is_provider_available("nvidia-nemo") is False
@@ -211,14 +211,14 @@ def test_nemo_provider_availability_gated_on_gpu(monkeypatch):
 
 
 def test_provider_health_nemo_branch():
-    from services import provider_health
+    from agent_friday.services import provider_health
     h = provider_health.check_provider("nvidia-nemo", use_cache=False)
     assert h["provider"] == "nvidia-nemo"
     assert h["status"] in ("missing", "down", "needs_download", "ok", "error")
 
 
 def test_capability_router_nemo_unlock_hint():
-    from services import capability_router
+    from agent_friday.services import capability_router
     settings = {"capability_routing": {
         "tts": {"provider": "nvidia-nemo", "model": "nemo-fastpitch-hifigan"}}}
     res = capability_router.resolve("tts", settings)

@@ -1,7 +1,7 @@
-"""Unit tests for services.capability_router — the single capability→provider+model
+﻿"""Unit tests for services.capability_router — the single capability→provider+model
 resolver that drives the onboarding lock/unlock badges and graceful degradation."""
-import core
-from services import capability_router as cr
+import agent_friday.core as core
+from agent_friday.services import capability_router as cr
 
 
 def test_route_table_covers_all_capabilities():

@@ -1,4 +1,4 @@
-"""Unit tests for the action-trust layer in services/agent.py.
+﻿"""Unit tests for the action-trust layer in services/agent.py.
 
 Covers the two behaviours added for "Friday should never surprise the user":
 
@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import services.agent as agent
+import agent_friday.services.agent as agent
 
 
 # ════════════════════════════════════════════════════════════════════════

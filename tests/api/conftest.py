@@ -1,4 +1,4 @@
-"""API-suite conftest — imports `server` once and provides the Flask test
+﻿"""API-suite conftest — imports `server` once and provides the Flask test
 client plus the LLM kill-switch. Scoped to tests/api/ so the heavy import is
 only paid by tests that exercise routes.
 
@@ -20,14 +20,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+_proj_root = Path(__file__).resolve().parent.parent.parent
+_src = _proj_root / "src"
+for _p in (str(_src), str(_proj_root)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import pytest
 
 from tests.conftest import CANNED_TEXT  # noqa: F401  (re-exported for api tests)
 
 # Import the app once for the api suite (env already prepared by root conftest).
-import server as friday_server  # noqa: E402
+import agent_friday.server as friday_server  # noqa: E402
 
 
 def _project_modules():
@@ -35,9 +39,7 @@ def _project_modules():
     for mod_name, mod in list(sys.modules.items()):
         if mod is None:
             continue
-        if (mod_name in ("server", "core")
-                or mod_name.startswith("routes.")
-                or mod_name.startswith("services.")):
+        if mod_name == "agent_friday" or mod_name.startswith("agent_friday."):
             yield mod
 
 

@@ -1,4 +1,4 @@
-"""Tests for offline-first resilience + voice-everywhere features.
+﻿"""Tests for offline-first resilience + voice-everywhere features.
 
 Covers the network monitor state machine, the offline routing overlay, the
 offline task queue, cached-RSS fallback, the local TTS fallback status, and the
@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-import core
+import agent_friday.core as core
 
 
 @pytest.fixture(autouse=True)
@@ -87,7 +87,7 @@ class TestOfflineQueue:
 
     def test_flush_unknown_kind_is_dropped(self):
         core._offline_queue_add("totally-unknown-kind", {})
-        import services.notifications as n
+        import agent_friday.services.notifications as n
         result = n._flush_offline_queue(reason="test")
         assert result["kept"] == 0  # unknown kinds are dropped, not retried forever
 
@@ -95,7 +95,7 @@ class TestOfflineQueue:
 # ── Cached-RSS fallback ───────────────────────────────────────────────────────
 class TestCachedNews:
     def test_offline_uses_archive_not_network(self, monkeypatch):
-        import services.news_engine as ne
+        import agent_friday.services.news_engine as ne
 
         def _boom(*a, **k):
             raise AssertionError("live RSS must not be hit while offline")
@@ -154,13 +154,13 @@ class TestVoiceContext:
 # ── Voice live-tool registry ──────────────────────────────────────────────────
 class TestVoiceTools:
     def test_calendar_and_email_tools_registered(self):
-        import services.voice_engine as v
+        import agent_friday.services.voice_engine as v
         names = {t[0] for t in v._VOICE_LIVE_TOOLS}
         assert "query_calendar" in names
         assert "check_email" in names
 
     def test_local_tts_helper_never_raises(self):
-        import services.voice_engine as v
+        import agent_friday.services.voice_engine as v
         # Returns a BytesIO or None depending on whether pyttsx3 is installed,
         # but must never raise.
         out = v._synthesize_tts_wav_local("hello")

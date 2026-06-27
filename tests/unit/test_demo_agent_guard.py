@@ -1,4 +1,4 @@
-"""Regression: the agentic primitive must short-circuit in demo mode.
+﻿"""Regression: the agentic primitive must short-circuit in demo mode.
 
 Before this guard, /api/chat/send and the background-task workers called
 services.agent._generate_agent, which exhausted every provider and raised
@@ -9,7 +9,7 @@ agentic path must return a labelled [DEMO] placeholder instead.
 Lives in tests/unit (not tests/api) because the api conftest autouse-stubs
 _generate_agent itself, which would mask the real guard under test.
 """
-from services import demo_mode as dm
+from agent_friday.services import demo_mode as dm
 
 
 def test_generate_agent_short_circuits_in_demo(monkeypatch):
@@ -17,7 +17,7 @@ def test_generate_agent_short_circuits_in_demo(monkeypatch):
     monkeypatch.setattr(dm, "_any_provider_available", lambda: False)
     assert dm.is_demo() is True
 
-    import services.agent as ag
+    import agent_friday.services.agent as ag
     text, trace = ag._generate_agent([{"role": "user", "content": "hi"}])
 
     assert isinstance(text, str) and text.startswith("[DEMO]")

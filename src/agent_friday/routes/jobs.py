@@ -29,7 +29,7 @@ jobs_bp = Blueprint("jobs", __name__)
 def _notify_adapter(payload):
     """Bridge skill notifications into Friday's notification engine."""
     try:
-        import notifications_engine as notif
+        import agent_friday.notifications_engine as notif
         notif.push(
             title=str(payload.get("title") or "Career pipeline"),
             body=str(payload.get("body") or ""),

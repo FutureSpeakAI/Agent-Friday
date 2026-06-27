@@ -189,7 +189,7 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         return {"status": "skipped", "passed": True, "score": None,
                 "critique": "vision QA disabled", "suggestions": ""}
     try:
-        from services import creative_engine as ce
+        from agent_friday.services import creative_engine as ce
         if not ce.is_available():
             return {"status": "skipped", "passed": True, "score": None,
                     "critique": "no vision key", "suggestions": ""}

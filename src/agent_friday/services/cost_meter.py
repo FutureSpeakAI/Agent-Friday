@@ -62,7 +62,7 @@ def price_for(model):
         pass
     # Fallback: blended provider_registry rate applied to both directions.
     try:
-        from services import provider_registry as _pr
+        from agent_friday.services import provider_registry as _pr
         for prov in _pr.list_providers() if hasattr(_pr, "list_providers") else []:
             rate = (prov.get("cost_per_1k") or {}).get(model)
             if rate:

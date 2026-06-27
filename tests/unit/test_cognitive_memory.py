@@ -1,4 +1,4 @@
-"""Unit tests for cognitive_memory.py — hash-chained tamper-evident memory ledger.
+﻿"""Unit tests for cognitive_memory.py — hash-chained tamper-evident memory ledger.
 
 Key invariants under test:
   - write_memory / read_memory round-trip
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from cognitive_memory import CognitiveMemory
+from agent_friday.cognitive_memory import CognitiveMemory
 
 
 # ── Fixture ────────────────────────────────────────────────────────────────────

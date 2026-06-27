@@ -1,239 +1,62 @@
 # Agent Friday
 
+[![CI](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml/badge.svg)](https://github.com/FutureSpeakAI/Agent-Friday/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 > **Note:** Agent Friday Desktop is the standalone desktop application (this repo). It is distinct from the [Asimov's Mind Claude Code plugin](https://futurespeak.ai/asimovs-mind), which is a separate product built for the Claude Code environment.
 
-**A sovereign personal AI built by [FutureSpeak.AI](https://futurespeak.ai)**
+---
 
-Agent Friday is a privacy-first, self-improving AI assistant that runs as a local Flask application backed by Anthropic Claude (cloud) and optionally Ollama (local). It features a holographic Three.js interface, a tiered data vault that keeps sensitive information off the cloud, and a skill evolution engine inspired by Microsoft SkillOpt and Karpathy's auto-research loop.
+## What is this?
 
-> Think Jarvis with a sharp newsroom editor's instincts.
+**Agent Friday** is a privacy-first, self-improving personal AI that runs entirely on your machine. It features a tiered data vault that keeps sensitive information off the cloud, a holographic Three.js interface, a layered content-safety classifier, and a skill-evolution engine — all served by a local Flask app backed by Anthropic Claude, Google Gemini, and/or Ollama.
+
+Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, and a zero-trust data policy.
+
+---
+
+## Demo
+
+[![Agent Friday — Live Demo](https://img.youtube.com/vi/JeAywoHd_jg/maxresdefault.jpg)](https://youtu.be/JeAywoHd_jg)
+
+| | |
+|---|---|
+| [![Full Explainer](https://img.youtube.com/vi/uFKAQ3uz2U4/hqdefault.jpg)](https://youtu.be/uFKAQ3uz2U4) | [![Defeating Disinformation](https://img.youtube.com/vi/Do2ONuv_UbM/hqdefault.jpg)](https://youtu.be/Do2ONuv_UbM) |
+| Full system explainer | Defeating disinformation |
 
 ---
 
 ## Quick Start
 
-### Windows (PowerShell)
-```powershell
-irm https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.ps1 | iex
-```
-Or clone and run manually:
-```powershell
-git clone https://github.com/FutureSpeakAI/Agent-Friday.git
-cd Agent-Friday
-.\install.ps1
-```
-
-### Linux / macOS
-```bash
-curl -fsSL https://raw.githubusercontent.com/FutureSpeakAI/Agent-Friday/main/install.sh | bash
-```
-Or clone and run manually:
 ```bash
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
-chmod +x install.sh && ./install.sh
+pip install -e .
+friday doctor    # verify API keys, Python version, Ollama, disk
+friday start     # launches the server and opens http://localhost:3000
 ```
 
-### Manual setup (without the installer)
+**No API key?** Friday boots in demo mode — explore the full UI first, connect a provider in Settings whenever you're ready.
 
-Prefer to wire things up yourself? Clone the repo, install dependencies, set your API keys, and run the server directly.
-
-```bash
-git clone https://github.com/FutureSpeakAI/Agent-Friday.git
-cd Agent-Friday
-pip install -e ".[all]"        # installs the `friday` command + every capability
-```
-
-`pip install -e .` (without `[all]`) installs just the core dependencies and
-still runs; the optional extras degrade gracefully. `pip install -r requirements.txt`
-also works as a direct fallback. If Windows blocks `install.ps1`, see
-[Unsigned-script warnings](docs/INSTALLATION.md#unsigned-script-warnings-windows-smartscreen--powershell--macos-gatekeeper).
-
-Set your API keys (no keys are stored in the repo). Use the syntax for your shell:
-
-```powershell
-# Windows (PowerShell)
-$env:ANTHROPIC_API_KEY = "your-key-here"
-$env:GEMINI_API_KEY    = "your-key-here"     # optional, for creative/voice
-$env:OPENAI_API_KEY    = "your-key-here"     # optional, OpenAI-compatible provider
-$env:OPENROUTER_API_KEY = "your-key-here"    # optional, alias for OpenRouter
-```
-
-```bat
-:: Windows (Command Prompt)
-set ANTHROPIC_API_KEY=your-key-here
-set GEMINI_API_KEY=your-key-here
-```
+Set your keys (no keys are stored in the repo):
 
 ```bash
 # Linux / macOS
-export ANTHROPIC_API_KEY=your-key-here
-export GEMINI_API_KEY=your-key-here          # optional, for creative/voice
-export OPENAI_API_KEY=your-key-here          # optional, OpenAI-compatible provider
-export OPENROUTER_API_KEY=your-key-here      # optional, alias for OpenRouter
+export ANTHROPIC_API_KEY=your-key     # core reasoning
+export GEMINI_API_KEY=your-key        # voice + creative (optional)
+export OPENAI_API_KEY=your-key        # OpenRouter / any /v1 endpoint (optional)
 ```
-
-Optional hardening (sensible defaults; override only if needed). PowerShell shown — use `set NAME=value` on cmd or `export NAME=value` on Linux/macOS:
 
 ```powershell
-$env:FRIDAY_TRUST_LOOPBACK = "0"             # require login even on localhost
-$env:FRIDAY_WS_TOKEN       = "your-token"    # gate the /ws/live voice WebSocket
-$env:FRIDAY_COOKIE_SECURE  = "1"             # Secure cookie behind HTTPS / a tunnel
-$env:FRIDAY_SANDBOX_MODE   = "confine"       # off | confine (default) | strict
-$env:FRIDAY_SANDBOX_ROOT   = "$env:USERPROFILE"  # write-confinement root for tools
+# Windows PowerShell
+$env:ANTHROPIC_API_KEY = "your-key"
+$env:GEMINI_API_KEY    = "your-key"
+$env:OPENAI_API_KEY    = "your-key"
 ```
 
-Then run the server:
-
-```bash
-python server.py        # or just `friday` if you installed via pyproject
-```
-
-Open **http://localhost:3000** in your browser. If port 3000 is busy, Friday
-binds the next free port and prints the URL it chose. See
-[docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide.
-
-### Requirements
-- **Python 3.10+**
-- **No API key?** Friday boots in **demo mode** so you can explore the full UI; connect a provider any time in Settings to go live.
-- **Anthropic API key** — for live Claude reasoning ([get one here](https://console.anthropic.com/settings/keys))
-- **Google Gemini API key** — for voice mode and creative features ([get one here](https://aistudio.google.com/apikey))
-- **OpenAI-compatible API key** — optional, for the third provider (OpenRouter or any `/v1` endpoint) via `OPENAI_API_KEY` / `OPENROUTER_API_KEY` ([OpenRouter keys](https://openrouter.ai/keys))
-- **Ollama** — optional, for local models and vault privacy ([ollama.com](https://ollama.com))
-- **GPU** — optional, for local model acceleration
-
-The installer handles cloning, virtual environment setup, dependency installation, API key configuration, GPU detection, and optional Ollama setup. After installation, open **http://localhost:3000** to launch Friday.
-
----
-
-## Architecture at a Glance
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    Holographic UI (Three.js)                  │
-│         WebGL shaders · Audio reactivity · Process orbs       │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ HTTP / WebSocket
-┌──────────────────────▼───────────────────────────────────────┐
-│                    Flask Server (server.py)                    │
-│  Authentication · Tool-use agent · PII Shield · Context log   │
-├───────────────────────────────────────────────────────────────┤
-│                     Intelligence Pipeline                      │
-│                                                               │
-│  Context Pruner ──► Context Compressor ──► Model Router        │
-│  (semantic RAG       (Headroom,              (cloud/local/     │
-│   over own history)   60-95% savings)         smart routing)   │
-│                                                               │
-├───────────────────────────────────────────────────────────────┤
-│                      Privacy Layer                             │
-│                                                               │
-│  Vault Access Control ──► PII Scrubber ──► HMAC Integrity      │
-│  (TIER 1/2/3 gating)     (SSN, CC, phone,   (signed cLaws,    │
-│                           address, email)     governance gate)  │
-├───────────────────────────────────────────────────────────────┤
-│                        Providers                               │
-│                                                               │
-│  Anthropic Claude ◄──────────────────────► Ollama (local)      │
-│  (cloud, tool use)                          (private data,     │
-│                                              vault access)     │
-│  OpenAI-compatible          Google Gemini                      │
-│  (OpenRouter / any /v1,     (TTS, creative,                    │
-│   opt-in, tool loop)         voice mode)                       │
-└───────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Core Systems
-
-### Sovereign Vault
-The most critical subsystem. The Vault holds private data (financial, health, legal, contacts, encrypted PII) and enforces a non-negotiable rule: **vault content is readable by local models only.** Cloud providers never receive TIER_2 (private) or TIER_3 (sensitive) content. The policy engine lives in `vault_access.py`; routing enforcement lives in `model_router.py`.
-
-- **TIER_1 (Public)** — Wiki articles, news, general docs. Any model.
-- **TIER_2 (Private)** — Contacts, family, trust graph, personal notes. Local only; cloud gets a redacted placeholder.
-- **TIER_3 (Sensitive)** — Financial records, health records, legal/custody data, SSNs, encrypted PII. Local only; cloud gets nothing.
-
-### Privacy Shield
-A runtime PII scrubber that processes every outbound message destined for a cloud model. Detects and redacts SSNs, credit card numbers, phone numbers, email addresses, street addresses, and configurable watchlist tokens. Supports bidirectional scrub/rehydrate so the model can reference PII by stable tags without ever seeing the raw values.
-
-### Trust Graph
-A scored relationship map with trust dimensions (competence, reliability, emotional safety, alignment). Loaded into context when a conversation references a known person. TIER_2 protected — cloud models see summaries, local models see full entries.
-
-### Cognitive Memory
-Long-term memory stored as timestamped entries in `~/.friday/memory/`. A personal wiki under `~/.friday/wiki/` organized by domain (identity, family, professional, health, legal, finance) serves as ground truth. Supports search, read, propose updates, and corrections.
-
-### Personality Evolution
-Personality evolves over time through maturity scores, trait weights, temperature adjustments, and session counts. The holographic UI reflects evolution through progressively complex visual structures: Genesis Lattice, Sacred Sphere, Shannon Network, Geodesic Cathedral, Lovelace Astrolabe, Von Neumann Tesseract.
-
-### Epistemic Score
-Tracks independence and reliability of reasoning — how well facts are distinguished from speculation, defer-vs-assert ratios, and confidence calibration.
-
-### HMAC Integrity
-All behavioral constraints (Asimov's cLaws, governance gates, privilege rings) are HMAC-SHA256 signed for **integrity verification and drift detection**, and verified before every action. The governance key is stored in the OS credential store (Windows Credential Manager, macOS Keychain, Linux Secret Service) and never leaves the machine. See [THREAT_MODEL.md](THREAT_MODEL.md) for the full security posture.
-
----
-
-## Intelligence Pipeline
-
-Every message flows through three stages before reaching the model:
-
-1. **Context Pruner** (`context_pruner.py`) — When conversations exceed a configurable threshold, semantic retrieval (RAG over the conversation's own history) selects the most relevant archived turns instead of naively truncating from the oldest. Uses `all-MiniLM-L6-v2` embeddings with content-hash caching.
-
-2. **Context Compressor** (`context_compressor.py`) — Powered by [Headroom](https://github.com/chopratejas/headroom) by Tejas Chopra (Apache 2.0). Compresses tool outputs, JSON, code, and prose — 60-95% fewer tokens with preserved answer quality. Falls back gracefully if the Headroom native core isn't available.
-
-3. **Model Router** (`model_router.py`) — Decides whether a request goes to Anthropic (cloud) or Ollama (local). Vault requests are always force-routed local regardless of routing mode.
-
----
-
-## Model Routing
-
-Three routing modes:
-
-| Mode | Behavior |
-|------|----------|
-| `cloud_only` (default) | All requests go to Anthropic Claude. Vault requests are still force-routed local or refused. |
-| `local_preferred` | Requests go to Ollama when a suitable local model is available. Falls back to cloud for tool use. |
-| `smart` | Task-type-aware routing. Simple questions go to the smallest local model. Code/research go to the largest. Tool use and voice stay on cloud. |
-
-The router classifies tasks by scanning the last user message for intent signals (code keywords, research keywords, message length, tool definitions). A `CostTracker` logs every request's provider, model, token count, and cost.
-
-**Choosing the cloud provider.** The cloud side of routing is itself pluggable. Set `model_routing.cloud_provider = "openai"` (default is Anthropic) to send cloud requests to an OpenAI-compatible endpoint instead — configured via `openai_base_url` (defaults to OpenRouter), `openai_model`, and `openai_api_key` (or env `OPENAI_API_KEY` / `OPENROUTER_API_KEY`). This unlocks OpenRouter's hundreds of models and any `/v1` endpoint, and runs a full agentic tool loop at parity with the Anthropic path. Vault and sensitive requests are never sent to it — they stay local or on Anthropic.
-
----
-
-## Holographic UI
-
-The interface is a holographic visualization built in Three.js with:
-
-- **WebGL shaders** — Rotating geometric structures that evolve with personality maturity
-- **Audio reactivity** — Web Audio API drives vertex displacement and color modulation
-- **Process orbs** — Orbiting visualizations representing active background tasks
-- **Progressive Web App** — Installable via manifest with service worker support
-
----
-
-## Voice Mode
-
-Real-time voice interaction powered by Google Gemini's multimodal Live API:
-
-- WebSocket-based streaming audio pipeline
-- Gemini `gemini-3.1-flash-live-preview` model for natural speech
-- Vault-gated: voice requests touching private data suggest switching to a local voice pipeline
-- Configurable TTS via Gemini's text-to-speech endpoint
-
----
-
-## Skills System
-
-Friday can build and evolve its own skills:
-
-- **Portable Skill Registry** (`skill_registry.py`) — A portable **SKILL.md folder** format: YAML frontmatter plus a markdown body, agentskills.io-compatible. Skills import/export across folders, zips, legacy-YAML, and OpenClaw formats via `/api/skills`, `/api/skills/import`, and `/api/skills/<name>/export`. Matched skills are injected into the system prompt each turn, so newly learned skills take effect without a restart.
-- **Learnable Skills** — YAML files in `~/.friday/skills/` defining reusable workflows with trigger patterns, tool chains, prompt templates, and success criteria
-- **SkillOpt Engine** (`skillopt_engine.py`) — Skills evolve through training epochs, validated against regression gates (must score within 5% of best), and refined by an auto-research loop
-- **Karpathy Auto-Research** — When a skill's rolling composite score drops >10% below its best, the system generates hypotheses and proposes improvements
-- **Closed-Loop Learning** (`skill_capture.py`) — Captures turn trajectories to Cognitive Memory and JSONL, feeding real chat usage straight into the SkillOpt optimizer. A nightly `skillopt-nightly` auto-research job turns lived experience into skill improvements.
-
-See [docs/SKILLS.md](docs/SKILLS.md) for the full skill system reference.
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, including the one-line shell installer, GPU setup, Ollama, and the Windows SmartScreen bypass.
 
 ---
 
@@ -243,44 +66,45 @@ See [docs/SKILLS.md](docs/SKILLS.md) for the full skill system reference.
 |----------|-------------|
 | [Architecture](docs/ARCHITECTURE.md) | System diagrams, pipeline flows, Mermaid charts |
 | [API Reference](docs/API.md) | Every endpoint with methods, paths, request/response |
-| [Installation](docs/INSTALLATION.md) | Fresh machine setup, prerequisites, troubleshooting |
+| [Installation](docs/INSTALLATION.md) | Fresh-machine setup, prerequisites, troubleshooting |
 | [Configuration](docs/CONFIGURATION.md) | All `settings.json` options |
-| [Skills](docs/SKILLS.md) | Skill system, SkillOpt, auto-research |
+| [Skills](docs/SKILLS.md) | Skill system, SkillOpt, auto-research loop |
 | [SELF.md](SELF.md) | Friday's self-knowledge document |
 | [Credits](CREDITS.md) | Third-party libraries and inspirations |
+| [Threat Model](THREAT_MODEL.md) | Security posture, trust boundaries, known gaps |
 
 ---
 
-## Ethics: Asimov's cLaws
+## Key Features
 
-Friday's ethical framework — signed Laws:
-
-1. Shall not harm a human being or, through inaction, allow harm.
-2. Shall obey user instructions except where they conflict with the First Law.
-3. Shall protect its own integrity except where this conflicts with the First or Second Laws.
-4. All behavioral constraints are HMAC-SHA256 signed for integrity verification and drift detection, and verified before every action.
-
-A governance gate checks privilege rings before every action:
-
-| Ring | Scope | Authorization |
-|------|-------|---------------|
-| 0 | Read-only file access, wiki queries | Always allowed |
-| 1 | File writes, wiki updates, memory ops | Always allowed |
-| 2 | Network access (web, email, calendar) | Requires auth |
-| 3 | OS control (screenshot, mouse, packages) | Explicit user enablement |
+- **Sovereign Vault** — TIER 1/2/3 access control; TIER_2 (private) and TIER_3 (sensitive) data never leave the local model. AES-256-GCM + Argon2id at rest.
+- **Layered Safety Classifier** — Fail-closed egress gate with sensitivity classifier as single source of truth; HMAC-SHA256 signed behavioral constraints (Asimov's cLaws).
+- **Holographic UI** — Three.js WebGL interface with audio reactivity, process orbs, and personality evolution visualized as progressively complex geometric structures.
+- **Voice Mode** — Real-time WebSocket audio pipeline via Google Gemini Live; local Piper/Whisper fallback when offline.
+- **Universal Tool Loop** — Anthropic, Gemini, Ollama (gemma4 native tool calling), and OpenAI-compatible providers share a single agentic tool loop.
+- **Creator Economy Layer** — Music (Lyria 3), video (Veo), image generation (Nano Banana Pro/2), provenance (C2PA), federation (Ed25519 identity, X25519+ChaCha20-Poly1305 transport), marketplace, and economy engine.
+- **Self-Improvement** — Weekly epistemic calibration, SkillOpt nightly loop, closed-loop learning from real usage.
+- **Defederation & Moderation** — Asimov-governed defederation protocol, H1–H4 harm floor, community content-policy packs.
 
 ---
 
-## Credits
+## Requirements
 
-Created by **[FutureSpeak.AI](https://futurespeak.ai)**.
+- Python 3.10+
+- An Anthropic API key — for live Claude reasoning ([get one](https://console.anthropic.com/settings/keys))
+- Google Gemini API key — for voice and creative features ([get one](https://aistudio.google.com/apikey)) — *optional*
+- Ollama — for local models and vault-private queries ([ollama.com](https://ollama.com)) — *optional*
 
-Built with **Claude by Anthropic** as AI development partner.
+---
 
-See [CREDITS.md](CREDITS.md) for the full list of third-party libraries and inspirations.
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome — please read the [Code of Conduct](CODE_OF_CONDUCT.md) first.
 
 ---
 
 ## License
 
 MIT License. Copyright 2026 FutureSpeak.AI. See [LICENSE](LICENSE).
+
+Created by **[FutureSpeak.AI](https://futurespeak.ai)** · Built with **Claude by Anthropic** as AI development partner.

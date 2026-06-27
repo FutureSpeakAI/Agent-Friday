@@ -74,7 +74,23 @@ core_bp = Blueprint('core_routes', __name__)
 
 @core_bp.route('/')
 def serve_ui():
-    return send_from_directory('.', 'index.html')
+    """Serve the main UI, injecting the ephemeral per-startup API token into HTML.
+
+    The token is placed in window.__FRIDAY_API_TOKEN so JavaScript can attach it
+    to every API request as the X-Friday-Token header.  It lives only in browser
+    JS memory and rotates on each server restart — never persisted to disk.
+    """
+    try:
+        with open('index.html', encoding='utf-8') as _f:
+            _html = _f.read()
+        _token_script = (
+            f'<script>window.__FRIDAY_API_TOKEN="{core._API_SESSION_TOKEN}";</script>'  # pragma: allowlist secret
+        )
+        # Inject early in <head> so the token is available before any fetch calls.
+        _html = _html.replace('<head>', f'<head>\n{_token_script}', 1)
+        return Response(_html, content_type='text/html')
+    except FileNotFoundError:
+        return "index.html not found — run: python build_ui.py", 404
 
 
 @core_bp.route('/static/<path:filename>')
@@ -128,6 +144,8 @@ def friday_health():
     for r in TOOL_RINGS.values():
         ring_counts[r] = ring_counts.get(r, 0) + 1
 
+    _vault_state = core._VAULT_ENCRYPTION_STATE
+    _vault_warning = _vault_state.get("warning") or _vault_state.get("error") or ""
     return jsonify({
         "status": "ok",
         "uptime_seconds": uptime_s,
@@ -139,6 +157,10 @@ def friday_health():
         "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
         "creative_model": settings.get("creative_model", "gemini-nano-banana-2"),
         "voice_model": settings.get("voice_model", "gemini-3.1-flash-live-preview"),
+        "vault": {
+            "encryption_enabled": _vault_state.get("enabled", False),
+            "warning": _vault_warning,
+        },
         "governance": {
             "enabled": True,
             "version": "v4.4",
@@ -367,7 +389,7 @@ def api_setup_complete():
     _save_settings so capability_routing and the flat *_model keys stay congruent.
     """
     data = request.get_json(silent=True) or {}
-    from services import credential_store as cs
+    from agent_friday.services import credential_store as cs
 
     # 1) Provider API keys → encrypted store + live env. Accept both the legacy
     #    flat fields and a providers:{name:{api_key}} map from the new wizard.
@@ -406,7 +428,7 @@ def api_setup_complete():
     # 3) Apply the chosen distribution preset (workspaces / layout / personality).
     if data.get('distribution'):
         try:
-            from services import distributions
+            from agent_friday.services import distributions
             delta.update(distributions.apply_distro(data['distribution']))
         except Exception:
             pass

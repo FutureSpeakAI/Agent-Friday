@@ -1,4 +1,4 @@
-"""API + wiring tests for Tier-1 local voice.
+﻿"""API + wiring tests for Tier-1 local voice.
 
 Covers the provider-agnostic integration surface that runs in CI with no model:
 the provider registers, asr/tts capabilities resolve, the /ws/voice-local route
@@ -6,13 +6,13 @@ is registered, /api/voice/session-info honors the local-default ethos and the
 voice_engine switch, /api/health/full reports local voice, and the model catalog
 surfaces the local voice models in the voice role.
 """
-import core
+import agent_friday.core as core
 
 
 # ── provider registry + capability router ─────────────────────────────────────
 
 def test_local_voice_provider_registered():
-    from services.provider_registry import get_provider_registry
+    from agent_friday.services.provider_registry import get_provider_registry
     reg = get_provider_registry()
     p = reg.get_provider("local-voice-lite")
     assert p is not None
@@ -22,7 +22,7 @@ def test_local_voice_provider_registered():
 
 
 def test_nemo_provider_registered_and_gpu_gated():
-    from services.provider_registry import get_provider_registry
+    from agent_friday.services.provider_registry import get_provider_registry
     reg = get_provider_registry()
     p = reg.get_provider("nvidia-nemo")
     assert p is not None and p["enabled"] is True
@@ -34,7 +34,7 @@ def test_nemo_provider_registered_and_gpu_gated():
 
 
 def test_asr_tts_capabilities_exist():
-    from services import capability_router
+    from agent_friday.services import capability_router
     assert "asr" in capability_router.CAPABILITIES
     assert "tts" in capability_router.CAPABILITIES
     for cap in ("asr", "tts"):
@@ -78,7 +78,7 @@ class _FakeEngine:
 
 
 def test_session_info_defaults_to_local(client, monkeypatch):
-    import routes.voice as rv
+    import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(True, True))
     # No voice_engine set → defaults to local (the ethos).
     monkeypatch.setattr(rv, "_load_settings", lambda: {})
@@ -90,7 +90,7 @@ def test_session_info_defaults_to_local(client, monkeypatch):
 
 
 def test_session_info_cloud_opt_in(client, monkeypatch):
-    import routes.voice as rv
+    import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(True, True))
     monkeypatch.setattr(rv, "_load_settings", lambda: {"voice_engine": "gemini"})
     monkeypatch.setattr(core, "GEMINI_API_KEY", "AQ.fake-key-for-test")  # pragma: allowlist secret
@@ -102,7 +102,7 @@ def test_session_info_cloud_opt_in(client, monkeypatch):
 
 
 def test_session_info_falls_back_to_cloud_when_local_missing(client, monkeypatch):
-    import routes.voice as rv
+    import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(False, False))
     monkeypatch.setattr(rv, "_load_settings", lambda: {"voice_engine": "local"})
     monkeypatch.setattr(core, "GEMINI_API_KEY", "AQ.fake-key-for-test")  # pragma: allowlist secret
@@ -114,7 +114,7 @@ def test_session_info_falls_back_to_cloud_when_local_missing(client, monkeypatch
 
 
 def test_session_info_demo_when_nothing_available(client, monkeypatch):
-    import routes.voice as rv
+    import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine", lambda: _FakeEngine(False, False))
     monkeypatch.setattr(rv, "_load_settings", lambda: {"voice_engine": "local"})
     monkeypatch.setattr(core, "GEMINI_API_KEY", "")
@@ -147,7 +147,7 @@ def test_health_full_lists_nemo_provider(client):
 
 
 def test_session_info_reports_tier(client, monkeypatch):
-    import routes.voice as rv
+    import agent_friday.routes.voice as rv
     monkeypatch.setattr(rv, "get_local_voice_engine",
                         lambda: _FakeEngine(True, True, tier="gpu"))
     monkeypatch.setattr(rv, "_load_settings", lambda: {"voice_engine": "local-gpu"})
@@ -192,8 +192,8 @@ def test_local_voice_alone_does_not_lift_demo(monkeypatch):
     """A machine with local voice deps but NO reasoning provider is still demo —
     voice needs a brain. (Guards against local-voice auth:none counting as a
     live provider.)"""
-    from services import demo_mode
-    from services.provider_registry import get_provider_registry
+    from agent_friday.services import demo_mode
+    from agent_friday.services.provider_registry import get_provider_registry
 
     reg = get_provider_registry()
 

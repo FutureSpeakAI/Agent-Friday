@@ -1,7 +1,7 @@
-"""Unit tests for cost metering (Part D)."""
+﻿"""Unit tests for cost metering (Part D)."""
 import pytest
 
-from services import cost_meter as cm
+from agent_friday.services import cost_meter as cm
 
 
 @pytest.fixture(autouse=True)

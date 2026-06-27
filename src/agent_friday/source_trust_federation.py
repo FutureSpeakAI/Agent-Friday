@@ -1,4 +1,4 @@
-"""
+﻿"""
 Source Trust Federation — signed attestation protocol.
 
 The Source Trust Graph (source_trust_graph.py) learns a *local* reputation for
@@ -66,7 +66,7 @@ def _imported_file(friday_dir=None):
 
 def _engine(governance_key_fn=None, friday_dir=None):
     """Fetch the shared IntegrityEngine (holds the Ed25519 keypair)."""
-    from proof_of_integrity import get_integrity_engine
+    from agent_friday.governance.proof_of_integrity import get_integrity_engine
     return get_integrity_engine(friday_dir=friday_dir,
                                 governance_key_fn=governance_key_fn)
 
@@ -128,7 +128,7 @@ def verify_attestation(attestation, public_key=None, governance_key_fn=None,
     pubkey = public_key or attestation.get("agent_id")
     if not sig or not pubkey:
         return False
-    from proof_of_integrity import IntegrityEngine
+    from agent_friday.governance.proof_of_integrity import IntegrityEngine
     return IntegrityEngine.verify_payload(_canonical_body(attestation), sig, pubkey)
 
 
@@ -226,7 +226,7 @@ _OBS_TYPE_MAP = {
 
 
 def _apply_to_graph(attestation, friday_dir=None):
-    from source_trust_graph import get_source_trust_graph
+    from agent_friday.source_trust_graph import get_source_trust_graph
     obs = attestation.get("observation") or {}
     otype = obs.get("type", "")
     dim, signal = _OBS_TYPE_MAP.get(otype, (None, None))

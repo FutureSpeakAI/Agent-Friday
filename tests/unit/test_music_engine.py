@@ -1,12 +1,12 @@
-"""Unit tests for the music generation engine (services/music_engine.py).
+﻿"""Unit tests for the music generation engine (services/music_engine.py).
 
 Offline-only. Covers model resolution, the harm-floor safety gate (dark/explicit
 ALLOWED, real-person harm BLOCKED), the Scene-DNA audio-layer prompt composition,
 cloud feature-detection, and the demo-mode graceful degradation (which writes a
 real artifact + signs provenance rather than failing).
 """
-import core
-from services import music_engine as me
+import agent_friday.core as core
+from agent_friday.services import music_engine as me
 
 
 # ── Model resolution ────────────────────────────────────────────────────────

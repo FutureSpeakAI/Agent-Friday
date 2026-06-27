@@ -1,6 +1,6 @@
-"""Unit tests for services/marketplace.py"""
+﻿"""Unit tests for services/marketplace.py"""
 import pytest
-from services import marketplace as mkt
+from agent_friday.services import marketplace as mkt
 
 
 def _mk_listing(**kwargs):

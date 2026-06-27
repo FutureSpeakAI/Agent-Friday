@@ -554,7 +554,7 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
 # ═══════════════════════════════════════════════════════════════
 
 try:
-    import notifications_engine as _notif_engine
+    import agent_friday.notifications_engine as _notif_engine
 except Exception as _e:
     _notif_engine = None
     print(f"  [FRIDAY] WARNING: notifications_engine unavailable: {_e}")

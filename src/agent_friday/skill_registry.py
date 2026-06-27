@@ -1,4 +1,4 @@
-"""
+﻿"""
 Portable Skill Registry — SKILL.md folder format.
 
 A skill is a folder containing a ``SKILL.md`` file: YAML frontmatter (the
@@ -428,7 +428,7 @@ def register_with_skillopt(skill: Skill) -> bool:
     """Register a skill's body as a SkillOpt version so the optimizer can
     version/score/improve it. Best-effort; never raises."""
     try:
-        from skillopt_engine import get_engine
+        from agent_friday.skillopt_engine import get_engine
         content = skill.body or skill.description or skill.name
         get_engine().register_skill(skill.name, content, notes=f"source={skill.source}")
         return True

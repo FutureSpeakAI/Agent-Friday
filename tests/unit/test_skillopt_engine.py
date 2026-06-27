@@ -1,4 +1,4 @@
-"""Unit tests for skillopt_engine.py — pure-math scoring, validation gate,
+﻿"""Unit tests for skillopt_engine.py — pure-math scoring, validation gate,
 and data-class helpers. No server, no network, no real ~/.friday writes.
 
 All tests use synthetic data and a temp directory for SkillStorage/SkillOptEngine.
@@ -13,8 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import skillopt_engine as soe
-from skillopt_engine import (
+import agent_friday.skillopt_engine as soe
+from agent_friday.skillopt_engine import (
     DEFAULT_LATENCY_TARGET_MS,
     DEFAULT_COST_TARGET_USD,
     REGRESSION_TOLERANCE,

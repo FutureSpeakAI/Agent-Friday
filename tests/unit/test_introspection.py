@@ -1,4 +1,4 @@
-"""Unit tests for the self-improvement introspection tools:
+﻿"""Unit tests for the self-improvement introspection tools:
 epistemic_score, personality_show, personality_check_sycophancy."""
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from services import introspection as I
+from agent_friday.services import introspection as I
 
 
 # ── A fake ConversationMemory standing in for ChromaDB ─────────────────────
@@ -286,7 +286,7 @@ class TestSelfImprovementOrb:
         monkeypatch.setattr(I, "SELF_IMPROVEMENT_DIR", tmp_path / "self_improvement")
 
     def test_orb_registered_updated_and_completed(self, monkeypatch):
-        import core
+        import agent_friday.core as core
         events = []
         monkeypatch.setattr(core, "process_register",
                             lambda pid, **k: events.append(("register", pid, k)))
@@ -304,7 +304,7 @@ class TestSelfImprovementOrb:
                    for e in events)
 
     def test_show_orb_false_touches_no_registry(self, monkeypatch):
-        import core
+        import agent_friday.core as core
         touched = []
         monkeypatch.setattr(core, "process_register",
                             lambda pid, **k: touched.append(pid))
@@ -313,7 +313,7 @@ class TestSelfImprovementOrb:
         assert touched == []
 
     def test_orb_failure_never_breaks_report(self, monkeypatch):
-        import core
+        import agent_friday.core as core
         monkeypatch.setattr(core, "process_register",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
         rep = I.generate_self_improvement_report(

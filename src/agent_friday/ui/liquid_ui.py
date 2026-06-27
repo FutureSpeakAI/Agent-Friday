@@ -1,4 +1,4 @@
-"""
+﻿"""
 Liquid UI — Friday's self-evolving interface system.
 FutureSpeak.AI · Asimov's Mind
 
@@ -1096,7 +1096,7 @@ class LiquidUIEngine:
 
 def _register_with_skillopt(spec: FeatureSpec):
     try:
-        from skillopt_engine import get_engine
+        from agent_friday.skillopt_engine import get_engine
     except ImportError:
         return
     try:
@@ -1126,7 +1126,7 @@ def _register_with_skillopt(spec: FeatureSpec):
 
 def _record_usage_to_skillopt(event: UsageEvent):
     try:
-        from skillopt_engine import record_skill_run
+        from agent_friday.skillopt_engine import record_skill_run
     except ImportError:
         return
     if not event.feature_id:

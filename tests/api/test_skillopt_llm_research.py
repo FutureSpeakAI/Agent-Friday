@@ -1,4 +1,4 @@
-"""SkillOpt auto-research with a real LLM researcher.
+﻿"""SkillOpt auto-research with a real LLM researcher.
 
 The AutoResearchLoop always had a researcher seam but nothing supplied one —
 proposals came from static heuristics only. The services layer now injects an
@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 import uuid
 
-import skillopt_engine as sopt
-import services.notifications as notif_mod
-import services.model_router as smr
+import agent_friday.skillopt_engine as sopt
+import agent_friday.services.notifications as notif_mod
+import agent_friday.services.model_router as smr
 
 
 LLM_RESPONSE = json.dumps({

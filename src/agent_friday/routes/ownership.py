@@ -16,7 +16,7 @@ FutureSpeak.AI · Asimov's Mind
 """
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
-from services import ownership, provenance as pv
+from agent_friday.services import ownership, provenance as pv
 
 ownership_bp = Blueprint("ownership", __name__)
 

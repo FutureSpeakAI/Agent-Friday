@@ -1,4 +1,4 @@
-"""Unit tests for conversation_memory.py — ChromaDB-backed persistent memory.
+﻿"""Unit tests for conversation_memory.py — ChromaDB-backed persistent memory.
 
 Strategy:
   * extract_keywords() is PURE — tested thoroughly with no deps.
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pytest
 
 # ── extract_keywords is pure Python — no heavy deps needed ───────────────────
-from conversation_memory import extract_keywords, _STOPWORDS  # noqa: E402
+from agent_friday.conversation_memory import extract_keywords, _STOPWORDS  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ class TestExtractKeywords:
 
 chromadb = pytest.importorskip("chromadb", reason="chromadb not installed")
 
-from conversation_memory import ConversationMemory, get_conversation_memory  # noqa: E402
+from agent_friday.conversation_memory import ConversationMemory, get_conversation_memory  # noqa: E402
 
 
 # ── Fake embedding function ────────────────────────────────────────────────
@@ -537,7 +537,7 @@ class TestThreadSafety:
 
 class TestSingleton:
     def test_same_object_returned_twice(self):
-        import conversation_memory as cm
+        import agent_friday.conversation_memory as cm
         # Reset singleton to test fresh construction.
         orig = cm._instance
         cm._instance = None

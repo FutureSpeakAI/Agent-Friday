@@ -1,4 +1,4 @@
-"""Unit tests for source_trust_graph — pure reputation-scoring logic.
+﻿"""Unit tests for source_trust_graph — pure reputation-scoring logic.
 
 Tests cover:
   * _extract_domain:  URL → bare domain canonicalization
@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import source_trust_graph as stg
-from source_trust_graph import (
+import agent_friday.source_trust_graph as stg
+from agent_friday.source_trust_graph import (
     DIMENSIONS,
     SourceTrustGraph,
     _extract_domain,

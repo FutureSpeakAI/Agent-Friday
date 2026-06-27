@@ -588,7 +588,7 @@ def evaluate_content(
 
     if scan_text:
         try:
-            from services import moderation
+            from agent_friday.services import moderation
             harm = moderation.scan(content_text=scan_text)
             if harm.get("blocked"):
                 return {

@@ -1,4 +1,4 @@
-"""Unit tests for notifications.py — pure template builders.
+﻿"""Unit tests for notifications.py — pure template builders.
 
 Every function under test is stateless; no server, no filesystem, no DB.
 Uses synthetic data only.
@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import notifications as notif
-from notifications import (
+import agent_friday.notifications as notif
+from agent_friday.notifications import (
     ICON_DIGEST,
     ICON_INFO,
     ICON_INTERVIEW,

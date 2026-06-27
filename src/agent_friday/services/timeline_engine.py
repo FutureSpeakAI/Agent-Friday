@@ -499,7 +499,7 @@ def _source_edges(timeline: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Every source clip's content hash becomes a provenance input edge (§3.3)."""
     edges = []
     try:
-        from services import provenance
+        from agent_friday.services import provenance
         for track in timeline.get("tracks", []):
             role = {"video": "clip", "audio": "score"}.get(track.get("kind"))
             if not role:
@@ -519,7 +519,7 @@ def _source_edges(timeline: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _write_provenance(file_rec, timeline, timeline_id, profile, sources, project_id,
                       license=None):
     try:
-        from services import provenance
+        from agent_friday.services import provenance
         tool = {"tool": "timeline_engine.compose", "version": "1.0",
                 "timeline_id": timeline_id, "profile": profile}
         provenance.write(file_rec["path"], tool_chain=[tool], sources=sources,
@@ -545,7 +545,7 @@ def _attach_project(project_id, files):
     if not project_id:
         return
     try:
-        from services import creative_memory
+        from agent_friday.services import creative_memory
         for f in files:
             creative_memory.add_asset(project_id, f["filename"])
     except Exception:

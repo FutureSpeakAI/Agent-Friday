@@ -9,11 +9,11 @@ FutureSpeak.AI · Asimov's Mind
 """
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
-from services import federation as fed
-from services import federation_transport as transport
-from services import marketplace
-from services import economy
-from services import moderation
+from agent_friday.services import federation as fed
+from agent_friday.services import federation_transport as transport
+from agent_friday.services import marketplace
+from agent_friday.services import economy
+from agent_friday.services import moderation
 
 federation_bp = Blueprint("federation", __name__)
 
@@ -428,7 +428,7 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
     if msg_type == "LICENSE_QUERY":
         asset_id = payload.get("asset_id", "")
         try:
-            from services import ownership
+            from agent_friday.services import ownership
             asset = ownership.get_asset(asset_id)
             if asset:
                 return {"found": True, "license": asset.get("license"), "asset_id": asset_id}

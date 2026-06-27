@@ -1,4 +1,4 @@
-"""Unit tests for behavioral_monitor.py — internal governance / anomaly detection.
+﻿"""Unit tests for behavioral_monitor.py — internal governance / anomaly detection.
 
 Covers: _clamp, _risk_level, _score_scope_drift, _score_privilege_escalation,
 _score_data_exfiltration, _score_repetition, summarize_args, _scrub,
@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import math
 import pytest
 
-from behavioral_monitor import (
+from agent_friday.governance.behavioral_monitor import (
     BehavioralMonitor,
     Remit,
     Action,

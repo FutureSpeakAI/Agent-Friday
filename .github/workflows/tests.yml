@@ -22,17 +22,21 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # The heavy optional ML stack (sentence-transformers/torch, chromadb,
-      # headroom-ai) is deliberately NOT installed: the app degrades those
-      # features to no-ops and the suite is validated against exactly this
-      # dependency set. Keeps CI under ~2 minutes instead of ~15.
-      - name: Install dependencies
+      # Install the package in editable mode so `import agent_friday` resolves
+      # via the src/ layout. The heavy optional ML stack (sentence-transformers,
+      # chromadb, headroom-ai) is deliberately excluded — the app degrades those
+      # to no-ops, keeping CI under ~2 minutes instead of ~15.
+      - name: Install core dependencies
         run: >
           pip install
           flask flask-sock anthropic google-genai
           google-api-python-client google-auth-oauthlib
           cryptography pynacl rich colorama beautifulsoup4 feedparser
           tzdata requests pyyaml pytest
+
+      # Install the package itself (src layout, no heavy extras).
+      - name: Install agent-friday (editable)
+        run: pip install -e . --no-deps
 
       # GUI-automation deps import display machinery; only meaningful (and
       # only installable cleanly) on the Windows runner.

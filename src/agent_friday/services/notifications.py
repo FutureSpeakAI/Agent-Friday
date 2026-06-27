@@ -303,7 +303,7 @@ def register_daily_job(name, hour, minute, fn):
     are no longer started at boot.
     """
     try:
-        from services import scheduler as _sched
+        from agent_friday.services import scheduler as _sched
         _sched.register_daily_job(name, hour, minute, fn)
     except Exception as e:
         print(f"  [daily-scheduler] shim delegate failed ({e}); using legacy list")
@@ -384,7 +384,7 @@ def _skillopt_llm_researcher(skill_name, context):
     to reach the model router.
     """
     from agent_friday.services.model_router import _generate_text
-    import skillopt_engine as _sopt
+    import agent_friday.skillopt_engine as _sopt
 
     recent = (context.get("recent_executions") or [])[:8]
     exec_lines = []
@@ -428,12 +428,12 @@ def _skillopt_llm_researcher(skill_name, context):
 def _skillopt_nightly():
     """Nightly closed-loop tick: run SkillOpt auto-research over drifted skills."""
     try:
-        import skillopt_engine as _sopt
+        import agent_friday.skillopt_engine as _sopt
         _sopt.set_researcher(_skillopt_llm_researcher)
     except Exception as e:
         print(f"  [skillopt] researcher wiring failed: {e}")
     try:
-        import skill_capture as _skcap
+        import agent_friday.skill_capture as _skcap
         result = _skcap.run_nightly()
         print(f"  [skillopt] nightly research: {result}")
     except Exception as e:

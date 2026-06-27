@@ -1,4 +1,4 @@
-"""Unit tests for context_pruner.py — semantic context pruning.
+﻿"""Unit tests for context_pruner.py — semantic context pruning.
 
 Tests cover:
   * should_prune   — threshold logic (under/over/at boundary)
@@ -25,7 +25,7 @@ import pytest  # noqa: E402  (needed before importorskip call)
 
 np = pytest.importorskip("numpy")  # skip whole file if numpy absent
 
-from context_pruner import ContextPruner  # noqa: E402
+from agent_friday.pipeline.context_pruner import ContextPruner  # noqa: E402
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

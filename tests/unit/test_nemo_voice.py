@@ -1,4 +1,4 @@
-"""Unit tests for the Tier-2 NeMo GPU voice backend (services/nemo_voice.py).
+﻿"""Unit tests for the Tier-2 NeMo GPU voice backend (services/nemo_voice.py).
 
 These run in CI with NO torch-CUDA, NO NeMo, and NO GPU — exactly the suite's
 philosophy. The module must import for free, probe deps/GPU without importing the
@@ -10,8 +10,8 @@ import array
 
 import pytest
 
-from services import nemo_voice as nv
-from services.nemo_voice import (
+from agent_friday.services import nemo_voice as nv
+from agent_friday.services.nemo_voice import (
     MIN_VRAM_GB,
     NeMoASR,
     NeMoTTS,

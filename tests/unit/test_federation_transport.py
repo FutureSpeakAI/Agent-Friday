@@ -1,6 +1,6 @@
-"""Unit tests for services/federation_transport.py"""
+﻿"""Unit tests for services/federation_transport.py"""
 import pytest
-from services import federation_transport as ft
+from agent_friday.services import federation_transport as ft
 
 
 # Detect whether the cryptography package is available (same flag the module uses)

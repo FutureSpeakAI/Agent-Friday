@@ -1,4 +1,4 @@
-"""Unit tests for the creative generation engine (services/creative_engine.py).
+﻿"""Unit tests for the creative generation engine (services/creative_engine.py).
 
 Offline-only: the google-genai client is replaced with hand-rolled fakes, so no
 network call and no API key are ever needed. Covers model resolution, the
@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-import core
-from services import creative_engine as ce
+import agent_friday.core as core
+from agent_friday.services import creative_engine as ce
 
 
 # ── Fake google-genai client (image) ───────────────────────────────────────

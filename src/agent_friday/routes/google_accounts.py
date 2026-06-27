@@ -1,4 +1,4 @@
-"""
+﻿"""
 routes/google_accounts.py — API for secure multi-account Google integration.
 
 Endpoints (all under /api/google/accounts):
@@ -26,8 +26,8 @@ from functools import wraps
 
 from flask import Blueprint, jsonify, request, session
 
-from services import google_accounts as ga
-from services import credential_store as cs
+from agent_friday.services import google_accounts as ga
+from agent_friday.services import credential_store as cs
 
 google_accounts_bp = Blueprint("google_accounts", __name__)
 

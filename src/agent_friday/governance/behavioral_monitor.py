@@ -1,4 +1,4 @@
-"""
+﻿"""
 behavioral_monitor.py — Behavioral anomaly detection for Agent Friday.
 
 Inspired by Adrian (secureagentics/adrian), but implemented as *internal
@@ -641,7 +641,7 @@ class BehavioralMonitor:
         notifier = self._notifier
         if notifier is None:
             try:
-                import notifications_engine as notifier  # type: ignore
+                import agent_friday.notifications_engine as notifier  # type: ignore
             except Exception:
                 return
         try:
@@ -654,7 +654,7 @@ class BehavioralMonitor:
         getter = self._epistemic_getter
         if getter is None:
             try:
-                from epistemic_engine import get_epistemic_engine as getter  # type: ignore
+                from agent_friday.epistemic_engine import get_epistemic_engine as getter  # type: ignore
             except Exception:
                 return
         try:

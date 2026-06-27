@@ -1,4 +1,4 @@
-"""Unit tests for ollama_manager — the local-model interface layer.
+﻿"""Unit tests for ollama_manager — the local-model interface layer.
 
 Pure logic under test (no network required):
   * recommend_models  — threshold-based hardware → model recommendation
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pytest
 
 # Reset the module-level singleton before each test so tests are independent.
-import ollama_manager as om
+import agent_friday.routing.ollama_manager as om
 
 
 @pytest.fixture(autouse=True)

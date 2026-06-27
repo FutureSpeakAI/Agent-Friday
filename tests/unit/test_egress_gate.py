@@ -1,4 +1,4 @@
-"""Unit tests for the egress gate (services/egress_gate.py).
+﻿"""Unit tests for the egress gate (services/egress_gate.py).
 
 The egress gate is the last security boundary before any cloud HTTP call.
 These tests use synthetic data — no real PII.
@@ -12,13 +12,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from services.egress_gate import (
+from agent_friday.services.egress_gate import (
     seal_outbound,
     _is_cloud,
     _gate_text,
     _gate_messages,
 )
-from services.sensitivity_classifier import Tier
+from agent_friday.services.sensitivity_classifier import Tier
 
 
 # ── Provider classification ────────────────────────────────────────────────────

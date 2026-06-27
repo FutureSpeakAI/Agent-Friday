@@ -1,4 +1,4 @@
-"""
+﻿"""
 Vault Access Control — the gatekeeper for the Sovereign Vault.
 
 The Sovereign Vault holds the user's most private data: financial records,
@@ -43,7 +43,7 @@ LOCAL_PROVIDERS = {"ollama", "local"}
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
 try:
-    from services.sensitivity_classifier import (
+    from agent_friday.services.sensitivity_classifier import (
         TIER_3_KEYWORDS, TIER_2_KEYWORDS,
         classify_legacy as _sc_classify_legacy,
     )

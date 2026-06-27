@@ -1,4 +1,4 @@
-"""Tests for Workspace Studio — Friday as a per-workspace customization agent.
+﻿"""Tests for Workspace Studio — Friday as a per-workspace customization agent.
 
 Covers the safety-critical and behavioural contract: patch sanitization (no CSS
 injection / script breakout), the apply→snapshot→merge flow, undoable revert and
@@ -11,7 +11,7 @@ import shutil
 
 import pytest
 
-from services import workspace_studio as ws
+from agent_friday.services import workspace_studio as ws
 
 
 @pytest.fixture(autouse=True)

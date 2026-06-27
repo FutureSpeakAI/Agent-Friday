@@ -1,7 +1,7 @@
-"""Unit tests for services/defederation.py"""
+﻿"""Unit tests for services/defederation.py"""
 import json
 import pytest
-from services import defederation as defd
+from agent_friday.services import defederation as defd
 
 defd._ensure_schema()
 

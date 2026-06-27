@@ -478,7 +478,7 @@ def compute_consensus(agent_pubkey: str) -> Dict[str, Any]:
         # Gather trust scores for assessors
         assessor_trust: Dict[str, float] = {}
         try:
-            from services import federation as fed
+            from agent_friday.services import federation as fed
             for a in assessments:
                 ap = a["assessor_pubkey"]
                 if ap not in assessor_trust:

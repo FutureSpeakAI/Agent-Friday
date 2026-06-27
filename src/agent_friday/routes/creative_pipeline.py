@@ -11,10 +11,10 @@ Mutation endpoints return HTTP 200 with status-in-body (project convention).
 import traceback
 from flask import Blueprint, jsonify, request
 
-from services import creative_pipeline as cp
-from services import scene_dna as sd
-from services import qa_gates
-from services import take_comparison as tc
+from agent_friday.services import creative_pipeline as cp
+from agent_friday.services import scene_dna as sd
+from agent_friday.services import qa_gates
+from agent_friday.services import take_comparison as tc
 
 creative_pipeline_bp = Blueprint('creative_pipeline', __name__)
 

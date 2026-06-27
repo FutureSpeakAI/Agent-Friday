@@ -1,4 +1,4 @@
-"""Unit tests for notifications_engine.py — persistent notification queue.
+﻿"""Unit tests for notifications_engine.py — persistent notification queue.
 
 The module writes to FRIDAY_DIR / notifications.json, which is redirected by
 conftest.py to an isolated temp home. We also explicitly reset state between
@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import notifications_engine as ne
-from notifications_engine import (
+import agent_friday.notifications_engine as ne
+from agent_friday.notifications_engine import (
     NOTIF_FILE,
     PRIORITY_ORDER,
     TRIGGER_STATE_FILE,

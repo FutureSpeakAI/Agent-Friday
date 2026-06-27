@@ -312,7 +312,7 @@ def create_music():
     image-to-music, custom lyrics, instrumental/song modes. When cloud music is
     unavailable the engine returns a {status:'demo'} preview rather than failing.
     Returns the standard creative envelope; HTTP 200 by convention."""
-    from services import music_engine
+    from agent_friday.services import music_engine
     data = request.get_json(silent=True) or {}
     prompt = (data.get('prompt') or 'Ambient electronic, warm, slow').strip()
     result = music_engine.generate_music(
@@ -336,7 +336,7 @@ def music_available():
     """Return whether cloud music generation (Lyria batch API) is available.
     The UI uses this to show a 'Coming Soon' badge on the music button when the
     current google-genai SDK lacks the batch generate_music surface."""
-    from services import music_engine
+    from agent_friday.services import music_engine
     ok, reason = music_engine.cloud_music_available()
     return jsonify({"available": ok, "reason": reason or None})
 
@@ -348,7 +348,7 @@ def create_timeline():
     engine). Accepts either a full {timeline:{...}} contract or the simpler
     {clips:[...], music, transition, title, exports} shorthand the Studio panel
     posts. HTTP 200 by convention; body carries status (ok|demo|error)."""
-    from services import timeline_engine
+    from agent_friday.services import timeline_engine
     data = request.get_json(silent=True) or {}
     timeline = data.get('timeline')
     if not isinstance(timeline, dict):
@@ -379,7 +379,7 @@ def create_timeline():
 @creations_bp.route('/api/timeline/formats')
 def timeline_formats():
     """The available timeline export presets (for the Studio composition panel)."""
-    from services import timeline_engine
+    from agent_friday.services import timeline_engine
     return jsonify({"status": "ok", "formats": timeline_engine.export_formats(),
                     "ffmpeg_available": timeline_engine.is_available()})
 
@@ -387,7 +387,7 @@ def timeline_formats():
 @creations_bp.route('/api/provenance/<path:content_hash>')
 def provenance_verify(content_hash):
     """Verify + trace the signed Content Credential for an artifact (Layer 2)."""
-    from services import provenance
+    from agent_friday.services import provenance
     ch = content_hash if content_hash.startswith('sha256:') else f'sha256:{content_hash}'
     manifest = provenance.get_manifest(ch)
     if not manifest:
@@ -399,7 +399,7 @@ def provenance_verify(content_hash):
 @creations_bp.route('/api/provenance/license-options')
 def provenance_license_options():
     """The license terms a creator can pick per piece (for the UI selector)."""
-    from services import provenance
+    from agent_friday.services import provenance
     return jsonify({"status": "ok", "terms": list(provenance.LICENSE_TERMS),
                     "default": provenance.DEFAULT_LICENSE_TERMS})
 
@@ -407,7 +407,7 @@ def provenance_license_options():
 @creations_bp.route('/api/provenance/by-file/<path:filename>/license', methods=['POST'])
 def provenance_set_license(filename):
     """Owner changes a creation's license terms (append-only edit, re-signed)."""
-    from services import provenance
+    from agent_friday.services import provenance
     p = CREATIONS_DIR / Path(filename).name
     if not p.exists():
         return jsonify({"status": "error", "message": "Creation not found."})
@@ -427,7 +427,7 @@ def provenance_set_license(filename):
 def provenance_by_file(filename):
     """Verify provenance for a creation by filename (hashes the file, reads its
     sidecar)."""
-    from services import provenance
+    from agent_friday.services import provenance
     p = CREATIONS_DIR / Path(filename).name
     if not p.exists():
         return jsonify({"status": "error", "message": "Creation not found."})

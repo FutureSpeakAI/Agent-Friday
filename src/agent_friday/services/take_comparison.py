@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — Take Comparison
 FutureSpeak.AI · Asimov's Mind
 
@@ -57,8 +57,8 @@ def compare_images(prompt: str, *, n: int = 3, model: Optional[str] = None,
     n = _clamp_n(n)
     intent = (intent or prompt or "").strip()
     try:
-        from services import creative_engine as ce
-        from services import qa_gates
+        from agent_friday.services import creative_engine as ce
+        from agent_friday.services import qa_gates
     except Exception as e:
         return {"status": "error", "message": f"take comparison unavailable: {e}"}
 
@@ -111,7 +111,7 @@ def compare_text(intent: str, generate_fn: Callable[[int], str], *,
     """
     n = _clamp_n(n)
     try:
-        from services import qa_gates
+        from agent_friday.services import qa_gates
     except Exception as e:
         return {"status": "error", "message": f"take comparison unavailable: {e}"}
 

@@ -1,4 +1,4 @@
-"""API tests for the creative pipeline, projects, Scene DNA, QA and take routes.
+﻿"""API tests for the creative pipeline, projects, Scene DNA, QA and take routes.
 
 The autouse `_no_real_llm` fixture stubs _generate_text (→ CANNED_TEXT), so
 pipeline stages and QA evaluation run without a model. No Gemini key is touched
@@ -131,7 +131,7 @@ def test_takes_text_recommends(client):
 
 
 def test_takes_images_unavailable_without_key(client, monkeypatch):
-    from services import creative_engine as ce
+    from agent_friday.services import creative_engine as ce
     monkeypatch.setattr(ce, "is_available", lambda: False)
     r = client.post("/api/takes/images", json={"prompt": "a dragon", "n": 2})
     assert r.get_json()["status"] in ("unavailable", "error")

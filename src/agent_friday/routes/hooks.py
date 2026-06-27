@@ -8,7 +8,7 @@ import traceback
 from flask import Blueprint, jsonify, request
 import agent_friday.core as core
 from agent_friday.core import login_required, _load_settings_raw, _save_settings
-from services import tool_hooks as _hooks
+from agent_friday.services import tool_hooks as _hooks
 
 hooks_bp = Blueprint('hooks', __name__)
 

@@ -7,8 +7,8 @@ FutureSpeak.AI · Asimov's Mind
 """
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
-from services import defederation
-from services import content_policies
+from agent_friday.services import defederation
+from agent_friday.services import content_policies
 
 defederation_bp = Blueprint("defederation", __name__)
 
@@ -123,7 +123,7 @@ def withdraw_assessment(assessment_id):
 
     if not assessor_pubkey:
         try:
-            from services import federation as fed
+            from agent_friday.services import federation as fed
             assessor_pubkey = fed.get_identity().get("agent_id", "")
         except Exception:
             pass

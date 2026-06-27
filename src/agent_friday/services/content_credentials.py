@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
-from services import provenance as pv
+from agent_friday.services import provenance as pv
 
 # ── optional heavy deps (lazy) ───────────────────────────────────────────────
 # mutagen (audio ID3), PIL/Pillow (image XMP), python-xmp-toolkit (full XMP).

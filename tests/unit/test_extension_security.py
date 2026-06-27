@@ -1,4 +1,4 @@
-"""Unit tests for the Goose-inspired extension security model.
+﻿"""Unit tests for the Goose-inspired extension security model.
 
 Pure logic tests — no Flask app, no subprocesses. The root conftest redirects
 HOME to a temp dir, so allowlist/audit files never touch the real ~/.friday.
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from services import extension_security as xsec
+from agent_friday.services import extension_security as xsec
 
 
 @pytest.fixture(autouse=True)

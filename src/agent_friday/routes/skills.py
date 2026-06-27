@@ -43,7 +43,7 @@ skills_bp = Blueprint('skills', __name__)
 def api_skills_list():
     """List all skills (learned, imported, bundled) in the registry."""
     try:
-        import skill_registry as _skreg
+        import agent_friday.skill_registry as _skreg
         skills = _skreg.list_skills()
         return jsonify({"skills": skills, "count": len(skills)})
     except Exception as e:
@@ -57,7 +57,7 @@ def api_skills_import():
     pointing at a local folder / zip / legacy .yaml."""
     import tempfile as _tf, shutil as _sh
     try:
-        import skill_registry as _skreg
+        import agent_friday.skill_registry as _skreg
         upload = request.files.get('file') if request.files else None
         if upload is not None:
             name = request.form.get('name') or None
@@ -84,7 +84,7 @@ def api_skills_import():
 def api_skills_export(name):
     """Download a skill as a portable .zip (canonical SKILL.md folder)."""
     try:
-        import skill_registry as _skreg
+        import agent_friday.skill_registry as _skreg
         z = _skreg.export_skill(name)
         return send_file(str(z), as_attachment=True, download_name=f"{name}.zip")
     except FileNotFoundError as e:

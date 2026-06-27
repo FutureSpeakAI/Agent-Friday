@@ -1,11 +1,11 @@
-"""API route tests for defederation and content policy endpoints."""
+﻿"""API route tests for defederation and content policy endpoints."""
 import base64
 import json
 import pytest
 
 
 def auth_headers():
-    import core
+    import agent_friday.core as core
     creds = base64.b64encode(
         f"{core.FRIDAY_USERNAME}:{core.FRIDAY_PASSWORD}".encode()
     ).decode()
@@ -14,15 +14,15 @@ def auth_headers():
 
 @pytest.fixture(autouse=True, scope="session")
 def _init_schemas():
-    from services import defederation
-    from services import content_policies
+    from agent_friday.services import defederation
+    from agent_friday.services import content_policies
     defederation._ensure_schema()
     content_policies._ensure_schema()
 
 
 @pytest.fixture
 def client():
-    import server as s
+    import agent_friday.server as s
     s.app.config["TESTING"] = True
     with s.app.test_client() as c:
         yield c
@@ -163,7 +163,7 @@ class TestAssessmentRoutes:
 
     def test_withdraw_own_assessment(self, client):
         # Create then immediately withdraw
-        from services import federation as fed
+        from agent_friday.services import federation as fed
         identity = fed.get_identity()
         agent_id = identity.get("agent_id", "local")
         payload = {
@@ -327,7 +327,7 @@ class TestPolicyRoutes:
 
     def test_evaluate_content_nsfw_clean_subscriptions(self, client):
         # With only asimov-standard subscribed (baseline), NSFW is not blocked
-        from services import content_policies as cp
+        from agent_friday.services import content_policies as cp
         packs_before = [p["pack_id"] for p in cp.get_subscribed_packs()]
         # Unsubscribe family-safe if currently subscribed
         cp.unsubscribe("family-safe")

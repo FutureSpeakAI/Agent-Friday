@@ -1,11 +1,11 @@
-"""Unit tests for the timeline composition engine (services/timeline_engine.py).
+﻿"""Unit tests for the timeline composition engine (services/timeline_engine.py).
 
 Offline-only and ffmpeg-free: the filter-graph BUILDER is a pure function, so we
 unit-test the generated argv structure without ever invoking ffmpeg. compose()'s
 no-ffmpeg demo fallback is exercised by stubbing ffmpeg discovery to None.
 """
-import core
-from services import timeline_engine as te
+import agent_friday.core as core
+from agent_friday.services import timeline_engine as te
 
 
 def _clip(name, data=b"FAKEVIDEO"):

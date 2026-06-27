@@ -1,4 +1,4 @@
-"""Unit tests for source_trust_federation — signed attestation protocol.
+﻿"""Unit tests for source_trust_federation — signed attestation protocol.
 
 Tests cover:
   * _canonical_body:     deterministic JSON canonicalization (key-order independence)
@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import source_trust_federation as stf
-from source_trust_federation import (
+import agent_friday.source_trust_federation as stf
+from agent_friday.source_trust_federation import (
     ATTESTATION_TYPE,
     ATTESTATION_VERSION,
     _OBS_TYPE_MAP,
@@ -36,7 +36,7 @@ except ImportError:
 
 # Probe the module's own flag (may live in proof_of_integrity)
 try:
-    from proof_of_integrity import _HAS_ED25519 as _MODULE_HAS_ED25519
+    from agent_friday.governance.proof_of_integrity import _HAS_ED25519 as _MODULE_HAS_ED25519
 except ImportError:
     _MODULE_HAS_ED25519 = False
 
@@ -285,7 +285,7 @@ class TestObsTypeMap:
             assert len(val) == 2, f"{key}: tuple should have length 2"
 
     def test_dimensions_are_valid(self):
-        from source_trust_graph import DIMENSIONS as VALID_DIMS
+        from agent_friday.source_trust_graph import DIMENSIONS as VALID_DIMS
         for key, (dim, _signal) in _OBS_TYPE_MAP.items():
             assert dim in VALID_DIMS, (
                 f"_OBS_TYPE_MAP['{key}'] references unknown dimension '{dim}'"

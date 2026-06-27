@@ -37,7 +37,7 @@ from pathlib import Path
 import agent_friday.core as core
 
 try:
-    import vault_crypto as _vc
+    import agent_friday.privacy.vault_crypto as _vc
     _HAS_VC = True
 except Exception:  # pragma: no cover - cryptography missing
     _vc = None

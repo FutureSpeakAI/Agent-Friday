@@ -3,6 +3,8 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
+> **Note:** Pre-1.0 releases have been archived. Current version: **4.5.0**
+
 ---
 
 ## [Unreleased]

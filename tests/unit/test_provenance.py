@@ -1,4 +1,4 @@
-"""Unit tests for the content provenance layer (services/provenance.py).
+﻿"""Unit tests for the content provenance layer (services/provenance.py).
 
 Offline-only. Covers hashing, license normalization, manifest build + sign +
 store + verify roundtrip, the sources DAG trace, and relicensing. The Ed25519
@@ -7,8 +7,8 @@ is asserted instead — either way verify_manifest must not crash.
 """
 import json
 
-import core
-from services import provenance as pv
+import agent_friday.core as core
+from agent_friday.services import provenance as pv
 
 
 def _write_creation(name, data=b"hello-bytes"):

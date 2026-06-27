@@ -103,7 +103,7 @@ def _workspace_block(workspace: str, settings: Dict[str, Any]) -> List[str]:
 
 def _project_block(max_chars: int) -> List[str]:
     try:
-        from services import creative_memory
+        from agent_friday.services import creative_memory
         pid = creative_memory.get_active_project_id()
         if not pid:
             return []

@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
-from services import provenance as pv
+from agent_friday.services import provenance as pv
 
 DB_PATH = FRIDAY_DIR / "ownership.db"
 _LOCK = threading.RLock()

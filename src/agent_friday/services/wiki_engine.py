@@ -83,7 +83,7 @@ def wiki_read_text(path) -> str:
     """
     raw = Path(path).read_bytes()
     try:
-        import vault_crypto as _vc
+        import agent_friday.privacy.vault_crypto as _vc
         if _vc.is_encrypted(raw):
             from agent_friday.services.agent import _get_vault_key  # upper layer — lazy
             key = _get_vault_key()
@@ -105,7 +105,7 @@ def wiki_write_text(path, text: str) -> None:
     data = text.encode("utf-8")
     if _wiki_path_is_sensitive(p):
         try:
-            import vault_crypto as _vc
+            import agent_friday.privacy.vault_crypto as _vc
             from agent_friday.services.agent import _get_vault_key  # upper layer — lazy
             key = _get_vault_key()
             if key is not None:

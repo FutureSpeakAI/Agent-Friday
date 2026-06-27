@@ -29,13 +29,20 @@ os.environ["USERPROFILE"] = str(_TEST_HOME)
 os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
 os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
 os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
+# FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
+# the backward-compat fallback.  Set both so tests exercise the new code path.
+os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
 # Quieten noisy optional-dep warnings during test runs.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+# With the src/ layout, add both the project root (for `from tests.*` imports)
+# and src/ (for `import agent_friday.*` imports without an editable install).
+_SRC = _ROOT / "src"
+for _p in (str(_SRC), str(_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import pytest  # noqa: E402
 

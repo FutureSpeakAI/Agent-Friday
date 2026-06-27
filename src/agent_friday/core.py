@@ -157,15 +157,51 @@ SERVER_START_TS = _time.time()
 
 # ── Authentication ───────────────────────────────────────────
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
+# FRIDAY_PASSWORD is kept for backward compatibility only. Its two former duties
+# are now split:
+#   • HTTP auth  → _HTTP_AUTH_KEY  (FRIDAY_REMOTE_KEY env var, fallback FRIDAY_PASSWORD)
+#   • Vault KDF  → FRIDAY_VAULT_PASSPHRASE (env var, fallback FRIDAY_PASSWORD)
+# Setting only FRIDAY_PASSWORD still works; set the dedicated vars to decouple them.
 FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
+
+# Vault passphrase — used ONLY for AES-256-GCM key derivation (Argon2id).
+# Never used for HTTP authentication.  Set FRIDAY_VAULT_PASSPHRASE to decouple
+# vault encryption from the remote-access password entirely.
+FRIDAY_VAULT_PASSPHRASE: str = (
+    os.environ.get("FRIDAY_VAULT_PASSPHRASE", "")
+    or FRIDAY_PASSWORD
+)
+
+# Remote HTTP auth key — used ONLY for the login form shown to non-loopback
+# clients (e.g. via Cloudflare Tunnel).  Set FRIDAY_REMOTE_KEY to a strong
+# unique value and keep it separate from the vault passphrase.
+_HTTP_AUTH_KEY: str = (
+    os.environ.get("FRIDAY_REMOTE_KEY", "")
+    or FRIDAY_PASSWORD
+)
+
+# Ephemeral per-startup API session token.  Generated fresh each restart, stored
+# only in memory, never written to disk.  The main HTML page embeds it as
+# window.__FRIDAY_API_TOKEN so the UI can include it in every API request via the
+# X-Friday-Token header.  Rotating every restart means a captured token is
+# automatically invalidated the next time the server is restarted.
+_API_SESSION_TOKEN: str = secrets.token_hex(32)
+
 # When "0"/"false", same-machine (loopback) requests are NOT auto-trusted and
 # must authenticate like remote clients. Default "1" preserves the local-dev UX.
-# (Only has an effect when FRIDAY_PASSWORD is set — without a password, auth is
-# disabled entirely.)
 FRIDAY_TRUST_LOOPBACK = os.environ.get("FRIDAY_TRUST_LOOPBACK", "1") not in ("0", "false", "False")
 # Optional shared token required for the /ws/live WebSocket regardless of
 # loopback trust — defense-in-depth for voice when the server is exposed.
 FRIDAY_WS_TOKEN = os.environ.get("FRIDAY_WS_TOKEN", "")
+
+# Vault encryption health — updated by _get_vault_key() in services/agent.py.
+# 'enabled' is True only when AES-256-GCM is confirmed working.  'warning' is
+# surfaced in GET /api/health so the UI can display a persistent banner.
+_VAULT_ENCRYPTION_STATE: dict = {
+    "enabled": False,
+    "error": "",    # non-empty = derivation failed (CRITICAL)
+    "warning": "",  # non-empty = passphrase unset (advisory)
+}
 
 # Simple in-memory login throttle (no extra deps): per-IP failed-attempt window.
 _LOGIN_ATTEMPTS = {}            # remote_addr -> (count, window_start_ts)
@@ -218,10 +254,13 @@ def _login_attempt_reset(ip):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not FRIDAY_PASSWORD:
+        if not _HTTP_AUTH_KEY:
             return f(*args, **kwargs)
         if _loopback_trusted():
             session['authenticated'] = True
+            return f(*args, **kwargs)
+        # Accept the ephemeral per-startup token embedded in the UI HTML.
+        if request.headers.get("X-Friday-Token") == _API_SESSION_TOKEN:
             return f(*args, **kwargs)
         if not session.get("authenticated"):
             if request.is_json or request.path.startswith("/api/"):
@@ -279,7 +318,7 @@ def login():
         session.permanent = True
         app.permanent_session_lifetime = timedelta(days=30)
         return redirect('/')
-    if not FRIDAY_PASSWORD:
+    if not _HTTP_AUTH_KEY:
         return redirect('/')
     error = ""
     if request.method == 'POST':
@@ -291,7 +330,7 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')  # pragma: allowlist secret
         # Constant-time comparison to avoid leaking credentials via timing.
-        if _hmac.compare_digest(username, FRIDAY_USERNAME) and _hmac.compare_digest(password, FRIDAY_PASSWORD):
+        if _hmac.compare_digest(username, FRIDAY_USERNAME) and _hmac.compare_digest(password, _HTTP_AUTH_KEY):  # pragma: allowlist secret
             session['authenticated'] = True
             session.permanent = True
             app.permanent_session_lifetime = timedelta(days=30)
@@ -1487,19 +1526,22 @@ def check_auth():
     # Loopback / same-machine access is always trusted — auto-authenticate the
     # session so the user never sees a login screen on their own device.
     # Remote access (e.g. via Cloudflare Tunnel) still goes through the
-    # password gate below.
+    # token/key gate below.
     if _loopback_trusted():
         if not session.get("authenticated"):
             session['authenticated'] = True
             session.permanent = True
             app.permanent_session_lifetime = timedelta(days=30)
         return None
-    if not FRIDAY_PASSWORD:
+    if not _HTTP_AUTH_KEY:
         return None
     if request.endpoint in ('login', 'serve_static_asset', 'serve_favicon'):
         return None
     if request.path.startswith('/ws/'):
         return None  # WebSocket upgrade handled inside ws_live (can't send HTTP redirect)
+    # Accept the ephemeral per-startup token (embedded in the served HTML).
+    if request.headers.get("X-Friday-Token") == _API_SESSION_TOKEN:
+        return None
     if not session.get("authenticated"):
         if request.is_json or request.path.startswith("/api/"):
             return jsonify({"error": "unauthorized"}), 401
