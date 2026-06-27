@@ -61,6 +61,10 @@ def _patch_settings(monkeypatch, routing):
     # leak must be demonstrated against that reality.
     monkeypatch.setattr(agent_mod, "get_anthropic_client",
                         lambda *a, **k: object(), raising=False)
+    # Demo mode intercepts before any provider is reached when no API keys are
+    # present (CI environment). Disable it so the fallback chain runs normally.
+    import services.demo_mode as _dm
+    monkeypatch.setattr(_dm, "is_demo", lambda: False)
 
 
 VAULT_MSG = [{"role": "user", "content": "summarize my health record for me"}]
