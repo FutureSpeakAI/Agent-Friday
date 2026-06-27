@@ -8,6 +8,31 @@ import threading
 import time
 
 
+# ── Unified classifier — single source of truth ────────────────────────────────
+# model_router.py previously maintained a duplicate VAULT_KEYWORDS list.
+# Both the router and the egress gate now import from sensitivity_classifier,
+# so they agree on tier boundaries by construction rather than by maintenance.
+try:
+    from services.sensitivity_classifier import (
+        classify as _sc_classify,
+        Tier as _SCTier,
+        TIER_3_KEYWORDS,
+        TIER_2_KEYWORDS,
+    )
+    # Legacy-compatible helper: classify with PUBLIC default for routing use.
+    def _vault_classify(text: str) -> int:
+        return _sc_classify(text, default=_SCTier.PUBLIC)
+except Exception:
+    # Graceful degradation if the classifier module is not yet available.
+    _vault_classify = None
+    TIER_3_KEYWORDS = (
+        "vault", "health record", "medical record",
+        "financial", "finance", "encrypted", "sovereign", "ssn", "social security",
+        "custody", "legal", "court",
+    )
+    TIER_2_KEYWORDS = ("contact", "phone number", "family", "partner")
+
+
 class TaskType:
     SIMPLE = "simple"
     TOOL_USE = "tool_use"
@@ -15,16 +40,6 @@ class TaskType:
     RESEARCH = "research"
     VOICE = "voice"
     VAULT_ACCESS = "vault_access"
-
-
-# Requests that touch the Sovereign Vault must run on a local model. These
-# keywords (and any vault-related tool definitions) flag a request as needing
-# vault access, which force-routes it to Ollama regardless of routing mode.
-VAULT_KEYWORDS = (
-    "vault", "health record", "medical record",
-    "financial", "finance", "encrypted", "sovereign", "ssn", "social security",
-    "custody", "legal", "court",
-)
 
 
 # The top-priority cloud model and the ordered fallback chain. Claude Opus 4.8
@@ -201,8 +216,14 @@ class ModelRouter:
                 if isinstance(content, str):
                     last_msg = content
                 break
+        if _vault_classify is not None:
+            try:
+                return _vault_classify(last_msg) > 1  # PRIVATE or SENSITIVE
+            except Exception:
+                pass
         low = last_msg.lower()
-        return any(kw in low for kw in VAULT_KEYWORDS)
+        return any(kw in low for kw in TIER_3_KEYWORDS) or \
+               any(kw in low for kw in TIER_2_KEYWORDS)
 
     def _finalize(self, result, vault_access=False, warning=None, refuse=False):
         """Attach the downstream control flags the chat pipeline checks.

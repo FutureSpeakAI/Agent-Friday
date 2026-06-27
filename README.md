@@ -169,7 +169,7 @@ Personality evolves over time through maturity scores, trait weights, temperatur
 Tracks independence and reliability of reasoning — how well facts are distinguished from speculation, defer-vs-assert ratios, and confidence calibration.
 
 ### HMAC Integrity
-All behavioral constraints (Asimov's cLaws, governance gates, privilege rings) are cryptographically signed with HMAC-SHA256 and verified before every action. The governance key lives locally and never leaves the machine.
+All behavioral constraints (Asimov's cLaws, governance gates, privilege rings) are HMAC-SHA256 signed for **integrity verification and drift detection**, and verified before every action. The governance key is stored in the OS credential store (Windows Credential Manager, macOS Keychain, Linux Secret Service) and never leaves the machine. See [THREAT_MODEL.md](THREAT_MODEL.md) for the full security posture.
 
 ---
 
@@ -253,12 +253,12 @@ See [docs/SKILLS.md](docs/SKILLS.md) for the full skill system reference.
 
 ## Ethics: Asimov's cLaws
 
-Friday's ethical framework — compiled Laws:
+Friday's ethical framework — signed Laws:
 
 1. Shall not harm a human being or, through inaction, allow harm.
 2. Shall obey user instructions except where they conflict with the First Law.
 3. Shall protect its own integrity except where this conflicts with the First or Second Laws.
-4. All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.
+4. All behavioral constraints are HMAC-SHA256 signed for integrity verification and drift detection, and verified before every action.
 
 A governance gate checks privilege rings before every action:
 

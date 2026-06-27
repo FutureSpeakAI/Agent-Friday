@@ -316,6 +316,68 @@ class IntegrityEngine:
             return {}
 
 
+# ── Governance key — OS keychain with file fallback ───────────────────────────
+
+_KEYRING_SERVICE = "agent-friday"
+_KEYRING_ACCOUNT = "governance-key"
+_GOV_KEY_FILE    = Path.home() / ".friday" / "vault" / ".governance-key"
+_GOV_KEY_LOCK    = threading.Lock()
+
+
+def get_governance_key() -> bytes:
+    """Load (or generate) the HMAC governance key.
+
+    Priority:
+      1. OS keychain via the 'keyring' library (Windows Credential Manager,
+         macOS Keychain, Secret Service on Linux).
+      2. File fallback: ~/.friday/vault/.governance-key (600 permissions).
+      3. Generate a new random key and persist it to whichever store works.
+
+    The key is 32 random bytes (256 bits). It is generated once and reused;
+    rotating it invalidates all existing manifests (expected behaviour during
+    a governance reset).
+    """
+    with _GOV_KEY_LOCK:
+        # 1. Try OS keychain
+        try:
+            import keyring as _kr
+            stored = _kr.get_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT)
+            if stored:
+                return bytes.fromhex(stored)
+        except Exception:
+            pass
+
+        # 2. Try key file
+        if _GOV_KEY_FILE.exists():
+            try:
+                raw = _GOV_KEY_FILE.read_bytes()
+                if len(raw) == 32:
+                    return raw
+                # Hex-encoded in file
+                return bytes.fromhex(raw.decode().strip())
+            except Exception:
+                pass
+
+        # 3. Generate a new key and persist it
+        key = os.urandom(32)
+        try:
+            import keyring as _kr
+            _kr.set_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT, key.hex())
+        except Exception:
+            # keyring unavailable — fall back to file
+            try:
+                _GOV_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _GOV_KEY_FILE.write_bytes(key)
+                try:
+                    import stat
+                    _GOV_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        return key
+
+
 # ── Singleton accessor ─────────────────────────────────────────
 
 _engine_instance = None
@@ -327,8 +389,11 @@ def get_integrity_engine(friday_dir=None, governance_key_fn=None) -> IntegrityEn
     if _engine_instance is None:
         with _engine_lock:
             if _engine_instance is None:
+                # Default governance key comes from the OS keychain (or file
+                # fallback). Callers may override by passing governance_key_fn.
+                key_fn = governance_key_fn or get_governance_key
                 _engine_instance = IntegrityEngine(
                     friday_dir=friday_dir,
-                    governance_key_fn=governance_key_fn,
+                    governance_key_fn=key_fn,
                 )
     return _engine_instance

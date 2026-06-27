@@ -291,6 +291,15 @@ def step_welcome(quick: bool):
         "[cyan]Welcome to Agent Friday — your personal sovereign AI.[/cyan]\n\n"
         "This wizard configures your agent on your machine.\n"
         "You'll need an [bold]Anthropic[/bold] API key to get started.\n\n"
+        "[bold]Privacy posture[/bold]\n"
+        "  • [bold]With Ollama (local):[/bold] Sensitive conversations are\n"
+        "    processed entirely on your device — nothing leaves your machine.\n"
+        "  • [bold]Without Ollama:[/bold] An egress gate redacts sensitive data\n"
+        "    before sending to cloud providers. Your private information never\n"
+        "    leaves your device, but redacted conversations may lose context.\n\n"
+        "  You can install Ollama later in Settings to upgrade to full local\n"
+        "  privacy. One-command install: [bold]winget install Ollama.Ollama[/bold]\n"
+        "  (Windows) or [bold]brew install ollama[/bold] (macOS).\n\n"
         f"{mode_note}",
         title="[bold]FIRST RUN SETUP[/bold]",
         border_style="cyan",
@@ -311,9 +320,42 @@ def step_name(total: int, existing: str) -> str:
     return name.strip().upper() or "AGENT FRIDAY"
 
 
+def _ollama_available() -> bool:
+    """Quick check for a running Ollama instance."""
+    try:
+        import requests as _r
+        return _r.get("http://localhost:11434/api/tags", timeout=2).ok
+    except Exception:
+        return False
+
+
+def _show_privacy_posture():
+    """Display the current privacy posture based on Ollama availability."""
+    if _ollama_available():
+        console.print(Panel(
+            "[bold green]Full local privacy[/bold green]\n"
+            "Ollama detected — sensitive conversations stay entirely on your device.\n"
+            "Nothing leaves your machine.",
+            title="Privacy Posture", border_style="green", padding=(0, 2),
+        ))
+    else:
+        console.print(Panel(
+            "[bold yellow]Egress-gate privacy[/bold yellow]\n"
+            "No Ollama detected. An egress gate redacts sensitive data before\n"
+            "cloud calls — your private information never leaves your device, but\n"
+            "redacted conversations may lose context.\n\n"
+            "Install Ollama for full local privacy:\n"
+            "  Windows: [bold]winget install Ollama.Ollama[/bold]\n"
+            "  macOS:   [bold]brew install ollama[/bold]",
+            title="Privacy Posture", border_style="yellow", padding=(0, 2),
+        ))
+    console.print()
+
+
 def step_provider(total: int, existing_provider: str) -> str:
     _clear()
     _header(2, total, "LLM PROVIDER")
+    _show_privacy_posture()
     console.print("  Choose your primary AI provider.\n")
 
     for i, p in enumerate(PROVIDERS):
