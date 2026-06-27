@@ -5,8 +5,9 @@ Run: python build_ui.py
 """
 import os
 
-parts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ui_parts')
-output = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'index.html')
+_repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..')
+parts_dir = os.path.join(_repo_root, 'ui_parts')
+output = os.path.join(_repo_root, 'index.html')
 
 # Read and combine parts in order
 parts = ['head.html', 'styles_and_scene.html', 'app.html']

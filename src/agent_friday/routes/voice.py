@@ -32,6 +32,7 @@ from agent_friday.core import (
     FRIDAY_PASSWORD,
     FRIDAY_WS_TOKEN,
     TEMP_AUDIO_DIR,
+    _API_SESSION_TOKEN,
     _is_local_request,
     _load_agent_personality,
     _load_settings,
@@ -292,6 +293,9 @@ if sock is not None:
         routing all behave identically to text chat.
         """
         # ── Auth (mirror /ws/live: loopback trusted, else token/password) ──
+        # Accept: (a) FRIDAY_WS_TOKEN env-var token in ?token=, (b) ephemeral
+        # UI session token in ?t= (injected into HTML as window.__FRIDAY_API_TOKEN),
+        # (c) existing HTTP session cookie, or (d) loopback auto-trust.
         if FRIDAY_WS_TOKEN:
             _tok = request.args.get('token', '')
             if not _hmac.compare_digest(_tok, FRIDAY_WS_TOKEN):
@@ -300,7 +304,10 @@ if sock is not None:
                 except Exception:
                     pass
                 return
-        if FRIDAY_PASSWORD and not session.get("authenticated") and not _loopback_trusted():
+        _ui_t = request.args.get('t', '')
+        _ui_tok_ok = bool(_ui_t) and _hmac.compare_digest(_ui_t, _API_SESSION_TOKEN)
+        if (FRIDAY_PASSWORD and not session.get("authenticated")
+                and not _loopback_trusted() and not _ui_tok_ok):
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
@@ -567,7 +574,10 @@ if sock is not None:
                 except Exception:
                     pass
                 return
-        if FRIDAY_PASSWORD and not session.get("authenticated") and not _loopback_trusted():
+        _ui_t = request.args.get('t', '')
+        _ui_tok_ok = bool(_ui_t) and _hmac.compare_digest(_ui_t, _API_SESSION_TOKEN)
+        if (FRIDAY_PASSWORD and not session.get("authenticated")
+                and not _loopback_trusted() and not _ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))

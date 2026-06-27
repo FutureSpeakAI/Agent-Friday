@@ -7,6 +7,14 @@ const WsCustomCtx = React.createContext({map:{}, setCust:()=>{}});
 // Voice debug logging is OFF by default. Enable from the console with
 // `window.FRIDAY_VOICE_DEBUG = true` to surface VOICE_DEBUG diagnostics.
 window.FRIDAY_VOICE_DEBUG = window.FRIDAY_VOICE_DEBUG || false;
+// Thin wrapper around fetch() that attaches the ephemeral UI session token so
+// API calls authenticate correctly on non-loopback (remote tunnel) connections.
+function apiFetch(url, opts){
+  const tok=window.__FRIDAY_API_TOKEN||'';
+  const headers=Object.assign({},opts&&opts.headers);
+  if(tok)headers['X-Friday-Token']=tok;
+  return fetch(url,Object.assign({},opts,{headers}));
+}
 // Full dock. `core:true` marks the trimmed 10-icon set shown to fresh installs
 // (show_all_workspaces=false). Existing installs (show_all_workspaces=true) see
 // every workspace. WS (below) always includes all items so deep-link navigation
@@ -515,6 +523,38 @@ function SendTo({content,personName,eventId,emailThreadId,dataType,options}){
       {opts.map((o,i)=><div key={i} onClick={()=>send(o.dest)} style={{padding:'6px 10px',fontSize:11,color:'#ccc',cursor:'pointer',borderRadius:4,display:'flex',alignItems:'center',gap:6,transition:'background .15s'}} onMouseOver={e=>e.currentTarget.style.background='rgba(0,212,255,0.08)'} onMouseOut={e=>e.currentTarget.style.background='transparent'}><span>{o.ico}</span><span>{o.label}</span></div>)}
     </div>}
   </div>);
+}
+
+// ═══ TALK TO FRIDAY BUTTON ═══
+// Reusable glassmorphic button that triggers voice mode pre-loaded with context.
+// contentType: 'article'|'briefing'|'editorial'|'creation'
+// title/summary: strings used to prime Friday's opening question
+function TalkToFridayButton({contentType,title,summary,style}){
+  const[active,setActive]=useState(false);
+  const onClick=(e)=>{
+    e.stopPropagation();
+    if(!window.fridayVoice){
+      alert('Enable voice mode first, then try again.');
+      return;
+    }
+    setActive(true);
+    setTimeout(()=>setActive(false),2000);
+    const typeLabel=contentType==='creation'?'creation':contentType==='briefing'?'briefing':contentType==='editorial'?'editorial':'article';
+    const ctx=`The user wants to discuss a ${typeLabel}: "${title||'this content'}". ${summary?'Brief summary: '+String(summary).slice(0,350)+'. ':''}Please start by asking: "Would you like me to read this to you, or shall we discuss it?"`;
+    const sourcesMd=`🎤 **Discussing with Friday** · ${title||''}${contentType?' · '+contentType:''}`;
+    window.fridayVoice.startAnchor({prompt:ctx,sourcesMd});
+  };
+  return<button onClick={onClick} title={`Discuss "${title||'this'}" with Friday`} style={Object.assign({},{
+    fontSize:10,padding:'3px 9px',cursor:'pointer',
+    background:active?'rgba(124,58,237,0.35)':'rgba(124,58,237,0.1)',
+    border:'1px solid rgba(124,58,237,'+(active?'0.7':'0.3')+')',
+    borderRadius:5,color:active?'#e0c8ff':'#b794f6',
+    display:'inline-flex',alignItems:'center',gap:4,
+    transition:'all .2s',whiteSpace:'nowrap',fontFamily:'inherit',
+    boxShadow:active?'0 0 10px rgba(124,58,237,0.35)':'none',
+  },style||{})}>
+    <span style={{fontSize:11}}>🎤</span>{active?'Starting…':'Discuss with Friday'}
+  </button>;
 }
 
 // ═══ WORKSPACES ═══
@@ -1694,6 +1734,7 @@ function StudioWS(){
   const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
   const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);const[minor,setMinor]=useState(false);
+  const[expandedCard,setExpandedCard]=useState(null);const[imgErrors,setImgErrors]=useState({});
   const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🔊',ogg:'🔊',m4a:'🔊',mp4:'🎬',webm:'🎬',mov:'🎬'};
   const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
   useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{});fetch('/api/settings').then(r=>r.json()).then(d=>{const s=d.settings||d;setMinor(!!(s&&s.minor_mode))}).catch(()=>{})},[]);
@@ -1771,27 +1812,62 @@ function StudioWS(){
       {['all','html','md','png','mp4','mp3','wav'].map(f=><button key={f} className={'btn '+(filter===f?'':'btn-magenta')} style={{fontSize:11,padding:'2px 7px'}} onClick={()=>setFilter(f)}>{f}</button>)}
     </div>
     {loading?<div style={{color:'#999'}}>Loading gallery...</div>:filtered.length===0?<div style={{color:'#999',fontSize:12,textAlign:'center',padding:20}}>No {filter==='all'?'':filter+' '}creations yet.</div>:
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6}}>
-      {filtered.map((f,i)=>{
+    <div style={{display:'flex',flexDirection:'column',gap:12,maxWidth:680,margin:'0 auto'}}>
+      {[...filtered].reverse().map((f,i)=>{
         const ext=(f.name||'').split('.').pop().toLowerCase();const icon=ICONS[ext]||'📄';
-        const date=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+        const dateStr=f.modified?new Date(f.modified).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';
         const url='/api/creations/'+f.name;
-        const isImg=['png','jpg','jpeg','webp','svg'].includes(ext),isVid=['mp4','webm','mov'].includes(ext),isAud=['mp3','wav','ogg','m4a'].includes(ext);
+        const isImg=['png','jpg','jpeg','webp','svg'].includes(ext),isVid=['mp4','webm','mov'].includes(ext),isAud=['mp3','wav','ogg','m4a'].includes(ext),isMd=ext==='md',isHtml=ext==='html';
         const hue=Math.abs((f.name||'x').split('').reduce((a,c)=>(a*31+c.charCodeAt(0))>>>0,7))%360;
-        const thumb=isImg?<img src={url} alt="" loading="lazy" style={{width:'100%',height:74,objectFit:'cover',borderRadius:6,background:'#0a0a0f'}}/>
-          :isVid?<div style={{position:'relative'}}><video src={url} muted preload="metadata" style={{width:'100%',height:74,objectFit:'cover',borderRadius:6,background:'#0a0a0f'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,color:'rgba(255,255,255,0.9)',textShadow:'0 1px 4px #000',pointerEvents:'none'}}>▶</div></div>
-          :isAud?<div style={{width:'100%',height:74,borderRadius:6,background:'linear-gradient(135deg,hsl('+hue+',65%,24%),hsl('+((hue+50)%360)+',60%,15%))',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>🎵</div>
-          :<div style={{width:'100%',height:74,borderRadius:6,background:'rgba(255,255,255,0.03)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:26}}>{icon}</div>;
+        const isExpanded=expandedCard===f.name;
+        const hasImgErr=imgErrors[f.name];
         const modStatus=f.mod_status||'unscanned';
-        const modIcon=modStatus==='clean'?{ico:'✓',col:'#00ff80',tip:'Verified clean'}:modStatus==='nsfw'?{ico:'⚠',col:'#f59e0b',tip:'NSFW flagged'}:modStatus==='blocked'?{ico:'✗',col:'#ff5470',tip:'Blocked'}:{ico:'?',col:'#8891a8',tip:'Not yet scanned'};
-        return(<div key={i} className="card" style={{cursor:'pointer',padding:6,display:'flex',flexDirection:'column',gap:4}} onClick={()=>openCreation(f)}>
-          {thumb}
-          <div style={{fontSize:10,color:'#cbd',wordBreak:'break-all',lineHeight:1.25,maxHeight:26,overflow:'hidden'}}>{f.name}</div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-            <span style={{fontSize:9,color:'#777'}}>{date}</span>
-            <div style={{display:'flex',gap:4,alignItems:'center'}}>
-              <span title={modIcon.tip} style={{fontSize:10,color:modIcon.col,fontWeight:700,lineHeight:1}}>{modIcon.ico}</span>
-              <button className="btn" style={{fontSize:9,padding:'1px 6px'}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}} title="Open in tab">↗</button>
+        const modBadge=modStatus==='clean'?{lbl:'✓ Verified',col:'rgba(0,255,128,0.15)',tc:'#00e87a'}:modStatus==='nsfw'?{lbl:'⚠ NSFW',col:'rgba(245,158,11,0.15)',tc:'#f59e0b'}:modStatus==='blocked'?{lbl:'✗ Blocked',col:'rgba(255,84,112,0.15)',tc:'#ff5470'}:{lbl:'? Unscanned',col:'rgba(136,145,168,0.1)',tc:'#8891a8'};
+        const typeBadge={html:'HTML',md:'Markdown',svg:'SVG',png:'Image',jpg:'Image',jpeg:'Image',webp:'Image',mp3:'Audio',wav:'Audio',ogg:'Audio',m4a:'Audio',mp4:'Video',webm:'Video',mov:'Video'}[ext]||ext.toUpperCase();
+        const license=f.license||null;
+        const provSigned=f.provenance_signed||false;
+        const title=(f.title||(f.name||'').replace(/[-_]/g,' ').replace(/\.[^.]+$/,''));
+        const summary=f.description||f.summary||null;
+        /* Inline preview content — shown collapsed (thumbnail) or expanded (full) */
+        const collapsedPreview=hasImgErr?
+          <div style={{width:'100%',padding:'18px 0',background:'rgba(255,84,112,0.06)',borderRadius:8,textAlign:'center',fontSize:11,color:'#ff5470'}}>⚠ File not found — may have moved to ~/.friday/friday-creations</div>:
+          isImg?<img src={url} alt={f.name} loading="lazy" onError={()=>setImgErrors(e=>({...e,[f.name]:true}))} style={{width:'100%',maxHeight:260,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/>:
+          isVid?<div style={{position:'relative',cursor:'pointer'}} onClick={e=>{e.stopPropagation();setExpandedCard(isExpanded?null:f.name)}}><video src={url} muted preload="metadata" style={{width:'100%',maxHeight:200,objectFit:'cover',borderRadius:8,background:'#0a0a0f',display:'block'}}/><div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,color:'rgba(255,255,255,0.9)',textShadow:'0 2px 8px #000',pointerEvents:'none',background:'rgba(0,0,0,0.25)',borderRadius:8}}>▶</div></div>:
+          isAud?<div style={{width:'100%',padding:'20px 0',borderRadius:8,background:'linear-gradient(135deg,hsl('+hue+',60%,20%),hsl('+((hue+60)%360)+',55%,12%))',display:'flex',alignItems:'center',justifyContent:'center',gap:12,fontSize:28}}>🎵<span style={{fontSize:13,color:'rgba(255,255,255,0.6)',fontFamily:'Orbitron'}}>Audio</span></div>:
+          isMd||isHtml?<div style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',borderRadius:8,fontSize:11,color:'#aab',lineHeight:1.5,maxHeight:80,overflow:'hidden',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>{summary||f.name}</div>:
+          <div style={{padding:'18px 0',borderRadius:8,background:'rgba(255,255,255,0.02)',textAlign:'center',fontSize:28}}>{icon}</div>;
+        const expandedContent=isImg?<img src={url} alt={f.name} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
+          isVid?<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>:
+          isAud?<AlbumArtPlayer name={f.name} url={url} big/>:
+          isHtml?<iframe src={url} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" style={{width:'100%',height:400,border:'none',borderRadius:8,background:'#0a0a0f'}}/>:
+          <ProvenanceBar filename={f.name}/>;
+        return(<div key={f.name||i} className="card" style={{padding:0,overflow:'hidden',cursor:'default',border:'1px solid rgba(255,255,255,0.06)',borderRadius:12,background:'rgba(10,10,18,0.6)',backdropFilter:'blur(10px)',transition:'border-color .2s'}}
+          onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(124,58,237,0.3)'}
+          onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.06)'}>
+          {/* Preview area */}
+          <div style={{padding:'12px 12px 0'}} onClick={()=>!isVid&&setExpandedCard(isExpanded?null:f.name)}>
+            {isExpanded?expandedContent:collapsedPreview}
+          </div>
+          {/* Metadata bar */}
+          <div style={{padding:'10px 14px 12px',display:'flex',flexDirection:'column',gap:8}}>
+            {/* Title + type */}
+            <div style={{display:'flex',alignItems:'flex-start',gap:8,justifyContent:'space-between'}}>
+              <div style={{fontSize:13,color:'#dde',fontWeight:600,lineHeight:1.3,flex:1,cursor:'pointer'}} onClick={()=>setExpandedCard(isExpanded?null:f.name)} title={f.name}>{title}</div>
+              <span style={{fontSize:9,padding:'2px 7px',borderRadius:4,background:'rgba(0,212,255,0.08)',color:'#7fb6c9',border:'1px solid rgba(0,212,255,0.15)',whiteSpace:'nowrap',flexShrink:0}}>{typeBadge}</span>
+            </div>
+            {/* Badges row */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+              <span style={{fontSize:9,color:'#666'}}>{dateStr}</span>
+              <span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:modBadge.col,color:modBadge.tc}}>{modBadge.lbl}</span>
+              {license&&<span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:'rgba(124,58,237,0.08)',color:'#9d7dff',border:'1px solid rgba(124,58,237,0.2)'}}>{license}</span>}
+              {provSigned&&<span style={{fontSize:9,padding:'1px 6px',borderRadius:4,background:'rgba(0,232,122,0.08)',color:'#00e87a',border:'1px solid rgba(0,232,122,0.2)'}}>🔏 Signed</span>}
+            </div>
+            {/* Action buttons */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginTop:2}}>
+              <button className="btn" style={{fontSize:10,padding:'2px 8px'}} onClick={()=>setExpandedCard(isExpanded?null:f.name)}>{isExpanded?'▴ Collapse':'▾ '+(isVid?'Play':isAud?'Listen':isMd||isHtml?'Read':'Expand')}</button>
+              <button className="btn" style={{fontSize:10,padding:'2px 8px'}} onClick={e=>{e.stopPropagation();openCreation(f)}} title="Open full-screen reader">↗ Full view</button>
+              <button className="btn" style={{fontSize:10,padding:'2px 8px'}} onClick={e=>{e.stopPropagation();window.open('/creation/'+f.name,'_blank')}} title="Open in new tab">⧉ Tab</button>
+              <TalkToFridayButton contentType="creation" title={title} summary={summary||'A '+typeBadge.toLowerCase()+' creation'} style={{fontSize:10,padding:'2px 9px'}}/>
             </div>
           </div>
         </div>);
@@ -3226,6 +3302,7 @@ function NewsWS(){
         <button className="btn" onClick={readAloud} disabled={ttsLoading} style={{fontSize:11}}>{ttsLoading?'Generating...':'🔊 Read Aloud'}</button>
         <button className="btn btn-magenta" onClick={stopReading} style={{fontSize:11}}>Stop</button>
         <button className="btn" onClick={()=>setChatOpen(!chatOpen)} style={{fontSize:11}}>{chatOpen?'Hide Chat':'💬 Discuss'}</button>
+        <TalkToFridayButton contentType="briefing" title={'Briefing '+selected?.date} summary={''} style={{fontSize:11}}/>
         <SendTo content={()=>htmlContent.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().substring(0,5000)} dataType="briefing_excerpt" options={[{label:'Copy to Clipboard',dest:'clipboard',ico:'📋'},{label:'Draft Email',dest:'gmail_draft',ico:'✉️'}]}/>
         {selected.filename&&selected.isHtml!==false&&<button className="btn" onClick={()=>openInTab(selected)} style={{fontSize:11}}>Open in Tab</button>}
       </div>
@@ -3341,7 +3418,10 @@ function NewsWS(){
            </div>
            <div className="cluster-headline" onClick={()=>{const a=cl.articles[0];if(a&&a.url){window.open(a.url,'_blank');newsRecord(a.source,'click',a.category)}}}>{cl.headline}</div>
            <div className="cluster-sources">{cl.sources.slice(0,6).join(' · ')}{cl.sources.length>6?' …':''}</div>
-           <button className="cluster-toggle" onClick={()=>setClOpen(o=>({...o,[cl.id]:!o[cl.id]}))}>{clOpen[cl.id]?'▾ Hide coverage':'▸ Show all '+cl.articles.length+' articles'}</button>
+           <div style={{display:'flex',gap:6,alignItems:'center',marginTop:4}}>
+             <button className="cluster-toggle" style={{flex:1}} onClick={()=>setClOpen(o=>({...o,[cl.id]:!o[cl.id]}))}>{clOpen[cl.id]?'▾ Hide coverage':'▸ Show all '+cl.articles.length+' articles'}</button>
+             <TalkToFridayButton contentType="article" title={cl.headline} summary={'Trending topic covered by '+cl.source_count+' sources: '+cl.sources.slice(0,3).join(', ')} style={{fontSize:10,padding:'2px 9px'}}/>
+           </div>
            {clOpen[cl.id]&&<div className="cluster-list">
              {cl.articles.map((a,ai)=><div key={ai} className="cluster-item">
                <SentimentDot it={a}/>
@@ -3373,6 +3453,7 @@ function NewsWS(){
              {it.published_at&&<span>{new Date(it.published_at).toLocaleDateString([],{month:'short',day:'numeric'})}</span>}
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{openBg(it.url);newsRecord(it.source,'click',it.category)}}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9'}} onClick={()=>{if(it.url){window.open(it.url,'_blank');newsRecord(it.source,'click',it.category)}}}>↗ Open article</span>
+             <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
            </div>
            {i===0&&<div className="editorial-note"><b>Friday's note:</b> {editorialFor(it)}</div>}
            <div className="relevance-tag">{relevanceFor(it)}</div>
@@ -3433,6 +3514,7 @@ function NewsWS(){
              {annoBadge(fp.lead)}
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>openBg(fp.lead.url)}>⧉ Background</span>
              <span style={{cursor:'pointer',color:'#7fb6c9',fontSize:11}} onClick={()=>fp.lead.url&&window.open(fp.lead.url,'_blank')}>↗ Open article</span>
+             <TalkToFridayButton contentType="article" title={fp.lead.title} summary={fp.lead.snippet||fp.lead.editorial_note} style={{marginLeft:'auto'}}/>
            </div>
            {annoBox(fp.lead)}
          </div>}
@@ -3469,6 +3551,7 @@ function NewsWS(){
                  {it.boosted&&<span className="badge-amber" style={{fontSize:9,padding:'1px 6px'}}>⭐</span>}
                  {savedUrls[it.url]&&<span className="badge-cyan" style={{fontSize:9,padding:'1px 6px'}}>🔖</span>}
                  {annoBadge(it)}
+                 <TalkToFridayButton contentType="article" title={it.title} summary={it.snippet} style={{marginLeft:'auto'}}/>
                </div>
                {annoBox(it)}
              </div>)}
@@ -3536,6 +3619,7 @@ function NewsWS(){
                {edList.map(w=><option key={w.id} value={w.id}>{w.week||w.id}</option>)}
              </select>}
              <button className="btn" style={{fontSize:11}} onClick={genEditorial} disabled={edGen}>{edGen?'Writing…':'↻ Rewrite'}</button>
+             <TalkToFridayButton contentType="editorial" title={"Friday's Editorial"+(editorial.week?' — '+editorial.week:'')} summary={editorial.preview||''} style={{fontSize:10}}/>
            </div>
          </div>
          <div className="ed-body"><FridayDoc text={(editorial.markdown||'').replace(/^# .*(\r?\n)+/,'').replace(/^> .*(\r?\n)+/,'')}/></div>
@@ -3682,9 +3766,10 @@ function NewsWS(){
        <div key={b.date||i} className={'brief-card'+(isOpen?' expanded':'')} onClick={()=>!isOpen&&setExpanded({...expanded,[b.date]:true})}>
          <div className="brief-cardhead">
            <div className="brief-date">{b.date}{i===0&&<span className="badge-cyan" style={{fontSize:9,marginLeft:8,padding:'1px 6px'}}>LATEST</span>}</div>
-           <div style={{display:'flex',gap:4}}>
+           <div style={{display:'flex',gap:4,alignItems:'center'}}>
              <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openBriefing(b)}}>Open full</button>
              <button className="btn" style={{fontSize:10,padding:'2px 7px'}} onClick={e=>{e.stopPropagation();openInTab(b)}}>New tab</button>
+             <TalkToFridayButton contentType="briefing" title={'Briefing '+b.date} summary={b.summary||''} style={{fontSize:10,padding:'2px 9px'}}/>
              <button className="icon-btn" onClick={e=>{e.stopPropagation();setExpanded({...expanded,[b.date]:!isOpen})}}>{isOpen?'▴':'▾'}</button>
            </div>
          </div>
@@ -5882,13 +5967,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     // Same audio plumbing + message contract on both, so only the URL changes.
     let _wsUrl='/ws/voice-local',_engine='local';
     try{
-      const _si=await fetch('/api/voice/session-info').then(r=>r.json());
+      const _si=await apiFetch('/api/voice/session-info').then(r=>r.json());
       if(_si&&_si.ws_url){_wsUrl=_si.ws_url;_engine=_si.engine||'local';}
       if(_si&&_si.engine==='demo'){setVoiceStatus('voice unavailable — install local voice or connect a cloud key');try{voiceStopRef.current?.()}catch(_){}return;}
       if(_engine==='local'&&_si&&_si.models_ready===false)setVoiceStatus('preparing local voice…');
     }catch(_){/* default to local */}
     v.engine=_engine;
-    const ws=new WebSocket(proto+'//'+location.host+_wsUrl);
+    // Pass the ephemeral UI session token so the WS handler can auth non-loopback
+    // connections without requiring a full cookie-based session.
+    const _ftok=window.__FRIDAY_API_TOKEN||'';
+    const ws=new WebSocket(proto+'//'+location.host+_wsUrl+(_ftok?'?t='+encodeURIComponent(_ftok):''));
     v.ws=ws;
     let wsOpened=false;
     setVoiceStatus('connecting…');
