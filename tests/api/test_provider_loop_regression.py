@@ -98,6 +98,8 @@ def test_generate_text_normalizes_string_prompts(monkeypatch):
     monkeypatch.setattr(smr, "_call_claude", _fake_claude)
     monkeypatch.setattr(smr, "get_anthropic_client",
                         lambda *a, **k: object(), raising=False)
+    import services.demo_mode as _dm
+    monkeypatch.setattr(_dm, "is_demo", lambda: False)
 
     out = smr._generate_text("just a bare prompt")
     assert out == "normalized fine"

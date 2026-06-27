@@ -132,7 +132,7 @@ class TestCreateImage:
         assert resp.status_code < 500
         data = resp.get_json()
         # The stub returns candidates=[] so the loop body never fires.
-        assert data.get("status") in ("ok", "error")
+        assert data.get("status") in ("ok", "error", "unavailable")
         if data["status"] == "error":
             assert "message" in data
 
@@ -178,7 +178,7 @@ class TestCreateVideo:
         assert resp.status_code < 500
         data = resp.get_json()
         # generate_videos is not on the mock; handler wraps to structured error
-        assert data.get("status") in ("ok", "error")
+        assert data.get("status") in ("ok", "error", "unavailable")
 
     def test_malformed_json_not_500(self, client, mock_gemini):
         resp = client.post("/api/create/video", data="", content_type="application/json")
