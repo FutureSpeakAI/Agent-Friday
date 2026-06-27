@@ -6,7 +6,7 @@ CRUD over the schedule registry plus run-now and run-history. Reads are open
 import traceback
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
-from services import scheduler as _sched
+from agent_friday.services import scheduler as _sched
 
 scheduler_bp = Blueprint('scheduler', __name__)
 

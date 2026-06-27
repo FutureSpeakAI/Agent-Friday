@@ -1,4 +1,4 @@
-"""Unit tests for liquid_ui.py — Liquid UI self-evolving interface system.
+﻿"""Unit tests for liquid_ui.py — Liquid UI self-evolving interface system.
 
 Covers:
   - classify_complexity: tier thresholds, score clamping, empty input,
@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import liquid_ui as lui
-from liquid_ui import (
+import agent_friday.ui.liquid_ui as lui
+from agent_friday.ui.liquid_ui import (
     TIER_DEFAULTS,
     TIER_THRESHOLDS,
     FeatureSpec,

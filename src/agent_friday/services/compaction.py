@@ -114,7 +114,7 @@ def _default_summarizer(text, max_tokens=400):
         )
         # kind tag flows via a thread-local attribution so the meter labels it.
         try:
-            from services import cost_meter as _cm
+            from agent_friday.services import cost_meter as _cm
             _cm.push_attribution(kind="compaction")
         except Exception:
             _cm = None

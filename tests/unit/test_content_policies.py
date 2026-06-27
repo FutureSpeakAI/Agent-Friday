@@ -1,6 +1,6 @@
-"""Unit tests for services/content_policies.py"""
+﻿"""Unit tests for services/content_policies.py"""
 import pytest
-from services import content_policies as cp
+from agent_friday.services import content_policies as cp
 
 cp._ensure_schema()
 

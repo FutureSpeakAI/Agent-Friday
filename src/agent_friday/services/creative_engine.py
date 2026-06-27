@@ -399,7 +399,7 @@ def _write_creative_provenance(file_rec: Dict[str, str], kind: str, prompt: str,
     the creator's per-piece choice (terms + optional price); None → the
     conservative all-rights-reserved default."""
     try:
-        from services import provenance
+        from agent_friday.services import provenance
         tool = {"tool": f"creative_engine.generate_{kind}", "model": model,
                 "api_model": api_model,
                 "prompt_hash": provenance.hash_text(prompt)}
@@ -440,7 +440,7 @@ def _demo_creation(kind: str, prompt: str, model: str, api_model: str,
                                    license=license)
         if project_id:
             try:
-                from services import creative_memory
+                from agent_friday.services import creative_memory
                 creative_memory.add_asset(project_id, fname)
             except Exception:
                 pass
@@ -490,12 +490,12 @@ def _compose_scene_dna_prompt(prompt: str, scene_dna: Optional[dict],
     if not scene_dna:
         return prompt
     try:
-        from services import scene_dna as _sd
+        from agent_friday.services import scene_dna as _sd
         char_desc = {}
         names = _sd.SceneDNA.from_dict(scene_dna).character_names()
         if project_id and names:
             try:
-                from services import creative_memory
+                from agent_friday.services import creative_memory
                 char_desc = creative_memory.character_context(project_id, names)
             except Exception:
                 char_desc = {}
@@ -606,7 +606,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         # Attach to the creative project's asset gallery when one is targeted.
         if project_id:
             try:
-                from services import creative_memory
+                from agent_friday.services import creative_memory
                 for f in files:
                     creative_memory.add_asset(project_id, f["filename"])
             except Exception:
@@ -770,7 +770,7 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                                        license=license)
         if project_id:
             try:
-                from services import creative_memory
+                from agent_friday.services import creative_memory
                 for f in files:
                     creative_memory.add_asset(project_id, f["filename"])
             except Exception:
@@ -927,6 +927,6 @@ def generate(kind: str, prompt: str, **opts) -> Dict[str, Any]:
             license=opts.get("license"),
         )
     if k in ("music", "song", "audio", "track"):
-        from services import music_engine
+        from agent_friday.services import music_engine
         return music_engine.generate(prompt, **opts)
     return {"status": "error", "message": f"Unknown creative kind: {kind!r}"}

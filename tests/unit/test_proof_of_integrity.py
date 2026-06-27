@@ -1,4 +1,4 @@
-"""Unit tests for proof_of_integrity.py — AI Bill of Integrity manifest.
+﻿"""Unit tests for proof_of_integrity.py — AI Bill of Integrity manifest.
 
 Tests cover:
   - verify_payload: False for empty/missing args; False when Ed25519 unavailable
@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import proof_of_integrity as poi
-from proof_of_integrity import (
+import agent_friday.governance.proof_of_integrity as poi
+from agent_friday.governance.proof_of_integrity import (
     AgentIntegrityManifest,
     CLAWS_TEXT,
     IntegrityEngine,

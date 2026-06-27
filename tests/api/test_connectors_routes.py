@@ -1,4 +1,4 @@
-"""One-click connector registry API — /api/connectors/*.
+﻿"""One-click connector registry API — /api/connectors/*.
 
 The suite is fully offline: the Google one-click flow's subprocess launch and the
 MCP hot-reload (which would spawn real `npx` servers) are stubbed so connect/
@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-import services.agent as agent_svc
-import services.connectors as conn
+import agent_friday.services.agent as agent_svc
+import agent_friday.services.connectors as conn
 
 
 @pytest.fixture(autouse=True)

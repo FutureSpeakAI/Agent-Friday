@@ -1,4 +1,4 @@
-"""API coverage for predictive workspaces, ambient awareness, and task-chaining
+﻿"""API coverage for predictive workspaces, ambient awareness, and task-chaining
 workflows. All offline: usage/ambient/chain state lands under the isolated temp
 home, and no LLM is touched (chains only *register*; we don't spawn real agents)."""
 from __future__ import annotations
@@ -106,7 +106,7 @@ class TestWorkflowChains:
         result into its prompt when with_context is set. Patch _spawn_task on the
         module that DEFINES _advance_task_chain (it resolves the name in its own
         namespace, not server's re-export)."""
-        import services.agent as agent_mod
+        import agent_friday.services.agent as agent_mod
         spawned = {}
 
         def fake_spawn(name, prompt, description='', on_complete=None, chain=None, chain_step=0):

@@ -1,4 +1,4 @@
-"""Developer-tools / system route tests.
+﻿"""Developer-tools / system route tests.
 
 Covers: vibe-code, git, repos, files, code, computer control, flow,
 routines, logs, tasks, system, and notifications.
@@ -30,7 +30,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
-import server as friday_server  # noqa: E402 (already imported by conftest but we want the ref)
+import agent_friday.server as friday_server  # noqa: E402 (already imported by conftest but we want the ref)
 
 
 # ═══════════════════════════════════════════════════════════════

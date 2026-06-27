@@ -398,7 +398,7 @@ def _run_task(rec):
                       description=f"scheduled:{rec.get('id')}")
     # Associate the spawned task with this schedule for cost attribution (Part D).
     try:
-        from services import cost_meter as _cm
+        from agent_friday.services import cost_meter as _cm
         if hasattr(_cm, "register_task_attribution"):
             _cm.register_task_attribution(tid, {
                 "kind": "scheduled", "schedule_id": rec.get("id"),

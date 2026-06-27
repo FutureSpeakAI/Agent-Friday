@@ -1,14 +1,14 @@
-"""API tests for the creative generation routes + FRIDAY tool handlers.
+﻿"""API tests for the creative generation routes + FRIDAY tool handlers.
 
 Exercises /api/creations/generate, /api/create/image, /api/create/video and the
 generate_image / generate_video chat tools. The google-genai client is replaced
 with fakes (via patching services.creative_engine._client), so nothing hits the
 network and no real API key is consumed.
 """
-import core
+import agent_friday.core as core
 import pytest
 
-from services import creative_engine as ce
+from agent_friday.services import creative_engine as ce
 from tests.unit.test_creative_engine import (
     _FakeImageClient, _FakeVideoClient, _DummyTimer,
 )
@@ -87,20 +87,20 @@ def test_create_video_route_unavailable_without_key(client, no_gemini_key):
 
 # ── FRIDAY tool handlers ─────────────────────────────────────────────────────
 def test_tool_generate_image_blocked(no_gemini_key):
-    from services.agent import _tool_generate_image
+    from agent_friday.services.agent import _tool_generate_image
     out = _tool_generate_image({"prompt": "a naked child"})
     assert "CONTENT SAFETY" in out
 
 
 def test_tool_generate_image_requires_prompt():
-    from services.agent import _tool_generate_image
+    from agent_friday.services.agent import _tool_generate_image
     assert "required" in _tool_generate_image({"prompt": ""})
 
 
 def test_tool_generate_image_ok(creations_dir, gemini_key, tame, monkeypatch):
     import json as _json
     monkeypatch.setattr(ce, "_client", lambda: _FakeImageClient())
-    from services.agent import _tool_generate_image
+    from agent_friday.services.agent import _tool_generate_image
     out = _tool_generate_image({"prompt": "a fox in snow", "model": "gemini-nano-banana-2"})
     parsed = _json.loads(out)
     assert parsed["status"] == "ok" and parsed["files"]
@@ -108,7 +108,7 @@ def test_tool_generate_image_ok(creations_dir, gemini_key, tame, monkeypatch):
 
 def test_tool_generate_video_registered():
     # The tool is wired into the unified registry at Ring 2 (network).
-    from services.agent import CLAUDE_TOOL_HANDLERS, TOOL_RINGS
+    from agent_friday.services.agent import CLAUDE_TOOL_HANDLERS, TOOL_RINGS
     assert "generate_image" in CLAUDE_TOOL_HANDLERS
     assert "generate_video" in CLAUDE_TOOL_HANDLERS
     assert TOOL_RINGS["generate_image"] == 2

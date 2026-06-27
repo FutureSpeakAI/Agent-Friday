@@ -255,12 +255,27 @@ if __name__ == '__main__':
     except Exception as _wi_err:
         print(f"  Wiki indexes: skipped ({_wi_err})")
 
-    # Derive the vault key (if FRIDAY_PASSWORD is set) and encrypt plaintext at rest.
+    # Derive the vault key (if FRIDAY_VAULT_PASSPHRASE is set) and encrypt plaintext.
+    # Failure here is a security event — log at ERROR and print a prominent banner.
+    import logging as _vlog_mod
+    _vlog = _vlog_mod.getLogger(__name__)
     try:
         _get_vault_key()
         _migrate_vault_plaintext()
     except Exception as _vk_err:
-        print(f"  Vault encryption: skipped ({_vk_err})")
+        _vlog.error(
+            "CRITICAL: Vault encryption setup FAILED: %s. "
+            "Sensitive data is NOT encrypted at rest.",
+            _vk_err,
+        )
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  SECURITY WARNING: VAULT ENCRYPTION FAILED                ║")
+        print(f"  ║  Error: {str(_vk_err)[:52]:<52}║")
+        print("  ║  Sensitive vault data is stored as PLAINTEXT at rest.     ║")
+        print("  ║  Set FRIDAY_VAULT_PASSPHRASE or run: friday vault-setup   ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
 
     # Session memory: surface the most recent end-of-day summary + prime the
     # emotional arc so cross-session continuity and tone adaptation are ready
@@ -279,11 +294,42 @@ if __name__ == '__main__':
         except Exception as _bm_boot_err:
             print(f"  Behavioral monitor: skipped ({_bm_boot_err})")
 
-    # Always bind to 127.0.0.1 — setting a password does NOT open the network.
-    # Set FRIDAY_BIND_HOST=0.0.0.0 explicitly if LAN access is required.
+    # Default bind: loopback only (127.0.0.1).  Non-loopback binds expose the
+    # server to the network; TLS is required for any such configuration.
     bind_host = os.environ.get("FRIDAY_BIND_HOST", "127.0.0.1")
+    _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+    _ssl_context = None
+    if bind_host not in _LOOPBACK_HOSTS:
+        _tls_cert = os.environ.get("FRIDAY_TLS_CERT", "")
+        _tls_key_path = os.environ.get("FRIDAY_TLS_KEY", "")
+        if _tls_cert and _tls_key_path:
+            import ssl as _ssl
+            _ssl_context = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+            _ssl_context.load_cert_chain(_tls_cert, _tls_key_path)
+            print(f"  TLS: enabled ({_tls_cert})")
+        elif os.environ.get("FRIDAY_SKIP_TLS_WARN", "") not in ("1", "true"):
+            print()
+            print("  ╔══════════════════════════════════════════════════════════════╗")
+            print("  ║  SECURITY WARNING: Network bind without TLS                 ║")
+            print("  ║                                                              ║")
+            print(f"  ║  FRIDAY_BIND_HOST={bind_host:<43}║")
+            print("  ║  No TLS certificate is configured.  All traffic —           ║")
+            print("  ║  conversations, vault data, API tokens — travels             ║")
+            print("  ║  in PLAINTEXT over the network.                              ║")
+            print("  ║                                                              ║")
+            print("  ║  To enable TLS:                                              ║")
+            print("  ║    FRIDAY_TLS_CERT=/path/to/cert.pem                        ║")
+            print("  ║    FRIDAY_TLS_KEY=/path/to/key.pem                          ║")
+            print("  ║  To suppress this warning: FRIDAY_SKIP_TLS_WARN=1           ║")
+            print("  ╚══════════════════════════════════════════════════════════════╝")
+            print()
+            if os.environ.get("FRIDAY_REQUIRE_TLS", "").lower() in ("1", "true", "yes"):
+                print("  FRIDAY_REQUIRE_TLS=1 — refusing to start without TLS.")
+                sys.exit(1)
+
     try:
-        app.run(host=bind_host, port=_port, debug=False, threaded=True)
+        app.run(host=bind_host, port=_port, debug=False, threaded=True,
+                ssl_context=_ssl_context)
     except OSError as _bind_err:
         print()
         print(f"  Could not start the server on port {_port}: {_bind_err}")

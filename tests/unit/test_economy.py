@@ -1,6 +1,6 @@
-"""Unit tests for services/economy.py"""
+﻿"""Unit tests for services/economy.py"""
 import pytest
-from services import economy as econ
+from agent_friday.services import economy as econ
 
 # The schema is skipped under FRIDAY_TESTING=1 to avoid daemon side-effects,
 # but the unit tests need the tables.  Call _ensure_schema() once at import time.

@@ -1,4 +1,4 @@
-"""PII Privacy Shield — scrub/redact correctness.
+﻿"""PII Privacy Shield — scrub/redact correctness.
 
 Pins the strengthened behavior:
   * credit cards must pass Luhn (random 13-19 digit runs are NOT cards)
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-import core
+import agent_friday.core as core
 
 
 def _reset_watchlist_cache():

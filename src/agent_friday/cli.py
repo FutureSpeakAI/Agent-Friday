@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 friday — Agent Friday CLI
 FutureSpeak.AI · Asimov's Mind
@@ -52,6 +52,8 @@ console = Console()
 
 # ── Paths ────────────────────────────────────────────────────────
 HERE = Path(__file__).parent.resolve()
+# Project root is two levels up from src/agent_friday/
+PROJ_ROOT = HERE.parent.parent
 FRIDAY_DIR = Path.home() / ".friday"
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
@@ -544,10 +546,10 @@ def cmd_status():
     console.print()
     console.print("  [bold]Installation[/bold]")
     _check("server.py found", (HERE / "server.py").exists())
-    _check("build_ui.py found", (HERE / "build_ui.py").exists())
-    _check("index.html built", (HERE / "index.html").exists(),
-           "run: python build_ui.py" if not (HERE / "index.html").exists() else "")
-    _check("ui_parts/ present", (HERE / "ui_parts").is_dir())
+    _check("build_ui.py found", (HERE / "ui" / "build_ui.py").exists())
+    _check("index.html built", (PROJ_ROOT / "index.html").exists(),
+           "run: python -m agent_friday.ui.build_ui" if not (PROJ_ROOT / "index.html").exists() else "")
+    _check("ui_parts/ present", (PROJ_ROOT / "ui_parts").is_dir())
 
     console.print()
 
@@ -700,6 +702,122 @@ def cmd_skills(delete_name: str = None):
 #  MAIN
 # ═══════════════════════════════════════════════════════════════════
 
+def cmd_vault_setup():
+    """Store the vault passphrase in the OS keychain (never in a file)."""
+    console.print()
+    console.rule("[bold cyan]VAULT PASSPHRASE SETUP[/bold cyan]")
+    console.print()
+    console.print("  The vault passphrase protects sensitive data at rest (AES-256-GCM).")
+    console.print("  It is stored in the OS keychain — never in a file or environment variable.")
+    console.print()
+
+    try:
+        import keyring as _keyring
+    except ImportError:
+        console.print(
+            "  [red]keyring not installed.[/red]  "
+            "Run: [bold]pip install 'agent-friday[keyring]'[/bold]"
+        )
+        console.print()
+        console.print("  Alternatively, set [bold]FRIDAY_VAULT_PASSPHRASE[/bold] in your environment")
+        console.print("  (a shell variable, NOT in a file committed to source control).")
+        return
+
+    from rich.prompt import Prompt
+    import getpass
+    try:
+        passphrase = getpass.getpass("  Vault passphrase: ")
+        if not passphrase:
+            console.print("  [red]Passphrase cannot be empty.[/red]")
+            return
+        confirm = getpass.getpass("  Confirm passphrase: ")
+        if passphrase != confirm:
+            console.print("  [red]Passphrases do not match.[/red]")
+            return
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n  [yellow]Cancelled.[/yellow]")
+        return
+
+    try:
+        _keyring.set_password("agent-friday", "vault-passphrase", passphrase)
+        console.print()
+        console.print("  [green]✓[/green]  Vault passphrase saved to the OS keychain.")
+        console.print("  [dim]Remove FRIDAY_PASSWORD / FRIDAY_VAULT_PASSPHRASE from start.bat[/dim]")
+        console.print("  [dim]if they were previously set there.[/dim]")
+    except Exception as e:
+        console.print(f"  [red]Failed to save to keychain: {e}[/red]")
+        console.print("  [dim]Set FRIDAY_VAULT_PASSPHRASE in your environment instead.[/dim]")
+    console.print()
+
+
+def cmd_tls_init():
+    """Generate a self-signed TLS certificate for local network access."""
+    console.print()
+    console.rule("[bold cyan]TLS CERTIFICATE SETUP[/bold cyan]")
+    console.print()
+
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        import datetime as _dt
+        import ipaddress
+    except ImportError:
+        console.print("  [red]cryptography package required.[/red]  Run: pip install cryptography")
+        return
+
+    import socket as _socket
+    cert_path = FRIDAY_DIR / "tls" / "cert.pem"
+    key_path  = FRIDAY_DIR / "tls" / "key.pem"
+    (FRIDAY_DIR / "tls").mkdir(parents=True, exist_ok=True)
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    hostname = _socket.gethostname()
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+    ])
+    san = x509.SubjectAlternativeName([
+        x509.DNSName("localhost"),
+        x509.DNSName(hostname),
+        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(_dt.datetime.utcnow())
+        .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=365))
+        .add_extension(san, critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ))
+    try:
+        import os as _os
+        _os.chmod(key_path, 0o600)
+    except Exception:
+        pass
+
+    console.print(f"  [green]✓[/green]  Certificate: {cert_path}")
+    console.print(f"  [green]✓[/green]  Private key: {key_path}")
+    console.print()
+    console.print("  Add to [bold]start.bat[/bold]:")
+    console.print(f"  [dim]set FRIDAY_TLS_CERT={cert_path}[/dim]")
+    console.print(f"  [dim]set FRIDAY_TLS_KEY={key_path}[/dim]")
+    console.print()
+    console.print("  [yellow]Self-signed — browsers will show a security warning.[/yellow]")
+    console.print("  [dim]Accept the warning once, or add the cert to your trusted roots.[/dim]")
+    console.print()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="friday",
@@ -715,10 +833,14 @@ commands:
   status          System health check (aliases: doctor, check)
   update          Pull latest changes and rebuild
   skills          Browse and manage skill YAML workflows
+  vault-setup     Store vault passphrase in the OS keychain (secure)
+  tls-init        Generate a self-signed TLS certificate for network access
 
 examples:
   friday
   friday setup --quick
+  friday vault-setup
+  friday tls-init
   friday config set temperature 0.9
   friday config get orchestrator_model
   friday skills --delete my-old-skill
@@ -759,6 +881,12 @@ examples:
     p_skills = sub.add_parser("skills", help="Browse and manage skills")
     p_skills.add_argument("--delete", metavar="NAME", help="Delete a skill by name")
 
+    # vault-setup
+    sub.add_parser("vault-setup", help="Store vault passphrase in the OS keychain")
+
+    # tls-init
+    sub.add_parser("tls-init", help="Generate a self-signed TLS certificate")
+
     return p
 
 
@@ -776,7 +904,7 @@ def cmd_health():
 
     from rich.markup import escape as _esc  # detail strings can contain .[extras]
     try:
-        from services import provider_health
+        from agent_friday.services import provider_health
         t = Table(box=box.SIMPLE)
         t.add_column("Provider"); t.add_column("Status"); t.add_column("Detail")
         for p in provider_health.check_all():
@@ -789,7 +917,7 @@ def cmd_health():
         console.print(f"[red]providers: {e}[/red]")
 
     try:
-        from services import capability_router
+        from agent_friday.services import capability_router
         t = Table(box=box.SIMPLE)
         t.add_column("Capability"); t.add_column("Provider"); t.add_column("Model"); t.add_column("Ready")
         for c in capability_router.route_table():
@@ -800,14 +928,14 @@ def cmd_health():
         console.print(f"[red]capabilities: {e}[/red]")
 
     try:
-        from services import demo_mode
+        from agent_friday.services import demo_mode
         on = demo_mode.demo_status().get("demo_mode")
         console.print(f"Demo mode: [bold]{'ON (no provider configured)' if on else 'off'}[/bold]")
     except Exception as e:
         console.print(f"[red]demo: {e}[/red]")
 
     try:
-        from ollama_manager import get_manager
+        from agent_friday.routing.ollama_manager import get_manager
         mgr = get_manager()
         hw = mgr.detect_hardware()
         console.print(f"Hardware: GPU={hw.get('gpu') or 'none'} | RAM={hw.get('ram_gb')}GB "
@@ -816,7 +944,7 @@ def cmd_health():
         console.print(f"[yellow]hardware: {e}[/yellow]")
 
     try:
-        from services.local_voice import local_voice_health
+        from agent_friday.services.local_voice import local_voice_health
         lv = local_voice_health()
         _vcolor = {"ok": "green", "needs_download": "yellow", "down": "yellow",
                    "missing": "yellow", "error": "red"}
@@ -844,7 +972,7 @@ def cmd_health():
     console.print(f"Optional groups: {deps}")
 
     try:
-        from services import credential_store
+        from agent_friday.services import credential_store
         console.print(f"Credential encryption: [bold]{credential_store.protection_method()}[/bold]")
     except Exception as e:
         console.print(f"[yellow]vault: {e}[/yellow]")
@@ -874,6 +1002,10 @@ def main():
         cmd_update()
     elif cmd == "skills":
         cmd_skills(delete_name=getattr(args, "delete", None))
+    elif cmd == "vault-setup":
+        cmd_vault_setup()
+    elif cmd == "tls-init":
+        cmd_tls_init()
     else:
         parser.print_help()
 

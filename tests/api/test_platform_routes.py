@@ -1,4 +1,4 @@
-"""API tests for the Goose-inspired platform routes: recipes, providers,
+﻿"""API tests for the Goose-inspired platform routes: recipes, providers,
 hints, prompt manager, distros, scoped subagents, and extension security.
 
 Background-task spawning is stubbed at services.agent._spawn_task (the only
@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def client():
-    import server as friday_server
+    import agent_friday.server as friday_server
     friday_server.app.config["TESTING"] = True
     with friday_server.app.test_client() as c:
         yield c
@@ -26,7 +26,7 @@ def no_spawn(monkeypatch):
         calls.append({"name": name, "prompt": prompt})
         return "task-fixed-id"
 
-    import services.agent as agent
+    import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_spawn_task", fake_spawn)
     return calls
 
@@ -65,7 +65,7 @@ def test_recipe_save_rejects_invalid(client):
 
 
 def test_recipe_run_spawns_scoped_task(client, no_spawn, monkeypatch):
-    from services import subagents
+    from agent_friday.services import subagents
     monkeypatch.setattr(subagents, "_SCOPED_TASKS", {})
     res = client.post("/api/recipes/morning-briefing/run", json={})
     assert res.status_code == 200
@@ -167,7 +167,7 @@ def test_subagent_scopes_listed(client):
 
 
 def test_subagent_spawn_and_list(client, no_spawn, monkeypatch):
-    from services import subagents
+    from agent_friday.services import subagents
     monkeypatch.setattr(subagents, "_SCOPED_TASKS", {})
     res = client.post("/api/subagents/spawn", json={
         "name": "Scoped research", "prompt": "Investigate X.", "scope": "readonly"})

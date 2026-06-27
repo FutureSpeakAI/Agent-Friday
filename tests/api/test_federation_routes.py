@@ -1,11 +1,11 @@
-"""API route tests for federation, marketplace, economy, and moderation routes."""
+﻿"""API route tests for federation, marketplace, economy, and moderation routes."""
 import json
 import pytest
 import base64
 
 
 def auth_headers():
-    import core
+    import agent_friday.core as core
     creds = base64.b64encode(
         f"{core.FRIDAY_USERNAME}:{core.FRIDAY_PASSWORD}".encode()
     ).decode()
@@ -19,15 +19,15 @@ def _init_layer3_schemas():
     Under FRIDAY_TESTING=1 these are skipped at module import time to avoid
     daemon side-effects, so we call _ensure_schema() explicitly once here.
     """
-    from services import federation as _fed
-    from services import economy as _econ
+    from agent_friday.services import federation as _fed
+    from agent_friday.services import economy as _econ
     _fed._ensure_schema()
     _econ._ensure_schema()
 
 
 @pytest.fixture
 def client():
-    import server as s
+    import agent_friday.server as s
     s.app.config["TESTING"] = True
     with s.app.test_client() as c:
         yield c

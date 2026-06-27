@@ -599,7 +599,7 @@ def chat():
         # Closed-loop learning — capture the turn trajectory + accumulate skill
         # metrics in the background. Feeds the nightly SkillOpt optimizer.
         try:
-            import skill_capture as _skcap
+            import agent_friday.skill_capture as _skcap
             threading.Thread(
                 target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
                     _skcap.capture(m, r, tool_trace=tt, workspace=ws),

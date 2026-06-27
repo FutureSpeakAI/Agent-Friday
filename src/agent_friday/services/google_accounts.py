@@ -33,7 +33,7 @@ from pathlib import Path
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR
-from services import credential_store as cs
+from agent_friday.services import credential_store as cs
 from agent_friday.services.calendar_engine import (
     GOOGLE_TOKEN_PATH,
     _google_client_config,

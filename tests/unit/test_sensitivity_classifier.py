@@ -1,4 +1,4 @@
-"""Unit tests for the unified sensitivity classifier.
+﻿"""Unit tests for the unified sensitivity classifier.
 
 All classification runs locally; no network calls are made.
 Tests use synthetic data — no real PII.
@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from services.sensitivity_classifier import (
+from agent_friday.services.sensitivity_classifier import (
     Tier,
     classify,
     classify_legacy,

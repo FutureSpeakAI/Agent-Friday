@@ -1,10 +1,10 @@
-"""Behaviour-preserving checks for the hook-chain refactor of _execute_tool.
+﻿"""Behaviour-preserving checks for the hook-chain refactor of _execute_tool.
 
 The pre-refactor gate sequence (confirmation → governance → sandbox → log →
 PII) is now a registered hook chain; these assert the externally-observable
 behaviour is unchanged.
 """
-from services import agent
+from agent_friday.services import agent
 
 
 def test_unknown_tool():

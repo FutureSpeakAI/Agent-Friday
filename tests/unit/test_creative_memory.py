@@ -1,11 +1,11 @@
-"""Unit tests for Creative Memory / Series Bible (services/creative_memory.py).
+﻿"""Unit tests for Creative Memory / Series Bible (services/creative_memory.py).
 
 Home is redirected to a temp dir by the root conftest, so projects persist under
 isolation. Each test creates its own project and operates on that id.
 """
 import pytest
 
-from services import creative_memory as cm
+from agent_friday.services import creative_memory as cm
 
 
 @pytest.fixture

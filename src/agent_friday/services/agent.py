@@ -32,7 +32,8 @@ from agent_friday.core import (
     CREATIONS_DIR,
     DECISION_BOM_FILE,
     FRIDAY_DIR,
-    FRIDAY_PASSWORD,
+    FRIDAY_VAULT_PASSPHRASE,
+    _VAULT_ENCRYPTION_STATE,
     HOME,
     JOB_SEARCH_FILE,
     PROCESSES,
@@ -473,7 +474,7 @@ def _tool_learn_skill(inp):
         # matched/injected on the very next turn (no restart needed) and enters
         # the closed-loop optimizer.
         try:
-            import skill_registry as _skreg
+            import agent_friday.skill_registry as _skreg
             _sk = _skreg.get_skill(name)
             if _sk:
                 _skreg.register_with_skillopt(_sk)
@@ -2642,7 +2643,7 @@ def _get_governance_key() -> bytes:
 # the key is None and every helper falls back to plaintext, so behaviour is
 # unchanged for the keyless local-dev case.
 try:
-    import vault_crypto as _vc
+    import agent_friday.privacy.vault_crypto as _vc
     _HAS_VAULT_CRYPTO = True
 except Exception:
     _vc = None
@@ -2654,23 +2655,52 @@ _VAULT_CONFIG_FILE = FRIDAY_DIR / "vault" / ".vault_config.json"
 
 
 def _get_vault_key() -> bytes | None:
-    """Derive (once) the AES-256 vault key from FRIDAY_PASSWORD.
+    """Derive (once) the AES-256 vault key from FRIDAY_VAULT_PASSPHRASE.
 
-    Returns the 32-byte key, or None when encryption is disabled/unavailable
-    (no password set, or vault_crypto/cryptography missing). On None, callers
-    transparently read and write plaintext.
+    Tries the OS keychain (keyring package) before the environment variable so
+    the passphrase never needs to appear in a shell script.  Returns the 32-byte
+    key, or None when encryption is unavailable.  On None, callers fall back to
+    plaintext — vault encryption failure is logged at ERROR and surfaces in
+    /api/health as a persistent warning banner.
     """
+    import logging as _logging
+    _vlog = _logging.getLogger(__name__)
+
     global _VAULT_KEY, _VAULT_KEY_READY
     if _VAULT_KEY_READY:
         return _VAULT_KEY
     _VAULT_KEY_READY = True
-    if not _HAS_VAULT_CRYPTO or not FRIDAY_PASSWORD:
-        if not FRIDAY_PASSWORD:
-            print("[vault] FRIDAY_PASSWORD not set — sensitive data stored as PLAINTEXT at rest.")
-        elif not _HAS_VAULT_CRYPTO:
-            print("[vault] vault_crypto unavailable — sensitive data stored as PLAINTEXT at rest.")
+
+    # 1. Try OS keychain first (most secure — never on disk as plaintext).
+    _passphrase = FRIDAY_VAULT_PASSPHRASE
+    if not _passphrase:
+        try:
+            import keyring as _keyring
+            _passphrase = _keyring.get_password("agent-friday", "vault-passphrase") or ""
+        except Exception:
+            pass
+
+    if not _HAS_VAULT_CRYPTO or not _passphrase:
+        if not _passphrase:
+            _VAULT_ENCRYPTION_STATE["enabled"] = False
+            _VAULT_ENCRYPTION_STATE["warning"] = (
+                "Vault encryption is DISABLED — sensitive data is stored as plaintext at rest. "
+                "Set FRIDAY_VAULT_PASSPHRASE or run: friday vault-setup"
+            )
+            _vlog.warning(
+                "[vault] FRIDAY_VAULT_PASSPHRASE not set — sensitive data stored "
+                "as PLAINTEXT at rest. Set the env var or run: friday vault-setup"
+            )
+        else:
+            _VAULT_ENCRYPTION_STATE["enabled"] = False
+            _VAULT_ENCRYPTION_STATE["error"] = "vault_crypto module unavailable"
+            _vlog.error(
+                "[vault] vault_crypto/cryptography unavailable — "
+                "sensitive data stored as PLAINTEXT at rest."
+            )
         _VAULT_KEY = None
         return None
+
     try:
         _VAULT_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         cfg = {}
@@ -2683,10 +2713,25 @@ def _get_vault_key() -> bytes | None:
             _tmp = _VAULT_CONFIG_FILE.with_name(_VAULT_CONFIG_FILE.name + ".tmp")
             _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             _tmp.replace(_VAULT_CONFIG_FILE)
-        _VAULT_KEY = _vc.derive_key(FRIDAY_PASSWORD, bytes.fromhex(salt_hex))
+        _VAULT_KEY = _vc.derive_key(_passphrase, bytes.fromhex(salt_hex))
+        _VAULT_ENCRYPTION_STATE["enabled"] = True
+        _VAULT_ENCRYPTION_STATE["error"] = ""
+        _VAULT_ENCRYPTION_STATE["warning"] = ""
         print("[vault] Encryption-at-rest ENABLED (AES-256-GCM · Argon2id).")
     except Exception as e:
-        print(f"[vault] key derivation failed ({e}) — falling back to plaintext.")
+        _VAULT_ENCRYPTION_STATE["enabled"] = False
+        _VAULT_ENCRYPTION_STATE["error"] = str(e)
+        _VAULT_ENCRYPTION_STATE["warning"] = (
+            f"CRITICAL: Vault key derivation failed ({e}). "
+            "Sensitive vault data may be unprotected. "
+            "Check FRIDAY_VAULT_PASSPHRASE and the cryptography package installation."
+        )
+        _vlog.error(
+            "[vault] CRITICAL: key derivation FAILED (%s) — "
+            "falling back to PLAINTEXT.  This is a security failure.  "
+            "Check FRIDAY_VAULT_PASSPHRASE and the cryptography package.",
+            e,
+        )
         _VAULT_KEY = None
     return _VAULT_KEY
 

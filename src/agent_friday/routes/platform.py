@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from services import distributions, extension_security, hints, recipes, subagents
+from agent_friday.services import distributions, extension_security, hints, recipes, subagents
 from agent_friday.services.prompt_manager import SEGMENT_KEYS, PromptManager
 from agent_friday.services.provider_registry import get_provider_registry
 
@@ -141,7 +141,7 @@ def api_providers_remove(name):
 def api_providers_health():
     """Per-provider reachability/auth status for the wizard + Settings provider step.
     Shallow by default (offline-safe); pass ?deep=1 for a light endpoint probe."""
-    from services import provider_health
+    from agent_friday.services import provider_health
     deep = (request.args.get("deep") or "").lower() in ("1", "true", "yes")
     return jsonify({"providers": provider_health.check_all(deep=deep)})
 
@@ -151,7 +151,7 @@ def api_provider_key(name):
     """Store (POST) or remove (DELETE) a provider's API key, encrypted at rest via
     the credential store. The key is hot-reloaded into the running process and is
     NEVER echoed back — only a connected/missing status is returned."""
-    from services import credential_store as cs
+    from agent_friday.services import credential_store as cs
     if request.method == "DELETE":
         removed = cs.delete_provider_key(name)
         cs.clear_provider_key_live(name)
@@ -173,7 +173,7 @@ def api_provider_key(name):
 def api_capabilities():
     """Each capability resolved to provider+model+availability — the UI renders
     lock/unlock badges and 'Connect X to unlock Y' hints from this."""
-    from services import capability_router
+    from agent_friday.services import capability_router
     return jsonify({"capabilities": capability_router.route_table()})
 
 
@@ -296,19 +296,19 @@ def api_health_full():
     out["distribution"] = settings.get("distribution", "default")
 
     try:
-        from services import provider_health
+        from agent_friday.services import provider_health
         out["providers"] = provider_health.check_all(deep=False)
     except Exception as e:
         out["providers"] = {"error": str(e)}
 
     try:
-        from services import capability_router
+        from agent_friday.services import capability_router
         out["capabilities"] = capability_router.route_table(settings)
     except Exception as e:
         out["capabilities"] = {"error": str(e)}
 
     try:
-        from services import demo_mode
+        from agent_friday.services import demo_mode
         out["demo"] = demo_mode.demo_status(settings)
     except Exception as e:
         out["demo"] = {"error": str(e)}
@@ -324,7 +324,7 @@ def api_health_full():
         out["hardware"] = {"error": str(e)}
 
     try:
-        from services import credential_store
+        from agent_friday.services import credential_store
         out["vault"] = {"credential_protection": credential_store.protection_method()}
     except Exception as e:
         out["vault"] = {"error": str(e)}
@@ -346,7 +346,7 @@ def api_health_full():
     out["dependencies"] = _optional_dep_status()
 
     try:
-        from services import google_accounts
+        from agent_friday.services import google_accounts
         accts = google_accounts.list_accounts()
         out["google_accounts"] = len(accts) if isinstance(accts, (list, tuple)) else 0
     except Exception:

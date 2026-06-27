@@ -1,10 +1,10 @@
-"""Unit tests for per-workspace temperature resolution
+﻿"""Unit tests for per-workspace temperature resolution
 (services/model_router.resolve_workspace_temperature) — the creative-pipeline
 temperature profiles read from settings.workspace_temperatures.
 """
 import pytest
 
-from services import model_router
+from agent_friday.services import model_router as model_router
 
 
 def test_explicit_temperature_always_wins():

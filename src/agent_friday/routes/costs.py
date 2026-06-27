@@ -7,7 +7,7 @@ services.cost_meter.
 import traceback
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
-from services import cost_meter as _cm
+from agent_friday.services import cost_meter as _cm
 
 costs_bp = Blueprint('costs', __name__)
 

@@ -56,8 +56,8 @@ DEFAULT_POLICY: Dict[str, Any] = {
 # ── optional service deps ─────────────────────────────────────────────────────
 try:
     if not core._TESTING:
-        from services import ownership as _ownership
-        from services import economy as _economy
+        from agent_friday.services import ownership as _ownership
+        from agent_friday.services import economy as _economy
     else:
         _ownership = None  # type: ignore[assignment]
         _economy = None    # type: ignore[assignment]

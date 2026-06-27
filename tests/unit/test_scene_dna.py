@@ -1,4 +1,4 @@
-"""Unit tests for Scene DNA layered prompting (services/scene_dna.py).
+﻿"""Unit tests for Scene DNA layered prompting (services/scene_dna.py).
 
 Pure module — no model, no I/O. Covers construction/coercion, surgical
 single-layer edits, merge/overlay semantics, character-description propagation,
@@ -6,8 +6,8 @@ and both natural + labelled rendering.
 """
 import pytest
 
-from services import scene_dna as sd
-from services.scene_dna import SceneDNA
+from agent_friday.services import scene_dna as sd
+from agent_friday.services.scene_dna import SceneDNA
 
 
 def test_from_dict_coerces_characters_from_string():

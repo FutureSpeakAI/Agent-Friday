@@ -94,12 +94,14 @@ all = [
 ]
 
 [project.scripts]
-friday = "friday_cli:main"
+friday = "agent_friday.cli:main"
 
-# ── Packaging (flat app layout) ───────────────────────────────────────────────
-# Explicit lists disable setuptools auto-discovery (which would error on the many
-# top-level modules). An editable install (`pip install -e .`) adds the project
-# root to sys.path, so every other top-level module imports normally too.
-[tool.setuptools]
-py-modules = ["server", "core", "friday_cli", "model_router", "build_ui"]
-packages = ["routes", "services"]
+# ── Packaging (src layout) ────────────────────────────────────────────────────
+# All application code lives under src/agent_friday/. An editable install
+# (`pip install -e .`) makes the `agent_friday` package importable everywhere
+# without sys.path manipulation. The `friday` CLI entry point launches the server.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"

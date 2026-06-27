@@ -163,7 +163,7 @@ def _compose_music_prompt(prompt: str, scene_dna: Optional[dict],
     parts: List[str] = []
     if scene_dna:
         try:
-            from services import scene_dna as _sd
+            from agent_friday.services import scene_dna as _sd
             dna = _sd.SceneDNA.from_dict(scene_dna)
             if dna.audio:
                 parts.append(dna.audio)
@@ -451,7 +451,7 @@ def _write_provenance(file_rec, prompt, model, api_model, mode, project_id,
                       *, demo: bool = False, license=None) -> None:
     """Sign a Content Credential for the track (Layer 2). Best-effort."""
     try:
-        from services import provenance
+        from agent_friday.services import provenance
         from hashlib import sha256
         tool = {"tool": "music_engine.generate_music", "model": model,
                 "api_model": api_model, "mode": mode,
@@ -468,7 +468,7 @@ def _attach_project(project_id, files) -> None:
     if not project_id:
         return
     try:
-        from services import creative_memory
+        from agent_friday.services import creative_memory
         for f in files:
             creative_memory.add_asset(project_id, f["filename"])
     except Exception:

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unit tests for services/ownership.py and services/content_credentials.py.
 
 Offline-only. Covers:
@@ -21,9 +21,9 @@ import hashlib
 import json
 from pathlib import Path
 
-import core
-from services import ownership, provenance as pv
-from services import content_credentials as cc
+import agent_friday.core as core
+from agent_friday.services import ownership, provenance as pv
+from agent_friday.services import content_credentials as cc
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────

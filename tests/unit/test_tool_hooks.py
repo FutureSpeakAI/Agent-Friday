@@ -1,7 +1,7 @@
-"""Unit tests for the tool lifecycle-hook registry (Part B)."""
+﻿"""Unit tests for the tool lifecycle-hook registry (Part B)."""
 import pytest
 
-from services import tool_hooks as h
+from agent_friday.services import tool_hooks as h
 
 
 @pytest.fixture(autouse=True)

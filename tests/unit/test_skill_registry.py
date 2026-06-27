@@ -1,4 +1,4 @@
-"""Unit tests for skill_registry.py — portable SKILL.md folder format.
+﻿"""Unit tests for skill_registry.py — portable SKILL.md folder format.
 
 Covers:
   - _safe_name: sanitisation, empty-string default.
@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import skill_registry as sr
-from skill_registry import (
+import agent_friday.skill_registry as sr
+from agent_friday.skill_registry import (
     Skill,
     _as_list,
     _parse_frontmatter,

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Closed-loop learning — trajectory capture + nightly skill optimization.
 
 Connects the previously-dormant SkillOpt machinery to the live chat loop:
@@ -81,7 +81,7 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
 
         # Tamper-evident copy in cognitive memory (provenance + audit trail).
         try:
-            from cognitive_memory import get_cognitive_memory
+            from agent_friday.cognitive_memory import get_cognitive_memory
             get_cognitive_memory().write_memory(
                 key=f"trajectory/{int(rec['ts'] * 1000)}",
                 content=json.dumps(rec, default=str),
@@ -95,10 +95,10 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
         # matched, so SkillOpt scores reflect live chat usage (not just the
         # bundled batch engines).
         try:
-            import skill_registry as skreg
+            import agent_friday.skill_registry as skreg
             matched = skreg.match_skills(message, limit=3)
             if matched:
-                from skillopt_engine import record_skill_run
+                from agent_friday.skillopt_engine import record_skill_run
                 for sk in matched:
                     record_skill_run(
                         skill_name=sk.name,
@@ -122,7 +122,7 @@ def run_nightly():
     """
     summary = {"checked": 0, "findings": 0, "skills": []}
     try:
-        from skillopt_engine import get_engine, maybe_autoresearch
+        from agent_friday.skillopt_engine import get_engine, maybe_autoresearch
         engine = get_engine()
         for name in engine.list_skills():
             summary["checked"] += 1

@@ -1,4 +1,4 @@
-"""Regression: _generate_agent's provider fallback must honor the router's
+﻿"""Regression: _generate_agent's provider fallback must honor the router's
 vault decision.
 
 The router force-routes vault-touching requests to a local model (or returns
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-import services.agent as agent_mod
+import agent_friday.services.agent as agent_mod
 
 # Opt out of the autouse LLM kill-switch: these tests run the REAL
 # _generate_agent and stub the provider primitives themselves.
@@ -63,7 +63,7 @@ def _patch_settings(monkeypatch, routing):
                         lambda *a, **k: object(), raising=False)
     # Demo mode intercepts before any provider is reached when no API keys are
     # present (CI environment). Disable it so the fallback chain runs normally.
-    import services.demo_mode as _dm
+    import agent_friday.services.demo_mode as _dm
     monkeypatch.setattr(_dm, "is_demo", lambda: False)
 
 
@@ -72,7 +72,7 @@ PLAIN_MSG = [{"role": "user", "content": "write a haiku about espresso"}]
 
 
 def test_vault_local_failure_never_falls_back_to_cloud(monkeypatch):
-    import ollama_manager
+    import agent_friday.routing.ollama_manager as ollama_manager
     monkeypatch.setattr(ollama_manager, "get_manager",
                         lambda *a, **k: _FakeOllama(available=True))
     _patch_settings(monkeypatch, {"mode": "cloud_only"})
@@ -95,7 +95,7 @@ def test_vault_local_failure_never_falls_back_to_cloud(monkeypatch):
 
 
 def test_router_refuse_flag_is_honored(monkeypatch):
-    import ollama_manager
+    import agent_friday.routing.ollama_manager as ollama_manager
     # No local model available + deny fallback → router returns refuse=True.
     monkeypatch.setattr(ollama_manager, "get_manager",
                         lambda *a, **k: _FakeOllama(available=False))
@@ -118,7 +118,7 @@ def test_router_refuse_flag_is_honored(monkeypatch):
 
 
 def test_non_vault_request_keeps_full_fallback_chain(monkeypatch):
-    import ollama_manager
+    import agent_friday.routing.ollama_manager as ollama_manager
     monkeypatch.setattr(ollama_manager, "get_manager",
                         lambda *a, **k: _FakeOllama(available=False))
     _patch_settings(monkeypatch, {"mode": "cloud_only"})

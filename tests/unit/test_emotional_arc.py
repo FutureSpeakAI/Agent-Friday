@@ -1,4 +1,4 @@
-"""Unit tests for emotional_arc.py — local sentiment + cross-session arc.
+﻿"""Unit tests for emotional_arc.py — local sentiment + cross-session arc.
 
 Strategy mirrors test_conversation_memory.py:
   * score_sentiment() is PURE — tested thoroughly with no deps.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from emotional_arc import (  # noqa: E402
+from agent_friday.emotional_arc import (  # noqa: E402
     score_sentiment, EmotionalArc, get_emotional_arc,
     POS_THRESHOLD, NEG_THRESHOLD,
 )

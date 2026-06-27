@@ -1,4 +1,4 @@
-"""Unit tests for context_compressor.py — Headroom-powered context compression.
+﻿"""Unit tests for context_compressor.py — Headroom-powered context compression.
 
 Covers:
   - _estimate_tokens: char-based token estimate for message lists.
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from context_compressor import ContextCompressor, _CHARS_PER_TOKEN
+from agent_friday.pipeline.context_compressor import ContextCompressor, _CHARS_PER_TOKEN
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

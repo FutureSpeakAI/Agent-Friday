@@ -1,10 +1,10 @@
-"""Unit tests for scoped subagents — scope resolution, allow/deny semantics,
+﻿"""Unit tests for scoped subagents — scope resolution, allow/deny semantics,
 ring ceiling, and step/time budgets."""
 from __future__ import annotations
 
 import pytest
 
-from services import subagents
+from agent_friday.services import subagents
 
 
 @pytest.fixture(autouse=True)
@@ -62,7 +62,7 @@ def test_spawn_registers_scope_and_appends_contract(monkeypatch):
         captured.update(name=name, prompt=prompt)
         return "tid-123"
 
-    import services.agent as agent
+    import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_spawn_task", fake_spawn)
 
     out = subagents.spawn_scoped_subagent("Research X", "Find facts about X.",
@@ -79,7 +79,7 @@ def test_spawn_registers_scope_and_appends_contract(monkeypatch):
 
 
 def test_step_budget_exhaustion(monkeypatch):
-    import services.agent as agent
+    import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: "tid-steps")
     subagents.save_custom_scope({"name": "tiny", "max_ring": 2, "max_steps": 2})
     subagents.spawn_scoped_subagent("t", "p", scope="tiny")
@@ -91,7 +91,7 @@ def test_step_budget_exhaustion(monkeypatch):
 
 
 def test_time_budget_exhaustion(monkeypatch):
-    import services.agent as agent
+    import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: "tid-time")
     subagents.save_custom_scope({"name": "brief", "max_ring": 2, "time_budget_s": 1})
     subagents.spawn_scoped_subagent("t", "p", scope="brief")
@@ -102,7 +102,7 @@ def test_time_budget_exhaustion(monkeypatch):
 
 
 def test_list_scoped_tasks(monkeypatch):
-    import services.agent as agent
+    import agent_friday.services.agent as agent
     monkeypatch.setattr(agent, "_spawn_task", lambda *a, **k: "tid-list")
     subagents.spawn_scoped_subagent("Listed", "p", scope="readonly")
     rows = subagents.list_scoped_tasks()

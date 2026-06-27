@@ -43,7 +43,7 @@ from agent_friday.services.model_router import (
 # directly (stdlib-only, no cycle risk). Without this, every completed
 # creation crashed _notify_creation with NameError.
 try:
-    import notifications_engine as _notif_engine
+    import agent_friday.notifications_engine as _notif_engine
 except Exception:
     _notif_engine = None
 
@@ -312,7 +312,7 @@ def _daily_budget_remaining():
         ceiling = float((_load_settings() or {}).get("daily_creation_budget_usd", 0.5) or 0)
         if ceiling <= 0:
             return 999.0
-        from services import cost_meter
+        from agent_friday.services import cost_meter
         today, _month = cost_meter._rolling_spend()
         return max(0.0, ceiling - float(today or 0))
     except Exception:
@@ -359,7 +359,7 @@ def _choose_daily_mode(date_str):
         ambient = "steady"
     project = ""
     try:
-        from services import creative_memory
+        from agent_friday.services import creative_memory
         ap = creative_memory.active_project() if hasattr(creative_memory, "active_project") else None
         if ap:
             project = ap.get("name") or ap.get("id") or ""
@@ -430,15 +430,15 @@ def _generate_media_daily(date_str, choice, path):
     concept = choice.get("concept") or "An evocative, original piece."
     try:
         if mode == "image":
-            from services import creative_engine
+            from agent_friday.services import creative_engine
             res = creative_engine.generate_image(concept, style="cinematic",
                                                  aspect_ratio="16:9", allow_demo=True)
         elif mode == "music-clip":
-            from services import music_engine
+            from agent_friday.services import music_engine
             res = music_engine.generate_music(concept, model="lyria-clip",
                                               duration_seconds=30)
         elif mode == "short-production":
-            from services import creative_pipeline as cp
+            from agent_friday.services import creative_pipeline as cp
             run = cp.create_run("full-production", {"logline": concept})
             if run.get("status") == "error":
                 return None

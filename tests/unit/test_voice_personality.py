@@ -1,4 +1,4 @@
-"""Unit tests for voice_personality.py — pure mood-adaptive voice system.
+﻿"""Unit tests for voice_personality.py — pure mood-adaptive voice system.
 
 All functions are stateless/class-based with no filesystem or network IO.
 """
@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from voice_personality import (
+from agent_friday.voice_personality import (
     AFFECTIVE_DIALOG_INSTRUCTION,
     DEFAULT_VOICE_STYLE,
     VOICE_MOOD_PROFILES,

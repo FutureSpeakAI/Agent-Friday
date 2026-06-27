@@ -1,4 +1,4 @@
-"""Unit tests for Take Comparison (services/take_comparison.py).
+﻿"""Unit tests for Take Comparison (services/take_comparison.py).
 
 Generation + scoring are stubbed (creative_engine + qa_gates), so no model or
 key is touched. Covers image/text take generation, best-take recommendation,
@@ -6,9 +6,9 @@ and the generic ranker.
 """
 import pytest
 
-from services import take_comparison as tc
-from services import qa_gates
-from services import creative_engine as ce
+from agent_friday.services import take_comparison as tc
+from agent_friday.services import qa_gates
+from agent_friday.services import creative_engine as ce
 
 
 # ── recommendation logic ────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
-"""Unit tests for services/federation.py"""
+﻿"""Unit tests for services/federation.py"""
 import pytest
-from services import federation as fed
+from agent_friday.services import federation as fed
 
 # The schema is skipped under FRIDAY_TESTING=1.  Initialise it explicitly so
 # the SQLite tables exist for the duration of the test session.

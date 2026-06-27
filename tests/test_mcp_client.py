@@ -1,4 +1,4 @@
-"""Tests for the dependency-free MCP client (mcp_client.py).
+﻿"""Tests for the dependency-free MCP client (mcp_client.py).
 
 Uses a small Python stdio MCP stub (mcp_stub_server.py) so the suite stays
 offline and needs no Node.js.
@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mcp_client import MCPManager, _flatten_tool_result  # noqa: E402
+from agent_friday.mcp_client import MCPManager, _flatten_tool_result  # noqa: E402
 
 STUB = str(Path(__file__).resolve().parent / "mcp_stub_server.py")
 

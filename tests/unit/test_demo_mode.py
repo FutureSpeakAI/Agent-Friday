@@ -1,5 +1,5 @@
-"""Unit tests for services.demo_mode — the no-provider exploration fallback."""
-from services import demo_mode as dm
+﻿"""Unit tests for services.demo_mode — the no-provider exploration fallback."""
+from agent_friday.services import demo_mode as dm
 
 
 def test_explicit_overrides():

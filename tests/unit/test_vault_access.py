@@ -1,4 +1,4 @@
-"""Unit tests for vault_access — the zero-trust gate that decides what vault
+﻿"""Unit tests for vault_access — the zero-trust gate that decides what vault
 content a cloud provider is ever allowed to see. This is security-critical: a
 false 'allow' leaks SSNs / custody data / financials to Anthropic. Every test
 uses synthetic data."""
@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import vault_access as va
-from vault_access import Tier, VaultAccessControl, VaultAccessDenied
+import agent_friday.privacy.vault_access as va
+from agent_friday.privacy.vault_access import Tier, VaultAccessControl, VaultAccessDenied
 
 
 @pytest.fixture

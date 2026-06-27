@@ -1,4 +1,4 @@
-"""Opt-in wiki encryption at rest.
+﻿"""Opt-in wiki encryption at rest.
 
 `wiki_encrypted_sections` in settings encrypts those wiki sections with the
 vault key (AES-256-GCM). OFF by default — the wiki stays hand-editable. All
@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-import vault_crypto as vc
-import services.wiki_engine as we
-import services.agent as agent_mod
-from core import WIKI_DIR
+import agent_friday.privacy.vault_crypto as vc
+import agent_friday.services.wiki_engine as we
+import agent_friday.services.agent as agent_mod
+from agent_friday.core import WIKI_DIR
 
 
 @pytest.fixture

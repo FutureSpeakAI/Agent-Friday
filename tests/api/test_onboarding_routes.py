@@ -1,7 +1,7 @@
-"""API tests for the onboarding / provider-agnostic surface:
+﻿"""API tests for the onboarding / provider-agnostic surface:
 capabilities, provider health, aggregate health, encrypted key storage (congruence
 proof: secret never lands in settings.json), and distribution apply."""
-import core
+import agent_friday.core as core
 
 
 def test_capabilities_route(client):
@@ -25,7 +25,7 @@ def test_health_full_route(client):
     assert r.status_code == 200
     body = r.get_json()
     for k in ("providers", "capabilities", "demo", "hardware", "dependencies",
-              "distribution", "server"):
+              "distribution", "agent_friday.server"):
         assert k in body, k
 
 
@@ -42,7 +42,7 @@ def test_provider_key_encrypted_never_in_settings(client):
     raw = core.SETTINGS_FILE.read_text(encoding="utf-8") if core.SETTINGS_FILE.exists() else "{}"
     assert secret not in raw
     # an encrypted key file exists
-    from services import credential_store as cs
+    from agent_friday.services import credential_store as cs
     assert cs.provider_key_status(prov) == "connected"
     # cleanup / DELETE flips status back to missing
     r2 = client.delete(f"/api/providers/{prov}/key")

@@ -1,4 +1,4 @@
-"""Tests for secure multi-account Google integration.
+﻿"""Tests for secure multi-account Google integration.
 
 Focus: the non-negotiable security guarantees (tokens encrypted at rest, never
 in API responses, per-account isolation, audit trail, rate limiting) plus the
@@ -14,9 +14,9 @@ import shutil
 
 import pytest
 
-from services import google_accounts as ga
-from services import credential_store as cs
-from routes import google_accounts as ra
+from agent_friday.services import google_accounts as ga
+from agent_friday.services import credential_store as cs
+from agent_friday.routes import google_accounts as ra
 
 
 class FakeCreds:

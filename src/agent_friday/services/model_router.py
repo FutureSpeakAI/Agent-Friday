@@ -88,7 +88,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     resp = client.messages.create(**kwargs)
     # Cost metering (Part D): capture input AND output tokens for this call.
     try:
-        from services import cost_meter as _cm
+        from agent_friday.services import cost_meter as _cm
         _cm.meter("anthropic", model, getattr(resp, "usage", None),
                   duration_ms=int((_time.time() - _t0) * 1000), kind="text")
     except Exception:
@@ -1573,7 +1573,7 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
     # message. Injecting the matched skill's procedure is what makes a learned or
     # imported skill actually shape behavior on the next turn.
     try:
-        import skill_registry as _skreg
+        import agent_friday.skill_registry as _skreg
         _skill_block = _skreg.build_injection(message, limit=3)
         if _skill_block:
             add(f"\n== MATCHED SKILLS (follow when relevant) ==\n{_skill_block}", _T1)

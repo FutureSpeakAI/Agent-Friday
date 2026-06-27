@@ -1,4 +1,4 @@
-"""Unit tests for the Context Injection Middleware (services/context_injection.py).
+﻿"""Unit tests for the Context Injection Middleware (services/context_injection.py).
 
 Verifies the auto-context block folds in the active project bible, user
 preferences, the user-intelligence profile, and workspace state — and that it's
@@ -6,8 +6,8 @@ empty when there's nothing to say.
 """
 import pytest
 
-from services import context_injection as ci
-from services import creative_memory as cm
+from agent_friday.services import context_injection as ci
+from agent_friday.services import creative_memory as cm
 
 
 @pytest.fixture

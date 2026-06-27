@@ -503,7 +503,7 @@ def _exec_agent_stage(stage, prompt, context):
 def _exec_image_stage(stage, prompt, context):
     """Generate an image for the stage; returns a short descriptor string and
     stashes the file record into the context under '<output_key>_file'."""
-    from services import creative_engine
+    from agent_friday.services import creative_engine
     res = creative_engine.generate_image(
         prompt, style=stage.get("style"),
         aspect_ratio=stage.get("aspect_ratio") or "1:1",
@@ -520,7 +520,7 @@ def _exec_image_stage(stage, prompt, context):
 def _exec_video_stage(stage, prompt, context):
     """Generate a Veo clip. For cross-scene continuity, seeds from an upstream
     keyframe (image→video) when ``seed_from`` names a file record in context."""
-    from services import creative_engine
+    from agent_friday.services import creative_engine
     seed_key = stage.get("seed_from")
     seed = None
     if seed_key and isinstance(context.get(seed_key), dict):
@@ -543,7 +543,7 @@ def _exec_video_stage(stage, prompt, context):
 def _exec_music_stage(stage, prompt, context):
     """Generate a Lyria 3 score. Reads the EXISTING SceneDNA.audio layer as the
     seed (zero new fields), so a storyboard's 'audio:' clause drives the score."""
-    from services import music_engine
+    from agent_friday.services import music_engine
     res = music_engine.generate_music(
         prompt, model=stage.get("model"),
         mode=stage.get("music_mode") or "instrumental",
@@ -562,7 +562,7 @@ def _exec_timeline_stage(stage, prompt, context):
     """Assemble every real video clip + music track accumulated in the context
     into a finished cut and export it (FFmpeg). The edge list of source clips is
     signed into the production's provenance (Layer 2)."""
-    from services import timeline_engine
+    from agent_friday.services import timeline_engine
     video_clips, music_clips = [], []
     for k, v in context.items():
         if not (k.endswith("_file") and isinstance(v, dict) and v.get("filename")):

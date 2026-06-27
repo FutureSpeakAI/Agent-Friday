@@ -1,5 +1,5 @@
-"""Unit tests for transcript auto-compaction (Part C)."""
-from services import compaction as comp
+﻿"""Unit tests for transcript auto-compaction (Part C)."""
+from agent_friday.services import compaction as comp
 
 
 _CFG = {"enabled": True, "keep_head": 3, "keep_tail": 10,

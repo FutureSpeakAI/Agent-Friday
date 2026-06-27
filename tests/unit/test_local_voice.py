@@ -1,4 +1,4 @@
-"""Unit tests for the Tier-1 local voice engine (services/local_voice.py).
+﻿"""Unit tests for the Tier-1 local voice engine (services/local_voice.py).
 
 These run in CI with NO torch, NO GPU, and (typically) NO faster-whisper/piper
 installed — exactly the philosophy of the suite. The real model backends are
@@ -7,8 +7,8 @@ so the whole ASR→TTS orchestration is exercised without a model download.
 """
 import array
 
-from services import local_voice as lv
-from services.local_voice import (
+from agent_friday.services import local_voice as lv
+from agent_friday.services.local_voice import (
     LocalVoiceEngine,
     VADEndpointer,
     _pcm16_rms,

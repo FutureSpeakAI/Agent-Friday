@@ -1,4 +1,4 @@
-"""Model catalog + provider-family inference.
+﻿"""Model catalog + provider-family inference.
 
 The catalog is the single source of truth for the UI model picker. These tests
 pin the contract the frontend relies on: role grouping, presentation metadata,
@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import os
 
-from model_router import provider_family
-from services.model_catalog import build_catalog
+from agent_friday.routing.model_router import provider_family
+from agent_friday.services.model_catalog import build_catalog
 
 
 def test_provider_family_inference():
@@ -103,7 +103,7 @@ def test_availability_reflects_env_keys(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     # Rebuild a fresh registry so the env change is observed.
-    import services.provider_registry as pr
+    import agent_friday.services.provider_registry as pr
     pr._registry = None
     cat = build_catalog()
     by_provider = {}

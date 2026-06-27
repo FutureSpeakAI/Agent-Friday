@@ -1,6 +1,6 @@
-"""Unit tests for services/moderation.py"""
+﻿"""Unit tests for services/moderation.py"""
 import pytest
-from services import moderation as mod
+from agent_friday.services import moderation as mod
 
 
 class TestScanClean:

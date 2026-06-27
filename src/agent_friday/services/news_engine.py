@@ -49,7 +49,7 @@ from agent_friday.services.model_router import (
 # UPPER layer) — import the leaf module directly so the editorial/digest/front
 # page notification pushes don't NameError.
 try:
-    import notifications_engine as _notif_engine
+    import agent_friday.notifications_engine as _notif_engine
 except Exception:
     _notif_engine = None
 

@@ -1,4 +1,4 @@
-"""Tests for vault_crypto — run with: python tests/test_vault_crypto.py
+﻿"""Tests for vault_crypto — run with: python tests/test_vault_crypto.py
 
 Uses FAST_PROFILE so the Argon2id KDF doesn't take 256MB/4-passes per call.
 All tests operate on synthetic data — never on real vault files.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import vault_crypto as vc  # noqa: E402
+import agent_friday.privacy.vault_crypto as vc  # noqa: E402
 
 FAST = vc.FAST_PROFILE
 SALT = bytes(range(16, 48))  # 32 deterministic bytes

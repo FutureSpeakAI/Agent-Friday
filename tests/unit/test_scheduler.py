@@ -1,10 +1,10 @@
-"""Unit tests for Friday's internal scheduler (Part A)."""
+﻿"""Unit tests for Friday's internal scheduler (Part A)."""
 import time
 from datetime import datetime
 
 import pytest
 
-from services import scheduler as s
+from agent_friday.services import scheduler as s
 
 
 @pytest.fixture(autouse=True)

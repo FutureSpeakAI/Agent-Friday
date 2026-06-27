@@ -1,4 +1,4 @@
-"""Tests for server.py's transparent encryption-at-rest layer.
+﻿"""Tests for server.py's transparent encryption-at-rest layer.
 
 Exercises the REAL _vault_read_text / _vault_write_text helpers wired into
 server.py. A fast Argon2id-equivalent key is injected directly so the test
@@ -15,9 +15,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Import the server module (heavy, but gives us the actually-wired helpers).
-import server  # noqa: E402
-import services.agent as _agent  # noqa: E402
-import vault_crypto as vc  # noqa: E402
+import agent_friday.server as server  # noqa: E402
+import agent_friday.services.agent as _agent  # noqa: E402
+import agent_friday.privacy.vault_crypto as vc  # noqa: E402
 
 # Inject a deterministic key, bypassing the production KDF + FRIDAY_PASSWORD.
 _TEST_KEY = vc.derive_key("test passphrase", bytes(range(16, 32)), profile=vc.FAST_PROFILE)

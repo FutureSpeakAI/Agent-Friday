@@ -1,4 +1,4 @@
-"""vault_encrypt_migrate — safely encrypt plaintext vault files at rest.
+﻿"""vault_encrypt_migrate — safely encrypt plaintext vault files at rest.
 
 The live app currently stores private data as PLAINTEXT under ~/.friday/vault
 (and ~/wiki). This tool encrypts those files with vault_crypto (AES-256-GCM +
@@ -33,7 +33,7 @@ import os
 import sys
 from pathlib import Path
 
-import vault_crypto as vc
+import agent_friday.privacy.vault_crypto as vc
 
 VAULT_DIR = Path.home() / ".friday" / "vault"
 

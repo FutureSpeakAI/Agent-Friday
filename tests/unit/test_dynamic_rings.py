@@ -1,4 +1,4 @@
-"""Unit tests for dynamic_rings.py — zero-trust privilege state machine.
+﻿"""Unit tests for dynamic_rings.py — zero-trust privilege state machine.
 
 Tests the PrivilegeState tracker and DynamicPrivilegeManager for:
   - Initial ring state
@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-from dynamic_rings import DynamicPrivilegeManager, PrivilegeState
+from agent_friday.dynamic_rings import DynamicPrivilegeManager, PrivilegeState
 
 
 # ════════════════════════════════════════════════════════════════════════

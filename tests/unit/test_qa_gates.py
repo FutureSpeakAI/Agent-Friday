@@ -1,4 +1,4 @@
-"""Unit tests for Self-Evaluation Gates (services/qa_gates.py).
+﻿"""Unit tests for Self-Evaluation Gates (services/qa_gates.py).
 
 The text evaluator routes through services.model_router._generate_text, which we
 stub so no model is called. Covers score parsing, pass/fail thresholds, graceful
@@ -6,8 +6,8 @@ skip on evaluator failure, and the generate→evaluate→improve gate loop.
 """
 import pytest
 
-from services import qa_gates
-from services import model_router
+from agent_friday.services import qa_gates
+from agent_friday.services import model_router as model_router
 
 
 # ── score parsing ──────────────────────────────────────────────────────────

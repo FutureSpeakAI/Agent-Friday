@@ -1,4 +1,4 @@
-"""Unit tests for the Creative Pipeline engine (services/creative_pipeline.py).
+﻿"""Unit tests for the Creative Pipeline engine (services/creative_pipeline.py).
 
 Stage text generation is stubbed (model_router._generate_text /
 _get_friday_system_prompt), so no model is called. Covers schema contracts,
@@ -7,8 +7,8 @@ typed-contract failure handling.
 """
 import pytest
 
-from services import creative_pipeline as cp
-from services import model_router
+from agent_friday.services import creative_pipeline as cp
+from agent_friday.services import model_router as model_router
 
 
 @pytest.fixture(autouse=True)
