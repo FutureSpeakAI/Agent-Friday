@@ -154,8 +154,22 @@ def _repo_path(name):
     return p
 
 
+def _git_available() -> bool:
+    """Return True if the git executable is on PATH."""
+    try:
+        subprocess.run(["git", "--version"], capture_output=True, timeout=5,
+                       creationflags=_POPEN_FLAGS)
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
 def _dev_git(repo_path, *args, timeout=40):
-    """Run a git subcommand inside repo_path. Returns CompletedProcess."""
+    """Run a git subcommand inside repo_path. Returns CompletedProcess or None."""
+    if not _git_available():
+        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="git not found")
     return subprocess.run(
         ["git", "-C", repo_path, *args],
         capture_output=True, text=True, timeout=timeout,

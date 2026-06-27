@@ -508,7 +508,7 @@ def _parse_feed(url, limit=12):
         import socket
         import feedparser
         d = feedparser.parse(url, request_headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0",
+            "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
         })
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -2495,7 +2495,7 @@ def _extract_article_text(url):
     import requests as _req
     from bs4 import BeautifulSoup
     resp = _req.get(url, timeout=15, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0",
+        "User-Agent": "Mozilla/5.0 FridayAgent/1.0",
     })
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")

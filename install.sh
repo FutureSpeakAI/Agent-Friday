@@ -216,20 +216,6 @@ python server.py
 STARTEOF
 chmod +x "$START_SCRIPT"
 
-# Add API keys to start script if set
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    sed -i.bak '2a export ANTHROPIC_API_KEY="'"$ANTHROPIC_API_KEY"'"' "$START_SCRIPT" 2>/dev/null || \
-    sed -i '' '2a\
-export ANTHROPIC_API_KEY="'"$ANTHROPIC_API_KEY"'"' "$START_SCRIPT"
-    rm -f "${START_SCRIPT}.bak"
-fi
-if [ -n "${GEMINI_API_KEY:-}" ]; then
-    sed -i.bak '2a export GEMINI_API_KEY="'"$GEMINI_API_KEY"'"' "$START_SCRIPT" 2>/dev/null || \
-    sed -i '' '2a\
-export GEMINI_API_KEY="'"$GEMINI_API_KEY"'"' "$START_SCRIPT"
-    rm -f "${START_SCRIPT}.bak"
-fi
-
 # macOS: create .command double-clickable alias
 if [ "$(uname)" = "Darwin" ]; then
     ln -sf "$START_SCRIPT" "$INSTALL_DIR/Start Agent Friday.command"

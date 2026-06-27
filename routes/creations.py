@@ -331,6 +331,16 @@ def create_music():
     return jsonify(_flatten_first_file(result))
 
 
+@creations_bp.route('/api/create/music/available', methods=['GET'])
+def music_available():
+    """Return whether cloud music generation (Lyria batch API) is available.
+    The UI uses this to show a 'Coming Soon' badge on the music button when the
+    current google-genai SDK lacks the batch generate_music surface."""
+    from services import music_engine
+    ok, reason = music_engine.cloud_music_available()
+    return jsonify({"available": ok, "reason": reason or None})
+
+
 @creations_bp.route('/api/create/timeline', methods=['POST'])
 @creations_bp.route('/api/creations/compose', methods=['POST'])
 def create_timeline():

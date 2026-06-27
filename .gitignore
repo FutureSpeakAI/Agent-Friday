@@ -36,7 +36,7 @@ verify_tts.wav
 .setup_complete
 
 # Per-user generated config — stays out of source
-# (NOTE: ~/.friday/settings.json holds API keys, never commit project copies)
+# (NOTE: API keys are stored encrypted in ~/.friday/credential_store.enc, not in settings.json)
 # Match only at project root — skill default configs under skills/*/config.yaml ship.
 /settings.json
 /config.yaml

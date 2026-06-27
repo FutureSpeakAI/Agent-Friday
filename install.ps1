@@ -267,8 +267,6 @@ $batContent = @"
 title Agent Friday
 cd /d "$installDir"
 call venv\Scripts\activate.bat
-$(if ($env:ANTHROPIC_API_KEY) { "set ANTHROPIC_API_KEY=$($env:ANTHROPIC_API_KEY)" })  # pragma: allowlist secret
-$(if ($env:GEMINI_API_KEY) { "set GEMINI_API_KEY=$($env:GEMINI_API_KEY)" })  # pragma: allowlist secret
 python server.py
 pause
 "@

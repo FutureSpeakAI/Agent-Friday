@@ -208,9 +208,9 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                 "is running, then retry."), []
     raise RuntimeError(
         "No model provider could run the agent (tried "
-        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY (start.bat / "
-        "launch_now.bat), configure an OpenAI-compatible endpoint in Settings, "
-        "or run Ollama locally, then restart the server."
+        + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
+        "wizard (or as an environment variable), configure an OpenAI-compatible "
+        "endpoint in Settings, or run Ollama locally, then restart the server."
     )
 
 
@@ -333,7 +333,7 @@ def _tool_search_web(inp):
         resp = _req.get(
             f"https://html.duckduckgo.com/html/?q={encoded}",
             timeout=12,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0'},
+            headers={'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'},
         )
         try:
             from bs4 import BeautifulSoup
@@ -378,7 +378,7 @@ def _tool_browse_web(inp):
         import requests as _req
         resp = _req.get(
             url, timeout=15,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0'},
+            headers={'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'},
             allow_redirects=True,
         )
         ct = resp.headers.get('content-type', '')
@@ -846,7 +846,7 @@ def _url_head_ok(url):
         pass
     try:
         import requests as _req
-        _hdrs = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FridayAgent/1.0'}
+        _hdrs = {'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'}
         resp = _req.head(url, timeout=6, allow_redirects=True, headers=_hdrs)
         if resp.status_code in (404, 410):
             return False, f"the page returned HTTP {resp.status_code}"
@@ -3449,7 +3449,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     client = get_anthropic_client()
     if client is None:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Add it to start.bat / launch_now.bat and restart the server."
+            "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → API Keys) or as an environment variable, then restart the server."
         )
 
     if pii_lookup is None:

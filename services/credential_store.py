@@ -62,9 +62,8 @@ def _now_iso() -> str:
 
 
 def _friday_password() -> str:
-    """The vault passphrase. Read live from the environment (set by start.bat /
-    the launch-script bootstrap) and fall back to the value core captured at
-    import — whichever is non-empty."""
+    """The vault passphrase. Read live from the environment (set via FRIDAY_PASSWORD
+    env var) and fall back to the value core captured at import — whichever is non-empty."""
     return os.environ.get("FRIDAY_PASSWORD") or getattr(core, "FRIDAY_PASSWORD", "") or ""
 
 
