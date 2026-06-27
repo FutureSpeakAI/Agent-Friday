@@ -24,17 +24,32 @@ datas = [
 datas = [(src, dest) for (src, dest) in datas if os.path.exists(src)]
 
 hiddenimports = [
-    # local modules (some are imported inside try/except — pin them explicitly)
-    'model_router', 'ollama_manager', 'notifications', 'notifications_engine',
-    'cognitive_memory', 'context_compressor', 'context_pruner', 'epistemic_engine',
-    # 'liquid_ui' intentionally NOT bundled — experimental, unwired (see its docstring)
-    'dynamic_rings', 'proof_of_integrity', 'vault_access',
-    'vault_crypto', 'vault_encrypt_migrate', 'voice_personality', 'skill_capture',
-    'skill_registry', 'skillopt_engine', 'setup_wizard', 'friday_cli',
+    # agent_friday package and submodules (imported inside try/except — pin explicitly)
+    'agent_friday', 'agent_friday.core', 'agent_friday.cli',
+    'agent_friday.services.model_router', 'agent_friday.services.agent',
+    'agent_friday.services.news_engine', 'agent_friday.services.voice_engine',
+    'agent_friday.services.notifications', 'agent_friday.services.scheduler',
+    'agent_friday.services.cost_meter', 'agent_friday.services.compaction',
+    'agent_friday.services.tool_hooks', 'agent_friday.services.credential_store',
+    'agent_friday.services.creative_engine', 'agent_friday.services.creative_pipeline',
+    'agent_friday.services.creative_memory', 'agent_friday.services.content_credentials',
+    'agent_friday.services.federation', 'agent_friday.services.federation_transport',
+    'agent_friday.services.marketplace', 'agent_friday.services.economy',
+    'agent_friday.services.moderation', 'agent_friday.services.defederation',
+    'agent_friday.services.capability_router', 'agent_friday.services.demo_mode',
+    'agent_friday.services.compaction', 'agent_friday.services.connectors',
+    'agent_friday.cognitive_memory', 'agent_friday.epistemic_engine',
+    'agent_friday.dynamic_rings', 'agent_friday.voice_personality',
+    'agent_friday.skill_capture', 'agent_friday.skill_registry',
+    'agent_friday.skillopt_engine', 'agent_friday.setup_wizard',
+    'agent_friday.mcp_client', 'agent_friday.notifications_engine',
+    'agent_friday.people_graph', 'agent_friday.source_trust_graph',
     # third-party that hooks can miss
     'flask_sock', 'feedparser', 'bs4', 'yaml', 'requests', 'colorama',
     'pyautogui', 'pynput', 'pynput.keyboard', 'pynput.mouse',
+    'pynacl', 'nacl', 'nacl.signing', 'nacl.public',
 ]
+hiddenimports += collect_submodules('agent_friday')
 hiddenimports += collect_submodules('anthropic')
 hiddenimports += collect_submodules('google.genai')
 
@@ -48,8 +63,8 @@ _icon = 'assets/icons/futurespeak.ico'
 icon = _icon if os.path.exists(_icon) else None
 
 a = Analysis(
-    ['server.py'],
-    pathex=[],
+    ['src/agent_friday/server.py'],
+    pathex=['src'],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
