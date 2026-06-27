@@ -25,7 +25,7 @@ from model_router import (
     ModelRouter,
     TaskType,
     CostTracker,
-    VAULT_KEYWORDS,
+    TIER_3_KEYWORDS as VAULT_KEYWORDS,  # unified source: sensitivity_classifier
     anthropic_to_openai_tools,
     openai_response_to_friday,
 )
@@ -676,7 +676,10 @@ class TestRouterStats:
 # ── VAULT_KEYWORDS sanity ─────────────────────────────────────────────────────
 
 class TestVaultKeywords:
-    """The VAULT_KEYWORDS constant is the primary security boundary."""
+    """TIER_3_KEYWORDS (imported as VAULT_KEYWORDS) are the routing security boundary.
+
+    Authoritative source: services/sensitivity_classifier.TIER_3_KEYWORDS.
+    """
 
     def test_all_critical_keywords_present(self):
         important = {"vault", "ssn", "custody", "financial", "health record"}

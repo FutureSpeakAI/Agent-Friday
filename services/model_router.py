@@ -78,6 +78,12 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     # (Opus 4.8+, Sonnet 4.6+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
     # backward-compat with callers; the model's default sampling is used.
+    # Egress gate: runs after payload assembly, before the HTTP call.
+    try:
+        from services.egress_gate import seal_outbound as _seal
+        kwargs = _seal(kwargs, "anthropic")
+    except Exception as _eg_err:
+        print(f"  [EGRESS] gate error (payload forwarded as-is): {_eg_err}")
     _t0 = _time.time()
     resp = client.messages.create(**kwargs)
     # Cost metering (Part D): capture input AND output tokens for this call.
@@ -403,6 +409,12 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
+            # Egress gate: runs after payload assembly, before the HTTP call.
+            try:
+                from services.egress_gate import seal_outbound as _seal
+                payload = _seal(payload, "openai")
+            except Exception as _eg_err:
+                print(f"  [EGRESS] gate error (payload forwarded as-is): {_eg_err}")
             r = requests.post(f"{base_url}/chat/completions", headers=headers,
                               json=payload, timeout=180)
             r.raise_for_status()

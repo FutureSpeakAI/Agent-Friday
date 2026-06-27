@@ -39,28 +39,32 @@ class Tier:
 LOCAL_PROVIDERS = {"ollama", "local"}
 
 
-# Keyword → tier classification. TIER_3 wins over TIER_2 wins over TIER_1.
-# Kept lowercase; matching is substring-based on lowercased content.
-TIER_3_KEYWORDS = (
-    # Financial
-    "financial", "finance", "bank account", "routing number", "account number",
-    "investment", "portfolio", "brokerage", "credit card", "tax return",
-    "net worth", "salary", "income",
-    # Health
-    "health record", "medical", "medication", "prescription", "diagnosis",
-    "doctor", "insurance", "appointment",
-    # Legal
-    "legal", "custody", "court", "divorce", "settlement",
-    # Identity / PII
-    "ssn", "social security", "passport", "driver's license", "date of birth",
-    "encrypted", "sovereign vault",
-)
-
-TIER_2_KEYWORDS = (
-    "contact", "phone number", "home address", "family", "daughter",
-    "partner", "personal note", "memory", "trust graph", "relationship",
-    "todo",
-)
+# ── Keyword lists exposed for legacy callers ────────────────────────────────
+# The authoritative definitions live in services/sensitivity_classifier.py.
+# These are imported from there so both modules agree by construction.
+try:
+    from services.sensitivity_classifier import (
+        TIER_3_KEYWORDS, TIER_2_KEYWORDS,
+        classify_legacy as _sc_classify_legacy,
+    )
+    _HAS_CLASSIFIER = True
+except Exception:
+    _HAS_CLASSIFIER = False
+    TIER_3_KEYWORDS = (
+        "financial", "finance", "bank account", "routing number", "account number",
+        "investment", "portfolio", "brokerage", "credit card", "tax return",
+        "net worth", "salary", "income",
+        "health record", "medical", "medication", "prescription", "diagnosis",
+        "doctor", "insurance", "appointment",
+        "legal", "custody", "court", "divorce", "settlement",
+        "ssn", "social security", "passport", "driver's license", "date of birth",
+        "encrypted", "sovereign vault",
+    )
+    TIER_2_KEYWORDS = (
+        "contact", "phone number", "home address", "family", "daughter",
+        "partner", "personal note", "memory", "trust graph", "relationship",
+        "todo",
+    )
 
 
 class VaultAccessDenied(Exception):
@@ -92,11 +96,30 @@ class VaultAccessControl:
     def classify(self, content, default=Tier.PUBLIC):
         """Best-effort sensitivity tier for a chunk of content.
 
-        Scans for TIER_3 markers first (most sensitive wins), then TIER_2.
-        Returns `default` (PUBLIC) when nothing sensitive is detected.
+        Delegates to the unified layered classifier in
+        services/sensitivity_classifier.py (which runs regex → Presidio NER →
+        embedding similarity → optional local LLM, all on-device). Falls back to
+        the legacy keyword scan when the classifier module is unavailable.
+
+        Returns `default` (PUBLIC) when nothing sensitive is detected — this
+        legacy default is intentionally PUBLIC for backward-compat with vault
+        context assembly. The egress gate uses PRIVATE as its default.
         """
         if not content or not isinstance(content, str):
             return default
+        if _HAS_CLASSIFIER:
+            try:
+                # Use keyword+regex only (no embeddings) for vault prompt assembly:
+                # the upstream tier-gating is about what goes INTO the prompt, where
+                # keyword precision matters more than semantic recall. The egress gate
+                # adds the semantic layer as a last line of defence.
+                return _sc_classify_legacy(
+                    content, default=default,
+                    use_presidio=False, use_embeddings=False,
+                )
+            except Exception:
+                pass
+        # Fallback: keyword-only scan
         low = content.lower()
         if any(kw in low for kw in TIER_3_KEYWORDS):
             return Tier.SENSITIVE
