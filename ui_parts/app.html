@@ -6754,7 +6754,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             </div>
             {/* Stats summary */}
             {routingMode!=='cloud_only'&&<div style={{padding:'4px 12px 8px',fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-              Today: {routingStats.local_requests} local, {routingStats.cloud_requests} cloud{routingStats.estimated_savings>0?`, ~$${routingStats.estimated_savings.toFixed(2)} saved`:''}
+              Today: {routingStats.local_requests} local, {routingStats.cloud_requests} cloud{routingStats.local_tokens>0?`, ${routingStats.local_tokens.toLocaleString()} local tokens`:''}
             </div>}
             {/* Per-role model assignment — spans every available provider */}
             <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6}}>

@@ -1,4 +1,4 @@
-"""Unit tests for model_router — the routing layer that decides which provider
+﻿"""Unit tests for model_router — the routing layer that decides which provider
 handles each request.  Security-critical: a misroute can send vault data to
 the cloud.  Every test uses synthetic data; no real network calls are made.
 
@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
 
-import model_router as mr
-from model_router import (
+import agent_friday.routing.model_router as mr
+from agent_friday.routing.model_router import (
     ModelRouter,
     TaskType,
     CostTracker,
@@ -461,8 +461,10 @@ class TestCostTracker:
         ct = CostTracker()
         ct.record("local", "gemma4:latest", prompt_tokens=1000, completion_tokens=0)
         stats = ct.stats(since=0)
-        # savings = 1000/1000 * 0.015 = 0.015
-        assert abs(stats["estimated_savings"] - 0.015) < 1e-5
+        # estimated_savings is 0 — blended-rate dollar figure was removed (inaccurate)
+        assert stats["estimated_savings"] == 0.0
+        # local_tokens reflects the on-device work instead
+        assert stats["local_tokens"] == 1000
 
     def test_total_requests(self):
         ct = CostTracker()
@@ -518,10 +520,10 @@ class TestRouteIntegration:
         """Patch get_manager in model_router so route() sees a fake Ollama.
 
         model_router imports ollama_manager lazily inside methods with
-        `from ollama_manager import get_manager`, so we must patch
+        `from agent_friday.routing.ollama_manager import get_manager`, so we must patch
         ollama_manager.get_manager directly on the already-imported module.
         """
-        import ollama_manager
+        import agent_friday.routing.ollama_manager as ollama_manager
 
         _avail = available
         _models = list(models or [])
