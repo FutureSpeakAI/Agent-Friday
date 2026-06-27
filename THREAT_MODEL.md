@@ -47,6 +47,14 @@ Linux Secret Service) via the `keyring` library, with a file fallback at
 Ed25519 signatures before every action. Drift is logged to
 `~/.friday/vault/access-log.jsonl`.
 
+**Keyring fallback:** On systems without a supported keyring backend (e.g. a
+headless Linux server without Secret Service), `get_governance_key()` falls back
+to the file at `~/.friday/vault/.governance-key` with 0o600 permissions. This
+fallback is now **logged as a WARNING** so operators are aware. File-based storage
+is weaker than OS keychain — the file is protected only by filesystem permissions.
+Set up a keyring backend (`python-secretstorage` + D-Bus on Linux) to eliminate
+this risk.
+
 **Guarantee:** Constraint modifications are detectable (integrity drift) and logged.
 The HMAC key lives in the OS keychain and is not stored in the repository.
 
