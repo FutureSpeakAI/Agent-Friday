@@ -21,7 +21,7 @@ from pathlib import Path
 import pystray
 from PIL import Image
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
 ICON_PATH = PROJECT_DIR / "assets" / "icons" / "futurespeak.png"
