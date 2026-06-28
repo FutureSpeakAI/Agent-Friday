@@ -394,7 +394,7 @@ DAILY_CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 # environment. os.environ ALWAYS wins (setdefault), so a real env var is never
 # overridden. Best-effort and silent about values — never logs a secret.
 def _bootstrap_env_from_launch_scripts():
-    repo = Path(__file__).resolve().parent
+    repo = Path(__file__).resolve().parents[2]  # core.py is src/agent_friday/core.py → repo root
     # Later files do not override earlier ones (setdefault); start.bat is primary.
     candidates = ['start.bat', 'launch_now.bat', 'friday_startup.bat']
     _set_re = re.compile(r'^\s*set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^"\r\n]*)"?\s*$',

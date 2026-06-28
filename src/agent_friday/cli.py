@@ -196,7 +196,7 @@ def cmd_start():
     if cfg.get("gemini_api_key") and not env.get("GEMINI_API_KEY"):
         env["GEMINI_API_KEY"] = cfg["gemini_api_key"]
 
-    proc = subprocess.Popen([sys.executable, str(server_script)], env=env, cwd=str(HERE))
+    proc = subprocess.Popen([sys.executable, str(server_script)], env=env, cwd=str(PROJ_ROOT))
 
     console.print("  [dim]Waiting for server...[/dim]")
     if _server_ready(SERVER_URL, timeout=20):
