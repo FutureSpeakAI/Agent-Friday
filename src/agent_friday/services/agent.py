@@ -983,7 +983,7 @@ def _resolve_open_target(target):
     raw = target.strip().strip('"').strip("'")
     low = re.sub(r'\s+', ' ', raw.lower()).strip()
     low = re.sub(r'\s+(folder|directory|dir|file)$', '', low).strip()
-    repo = Path(__file__).resolve().parent
+    repo = Path(__file__).resolve().parents[3]  # agent.py is src/agent_friday/services/ → repo root
     aliases = {
         'downloads': HOME / 'Downloads', 'download': HOME / 'Downloads',
         'documents': HOME / 'Documents', 'docs': HOME / 'Documents',

@@ -43,6 +43,7 @@ console = Console()
 
 # ── Paths ────────────────────────────────────────────────────────
 HERE = Path(__file__).parent.resolve()
+PROJ_ROOT = HERE.parent.parent  # src/agent_friday/ → repo root
 FRIDAY_DIR = Path.home() / ".friday"
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 CONFIG_YAML = FRIDAY_DIR / "config.yaml"
@@ -269,7 +270,7 @@ def _existing_user() -> bool:
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY"):
         return True
     for n in ("start.bat", "friday_startup.bat", "friday_startup.vbs"):
-        if (HERE / n).exists():
+        if (PROJ_ROOT / n).exists():
             return True
     return False
 
@@ -709,8 +710,8 @@ def _write_start_bat(config: dict):
         lines.append(f'SET GEMINI_API_KEY={config["gemini_api_key"]}')  # pragma: allowlist secret
     if config.get("vault_password"):
         lines.append(f'SET FRIDAY_PASSWORD={config["vault_password"]}')  # pragma: allowlist secret
-    lines += ["", f'cd /d "{HERE}"', "python server.py", "pause"]
-    bat = HERE / "start.bat"
+    lines += ["", f'cd /d "{PROJ_ROOT}"', "python server.py", "pause"]
+    bat = PROJ_ROOT / "start.bat"
     bat.write_text("\r\n".join(lines), encoding="utf-8")
 
 
@@ -866,9 +867,9 @@ def main():
 
 
 def _launch():
-    server = HERE / "server.py"
+    server = PROJ_ROOT / "server.py"
     if not server.exists():
-        console.print(f"  [red]server.py not found in {HERE}[/red]")
+        console.print(f"  [red]server.py not found in {PROJ_ROOT}[/red]")
         return
     console.print()
     console.print(Panel(
@@ -885,7 +886,7 @@ def _launch():
     if cfg.get("gemini_api_key") and not env.get("GEMINI_API_KEY"):
         env["GEMINI_API_KEY"] = cfg["gemini_api_key"]
     try:
-        subprocess.run([sys.executable, str(server)], env=env, cwd=str(HERE))
+        subprocess.run([sys.executable, str(server)], env=env, cwd=str(PROJ_ROOT))
     except KeyboardInterrupt:
         console.print("\n  [dim]Stopped.[/dim]\n")
 

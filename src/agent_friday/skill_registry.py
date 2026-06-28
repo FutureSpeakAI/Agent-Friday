@@ -57,7 +57,7 @@ except Exception:                                   # pragma: no cover
 
 HOME = Path(os.path.expanduser("~"))
 SKILLS_DIR = HOME / ".friday" / "skills"            # user/learned/imported skills
-BUNDLED_DIR = Path(__file__).resolve().parent / "skills"   # shipped Python skills
+BUNDLED_DIR = Path(__file__).resolve().parents[2] / "skills"  # skill_registry.py is src/agent_friday/ → repo root/skills
 
 # Files we recognize as a skill manifest, in priority order. OpenClaw/agentskills
 # folders may use a lowercase or README variant.

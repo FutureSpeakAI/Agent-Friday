@@ -48,7 +48,7 @@ from pathlib import Path
 
 HOME = Path(os.path.expanduser("~"))
 FRIDAY_DIR = HOME / ".friday"
-REPO_DIR = Path(__file__).resolve().parent.parent
+REPO_DIR = Path(__file__).resolve().parents[3]  # connectors.py is src/agent_friday/services/ → repo root
 
 # Spawn child processes without flashing a console window on Windows.
 _POPEN_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
