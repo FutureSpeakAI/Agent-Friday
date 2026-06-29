@@ -1168,12 +1168,15 @@ _CAP_FLAT_MAP = {
 def _sync_capability_routing(settings, changed=None):
     """Keep capability_routing (canonical) and the legacy flat *_model keys congruent.
 
-    For the four mapped capabilities, whichever side the caller modified wins: an
-    explicit ``capability_routing`` entry in ``changed`` propagates to the flat key;
-    otherwise the flat key is authoritative (legacy installs + the classic model
-    picker) and is copied into routing. The unmapped capabilities (creative_video,
-    embedding, local) come straight from routing/defaults. Copy-safe — never mutates
-    the shared DEFAULT_SETTINGS nested dicts.
+    Priority rule: the flat model key wins when it is explicitly present in
+    ``changed``.  A ``capability_routing`` entry propagates to the flat key only
+    when it is in ``changed`` and the corresponding flat key is NOT (i.e. the
+    wizard or routing panel changed routing without touching the picker).  This
+    prevents the model-picker snap-back bug where the UI sends a full settings
+    blob containing stale ``capability_routing`` and the old routing model
+    overwrites the newly-chosen flat key.  Unmapped capabilities (creative_video,
+    embedding, local) come straight from routing/defaults.  Copy-safe — never
+    mutates the shared DEFAULT_SETTINGS nested dicts.
     """
     defaults = DEFAULT_SETTINGS["capability_routing"]
     src = settings.get("capability_routing")
@@ -1185,14 +1188,20 @@ def _sync_capability_routing(settings, changed=None):
     changed = changed or {}
     delta_cr = changed.get("capability_routing")
     delta_cr = delta_cr if isinstance(delta_cr, dict) else {}
+    changed_keys = set((changed or {}).keys())
     for cap, flat_key in _CAP_FLAT_MAP.items():
         entry = cr[cap]
-        if cap in delta_cr:
-            # new UI changed routing → the flat key mirrors it
+        # Flat key wins when it was explicitly set by the caller (the model picker
+        # always sends the full settings blob, which includes a stale
+        # capability_routing — without this guard, _sync would overwrite the
+        # newly-chosen model with the old capability_routing value, causing the
+        # snap-back bug).
+        if cap in delta_cr and flat_key not in changed_keys:
+            # capability_routing changed and flat key was NOT touched → mirror
             if entry.get("model"):
                 settings[flat_key] = entry["model"]
         else:
-            # flat key is authoritative → copy into routing
+            # flat key is authoritative (either explicitly set, or routing unchanged)
             fv = settings.get(flat_key)
             if fv:
                 entry["model"] = fv
