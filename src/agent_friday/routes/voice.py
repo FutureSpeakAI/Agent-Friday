@@ -587,9 +587,28 @@ if sock is not None:
                 pass
             return
 
-        # Trigger settings-fallback if env var not set (onboarding-wizard path
-        # stores key in settings.json; get_genai_client() reads it + updates the global).
-        if not core.GEMINI_API_KEY:
+        # Refresh the key at EVERY connect — handles two rotation scenarios:
+        #   (a) User updated start.bat and restarted: os.environ has the fresh key
+        #       but core.GEMINI_API_KEY is a module-level var captured at startup.
+        #   (b) User saved a new key via the Settings wizard: stored in settings.json,
+        #       possibly never set in the environment at all.
+        # Checking both sources each time means a settings-UI key update takes
+        # effect on the next voice connect without a server restart.
+        _env_key = os.environ.get('GEMINI_API_KEY', '') or os.environ.get('GOOGLE_API_KEY', '')
+        _settings_key = ''
+        try:
+            _settings_key = (_load_settings() or {}).get('gemini_api_key', '')  # pragma: allowlist secret
+        except Exception:
+            pass
+        _fresh_key = _env_key or _settings_key
+        if _fresh_key and _fresh_key != core.GEMINI_API_KEY:
+            _old_kp = (core.GEMINI_API_KEY[:8] + '...') if core.GEMINI_API_KEY else 'MISSING'
+            core.GEMINI_API_KEY = _fresh_key  # pragma: allowlist secret
+            core._genai_client = None  # force client recreation with the new key
+            _key_src = 'env' if _env_key else 'settings.json'
+            print(f'[live] GEMINI_API_KEY refreshed from {_key_src}: was={_old_kp} now={_fresh_key[:8]}...', flush=True)
+            _vlog(f'key refreshed from {_key_src}: {_fresh_key[:8]}...')
+        elif not core.GEMINI_API_KEY:
             try:
                 core.get_genai_client()
             except Exception:

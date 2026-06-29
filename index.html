@@ -3824,6 +3824,7 @@ const DOCK_GROUPS=[
     {id:'studio',ico:'ðŸŽ¨',label:'Studio'},
     {id:'marketplace',ico:'ðŸ›’',label:'Marketplace'},
     {id:'system',ico:'ðŸ–¥ï¸',label:'System',core:true},
+    {id:'settings',ico:'⚙️',label:'Settings',core:true},
   ]},
 ];
 const WS=DOCK_GROUPS.flatMap(g=>g.items);
@@ -9290,6 +9291,397 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
   );
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════════
+//  SETTINGS WORKSPACE — full tabbed settings (General / Models / Voice / Privacy /
+//  Federation / Economy / Orchestrator / Connectors / About)
+// ═════════════════════════════════════════════════════════════════════════════════
+
+function useSettings(){
+  const[s,setS]=useState({});
+  const[msg,setMsg]=useState('');
+  const load=()=>{apiFetch('/api/settings').then(r=>r.json()).then(d=>{if(d&&d.status!=='error')setS(d)}).catch(()=>{})};
+  useEffect(load,[]);
+  const save=async(patch)=>{
+    try{
+      const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+      const d=await r.json();
+      if(d.status==='ok'){setS(prev=>({...prev,...patch}));setMsg('Saved ✓');setTimeout(()=>setMsg(''),2000);}
+      else{setMsg('Error');setTimeout(()=>setMsg(''),2000);}
+    }catch(e){setMsg('Error');setTimeout(()=>setMsg(''),2000);}
+  };
+  return{s,save,msg,reload:load};
+}
+function StRow({label,children,desc}){
+  return <div style={{marginBottom:14}}>
+    <div style={{fontSize:12,color:'rgba(255,255,255,0.75)',marginBottom:desc?2:6,fontFamily:'JetBrains Mono'}}>{label}</div>
+    {desc&&<div style={{fontSize:11,color:'rgba(255,255,255,0.38)',marginBottom:6,lineHeight:1.5}}>{desc}</div>}
+    {children}
+  </div>;
+}
+function StToggle({label,value,onChange,desc}){
+  return <div style={{marginBottom:8}}>
+    <div onClick={onChange} style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+      <div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono'}}>{label}</div>
+        {desc&&<div style={{fontSize:11,color:'rgba(255,255,255,0.38)',marginTop:2}}>{desc}</div>}
+      </div>
+      <div style={{width:34,height:18,borderRadius:9,background:value?'linear-gradient(90deg,#0097b2,#00d4ff)':'rgba(255,255,255,0.1)',position:'relative',transition:'background .2s',flexShrink:0,marginLeft:12}}>
+        <div style={{position:'absolute',top:2,left:value?16:2,width:14,height:14,borderRadius:7,background:'#fff',transition:'left .2s',boxShadow:'0 1px 4px rgba(0,0,0,0.4)'}}/>
+      </div>
+    </div>
+  </div>;
+}
+function StSection({title,children}){
+  return <div style={{marginBottom:26}}>
+    <div style={{fontFamily:'Orbitron',fontSize:9,color:'#00d4ff',letterSpacing:'.15em',marginBottom:14,paddingBottom:6,borderBottom:'1px solid rgba(0,212,255,0.1)'}}>{title}</div>
+    {children}
+  </div>;
+}
+function SettingsTabGeneral({s,save}){
+  return <div>
+    <StSection title="IDENTITY">
+      <StRow label="Agent Name">
+        <input className="input" style={{width:'100%'}} defaultValue={s.agent_name||'Friday'} key={'an'+s.agent_name} onBlur={e=>save({agent_name:e.target.value})} placeholder="Agent Friday"/>
+      </StRow>
+      <StRow label="Personality" desc="How Friday presents herself.">
+        <textarea className="input" style={{width:'100%',height:80,resize:'vertical'}} defaultValue={s.personality||''} key={'pe'+s.personality} onBlur={e=>save({personality:e.target.value})} placeholder="Describe Friday's personality..."/>
+      </StRow>
+    </StSection>
+    <StSection title="APPEARANCE">
+      <StRow label="Scene" desc="Holographic background scene.">
+        <select className="input" style={{width:'100%'}} value={s.scene_name||'nebula'} onChange={e=>save({scene_name:e.target.value})}>
+          {['nebula','matrix','void','aurora','cosmos','midnight','prism','circuit','ocean','ember'].map(n=><option key={n} value={n}>{n.charAt(0).toUpperCase()+n.slice(1)}</option>)}
+        </select>
+      </StRow>
+      <StToggle label="Show All Workspaces" value={s.show_all_workspaces!==false} onChange={()=>save({show_all_workspaces:!(s.show_all_workspaces!==false)})} desc="Show all workspace icons in the dock."/>
+      <StToggle label="Compact Mode" value={!!s.compact_mode} onChange={()=>save({compact_mode:!s.compact_mode})} desc="Reduce padding and element sizes."/>
+    </StSection>
+    <StSection title="STARTUP">
+      <StRow label="Startup Workspace">
+        <select className="input" style={{width:'100%'}} value={s.startup_workspace||''} onChange={e=>save({startup_workspace:e.target.value})}>
+          <option value="">None</option>
+          {WS.map(w=><option key={w.id} value={w.id}>{w.ico} {w.label}</option>)}
+        </select>
+      </StRow>
+      <StToggle label="Auto-open Chat on Launch" value={!!s.auto_open_chat} onChange={()=>save({auto_open_chat:!s.auto_open_chat})}/>
+    </StSection>
+  </div>;
+}
+function SettingsTabModels({s,save}){
+  const mc=useModelCatalog();
+  const mkSel=(role,key,label,desc)=>{
+    const models=mc[role]||[];
+    return <StRow key={key} label={label} desc={desc}>
+      <select className="input" style={{width:'100%'}} value={s[key]||''} onChange={e=>save({[key]:e.target.value})}>
+        {!s[key]&&<option value="">— default —</option>}
+        {models.map(m=><option key={m.id} value={m.id}>{m.label||m.id}</option>)}
+      </select>
+    </StRow>;
+  };
+  return <div>
+    <StSection title="CAPABILITY ROUTING">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:14,lineHeight:1.6}}>Model assignments per capability. Changes apply next request — no restart needed.</div>
+      {mkSel('orchestrator','orchestrator_model','Orchestrator Model','Primary model for tool-using agentic loops.')}
+      {mkSel('subagent','subagent_model','Sub-agent Model','Model for parallel sub-tasks.')}
+      {mkSel('creative','creative_model','Creative Model','Image/video and creative writing.')}
+      {mkSel('voice','voice_model','Voice Model','Gemini Live model for real-time voice.')}
+    </StSection>
+    <StSection title="REASONING">
+      <StRow label="Temperature" desc="Higher = more creative. Lower = more focused.">
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <input type="range" min="0" max="2" step="0.05" style={{flex:1}} value={s.temperature??0.7} onChange={e=>save({temperature:parseFloat(e.target.value)})}/>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff',minWidth:32}}>{(s.temperature??0.7).toFixed(2)}</span>
+        </div>
+      </StRow>
+    </StSection>
+    <StSection title="RESPONSE">
+      <StToggle label="Cite Sources in Chat" value={!!s.cite_sources} onChange={()=>save({cite_sources:!s.cite_sources})} desc="Include inline citations in responses."/>
+      <StToggle label="Streaming Responses" value={s.stream_responses!==false} onChange={()=>save({stream_responses:!(s.stream_responses!==false)})} desc="Stream tokens as they arrive."/>
+    </StSection>
+  </div>;
+}
+function SettingsTabVoice({s,save}){
+  return <div>
+    <StSection title="VOICE ENGINE">
+      <StRow label="Engine" desc="Local = on-device, private. Cloud = Gemini Live, most expressive.">
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {[{k:'local',label:'🔒 Local CPU'},{k:'local-gpu',label:'⚡ Local GPU'},{k:'gemini',label:'☁ Cloud'},{k:'auto',label:'Auto'}].map(o=>(
+            <button key={o.k} className={`settings-btn ${(s.voice_engine||'local')===o.k?'active':''}`} style={{fontSize:12,padding:'7px 14px'}} onClick={()=>save({voice_engine:o.k})}>{o.label}</button>
+          ))}
+        </div>
+      </StRow>
+      <StRow label="TTS Voice">
+        <select className="input" style={{width:'100%'}} value={s.tts_voice||'Aoede'} onChange={e=>save({tts_voice:e.target.value})}>
+          {['Aoede','Puck','Charon','Kore','Fenrir','Leda','Orus','Zephyr'].map(v=><option key={v}>{v}</option>)}
+        </select>
+      </StRow>
+    </StSection>
+    <StSection title="AUDIO">
+      <StRow label="Interruption Mode" desc="Speaker mode prevents echo. Headphones mode allows barge-in.">
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {[{k:'speaker',l:'🔊 Speaker (echo-safe)'},{k:'headphones',l:'🎧 Headphones'}].map(o=>(
+            <button key={o.k} className={`settings-btn ${(s.voice_interruption_mode||'speaker')===o.k?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
+          ))}
+        </div>
+      </StRow>
+      <StRow label="VAD Silence Threshold">
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <input type="range" min="300" max="2000" step="100" style={{flex:1}} value={s.voice_silence_ms??800} onChange={e=>save({voice_silence_ms:parseInt(e.target.value)})}/>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff',minWidth:50}}>{s.voice_silence_ms??800}ms</span>
+        </div>
+      </StRow>
+    </StSection>
+    <StSection title="ADVANCED">
+      <StToggle label="Affective Dialog" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Emotional expressiveness (2.5 native-audio models, v1alpha)."/>
+      <StToggle label="Proactive Audio" value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="Friday initiates follow-up questions."/>
+      <StToggle label="Context Compression" value={!!s.voice_context_compression} onChange={()=>save({voice_context_compression:!s.voice_context_compression})}/>
+      <StToggle label="Voice Tools" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc="Allow tool calls during voice sessions."/>
+      <StRow label="Voice Temperature">
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <input type="range" min="0" max="2" step="0.05" style={{flex:1}} value={s.voice_temperature??1.0} onChange={e=>save({voice_temperature:parseFloat(e.target.value)})}/>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#00d4ff',minWidth:32}}>{(s.voice_temperature??1.0).toFixed(2)}</span>
+        </div>
+      </StRow>
+      <StRow label="Custom Speaking Style" desc="Prepended as 'Speaking style: ...'">
+        <input className="input" style={{width:'100%'}} defaultValue={s.voice_style_prompt||''} key={'vs'+s.voice_style_prompt} onBlur={e=>save({voice_style_prompt:e.target.value})} placeholder="e.g. warm, concise, news anchor"/>
+      </StRow>
+      <StRow label="Language (BCP-47)">
+        <input className="input" style={{width:'100%'}} defaultValue={s.voice_language||''} key={'vl'+s.voice_language} onBlur={e=>save({voice_language:e.target.value})} placeholder="e.g. en-US"/>
+      </StRow>
+    </StSection>
+  </div>;
+}
+function SettingsTabPrivacy({s,save}){
+  const[vaultStatus,setVaultStatus]=useState(null);
+  useEffect(()=>{apiFetch('/api/vault/status').then(r=>r.json()).then(setVaultStatus).catch(()=>{})},[]);
+  return <div>
+    <StSection title="SOVEREIGN VAULT">
+      {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+          {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron',fontSize:12,color:x.c}}>{x.v}</div></div>)}
+        </div>
+      </div>}
+      <StToggle label="Local-Only Mode" value={!!s.vault_local_only} onChange={()=>save({vault_local_only:!s.vault_local_only})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+    </StSection>
+    <StSection title="EGRESS GATE">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Controls what data leaves the device. Tier 1 (public) passes through. Tier 2 (sensitive) is redacted. Tier 3 (private) is blocked.</div>
+      <StRow label="Cloud Mode">
+        <div style={{display:'flex',gap:6}}>{['audit','enforce'].map(m=><button key={m} className={`settings-btn ${(s.egress_mode||'enforce')===m?'active':''}`} onClick={()=>save({egress_mode:m})} style={{fontSize:12}}>{m.charAt(0).toUpperCase()+m.slice(1)}</button>)}</div>
+      </StRow>
+    </StSection>
+    <StSection title="CONTEXT LOGGING">
+      <StToggle label="Full Context Logging" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="Append-only log of chats, tool calls, file reads. Stored locally."/>
+      <StToggle label="Go Off Record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Disable logging for this session."/>
+      <StRow label="Retention Period">
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
+      </StRow>
+      <button className="settings-btn" style={{width:'100%',fontSize:12,marginTop:6}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export My Data (ZIP)</button>
+    </StSection>
+    <StSection title="COMPUTER CONTROL">
+      <div style={{fontSize:11,color:'rgba(255,200,200,0.7)',marginBottom:10,lineHeight:1.6}}>High-risk. Allow Friday to move the mouse, click, type, and take screenshots. Permission revokes on every restart.</div>
+      <StToggle label="Enable Computer Control" value={!!s.computer_control_enabled} onChange={()=>save({computer_control_enabled:!s.computer_control_enabled})}/>
+    </StSection>
+  </div>;
+}
+function SettingsTabFederation(){
+  return <div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Ed25519 identity + X25519/ChaCha20-Poly1305 transport. Connect with other Friday instances on the federation network.</div>
+    <FederationPanel/>
+    <div style={{marginTop:24}}><StSection title="DEFEDERATION"><DefederationPanel/></StSection></div>
+  </div>;
+}
+function SettingsTabEconomy(){
+  return <div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Positron (Ψ) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge.</div>
+    <EconomyPanel/>
+    <div style={{marginTop:24}}><StSection title="WORKSPACE BUDGETS"><OrchestratorBudgetPanel/></StSection></div>
+  </div>;
+}
+function SettingsTabOrchestrator(){
+  return <div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Manage local sub-agent workers. Spawn tasks to Ollama, Python scripts, or HTTP APIs within your budget envelope.</div>
+    <OrchestratorPanel/>
+    <div style={{marginTop:24}}><StSection title="CAPABILITY CARD"><CapabilityCardPanel/></StSection></div>
+    <div style={{marginTop:24}}><StSection title="WORK LOG"><WorkLogPanel/></StSection></div>
+  </div>;
+}
+function GoogleAccountsPanel(){
+  const[accounts,setAccounts]=useState([]);
+  const[msg,setMsg]=useState('');
+  const[label,setLabel]=useState('');
+  const[loading,setLoading]=useState(false);
+  const refresh=()=>apiFetch('/api/google/accounts').then(r=>r.json()).then(d=>{if(d.status==='ok')setAccounts(d.accounts||[])}).catch(()=>{});
+  useEffect(refresh,[]);
+  const addAccount=async()=>{
+    setLoading(true);
+    try{
+      const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});
+      const d=await r.json();
+      if(d.status==='ok'&&d.auth_url){window.open(d.auth_url,'_blank','width=600,height=700');setMsg('Complete the OAuth flow in the popup, then click ↻.');setLabel('');}
+      else setMsg(d.message||'Failed to start OAuth.');
+    }catch(e){setMsg('Error: '+e.message);}
+    setLoading(false);
+  };
+  const removeAccount=async(id,email)=>{
+    if(!window.confirm('Remove '+email+'? This revokes access.'))return;
+    try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
+    catch(e){setMsg('Error.');}
+  };
+  const toggleSvc=async(id,svc,current)=>{
+    const acc=accounts.find(a=>a.id===id);if(!acc)return;
+    const services={...(acc.services||{}),[svc]:!current};
+    try{await apiFetch('/api/google/accounts/'+id+'/services',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({services})});setAccounts(a=>a.map(x=>x.id===id?{...x,services}:x));}
+    catch(e){}
+  };
+  return <div>
+    {accounts.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:12}}>No Google accounts connected yet.</div>}
+    {accounts.map(acc=>(
+      <div key={acc.id} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:8,padding:14,marginBottom:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{display:'flex',gap:10,alignItems:'center'}}>
+            <div style={{width:32,height:32,borderRadius:16,background:acc.color||'#00d4ff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:700,color:'#000',flexShrink:0}}>{(acc.email||acc.label||'G').charAt(0).toUpperCase()}</div>
+            <div>
+              <div style={{color:'#fff',fontSize:13,fontWeight:600}}>{acc.email||acc.label||'Unknown'}</div>
+              <div style={{color:'rgba(255,255,255,0.4)',fontSize:11}}>{acc.label||''}{acc.last_sync?' · synced '+new Date(acc.last_sync).toLocaleTimeString():''}</div>
+            </div>
+          </div>
+          <button className="settings-btn" style={{fontSize:11,color:'#ff6060'}} onClick={()=>removeAccount(acc.id,acc.email||acc.label||'account')}>Remove</button>
+        </div>
+        <div style={{display:'flex',gap:6,marginTop:10}}>
+          {['gmail','calendar','drive'].map(svc=>{const on=acc.services?.[svc]!==false;return(
+            <button key={svc} className={`settings-btn ${on?'active':''}`} style={{fontSize:11,padding:'3px 10px'}} onClick={()=>toggleSvc(acc.id,svc,on)}>
+              {svc==='gmail'?'✉️ Gmail':svc==='calendar'?'📅 Cal':'📁 Drive'}
+            </button>
+          );})}
+        </div>
+      </div>
+    ))}
+    <div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
+      <input className="input" style={{flex:1,fontSize:12}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (e.g. Personal, Work)"/>
+      <button className="settings-btn" style={{padding:'6px 14px',color:'#00d4ff',fontSize:12,whiteSpace:'nowrap'}} onClick={addAccount} disabled={loading}>{loading?'…':'+ Add Account'}</button>
+      <button className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻</button>
+    </div>
+    {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
+  </div>;
+}
+function SettingsTabConnectors({s,save}){
+  const[mcpServers,setMcpServers]=useState([]);
+  const[connectors,setConnectors]=useState([]);
+  useEffect(()=>{
+    apiFetch('/api/mcp/servers').then(r=>r.json()).then(d=>setMcpServers(d.servers||[])).catch(()=>{});
+    apiFetch('/api/connectors').then(r=>r.json()).then(d=>setConnectors(Array.isArray(d)?d:(d.connectors||[]))).catch(()=>{});
+  },[]);
+  return <div>
+    <StSection title="GOOGLE ACCOUNTS">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.5}}>Connect multiple Google accounts. Tokens are encrypted on-device with DPAPI — never sent to cloud.</div>
+      <GoogleAccountsPanel/>
+    </StSection>
+    <StSection title="MCP SERVERS">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Model Context Protocol servers extend Friday's tool surface. Config: <code style={{color:'#00d4ff'}}>~/.friday/mcp_servers.json</code></div>
+      {mcpServers.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:8}}>No MCP servers configured.</div>}
+      {mcpServers.map((srv,i)=>(
+        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'rgba(255,255,255,0.03)',borderRadius:6,marginBottom:6}}>
+          <div><div style={{color:'rgba(255,255,255,0.85)',fontSize:12,fontFamily:'JetBrains Mono'}}>{srv.name||srv.id||'Unnamed'}</div>{srv.description&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:11}}>{srv.description}</div>}</div>
+          <span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:srv.enabled!==false?'rgba(0,255,128,0.1)':'rgba(255,255,255,0.04)',color:srv.enabled!==false?'#00ff80':'#555',fontFamily:'JetBrains Mono'}}>{srv.enabled!==false?'active':'off'}</span>
+        </div>
+      ))}
+    </StSection>
+    <StSection title="PLATFORM CONNECTORS">
+      {connectors.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12}}>No connectors available.</div>}
+      {connectors.slice(0,12).map((c,i)=>(
+        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'rgba(255,255,255,0.03)',borderRadius:6,marginBottom:6}}>
+          <div style={{color:'rgba(255,255,255,0.85)',fontSize:12,fontFamily:'JetBrains Mono'}}>{c.name||c.id}</div>
+          <span style={{fontSize:10,padding:'2px 8px',borderRadius:4,background:c.connected?'rgba(0,255,128,0.1)':'rgba(255,255,255,0.04)',color:c.connected?'#00ff80':'#555'}}>{c.connected?'on':'off'}</span>
+        </div>
+      ))}
+    </StSection>
+  </div>;
+}
+function SettingsTabAbout(){
+  const[h,setH]=useState(null);
+  const[evo,setEvo]=useState(null);
+  useEffect(()=>{
+    apiFetch('/api/health').then(r=>r.json()).then(setH).catch(()=>{});
+    apiFetch('/api/evolution').then(r=>r.json()).then(setEvo).catch(()=>{});
+  },[]);
+  const fmtUp=sec=>{if(!sec)return'—';const hh=Math.floor(sec/3600),mm=Math.floor((sec%3600)/60);return hh>0?`${hh}h ${mm}m`:`${mm}m`;};
+  return <div>
+    <div style={{textAlign:'center',padding:'24px 16px 20px',background:'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',borderRadius:10,border:'1px solid rgba(245,158,11,0.1)',marginBottom:24}}>
+      <div style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
+      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>v4.5.0 · Desktop OS · Sovereign AI</div>
+      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
+    </div>
+    <StSection title="SYSTEM HEALTH">
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+        {[{l:'Evolution Day',v:evo?.day??'—',c:'#00d4ff'},{l:'Uptime',v:fmtUp(h?.uptime_seconds),c:'#00ff80'},{l:'Mood',v:h?.mood||'—',c:'#a855f7'},{l:'Creations Today',v:h?.creations_today??'—',c:'#f59e0b'},{l:'Memory Entries',v:h?.memory_entries??'—',c:'#00d4ff'},{l:'Vault Entries',v:h?.vault_count??'—',c:'#22c55e'}].map(x=>(
+          <div key={x.l} style={{padding:'10px 12px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
+            <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:4}}>{x.l}</div>
+            <div style={{fontFamily:'Orbitron',fontSize:14,color:x.c}}>{x.v}</div>
+          </div>
+        ))}
+      </div>
+      {h?.models&&<div style={{marginTop:8}}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginBottom:6,fontFamily:'JetBrains Mono'}}>Active Models</div><div style={{display:'flex',flexWrap:'wrap',gap:6}}>{h.models.map((m,i)=><span key={i} className="model-pill" style={{fontSize:11}}><span className={`dot ${m.active?'active':'idle'}`}/>{m.name}</span>)}</div></div>}
+    </StSection>
+    <StSection title="PERSONALITY MATURITY">
+      {evo&&<div style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',borderRadius:8,border:'1px solid rgba(255,255,255,0.04)'}}>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono',lineHeight:1.6}}>{evo.structure||'No evolution data yet.'}</div>
+        {evo.structure_index!==undefined&&<div style={{marginTop:8,fontFamily:'Orbitron',fontSize:12,color:'#a855f7'}}>Structure Index: {evo.structure_index}</div>}
+      </div>}
+    </StSection>
+    <StSection title="LINKS">
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <a href="https://github.com/FutureSpeak-AI/friday-desktop" target="_blank" rel="noopener noreferrer" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>GitHub</a>
+        <a href="/THREAT_MODEL.md" target="_blank" className="settings-btn" style={{fontSize:12,textDecoration:'none'}}>Threat Model</a>
+        <button className="settings-btn" style={{fontSize:12}} onClick={()=>window.open('/api/context/export','_blank')}>⤓ Export Data</button>
+      </div>
+    </StSection>
+    <StSection title="ACKNOWLEDGMENTS">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.7,fontFamily:'JetBrains Mono'}}>Context compression powered by <a href="https://github.com/chopratejas/headroom" target="_blank" rel="noopener noreferrer" style={{color:'#00d4ff',textDecoration:'none'}}>Headroom</a> by Tejas Chopra — Apache 2.0.</div>
+    </StSection>
+  </div>;
+}
+function SettingsWS(){
+  const[tab,setTab]=useState('general');
+  const{s,save,msg}=useSettings();
+  const TABS=[
+    {id:'general',label:'General',ico:'⚡️'},
+    {id:'models',label:'Models',ico:'🧠'},
+    {id:'voice',label:'Voice',ico:'🎤'},
+    {id:'privacy',label:'Privacy & Security',ico:'🔒'},
+    {id:'federation',label:'Federation',ico:'🌐'},
+    {id:'economy',label:'Economy',ico:'💎'},
+    {id:'orchestrator',label:'Orchestrator',ico:'⚙️'},
+    {id:'connectors',label:'Connectors',ico:'🔌'},
+    {id:'about',label:'About',ico:'ℹ️'},
+  ];
+  return (
+    <div style={{display:'flex',height:'100%',minHeight:0}}>
+      <div style={{width:168,borderRight:'1px solid rgba(255,255,255,0.05)',padding:'14px 0',flexShrink:0,overflowY:'auto',background:'rgba(0,0,0,0.15)'}}>
+        <div style={{fontFamily:'Orbitron',fontSize:9,color:'rgba(255,255,255,0.22)',padding:'0 14px',marginBottom:12,letterSpacing:'.15em'}}>SETTINGS</div>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'9px 14px',background:tab===t.id?'rgba(0,212,255,0.07)':'none',border:'none',borderLeft:`3px solid ${tab===t.id?'#00d4ff':'transparent'}`,color:tab===t.id?'#00d4ff':'rgba(255,255,255,0.52)',cursor:'pointer',textAlign:'left',fontSize:12,transition:'all .15s'}}>
+            <span style={{fontSize:13,width:18,textAlign:'center',flexShrink:0}}>{t.ico}</span>
+            <span style={{fontFamily:'JetBrains Mono'}}>{t.label}</span>
+          </button>
+        ))}
+        {msg&&<div style={{padding:'10px 14px',fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{msg}</div>}
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'24px 26px',minWidth:0}}>
+        {tab==='general'&&<SettingsTabGeneral s={s} save={save}/>}
+        {tab==='models'&&<SettingsTabModels s={s} save={save}/>}
+        {tab==='voice'&&<SettingsTabVoice s={s} save={save}/>}
+        {tab==='privacy'&&<SettingsTabPrivacy s={s} save={save}/>}
+        {tab==='federation'&&<SettingsTabFederation/>}
+        {tab==='economy'&&<SettingsTabEconomy/>}
+        {tab==='orchestrator'&&<SettingsTabOrchestrator/>}
+        {tab==='connectors'&&<SettingsTabConnectors s={s} save={save}/>}
+        {tab==='about'&&<SettingsTabAbout/>}
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const[openWins,setOpenWins]=useState(new Set());
   const[focusWin,setFocusWin]=useState(null);
@@ -10841,7 +11233,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
@@ -11360,1273 +11752,36 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         })}
     </div>}
 
-    {/* Settings Panel â€” reorganized into 5 top-level collapsible groups
-        (Audio & Voice / AI Model / Appearance / Account & Security / About)
-        with smooth max-height slide animation via .settings-coll-body. */}
+    {/* Settings sidebar — minimal quick-access strip. Full settings in
+        the Settings workspace (dock → System → ⚙️ Settings). */}
     <div className={`settings-panel ${settingsOpen?'open':''}`}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 16px',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>SETTINGS</span>
+        <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK SETTINGS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           {settingsSaveMsg&&<span style={{fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{settingsSaveMsg}</span>}
-          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
+          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>&#x2715;</button>
         </div>
       </div>
-
-      {/* â”€â”€ 1) AUDIO & VOICE â”€â”€ default open. Mic + speaker + Test buttons live here. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.audio?'open':''}`} onClick={()=>toggleSection('audio')}>
-          <div className="settings-section-title" style={{margin:0,color:'#f59e0b'}}>Audio &amp; Voice</div>
-          <span className="chev">{openSections.audio?'â–¾':'â–¸'}</span>
+      <div style={{padding:'14px 16px'}}>
+        <button className="btn" style={{width:'100%',marginBottom:14,fontSize:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'9px'}} onClick={()=>{setSettingsOpen(false);toggle('settings');}}>
+          ⚙️️ Open Full Settings
+        </button>
+        <div className="settings-section-title" style={{marginBottom:8}}>Quick Toggles</div>
+        <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
+          <span className="settings-toggle-label">Show all workspaces</span>
+          <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
         </div>
-        <div className={`settings-coll-body ${openSections.audio?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Voice Engine</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>
-              Local (CPU) runs fully on-device (private, offline-capable). Local GPU (NeMo) is the premium tier for NVIDIA cards â€” lower latency, higher fidelity. Cloud uses Gemini Live (most expressive, needs a key + network). Auto picks GPU when ready, else CPU. Local is the default â€” cloud is always opt-in.
-            </div>
-            <div style={{display:'flex',gap:4,marginBottom:6,flexWrap:'wrap'}}>
-              {[{k:'local',label:'ðŸ”’ Local (CPU)'},{k:'local-gpu',label:'âš¡ Local GPU'},{k:'gemini',label:'â˜ Cloud'},{k:'auto',label:'Auto'}].map(o=>(
-                <button key={o.k}
-                  className={`settings-btn ${(agentSettings.voice_engine||'local')===o.k?'active':''}`}
-                  style={{fontSize:11,padding:'5px 9px',flex:'1 1 22%',textAlign:'center'}}
-                  onClick={()=>saveAgentSettings({voice_engine:o.k})}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            {hwFull&&hwFull.local_voice&&<div style={{fontSize:11,marginBottom:6,fontFamily:'JetBrains Mono',
-              color:hwFull.local_voice.status==='ok'?'#00ff80':hwFull.local_voice.status==='missing'?'#ff5588':'#f59e0b'}}>
-              Local voice (CPU): {hwFull.local_voice.status==='ok'?'âœ… ready':hwFull.local_voice.status==='needs_download'?'â¬‡ models download on first use':hwFull.local_voice.status==='missing'?'âŒ not installed â€” pip install -e .[voice-local-lite]':(hwFull.local_voice.detail||hwFull.local_voice.status)}
-            </div>}
-            {hwFull&&hwFull.local_voice&&hwFull.local_voice.gpu&&<div style={{fontSize:11,marginBottom:14,fontFamily:'JetBrains Mono',
-              color:hwFull.local_voice.gpu.status==='ok'?'#00ff80':hwFull.local_voice.gpu.status==='needs_download'?'#f59e0b':'rgba(255,255,255,0.4)'}}>
-              Local voice (GPU Â· NeMo): {hwFull.local_voice.gpu.status==='ok'?'âœ… ready':hwFull.local_voice.gpu.status==='needs_download'?'â¬‡ models download on first use':(hwFull.local_voice.gpu.detail||hwFull.local_voice.gpu.status)}
-              {hwFull.local_voice.perf&&(hwFull.local_voice.perf.asr_ms||hwFull.local_voice.perf.tts_ms)?<span style={{color:'rgba(255,255,255,0.4)'}}>{` Â· tier ${hwFull.local_voice.perf.tier} Â· ASR ${hwFull.local_voice.perf.asr_ms??'â€”'}ms Â· TTS ${hwFull.local_voice.perf.tts_ms??'â€”'}ms`}</span>:null}
-            </div>}
-
-            <div className="settings-subtitle">Microphone (Input)</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Used when starting voice mode. Grant mic permission first to see device labels.</div>
-            <select value={agentSettings.audio_input_device_id||''} onChange={e=>saveAgentSettings({audio_input_device_id:e.target.value})}
-              style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
-              <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
-              {audioInputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
-            </select>
-            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:6,color:'#f59e0b',borderColor:'rgba(245,158,11,0.3)'}}
-              disabled={micTestActive}
-              onClick={testMicrophone}>
-              {micTestActive?'ðŸŽ™ Listening â€” speak into micâ€¦':'ðŸŽ™ Test Microphone (5s)'}
-            </button>
-            {(micTestActive||micTestMsg)&&<>
-              <div className="miclevel-bar"><div className="miclevel-fill" style={{width:Math.min(100,Math.max(2,micTestLevel*180))+'%'}}/></div>
-              {micTestMsg&&<div style={{fontSize:11,color:micTestMsg.startsWith('âœ…')?'#00ff80':micTestMsg.startsWith('âŒ')||micTestMsg.startsWith('âš ')?'#ff5588':'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginTop:6}}>{micTestMsg}</div>}
-            </>}
-
-            {audioOutputDevices.filter(d=>d.label).length>0&&<>
-              <div className="settings-subtitle" style={{marginTop:14}}>Speaker (Output)</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Test routes through &lt;audio&gt;.setSinkId â€” the reliable cross-browser path. Live voice uses AudioContext.setSinkId (Chrome 110+).</div>
-              <select value={agentSettings.audio_output_device_id||''} onChange={e=>saveAgentSettings({audio_output_device_id:e.target.value})}
-                style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
-                <option value="" style={{background:'#0a0a14',color:'#ccc'}}>System Default</option>
-                {audioOutputDevices.filter(d=>d.label).map(d=><option key={d.deviceId} value={d.deviceId} style={{background:'#0a0a14',color:'#ccc'}}>{d.label}</option>)}
-              </select>
-              <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:6,color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
-                disabled={speakerTestActive}
-                onClick={testSpeaker}>
-                {speakerTestActive?'ðŸ”Š Playing toneâ€¦':'ðŸ”Š Test Speaker (440 Hz beep)'}
-              </button>
-              {speakerTestMsg&&<div style={{fontSize:11,color:speakerTestMsg.startsWith('âœ…')?'#00ff80':speakerTestMsg.startsWith('âŒ')||speakerTestMsg.startsWith('âš ')?'#f59e0b':'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>{speakerTestMsg}</div>}
-            </>}
-            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:14}} onClick={()=>refreshAudioDevicesRef.current?.()}>â†º Refresh Device List</button>
-
-            <div className="settings-subtitle">Voice Model (Live)</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:6}}>Underlying Gemini Live model used for the mic conversation.</div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:14}}>
-              {modelCatalog.voice.map(m=>(
-                <button key={(m.provider||'')+m.id}
-                  className={`settings-btn ${agentSettings.voice_model===m.id?'active':''}`}
-                  style={{fontSize:11,padding:'4px 8px'}}
-                  onClick={()=>saveAgentSettings({voice_model:m.id})}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="settings-subtitle">TTS Voice</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:8,lineHeight:1.5}}>
-              Voice used by briefing Read Aloud <span style={{color:'rgba(255,255,255,0.55)'}}>and</span> live voice mode.
-            </div>
-            <select
-              value={agentSettings.tts_voice||'Aoede'}
-              onChange={e=>saveAgentSettings({tts_voice:e.target.value})}
-              style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-              {TTS_VOICES.map(v=><option key={v.id} value={v.id} style={{background:'#0a0a14',color:'#ccc'}}>{v.label}</option>)}
-            </select>
-            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}}
-              disabled={ttsPreviewBusy}
-              onClick={()=>previewVoice(agentSettings.tts_voice||'Aoede')}>
-              {ttsPreviewBusy?'Previewing...':'ðŸ”Š Preview selected voice'}
-            </button>
-
-            {/* Nested collapsible â€” Advanced Voice Tuning. */}
-            <div className="settings-subcoll-header" style={{marginTop:14}} onClick={()=>toggleSection('voice_advanced')}>
-              <span>Advanced Voice Tuning</span>
-              <span style={{color:'rgba(0,212,255,0.6)'}}>{openSections.voice_advanced?'â–¾':'â–¸'}</span>
-            </div>
-            <div className={`settings-coll-body ${openSections.voice_advanced?'open':''}`}>
-              <div style={{paddingTop:4}}>
-                <div className="settings-subtitle">Language</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6}}>BCP-47 region code passed to Gemini-TTS &amp; the Live API.</div>
-                <select
-                  value={agentSettings.voice_language||''}
-                  onChange={e=>saveAgentSettings({voice_language:e.target.value})}
-                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-                  {VOICE_LANGUAGES.map(l=><option key={l.id||'default'} value={l.id} style={{background:'#0a0a14',color:'#ccc'}}>{l.label}</option>)}
-                </select>
-
-                <div className="settings-subtitle" style={{marginTop:14}}>Speaking style prompt</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>
-                  Free-text instruction shaping delivery. Leave blank for the built-in conversational style.
-                </div>
-                <select
-                  value={''}
-                  onChange={e=>{ if(e.target.value!==undefined){ saveAgentSettings({voice_style_prompt:e.target.value}); } }}
-                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer',marginBottom:6}}>
-                  <option value="" style={{background:'#0a0a14',color:'#888'}}>â€” Insert presetâ€¦ â€”</option>
-                  {VOICE_STYLE_PRESETS.filter(p=>p.id).map((p,i)=><option key={i} value={p.id} style={{background:'#0a0a14',color:'#ccc'}}>{p.label}</option>)}
-                </select>
-                <textarea
-                  value={agentSettings.voice_style_prompt||''}
-                  onChange={e=>saveAgentSettings({voice_style_prompt:e.target.value})}
-                  placeholder="e.g. Speak warmly and slowly, like a calm storytellerâ€¦"
-                  rows={3}
-                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical',boxSizing:'border-box'}}/>
-                {agentSettings.voice_style_prompt&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:6}}
-                  onClick={()=>saveAgentSettings({voice_style_prompt:''})}>Clear style prompt</button>}
-
-                <div className="settings-subtitle" style={{marginTop:14}}>Inline markup tags</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:6,lineHeight:1.5}}>Click a chip to copy it.</div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                  {VOICE_MARKUP_TAGS.map(t=>(
-                    <span key={t.tag} title={t.desc}
-                      onClick={()=>{try{navigator.clipboard.writeText(t.tag);setSettingsSaveMsg('Copied '+t.tag);setTimeout(()=>setSettingsSaveMsg(''),1200);}catch(e){}}}
-                      style={{padding:'4px 9px',borderRadius:12,background:'rgba(124,58,237,0.10)',border:'1px solid rgba(124,58,237,0.30)',color:'#cbb6ff',fontFamily:'JetBrains Mono',fontSize:11,cursor:'pointer',userSelect:'none'}}>{t.tag}</span>
-                  ))}
-                </div>
-
-                <div className="settings-subtitle" style={{marginTop:18}}>Live response tuning</div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#bbb'}}>Temperature</span>
-                  <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#a78bfa'}}>
-                    {agentSettings.voice_temperature==null?'default':Number(agentSettings.voice_temperature).toFixed(2)}
-                  </span>
-                </div>
-                <input type="range" min="0" max="2" step="0.05"
-                  value={agentSettings.voice_temperature==null?1.0:Number(agentSettings.voice_temperature)}
-                  onChange={e=>saveAgentSettings({voice_temperature:parseFloat(e.target.value)})}
-                  style={{width:'100%',accentColor:'#7c3aed'}}/>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:-2,marginBottom:4,fontFamily:'JetBrains Mono'}}>
-                  <span>focused</span><span>balanced</span><span>playful</span>
-                </div>
-                {agentSettings.voice_temperature!=null&&<button className="settings-btn" style={{width:'100%',textAlign:'center',marginBottom:8,fontSize:11}}
-                  onClick={()=>saveAgentSettings({voice_temperature:null})}>Reset temperature to model default</button>}
-
-                <div className="settings-subtitle" style={{marginTop:10}}>Max response length</div>
-                <select
-                  value={String(agentSettings.voice_max_tokens||0)}
-                  onChange={e=>saveAgentSettings({voice_max_tokens:parseInt(e.target.value,10)||0})}
-                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-                  <option value="0"   style={{background:'#0a0a14',color:'#ccc'}}>Unlimited (model default)</option>
-                  <option value="100" style={{background:'#0a0a14',color:'#ccc'}}>~15 sec  Â·  100 tokens (very brief)</option>
-                  <option value="200" style={{background:'#0a0a14',color:'#ccc'}}>~30 sec  Â·  200 tokens (brief)</option>
-                  <option value="400" style={{background:'#0a0a14',color:'#ccc'}}>~60 sec  Â·  400 tokens (standard)</option>
-                  <option value="800" style={{background:'#0a0a14',color:'#ccc'}}>~2 min   Â·  800 tokens (longform)</option>
-                </select>
-
-                <div className="settings-subtitle" style={{marginTop:14}}>Interruption mode</div>
-                <select
-                  value={agentSettings.voice_interruption_mode||'speaker'}
-                  onChange={e=>saveAgentSettings({voice_interruption_mode:e.target.value})}
-                  style={{width:'100%',padding:'8px 10px',background:'rgba(255,255,255,0.06)',color:'#ccc',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,fontSize:12,fontFamily:'JetBrains Mono',outline:'none',cursor:'pointer'}}>
-                  <option value="speaker"    style={{background:'#0a0a14',color:'#ccc'}}>ðŸ”Š Speaker-safe â€” no interruption (recommended)</option>
-                  <option value="headphones" style={{background:'#0a0a14',color:'#ccc'}}>ðŸŽ§ Headphones â€” barge-in enabled</option>
-                </select>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4,marginTop:4}}>
-                  On speakers, the mic re-hears Friday's own voice and can cut her off mid-sentence. <span style={{color:'#a78bfa'}}>Speaker-safe</span> lets her finish every sentence. Switch to <span style={{color:'#a78bfa'}}>Headphones</span> for true barge-in (talk over her to interrupt) â€” only safe when there's no speaker bleed.
-                </div>
-
-                <div className="settings-subtitle" style={{marginTop:14}}>Behaviour</div>
-                <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:4}}>
-                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-                    <input type="checkbox" checked={!!agentSettings.voice_affective}
-                      onChange={e=>saveAgentSettings({voice_affective:e.target.checked})}
-                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
-                    <div>
-                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Affective dialog</div>
-                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Detect emotional tone in speech, adapt delivery. <span style={{color:'rgba(245,158,11,0.85)'}}>Requires native-audio Live model.</span></div>
-                    </div>
-                  </label>
-                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-                    <input type="checkbox" checked={!!agentSettings.voice_proactive}
-                      onChange={e=>saveAgentSettings({voice_proactive:e.target.checked})}
-                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
-                    <div>
-                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Proactive audio</div>
-                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Stay silent on background talk. Recommended for always-on mic.</div>
-                    </div>
-                  </label>
-                  <label style={{display:'flex',alignItems:'flex-start',gap:8,cursor:'pointer',userSelect:'none'}}>
-                    <input type="checkbox" checked={!!agentSettings.voice_context_compression}
-                      onChange={e=>saveAgentSettings({voice_context_compression:e.target.checked})}
-                      style={{marginTop:3,accentColor:'#7c3aed'}}/>
-                    <div>
-                      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'#ddd'}}>Sliding-window context compression</div>
-                      <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.4}}>Keep long voice sessions alive past the context cap.</div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
+          <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record</span>
+          <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
-      </div>
-
-      {/* â”€â”€ 2) AI MODEL â”€â”€ chat models, reasoning, prompt-style, personality. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.ai_model?'open':''}`} onClick={()=>toggleSection('ai_model')}>
-          <div className="settings-section-title" style={{margin:0}}>AI Model</div>
-          <span className="chev">{openSections.ai_model?'â–¾':'â–¸'}</span>
+        <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
+          <span className="settings-toggle-label">Context Logging</span>
+          <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
         </div>
-        <div className={`settings-coll-body ${openSections.ai_model?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Agent Name</div>
-        <div style={{display:'flex',gap:6,marginBottom:14,alignItems:'center'}}>
-          <input value={agentSettings.agent_name||''} onChange={e=>setAgentSettings(s=>({...s,agent_name:e.target.value}))} onBlur={e=>saveAgentSettings({agent_name:e.target.value})}
-            placeholder="AGENT FRIDAY"
-            style={{flex:1,background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'Orbitron',fontSize:12,letterSpacing:'0.06em',outline:'none'}}/>
-        </div>
-            {/* Chat model selectors â€” driven by the live catalog (/api/models),
-                spanning Claude, OpenAI, local Ollama. voice_model lives in the
-                Audio & Voice section. */}
-            {[
-              {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:modelCatalog.orchestrator},
-              {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:modelCatalog.subagent},
-              {label:'Creative',subtitle:'Image & video gen',key:'creative_model',models:modelCatalog.creative},
-            ].map(cat=>(
-              <div key={cat.key} style={{marginBottom:12}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
-                  <span className="settings-subtitle" style={{margin:0}}>{cat.label}</span>
-                  <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{cat.subtitle}</span>
-                </div>
-                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                  {cat.models.map(m=>{
-                    const off=m.available===false;
-                    return(
-                    <button key={(m.provider||'')+m.id}
-                      className={`settings-btn ${agentSettings[cat.key]===m.id?'active':''}`}
-                      style={{fontSize:11,padding:'4px 8px',opacity:off?0.45:1}}
-                      title={(m.provider_label||'')+(off?' â€” add API key in Settings':'')+(m.local?' Â· on-device':'')}
-                      onClick={()=>saveAgentSettings({[cat.key]:m.id})}>
-                      {m.local?'ðŸ  ':''}{m.label}
-                    </button>
-                  )})}
-                </div>
-              </div>
-            ))}
-
-            <div className="settings-subtitle" style={{marginTop:6}}>Reasoning Style</div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Precise</span>
-            <span style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{(agentSettings.temperature??0.7).toFixed(2)}</span>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#888'}}>Creative</span>
-          </div>
-          <input type="range" min="0" max="1" step="0.05"
-            value={agentSettings.temperature??0.7}
-            onChange={e=>setAgentSettings(s=>({...s,temperature:parseFloat(e.target.value)}))}
-            onMouseUp={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
-            onTouchEnd={e=>saveAgentSettings({temperature:parseFloat(e.target.value)})}
-            style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginTop:4,marginBottom:14}}>Lower = deterministic, fact-anchored. Higher = exploratory, more variation.</div>
-
-          {/* â”€â”€ Per-workspace temperature profiles (creative pipeline) â”€â”€ */}
-          <div className="settings-subtitle">Workspace Creativity</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
-            Each workspace gets its own creativity level. Studio runs hot for bold ideas; Research runs cold for precision. Applied automatically per workspace.
-          </div>
-          {[
-            {ws:'studio',label:'ðŸŽ¨ Creative Studio',def:0.75},
-            {ws:'research',label:'ðŸ”¬ Research',def:0.25},
-            {ws:'code',label:'ðŸ’» Code / Dev',def:0.45},
-            {ws:'content',label:'âœï¸ Content Writing',def:0.6},
-            {ws:'chat',label:'ðŸ’¬ Conversation',def:0.5},
-          ].map(row=>{
-            const wt=agentSettings.workspace_temperatures||{};
-            const val=(wt[row.ws]!=null?wt[row.ws]:row.def);
-            return(
-              <div key={row.ws} style={{marginBottom:10}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
-                  <span style={{fontSize:12,color:'rgba(255,255,255,0.8)'}}>{row.label}</span>
-                  <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff'}}>{Number(val).toFixed(2)}</span>
-                </div>
-                <input type="range" min="0" max="1" step="0.05" value={val}
-                  onChange={e=>{const v=parseFloat(e.target.value);setAgentSettings(s=>({...s,workspace_temperatures:{...(s.workspace_temperatures||{}),[row.ws]:v}}));}}
-                  onMouseUp={e=>saveAgentSettings({workspace_temperatures:{...(agentSettings.workspace_temperatures||{}),[row.ws]:parseFloat(e.target.value)}})}
-                  onTouchEnd={e=>saveAgentSettings({workspace_temperatures:{...(agentSettings.workspace_temperatures||{}),[row.ws]:parseFloat(e.target.value)}})}
-                  style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
-              </div>
-            );
-          })}
-
-          {/* â”€â”€ Self-Evaluation (QA) Gates â”€â”€ */}
-          <div className="settings-subtitle" style={{marginTop:12}}>Self-Evaluation Gates</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
-            Before presenting significant generated content, Friday scores it against your intent and silently improves (or flags) anything below the bar. Turn off for raw speed.
-          </div>
-          <div className="settings-toggle" onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),enabled:!((agentSettings.qa_gates||{}).enabled)}})}>
-            <span className="settings-toggle-label">QA gates enabled</span>
-            <div className={`settings-toggle-switch ${((agentSettings.qa_gates||{}).enabled)?'on':''}`}/>
-          </div>
-          {((agentSettings.qa_gates||{}).enabled)&&(<div style={{marginTop:8}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:2}}>
-              <span style={{fontSize:12,color:'rgba(255,255,255,0.8)'}}>Quality threshold</span>
-              <span style={{fontFamily:'Orbitron',fontSize:12,color:'#00d4ff'}}>{Number((agentSettings.qa_gates||{}).threshold??0.7).toFixed(2)}</span>
-            </div>
-            <input type="range" min="0" max="1" step="0.05" value={(agentSettings.qa_gates||{}).threshold??0.7}
-              onChange={e=>{const v=parseFloat(e.target.value);setAgentSettings(s=>({...s,qa_gates:{...(s.qa_gates||{}),threshold:v}}));}}
-              onMouseUp={e=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),threshold:parseFloat(e.target.value)}})}
-              style={{width:'100%',accentColor:'#00d4ff',cursor:'pointer'}}/>
-            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr',marginTop:8,marginBottom:6}}>
-              {[{v:'improve',l:'Silently improve'},{v:'flag',l:'Flag the gap'}].map(m=>
-                <button key={m.v} className={`settings-btn ${((agentSettings.qa_gates||{}).mode||'improve')===m.v?'active':''}`}
-                  style={{textAlign:'center'}}
-                  onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),mode:m.v}})}>{m.l}</button>
-              )}
-            </div>
-            <div className="settings-toggle" onClick={()=>saveAgentSettings({qa_gates:{...(agentSettings.qa_gates||{}),vision_for_images:!((agentSettings.qa_gates||{}).vision_for_images)}})}>
-              <span className="settings-toggle-label">Score images with a vision model</span>
-              <div className={`settings-toggle-switch ${((agentSettings.qa_gates||{}).vision_for_images)?'on':''}`}/>
-            </div>
-          </div>)}
-          <div style={{height:14}}/>
-
-          {/* Default Model â€” configured in Agent Identity section above */}
-          <div className="settings-subtitle">Configured Models</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:14}}>
-            {[
-              {label:modelCatalog.byId[agentSettings.orchestrator_model]?.label||agentSettings.orchestrator_model,role:'Orchestrator'},
-              {label:modelCatalog.byId[agentSettings.subagent_model]?.label||agentSettings.subagent_model,role:'Subagent'},
-              {label:modelCatalog.byId[agentSettings.creative_model]?.label||agentSettings.creative_model,role:'Creative'},
-              {label:modelCatalog.byId[agentSettings.voice_model]?.label||agentSettings.voice_model,role:'Voice'},
-            ].map((m,i)=>(
-              <span key={i} className="model-pill" style={{fontSize:10}}>
-                <span className="dot active"/>{m.role}: {m.label}
-              </span>
-            ))}
-          </div>
-
-          {/* Response Preferences */}
-          <div className="settings-subtitle">Response Length</div>
-          <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:12}}>
-            {['concise','standard','detailed'].map(v=>
-              <button key={v} className={`settings-btn ${agentSettings.response_length===v?'active':''}`}
-                style={{textAlign:'center',textTransform:'capitalize'}}
-                onClick={()=>saveAgentSettings({response_length:v})}>{v}</button>
-            )}
-          </div>
-          <div className="settings-toggle" onClick={()=>saveAgentSettings({include_sources:!agentSettings.include_sources})}>
-            <span className="settings-toggle-label">Always include sources</span>
-            <div className={`settings-toggle-switch ${agentSettings.include_sources?'on':''}`}/>
-          </div>
-          <div className="settings-subtitle" style={{marginTop:10}}>News Priorities</div>
-          <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
-            {NEWS_TOPICS.map(t=>{const on=(agentSettings.news_priorities||[]).includes(t);return(
-              <button key={t} className={`settings-btn ${on?'active':''}`} style={{padding:'4px 8px',fontSize:11}}
-                onClick={()=>toggleNewsTopic(t)}>
-                <span style={{marginRight:5,color:on?'#00d4ff':'#444'}}>{on?'â˜‘':'â˜'}</span>{t}
-              </button>
-            )})}
-          </div>
-            <div className="settings-subtitle">Communication Style</div>
-            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:14}}>
-              {['professional','casual','technical'].map(v=>
-                <button key={v} className={`settings-btn ${agentSettings.communication_style===v?'active':''}`}
-                  style={{textAlign:'center',textTransform:'capitalize'}}
-                  onClick={()=>saveAgentSettings({communication_style:v})}>{v}</button>
-              )}
-            </div>
-
-            {/* â”€â”€ One-click Connectors â”€â”€ */}
-            <div className="settings-subtitle" style={{marginTop:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span>Connectors</span>
-              {connHubHealth&&<span style={{fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono'}}>{connHubHealth.summary}</span>}
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
-              One-click integrations. Connect a source and its data flows into your briefings, workspaces, and the agent's tools. Google uses OAuth (browser approval); the rest connect with an API token.
-            </div>
-            <div style={{display:'flex',flexDirection:'column',gap:7,marginBottom:16}}>
-              {connectors.map(c=>{
-                const badge={connected:'CONNECTED',connecting:'CONNECTING',error:'ERROR',disconnected:'OFF',needs_setup:'CONNECT',unknown:'â€”'}[c.status]||c.status.toUpperCase();
-                const open=connOpen[c.key];
-                return(
-                  <div key={c.key} style={{background:'rgba(255,255,255,0.03)',border:'1px solid '+(c.connected?'rgba(0,255,128,0.25)':'rgba(255,255,255,0.08)'),borderRadius:8,padding:'10px 12px'}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
-                      <span style={{display:'flex',alignItems:'center',gap:9,minWidth:0}}>
-                        <span style={{fontSize:20,lineHeight:1}}>{c.icon}</span>
-                        <span style={{display:'flex',flexDirection:'column',minWidth:0}}>
-                          <span style={{display:'flex',alignItems:'center',gap:7}}>
-                            <span style={{fontFamily:'Orbitron',fontSize:13,color:'rgba(255,255,255,0.92)'}}>{c.name}</span>
-                            <span style={{width:7,height:7,borderRadius:'50%',background:c.color,boxShadow:`0 0 7px ${c.color}`,flex:'0 0 auto'}}/>
-                            <span style={{fontSize:9,color:c.color,fontFamily:'JetBrains Mono',letterSpacing:'0.08em'}}>{badge}</span>
-                          </span>
-                          <span style={{fontSize:10,color:'rgba(255,255,255,0.5)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:340}}>{connMsg[c.key]||c.detail}</span>
-                        </span>
-                      </span>
-                      <span style={{display:'flex',gap:6,flex:'0 0 auto'}}>
-                        {c.connected
-                          ? <button className="settings-btn" style={{padding:'4px 11px',fontSize:10}} onClick={()=>connDisconnect(c)}>Disconnect</button>
-                          : <button className="settings-btn" style={{padding:'4px 11px',fontSize:10,color:'#00d4ff',borderColor:'rgba(0,212,255,0.35)'}} onClick={()=>connConnect(c)}>{open?'Cancel':(c.status==='disconnected'?'Reconnect':'Connect')}</button>}
-                      </span>
-                    </div>
-                    {/* Connector-aware workspaces this source powers */}
-                    {c.workspaces&&c.workspaces.length>0&&<div style={{marginTop:6,display:'flex',gap:5,flexWrap:'wrap',alignItems:'center'}}>
-                      <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>powers</span>
-                      {c.workspaces.map(w=>{const ws=WS.find(x=>x.id===w);return ws?<span key={w} style={{fontSize:9.5,color:c.connected?'rgba(0,255,128,0.8)':'rgba(255,255,255,0.45)',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:4,padding:'1px 6px'}}>{ws.ico} {ws.label}</span>:null})}
-                    </div>}
-                    {/* Credential form (MCP connectors) */}
-                    {open&&c.fields&&c.fields.length>0&&<div style={{marginTop:9,paddingTop:9,borderTop:'1px solid rgba(255,255,255,0.07)'}}>
-                      {c.setup_hint&&<div style={{fontSize:10,color:'rgba(255,255,255,0.55)',marginBottom:7,lineHeight:1.5}}>{c.setup_hint}{c.docs_url&&<> Â· <a href={c.docs_url} target="_blank" rel="noopener" style={{color:'#00d4ff'}}>get token â†—</a></>}</div>}
-                      {c.fields.map(f=>(
-                        <div key={f.key} style={{marginBottom:6}}>
-                          <input type={f.secret?'password':'text'} placeholder={f.label+(f.required?' *':'')+(f.set?' (set â€” leave blank to keep)':'')+'  '+(f.placeholder||'')}
-                            value={(connForms[c.key]||{})[f.key]||''} onChange={e=>setConnField(c.key,f.key,e.target.value)}
-                            style={{width:'100%',background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:5,padding:'7px 9px',color:'#cfe',fontFamily:'JetBrains Mono',fontSize:11,outline:'none',boxSizing:'border-box'}}/>
-                        </div>
-                      ))}
-                      <button className="settings-btn" style={{padding:'5px 13px',fontSize:10,color:'#00ff80',borderColor:'rgba(0,255,128,0.3)',marginTop:2}} onClick={()=>connConnect(c)}>Save & Connect</button>
-                    </div>}
-                  </div>
-                );
-              })}
-              {connectors.length===0&&<div style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>Loading connectorsâ€¦</div>}
-            </div>
-
-            {/* â”€â”€ MCP Connectors (advanced) â”€â”€ */}
-            <div className="settings-subtitle" style={{marginTop:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span>MCP Connectors</span>
-              <span style={{display:'flex',gap:6,alignItems:'center'}}>
-                {mcpMsg&&<span style={{fontSize:10,color:'#f59e0b',fontFamily:'JetBrains Mono'}}>{mcpMsg}</span>}
-                <button className="settings-btn" style={{padding:'3px 9px',fontSize:10}} onClick={mcpReload}>â†» Reload all</button>
-              </span>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8}}>
-              Standard MCP servers (the same protocol Claude uses). Their tools are registered into Friday's agent as <span style={{fontFamily:'JetBrains Mono',color:'#00d4ff'}}>mcp_&lt;server&gt;_&lt;tool&gt;</span> and pass the same governance + vault gate as native tools.
-            </div>
-            {!mcpStatus.available&&<div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:10,fontFamily:'JetBrains Mono'}}>MCP client unavailable.</div>}
-            <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
-              {Object.entries(mcpStatus.servers||{}).map(([name,s])=>{
-                const st=s.status||'stopped';
-                const col=st==='ready'?'#00ff80':(st==='error'||st==='crashed')?'#ff5470':st==='starting'?'#f59e0b':st==='disabled'?'#555':'#888';
-                return(
-                  <div key={name} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'8px 10px'}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <span style={{display:'flex',alignItems:'center',gap:7}}>
-                        <span style={{width:8,height:8,borderRadius:'50%',background:col,boxShadow:`0 0 8px ${col}`}}/>
-                        <span style={{fontFamily:'Orbitron',fontSize:12,color:'rgba(255,255,255,0.9)'}}>{name}</span>
-                        <span style={{fontSize:10,color:col,fontFamily:'JetBrains Mono',textTransform:'uppercase'}}>{st}</span>
-                      </span>
-                      <span style={{display:'flex',alignItems:'center',gap:8}}>
-                        <span style={{fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono'}}>{s.tool_count||0} tool{(s.tool_count||0)===1?'':'s'}</span>
-                        {st!=='disabled'&&<button className="settings-btn" style={{padding:'2px 8px',fontSize:10}} onClick={()=>mcpRestart(name)}>Restart</button>}
-                      </span>
-                    </div>
-                    {s.tools&&s.tools.length>0&&<div style={{marginTop:5,fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',lineHeight:1.5}}>{s.tools.join(' Â· ')}</div>}
-                    {s.error&&<div style={{marginTop:5,fontSize:10,color:'#ff5470',fontFamily:'JetBrains Mono',wordBreak:'break-word'}}>{String(s.error).slice(0,180)}</div>}
-                  </div>
-                );
-              })}
-              {Object.keys(mcpStatus.servers||{}).length===0&&mcpStatus.available&&<div style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>No MCP servers configured yet.</div>}
-            </div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5}}>
-              <span style={{fontSize:11,color:'rgba(255,255,255,0.7)',fontFamily:'JetBrains Mono'}}>mcp_servers.json</span>
-              <span style={{display:'flex',gap:6}}>
-                {mcpEditing&&<button className="settings-btn" style={{padding:'3px 11px',fontSize:10,color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}} onClick={mcpSaveConfig}>Save + reload</button>}
-                <button className="settings-btn" style={{padding:'3px 9px',fontSize:10}} onClick={()=>{setMcpEditing(e=>!e);if(mcpEditing)refreshMcp()}}>{mcpEditing?'Cancel':'Edit'}</button>
-              </span>
-            </div>
-            <textarea
-              value={mcpConfigText}
-              onChange={e=>{setMcpEditing(true);setMcpConfigText(e.target.value)}}
-              readOnly={!mcpEditing}
-              rows={8}
-              spellCheck={false}
-              style={{width:'100%',background:'rgba(0,0,0,0.3)',border:'1px solid '+(mcpEditing?'rgba(0,212,255,0.3)':'rgba(255,255,255,0.08)'),borderRadius:5,padding:8,color:mcpEditing?'#cfe':'#9ab',fontFamily:'JetBrains Mono',fontSize:10.5,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box',marginBottom:14}}/>
-
-            {/* Personality + ASIMOV cLaws + Epistemic + Evolution â€” all folded into AI Model. */}
-            <div className="settings-subtitle">Agent Personality</div>
-          <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginBottom:6}}>Customize your agent's voice and focus. Safety constraints (cLaws) cannot be modified.</div>
-          <textarea
-            value={personalityDraft}
-            onChange={e=>setPersonalityDraft(e.target.value)}
-            rows={5}
-            style={{width:'100%',background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:5,padding:8,color:'#ccc',fontFamily:'Inter',fontSize:11,lineHeight:1.5,resize:'vertical',outline:'none',boxSizing:'border-box'}}/>
-          <div style={{display:'flex',gap:6,marginTop:6,alignItems:'center',marginBottom:14}}>
-            <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 12px',color:'#00d4ff',borderColor:'rgba(0,212,255,0.3)'}}
-              disabled={personalityDraft===agentPersonality} onClick={savePersonality}>Save</button>
-            <button className="settings-btn" style={{flex:'0 0 auto',padding:'5px 10px'}}
-              disabled={personalityDraft===agentPersonality} onClick={()=>setPersonalityDraft(agentPersonality)}>Reset</button>
-            <span style={{fontSize:11,color:personalityDraft!==agentPersonality?'#f59e0b':'#444',fontFamily:'JetBrains Mono'}}>{personalityDraft!==agentPersonality?'unsaved':'in sync'}</span>
-          </div>
-
-          {/* ASIMOV cLaws â€” read-only sealed display */}
-          <div style={{background:'rgba(0,255,128,0.025)',border:'1px solid rgba(0,255,128,0.18)',borderRadius:6,padding:10,marginBottom:14,boxShadow:'inset 0 0 18px rgba(0,255,128,0.04)'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setLawsOpen(o=>!o)}>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <span style={{width:8,height:8,borderRadius:'50%',background:'#00ff80',boxShadow:'0 0 8px rgba(0,255,128,0.7)'}}/>
-                <span className="settings-section-title" style={{margin:0,color:'rgba(0,255,128,0.75)'}}>ASIMOV cLAWS â€” VERIFIED &#x2713;</span>
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:6,color:'rgba(0,255,128,0.6)',fontSize:13}}>
-                <span title="Sealed">&#x1F512;</span>
-                <span style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{lawsOpen?'â–¾':'â–¸'}</span>
-              </div>
-            </div>
-            {lawsOpen&&<>
-              <ol style={{margin:'10px 0 4px',paddingLeft:20,color:'#bbb',fontSize:11,lineHeight:1.6,fontFamily:'Inter'}}>
-                <li>An Asimov agent shall not harm a human being or, through inaction, allow harm.</li>
-                <li>An Asimov agent shall obey user instructions except where they conflict with the First Law.</li>
-                <li>An Asimov agent shall protect its own integrity except where this conflicts with the First or Second Laws.</li>
-                <li>All behavioral constraints are cryptographically signed (HMAC-SHA256) and verified before every action.</li>
-              </ol>
-              <div style={{marginTop:8,padding:'6px 8px',background:'rgba(0,0,0,0.25)',border:'1px solid rgba(0,255,128,0.15)',borderRadius:4,fontSize:11,color:'rgba(255,255,255,0.78)',fontStyle:'italic',lineHeight:1.5}}>These constraints are compiled into the architecture and cannot be modified through the UI.</div>
-            </>}
-          </div>
-
-          {/* Epistemic Score */}
-          <div className="settings-subtitle">Epistemic Independence</div>
-          {(()=>{const e=stEpi?(stEpi.overall_score??stEpi.overall??0.72):null;const dims=stEpi?.dimensions||{};const color=e==null?'#555':e>0.6?'#00ff80':e>=0.4?'#f59e0b':'#ff0080';const label=e==null?'â€”':e>0.6?'making user smarter':e>=0.4?'neutral':'creating dependency';return(<>
-            <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:6}}>
-              <span style={{fontFamily:'Orbitron',fontSize:24,color,fontWeight:700}}>{e==null?'â€”':e.toFixed(2)}</span>
-              <span style={{fontSize:11,color:'#aaa'}}>{label}</span>
-              {stEpi?.total_turns_scored>0&&<span style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginLeft:'auto'}}>{stEpi.total_turns_scored} turns</span>}
-            </div>
-            <div className="progress-bar" style={{marginBottom:10}}>
-              <div className="progress-fill" style={{width:Math.max((e||0)*100,2)+'%',background:color}}/>
-            </div>
-            {Object.keys(dims).length>0&&<>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>sub-dimensions</div>
-              {Object.entries(dims).map(([k,v],i)=>(
-                <div key={i} style={{marginBottom:5}}>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
-                    <span style={{color:'#bbb'}}>{k.replace(/_/g,' ')}</span>
-                    <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{Number(v).toFixed(2)}</span>
-                  </div>
-                  <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(Number(v)*100,2)+'%',background:Number(v)>0.6?'#00ff80':Number(v)>=0.4?'#f59e0b':'#ff0080'}}/></div>
-                </div>
-              ))}
-            </>}
-            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10,marginBottom:14}} onClick={refreshSettingsData}>Refresh Score</button>
-          </>)})()}
-
-          {/* Personality Evolution */}
-          <div className="settings-subtitle">Personality Evolution</div>
-          {(()=>{const sc=stPers?.session_count||0;const mp=Math.min(100,Math.round(sc/50*100));const traits=stPers?.traits||{};const top=Object.entries(traits).sort((a,b)=>b[1]-a[1]).slice(0,6);return(<>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-              <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'#aaa'}}>{sc} / 50 sessions</span>
-              <span style={{fontFamily:'Orbitron',fontSize:13,color:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}>{mp}%</span>
-            </div>
-            <div className="progress-bar" style={{marginBottom:10}}>
-              <div className="progress-fill" style={{width:Math.max(mp,2)+'%',background:mp>=66?'#00ff80':mp>=33?'#f59e0b':'#7c3aed'}}/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.78)',fontFamily:'JetBrains Mono',marginBottom:6}}>top traits</div>
-            {top.length===0?<div style={{fontSize:11,color:'#999'}}>No trait data yet</div>:top.map(([k,v],i)=>(
-              <div key={i} style={{marginBottom:5}}>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:2}}>
-                  <span style={{color:'#bbb'}}>{k}</span>
-                  <span style={{color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{v.toFixed(2)}</span>
-                </div>
-                <div className="progress-bar"><div className="progress-fill" style={{width:Math.max(v*100,2)+'%',background:'#00d4ff'}}/></div>
-              </div>
-            ))}
-            <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:10}} onClick={checkSycophancy}>Check Sycophancy</button>
-            {stSycoMsg&&<div style={{marginTop:6,fontSize:11,color:stSycoMsg.startsWith('SYCOPHANCY')?'#ff0080':stSycoMsg.startsWith('LEAN')?'#f59e0b':'#00ff80',fontFamily:'JetBrains Mono'}}>{stSycoMsg}</div>}
-          </>)})()}
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ AI PROVIDERS â”€â”€ connected providers, key status, what each unlocks. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.providers?'open':''}`} onClick={()=>toggleSection('providers')}>
-          <div className="settings-section-title" style={{margin:0}}>AI Providers</div>
-          <span className="chev">{openSections.providers?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.providers?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Bring your own key â€” encrypted at rest. One provider is enough to go live.</div>
-            {(modelCatalog.providers||[]).map(p=>{
-              const h=provHealth[p.name]||{}; const local=p.type==='ollama';
-              const connected=h.status==='ok'||p.available; const draft=provKeyInput[p.name]||'';
-              const unlocks=capList.filter(c=>c.provider===p.name).map(c=>c.label);
-              const color=connected?'#34d399':(h.status==='missing'?'rgba(255,255,255,0.4)':'#f59e0b');
-              return(
-                <div key={p.name} style={{padding:'10px 0',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <span style={{fontSize:12,color:'#ddd',fontFamily:'Orbitron'}}>{p.label||p.name}</span>
-                    <span style={{fontSize:10,fontFamily:'JetBrains Mono',color}}>{connected?'connected':(local?(h.detail||'not running'):(h.status||'missing'))}</span>
-                  </div>
-                  {unlocks.length>0&&<div style={{fontSize:10,color:'rgba(0,212,255,0.55)',marginTop:2,fontFamily:'JetBrains Mono'}}>{unlocks.join(' Â· ')}</div>}
-                  {!local&&(
-                    <div style={{display:'flex',gap:6,marginTop:6}}>
-                      <input type="password" value={draft} placeholder={connected?'â€¢â€¢â€¢â€¢â€¢â€¢ stored â€” enter a new key to replace':'Add API key'} onChange={e=>setProvKeyInput(s=>({...s,[p.name]:e.target.value}))/* pragma: allowlist secret */}
-                        style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.2)',borderRadius:5,padding:'6px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11,outline:'none'}}/>
-                      <button className="settings-btn" disabled={!draft.trim()} onClick={()=>saveProviderKey(p.name)}>Save</button>
-                      {connected&&<button className="settings-btn" onClick={()=>removeProviderKey(p.name)}>Remove</button>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',marginTop:10,fontFamily:'JetBrains Mono'}}>Per-role model assignment is in the AI Model section above.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ CONNECTED SERVICES â”€â”€ Google accounts + MCP connector counts. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.services?'open':''}`} onClick={()=>toggleSection('services')}>
-          <div className="settings-section-title" style={{margin:0}}>Connected Services</div>
-          <span className="chev">{openSections.services?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.services?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Google accounts &amp; MCP connectors</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>
-              {hwFull?<span>{hwFull.google_accounts||0} Google account(s) Â· {hwFull.mcp_servers||0} MCP server(s) configured.</span>:'Loadingâ€¦'}
-            </div>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:8,fontFamily:'JetBrains Mono'}}>Manage Google sign-in in Account &amp; Security; MCP servers in the MCP Connectors panel.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ HARDWARE â”€â”€ GPU / RAM detection + suggested local models. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.hardware?'open':''}`} onClick={()=>toggleSection('hardware')}>
-          <div className="settings-section-title" style={{margin:0}}>Hardware</div>
-          <span className="chev">{openSections.hardware?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.hardware?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            {(()=>{const hw=(hwFull&&hwFull.hardware)||null; if(!hw)return <div className="settings-subtitle">Detectingâ€¦</div>; return(<>
-              <div className="settings-subtitle">GPU: <span style={{color:hw.gpu?'#34d399':'rgba(255,255,255,0.5)'}}>{hw.gpu||'none'}</span>{hw.ram_gb?' Â· '+hw.ram_gb+'GB RAM':''}{hw.vram_gb?' Â· '+hw.vram_gb+'GB VRAM':''}</div>
-              {(hw.suggested_models||[]).map(m=>(<div key={m.name} style={{display:'flex',justifyContent:'space-between',gap:10,fontSize:11,padding:'3px 0',fontFamily:'JetBrains Mono'}}><span style={{color:'#00d4ff'}}>{m.name}</span><span style={{color:'rgba(255,255,255,0.4)',textAlign:'right'}}>{m.task}</span></div>))}
-              <div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:6,fontFamily:'JetBrains Mono'}}>Ollama {hw.ollama_available?'running':'not running'}.</div>
-            </>)})()}
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ DISTRIBUTION â”€â”€ persona profile switch (rebuilds workspace layout). */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.distribution?'open':''}`} onClick={()=>toggleSection('distribution')}>
-          <div className="settings-section-title" style={{margin:0}}>Distribution</div>
-          <span className="chev">{openSections.distribution?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.distribution?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Active profile: <span style={{color:'#00d4ff',textTransform:'capitalize'}}>{agentSettings.distribution||'default'}</span></div>
-            <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:6}}>
-              {(distroList.length?distroList:[{name:'default',description:''}]).map(d=>{const sel=(agentSettings.distribution||'default')===d.name;return(
-                <div key={d.name} onClick={()=>applyDistro(d.name)} style={{padding:'8px 12px',borderRadius:6,border:'1px solid '+(sel?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),background:sel?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.02)',cursor:'pointer'}}>
-                  <div style={{fontSize:12,color:sel?'#00d4ff':'#ddd',textTransform:'capitalize',fontFamily:'Orbitron'}}>{d.name}</div>
-                  {d.description&&<div style={{fontSize:10,color:'rgba(255,255,255,0.4)',marginTop:2}}>{d.description}</div>}
-                </div>);})}
-            </div>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',marginTop:8,fontFamily:'JetBrains Mono'}}>Switching rebuilds your workspaces and Friday's tone.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ ADVANCED â”€â”€ capability routing, demo mode, re-run setup. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.advanced?'open':''}`} onClick={()=>toggleSection('advanced')}>
-          <div className="settings-section-title" style={{margin:0}}>Advanced</div>
-          <span className="chev">{openSections.advanced?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.advanced?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Capability routing</div>
-            {(capList||[]).map(c=>(
-              <div key={c.capability} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,fontSize:11,padding:'3px 0',fontFamily:'JetBrains Mono'}}>
-                <span style={{color:'rgba(255,255,255,0.6)'}}>{c.label}</span>
-                <span style={{color:c.available?'#34d399':'#f59e0b',textAlign:'right'}}>{(c.provider_label||c.provider||'â€”')+' Â· '+(c.model||'â€”')+(c.available?'':' (locked)')}</span>
-              </div>
-            ))}
-            <div className="settings-subtitle" style={{marginTop:14}}>Demo mode</div>
-            <select value={agentSettings.demo_mode===true?'on':agentSettings.demo_mode===false?'off':'auto'} onChange={e=>{const v=e.target.value;saveAgentSettings({demo_mode:v==='on'?true:(v==='off'?false:null)})}}
-              style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'7px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
-              <option value="auto">Auto â€” demo only when no provider configured</option>
-              <option value="on">Always on (canned responses)</option>
-              <option value="off">Always off</option>
-            </select>
-            <div className="settings-subtitle" style={{marginTop:14}}>Auto-compaction</div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',lineHeight:1.5}}>Summarize the middle of very long sessions so they don't overflow the model's context window. Full history stays searchable.</div>
-              <span className={'toggle-pill '+((agentSettings.compaction?.enabled!==false)?'on':'')} onClick={()=>saveAgentSettings({compaction:{...(agentSettings.compaction||{}),enabled:!(agentSettings.compaction?.enabled!==false)}})}>{(agentSettings.compaction?.enabled!==false)?'On':'Off'}</span>
-            </div>
-            <div style={{display:'flex',gap:10,marginTop:8,alignItems:'center'}}>
-              <label style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>trigger at</label>
-              <input type="number" min="0.3" max="0.95" step="0.05" value={agentSettings.compaction?.trigger_ratio??0.70}
-                onChange={e=>saveAgentSettings({compaction:{...(agentSettings.compaction||{}),trigger_ratio:parseFloat(e.target.value)||0.70}})}
-                style={{width:70,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
-              <span style={{fontSize:10,color:'rgba(255,255,255,0.4)'}}>of context window Â· keep first {agentSettings.compaction?.keep_head??3} / last {agentSettings.compaction?.keep_tail??10} turns</span>
-            </div>
-            <button className="settings-btn" style={{width:'100%',marginTop:12}} onClick={()=>{setSettingsOpen(false);setWizStep(0);setSetupDone(false);}}>Re-run setup wizard</button>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ SCHEDULED TASKS (Part A) â”€â”€ Friday's internal cron: list, add, edit, run-now, history. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.scheduler?'open':''}`} onClick={()=>toggleSection('scheduler')}>
-          <div className="settings-section-title" style={{margin:0}}>Scheduled Tasks</div>
-          <span className="chev">{openSections.scheduler?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.scheduler?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:10,lineHeight:1.5}}>Friday runs all her recurring work herself â€” heartbeat, briefings, creations, repo sync, self-improvement. Add your own recurring agent jobs with no code.</div>
-            {schedMsg&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:8,fontFamily:'JetBrains Mono'}}>{schedMsg}</div>}
-            {(schedules||[]).map(s=>(
-              <div key={s.id} style={{borderRadius:7,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.02)',padding:'9px 11px',marginBottom:7}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{width:8,height:8,borderRadius:'50%',background:schedStatusColor(s),flexShrink:0,boxShadow:s.running?'0 0 6px '+schedStatusColor(s):'none'}}></span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,color:'#ddd',fontFamily:'Orbitron',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.name} {s.task?.kind==='agent_prompt'&&<span style={{fontSize:8,color:'rgba(0,212,255,0.6)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginLeft:4}}>AGENT</span>}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{fmtTrigger(s)} Â· last {fmtTime(s.last_run_ts)}{s.last_status?(' '+(s.last_status==='complete'?'âœ“':s.last_status==='failed'?'âœ•':s.last_status)):''} Â· next {fmtTime(s.next_run)}</div>
-                    {s.last_summary&&<div style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.last_summary}</div>}
-                  </div>
-                  <span className={'toggle-pill '+(s.enabled?'on':'')} onClick={()=>toggleSchedule(s)} style={{flexShrink:0}}>{s.enabled?'On':'Off'}</span>
-                </div>
-                <div style={{display:'flex',gap:8,marginTop:7,flexWrap:'wrap'}}>
-                  <button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto'}} onClick={()=>runScheduleNow(s)}>Run now</button>
-                  <button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto'}} onClick={()=>loadHistory(s)}>{schedHistory[s.id]?'Hide history':'History'}</button>
-                  {s.source!=='builtin'&&<button className="settings-btn" style={{padding:'3px 9px',fontSize:10,width:'auto',color:'#ef9a9a'}} onClick={()=>deleteSchedule(s)}>Delete</button>}
-                </div>
-                {schedHistory[s.id]&&<div style={{marginTop:7,borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:6}}>
-                  {(schedHistory[s.id].length?schedHistory[s.id]:[{run_id:'_',status:'(no runs yet)'}]).map((r,i)=>(
-                    <div key={r.run_id||i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:10,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.45)',padding:'2px 0'}}>
-                      <span style={{color:r.status==='failed'?'#ef9a9a':r.status==='complete'?'#86efac':'rgba(255,255,255,0.5)'}}>{r.status}</span>
-                      <span>{r.started?fmtTime(r.started):''}{r.duration_ms?(' Â· '+(r.duration_ms/1000).toFixed(1)+'s'):''}</span>
-                    </div>
-                  ))}
-                </div>}
-              </div>
-            ))}
-            {!schedForm&&<button className="settings-btn" style={{width:'100%',marginTop:6}} onClick={()=>setSchedForm({trigger:'daily',kind:'agent_prompt',notify:'on_complete',hour:9,minute:0,every:60,weekday:6})}>+ Add scheduled task</button>}
-            {schedForm&&<div style={{marginTop:8,borderRadius:7,border:'1px solid rgba(0,212,255,0.25)',background:'rgba(0,212,255,0.04)',padding:11}}>
-              <input placeholder="Task name" value={schedForm.name||''} onChange={e=>setSchedForm(f=>({...f,name:e.target.value}))}
-                style={{width:'100%',boxSizing:'border-box',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'7px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11,marginBottom:7}}/>
-              <div style={{display:'flex',gap:7,marginBottom:7}}>
-                <select value={schedForm.trigger} onChange={e=>setSchedForm(f=>({...f,trigger:e.target.value}))} style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
-                  <option value="interval">Interval</option><option value="daily">Daily</option><option value="weekly">Weekly</option>
-                </select>
-                {schedForm.trigger==='interval'&&<input type="number" min="1" value={schedForm.every} onChange={e=>setSchedForm(f=>({...f,every:e.target.value}))} placeholder="minutes" style={{width:90,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>}
-                {schedForm.trigger==='weekly'&&<select value={schedForm.weekday} onChange={e=>setSchedForm(f=>({...f,weekday:e.target.value}))} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=><option key={i} value={i}>{d}</option>)}</select>}
-                {schedForm.trigger!=='interval'&&<><input type="number" min="0" max="23" value={schedForm.hour} onChange={e=>setSchedForm(f=>({...f,hour:e.target.value}))} style={{width:54,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/><input type="number" min="0" max="59" value={schedForm.minute} onChange={e=>setSchedForm(f=>({...f,minute:e.target.value}))} style={{width:54,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/></>}
-              </div>
-              <div style={{display:'flex',gap:7,marginBottom:7}}>
-                <select value={schedForm.kind} onChange={e=>setSchedForm(f=>({...f,kind:e.target.value}))} style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
-                  <option value="agent_prompt">Agent prompt (any recurring job)</option><option value="builtin">Built-in task</option>
-                </select>
-                <select value={schedForm.notify} onChange={e=>setSchedForm(f=>({...f,notify:e.target.value}))} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}>
-                  <option value="on_complete">Notify on complete</option><option value="on_change">Notify on change</option><option value="silent">Silent</option>
-                </select>
-              </div>
-              {schedForm.kind==='agent_prompt'?
-                <textarea placeholder="What should Friday do, on this schedule?" value={schedForm.prompt||''} onChange={e=>setSchedForm(f=>({...f,prompt:e.target.value}))} rows={3} style={{width:'100%',boxSizing:'border-box',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'7px 10px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11,resize:'vertical'}}/>:
-                <select value={schedForm.ref||''} onChange={e=>setSchedForm(f=>({...f,ref:e.target.value}))} style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'6px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}><option value="">â€” pick a built-in â€”</option>{schedBuiltins.map(b=><option key={b} value={b}>{b}</option>)}</select>}
-              <div style={{display:'flex',gap:8,marginTop:9}}>
-                <button className="settings-btn" style={{flex:1}} onClick={saveNewSchedule}>Save task</button>
-                <button className="settings-btn" style={{flex:1,opacity:0.7}} onClick={()=>setSchedForm(null)}>Cancel</button>
-              </div>
-            </div>}
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ COST & USAGE (Part D) â”€â”€ per-call spend, breakdowns, budget alerts. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.costs?'open':''}`} onClick={()=>toggleSection('costs')}>
-          <div className="settings-section-title" style={{margin:0}}>Cost &amp; Usage</div>
-          <span className="chev">{openSections.costs?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.costs?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            {(()=>{const s=costSummary;const peak=Math.max(1,...costSeries.map(p=>p.usd||0));return(<>
-              <div style={{display:'flex',gap:8,marginBottom:8}}>
-                {['today','7d','month'].map(r=>(<span key={r} onClick={()=>setCostRange(r)} style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:'3px 9px',borderRadius:5,border:'1px solid '+(costRange===r?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),color:costRange===r?'#00d4ff':'rgba(255,255,255,0.5)'}}>{r}</span>))}
-              </div>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
-                <div style={{fontSize:24,color:'#fff',fontFamily:'Orbitron'}}>{usd(s?.total_usd)}</div>
-                <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>{s?s.total_calls:0} calls Â· {((s?.input_tokens||0)+(s?.output_tokens||0)).toLocaleString()} tok</div>
-              </div>
-              {/* daily sparkline */}
-              <div style={{display:'flex',alignItems:'flex-end',gap:2,height:34,marginTop:8}}>
-                {costSeries.slice(-30).map((p,i)=>(<div key={i} title={p.date+': '+usd(p.usd)} style={{flex:1,minWidth:2,height:Math.max(2,(p.usd/peak)*34)+'px',background:'rgba(0,212,255,0.5)',borderRadius:'1px 1px 0 0'}}></div>))}
-                {!costSeries.length&&<div style={{fontSize:10,color:'rgba(255,255,255,0.3)'}}>No spend recorded yet.</div>}
-              </div>
-              {s&&<>
-                <div className="settings-subtitle" style={{marginTop:14}}>By provider</div>
-                {Object.entries(s.by_provider||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span>{k}</span><span style={{color:'#00d4ff'}}>{usd(v.usd)} Â· {v.calls}</span></div>))}
-                <div className="settings-subtitle" style={{marginTop:10}}>By workspace</div>
-                {Object.entries(s.by_workspace||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span>{k||'â€”'}</span><span style={{color:'#00d4ff'}}>{usd(v.usd)}</span></div>))}
-                <div className="settings-subtitle" style={{marginTop:10}}>By model</div>
-                {Object.entries(s.by_model||{}).map(([k,v])=>(<div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{k||'â€”'}</span><span style={{color:'#00d4ff',flexShrink:0,marginLeft:8}}>{usd(v.usd)}</span></div>))}
-                {!!(costSched&&costSched.length)&&<><div className="settings-subtitle" style={{marginTop:10}}>Scheduled jobs (month)</div>
-                  {costSched.map(r=>(<div key={r.schedule_id} style={{display:'flex',justifyContent:'space-between',fontSize:11,fontFamily:'JetBrains Mono',padding:'2px 0',color:'rgba(255,255,255,0.6)'}}><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.schedule_id}</span><span style={{color:'#00d4ff',flexShrink:0,marginLeft:8}}>{usd(r.usd)}</span></div>))}</>}
-              </>}
-            </>)})()}
-            <div className="settings-subtitle" style={{marginTop:14}}>Budget alerts</div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-              <span className={'toggle-pill '+(costBudget.daily_enabled?'on':'')} onClick={()=>saveBudget({daily_enabled:!costBudget.daily_enabled})}>Daily</span>
-              <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>$</span>
-              <input type="number" min="0" step="0.5" value={costBudget.daily} onChange={e=>saveBudget({daily:parseFloat(e.target.value)||0})} style={{width:80,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
-            </div>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span className={'toggle-pill '+(costBudget.monthly_enabled?'on':'')} onClick={()=>saveBudget({monthly_enabled:!costBudget.monthly_enabled})}>Monthly</span>
-              <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>$</span>
-              <input type="number" min="0" step="1" value={costBudget.monthly} onChange={e=>saveBudget({monthly:parseFloat(e.target.value)||0})} style={{width:80,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,padding:'5px 8px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:11}}/>
-            </div>
-            <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',marginTop:8,fontFamily:'JetBrains Mono'}}>Alert-only: crossing 80% warns, 100% alerts. Friday is never blocked from working.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ ACTIVE HOOKS (Part B) â”€â”€ read-only tool lifecycle hook list + toggles. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.hooks?'open':''}`} onClick={()=>toggleSection('hooks')}>
-          <div className="settings-section-title" style={{margin:0}}>Active Hooks</div>
-          <span className="chev">{openSections.hooks?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.hooks?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:10,lineHeight:1.5}}>Every tool call passes through these PreToolUse / PostToolUse hooks. Critical security gates can't be disabled.</div>
-            {(hooksList||[]).map(h=>(
-              <div key={h.name} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
-                <span style={{fontSize:8,color:h.phase==='pre'?'#fbbf24':'#a78bfa',border:'1px solid '+(h.phase==='pre'?'rgba(251,191,36,0.3)':'rgba(167,139,250,0.3)'),borderRadius:3,padding:'1px 4px',fontFamily:'JetBrains Mono',flexShrink:0}}>{h.phase.toUpperCase()}</span>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:11,color:'#ddd',fontFamily:'JetBrains Mono'}}>{h.name} {h.critical&&<span style={{color:'#ef9a9a',fontSize:9}}>Â· critical</span>}</div>
-                  <div style={{fontSize:9,color:'rgba(255,255,255,0.35)'}}>priority {h.priority} Â· {Array.isArray(h.scope)?h.scope.join(','):h.scope} Â· {h.source}</div>
-                </div>
-                <span className={'toggle-pill '+(h.enabled?'on':'')} onClick={()=>toggleHook(h)} style={{flexShrink:0,opacity:h.critical?0.45:1,cursor:h.critical?'not-allowed':'pointer'}}>{h.enabled?'On':'Off'}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ 3) APPEARANCE â”€â”€ visual scene, mood, holographic toggles. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.appearance?'open':''}`} onClick={()=>toggleSection('appearance')}>
-          <div className="settings-section-title" style={{margin:0}}>Appearance</div>
-          <span className="chev">{openSections.appearance?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.appearance?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Evolution Structure</div>
-            <div className="settings-grid" style={{marginBottom:14}}>
-              {(structures.length>0?structures:Array.from({length:13},(_,i)=>({name:'DAY '+(i+1)}))).map((s,i)=>
-                <button key={i} className={`settings-btn ${sceneState.structIdx===i?'active':''}`}
-                  onClick={()=>{
-                    window.fridayVibe?.setStructure(i);
-                    fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:i})}).catch(()=>{});
-                  }}>
-                  <span style={{opacity:0.5,marginRight:4}}>D{i+1}</span> {s.name}
-                </button>
-              )}
-            </div>
-            <div style={{marginTop:-8,marginBottom:14,fontSize:11,color:'rgba(255,255,255,0.35)',display:'flex',justifyContent:'flex-end'}}>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(0,212,255,0.4)',fontSize:11,padding:0}} onClick={()=>{window.fridayVibe?.setStructure&&fetch('/api/evolution',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferred_scene_index:null})}).catch(()=>{})}}>reset to auto (evolution)</button>
-            </div>
-
-            <div className="settings-subtitle">Mood <span style={{fontSize:9,opacity:0.4,marginLeft:4,textTransform:'none',letterSpacing:0}}>â€” manual override</span></div>
-            <div className="settings-grid" style={{marginBottom:14}}>
-              <button className="settings-btn" style={{gridColumn:'1/-1',opacity:0.55}} onClick={()=>window.fridayVibe?.clearMoodOverride()}>AUTO (system-driven)</button>
-              {moods.map(m=>
-                <button key={m} className={`settings-btn ${sceneState.mood===m?'active':''}`}
-                  onClick={()=>window.fridayVibe?.setMood(m)}>{m}</button>
-              )}
-            </div>
-
-            <div className="settings-subtitle">Holographic Consciousness</div>
-            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHologram()}>
-              <span className="settings-toggle-label">Hologram Mode (face tracking)</span>
-              <div className={`settings-toggle-switch ${sceneState.holo?'on':''}`}/>
-            </div>
-            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleHands()}>
-              <span className="settings-toggle-label">Hand Tracking (Minority Report)</span>
-              <div className={`settings-toggle-switch ${sceneState.hands?'on':''}`}/>
-            </div>
-            <div className="settings-toggle" onClick={()=>window.fridayVibe?.toggleTimeLapse()}>
-              <span className="settings-toggle-label">Timelapse (auto-cycle structures)</span>
-              <div className={`settings-toggle-switch ${sceneState.timelapse?'on':''}`}/>
-            </div>
-
-            <div className="settings-subtitle" style={{marginTop:14}}>Dock</div>
-            <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
-              <span className="settings-toggle-label">Show all workspaces</span>
-              <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:4,lineHeight:1.5}}>On: the full dock (Finance, Health, Family, Trust, Studio, Content, FutureSpeak). Off: the trimmed core set.</div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ 4) ACCOUNT & SECURITY â”€â”€ email, API keys, logging, camera, computer control. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.security?'open':''}`} onClick={()=>toggleSection('security')}>
-          <div className="settings-section-title" style={{margin:0}}>Account &amp; Security</div>
-          <span className="chev">{openSections.security?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.security?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div className="settings-subtitle">Your Email</div>
-            <input value={agentSettings.user_email||''} onChange={e=>setAgentSettings(s=>({...s,user_email:e.target.value}))} onBlur={e=>saveAgentSettings({user_email:e.target.value})}
-              placeholder="you@example.com"
-              style={{width:'100%',background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',marginBottom:6}}/>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:14}}>Yours stays plain. Other emails are replaced with <code style={{color:'#00d4ff'}}>[PII:email:hash]</code> before being sent to the Claude API and rehydrated on the way back.</div>
-
-            <div className="settings-subtitle">API Key Status</div>
-            <div style={{marginBottom:14}}>
-              {(()=>{
-                const rows=[
-                  {label:'Anthropic (Claude)',ok:!!(agentSettings.anthropic_api_key&&agentSettings.anthropic_api_key.length>8)},
-                  {label:'Google (Gemini)',ok:!!(agentSettings.gemini_api_key&&agentSettings.gemini_api_key.length>8)},
-                ];
-                return rows.map((r,i)=>(
-                  <div key={i} className="keystatus-row">
-                    <span>{r.label}</span>
-                    {r.ok?<span className="ok">âœ“ configured</span>:<span className="missing">âœ— missing</span>}
-                  </div>
-                ));
-              })()}
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginTop:6,lineHeight:1.5}}>Keys are stored in <code style={{color:'#00d4ff'}}>~/.friday/settings.json</code> on this machine only.</div>
-              <button className="settings-btn" style={{width:'100%',textAlign:'center',marginTop:8}} onClick={()=>setSetupDone(false)}>Re-open Setup Wizard</button>
-            </div>
-
-            {/* â”€â”€ Google Accounts (multi-account: Gmail / Calendar / Drive) â”€â”€ */}
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-              <div className="settings-subtitle" style={{margin:0}}>Google Accounts</div>
-              <span style={{fontSize:10,fontFamily:'Orbitron',color:googleProtection&&googleProtection!=='plaintext'?'#22c55e':'#f59e0b',padding:'1px 6px',borderRadius:4,border:'1px solid rgba(255,255,255,0.12)'}}>
-                {googleProtection==='vault'?'ðŸ”’ ENCRYPTED (VAULT)':googleProtection==='dpapi'?'ðŸ”’ ENCRYPTED (DPAPI)':googleProtection==='plaintext'?'âš  PLAINTEXT':'â€¦'}
-              </span>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:10,lineHeight:1.5}}>Connect one or more Google accounts. Each gets its own read-only Gmail, read/write Calendar, and read-only Drive access. Tokens are encrypted at rest and never leave this machine.</div>
-
-            {googleAccounts.map(a=>(
-              <div key={a.id} style={{border:'1px solid rgba(255,255,255,0.08)',borderLeft:`3px solid ${a.color||'#00d4ff'}`,borderRadius:6,padding:'8px 10px',marginBottom:8,background:'rgba(255,255,255,0.02)'}}>
-                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{fontSize:12,color:'#ddd',fontFamily:'JetBrains Mono',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.label}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{a.email}</div>
-                  </div>
-                  <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
-                    <span style={{fontSize:9,fontFamily:'Orbitron',color:a.status==='connected'?'#22c55e':'#f59e0b'}}>{a.status==='connected'?'â— CONNECTED':'â— REAUTH'}</span>
-                    <button className="settings-btn" style={{padding:'2px 8px',fontSize:11,color:'#ff6060'}} onClick={()=>removeGoogleAccount(a)}>Remove</button>
-                  </div>
-                </div>
-                <div style={{display:'flex',gap:6,marginTop:8}}>
-                  {['gmail','calendar','drive'].map(svc=>(
-                    <span key={svc} onClick={()=>toggleAccountService(a,svc)}
-                      style={{cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:'2px 8px',borderRadius:4,
-                        border:'1px solid '+((a.services||{})[svc]?'rgba(34,197,94,0.4)':'rgba(255,255,255,0.1)'),
-                        color:(a.services||{})[svc]?'#22c55e':'rgba(255,255,255,0.4)',
-                        background:(a.services||{})[svc]?'rgba(34,197,94,0.08)':'transparent'}}>
-                      {(a.services||{})[svc]?'âœ“ ':''}{svc[0].toUpperCase()+svc.slice(1)}
-                    </span>
-                  ))}
-                </div>
-                {a.last_sync&&<div style={{fontSize:9,color:'rgba(255,255,255,0.35)',marginTop:6}}>Last sync {new Date(a.last_sync).toLocaleString()}</div>}
-              </div>
-            ))}
-
-            <div style={{display:'flex',gap:6,marginBottom:6}}>
-              <input value={googleAcctLabel} onChange={e=>setGoogleAcctLabel(e.target.value)} placeholder="Label (e.g. Personal, Work)"
-                style={{flex:1,background:'rgba(255,255,255,0.04)',color:'#ddd',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'6px 10px',fontFamily:'JetBrains Mono',fontSize:12,outline:'none'}}/>
-              <button className="settings-btn" style={{padding:'6px 12px',color:'#00d4ff'}} onClick={addGoogleAccount}>+ Add</button>
-              <button className="settings-btn" style={{padding:'6px 10px'}} onClick={refreshGoogleAccounts}>â†»</button>
-            </div>
-            {googleAcctMsg&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:10}}>{googleAcctMsg}</div>}
-            {googleAccounts.length===0&&!googleAcctMsg&&<div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10}}>No Google accounts connected yet.</div>}
-            <div style={{height:14}}/>
-
-            <div className="settings-toggle" onClick={()=>saveAgentSettings({context_logging_enabled:!agentSettings.context_logging_enabled})}>
-              <span className="settings-toggle-label">Full Context Logging</span>
-              <div className={`settings-toggle-switch ${agentSettings.context_logging_enabled?'on':''}`}/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>Append-only event log of chats, tool calls, wiki edits, and file reads. Stored locally in <code style={{color:'#00d4ff'}}>~/.friday/vault/context-log/</code>.</div>
-
-            <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
-              <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>Go Off Record (quick toggle)</span>
-              <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:12}}>When on, chat messages are not written to the context log even if logging is enabled.</div>
-
-            <div className="settings-subtitle">Retention Period</div>
-            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr',marginBottom:12}}>
-              {[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=>
-                <button key={o.v} className={`settings-btn ${(agentSettings.context_retention_days??0)===o.v?'active':''}`}
-                  style={{textAlign:'center',fontSize:11}}
-                  onClick={()=>saveAgentSettings({context_retention_days:o.v})}>{o.l}</button>
-              )}
-            </div>
-            <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:14}} onClick={()=>window.open('/api/context/export','_blank')}>â¤“ Export My Data (ZIP)</button>
-
-            <div className="settings-subtitle">Camera &amp; Vision</div>
-            <div className="settings-toggle" onClick={toggleCamera} style={{paddingTop:0}}>
-              <span className="settings-toggle-label">Enable camera (screen / webcam capture)</span>
-              <div className={`settings-toggle-switch ${cameraOn?'on':''}`}/>
-            </div>
-            {cameraOn&&<div className="camera-privacy-banner" style={{marginBottom:8}}><span className="pulse"/>Camera is active</div>}
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginTop:6,marginBottom:4}}>Frame Capture Interval</div>
-            <div className="settings-grid" style={{gridTemplateColumns:'1fr 1fr 1fr',marginBottom:6}}>
-              {[1,3,5].map(s=>
-                <button key={s} className={`settings-btn ${cameraIntervalSec===s?'active':''}`}
-                  style={{textAlign:'center'}}
-                  onClick={()=>{setCameraIntervalSec(s);saveAgentSettings({camera_interval_sec:s})}}>{s}s</button>
-              )}
-            </div>
-            <div className="settings-toggle" onClick={()=>{const v=!cameraAutoDescribe;setCameraAutoDescribe(v);saveAgentSettings({camera_auto_describe:v})}}>
-              <span className="settings-toggle-label">Auto-describe what Friday sees</span>
-              <div className={`settings-toggle-switch ${cameraAutoDescribe?'on':''}`}/>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',marginBottom:14}}>When off, Friday only references the camera when you ask. When on, expect proactive commentary.</div>
-
-            {/* Computer Control â€” EXPERIMENTAL, opt-in. Off by default for new
-                users. Even once the feature is enabled here, each runtime grant
-                is a separate Ring-3 step and is revoked on every restart. */}
-            <div style={{border:'1px solid rgba(255,50,50,0.2)',borderRadius:6,padding:10,background:'rgba(255,50,50,0.02)'}}>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                <div className="settings-section-title" style={{margin:0,color:'rgba(255,100,100,0.85)'}}>Computer Control</div>
-                <span style={{fontSize:10,fontFamily:'Orbitron',color:'#f59e0b',padding:'1px 6px',borderRadius:4,background:'rgba(245,158,11,0.12)',border:'1px solid rgba(245,158,11,0.3)'}}>EXPERIMENTAL</span>
-                {ccGranted&&<span style={{fontSize:10,fontFamily:'Orbitron',color:'#ff3333',padding:'1px 6px',borderRadius:4,background:'rgba(255,0,0,0.12)',border:'1px solid rgba(255,0,0,0.3)'}}>ACTIVE</span>}
-              </div>
-              <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
-                When enabled, Friday can move your mouse, click, type, and take screenshots â€” driving your computer like a person would. This is a powerful, high-risk capability. Leave it off unless you specifically need it.
-              </div>
-              <div className="settings-toggle" onClick={()=>saveAgentSettings({computer_control_enabled:!agentSettings.computer_control_enabled})}>
-                <span className="settings-toggle-label">{agentSettings.computer_control_enabled?'Computer Control feature enabled':'Enable Computer Control feature'}</span>
-                <div className={`settings-toggle-switch ${agentSettings.computer_control_enabled?'on':''}`}/>
-              </div>
-              {agentSettings.computer_control_enabled&&<div style={{marginTop:12,paddingTop:10,borderTop:'1px solid rgba(255,50,50,0.15)'}}>
-                {!ccAvailable&&<div style={{fontSize:11,color:'#f59e0b',padding:'6px 8px',background:'rgba(245,158,11,0.08)',borderRadius:4,marginBottom:10}}>pyautogui not installed. Run <code style={{color:'#00d4ff'}}>pip install pyautogui</code> in the venv and restart the server.</div>}
-                <div style={{fontSize:11,color:'rgba(255,200,200,0.85)',marginBottom:10,lineHeight:1.6}}>
-                  Granting control is a separate, deliberate step. <strong style={{color:'#ff6060'}}>Permission is revoked on every server restart.</strong>
-                </div>
-                <div className="settings-toggle" onClick={()=>{
-                  if(ccGranted){
-                    fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'revoke'})}).then(()=>setCcGranted(false)).catch(()=>{});
-                  }else{
-                    fetch('/api/control/permission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'grant'})}).then(r=>r.json()).then(d=>setCcGranted(!!d.granted)).catch(()=>{});
-                  }
-                }} style={{borderColor:ccGranted?'rgba(255,50,50,0.4)':'undefined'}}>
-                  <span className="settings-toggle-label" style={{color:ccGranted?'#ff6060':undefined}}>{ccGranted?'ðŸ”´ Computer Control ACTIVE':'ðŸŸ¢ Grant computer control'}</span>
-                  <div className={`settings-toggle-switch ${ccGranted?'on':''}`} style={ccGranted?{background:'linear-gradient(90deg,#cc0000,#ff2222)'}:{}}/>
-                </div>
-                {ccGranted&&<div style={{marginTop:10,padding:'10px 12px',background:'rgba(255,0,0,0.06)',border:'1px solid rgba(255,0,0,0.2)',borderRadius:6}}>
-                  <div style={{fontFamily:'Orbitron',fontSize:11,color:'#ff4444',marginBottom:6,letterSpacing:'.05em'}}>&#x26D4; KILL SWITCH</div>
-                  <div style={{fontSize:11,color:'rgba(255,200,200,0.8)',marginBottom:8}}>Immediately stop all computer control. Also available via <code style={{color:'#ff9999'}}>Ctrl+Shift+Q</code>.</div>
-                  <button onClick={killSwitch} style={{width:'100%',padding:'8px',background:'linear-gradient(135deg,#aa0000,#cc2222)',border:'1px solid rgba(255,50,50,0.5)',borderRadius:5,color:'#fff',fontFamily:'Orbitron',fontSize:12,letterSpacing:'.1em',cursor:'pointer',fontWeight:700}}>&#x26D4; KILL COMPUTER CONTROL</button>
-                </div>}
-              </div>}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ ORCHESTRATOR DASHBOARD â”€â”€ active workers, kill, spawn. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.orchestrator?'open':''}`} onClick={()=>toggleSection('orchestrator')}>
-          <div className="settings-section-title" style={{margin:0}}>Orchestrator</div>
-          <span className="chev">{openSections.orchestrator?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.orchestrator?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Manage local sub-agent workers. Spawn tasks to Ollama, Python scripts, or HTTP APIs within your budget envelope.</div>
-            <OrchestratorPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ ORCHESTRATOR BUDGETS â”€â”€ per-workspace mÏˆ spend bars and caps. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.orchestrator_budgets?'open':''}`} onClick={()=>toggleSection('orchestrator_budgets')}>
-          <div className="settings-section-title" style={{margin:0}}>Orchestrator Budgets</div>
-          <span className="chev">{openSections.orchestrator_budgets?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.orchestrator_budgets?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Per-workspace budget caps in milliPositrons (mÏˆ). These limit orchestrated work spend independently of the USD cost meter above.</div>
-            <OrchestratorBudgetPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ CAPABILITY CARD â”€â”€ what this Friday advertises + federated jobs. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.capability_card?'open':''}`} onClick={()=>toggleSection('capability_card')}>
-          <div className="settings-section-title" style={{margin:0}}>Capability Card</div>
-          <span className="chev">{openSections.capability_card?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.capability_card?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>What this Friday advertises to the federation network as a compute provider. Toggle capabilities on/off and set pricing in mÏˆ.</div>
-            <CapabilityCardPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ WORK LOG â”€â”€ audit trail of all orchestrated work. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.work_log?'open':''}`} onClick={()=>toggleSection('work_log')}>
-          <div className="settings-section-title" style={{margin:0}}>Work Log</div>
-          <span className="chev">{openSections.work_log?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.work_log?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Audit trail of every orchestrated task â€” both local workers and federated compute jobs. Filterable by workspace, worker type, and date range.</div>
-            <WorkLogPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ FEDERATION â”€â”€ agent identity, peer discovery, known peers, peer card export. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.federation?'open':''}`} onClick={()=>toggleSection('federation')}>
-          <div className="settings-section-title" style={{margin:0}}>Federation</div>
-          <span className="chev">{openSections.federation?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.federation?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <FederationPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ DEFEDERATION â”€â”€ Asimov-governed defederation assessments + consensus. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.defederation?'open':''}`} onClick={()=>toggleSection('defederation')}>
-          <div className="settings-section-title" style={{margin:0}}>Defederation</div>
-          <span className="chev">{openSections.defederation?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.defederation?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <DefederationPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ CONTENT POLICIES â”€â”€ community policy packs, subscription management. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.content_policies?'open':''}`} onClick={()=>toggleSection('content_policies')}>
-          <div className="settings-section-title" style={{margin:0}}>Content Policies</div>
-          <span className="chev">{openSections.content_policies?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.content_policies?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <ContentPoliciesPanel/>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ MODERATION â”€â”€ family mode, adult content, harm boundary info. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.moderation?'open':''}`} onClick={()=>toggleSection('moderation')}>
-          <div className="settings-section-title" style={{margin:0}}>Content Moderation</div>
-          <span className="chev">{openSections.moderation?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.moderation?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginBottom:12,lineHeight:1.6}}>
-              Content moderation runs locally on your device. Friday enforces harm boundaries (CSAM, deepfakes, doxxing, violence) but does not police taste or morality.
-            </div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-              <div>
-                <div style={{fontSize:12,color:'#dde',marginBottom:2}}>Family mode</div>
-                <div style={{fontSize:11,color:'#888'}}>Blocks NSFW content in Studio and Marketplace</div>
-              </div>
-              <span className={'toggle-pill '+((agentSettings.minor_mode||agentSettings.family_mode)?'on':'')}
-                onClick={()=>saveAgentSettings({minor_mode:!(agentSettings.minor_mode||agentSettings.family_mode),family_mode:!(agentSettings.minor_mode||agentSettings.family_mode)})}>
-                {(agentSettings.minor_mode||agentSettings.family_mode)?'On':'Off'}
-              </span>
-            </div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-              <div>
-                <div style={{fontSize:12,color:'#dde',marginBottom:2}}>Allow adult content</div>
-                <div style={{fontSize:11,color:'#888'}}>Permits NSFW-rated items in Marketplace browse</div>
-              </div>
-              <span className={'toggle-pill '+(agentSettings.allow_adult_content?'on':'')}
-                onClick={()=>saveAgentSettings({allow_adult_content:!agentSettings.allow_adult_content})}>
-                {agentSettings.allow_adult_content?'On':'Off'}
-              </span>
-            </div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',fontStyle:'italic',lineHeight:1.5,padding:'8px 10px',background:'rgba(255,255,255,0.02)',borderRadius:6,border:'1px solid rgba(255,255,255,0.05)'}}>
-              Absolute limits (always enforced, cannot be disabled): CSAM, non-consensual deepfakes, doxxing, incitement to violence. These are not content-policy choices â€” they are hard stops in the cLAWS harm gate.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* â”€â”€ 5) ABOUT â”€â”€ branding + system health snapshot. */}
-      <div className="settings-section" style={{padding:0}}>
-        <div className={`settings-coll-header ${openSections.about?'open':''}`} onClick={()=>toggleSection('about')}>
-          <div className="settings-section-title" style={{margin:0}}>About</div>
-          <span className="chev">{openSections.about?'â–¾':'â–¸'}</span>
-        </div>
-        <div className={`settings-coll-body ${openSections.about?'open':''}`}>
-          <div style={{padding:'0 16px 14px'}}>
-            <div style={{textAlign:'center',marginBottom:14,padding:'14px 8px',background:'linear-gradient(135deg,rgba(245,158,11,0.06),rgba(0,212,255,0.04))',borderRadius:8,border:'1px solid rgba(245,158,11,0.15)'}}>
-              <div style={{fontFamily:'Orbitron',fontSize:18,color:'#f59e0b',letterSpacing:'0.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 14px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
-              <div style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:8}}>v4.5.0 Â· Desktop OS</div>
-              <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.18em'}}>BY FUTURESPEAK.AI</div>
-            </div>
-
-            <div className="settings-subtitle">System Health</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,fontSize:11,marginBottom:8}}>
-              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Evolution Day</div>
-                <div style={{fontFamily:'Orbitron',fontSize:15,color:'#00d4ff'}}>{stEvo?.day??'â€”'}</div>
-              </div>
-              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Mood</div>
-                <div style={{fontFamily:'Orbitron',fontSize:13,color:'#7c3aed'}}>{sceneState.mood||'â€”'}</div>
-              </div>
-              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Uptime</div>
-                <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00ff80'}}>{formatUptime(stHealth?.uptime_seconds)}</div>
-              </div>
-              <div style={{padding:'6px 8px',background:'rgba(255,255,255,0.05)',borderRadius:5,border:'1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:2}}>Creations Today</div>
-                <div style={{fontFamily:'Orbitron',fontSize:15,color:'#f59e0b'}}>{stHealth?.creations_today??'â€”'}</div>
-              </div>
-            </div>
-            <div style={{marginTop:8}}>
-              <div style={{color:'rgba(255,255,255,0.72)',fontSize:11,fontFamily:'JetBrains Mono',marginBottom:4}}>Active Models</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-                {(stHealth?.models||[{name:'Claude',active:true},{name:'Gemini',active:true}]).map((m,i)=>(
-                  <span key={i} className="model-pill" style={{fontSize:11}}>
-                    <span className={`dot ${m.active?'active':'idle'}`}/>
-                    {m.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {stEvo?.structure&&<div style={{marginTop:8,fontSize:11,color:'#a8a8b4',fontFamily:'JetBrains Mono'}}>{stEvo.structure}</div>}
-
-            <div className="settings-subtitle" style={{marginTop:14}}>Acknowledgments</div>
-            <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',lineHeight:1.6,fontFamily:'JetBrains Mono'}}>
-              Context compression powered by{' '}
-              <a href="https://github.com/chopratejas/headroom" target="_blank" rel="noopener noreferrer" style={{color:'#00d4ff',textDecoration:'none'}}>Headroom</a>
-              {' '}by Tejas Chopra â€” Apache 2.0. Compresses tool outputs, JSON, code, and prose before they reach the LLM (60-95% fewer tokens, same answers).
-            </div>
-          </div>
+        <div className="settings-toggle" onClick={()=>saveAgentSettings({computer_control_enabled:!agentSettings.computer_control_enabled})}>
+          <span className="settings-toggle-label">Computer Control</span>
+          <div className={`settings-toggle-switch ${agentSettings.computer_control_enabled?'on':''}`}/>
         </div>
       </div>
     </div>
