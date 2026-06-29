@@ -8301,6 +8301,8 @@ const CREATIVE_MODELS=[
   {id:'gemini-nano-banana-pro',label:'Gemini Nano Banana Pro (image)',short:'Nano BPro'},
   {id:'gemini-nano-banana-2',label:'Gemini Nano Banana 2 (image)',short:'Nano B2'},
   {id:'veo-3',label:'Google Veo (video)',short:'Veo'},
+  {id:'lyria-clip',label:'Lyria 3 Clip (music · ≤30s)',short:'Lyria Clip'},
+  {id:'lyria-pro',label:'Lyria 3 Pro (music · full)',short:'Lyria Pro'},
 ];
 const VOICE_MODELS=[
   {id:'gemini-3.1-flash-live-preview',label:'Gemini 3.1 Flash Live Preview',short:'Gemini Live'},
@@ -8314,7 +8316,7 @@ function useModelCatalog(){
   const[cat,setCat]=useState(window.__fridayModelCatalog||null);
   useEffect(()=>{
     if(window.__fridayModelCatalog){setCat(window.__fridayModelCatalog);return;}
-    fetch('/api/models').then(r=>r.json()).then(d=>{
+    apiFetch('/api/models').then(r=>r.json()).then(d=>{
       if(d&&d.status==='ok'&&d.roles){window.__fridayModelCatalog=d;setCat(d);}
     }).catch(()=>{});
   },[]);
@@ -9409,7 +9411,7 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-2.5-flash',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -9531,6 +9533,14 @@ function App(){
     }).catch(()=>{});
   };
   useEffect(()=>{if(settingsOpen)refreshSettingsData()},[settingsOpen]);
+  // Load settings on mount so the model picker, voice engine selector, and other
+  // controls reflect the actual saved state before the Settings panel is ever opened.
+  useEffect(()=>{
+    fetch('/api/settings').then(r=>r.json()).then(d=>{
+      if(d&&d.settings)setAgentSettings(s=>({...s,...d.settings}));
+      if(typeof d?.personality==='string'){setAgentPersonality(d.personality);setPersonalityDraft(d.personality)}
+    }).catch(()=>{});
+  },[]);
   // ── MCP connectors state ──
   const[mcpStatus,setMcpStatus]=useState({available:false,servers:{}});
   const[mcpConfigText,setMcpConfigText]=useState('');
@@ -9651,7 +9661,7 @@ function App(){
     try{
       const body={settings:next};
       if(opts.personality!==undefined)body.personality=opts.personality;
-      const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d?.settings)setAgentSettings({...DEFAULT_AGENT_SETTINGS,...d.settings});
       if(opts.personality!==undefined&&typeof d?.personality==='string'){setAgentPersonality(d.personality);setPersonalityDraft(d.personality)}
