@@ -5834,11 +5834,15 @@ function OrchestratorPanel(){
   const[spawning,setSpawning]=useState(false);
   const[form,setForm]=useState({prompt:'',task_type:'CUSTOM',adapter_type:'OLLAMA',budget_mψ:50000,deadline_seconds:300});
   const[toast,setToast]=useState('');
+  const[ollamaStatus,setOllamaStatus]=useState(null);
   const flash=t=>{setToast(t);setTimeout(()=>setToast(''),3000)};
   const load=()=>{
     apiFetch('/api/orchestrator/workers').then(r=>r.json()).then(d=>setWorkers(d.workers||[])).catch(()=>{}).finally(()=>setLoading(false));
   };
-  useEffect(()=>{load();const id=setInterval(load,4000);return()=>clearInterval(id)},[]);
+  const loadStatus=()=>{
+    apiFetch('/api/orchestrator/status').then(r=>r.json()).then(d=>setOllamaStatus(d.ollama||null)).catch(()=>{});
+  };
+  useEffect(()=>{load();loadStatus();const id=setInterval(load,4000);const id2=setInterval(loadStatus,15000);return()=>{clearInterval(id);clearInterval(id2);}},[]);
   const cancel=async(id)=>{
     try{await apiFetch('/api/orchestrator/cancel/'+id,{method:'POST'});flash('Worker cancelled');load();}
     catch(e){flash('Error: '+e.message);}
@@ -5857,8 +5861,16 @@ function OrchestratorPanel(){
   const statusColor={PENDING:'#f59e0b',RUNNING:'#00d4ff',COMPLETED:'#00ff80',FAILED:'#ef4444',CANCELLED:'rgba(255,255,255,0.3)'};
   const statusLabel={PENDING:'⏳ Pending',RUNNING:'⚡ Running',COMPLETED:'✓ Done',FAILED:'✗ Failed',CANCELLED:'◌ Cancelled'};
   if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading workers…</div>;
+  const ollamaOk=ollamaStatus&&ollamaStatus.available;
   return(<div>
     {toast&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{toast}</div>}
+    {ollamaStatus&&<div style={{marginBottom:10,padding:'6px 9px',borderRadius:5,background:ollamaOk?'rgba(0,255,128,0.05)':'rgba(239,68,68,0.06)',border:'1px solid '+(ollamaOk?'rgba(0,255,128,0.2)':'rgba(239,68,68,0.2)'),fontSize:10,display:'flex',alignItems:'center',gap:7}}>
+      <span style={{color:ollamaOk?'#00ff80':'#ef4444',fontSize:9}}>{ollamaOk?'●':'○'}</span>
+      <span style={{color:ollamaOk?'rgba(0,255,128,0.8)':'rgba(239,68,68,0.8)',fontFamily:'JetBrains Mono'}}>
+        {ollamaOk?`Ollama · ${ollamaStatus.model_count} model${ollamaStatus.model_count!==1?'s':''}`:'Ollama offline'}
+      </span>
+      {ollamaStatus.error&&<span style={{color:'rgba(255,255,255,0.35)',fontSize:9,marginLeft:'auto',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:160}}>{ollamaStatus.error}</span>}
+    </div>}
     <div className="settings-subtitle">Active Workers ({workers.length})</div>
     {workers.length===0&&<div style={{fontSize:11,color:'#555',marginBottom:10,fontStyle:'italic'}}>No active workers.</div>}
     {workers.map(w=>(
@@ -5877,6 +5889,7 @@ function OrchestratorPanel(){
     <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:6}}>
       <select className="input" style={{flex:1,fontSize:11}} value={form.adapter_type} onChange={e=>setForm(f=>({...f,adapter_type:e.target.value}))}>
         <option value="OLLAMA">Ollama (local LLM)</option>
+        <option value="CLAUDE_CODE">Claude Code (coding tasks)</option>
         <option value="PYTHON_SCRIPT">Python Script</option>
         <option value="HTTP_API">HTTP API</option>
       </select>

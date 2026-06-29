@@ -29,11 +29,45 @@ _JOBS: Dict[str, dict] = {}
 _JOBS_LOCK = threading.RLock()
 
 
+def _probe_ollama(base: str = _OLLAMA_BASE, timeout: float = 3.0) -> dict:
+    """Probe Ollama availability. Returns {available, models, error}."""
+    try:
+        req = urllib.request.Request(f"{base}/api/tags",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        models = [m.get("name") for m in (data.get("models") or []) if m.get("name")]
+        return {"available": True, "models": models, "error": None}
+    except urllib.error.URLError:
+        return {"available": False, "models": [],
+                "error": "Ollama is not running. Start it with `ollama serve`."}
+    except Exception as exc:
+        return {"available": False, "models": [], "error": str(exc)}
+
+
 class OllamaAdapter(BaseAdapter):
 
     def start(self, task: "WorkerTask") -> str:
         from agent_friday.services.orchestrator import ResultStatus
         aid = str(uuid.uuid4())
+
+        # Fast pre-flight — fail immediately rather than timing out in _run.
+        probe = _probe_ollama()
+        if not probe["available"]:
+            entry = {
+                "aid": aid,
+                "task_id": task.task_id,
+                "status": WorkerStatus.FAILED,
+                "output": "",
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "error": probe["error"],
+                "started": time.time(),
+            }
+            with _JOBS_LOCK:
+                _JOBS[aid] = entry
+            return aid
+
         entry = {
             "aid": aid,
             "task_id": task.task_id,
@@ -43,6 +77,7 @@ class OllamaAdapter(BaseAdapter):
             "tokens_out": 0,
             "error": None,
             "started": time.time(),
+            "_ollama_models": probe["models"],
         }
         with _JOBS_LOCK:
             _JOBS[aid] = entry
@@ -61,6 +96,12 @@ class OllamaAdapter(BaseAdapter):
             model = s.get("local_model") or s.get("default_local_model") or model
         except Exception:
             pass
+
+        # If the preferred model isn't installed, fall back to the first available.
+        with _JOBS_LOCK:
+            installed = _JOBS.get(aid, {}).get("_ollama_models") or []
+        if installed and model not in installed:
+            model = installed[0]
 
         payload = json.dumps({
             "model": model,

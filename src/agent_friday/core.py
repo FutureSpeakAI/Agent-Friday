@@ -399,6 +399,12 @@ def _bootstrap_env_from_launch_scripts():
     candidates = ['start.bat', 'launch_now.bat', 'friday_startup.bat']
     _set_re = re.compile(r'^\s*set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^"\r\n]*)"?\s*$',
                          re.IGNORECASE)
+    # API keys ALWAYS come from start.bat — stale Windows User-scope env vars
+    # (set months ago, now expired) would otherwise shadow the fresh key and
+    # cause 1008 auth failures against Gemini Live or Anthropic.
+    _FORCE_OVERRIDE = {
+        'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
+    }
     loaded = []
     for fname in candidates:
         p = repo / fname
@@ -412,7 +418,7 @@ def _bootstrap_env_from_launch_scripts():
                 name, value = m.group(1), m.group(2).strip()
                 if not value or value.startswith('%'):  # skip empty / %VAR% refs
                     continue
-                if not os.environ.get(name):
+                if name in _FORCE_OVERRIDE or not os.environ.get(name):
                     os.environ[name] = value
                     loaded.append(name)
         except Exception as _be:
@@ -810,11 +816,14 @@ PROCESSES_LOCK = threading.Lock()
 
 
 def process_register(pid, *, name="Task", label=None, category="default",
-                     icon="⚡", steps=None, model=None, color=None):
+                     icon="⚡", steps=None, model=None, color=None,
+                     task_id=None):
     """Register a new process for the holographic orb display.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
     in the 3-D scene — used for the green vault-access orb.
+    `task_id` links this process to a TASKS entry so the notification detail
+    panel can stream the underlying task's log.
     """
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
@@ -828,12 +837,14 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "status": "running",
             "progress": 0,
             "steps": steps or [],
+            "log": [],
+            "task_id": task_id,
             "started": _time.time(),
         }
 
 
 def process_update(pid, *, status=None, progress=None, label=None,
-                   step=None, steps=None):
+                   step=None, steps=None, task_id=None):
     """Update an existing process entry."""
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
@@ -849,8 +860,20 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"].append(step)
         if steps is not None:
             p["steps"] = steps
+        if task_id is not None:
+            p["task_id"] = task_id
         if status in ("completed", "error"):
             p["ended"] = _time.time()
+
+
+def process_log(pid, line: str):
+    """Append a log line to a process so the notification detail panel shows activity."""
+    with PROCESSES_LOCK:
+        p = PROCESSES.get(pid)
+        if p is not None:
+            p.setdefault("log", []).append(str(line))
+            if len(p["log"]) > 200:
+                p["log"] = p["log"][-200:]
 
 
 def process_remove(pid):

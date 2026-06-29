@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 import agent_friday.core as core
-from agent_friday.core import FRIDAY_DIR, _load_settings, process_register, process_update
+from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
@@ -396,6 +396,15 @@ def _run_task(rec):
     run_id = rec.get("_active_run_id")
     tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
                       description=f"scheduled:{rec.get('id')}")
+    # Link the scheduler's process orb to the spawned task so the notification
+    # detail panel can stream the task's live log.
+    orb_id = rec.get("_orb_id")
+    if orb_id:
+        try:
+            process_update(orb_id, task_id=tid)
+            process_log(orb_id, f"Spawned agent task {tid}")
+        except Exception:
+            pass
     # Associate the spawned task with this schedule for cost attribution (Part D).
     try:
         from agent_friday.services import cost_meter as _cm
@@ -445,10 +454,20 @@ def dispatch(rec, *, manual=False):
 
     def _body():
         status, summary, err = "complete", "", None
-        rec_live = dict(rec, _active_run_id=run_id)
+        rec_live = dict(rec, _active_run_id=run_id, _orb_id=orb_id)
+        if orb_id:
+            try:
+                process_log(orb_id, f"Starting: {rec.get('name')}")
+            except Exception:
+                pass
         try:
             result = _run_task(rec_live)
             summary = _summarize(result)
+            if orb_id:
+                try:
+                    process_log(orb_id, f"Completed: {summary[:200]}" if summary else "Completed.")
+                except Exception:
+                    pass
             # on_change: suppress the notification when nothing changed.
             do_notify = True
             if rec.get("notify") == "on_change" and not _changed(result):
