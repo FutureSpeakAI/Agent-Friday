@@ -559,7 +559,9 @@ if sock is not None:
             print(f'[live] {msg}')
 
         _vlog(f'=== WS connection from {request.remote_addr} ===')
-        _vlog(f'session.authenticated={session.get("authenticated")} local={_is_local_request()} GEMINI_KEY={core.GEMINI_API_KEY[:8] if core.GEMINI_API_KEY else "MISSING"}...')
+        _key_preview = (core.GEMINI_API_KEY[:10] + '...') if core.GEMINI_API_KEY else 'MISSING'
+        print(f'[live] WS connect from {request.remote_addr} | auth={session.get("authenticated")} local={_is_local_request()} | GEMINI_KEY={_key_preview}', flush=True)
+        _vlog(f'session.authenticated={session.get("authenticated")} local={_is_local_request()} GEMINI_KEY={_key_preview}')
 
         # Auth enforcement (before_request already redirects unauthenticated HTML
         # requests, but be defensive in case /ws/ paths were excluded).
@@ -585,8 +587,17 @@ if sock is not None:
                 pass
             return
 
+        # Trigger settings-fallback if env var not set (onboarding-wizard path
+        # stores key in settings.json; get_genai_client() reads it + updates the global).
+        if not core.GEMINI_API_KEY:
+            try:
+                core.get_genai_client()
+            except Exception:
+                pass
+
         if not core.GEMINI_API_KEY:
             _vlog('ERROR — GEMINI_API_KEY not set')
+            print('[live] ERROR — GEMINI_API_KEY missing; voice unavailable', flush=True)
             try:
                 ws.send(json.dumps({"type": "error", "error": "GEMINI_API_KEY not set"}))
             except Exception:
@@ -1210,11 +1221,22 @@ if sock is not None:
                     last_error = e
                     import traceback as _tb
                     tb_str = _tb.format_exc()
+                    _err_str = str(e)
+                    _is_auth_1008 = '1008' in _err_str or 'authentication' in _err_str.lower() or 'OAuth' in _err_str
                     _vlog(f'SESSION ERROR with {model_name} (api={api_version or "default(v1beta)"}): {type(e).__name__}: {e}')
                     _vlog(f'TRACEBACK: {tb_str}')
                     traceback.print_exc()
+                    if _is_auth_1008:
+                        _live_key_now = core.GEMINI_API_KEY
+                        _key_diag = (_live_key_now[:10] + '...') if _live_key_now else 'MISSING'
+                        print(f'[live] 1008 auth error on {model_name} (api={api_version or "v1beta"}). KEY={_key_diag}. Check GEMINI_API_KEY in start.bat — likely expired/rotated.', flush=True)
                     if (api_version, model_name) == attempts[-1]:
-                        _safe_send({"type": "error", "error": str(e)})
+                        if _is_auth_1008:
+                            _live_key_now = core.GEMINI_API_KEY
+                            _key_diag = (_live_key_now[:10] + '...') if _live_key_now else 'MISSING'
+                            _safe_send({"type": "error", "error": f"Gemini API key rejected (1008 auth). Key starts with: {_key_diag}. Rotate GEMINI_API_KEY in start.bat and restart Friday."})
+                        else:
+                            _safe_send({"type": "error", "error": _err_str})
                     else:
                         nxt = attempts[attempts.index((api_version, model_name)) + 1]
                         _vlog(f'trying fallback: model={nxt[1]} api={nxt[0] or "default(v1beta)"}')
