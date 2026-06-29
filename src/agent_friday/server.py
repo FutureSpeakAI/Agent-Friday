@@ -93,6 +93,10 @@ from agent_friday.routes.ownership import ownership_bp
 from agent_friday.routes.federation import federation_bp
 from agent_friday.routes.defederation import defederation_bp
 from agent_friday.routes.ext_security import ext_security_bp
+from agent_friday.routes.orchestrator import orchestrator_bp
+from agent_friday.routes.budget_policy import budget_bp
+from agent_friday.routes.compute import compute_bp
+from agent_friday.routes.work_log import work_log_bp
 
 for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, calendar_bp,
             messages_bp, wiki_bp, context_bp, creations_bp, fh_bp, code_bp, fs_bp, contacts_bp,
@@ -101,7 +105,11 @@ for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, cal
             projects_bp, creative_pipeline_bp, hooks_bp, scheduler_bp, costs_bp, ownership_bp,
             federation_bp,
             defederation_bp,
-            ext_security_bp):
+            ext_security_bp,
+            orchestrator_bp,
+            budget_bp,
+            compute_bp,
+            work_log_bp):
     app.register_blueprint(_bp)
 
 
