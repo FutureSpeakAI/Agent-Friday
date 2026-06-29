@@ -105,10 +105,11 @@ DEFAULT_PROVIDERS = [
         "models": [
             "gemini-2.5-flash", "gemini-2.5-pro",
             "gemini-nano-banana-pro", "gemini-nano-banana-2", "veo-3",
+            "lyria-clip", "lyria-pro",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
         ],
-        "capabilities": ["tools", "vision", "audio", "live", "image", "video"],
+        "capabilities": ["tools", "vision", "audio", "live", "image", "video", "music"],
         # Mixed-role provider — every model overrides via model_meta below.
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
         "cost_per_1k": {"gemini-3.1-flash-live-preview": 0.01},
@@ -131,6 +132,12 @@ DEFAULT_PROVIDERS = [
             # Video generation.
             "veo-3": {"label": "Google Veo (video)", "short": "Veo",
                        "roles": [ROLE_CREATIVE], "modalities": ["video"]},
+            # Music generation (Lyria 3). lyria-clip = clips ≤30s, lyria-pro = full songs.
+            # These friendly IDs are resolved to real API strings by music_engine.resolve_music_model().
+            "lyria-clip": {"label": "Lyria 3 Clip (music · ≤30s)", "short": "Lyria Clip",
+                            "roles": [ROLE_CREATIVE], "modalities": ["audio", "music"]},
+            "lyria-pro": {"label": "Lyria 3 Pro (music · full)", "short": "Lyria Pro",
+                           "roles": [ROLE_CREATIVE], "modalities": ["audio", "music"]},
             # Voice-only live models — only ever offered for the Voice role.
             "gemini-3.1-flash-live-preview": {
                 "label": "Gemini 3.1 Flash Live Preview", "short": "3.1 Live",
