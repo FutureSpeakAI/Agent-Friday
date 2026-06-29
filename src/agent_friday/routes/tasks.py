@@ -89,9 +89,45 @@ def list_tasks():
 @tasks_bp.route('/api/tasks/<task_id>')
 def get_task(task_id):
     task = _task_snapshot(task_id)
-    if not task:
+    if task:
+        return jsonify(task)
+
+    # Fall back to PROCESSES when the id isn't a TASK (e.g. scheduler orbs,
+    # vault-access orbs, and other process_register() entries).  Synthesise a
+    # task-shaped response so the notification detail panel can show steps/log.
+    import time as _t
+    with PROCESSES_LOCK:
+        proc = PROCESSES.get(task_id)
+        if proc:
+            proc = dict(proc)
+
+    if not proc:
         return jsonify({"error": "Task not found"}), 404
-    return jsonify(task)
+
+    # If the process is backed by a real task (e.g. agent_prompt scheduled
+    # jobs), follow the link and return that task's live log instead.
+    linked_tid = proc.get("task_id")
+    if linked_tid:
+        linked = _task_snapshot(linked_tid)
+        if linked:
+            return jsonify(linked)
+
+    now = _t.time()
+    started = proc.get("started", now)
+    ended = proc.get("ended")
+    steps = proc.get("steps") or []
+    proc_log = proc.get("log") or []
+    combined_log = proc_log + [f"[step] {s}" for s in steps if s not in proc_log]
+    return jsonify({
+        "task_id": task_id,
+        "name": proc.get("label") or proc.get("name") or "Process",
+        "status": proc.get("status", "running"),
+        "progress": proc.get("progress", 0),
+        "log": combined_log,
+        "result": proc.get("result"),
+        "elapsed": int((ended or now) - started),
+        "process": True,
+    })
 
 
 @tasks_bp.route('/api/tasks/<task_id>', methods=['DELETE'])
