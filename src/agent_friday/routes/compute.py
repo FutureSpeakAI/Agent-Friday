@@ -93,6 +93,29 @@ def active_jobs():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@compute_bp.route("/api/federation/capabilities/toggle", methods=["POST"])
+@login_required
+def toggle_capability():
+    data = request.get_json(silent=True) or {}
+    name = data.get("capability")
+    if not name:
+        return jsonify({"error": "capability required"}), 400
+    enabled = prov.toggle_capability(name)
+    return jsonify({"ok": True, "capability": name, "enabled": enabled})
+
+
+@compute_bp.route("/api/federation/capabilities/price", methods=["POST"])
+@login_required
+def set_capability_price():
+    data = request.get_json(silent=True) or {}
+    name = data.get("capability")
+    price = data.get("price_mψ_per_ktoken", 10)
+    if not name:
+        return jsonify({"error": "capability required"}), 400
+    ok = prov.set_capability_price(name, int(price))
+    return jsonify({"ok": ok})
+
+
 # ── Employer (send + track) ───────────────────────────────────────────────────
 
 @compute_bp.route("/api/compute/providers/<capability>", methods=["GET"])
