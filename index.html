@@ -5827,6 +5827,290 @@ function ContentPoliciesPanel(){
     {available.length===0&&<div style={{fontSize:11,color:'#666'}}>No packs found.</div>}
   </div>);
 }
+// ═══ ORCHESTRATOR PANEL ═══
+function OrchestratorPanel(){
+  const[workers,setWorkers]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[spawning,setSpawning]=useState(false);
+  const[form,setForm]=useState({prompt:'',task_type:'CUSTOM',adapter_type:'OLLAMA',budget_mψ:50000,deadline_seconds:300});
+  const[toast,setToast]=useState('');
+  const flash=t=>{setToast(t);setTimeout(()=>setToast(''),3000)};
+  const load=()=>{
+    apiFetch('/api/orchestrator/workers').then(r=>r.json()).then(d=>setWorkers(d.workers||[])).catch(()=>{}).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load();const id=setInterval(load,4000);return()=>clearInterval(id)},[]);
+  const cancel=async(id)=>{
+    try{await apiFetch('/api/orchestrator/cancel/'+id,{method:'POST'});flash('Worker cancelled');load();}
+    catch(e){flash('Error: '+e.message);}
+  };
+  const spawn=async()=>{
+    if(!form.prompt.trim())return;
+    setSpawning(true);
+    try{
+      const r=await apiFetch('/api/orchestrator/spawn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)});
+      const d=await r.json();
+      if(d.ok){flash('Worker spawned: '+d.worker_id.slice(0,8)+'…');setForm(f=>({...f,prompt:''}));load();}
+      else flash('Error: '+(d.error||'unknown'));
+    }catch(e){flash('Error: '+e.message);}
+    setSpawning(false);
+  };
+  const statusColor={PENDING:'#f59e0b',RUNNING:'#00d4ff',COMPLETED:'#00ff80',FAILED:'#ef4444',CANCELLED:'rgba(255,255,255,0.3)'};
+  const statusLabel={PENDING:'⏳ Pending',RUNNING:'⚡ Running',COMPLETED:'✓ Done',FAILED:'✗ Failed',CANCELLED:'◌ Cancelled'};
+  if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading workers…</div>;
+  return(<div>
+    {toast&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{toast}</div>}
+    <div className="settings-subtitle">Active Workers ({workers.length})</div>
+    {workers.length===0&&<div style={{fontSize:11,color:'#555',marginBottom:10,fontStyle:'italic'}}>No active workers.</div>}
+    {workers.map(w=>(
+      <div key={w.task_id} style={{padding:'7px 10px',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:6,marginBottom:5,display:'flex',alignItems:'center',gap:8}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,color:statusColor[w.status]||'#aaa',fontFamily:'JetBrains Mono',marginBottom:2}}>{statusLabel[w.status]||w.status}</div>
+          <div style={{fontSize:10,color:'rgba(255,255,255,0.5)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{w.prompt||'—'}</div>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:2,fontFamily:'JetBrains Mono'}}>{w.adapter_type} · {w.task_type} · {(w.budget_mψ||0).toLocaleString()}mψ</div>
+        </div>
+        {w.duration_seconds!=null&&<div style={{fontSize:9,color:'#f59e0b',fontFamily:'JetBrains Mono',flexShrink:0}}>{Math.round(w.duration_seconds)}s</div>}
+        {(w.status==='PENDING'||w.status==='RUNNING')&&<button className="settings-btn" style={{fontSize:9,padding:'2px 7px',borderColor:'rgba(239,68,68,0.4)',color:'#ef4444',flexShrink:0}} onClick={()=>cancel(w.task_id)}>Kill</button>}
+      </div>
+    ))}
+    <div className="settings-subtitle" style={{marginTop:12}}>Spawn Worker</div>
+    <textarea className="input" style={{width:'100%',height:52,resize:'none',fontSize:11,marginBottom:6,boxSizing:'border-box'}} value={form.prompt} onChange={e=>setForm(f=>({...f,prompt:e.target.value}))} placeholder="Task prompt…"/>
+    <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:6}}>
+      <select className="input" style={{flex:1,fontSize:11}} value={form.adapter_type} onChange={e=>setForm(f=>({...f,adapter_type:e.target.value}))}>
+        <option value="OLLAMA">Ollama (local LLM)</option>
+        <option value="PYTHON_SCRIPT">Python Script</option>
+        <option value="HTTP_API">HTTP API</option>
+      </select>
+      <select className="input" style={{flex:1,fontSize:11}} value={form.task_type} onChange={e=>setForm(f=>({...f,task_type:e.target.value}))}>
+        <option value="CUSTOM">Custom</option>
+        <option value="SUMMARIZE">Summarize</option>
+        <option value="CODE_GEN">Code Gen</option>
+        <option value="RESEARCH">Research</option>
+        <option value="ANALYSIS">Analysis</option>
+      </select>
+    </div>
+    <div style={{display:'flex',gap:5,marginBottom:8}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Budget (mψ)</div>
+        <input type="number" className="input" style={{width:'100%',fontSize:11}} value={form.budget_mψ} onChange={e=>setForm(f=>({...f,budget_mψ:parseInt(e.target.value)||50000}))} min="1000" step="10000"/>
+      </div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Deadline (s)</div>
+        <input type="number" className="input" style={{width:'100%',fontSize:11}} value={form.deadline_seconds} onChange={e=>setForm(f=>({...f,deadline_seconds:parseInt(e.target.value)||300}))} min="30" step="30"/>
+      </div>
+    </div>
+    <button className="settings-btn" onClick={spawn} disabled={spawning||!form.prompt.trim()} style={{width:'100%'}}>{spawning?'Spawning…':'Spawn Worker'}</button>
+  </div>);
+}
+
+// ═══ ORCHESTRATOR BUDGET PANEL ═══
+function OrchestratorBudgetPanel(){
+  const[budgets,setBudgets]=useState([]);
+  const[editing,setEditing]=useState(null);
+  const[editForm,setEditForm]=useState({monthly_cap_mψ:1000000,per_task_cap_mψ:100000,warn_pct:80});
+  const[loading,setLoading]=useState(true);
+  const[msg,setMsg]=useState('');
+  const flash=t=>{setMsg(t);setTimeout(()=>setMsg(''),3000)};
+  const load=()=>{
+    apiFetch('/api/budget/status').then(r=>r.json()).then(d=>setBudgets(d.budgets||[])).catch(()=>{}).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load()},[]);
+  const save=async()=>{
+    if(!editing)return;
+    try{
+      const r=await apiFetch('/api/budget/policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({workspace:editing,...editForm})});
+      const d=await r.json();
+      if(d.ok){flash('Policy saved for '+editing);setEditing(null);load();}
+      else flash('Error: '+(d.error||'unknown'));
+    }catch(e){flash('Error: '+e.message);}
+  };
+  const pct=(used,cap)=>cap>0?Math.min(100,Math.round(((used||0)/cap)*100)):0;
+  const barColor=(p)=>p>=100?'#ef4444':p>=80?'#f59e0b':'#00d4ff';
+  const fmtMψ=(n)=>{const v=n||0;return v>=1000000?(v/1000000).toFixed(1)+'M':(v>=1000?(v/1000).toFixed(0)+'K':String(v))+'mψ'};
+  if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading budgets…</div>;
+  return(<div>
+    {msg&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{msg}</div>}
+    {budgets.length===0&&<div style={{fontSize:11,color:'#555',fontStyle:'italic',marginBottom:10}}>No budget policies configured yet.</div>}
+    {budgets.map(b=>{
+      const p=pct(b.spent_mψ,b.monthly_cap_mψ||1000000);
+      const bc=barColor(p);
+      return(<div key={b.workspace} style={{marginBottom:10,padding:'8px 10px',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:6}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+          <div style={{fontSize:11,color:'#dde',fontFamily:'JetBrains Mono'}}>{b.workspace}</div>
+          <div style={{display:'flex',gap:5,alignItems:'center'}}>
+            <span style={{fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{fmtMψ(b.spent_mψ)} / {fmtMψ(b.monthly_cap_mψ||1000000)}</span>
+            <button className="settings-btn" style={{fontSize:9,padding:'1px 6px'}} onClick={()=>{setEditing(b.workspace);setEditForm({monthly_cap_mψ:b.monthly_cap_mψ||1000000,per_task_cap_mψ:b.per_task_cap_mψ||100000,warn_pct:b.warn_pct||80})}}>Edit</button>
+          </div>
+        </div>
+        <div style={{height:5,background:'rgba(255,255,255,0.06)',borderRadius:3}}>
+          <div style={{height:'100%',width:p+'%',background:bc,borderRadius:3,transition:'width 0.3s'}}/>
+        </div>
+        <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:3,fontFamily:'JetBrains Mono'}}>{p}% · {fmtMψ((b.monthly_cap_mψ||1000000)-(b.spent_mψ||0))} remaining · task cap {fmtMψ(b.per_task_cap_mψ||100000)}</div>
+      </div>);
+    })}
+    {editing&&(<div style={{marginTop:10,padding:'10px 12px',background:'rgba(0,212,255,0.04)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:6}}>
+      <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.05em',marginBottom:8}}>EDIT POLICY — {editing.toUpperCase()}</div>
+      <div style={{display:'flex',gap:5,marginBottom:6}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Monthly cap (mψ)</div>
+          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.monthly_cap_mψ} onChange={e=>setEditForm(f=>({...f,monthly_cap_mψ:parseInt(e.target.value)||1000000}))} min="10000" step="100000"/>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Per-task cap (mψ)</div>
+          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.per_task_cap_mψ} onChange={e=>setEditForm(f=>({...f,per_task_cap_mψ:parseInt(e.target.value)||100000}))} min="1000" step="10000"/>
+        </div>
+        <div style={{width:72}}>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',marginBottom:3,fontFamily:'JetBrains Mono'}}>Warn %</div>
+          <input type="number" className="input" style={{width:'100%',fontSize:11}} value={editForm.warn_pct} onChange={e=>setEditForm(f=>({...f,warn_pct:parseInt(e.target.value)||80}))} min="10" max="99"/>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:5}}>
+        <button className="settings-btn" onClick={save}>Save</button>
+        <button className="settings-btn" style={{opacity:0.6}} onClick={()=>setEditing(null)}>Cancel</button>
+      </div>
+    </div>)}
+    <button className="settings-btn" style={{marginTop:8}} onClick={()=>{setEditing('default');setEditForm({monthly_cap_mψ:1000000,per_task_cap_mψ:100000,warn_pct:80})}}>+ Add Policy</button>
+  </div>);
+}
+
+// ═══ CAPABILITY CARD PANEL ═══
+function CapabilityCardPanel(){
+  const[card,setCard]=useState(null);
+  const[jobs,setJobs]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[editing,setEditing]=useState(null);
+  const[priceInputs,setPriceInputs]=useState({});
+  const[msg,setMsg]=useState('');
+  const flash=t=>{setMsg(t);setTimeout(()=>setMsg(''),3000)};
+  const load=()=>{
+    Promise.all([
+      apiFetch('/api/federation/capabilities').then(r=>r.json()).catch(()=>({})),
+      apiFetch('/api/compute/jobs').then(r=>r.json()).catch(()=>({})),
+    ]).then(([cd,jd])=>{setCard(cd||null);setJobs(jd.jobs||[]);}).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load()},[]);
+  const toggle=async(name)=>{
+    try{
+      const r=await apiFetch('/api/federation/capabilities/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:name})});
+      const d=await r.json();if(d.ok){flash(name+' '+(d.enabled?'enabled':'disabled'));load();}
+      else flash('Error: '+(d.error||'unknown'));
+    }catch(e){flash('Error: '+e.message);}
+  };
+  const savePrice=async(name)=>{
+    const price=parseInt(priceInputs[name])||10;
+    try{
+      const r=await apiFetch('/api/federation/capabilities/price',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:name,price_mψ_per_ktoken:price})}); // pragma: allowlist secret
+      const d=await r.json();if(d.ok){flash('Price updated');setEditing(null);load();}
+      else flash('Error: '+(d.error||'unknown'));
+    }catch(e){flash('Error: '+e.message);}
+  };
+  const jobStatusColor={PENDING:'#f59e0b',RUNNING:'#00d4ff',COMPLETED:'#00ff80',FAILED:'#ef4444',REJECTED:'rgba(255,255,255,0.3)'};
+  if(loading)return<div style={{color:'#999',fontSize:12,padding:'8px 0'}}>Loading capabilities…</div>;
+  const caps=card&&Array.isArray(card.capabilities)?card.capabilities:[];
+  const specs=card&&card.compute_specs||{};
+  return(<div>
+    {msg&&<div style={{marginBottom:8,padding:'5px 8px',borderRadius:5,background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.2)',fontSize:11,color:'#00d4ff'}}>{msg}</div>}
+    {card&&<div style={{padding:'7px 10px',background:'rgba(124,58,237,0.06)',border:'1px solid rgba(124,58,237,0.2)',borderRadius:6,marginBottom:12,fontSize:10,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.5)'}}>
+      <span style={{color:'#b794f6',marginRight:8}}>Hardware:</span>
+      {specs.cpu_cores||'?'} CPU cores · {specs.ram_gb||'?'}GB RAM
+      {specs.gpu_model&&<span> · {specs.gpu_model}{specs.gpu_vram_gb?` (${specs.gpu_vram_gb}GB VRAM)`:''}</span>}
+    </div>}
+    <div className="settings-subtitle">What Friday Advertises to the Network</div>
+    {caps.length===0&&<div style={{fontSize:11,color:'#555',fontStyle:'italic',marginBottom:8}}>No capabilities configured.</div>}
+    {caps.map(c=>(
+      <div key={c.type} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,color:'#dde',fontFamily:'JetBrains Mono'}}>{c.type}</div>
+          <div style={{fontSize:9,color:'rgba(255,255,255,0.35)',marginTop:1}}>{c.description||''}</div>
+        </div>
+        {editing===c.type?(
+          <div style={{display:'flex',gap:4,alignItems:'center',flexShrink:0}}>
+            <input type="number" value={priceInputs[c.type]??c.price_mψ??10} min="1" step="100" onChange={e=>setPriceInputs(p=>({...p,[c.type]:e.target.value}))}
+              style={{width:70,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:5,padding:'3px 6px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:10}}/>
+            <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>mψ</span>
+            <button className="settings-btn" style={{fontSize:9,padding:'2px 6px'}} onClick={()=>savePrice(c.type)}>Save</button>
+            <button className="settings-btn" style={{fontSize:9,padding:'2px 6px',opacity:0.6}} onClick={()=>setEditing(null)}>×</button>
+          </div>
+        ):(
+          <div style={{display:'flex',gap:5,alignItems:'center',flexShrink:0}}>
+            <span style={{fontSize:9,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',cursor:'pointer',textDecoration:'underline dotted'}} onClick={()=>{setPriceInputs(p=>({...p,[c.type]:c.price_mψ??10}));setEditing(c.type)}}>{(c.price_mψ||10).toLocaleString()}mψ ✎</span>
+            <span className={'toggle-pill '+(c.enabled!==false?'on':'')} style={{fontSize:9,padding:'2px 8px'}} onClick={()=>toggle(c.type)}>{c.enabled!==false?'On':'Off'}</span>
+          </div>
+        )}
+      </div>
+    ))}
+    <div className="settings-subtitle" style={{marginTop:14}}>Incoming Federated Jobs</div>
+    {jobs.length===0&&<div style={{fontSize:11,color:'#555',fontStyle:'italic'}}>No federated jobs received.</div>}
+    {jobs.slice(0,10).map(j=>(
+      <div key={j.job_id} style={{padding:'5px 8px',background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:5,marginBottom:4,fontSize:10,fontFamily:'JetBrains Mono'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:1}}>
+          <span style={{color:jobStatusColor[j.status]||'#aaa'}}>{j.status}</span>
+          <span style={{color:'rgba(255,255,255,0.35)'}}>{j.capability}</span>
+        </div>
+        <div style={{color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{j.prompt||'—'}</div>
+      </div>
+    ))}
+  </div>);
+}
+
+// ═══ WORK LOG PANEL ═══
+function WorkLogPanel(){
+  const[entries,setEntries]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[expanded,setExpanded]=useState(null);
+  const[filter,setFilter]=useState({workspace:'',worker_type:'',since:'',until:''});
+  const[page,setPage]=useState(0);
+  const PAGE=20;
+  const load=()=>{
+    setLoading(true);
+    const active=Object.fromEntries(Object.entries(filter).filter(([,v])=>v));
+    const p=new URLSearchParams({limit:PAGE,offset:page*PAGE,...active}).toString();
+    apiFetch('/api/work-log?'+p).then(r=>r.json()).then(d=>setEntries(d.entries||[])).catch(()=>{}).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{load()},[page,JSON.stringify(filter)]);
+  const toggleExp=(id)=>setExpanded(e=>e===id?null:id);
+  const fmtDur=(s)=>s==null?'':s<60?Math.round(s)+'s':(Math.round(s/60)+'m '+Math.round(s%60)+'s');
+  const statusColor={SUCCESS:'#00ff80',FAILED:'#ef4444',CANCELLED:'rgba(255,255,255,0.3)',RUNNING:'#00d4ff',PENDING:'#f59e0b'};
+  return(<div>
+    <div style={{display:'flex',gap:5,marginBottom:10,flexWrap:'wrap'}}>
+      <input className="input" style={{flex:1,minWidth:80,fontSize:10}} value={filter.workspace} onChange={e=>setFilter(f=>({...f,workspace:e.target.value}))} placeholder="Workspace filter…"/>
+      <input className="input" style={{flex:1,minWidth:80,fontSize:10}} value={filter.worker_type} onChange={e=>setFilter(f=>({...f,worker_type:e.target.value}))} placeholder="Worker type…"/>
+      <input className="input" style={{flex:1,minWidth:90,fontSize:10}} type="date" value={filter.since} onChange={e=>setFilter(f=>({...f,since:e.target.value}))} title="Since date"/>
+      <input className="input" style={{flex:1,minWidth:90,fontSize:10}} type="date" value={filter.until} onChange={e=>setFilter(f=>({...f,until:e.target.value}))} title="Until date"/>
+      <button className="settings-btn" style={{fontSize:9}} onClick={()=>{setFilter({workspace:'',worker_type:'',since:'',until:''});setPage(0);}}>Clear</button>
+    </div>
+    {loading&&<div style={{fontSize:11,color:'#999',fontStyle:'italic'}}>Loading…</div>}
+    {!loading&&entries.length===0&&<div style={{fontSize:11,color:'#555',fontStyle:'italic'}}>No work log entries match these filters.</div>}
+    {entries.map(e=>(
+      <div key={e.work_id} style={{marginBottom:5,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:6,overflow:'hidden'}}>
+        <div onClick={()=>toggleExp(e.work_id)} style={{cursor:'pointer',padding:'7px 10px',display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:9,color:statusColor[e.status]||'#aaa',fontFamily:'JetBrains Mono',flexShrink:0,minWidth:52}}>{e.status||'—'}</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:10,color:'#ccc',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'JetBrains Mono'}}>{e.workspace||'default'} · {e.worker_type||'—'}</div>
+            <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:1}}>{e.started_at?new Date(e.started_at).toLocaleString():''}</div>
+          </div>
+          <div style={{flexShrink:0,textAlign:'right'}}>
+            {e.duration_seconds!=null&&<div style={{fontSize:9,color:'#f59e0b',fontFamily:'JetBrains Mono'}}>{fmtDur(e.duration_seconds)}</div>}
+            {e.cost_mψ!=null&&<div style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>{e.cost_mψ}mψ</div>}
+          </div>
+          <span style={{color:'rgba(255,255,255,0.3)',fontSize:10,flexShrink:0}}>{expanded===e.work_id?'▾':'▸'}</span>
+        </div>
+        {expanded===e.work_id&&<div style={{padding:'8px 12px 10px',borderTop:'1px solid rgba(255,255,255,0.05)',background:'rgba(0,0,0,0.3)'}}>
+          {e.adapter_type&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginBottom:3}}>Adapter: {e.adapter_type}</div>}
+          {e.tokens_used!=null&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginBottom:3}}>Tokens: {(e.tokens_used||0).toLocaleString()}</div>}
+          {e.quality_score!=null&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginBottom:3}}>Quality: {Math.round((e.quality_score||0)*100)}%</div>}
+          {e.artifacts&&e.artifacts.length>0&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginBottom:3}}>Artifacts: {e.artifacts.join(', ')}</div>}
+          {e.goal_ancestry&&e.goal_ancestry.length>0&&<div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginBottom:3}}>Goals: {e.goal_ancestry.join(' → ')}</div>}
+          {e.error&&<div style={{fontSize:10,color:'#ef4444',fontFamily:'JetBrains Mono',marginTop:4,padding:'4px 8px',background:'rgba(239,68,68,0.06)',borderRadius:4}}>Error: {e.error}</div>}
+        </div>}
+      </div>
+    ))}
+    <div style={{display:'flex',gap:6,justifyContent:'center',marginTop:8}}>
+      {page>0&&<button className="settings-btn" style={{fontSize:10}} onClick={()=>setPage(p=>p-1)}>← Prev</button>}
+      {entries.length===PAGE&&<button className="settings-btn" style={{fontSize:10}} onClick={()=>setPage(p=>p+1)}>Next →</button>}
+    </div>
+  </div>);
+}
+
 // ═══ FEDERATION PANEL (embedded in Settings) ═══
 function FederationPanel(){
   const[identity,setIdentity]=useState(null);const[peers,setPeers]=useState([]);
@@ -9117,7 +9401,7 @@ function App(){
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
-  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false,federation:false,defederation:false,content_policies:false,moderation:false});
+  const[openSections,setOpenSections]=useState({audio:true,ai_model:false,providers:false,services:false,hardware:false,distribution:false,advanced:false,appearance:false,security:false,about:false,voice_advanced:false,personality:false,intel:false,visual:false,camera:false,privacy:false,computer_control:false,scheduler:false,costs:false,hooks:false,federation:false,defederation:false,content_policies:false,moderation:false,orchestrator:false,orchestrator_budgets:false,capability_card:false,work_log:false});
   const toggleSection=(k)=>setOpenSections(s=>({...s,[k]:!s[k]}));
   // Mic / Speaker test state (used by the Audio & Voice section).
   const[micTestActive,setMicTestActive]=useState(false);
@@ -12130,6 +12414,62 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 </div>}
               </div>}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ORCHESTRATOR DASHBOARD ── active workers, kill, spawn. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.orchestrator?'open':''}`} onClick={()=>toggleSection('orchestrator')}>
+          <div className="settings-section-title" style={{margin:0}}>Orchestrator</div>
+          <span className="chev">{openSections.orchestrator?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.orchestrator?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Manage local sub-agent workers. Spawn tasks to Ollama, Python scripts, or HTTP APIs within your budget envelope.</div>
+            <OrchestratorPanel/>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ORCHESTRATOR BUDGETS ── per-workspace mψ spend bars and caps. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.orchestrator_budgets?'open':''}`} onClick={()=>toggleSection('orchestrator_budgets')}>
+          <div className="settings-section-title" style={{margin:0}}>Orchestrator Budgets</div>
+          <span className="chev">{openSections.orchestrator_budgets?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.orchestrator_budgets?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Per-workspace budget caps in milliPositrons (mψ). These limit orchestrated work spend independently of the USD cost meter above.</div>
+            <OrchestratorBudgetPanel/>
+          </div>
+        </div>
+      </div>
+
+      {/* ── CAPABILITY CARD ── what this Friday advertises + federated jobs. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.capability_card?'open':''}`} onClick={()=>toggleSection('capability_card')}>
+          <div className="settings-section-title" style={{margin:0}}>Capability Card</div>
+          <span className="chev">{openSections.capability_card?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.capability_card?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>What this Friday advertises to the federation network as a compute provider. Toggle capabilities on/off and set pricing in mψ.</div>
+            <CapabilityCardPanel/>
+          </div>
+        </div>
+      </div>
+
+      {/* ── WORK LOG ── audit trail of all orchestrated work. */}
+      <div className="settings-section" style={{padding:0}}>
+        <div className={`settings-coll-header ${openSections.work_log?'open':''}`} onClick={()=>toggleSection('work_log')}>
+          <div className="settings-section-title" style={{margin:0}}>Work Log</div>
+          <span className="chev">{openSections.work_log?'▾':'▸'}</span>
+        </div>
+        <div className={`settings-coll-body ${openSections.work_log?'open':''}`}>
+          <div style={{padding:'0 16px 14px'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:10,lineHeight:1.5}}>Audit trail of every orchestrated task — both local workers and federated compute jobs. Filterable by workspace, worker type, and date range.</div>
+            <WorkLogPanel/>
           </div>
         </div>
       </div>

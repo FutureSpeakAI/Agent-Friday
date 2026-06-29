@@ -127,7 +127,7 @@ def advertise_capabilities() -> dict:
         "type": "FridayCapabilityCard",
         "version": "1.0",
         "agent_pubkey": _own_pubkey(),
-        "capabilities": _CAPABILITIES,
+        "capabilities": [c for c in _CAPABILITIES if c.get("enabled", True)],
         "compute_specs": _compute_specs(),
         "availability": {
             "online": True,
@@ -349,3 +349,21 @@ def get_job_result(job_id: str) -> Optional[dict]:
         except Exception:
             pass
     return d
+
+
+def toggle_capability(name: str) -> bool:
+    """Toggle a capability on/off. Returns new enabled state."""
+    for cap in _CAPABILITIES:
+        if cap["type"] == name:
+            cap["enabled"] = not cap.get("enabled", True)
+            return cap["enabled"]
+    return False
+
+
+def set_capability_price(name: str, price_mψ_per_ktoken: int) -> bool:
+    """Set pricing for a capability. Returns True if found."""
+    for cap in _CAPABILITIES:
+        if cap["type"] == name:
+            cap["price_mψ"] = int(price_mψ_per_ktoken)
+            return True
+    return False
