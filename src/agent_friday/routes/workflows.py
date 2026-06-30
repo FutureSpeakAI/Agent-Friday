@@ -18,11 +18,14 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+
+_log = logging.getLogger("friday.routes.workflows")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -372,7 +375,7 @@ def outreach_draft():
             )
             draft_text = (getattr(resp, 'text', None) or '').strip()
     except Exception as e:
-        print(f"  [FRIDAY] outreach draft Gemini error: {e}")
+        _log.warning("outreach draft Gemini error: %s", e)
 
     if not draft_text:
         subject = f"Quick hello — {angle.title()}"
@@ -543,7 +546,7 @@ def content_draft():
             orb_label="📝 Content Draft", workspace='content',
         )
     except Exception as e:
-        print(f"  [FRIDAY] content draft generation error: {e}")
+        _log.warning("content draft generation error: %s", e)
 
     if not draft_text:
         draft_text = (

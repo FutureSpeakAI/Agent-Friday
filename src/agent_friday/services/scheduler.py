@@ -24,12 +24,15 @@ daemons) but leaves the store + dispatch callable for unit tests.
 """
 
 import json
+import logging
 import threading
 import time as _time
 import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+_log = logging.getLogger("friday.scheduler")
 
 import agent_friday.core as core
 from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_register, process_update
@@ -752,11 +755,11 @@ def _tick():
             if _is_due(rec, now):
                 dispatch(rec)
         except Exception as e:
-            print(f"  [scheduler:{rec.get('id')}] tick error: {e}")
+            _log.warning("tick error [%s]: %s", rec.get('id'), e)
 
 
 def _loop():
-    print("  [FRIDAY] Internal scheduler started.")
+    _log.info("Internal scheduler started.")
     _time.sleep(10)   # let the server finish coming up
     while True:
         try:

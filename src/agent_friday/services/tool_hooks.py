@@ -34,9 +34,12 @@ Guarantees
   toggle — they cannot be disabled from the UI.
 """
 
+import logging
 import threading
 import time as _time
 from dataclasses import dataclass, field
+
+_log = logging.getLogger("friday.tool_hooks")
 
 import agent_friday.core as core
 
@@ -231,10 +234,7 @@ def run_post_hooks(ctx: HookContext, result: str) -> str:
 
 
 def _log_hook_error(phase, name, err):
-    try:
-        print(f"  [tool-hook:{phase}:{name}] error (ignored): {err}")
-    except Exception:
-        pass
+    _log.warning("hook %s:%s error (ignored): %s", phase, name, err)
 
 
 # ── Introspection (for the Settings → Active Hooks list) ─────────────────────

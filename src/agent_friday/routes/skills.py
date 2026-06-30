@@ -104,6 +104,89 @@ def api_skillopt_state():
         return jsonify({"error": str(e), "skills": []})
 
 
+@skills_bp.route('/api/skills/reload', methods=['POST'])
+@login_required
+def api_skills_reload():
+    """Hot-reload the skill registry — rescan ~/.friday/skills/ and the bundled
+    skills directory without restarting the server. Because skill files are
+    YAML/Markdown (not Python modules), the scan happens on each agent call
+    already; this endpoint is a manual trigger that also resets the watcher
+    baseline so change-detection restarts from the current state."""
+    try:
+        import agent_friday.skill_registry as _skreg
+        skills = _skreg.list_skills()
+        # Notify the watcher (if running) to reset its mtime baseline
+        _skills_watcher_reset()
+        return jsonify({"ok": True, "skills_loaded": len(skills),
+                        "skills": [s.get("name", "") for s in skills]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Skill hot-reload watcher ──────────────────────────────────────────────────
+# Polls ~/.friday/skills/ every 10 s; emits a log line when the set of skill
+# files changes. Skills are already rescanned per agent call, so this watcher's
+# role is diagnostic: it surfaces additions/removals in the server log so
+# operators can confirm changes took effect without needing a restart.
+
+_SKILLS_WATCH_DIR = Path(os.path.expanduser("~")) / ".friday" / "skills"
+_skills_watcher_baseline: set = set()
+_skills_watcher_lock = threading.Lock()
+
+
+def _skills_watcher_reset():
+    """Reset the watcher's snapshot to the current directory state."""
+    try:
+        current = set(_SKILLS_WATCH_DIR.glob("**/*.yaml")) | \
+                  set(_SKILLS_WATCH_DIR.glob("**/*.md"))
+        with _skills_watcher_lock:
+            _skills_watcher_baseline.clear()
+            _skills_watcher_baseline.update(current)
+    except Exception:
+        pass
+
+
+def _skills_watcher_loop():
+    """Background thread: watch ~/.friday/skills/ for file changes."""
+    import logging as _lg
+    _wlog = _lg.getLogger("friday.skill_watcher")
+    _SKILLS_WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    _skills_watcher_reset()
+    _wlog.info("Skill hot-reload watcher started (polling %s every 10s).",
+               _SKILLS_WATCH_DIR)
+    while True:
+        try:
+            _time.sleep(10)
+            current = set(_SKILLS_WATCH_DIR.glob("**/*.yaml")) | \
+                      set(_SKILLS_WATCH_DIR.glob("**/*.md"))
+            with _skills_watcher_lock:
+                prev = set(_skills_watcher_baseline)
+                added = current - prev
+                removed = prev - current
+                if added or removed:
+                    _skills_watcher_baseline.clear()
+                    _skills_watcher_baseline.update(current)
+                    if added:
+                        _wlog.info("Skills added: %s",
+                                   [p.stem for p in sorted(added)])
+                    if removed:
+                        _wlog.info("Skills removed: %s",
+                                   [p.stem for p in sorted(removed)])
+        except Exception as _e:
+            _wlog.debug("skill watcher tick error: %s", _e)
+
+
+def start_skill_watcher():
+    """Launch the skill-watcher thread (idempotent — safe to call multiple times)."""
+    t = threading.Thread(target=_skills_watcher_loop, name="skill-watcher",
+                         daemon=True)
+    t.start()
+
+
+if not os.environ.get("FRIDAY_TESTING"):
+    start_skill_watcher()
+
+
 @skills_bp.route('/api/ollama/status')
 def ollama_status():
     """Return Ollama availability + installed models."""

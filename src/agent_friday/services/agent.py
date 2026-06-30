@@ -18,10 +18,13 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
+
+_log = logging.getLogger("friday.agent")
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
@@ -2149,9 +2152,9 @@ try:
     _pag.FAILSAFE = True   # moving mouse to top-left corner aborts any running call
     _pag.PAUSE = 0.05
     _HAS_PYAUTOGUI = True
-    print("  [FRIDAY] pyautogui loaded — computer control available")
+    _log.info("pyautogui loaded — computer control available")
 except ImportError:
-    print("  [FRIDAY] pyautogui not installed — computer control disabled. Run: pip install pyautogui")
+    _log.info("pyautogui not installed — computer control disabled. Run: pip install pyautogui")
 
 
 def _cc_persist(granted: bool):
@@ -2167,7 +2170,7 @@ def _cc_persist(granted: bool):
         elif _CC_PERM_FILE.exists():
             _CC_PERM_FILE.unlink()
     except Exception as _e:
-        print(f"  [FRIDAY] CC permission persist failed: {_e}")
+        _log.warning("CC permission persist failed: %s", _e)
 
 
 # Public-release hardening: Computer Control starts DISABLED on every launch.
@@ -3060,6 +3063,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
         traceback.print_exc()
         return f"Tool error ({name}): {e}"
 
+    # Cap result size to prevent token explosion in the model context window.
+    # The voice path already caps at 8 KB; apply the same limit uniformly here.
+    _TOOL_RESULT_MAX = 8192
+    if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
+        result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
+
     # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
     return _hooks.run_post_hooks(ctx, result)
 
@@ -3422,10 +3431,10 @@ def _mcp_boot() -> None:
         # the on_ready callback as each handshake completes.
         mgr.start_all(on_ready=_mcp_register_server_tools)
         enabled = [n for n, s in mgr.servers.items() if s.status != "disabled"]
-        print(f"  [FRIDAY] MCP client: {len(mgr.servers)} server(s) configured "
-              f"({len(enabled)} enabled), connecting async…")
+        _log.info("MCP client: %d server(s) configured (%d enabled), connecting async…",
+                  len(mgr.servers), len(enabled))
     except Exception as e:  # noqa: BLE001
-        print(f"  [mcp] boot failed: {e}")
+        _log.warning("MCP boot failed: %s", e)
 
 
 def _mcp_reload() -> dict:
@@ -3903,7 +3912,7 @@ def _start_kill_hotkey():
         from pynput import keyboard as _kb
 
         def _on_kill():
-            print("  [FRIDAY] KILL HOTKEY Ctrl+Shift+Q — computer control terminated")
+            _log.info("KILL HOTKEY Ctrl+Shift+Q — computer control terminated")
             _CC_PERMISSION.clear()
             _CC_KILL.set()
             _cc_persist(False)
@@ -3919,10 +3928,10 @@ def _start_kill_hotkey():
 
         hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill})
         hk.start()
-        print("  [FRIDAY] Global kill hotkey active: Ctrl+Shift+Q")
+        _log.info("Global kill hotkey active: Ctrl+Shift+Q")
     except ImportError:
-        print("  [FRIDAY] pynput not installed — kill hotkey unavailable. Run: pip install pynput")
+        _log.info("pynput not installed — kill hotkey unavailable. Run: pip install pynput")
     except Exception as e:
-        print(f"  [FRIDAY] Kill hotkey listener failed: {e}")
+        _log.warning("Kill hotkey listener failed: %s", e)
 
 

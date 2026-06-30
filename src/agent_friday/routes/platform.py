@@ -14,6 +14,8 @@ recipe/subagent runs delegate to the canonical background-task pipeline.
 """
 from __future__ import annotations
 
+import os
+
 from flask import Blueprint, jsonify, request
 
 from agent_friday.services import distributions, extension_security, hints, recipes, subagents
@@ -165,6 +167,35 @@ def api_provider_key(name):
     cs.hot_reload_provider_key(name, key)
     return jsonify({"ok": True, "provider": name, "status": "connected",
                     "protection": method})
+
+
+@platform_bp.route("/api/providers/<name>/reload-key", methods=["POST"])
+def api_provider_reload_key(name):
+    """Re-read the stored key for <name> from the credential store (or env) and
+    reinitialize the provider client — without requiring the caller to re-submit
+    the key value. Returns the provider's live status after reload.
+
+    Useful after rotating a key externally: the new value is already stored,
+    and this endpoint applies it to the running process without a restart.
+    """
+    from agent_friday.services import credential_store as cs
+    stored = cs.get_provider_key(name)
+    if stored:
+        cs.hot_reload_provider_key(name, stored)
+        return jsonify({"ok": True, "provider": name, "status": "connected",
+                        "source": "credential_store"})
+    # Fall back to env var (user may have rotated start.bat manually)
+    env_map = {"anthropic": "ANTHROPIC_API_KEY", "google-gemini": "GEMINI_API_KEY",
+               "openai": "OPENAI_API_KEY", "ollama": None}
+    env_key = env_map.get(name) or f"{name.upper().replace('-', '_')}_API_KEY"
+    env_val = (os.environ.get(env_key) or "").strip()
+    if env_val:
+        cs.hot_reload_provider_key(name, env_val)
+        return jsonify({"ok": True, "provider": name, "status": "connected",
+                        "source": "environment"})
+    return jsonify({"ok": False, "provider": name,
+                    "status": cs.provider_key_status(name),
+                    "message": f"No stored or env key found for provider '{name}'"}), 404
 
 
 # ── Capabilities (lock/unlock badges + graceful degradation) ─────────────────

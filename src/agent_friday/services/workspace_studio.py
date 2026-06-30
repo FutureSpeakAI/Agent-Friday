@@ -23,11 +23,14 @@ customization patch. She returns the patch in a fenced ```friday-customize
 """
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
 
 from agent_friday.core import FRIDAY_DIR
+
+_log = logging.getLogger("friday.workspace_studio")
 
 WS_STUDIO_DIR = FRIDAY_DIR / "workspace_studio"
 WS_STUDIO_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,7 +83,7 @@ def save_ws_doc(ws_id, doc):
     try:
         _ws_path(ws_id).write_text(json.dumps(doc, indent=2), encoding="utf-8")
     except Exception as e:  # pragma: no cover - disk failure
-        print(f"  [FRIDAY] workspace_studio save failed ({ws_id}): {e}")
+        _log.warning("workspace_studio save failed (%s): %s", ws_id, e)
     return doc
 
 
@@ -330,7 +333,7 @@ def workspace_chat_turn(ws_id, ws_label, message, system=None, generate=None):
     try:
         reply = generate(history, sys_prompt, f"🛠️ {ws_label} Studio") or ""
     except Exception as e:
-        print(f"  [FRIDAY] workspace_chat_turn generate error ({ws_id}): {e}")
+        _log.warning("workspace_chat_turn generate error (%s): %s", ws_id, e)
         reply = "I hit an error reaching the model. Try again in a moment."
 
     patch = _extract_patch(reply)

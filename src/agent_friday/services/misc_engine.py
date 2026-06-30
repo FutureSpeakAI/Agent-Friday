@@ -18,11 +18,14 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+
+_log = logging.getLogger("friday.misc_engine")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -566,7 +569,7 @@ def _save_outreach_log(log):
     try:
         OUTREACH_LOG_FILE.write_text(json.dumps(log, indent=2), encoding='utf-8')
     except Exception as e:
-        print(f"  [FRIDAY] outreach log save failed: {e}")
+        _log.warning("outreach log save failed: %s", e)
 
 
 def _career_ops_companies():
@@ -612,7 +615,7 @@ def _save_content_pipeline(pipe):
     try:
         CONTENT_PIPELINE_FILE.write_text(json.dumps(pipe, indent=2), encoding='utf-8')
     except Exception as e:
-        print(f"  [FRIDAY] content pipeline save failed: {e}")
+        _log.warning("content pipeline save failed: %s", e)
 
 
 # Curated starter templates so the Content studio is useful on day one. Each is
