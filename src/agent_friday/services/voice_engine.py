@@ -18,11 +18,14 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+
+_log = logging.getLogger("friday.voice_engine")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -380,8 +383,10 @@ def _voice_tool_run(name, args, send_client):
                     pass
             return res
     except Exception as e:
-        return f"(tool {name} error: {e})"
-    return f"(unknown tool {name})"
+        _log.error("Voice tool %r raised %s: %s", name, type(e).__name__, e, exc_info=True)
+        return (f"I ran into a problem using the {name} tool: {type(e).__name__}. "
+                f"Please try again, or ask me a different way.")
+    return f"I don't have a tool called '{name}' available in voice mode."
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -557,7 +562,7 @@ try:
     import agent_friday.notifications_engine as _notif_engine
 except Exception as _e:
     _notif_engine = None
-    print(f"  [FRIDAY] WARNING: notifications_engine unavailable: {_e}")
+    _log.warning("notifications_engine unavailable: %s", _e)
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -290,6 +290,13 @@ class VaultAccessControl:
                 else:
                     p = p.parent / "access-log.jsonl"
                 p.parent.mkdir(parents=True, exist_ok=True)
+                # Rotate when the log exceeds 50 MB to prevent unbounded disk fill.
+                _ACCESS_LOG_MAX = 50 * 1024 * 1024
+                if p.exists() and p.stat().st_size > _ACCESS_LOG_MAX:
+                    try:
+                        p.rename(p.with_suffix(".1.jsonl"))
+                    except Exception:
+                        pass
                 with open(p, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")
             except Exception:

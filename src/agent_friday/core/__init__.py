@@ -20,16 +20,26 @@ import re
 import html
 import time as _time
 import calendar
+import logging
+import logging.handlers
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
+
+# ── Structured logging ──────────────────────────────────────────
+# Module-level logger; file handler is attached below once FRIDAY_DIR is known.
+# Using the "friday" hierarchy means all sub-loggers (friday.agent, friday.vault,
+# etc.) propagate here and land in the same friday.log file automatically.
+_log = logging.getLogger("friday")
 
 # ── Frozen (PyInstaller) resource root ──────────────────────────
 # When bundled, data files (index.html, static/, assets/, SELF.md, skills/…)
 # live under sys._MEIPASS. Resolve resource paths against it and chdir there so
 # the many CWD-relative send_from_directory('.', …) / ('static', …) calls work.
+# NOTE: this file lives at src/agent_friday/core/__init__.py; .parent.parent gives
+# src/agent_friday/ which is the package root where SELF.md and static/ live.
 _RES_DIR = (Path(getattr(sys, "_MEIPASS")) if getattr(sys, "frozen", False)
-            else Path(__file__).resolve().parent)
+            else Path(__file__).resolve().parent.parent)
 if getattr(sys, "frozen", False):
     try:
         os.chdir(_RES_DIR)
@@ -48,7 +58,7 @@ except Exception as _vac_err:  # pragma: no cover
     VaultAccessControl = None
     class VaultAccessDenied(Exception):
         pass
-    print(f"  [FRIDAY] WARNING: vault_access unavailable ({_vac_err}); vault gating disabled.")
+    _log.warning("vault_access unavailable (%s); vault gating disabled.", _vac_err)
 
 # Cognitive Memory — versioned, hash-chained memory ledger.
 try:
@@ -56,7 +66,7 @@ try:
     _HAS_COGMEM = True
 except Exception as _cm_err:
     _HAS_COGMEM = False
-    print(f"  [FRIDAY] WARNING: cognitive_memory unavailable ({_cm_err})")
+    _log.warning("cognitive_memory unavailable (%s)", _cm_err)
 
 # Dynamic Privilege Rings — zero-trust per-call elevation.
 try:
@@ -64,7 +74,7 @@ try:
     _HAS_DYNRINGS = True
 except Exception as _dr_err:
     _HAS_DYNRINGS = False
-    print(f"  [FRIDAY] WARNING: dynamic_rings unavailable ({_dr_err})")
+    _log.warning("dynamic_rings unavailable (%s)", _dr_err)
 
 # Proof of Integrity — AI Bill of Integrity manifest.
 try:
@@ -72,7 +82,7 @@ try:
     _HAS_INTEGRITY = True
 except Exception as _poi_err:
     _HAS_INTEGRITY = False
-    print(f"  [FRIDAY] WARNING: proof_of_integrity unavailable ({_poi_err})")
+    _log.warning("proof_of_integrity unavailable (%s)", _poi_err)
 
 # Trust systems — split into human contacts (PeopleGraph) and media/agent
 # reputation (SourceTrustGraph) + the signed Federation attestation protocol.
@@ -83,7 +93,7 @@ try:
     _HAS_TRUST_GRAPHS = True
 except Exception as _tg_err:
     _HAS_TRUST_GRAPHS = False
-    print(f"  [FRIDAY] WARNING: trust graphs unavailable ({_tg_err})")
+    _log.warning("trust graphs unavailable (%s)", _tg_err)
 
 # Behavioral anomaly detection — internal-governance monitor that scores each
 # agent tool-use loop against the user's stated intent (inspired by Adrian).
@@ -92,7 +102,7 @@ try:
     _HAS_BEHAVIORAL_MONITOR = True
 except Exception as _bm_err:
     _HAS_BEHAVIORAL_MONITOR = False
-    print(f"  [FRIDAY] WARNING: behavioral_monitor unavailable ({_bm_err})")
+    _log.warning("behavioral_monitor unavailable (%s)", _bm_err)
 
 # Prevent console windows from flashing when spawning subprocesses on Windows.
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -102,7 +112,7 @@ try:
     _HAS_SOCK = True
 except ImportError:
     _HAS_SOCK = False
-    print("  [FRIDAY] WARNING: flask-sock not installed. /ws/live disabled.")
+    _log.warning("flask-sock not installed — /ws/live disabled.")
 
 app = Flask(__name__, static_folder=None)
 
@@ -132,11 +142,13 @@ def _load_or_create_secret():
                 return existing
         s = secrets.token_hex(32)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(s, encoding="utf-8")
+        tmp = p.with_suffix('.tmp')
+        tmp.write_text(s, encoding="utf-8")
         try:
-            os.chmod(p, 0o600)
+            os.chmod(tmp, 0o600)  # restrict BEFORE rename so it's never world-readable
         except Exception:
             pass
+        tmp.replace(p)  # atomic — no TOCTOU window
         return s
     except Exception:
         # Last resort: ephemeral per-process secret (logs everyone out on restart,
@@ -203,11 +215,27 @@ _VAULT_ENCRYPTION_STATE: dict = {
     "warning": "",  # non-empty = passphrase unset (advisory)
 }
 
-# Simple in-memory login throttle (no extra deps): per-IP failed-attempt window.
-_LOGIN_ATTEMPTS = {}            # remote_addr -> (count, window_start_ts)
+# Login throttle — per-IP failed-attempt window, persisted in SQLite so it
+# survives server restarts (prevents brute-force via restart-cycle).
 _LOGIN_LOCK = threading.Lock()
 _LOGIN_MAX = 8                  # attempts allowed per window
 _LOGIN_WINDOW = 300            # seconds
+_THROTTLE_DB_PATH = None       # set once FRIDAY_DIR is known (below)
+
+def _get_throttle_db():
+    """Return a connection to the login throttle DB, creating the table if needed."""
+    import sqlite3 as _sq3
+    global _THROTTLE_DB_PATH
+    if _THROTTLE_DB_PATH is None:
+        _THROTTLE_DB_PATH = FRIDAY_DIR / "login_throttle.db"
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    conn = _sq3.connect(str(_THROTTLE_DB_PATH), timeout=5)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS login_attempts "
+        "(ip TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start REAL NOT NULL)"
+    )
+    conn.commit()
+    return conn
 
 # Loopback addresses that are always auto-authenticated. Requests from the
 # user's own machine (direct HTTP or WebSocket) skip the login screen; only
@@ -232,24 +260,66 @@ def _loopback_trusted():
     return FRIDAY_TRUST_LOOPBACK and _is_local_request()
 
 def _login_attempt_ok(ip):
-    """False if this IP has exceeded the failed-login budget for the window."""
-    with _LOGIN_LOCK:
-        cnt, first = _LOGIN_ATTEMPTS.get(ip, (0, _time.time()))
-        if _time.time() - first > _LOGIN_WINDOW:
-            cnt, first = 0, _time.time()
-            _LOGIN_ATTEMPTS[ip] = (cnt, first)
-        return cnt < _LOGIN_MAX
+    """False if this IP has exceeded the failed-login budget for the window.
+
+    State is persisted in SQLite so throttle windows survive server restarts,
+    giving real brute-force protection regardless of process lifecycle.
+    """
+    try:
+        with _LOGIN_LOCK:
+            conn = _get_throttle_db()
+            row = conn.execute(
+                "SELECT count, window_start FROM login_attempts WHERE ip=?", (ip,)
+            ).fetchone()
+            if row is None:
+                conn.close()
+                return True
+            cnt, first = row
+            if _time.time() - first > _LOGIN_WINDOW:
+                conn.execute("DELETE FROM login_attempts WHERE ip=?", (ip,))
+                conn.commit()
+                conn.close()
+                return True
+            conn.close()
+            return cnt < _LOGIN_MAX
+    except Exception:
+        return True  # fail open on DB error so a corrupt DB doesn't lock everyone out
 
 def _login_attempt_fail(ip):
-    with _LOGIN_LOCK:
-        cnt, first = _LOGIN_ATTEMPTS.get(ip, (0, _time.time()))
-        if _time.time() - first > _LOGIN_WINDOW:
-            cnt, first = 0, _time.time()
-        _LOGIN_ATTEMPTS[ip] = (cnt + 1, first)
+    try:
+        with _LOGIN_LOCK:
+            conn = _get_throttle_db()
+            now = _time.time()
+            row = conn.execute(
+                "SELECT count, window_start FROM login_attempts WHERE ip=?", (ip,)
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO login_attempts (ip, count, window_start) VALUES (?,?,?)",
+                    (ip, 1, now)
+                )
+            else:
+                cnt, first = row
+                if now - first > _LOGIN_WINDOW:
+                    cnt, first = 0, now
+                conn.execute(
+                    "INSERT OR REPLACE INTO login_attempts (ip, count, window_start) VALUES (?,?,?)",
+                    (ip, cnt + 1, first)
+                )
+            conn.commit()
+            conn.close()
+    except Exception:
+        pass
 
 def _login_attempt_reset(ip):
-    with _LOGIN_LOCK:
-        _LOGIN_ATTEMPTS.pop(ip, None)
+    try:
+        with _LOGIN_LOCK:
+            conn = _get_throttle_db()
+            conn.execute("DELETE FROM login_attempts WHERE ip=?", (ip,))
+            conn.commit()
+            conn.close()
+    except Exception:
+        pass
 
 def login_required(f):
     @wraps(f)
@@ -383,6 +453,41 @@ CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 DAILY_CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# ── File logging setup ─────────────────────────────────────────
+# Now that FRIDAY_DIR is known, wire the rotating file handler. This runs once
+# at import time. Using pythonw (no console) makes this the only debug output.
+def _setup_friday_logging() -> None:
+    root = logging.getLogger("friday")
+    if root.handlers:
+        return  # already configured (e.g. tests that import core twice)
+    root.setLevel(logging.DEBUG)
+    try:
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            FRIDAY_DIR / "friday.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        ))
+        root.addHandler(fh)
+    except Exception:
+        pass  # never crash the server because of a logging setup failure
+    # Always mirror WARNING+ to stderr so console launches still show issues.
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setLevel(logging.WARNING)
+    sh.setFormatter(logging.Formatter("[FRIDAY] %(levelname)s %(message)s"))
+    root.addHandler(sh)
+
+
+if not _TESTING:
+    _setup_friday_logging()
+
+
 # ── Env bootstrap from launch scripts ─────────────────────────
 # The API keys live in start.bat / launch_now.bat as `set NAME=VALUE` lines. A
 # server launched THROUGH those scripts inherits them — but one started any other
@@ -394,7 +499,7 @@ DAILY_CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
 # environment. os.environ ALWAYS wins (setdefault), so a real env var is never
 # overridden. Best-effort and silent about values — never logs a secret.
 def _bootstrap_env_from_launch_scripts():
-    repo = Path(__file__).resolve().parents[2]  # core.py is src/agent_friday/core.py → repo root
+    repo = Path(__file__).resolve().parents[3]  # __init__.py is src/agent_friday/core/__init__.py → repo root
     # Later files do not override earlier ones (setdefault); start.bat is primary.
     candidates = ['start.bat', 'launch_now.bat', 'friday_startup.bat']
     _set_re = re.compile(r'^\s*set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^"\r\n]*)"?\s*$',
@@ -886,6 +991,20 @@ def process_remove(pid):
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
 
+# In-memory settings cache — avoids hammering the filesystem on every API call.
+# _load_settings_raw() returns a cached copy when the on-disk value is ≤2 s old;
+# _save_settings() invalidates the cache immediately after writing so the next
+# call always returns the freshly persisted value.
+_SETTINGS_CACHE: dict = {"value": None, "ts": 0.0}
+_SETTINGS_CACHE_TTL: float = 2.0  # seconds
+_SETTINGS_CACHE_LOCK = threading.Lock()
+
+
+def _invalidate_settings_cache() -> None:
+    with _SETTINGS_CACHE_LOCK:
+        _SETTINGS_CACHE["value"] = None
+        _SETTINGS_CACHE["ts"] = 0.0
+
 DEFAULT_AGENT_PERSONALITY = (
     "You are Friday — a calm, perceptive AI partner. "
     "You speak with quiet confidence and dry warmth; you favor signal over noise. "
@@ -1211,7 +1330,17 @@ def _sync_capability_routing(settings, changed=None):
 
 
 def _load_settings_raw():
-    """Load agent settings exactly as persisted (no offline overlay)."""
+    """Load agent settings exactly as persisted (no offline overlay).
+
+    Results are cached for up to _SETTINGS_CACHE_TTL seconds so rapid
+    sequential API calls don't hammer the filesystem. The cache is
+    invalidated by _save_settings() and _invalidate_settings_cache().
+    """
+    with _SETTINGS_CACHE_LOCK:
+        if (_SETTINGS_CACHE["value"] is not None
+                and (_time.time() - _SETTINGS_CACHE["ts"]) < _SETTINGS_CACHE_TTL):
+            return dict(_SETTINGS_CACHE["value"])
+
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if not SETTINGS_FILE.exists():
         seed = dict(DEFAULT_SETTINGS)
@@ -1223,6 +1352,9 @@ def _load_settings_raw():
             SETTINGS_FILE.write_text(json.dumps(seed, indent=2), encoding='utf-8')
         except Exception:
             pass
+        with _SETTINGS_CACHE_LOCK:
+            _SETTINGS_CACHE["value"] = seed
+            _SETTINGS_CACHE["ts"] = _time.time()
         return seed
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
@@ -1230,6 +1362,9 @@ def _load_settings_raw():
         merged = dict(DEFAULT_SETTINGS)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _sync_capability_routing(merged)
+        with _SETTINGS_CACHE_LOCK:
+            _SETTINGS_CACHE["value"] = merged
+            _SETTINGS_CACHE["ts"] = _time.time()
         return merged
     except Exception:
         return dict(DEFAULT_SETTINGS)
@@ -1248,6 +1383,9 @@ def _load_settings():
 
 def _save_settings(data):
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    # Invalidate the cache first so any concurrent reader re-loads from disk
+    # once we're done writing, not from the stale pre-write snapshot.
+    _invalidate_settings_cache()
     # Read existing file first to preserve any keys not in DEFAULT_SETTINGS
     existing = {}
     if SETTINGS_FILE.exists():
@@ -1262,7 +1400,16 @@ def _save_settings(data):
     # Reconcile capability_routing ⇄ flat *_model keys before persisting so the
     # wizard, Settings UI and router never disagree about the active models.
     _sync_capability_routing(merged, data)
-    SETTINGS_FILE.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+    # Atomic write: write to a sibling temp file, fsync, then rename so a crash
+    # mid-write never leaves a half-written (corrupt) settings.json.
+    _tmp = SETTINGS_FILE.with_suffix('.tmp')
+    _tmp.write_text(json.dumps(merged, indent=2), encoding='utf-8')
+    try:
+        with open(_tmp, 'rb') as _f:
+            os.fsync(_f.fileno())
+    except Exception:
+        pass
+    _tmp.replace(SETTINGS_FILE)
     return merged
 
 
@@ -1642,5 +1789,76 @@ def _is_existing_install() -> bool:
     if (FRIDAY_DIR / "personality.json").exists():
         return True
     return False
+
+
+# ══════════════════════════════════════════════════════════════
+#  FEATURE FLAGS  (replaces scattered try/except blocks)
+# ══════════════════════════════════════════════════════════════
+
+class FeatureFlags:
+    """Detect which optional subsystems are available at runtime.
+
+    Call FeatureFlags.detect() once at startup; the result is exposed via
+    GET /api/health so the UI can show which features are active without
+    each route independently probing for optional dependencies.
+    """
+    __slots__ = (
+        "vault_access", "cognitive_memory", "dynamic_rings", "proof_of_integrity",
+        "trust_graphs", "behavioral_monitor", "flask_sock", "chromadb",
+        "local_voice", "nemo_voice", "ollama", "anthropic_sdk", "google_genai",
+        "skill_hot_reload",
+    )
+
+    def __init__(self, **kwargs):
+        for slot in self.__slots__:
+            setattr(self, slot, kwargs.get(slot, False))
+
+    @classmethod
+    def detect(cls) -> "FeatureFlags":
+        """Probe each optional subsystem and return a populated FeatureFlags."""
+        flags: dict = {}
+
+        def _probe(key, mod, *attrs):
+            try:
+                import importlib
+                m = importlib.import_module(mod)
+                flags[key] = all(hasattr(m, a) for a in attrs) if attrs else True
+            except Exception:
+                flags[key] = False
+
+        _probe("vault_access",       "agent_friday.privacy.vault_access",       "Tier", "VaultAccessControl")
+        _probe("cognitive_memory",   "agent_friday.cognitive_memory",            "get_cognitive_memory")
+        _probe("dynamic_rings",      "agent_friday.dynamic_rings",               "get_privilege_manager")
+        _probe("proof_of_integrity", "agent_friday.governance.proof_of_integrity", "get_integrity_engine")
+        _probe("trust_graphs",       "agent_friday.people_graph",               "get_people_graph")
+        _probe("behavioral_monitor", "agent_friday.governance.behavioral_monitor", "get_behavioral_monitor")
+        _probe("flask_sock",         "flask_sock",                               "Sock")
+        _probe("local_voice",        "agent_friday.services.local_voice",        "LocalVoiceEngine")
+        _probe("nemo_voice",         "agent_friday.services.nemo_voice",         "NeMoVoiceEngine")
+        _probe("anthropic_sdk",      "anthropic",                                "Anthropic")
+        _probe("google_genai",       "google.genai",                             "Client")
+        _probe("skill_hot_reload",   "importlib",                                "reload")
+
+        try:
+            import chromadb  # noqa: F401
+            flags["chromadb"] = True
+        except Exception:
+            flags["chromadb"] = False
+
+        try:
+            import requests as _r  # type: ignore
+            _r.get("http://localhost:11434/api/tags", timeout=1)
+            flags["ollama"] = True
+        except Exception:
+            flags["ollama"] = False
+
+        return cls(**flags)
+
+    def as_dict(self) -> dict:
+        return {slot: getattr(self, slot) for slot in self.__slots__}
+
+
+# Singleton — detected once at module-load; refresh via FeatureFlags.detect()
+FEATURE_FLAGS: FeatureFlags = FeatureFlags.detect()
 
 

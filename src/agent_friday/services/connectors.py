@@ -44,7 +44,10 @@ import sys
 import subprocess
 import threading
 import time as _time
+import logging
 from pathlib import Path
+
+_log = logging.getLogger("friday.connectors")
 
 HOME = Path(os.path.expanduser("~"))
 FRIDAY_DIR = HOME / ".friday"
@@ -699,7 +702,7 @@ def monitor_connector_health() -> dict:
 
 def connector_health_monitor_loop(interval: float = 120.0):
     """Background daemon: tick monitor_connector_health() forever."""
-    print("  [FRIDAY] Connector health monitor started.")
+    _log.info("Connector health monitor started.")
     _time.sleep(12)   # let MCP servers finish their first handshake
     # Prime last-seen so the first real tick doesn't fire spurious "down" alerts.
     try:

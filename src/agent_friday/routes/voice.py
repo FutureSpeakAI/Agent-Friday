@@ -13,6 +13,9 @@ import asyncio
 import re
 import html
 import calendar
+import logging
+
+_log = logging.getLogger("friday.routes.voice")
 import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
@@ -40,6 +43,7 @@ from agent_friday.core import (
     _loopback_trusted,
     _network_status,
     _ollama_available,
+    login_required,
     sock,
 )  # noqa: E501
 from agent_friday.services.agent import (
@@ -271,6 +275,98 @@ def voice_session_info():
     plumbing and event contract are identical on both paths."""
     info = _resolve_voice_engine()
     return jsonify({"status": "ok", **info})
+
+
+@voice_bp.route('/api/voice/setup/status')
+@login_required
+def voice_setup_status():
+    """Return voice setup readiness for the first-run wizard.
+
+    Response shape::
+
+        {
+          "ready": bool,           # true = voice is fully configured and working
+          "engine": "local"|"gemini"|"...",
+          "steps": [
+            {"id": "deps", "label": "Dependencies", "status": "ok"|"missing", "detail": "..."},
+            {"id": "models", "label": "ASR / TTS Models", "status": "ok"|"needs_download", "detail": "..."},
+            {"id": "mic", "label": "Microphone", "status": "ok"|"unknown", "detail": "..."},
+            {"id": "key", "label": "API Key", "status": "ok"|"missing", "detail": "..."},
+          ]
+        }
+    """
+    steps = []
+    engine_info = {}
+    try:
+        engine_info = _resolve_voice_engine()
+    except Exception as _e:
+        _log.warning("voice_setup_status: _resolve_voice_engine failed: %s", _e)
+
+    resolved = engine_info.get("engine", "local")
+
+    if resolved in ("local", "local-gpu"):
+        try:
+            from agent_friday.services.local_voice import local_voice_health
+            lv = local_voice_health()
+            steps.append({
+                "id": "deps",
+                "label": "Python dependencies (faster-whisper / piper)",
+                "status": lv.get("status", "unknown"),
+                "detail": lv.get("detail", ""),
+            })
+            model_ok = lv.get("status") not in ("unavailable", "needs_download")
+            steps.append({
+                "id": "models",
+                "label": "ASR / TTS model files (~300 MB, one-time download)",
+                "status": "ok" if model_ok else "needs_download",
+                "detail": lv.get("detail", "Models download on first voice session."),
+            })
+        except Exception as _e:
+            steps.append({"id": "deps", "label": "Local voice deps",
+                          "status": "unavailable", "detail": str(_e)})
+        steps.append({"id": "mic", "label": "Microphone",
+                      "status": "unknown",
+                      "detail": "Click the mic button to test — browser will prompt for permission."})
+    else:
+        # Cloud / Gemini voice — needs API key
+        from agent_friday.core import GEMINI_API_KEY
+        key_ok = bool(GEMINI_API_KEY)
+        steps.append({"id": "key", "label": "Gemini API Key",
+                      "status": "ok" if key_ok else "missing",
+                      "detail": "Set via Settings → Providers → Google Gemini" if not key_ok else ""})
+        steps.append({"id": "mic", "label": "Microphone",
+                      "status": "unknown",
+                      "detail": "Browser will prompt for mic permission on first session."})
+
+    all_ok = all(s["status"] == "ok" for s in steps if s["status"] != "unknown")
+    return jsonify({"ready": all_ok, "engine": resolved, "steps": steps,
+                    "engine_info": engine_info})
+
+
+@voice_bp.route('/api/voice/setup/test', methods=['POST'])
+@login_required
+def voice_setup_test():
+    """Run a short TTS test utterance and return the audio as base64 PCM16.
+    The wizard plays this back to confirm the TTS pipeline is working end-to-end.
+    """
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "Hello, I'm Friday. Voice setup is complete.").strip()
+    try:
+        from agent_friday.services.voice_engine import _synthesize_tts_wav
+        wav_bytes = _synthesize_tts_wav(text, allow_local=True)
+        import base64 as _b64
+        return jsonify({
+            "status": "ok",
+            "audio_b64": _b64.b64encode(wav_bytes).decode() if wav_bytes else None,
+            "format": "wav",
+        })
+    except Exception as e:
+        _log.warning("voice setup test TTS failed: %s", e, exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": f"TTS synthesis failed: {type(e).__name__} — {e}. "
+                       f"Check that voice dependencies are installed.",
+        }), 500
 
 
 if sock is not None:
@@ -982,7 +1078,9 @@ if sock is not None:
                                 result = await asyncio.to_thread(
                                     _voice_tool_run, fname, fargs, _safe_send)
                             except Exception as _te:
-                                result = f"(tool {fname} failed: {_te})"
+                                _log.error("Voice tool %r failed: %s", fname, _te, exc_info=True)
+                                result = (f"I hit a problem with the {fname} tool "
+                                          f"({type(_te).__name__}). Please try again.")
                             if not isinstance(result, str):
                                 result = str(result)
                             result = result[:8000]

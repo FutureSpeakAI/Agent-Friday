@@ -1,7 +1,25 @@
 ﻿"""
-Model Router — upstream fork that decides whether a request goes to
-Ollama (local) or Anthropic (cloud). Default mode is "cloud_only",
-meaning this module is a no-op unless the user explicitly enables it.
+routing/model_router.py — ROUTING LAYER (WHERE to send a request).
+
+This module decides which provider (Anthropic / Ollama / OpenAI-compatible)
+and which model should handle a given request, based on:
+  • The user's model_routing.mode setting (cloud_only / smart / local_preferred / local_only)
+  • The request's vault tier (TIER_2/3 → local only)
+  • The current network state (offline → local only)
+  • Task-type overrides in model_routing.task_overrides
+
+It does NOT execute any model calls.  Execution happens in:
+  services/model_router.py — _call_claude, _call_ollama, _call_openai, _generate_text
+
+Canonical imports for callers::
+
+    from agent_friday.routing.model_router import get_router, provider_family
+    from agent_friday.routing.model_router import anthropic_to_openai_tools
+
+Do NOT import `get_router` or `provider_family` from both modules — prefer
+this file (routing/) when you need routing decisions; services/model_router.py
+re-exports provider_family for backwards compatibility but the canonical source
+is always here.
 """
 
 import threading

@@ -18,11 +18,14 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+
+_log = logging.getLogger("friday.news_engine")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -1266,7 +1269,7 @@ def _news_archiver_tick():
 def _news_archiver_loop():
     """Background thread: archive new articles every ~5 min, matching the RSS
     cache TTL so a tick reuses freshly-cached feeds instead of re-pulling."""
-    print("  [FRIDAY] News archiver started.")
+    _log.info("News archiver started.")
     _time.sleep(12)  # let the server finish coming up
     while True:
         try:

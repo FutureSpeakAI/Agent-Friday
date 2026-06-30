@@ -7,8 +7,24 @@ FutureSpeak.AI · Asimov's Mind
 /api/economy/*      — wallet, transfers, leaderboard
 /api/moderation/*   — content scanning, policy
 """
+import logging
+
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
+
+_log = logging.getLogger("friday.routes.federation")
+
+# Settings keys that are safe to sync across devices (no secrets, no PII).
+# API keys, vault content, and personally identifiable data are never synced.
+_SYNC_SAFE_KEYS = frozenset({
+    "agent_name", "communication_style", "temperature", "voice_engine",
+    "voice_temperature", "voice_silence_ms", "voice_interruption_mode",
+    "voice_affective", "voice_proactive", "voice_style_prompt",
+    "voice_tools", "stream_responses", "cite_sources",
+    "model_routing", "capability_routing",
+    "theme", "density", "tts_voice", "voice_language",
+    "show_all_workspaces", "workspace_order",
+})
 from agent_friday.services import federation as fed
 from agent_friday.services import federation_transport as transport
 from agent_friday.services import marketplace
@@ -96,6 +112,59 @@ def federation_inbox():
     # Dispatch to handler
     response_payload = _handle_federation_message(msg_type, payload, result["sender_pubkey"])
     return jsonify({"ok": True, "msg_type": msg_type, "response": response_payload})
+
+
+@federation_bp.route("/api/federation/settings/sync", methods=["POST"])
+@login_required
+def federation_settings_sync():
+    """Push this device's non-sensitive settings to one or all known peers.
+
+    Body (JSON)::
+
+        {
+          "peer_id": "<agent_id>",  # optional; omit to broadcast to all peers
+          "keys": ["voice_engine", ...]  # optional subset; omit to send all safe keys
+        }
+
+    Returns per-peer send results — the caller can poll until all peers ACK.
+    """
+    from agent_friday.core import _load_settings
+    data = request.get_json(silent=True) or {}
+    peer_id_filter = data.get("peer_id")
+    key_subset = set(data.get("keys") or []) & _SYNC_SAFE_KEYS or _SYNC_SAFE_KEYS
+
+    settings = _load_settings()
+    delta = {k: v for k, v in settings.items() if k in key_subset}
+    if not delta:
+        return jsonify({"ok": True, "sent": 0, "results": []})
+
+    peers = fed.get_peers()
+    if peer_id_filter:
+        peers = [p for p in peers if p.get("agent_id") == peer_id_filter]
+
+    results = []
+    for peer in peers:
+        pubkey = peer.get("public_key_hex") or peer.get("pubkey")
+        endpoint = peer.get("endpoint")
+        if not (pubkey and endpoint):
+            results.append({"peer": peer.get("agent_id"), "ok": False,
+                            "error": "missing pubkey or endpoint"})
+            continue
+        try:
+            envelope = transport.build_message("SETTINGS_SYNC", {"settings": delta}, pubkey)
+            if not envelope:
+                results.append({"peer": peer.get("agent_id"), "ok": False,
+                                "error": "envelope build failed"})
+                continue
+            res = transport.send_to_peer(endpoint, envelope)
+            results.append({"peer": peer.get("agent_id"), "ok": res.get("ok", False),
+                            "result": res})
+        except Exception as e:
+            results.append({"peer": peer.get("agent_id"), "ok": False, "error": str(e)})
+
+    sent_ok = sum(1 for r in results if r["ok"])
+    return jsonify({"ok": True, "sent": sent_ok, "total_peers": len(peers),
+                    "keys_synced": list(delta.keys()), "results": results})
 
 
 @federation_bp.route("/api/federation/send", methods=["POST"])
@@ -435,5 +504,24 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
         except Exception:
             pass
         return {"found": False, "asset_id": asset_id}
+
+    if msg_type == "SETTINGS_SYNC":
+        # Receive a settings delta from a trusted peer (same user, different device).
+        # Only apply keys that are on the safe list — never overwrite secrets.
+        delta = payload.get("settings") or {}
+        safe_delta = {k: v for k, v in delta.items() if k in _SYNC_SAFE_KEYS}
+        if safe_delta:
+            try:
+                from agent_friday.core import _load_settings, _save_settings
+                current = _load_settings()
+                current.update(safe_delta)
+                _save_settings(current)
+                _log.info("Settings sync: applied %d key(s) from peer %s",
+                          len(safe_delta), sender_pubkey[:16])
+                return {"applied": list(safe_delta.keys()), "count": len(safe_delta)}
+            except Exception as e:
+                _log.warning("Settings sync apply failed: %s", e)
+                return {"error": str(e)}
+        return {"applied": [], "count": 0}
 
     return {"msg_type": msg_type, "status": "received"}

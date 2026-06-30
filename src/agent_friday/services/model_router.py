@@ -1,4 +1,26 @@
-﻿import os
+﻿"""
+services/model_router.py — EXECUTION LAYER (HOW to execute a model call).
+
+This module executes calls to configured providers:
+  • _call_claude     — Anthropic Claude text generation
+  • _call_ollama     — Ollama local inference (OpenAI-compatible tool loop)
+  • _call_openai     — OpenAI-compatible endpoint (OpenRouter, Together, …)
+  • _generate_text   — smart dispatch: provider_family(model) → correct call
+  • _generate_agent  — agentic tool loop (tool dispatch, vault gate, PII scrub)
+
+Routing decisions (WHICH provider/model to use) live in:
+  routing/model_router.py — get_router(), provider_family(), task_overrides
+
+Canonical import pattern::
+
+    from agent_friday.services.model_router import _generate_text, _generate_agent
+    from agent_friday.routing.model_router import get_router, provider_family
+
+provider_family is re-exported from this module for backwards compatibility;
+the canonical source is routing/model_router.py.
+"""
+
+import os
 import io
 import json
 import glob
@@ -13,11 +35,14 @@ import asyncio
 import re
 import html
 import calendar
+import logging
 import time as _time
 import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+
+_log = logging.getLogger("friday.model_router")
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -49,6 +74,15 @@ from agent_friday.services.wiki_engine import (
     wiki_write_text,
 )  # noqa: E501
 
+# Re-export routing helpers so callers can use a single import location.
+# Canonical source is routing/model_router.py — import from there when you only
+# need routing decisions and want to avoid pulling in the full execution layer.
+try:
+    from agent_friday.routing.model_router import provider_family  # noqa: F401
+except Exception:
+    def provider_family(model_id):  # type: ignore[misc]
+        return None
+
 
 
 def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None):
@@ -78,6 +112,12 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     # (Opus 4.8+, Sonnet 4.6+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
     # backward-compat with callers; the model's default sampling is used.
+    if temperature is not None:
+        _log.warning(
+            "temperature=%.3g silently dropped — model %s does not accept the param; "
+            "the model's own default sampling will be used instead",
+            temperature, kwargs.get("model", "unknown"),
+        )
     # Egress gate: runs after payload assembly, before the HTTP call.
     try:
         from agent_friday.services.egress_gate import seal_outbound as _seal

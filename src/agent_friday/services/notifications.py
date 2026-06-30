@@ -18,11 +18,14 @@ import hashlib as _hashlib
 import hmac as _hmac
 import queue as _queue
 import difflib as _difflib
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
+
+_log = logging.getLogger("friday.notifications")
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 import agent_friday.core as core
@@ -340,7 +343,7 @@ def _daily_scheduler_loop():
     except Exception:
         _tz = None
     names = ", ".join(j["name"] for j in _DAILY_JOBS)
-    print(f"  [FRIDAY] Daily scheduler started ({names}).")
+    _log.info("Daily scheduler started (%s).", names)
     _time.sleep(10)  # let the server finish coming up
     while True:
         now = datetime.now(_tz) if _tz else datetime.now()
@@ -569,7 +572,7 @@ def _notification_trigger_loop():
         ("gmail", _trigger_gmail_signals),
         ("message_cache", _trigger_message_cache),
     ]
-    print("  [FRIDAY] Notification trigger loop started.")
+    _log.info("Notification trigger loop started.")
     # Wait a bit so the server can finish coming up
     _time.sleep(8)
     while True:
@@ -725,8 +728,7 @@ def _on_network_transition(old, new, host=None):
 
 def _network_monitor_loop():
     """Probe connectivity every 30s and drive core.NETWORK_STATE + side effects."""
-    print("  [FRIDAY] Network monitor started (probe every "
-          f"{NETWORK_PROBE_INTERVAL}s).")
+    _log.info("Network monitor started (probe every %ds).", NETWORK_PROBE_INTERVAL)
     _time.sleep(5)  # let the server finish coming up before the first probe
     while True:
         try:

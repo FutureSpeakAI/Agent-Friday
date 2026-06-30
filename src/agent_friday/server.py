@@ -13,8 +13,11 @@ daemons, and run the dev server. Powered by FutureSpeak.AI
 import os
 import sys
 import threading
+import logging
 
 import agent_friday.core as core
+
+_log = logging.getLogger("friday.server")
 from agent_friday.core import app, sock, _TESTING
 
 # Explicit imports from the defining modules — the star-import cascade is
@@ -55,62 +58,38 @@ from agent_friday.services.voice_engine import (
     _notif_engine,
 )  # noqa: E501
 
-# ── Blueprints ───────────────────────────────────────────────────
-from agent_friday.routes.core_routes import core_bp
-from agent_friday.routes.chat import chat_bp
-from agent_friday.routes.voice import voice_bp          # also registers the @sock.route('/ws/live') handler
-from agent_friday.routes.voice_context import voice_context_bp
-from agent_friday.routes.news import news_bp
-from agent_friday.routes.tasks import tasks_bp
-from agent_friday.routes.calendar import calendar_bp
-from agent_friday.routes.messages import messages_bp
-from agent_friday.routes.wiki import wiki_bp
-from agent_friday.routes.context import context_bp
-from agent_friday.routes.creations import creations_bp
-from agent_friday.routes.finance_health import fh_bp
-from agent_friday.routes.code import code_bp
-from agent_friday.routes.futurespeak import fs_bp
-from agent_friday.routes.contacts import contacts_bp
-from agent_friday.routes.insights import insights_bp
-from agent_friday.routes.todos import todos_bp
-from agent_friday.routes.workflows import workflows_bp
-from agent_friday.routes.google import google_bp
-from agent_friday.routes.google_accounts import google_accounts_bp
-from agent_friday.routes.skills import skills_bp
-from agent_friday.routes.notifications import notif_bp
-from agent_friday.routes.control import control_bp
-from agent_friday.routes.ambient import ambient_bp
-from agent_friday.routes.jobs import jobs_bp
-from agent_friday.routes.connectors import connectors_bp
-from agent_friday.routes.platform import platform_bp
-from agent_friday.routes.workspace_studio import ws_studio_bp
-from agent_friday.routes.projects import projects_bp
-from agent_friday.routes.creative_pipeline import creative_pipeline_bp
-from agent_friday.routes.hooks import hooks_bp
-from agent_friday.routes.scheduler import scheduler_bp
-from agent_friday.routes.costs import costs_bp
-from agent_friday.routes.ownership import ownership_bp
-from agent_friday.routes.federation import federation_bp
-from agent_friday.routes.defederation import defederation_bp
-from agent_friday.routes.ext_security import ext_security_bp
-from agent_friday.routes.orchestrator import orchestrator_bp
-from agent_friday.routes.budget_policy import budget_bp
-from agent_friday.routes.compute import compute_bp
-from agent_friday.routes.work_log import work_log_bp
+# ── Blueprints — auto-discovered from routes/*.py ─────────────────────────
+# Adding a new route file is now a single-file operation: create
+# routes/my_feature.py with a Blueprint named *_bp and it registers itself
+# automatically on the next server start.  No manual import needed here.
+import importlib as _importlib
+from pathlib import Path as _Path
+from flask import Blueprint as _Blueprint
 
-for _bp in (core_bp, chat_bp, voice_bp, voice_context_bp, news_bp, tasks_bp, calendar_bp,
-            messages_bp, wiki_bp, context_bp, creations_bp, fh_bp, code_bp, fs_bp, contacts_bp,
-            insights_bp, todos_bp, workflows_bp, google_bp, google_accounts_bp, skills_bp, notif_bp,
-            control_bp, ambient_bp, jobs_bp, connectors_bp, platform_bp, ws_studio_bp,
-            projects_bp, creative_pipeline_bp, hooks_bp, scheduler_bp, costs_bp, ownership_bp,
-            federation_bp,
-            defederation_bp,
-            ext_security_bp,
-            orchestrator_bp,
-            budget_bp,
-            compute_bp,
-            work_log_bp):
-    app.register_blueprint(_bp)
+def _discover_and_register_blueprints(flask_app):
+    _routes_dir = _Path(__file__).resolve().parent / "routes"
+    _registered: list = []
+    _failed: list = []
+    for _route_file in sorted(_routes_dir.glob("*.py")):
+        if _route_file.name.startswith("_"):
+            continue
+        _mod_name = f"agent_friday.routes.{_route_file.stem}"
+        try:
+            _mod = _importlib.import_module(_mod_name)
+        except Exception as _e:
+            _failed.append((_route_file.stem, str(_e)))
+            _log.warning("failed to import %s: %s", _mod_name, _e)
+            continue
+        for _val in vars(_mod).values():
+            if isinstance(_val, _Blueprint) and _val not in _registered:
+                flask_app.register_blueprint(_val)
+                _registered.append(_val)
+    if _failed:
+        _log.warning("Blueprint auto-discovery: %d registered, %d skipped",
+                     len(_registered), len(_failed))
+    return _registered
+
+_discover_and_register_blueprints(app)
 
 
 # ── Back-compat facade (PEP 562) ──────────────────────────────────

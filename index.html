@@ -5067,16 +5067,27 @@ function FamilyWS(){
   const[cd,setCd]=useState(null);
   useEffect(()=>{fetch('/api/countdowns').then(r=>r.json()).then(setCd).catch(()=>{})},[]);
   const familyCountdown=cd?.countdowns?.[0];
+  const hasEvents=cd?.countdowns?.length>0;
+  const quickAsk=(q)=>{if(window.fridayQuickChat)window.fridayQuickChat(q);};
   return(<div>
-    <FridaySays text={familyCountdown?(()=>{const d=familyCountdown.days??familyCountdown.days_until;return d==null?'Next family event coming up.':d===0?'A family event is today.':`Next family event in ${d} day${d===1?'':'s'}.`})():'Family dashboard loaded.'}/>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      <div className="card"><div className="card-title">ðŸŽ‚ Family Member</div><div style={{fontSize:13}}>Add family members in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
-      <div className="card"><div className="card-title">â¤ï¸ Partner</div><div style={{fontSize:13}}>Add partner details in your wiki</div><div style={{fontSize:11,color:'#888',marginTop:4}}>Edit ~/.friday/wiki/family/ to populate</div></div>
-      <div className="card"><div className="card-title">ðŸ¾ Pets</div><div style={{fontSize:12,lineHeight:1.8}}>Add pet info in your family wiki</div></div>
-      <div className="card"><div className="card-title">ðŸ‘¨â€ðŸ‘©â€ðŸ‘§ Extended Family</div><div style={{fontSize:12,color:'#aaa'}}>Add family members in ~/.friday/wiki/family/</div></div>
-      <div className="card"><div className="card-title">ðŸš— Vehicles</div><div style={{fontSize:11,color:'#aaa'}}>Add vehicles in your wiki</div></div>
-      <div className="card"><div className="card-title">ðŸ“… Upcoming</div>{cd?.countdowns?.map((c,i)=><div key={i} style={{fontSize:12,padding:'3px 0'}}>{c.emoji||'ðŸ“…'} {c.label||c.name} â€” <span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{c.days??c.days_until??'?'}d</span></div>)||<span style={{color:'#999'}}>Loading...</span>}</div>
+    <FridaySays text={familyCountdown?(()=>{const d=familyCountdown.days??familyCountdown.days_until;return d==null?'Next family event coming up.':d===0?'A family event is today.':`Next family event in ${d} day${d===1?'':'s'}.`})():'Your family dashboard. Ask me to help set it up.'}/>
+    {hasEvents&&<div style={{marginBottom:12}}>{cd.countdowns.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 10px',background:'rgba(0,212,255,0.04)',borderRadius:6,marginBottom:4}}><span style={{fontSize:12}}>{c.label||c.name}</span><span style={{color:'#00d4ff',fontFamily:'Orbitron',fontSize:11}}>{(c.days??c.days_until)===0?'Today':`${c.days??c.days_until}d`}</span></div>)}</div>}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+      <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add my family members to the wiki.')}>
+        <div className="card-title">Family Members</div><div style={{fontSize:11,color:'#888'}}>Click to set up with Friday</div>
+      </button>
+      <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add birthday and anniversary countdowns for my family.')}>
+        <div className="card-title">Add Countdown</div><div style={{fontSize:11,color:'#888'}}>Birthdays, anniversaries</div>
+      </button>
+      <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me add pet info to my family wiki.')}>
+        <div className="card-title">Pets</div><div style={{fontSize:11,color:'#888'}}>Vet info, notes</div>
+      </button>
+      <button className="card" style={{textAlign:'left',cursor:'pointer'}} onClick={()=>quickAsk('Help me set up family routines and shared tasks.')}>
+        <div className="card-title">Routines</div><div style={{fontSize:11,color:'#888'}}>Chores, schedules</div>
+      </button>
     </div>
+    <div style={{display:'none'}}>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.2)',fontFamily:'JetBrains Mono',paddingTop:8,borderTop:'1px solid rgba(255,255,255,0.05)'}}>Family data lives in private local wiki.</div>
   </div>);
 }
 // â”€â”€ Shared: per-creation license selector (Layer 2 Â§10) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -9401,8 +9412,44 @@ function SettingsTabModels({s,save}){
     </StSection>
   </div>;
 }
+function VoiceSetupWizard({onClose}){
+  const[status,setStatus]=useState(null);const[testing,setTesting]=useState(false);const[testResult,setTestResult]=useState(null);
+  useEffect(()=>{apiFetch('/api/voice/setup/status').then(r=>r.json()).then(setStatus).catch(e=>setStatus({error:String(e)}))},[]);
+  const runTest=async()=>{setTesting(true);setTestResult(null);try{const r=await apiFetch('/api/voice/setup/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'Hello, voice setup is complete.'})});const d=await r.json();setTestResult(d);}catch(e){setTestResult({status:'error',message:String(e)})}finally{setTesting(false);}};
+  const statusIcon=s=>s==='ok'?'✓':s==='needs_download'?'⬇':s==='missing'?'✗':s==='unavailable'?'✗':'?';
+  const statusColor=s=>s==='ok'?'#00ff80':s==='needs_download'?'#f59e0b':s==='missing'||s==='unavailable'?'#ef4444':'#a8a8b4';
+  return(<div style={{background:'rgba(0,0,0,0.5)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:12,padding:20,marginBottom:18}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff',letterSpacing:'0.05em'}}>VOICE SETUP WIZARD</div>
+      {onClose&&<button className="btn" style={{fontSize:11,padding:'2px 8px'}} onClick={onClose}>✕ Close</button>}
+    </div>
+    {!status&&<div style={{color:'#888',fontSize:12}}>Checking voice readiness…</div>}
+    {status?.error&&<div style={{color:'#ef4444',fontSize:12}}>Error: {status.error}</div>}
+    {status&&!status.error&&<div>
+      <div style={{marginBottom:14}}>
+        {(status.steps||[]).map(step=><div key={step.id} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:statusColor(step.status),minWidth:18,textAlign:'center'}}>{statusIcon(step.status)}</span>
+          <div><div style={{fontSize:12,color:'#ddd'}}>{step.label}</div>{step.detail&&<div style={{fontSize:11,color:'#888',marginTop:2}}>{step.detail}</div>}</div>
+        </div>)}
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+        {status.ready?<div style={{fontSize:12,color:'#00ff80',fontFamily:'JetBrains Mono'}}>✓ Voice ready — click the mic button to start</div>:<div style={{fontSize:12,color:'#f59e0b'}}>Complete the steps above, then click the mic button.</div>}
+        <button className="btn" style={{fontSize:11}} onClick={()=>{setStatus(null);apiFetch('/api/voice/setup/status').then(r=>r.json()).then(setStatus).catch(()=>{})}}>Refresh</button>
+        <button className="btn" style={{fontSize:11}} onClick={runTest} disabled={testing}>{testing?'Testing…':'Test TTS'}</button>
+      </div>
+      {testResult&&<div style={{marginTop:10,padding:'8px 12px',background:'rgba(0,0,0,0.3)',borderRadius:6,fontSize:11,color:testResult.status==='ok'?'#00ff80':'#ef4444'}}>
+        {testResult.status==='ok'?'TTS test audio generated successfully.':testResult.message||'TTS test failed.'}
+      </div>}
+    </div>}
+  </div>);
+}
 function SettingsTabVoice({s,save}){
+  const[showWizard,setShowWizard]=useState(false);
   return <div>
+    <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
+      <button className="btn" style={{fontSize:11}} onClick={()=>setShowWizard(w=>!w)}>🎙 {showWizard?'Hide':'Voice Setup Wizard'}</button>
+    </div>
+    {showWizard&&<VoiceSetupWizard onClose={()=>setShowWizard(false)}/>}
     <StSection title="VOICE ENGINE">
       <StRow label="Engine" desc="Local = on-device, private. Cloud = Gemini Live, most expressive.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
@@ -11870,3 +11917,4 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
 </script>
 </body>
 </html>
+
