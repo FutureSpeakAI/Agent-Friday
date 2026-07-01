@@ -119,11 +119,19 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             temperature, kwargs.get("model", "unknown"),
         )
     # Egress gate: runs after payload assembly, before the HTTP call.
+    # The egress gate is the LAST line of defense and must fail CLOSED: if it
+    # raises, the payload is unverified, so we must NOT forward it to the cloud.
+    # (Previously the except-branch printed a warning and sent the UN-sealed
+    # kwargs anyway — a full bypass of the security boundary on any gate error.)
     try:
         from agent_friday.services.egress_gate import seal_outbound as _seal
         kwargs = _seal(kwargs, "anthropic")
     except Exception as _eg_err:
-        print(f"  [EGRESS] gate error (payload forwarded as-is): {_eg_err}")
+        _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
+        raise RuntimeError(
+            "Egress gate failed; cloud send blocked to avoid leaking unverified "
+            f"content: {_eg_err}"
+        ) from _eg_err
     _t0 = _time.time()
     resp = client.messages.create(**kwargs)
     # Cost metering (Part D): capture input AND output tokens for this call.
@@ -450,11 +458,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
             # Egress gate: runs after payload assembly, before the HTTP call.
+            # Fail CLOSED: if the gate raises, block the send rather than
+            # forwarding the un-sealed payload to the cloud.
             try:
                 from agent_friday.services.egress_gate import seal_outbound as _seal
                 payload = _seal(payload, "openai")
             except Exception as _eg_err:
-                print(f"  [EGRESS] gate error (payload forwarded as-is): {_eg_err}")
+                _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
+                raise RuntimeError(
+                    "Egress gate failed; cloud send blocked to avoid leaking "
+                    f"unverified content: {_eg_err}"
+                ) from _eg_err
             r = requests.post(f"{base_url}/chat/completions", headers=headers,
                               json=payload, timeout=180)
             r.raise_for_status()
