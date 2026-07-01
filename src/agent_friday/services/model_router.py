@@ -1042,6 +1042,24 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
         if self_knowledge:
             prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
 
+    # v5 personalization — fold in the LOCAL user model + learned heuristics.
+    # Both are TIER_1 behavioral text (never raw PII), both best-effort, and both
+    # skip themselves when their subsystem is disabled or has learned nothing.
+    try:
+        from agent_friday.services.user_model import render_user_model_prompt
+        _um = render_user_model_prompt()
+        if _um:
+            prefix += "\n\n== USER MODEL ==\n" + _um + "\n"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services.learning_loop import render_heuristics_prompt
+        _heur = render_heuristics_prompt(task_type=workspace or None)
+        if _heur:
+            prefix += "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur + "\n"
+    except Exception:
+        pass
+
     try:
         system_prompt, _ = _build_context_prompt(
             keywords or '', workspace, provider=provider,

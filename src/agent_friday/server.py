@@ -67,7 +67,13 @@ from pathlib import Path as _Path
 from flask import Blueprint as _Blueprint
 
 def _discover_and_register_blueprints(flask_app):
-    _routes_dir = _Path(__file__).resolve().parent / "routes"
+    # Derive the routes dir from the agent_friday PACKAGE, not __file__: when the
+    # repo-root server.py shim exec()s this file, __file__ resolves to the shim
+    # (repo root), so __file__-relative discovery would glob a nonexistent
+    # <repo>/routes and silently register ZERO blueprints — the whole API 404s.
+    # The package path is stable regardless of how the entry point was launched.
+    import agent_friday as _af_pkg
+    _routes_dir = _Path(_af_pkg.__file__).resolve().parent / "routes"
     _registered: list = []
     _failed: list = []
     for _route_file in sorted(_routes_dir.glob("*.py")):

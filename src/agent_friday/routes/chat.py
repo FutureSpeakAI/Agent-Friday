@@ -91,6 +91,13 @@ def chat():
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
+        # v5: feed the LOCAL user model from each user turn (best-effort — never
+        # blocks or fails the chat turn). Personalizes future system prompts.
+        try:
+            from agent_friday.services import user_model as _um
+            _um.observe_message(message, role='user', workspace=workspace)
+        except Exception:
+            pass
         include_vision = data.get('includeVision', False)
         voice_mode = bool(data.get('voice_mode', False))
         # Source Production Mode — when true, Friday cites every factual claim
@@ -686,6 +693,13 @@ def chat_send():
         message = data.get('message', '')
         workspace = data.get('workspace', '')
         workspace_context = data.get('workspaceContext', None)
+        # v5: feed the LOCAL user model from each user turn (best-effort — never
+        # blocks or fails the chat turn). Personalizes future system prompts.
+        try:
+            from agent_friday.services import user_model as _um
+            _um.observe_message(message, role='user', workspace=workspace)
+        except Exception:
+            pass
         include_vision = data.get('includeVision', False)
         vision_description = None
 

@@ -132,6 +132,45 @@ info "Building UI..."
 "$PYTHON_VENV" "$INSTALL_DIR/build_ui.py" > /dev/null
 success "index.html built"
 
+# ── 6.5 Bundled model (Ollama + Gemma) — zero cloud key needed ───
+#  Friday runs a local Gemma model by default so chat works with NO API key.
+#  This step is best-effort and never fails the install; skip it with
+#  FRIDAY_SKIP_MODEL=1 or the --no-model flag.
+echo ""
+BUNDLED_MODEL="gemma3:4b"
+if [ "${FRIDAY_SKIP_MODEL:-0}" = "1" ] || [[ " $* " == *" --no-model "* ]]; then
+    warn "Skipping local model bootstrap (FRIDAY_SKIP_MODEL / --no-model)"
+else
+    info "Setting up local model ($BUNDLED_MODEL) for no-API-key chat..."
+    ( set +e
+      if ! command -v ollama &>/dev/null; then
+          info "Installing Ollama..."
+          if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &>/dev/null; then
+              brew install ollama
+          else
+              curl -fsSL https://ollama.com/install.sh | sh
+          fi
+      fi
+      if command -v ollama &>/dev/null; then
+          # Ensure a server is up (best-effort; harmless if one already runs).
+          (ollama serve >/dev/null 2>&1 &) || true
+          sleep 2
+          if ollama list 2>/dev/null | grep -q "$BUNDLED_MODEL"; then
+              success "$BUNDLED_MODEL already present"
+          else
+              info "Pulling $BUNDLED_MODEL (~3GB, one-time download)..."
+              if ollama pull "$BUNDLED_MODEL"; then
+                  success "$BUNDLED_MODEL ready — no cloud key required for chat"
+              else
+                  warn "Model pull failed — run 'ollama pull $BUNDLED_MODEL' later"
+              fi
+          fi
+      else
+          warn "Ollama unavailable — install later for offline chat: https://ollama.com"
+      fi
+    )
+fi
+
 # ── 7. Register CLI entry point ──────────────────────────────────
 echo ""
 info "Registering 'friday' command..."

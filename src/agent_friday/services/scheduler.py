@@ -650,6 +650,27 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] repo_sync unavailable: {e}")
 
+    # memory-dreaming (v5) — nightly local consolidation of the day's turns.
+    try:
+        from agent_friday.services.memory_dreaming import dream as _dream
+        md_hour = int((settings.get("memory_dreaming") or {}).get("hour", 3))
+        register_builtin_task("memory_dreaming", _dream,
+                              label="Memory dreaming", default_trigger="daily",
+                              default_spec={"hour": md_hour, "minute": 0}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] memory_dreaming unavailable: {e}")
+
+    # learning-epoch (v5) — weekly mine→promote cycle over task outcomes.
+    try:
+        from agent_friday.services.learning_loop import run_epoch as _learn_epoch
+        le_wd = int((settings.get("learning_loop") or {}).get("epoch_weekday", 6))
+        register_builtin_task("learning_epoch", _learn_epoch,
+                              label="Learning epoch", default_trigger="weekly",
+                              default_spec={"weekday": le_wd, "hour": 4, "minute": 0},
+                              notify="on_complete")
+    except Exception as e:
+        print(f"  [scheduler] learning_epoch unavailable: {e}")
+
 
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the
