@@ -130,3 +130,33 @@ def test_retire_low_scoring_active():
         ll.record_trial(sid, success=False, satisfaction=0.05)
     changes = ll.promote()
     assert any(c["to"] == "retired" for c in changes)
+
+
+def test_mine_requires_distinct_prompts():
+    # Anti-flood: 5 observations that all share ONE prompt have only 1 distinct
+    # prompt_hash (< min_distinct) and must NOT mint a promotable skill.
+    for _ in range(5):
+        ll.observe("code", "same prompt", approach="tdd", success=True, satisfaction=0.9)
+    assert ll.mine_candidates() == []
+
+
+def test_mine_dedup_pattern_unique(tmp_path):
+    # UNIQUE index on pattern: even a direct second mine can't duplicate.
+    _seed_successful(n=5)
+    first = ll.mine_candidates()
+    assert len(first) == 1
+    # a raw INSERT of the same pattern is rejected by the unique index
+    conn = ll._connect()
+    import sqlite3
+    pat = first[0]["pattern"]
+    dup_ok = True
+    try:
+        conn.execute(
+            "INSERT INTO skills(skill_id,name,task_type,created_ts,pattern,status,"
+            "score,trials,wins,source_obs_json) VALUES('x','x','code',0,?, 'candidate',0,0,0,'[]')",
+            (pat,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        dup_ok = False
+    conn.close()
+    assert dup_ok is False

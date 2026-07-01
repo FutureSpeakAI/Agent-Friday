@@ -116,3 +116,26 @@ def test_dream_reruns_replace_same_day():
     md.dream(day=day, memory=FakeMemory(_rows(day)))
     md.dream(day=day, memory=FakeMemory(_rows(day)))
     assert md.state()["total_dreams"] == 1  # deduped by day
+
+
+def test_rerun_same_day_does_not_inflate_fact_confidence():
+    # Regression: re-running the SAME day must not reinforce fact confidence
+    # (source is day-scoped; note_fact only bumps on a new source).
+    day = "2026-06-30"
+    md.dream(day=day, memory=FakeMemory(_rows(day)))
+    before = {f["text"]: f["confidence"] for f in um.profile()["facts"]}
+    md.dream(day=day, memory=FakeMemory(_rows(day)))
+    md.dream(day=day, memory=FakeMemory(_rows(day)))
+    after = {f["text"]: f["confidence"] for f in um.profile()["facts"]}
+    assert after == before
+
+
+def test_pull_turns_flags_capped(monkeypatch):
+    # When the recent() window saturates and its oldest row is still on the day,
+    # dream() must flag capped rather than silently under-consolidate.
+    monkeypatch.setattr(md, "_PULL_WINDOW", 3)
+    day = "2026-06-30"
+    rows = [{"text": f"I prefer thing {i}", "role": "user", "date": day,
+             "timestamp": f"{day}T10:0{i}:00", "topic_keywords": []} for i in range(3)]
+    res = md.dream(day=day, memory=FakeMemory(rows))
+    assert res["capped"] is True

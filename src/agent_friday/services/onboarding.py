@@ -119,15 +119,22 @@ def get_state() -> Dict[str, Any]:
 
 def advance(answer: str = "", *, key_provider: str = "", key_value: str = "") -> Dict[str, Any]:
     """Advance the state machine with the user's answer to the current step."""
+    # Normalize once: a client POSTing {"answer": null} passes None through
+    # dict.get(...,"") (present key → not the default), and None.strip() would
+    # raise, violating the "never raises" contract. Guard all steps here.
+    answer = (answer or "")
+    key_provider = (key_provider or "")
+    key_value = (key_value or "")
     state = load_state()
     step = state.get("step", "greet")
+    warning = None
 
     if step in ("greet", "name"):
         if answer.strip():
             state["name"] = answer.strip()[:60]
         state["step"] = "voice_test"
     elif step == "voice_test":
-        state["voice_pref"] = (answer or "").strip()[:120]
+        state["voice_pref"] = answer.strip()[:120]
         state["step"] = "keys"
     elif step == "keys":
         if key_provider and key_value:
@@ -136,6 +143,12 @@ def advance(answer: str = "", *, key_provider: str = "", key_value: str = "") ->
                 added = set(state.get("keys_added") or [])
                 added.add(key_provider)
                 state["keys_added"] = sorted(added)
+            else:
+                # Don't advance as if the key was stored — surface the failure so
+                # the user knows to re-enter it (their cloud calls would otherwise
+                # fail with a key they believe they provided).
+                warning = ("Your API key could not be stored securely — please "
+                           "re-enter it, or skip and add it later in Settings.")
         state["step"] = "identity"
     elif step == "identity":
         state["identity_pubkey"] = _ensure_identity()
@@ -149,8 +162,12 @@ def advance(answer: str = "", *, key_provider: str = "", key_value: str = "") ->
 
     _save_state(state)
     new_step = state["step"]
-    return {"ok": True, "step": new_step, "line": line_for(new_step, state),
-            "complete": is_complete()}
+    out = {"ok": True, "step": new_step, "line": line_for(new_step, state),
+           "complete": is_complete()}
+    if warning:
+        out["warning"] = warning
+        out["key_saved"] = False
+    return out
 
 
 def complete() -> Dict[str, Any]:

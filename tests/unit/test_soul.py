@@ -95,3 +95,33 @@ def test_mtime_cache_refreshes_on_change():
     assert "first" in soul.load_soul()
     soul.save_soul("# SOUL.md\nsecond")
     assert "second" in soul.load_soul()
+
+
+def test_render_preserves_content_after_single_line_note():
+    # Regression: a self-contained italic note with NO blank line after it must
+    # not eat the content that follows (previously the identity block vanished).
+    soul.save_soul(
+        "# My Friday\n"
+        "*Edit me freely.*\n"
+        "## Who you are\n"
+        "You are Friday.\n\n"
+        "## Voice\nBe terse.\n"
+    )
+    body = soul.render_personality()
+    assert "Who you are" in body
+    assert "You are Friday." in body
+    assert "Be terse." in body
+    assert "Edit me freely" not in body
+
+
+def test_render_drops_multiline_note_but_keeps_default_body():
+    body = soul.render_personality()  # the shipped default
+    assert "This file defines Friday's personality" not in body  # note stripped
+    assert "family, not a tool" in body                          # substance kept
+
+
+def test_render_keeps_markdown_bullets_mentioning_edit():
+    # A '* ' bullet is NOT an italic editor note even if it says "edit".
+    soul.save_soul("# T\n## Rules\n* You may edit files when asked.\n* Be terse.\n")
+    body = soul.render_personality()
+    assert "You may edit files when asked." in body

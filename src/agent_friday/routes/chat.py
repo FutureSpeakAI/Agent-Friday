@@ -397,6 +397,26 @@ def chat():
                 vault_fallback=_vault_cloud_fallback(),
             )
             sp = _settings_system_prefix(settings, personality) + (sp or '')
+            # v5 personalization: fold in the LOCAL user model + learned heuristics
+            # (the same blocks _get_friday_system_prompt injects). /api/chat builds
+            # its prompt via _build_context_prompt directly, so without this the
+            # flagship interactive path FED observe_message() but never USED what
+            # it learned. Best-effort, TIER_1 text, and still scrubbed/gated below
+            # before any cloud send. Guarded so it can never break a chat turn.
+            try:
+                from agent_friday.services.user_model import render_user_model_prompt
+                _um_block = render_user_model_prompt()
+                if _um_block:
+                    sp = sp + "\n\n== USER MODEL ==\n" + _um_block + "\n"
+            except Exception:
+                pass
+            try:
+                from agent_friday.services.learning_loop import render_heuristics_prompt
+                _heur_block = render_heuristics_prompt(task_type=workspace or None)
+                if _heur_block:
+                    sp = sp + "\n\n== LEARNED HEURISTICS (advisory) ==\n" + _heur_block + "\n"
+            except Exception:
+                pass
             if _extra_system:
                 sp = sp + "\n" + _extra_system
             if voice_mode:
