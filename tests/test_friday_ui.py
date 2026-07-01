@@ -131,9 +131,10 @@ class TestBranding:
 # ────────────────────────────────────────────────────────────────────────────
 class TestThreeJs:
     def test_canvas_present(self, loaded_page: Page):
-        # The Three.js renderer appends a <canvas> directly to <body>
-        canvases = loaded_page.locator("body > canvas")
-        count = canvases.count()
+        # The Three.js renderer appends a <canvas> directly to <body> — but
+        # only after scene init, so wait rather than counting instantly.
+        loaded_page.wait_for_selector("body > canvas", timeout=15000, state="attached")
+        count = loaded_page.locator("body > canvas").count()
         assert count >= 1, "No Three.js canvas attached to body"
 
     def test_canvas_has_dimensions(self, loaded_page: Page):
@@ -650,11 +651,13 @@ class TestSettingsPanel:
         API key fields live only in the first-run SetupWizard — the always-on
         Settings panel exposes Agent Identity / model pickers / etc. instead.
         """
+        # The top-bar gear opens QUICK SETTINGS; the full panel (IDENTITY →
+        # Agent Name, Orchestrator tab, …) is one click deeper.
         btn = loaded_page.locator(".top-bar button[title='Settings']").first
         btn.click()
+        loaded_page.locator("text=Open Full Settings").first.click()
         loaded_page.wait_for_timeout(800)
-        # SETTINGS header + Agent Identity section confirms it's open
-        expect(loaded_page.locator("text=Agent Identity").first).to_be_visible(timeout=3000)
+        expect(loaded_page.locator("text=Agent Name").first).to_be_visible(timeout=3000)
         expect(loaded_page.locator("text=Orchestrator").first).to_be_visible()
         loaded_page.screenshot(path=str(SCREENSHOTS / "settings_open.png"))
 
@@ -663,6 +666,7 @@ class TestSettingsPanel:
         real API key (sk-ant-… or AIza…), flag it as a leak."""
         btn = loaded_page.locator(".top-bar button[title='Settings']").first
         btn.click()
+        loaded_page.locator("text=Open Full Settings").first.click()
         loaded_page.wait_for_timeout(800)
         leaks = loaded_page.evaluate(
             """() => {

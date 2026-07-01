@@ -66,13 +66,46 @@ routed through the existing cLaws governance + egress gate.
   (drift-guarded by `tests/api/test_blueprint_discovery.py`) and adding `src` to
   the spec's path so the route modules are bundled. Verified: `python server.py`
   and the frozen `.exe` both serve 200 on every endpoint.
+- **The entire UI silently failed to mount** — an unclosed
+  `<div style={{display:'none'}}>` in `FamilyWS` left the component's outer JSX
+  element open, so the single inline Babel script died at parse time: blank
+  screen, bare holo scene, empty console. Also repaired ~1,390 double-encoded
+  UTF-8 (mojibake) runs and a stray BOM in `ui_parts/app.html` (dock emoji,
+  comment rules, license-picker hints).
+- **JSX is now precompiled at build time.** `build_ui.py` compiles the app
+  bundle with `@babel/standalone` under node when available (in-browser Babel
+  remains as fallback). Cold-load `DOMContentLoaded` dropped from ~17.5 s to
+  ~0.35 s, and index.html no longer needs the Babel CDN at runtime.
+- **UI libraries are vendored — the shell and holo scene now load offline.**
+  React 18.3.1, ReactDOM, marked 9.1.6, highlight.js 11.9.0 (+theme CSS), and
+  Three.js r128 with its six post-processing files moved from unpkg/jsdelivr/
+  cdnjs into `static/vendor/`, each verified against the SRI hash the old CDN
+  tag pinned. Remaining external fetches are Google Fonts and the optional
+  MediaPipe camera libs, both of which degrade gracefully.
+- **`/api/vault/status` was never implemented** — the Settings → Privacy
+  "Sovereign Vault" card 404'd forever (silently). New endpoint reports live
+  encryption state (AES-256-GCM vs None), entry/encrypted counts, and a
+  `locked` flag (encrypted blobs on disk with no derivable key).
+- **`/static/*` and the dock icon set never served.** `send_from_directory`
+  with a relative path resolves against Flask's `root_path` (inside the
+  package since the src/ move), so `/static/favicon.ico` 404'd — and
+  `/assets/*` had no route at all, so the dock's designed SVG icon set
+  (`assets/icons/*.svg`) had never once rendered; the emoji fallback always
+  showed. Both routes now anchor to the process cwd like `serve_ui` does, and
+  the two missing icons (`marketplace.svg`, `settings.svg`) were drawn in the
+  set's neon line-art style. The dock now ships its intended icons.
+- **`friday doctor` misdiagnosed keys and crashed on legacy consoles** — it
+  now reads API keys from `start.bat`-style launch scripts (same precedence as
+  the server's env bootstrap) and degrades ✓/✗ glyphs instead of dying with
+  `UnicodeEncodeError` on cp1252 consoles.
 
 ### Notes
 
 - All v5 subsystems are **local-only** and pass through cLaws governance and the
   egress gate. Nothing new introduces a default cloud dependency.
-- 3162 tests pass (64 new). See `docs/SUPER_AGENT_BUILD_SPEC.md` for the full
-  design and `docs/RELEASE_NOTES_v5.0.md` for the release summary.
+- 3,629 offline tests pass (plus the Playwright UI suite against a live
+  server). See `docs/SUPER_AGENT_BUILD_SPEC.md` for the full design and
+  `docs/RELEASE_NOTES_v5.0.md` for the release summary.
 
 ---
 

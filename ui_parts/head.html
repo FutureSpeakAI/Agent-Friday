@@ -21,14 +21,18 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
+<!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
+     pinned versions the old CDN tags carried) so the shell loads offline.
+     Babel below is the sole remaining CDN script and only for fallback builds:
+     build_ui.py strips the tag entirely when it precompiles the JSX. -->
+<script src="/static/vendor/react-18.3.1.production.min.js"></script>
+<script src="/static/vendor/react-dom-18.3.1.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js" integrity="sha384-ezQ6HS3FLspd9te19o2McUV6FAK091+GG7KO54f/R8DKgCDi7fULhapNrd5LY+vG" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js" integrity="sha384-odPBjvtXVM/5hOYIr3A1dB+flh0c3wAT3bSesIOqEGmyUA4JoKf/YTWy0XKOYAY7" crossorigin="anonymous"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" integrity="sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07" crossorigin="anonymous">
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+<script src="/static/vendor/marked-9.1.6.min.js"></script>
+<link rel="stylesheet" href="/static/vendor/atom-one-dark-11.9.0.min.css">
+<script src="/static/vendor/highlight-11.9.0.min.js"></script>
 <script>
-// Hard fail-fast if any critical CDN didn't load — show a visible banner on mobile.
+// Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
   var missing=[];
   if(typeof React==='undefined')missing.push('React');
@@ -38,10 +42,10 @@ window.addEventListener('DOMContentLoaded',function(){
     var errs=window.__fridayCdnErrors||[];
     var box=document.createElement('div');
     box.style.cssText='position:fixed;left:12px;right:12px;top:12px;z-index:99999;background:rgba(20,0,10,.95);border:1px solid #ff0080;border-radius:10px;padding:12px 14px;color:#ffdbe8;font:12px/1.45 monospace;max-height:45vh;overflow:auto';
-    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY — CDN load failed</div>'
+    box.innerHTML='<div style="color:#ff5599;font-weight:700;margin-bottom:6px">FRIDAY — UI libraries failed to load</div>'
       +'<div>Missing: '+missing.join(', ')+'</div>'
       +(errs.length?'<div style="margin-top:6px;opacity:.75">Blocked URLs:<br>'+errs.map(function(u){return '&middot; '+u}).join('<br>')+'</div>':'')
-      +'<div style="margin-top:8px;opacity:.8">Likely a tunnel CSP, ad-blocker, or offline state. Reload when a network is available.</div>';
+      +'<div style="margin-top:8px;opacity:.8">Likely a tunnel CSP, an ad-blocker, or a corrupted install. Vendored files live under /static/vendor/.</div>';
     document.body&&document.body.appendChild(box);
   }
 });
