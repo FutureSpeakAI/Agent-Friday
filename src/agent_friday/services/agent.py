@@ -60,6 +60,7 @@ from agent_friday.services.model_router import (
     _call_openai,
     _get_friday_system_prompt,
     _get_vault_control,
+    _seal_or_block,
 )  # noqa: E501
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services.news_engine import (
@@ -1358,11 +1359,15 @@ def _evaluate_output(task_id, goal, output):
             f"GRADE: [PASS/PARTIAL/FAIL]\n"
             f"REASON: [one sentence]"
         )
-        resp = client.messages.create(
-            model=ANTHROPIC_MODEL_DEFAULT,
-            max_tokens=128,
-            messages=[{"role": "user", "content": eval_prompt}],
-        )
+        # Egress gate (fail-closed): the goal + task output can carry whatever the
+        # task touched (files, vault reads, PII). This evaluator call went to the
+        # cloud ungated; route it through the shared wrapper like every other path.
+        _eval_kwargs = _seal_or_block({
+            "model": ANTHROPIC_MODEL_DEFAULT,
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": eval_prompt}],
+        }, "anthropic")
+        resp = client.messages.create(**_eval_kwargs)
         return resp.content[0].text.strip() if resp.content else "GRADE: PARTIAL\nREASON: Evaluation unavailable."
     except Exception as e:
         return f"GRADE: PARTIAL\nREASON: Evaluation failed: {e}"
@@ -3663,6 +3668,15 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # models (Opus 4.8+, Sonnet 4.6+) 400 on the deprecated param.
             # Kept in the signature for backward-compat; model defaults are used.
 
+            # EGRESS GATE (fail-closed): this tool-loop is the PRIMARY cloud path
+            # in Friday — /api/chat, channel messages, scheduled tasks and
+            # orchestrator workers all funnel through here. It previously called
+            # the Anthropic API directly, bypassing the gate that model_router's
+            # _call_claude enforces, so the multi-layer sensitivity classifier
+            # (financial/medical/legal/contextual-PII + vault content) NEVER ran on
+            # the main path. Route every iteration's payload through the same
+            # centralized _seal_or_block wrapper (R3) so the boundary holds here too.
+            kwargs = _seal_or_block(kwargs, "anthropic")
             _t0 = _time.time()
             resp = client.messages.create(**kwargs)
             # Cost metering (Part D): the Anthropic tool loop used to discard

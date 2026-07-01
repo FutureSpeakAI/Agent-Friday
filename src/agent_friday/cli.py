@@ -975,10 +975,87 @@ examples:
     # vault-setup
     sub.add_parser("vault-setup", help="Store vault passphrase in the OS keychain")
 
+    # Data rights (GDPR/CCPA). Everything is device-local, so these operate on
+    # ~/.friday directly with no server round-trip.
+    sub.add_parser("export", help="Export ALL your Friday data to a portable zip (right of access)")
+    p_erase = sub.add_parser("erase", help="Permanently delete ALL local Friday data (right to erasure)")
+    p_erase.add_argument("--yes", action="store_true", help="Skip the typed confirmation prompt")
+
     # tls-init
     sub.add_parser("tls-init", help="Generate a self-signed TLS certificate")
 
     return p
+
+
+def cmd_export():
+    """GDPR/CCPA right-of-access: bundle EVERYTHING Friday stores about the user
+    into a single portable zip. All of Friday's data already lives on-device under
+    ~/.friday; this just packages it so a non-technical user can exercise data
+    portability without hunting through hidden folders."""
+    console.print(Rule("[bold cyan]Agent Friday — Export My Data[/bold cyan]"))
+    if not FRIDAY_DIR.exists():
+        console.print("[yellow]No Friday data found (~/.friday does not exist). Nothing to export.[/yellow]")
+        return
+    import zipfile
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = Path.cwd() / f"friday-data-export-{stamp}.zip"
+    count = 0
+    skipped = 0
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in FRIDAY_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            # Skip volatile/transient artifacts that are not user data.
+            rel = path.relative_to(FRIDAY_DIR)
+            parts = set(rel.parts)
+            if parts & {"audio-cache", "vibe-code-logs", "__pycache__"}:
+                skipped += 1
+                continue
+            try:
+                zf.write(path, arcname=str(Path(".friday") / rel))
+                count += 1
+            except Exception:
+                skipped += 1
+    size_mb = out.stat().st_size / (1024 * 1024)
+    console.print(f"[green]Exported {count} files[/green] ({size_mb:.1f} MB) → [bold]{out}[/bold]")
+    if skipped:
+        console.print(f"[dim]Skipped {skipped} transient/cache files (audio cache, logs).[/dim]")
+    console.print("[dim]Note: encrypted vault blobs are exported as-is; they need your "
+                  "vault passphrase to read. Everything else is plain files you own.[/dim]")
+
+
+def cmd_erase(assume_yes: bool = False):
+    """GDPR/CCPA right-to-erasure: delete ALL local Friday data. Because Friday is
+    device-local with no server-side copy, this is a complete erasure — nothing
+    about the user survives it. Guarded by an explicit typed confirmation."""
+    console.print(Rule("[bold red]Agent Friday — Erase My Data[/bold red]"))
+    if not FRIDAY_DIR.exists():
+        console.print("[yellow]No Friday data found (~/.friday does not exist). Nothing to erase.[/yellow]")
+        return
+    # Show what will go, so the user knows the blast radius.
+    try:
+        total = sum(1 for p in FRIDAY_DIR.rglob("*") if p.is_file())
+    except Exception:
+        total = 0
+    console.print(f"This will permanently delete [bold]{FRIDAY_DIR}[/bold] "
+                  f"and everything in it ([bold]{total}[/bold] files): settings, chat history, "
+                  "vault, wiki, memory, credentials, and identity keys.")
+    console.print("[bold red]This cannot be undone.[/bold red] Run `friday export` first if you "
+                  "want a copy.")
+    if not assume_yes:
+        try:
+            typed = Prompt.ask("Type ERASE to confirm", default="")
+        except Exception:
+            typed = ""
+        if typed.strip() != "ERASE":
+            console.print("[yellow]Aborted — nothing was deleted.[/yellow]")
+            return
+    try:
+        shutil.rmtree(FRIDAY_DIR)
+        console.print(f"[green]Erased {FRIDAY_DIR}. Friday is back to a clean first-run state.[/green]")
+    except Exception as e:
+        console.print(f"[red]Erase failed: {e}[/red]")
+        console.print("[dim]Close any running Friday server (it may be holding files open) and retry.[/dim]")
 
 
 def cmd_health():
@@ -1078,6 +1155,22 @@ def cmd_health():
     except Exception as e:
         console.print(f"[yellow]vault: {e}[/yellow]")
 
+    # Vault DATA-AT-REST state — distinct from credential encryption above. This is
+    # the single most important thing for a privacy-conscious user to see, and it
+    # was previously invisible unless you read the boot banner (gone under a tray
+    # launch). Green when a passphrase armed AES-256-GCM; loud yellow otherwise.
+    try:
+        _pass = bool(os.environ.get("FRIDAY_VAULT_PASSPHRASE") or os.environ.get("FRIDAY_PASSWORD"))
+        if _pass:
+            console.print("Vault data-at-rest: [green]encrypted[/green] "
+                          "(AES-256-GCM, passphrase armed)")
+        else:
+            console.print("Vault data-at-rest: [bold yellow]PLAINTEXT[/bold yellow] — set "
+                          "FRIDAY_VAULT_PASSPHRASE (or run `friday vault-setup`) to encrypt "
+                          "~/.friday/vault at rest")
+    except Exception:
+        pass
+
 
 def main():
     parser = build_parser()
@@ -1105,6 +1198,10 @@ def main():
         cmd_skills(delete_name=getattr(args, "delete", None))
     elif cmd == "vault-setup":
         cmd_vault_setup()
+    elif cmd == "export":
+        cmd_export()
+    elif cmd == "erase":
+        cmd_erase(assume_yes=getattr(args, "yes", False))
     elif cmd == "tls-init":
         cmd_tls_init()
     else:
