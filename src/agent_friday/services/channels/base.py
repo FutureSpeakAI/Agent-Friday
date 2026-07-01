@@ -80,7 +80,13 @@ class ChannelAdapter:
         return {"ok": True}
 
     def _loop(self) -> None:
-        interval = float(self._config.get("poll_interval", 3.0))
+        try:
+            interval = float(self._config.get("poll_interval", 3.0))
+        except (TypeError, ValueError):
+            interval = 3.0
+        # Clamp: a zero/negative interval would busy-spin the poll thread and
+        # hammer the platform API; an absurd one would wedge the channel.
+        interval = max(1.0, min(300.0, interval))
         while not self._stop.is_set():
             try:
                 self._poll_once()
@@ -99,7 +105,11 @@ class ChannelAdapter:
     def _dispatch(self, chat_id: str, text: str) -> None:
         if not self._handler:
             return
-        reply = self._handler(self.name, str(chat_id), text or "")
+        if not isinstance(text, str):
+            text = "" if text is None else str(text)
+        # Truncate hostile/oversized inbound payloads before the agent loop —
+        # adapters also cap, but the shared funnel must not rely on it.
+        reply = self._handler(self.name, str(chat_id), text[:8000])
         if reply:
             try:
                 self.send(str(chat_id), reply)

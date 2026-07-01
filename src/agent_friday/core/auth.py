@@ -16,6 +16,8 @@ from agent_friday.core import (  # noqa: F401
     FRIDAY_WS_TOKEN,
     _HTTP_AUTH_KEY,
     _API_SESSION_TOKEN,
+    _current_api_token,
+    _api_token_valid,
     _LOGIN_LOCK,
     _LOGIN_MAX,
     _LOGIN_WINDOW,

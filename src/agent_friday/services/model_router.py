@@ -85,6 +85,39 @@ except Exception:
 
 
 
+def _seal_or_block(payload, provider):
+    """Egress-gate wrapper shared by EVERY cloud provider call site (R3).
+
+    Centralizing the wrapper means the fail-closed contract cannot drift between
+    the Anthropic and OpenAI-compatible paths again. Semantics:
+
+      • gate raises            → RuntimeError, cloud send BLOCKED (fail-closed)
+      • gate import fails      → RuntimeError, cloud send BLOCKED
+      • startup self-test (R2) → RuntimeError, cloud routing refused entirely
+        failed at boot
+      • gate healthy           → returns the sealed payload
+
+    Nothing leaves the device when the gate can't verify it.
+    """
+    try:
+        from agent_friday.services import egress_gate as _eg
+        operational = _eg.gate_operational()
+        sealed = _eg.seal_outbound(payload, provider) if operational else None
+    except Exception as _eg_err:
+        _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
+        raise RuntimeError(
+            "Egress gate failed; cloud send blocked to avoid leaking unverified "
+            f"content: {_eg_err}"
+        ) from _eg_err
+    if not operational:
+        _log.error("egress gate failed its startup self-test — BLOCKING cloud send")
+        raise RuntimeError(
+            "Egress gate is non-functional (startup self-test failed); cloud "
+            "send blocked. Fix the gate (see boot log) or use a local model."
+        )
+    return sealed
+
+
 def _call_claude(messages, system=None, model=None, max_tokens=16384, temperature=None):
     """Call Claude with structured messages. Returns the text response.
 
@@ -118,20 +151,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             "the model's own default sampling will be used instead",
             temperature, kwargs.get("model", "unknown"),
         )
-    # Egress gate: runs after payload assembly, before the HTTP call.
-    # The egress gate is the LAST line of defense and must fail CLOSED: if it
-    # raises, the payload is unverified, so we must NOT forward it to the cloud.
-    # (Previously the except-branch printed a warning and sent the UN-sealed
-    # kwargs anyway — a full bypass of the security boundary on any gate error.)
-    try:
-        from agent_friday.services.egress_gate import seal_outbound as _seal
-        kwargs = _seal(kwargs, "anthropic")
-    except Exception as _eg_err:
-        _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
-        raise RuntimeError(
-            "Egress gate failed; cloud send blocked to avoid leaking unverified "
-            f"content: {_eg_err}"
-        ) from _eg_err
+    # Egress gate: runs after payload assembly, before the HTTP call — via the
+    # shared fail-closed wrapper (R3: one enforcement point for all providers).
+    kwargs = _seal_or_block(kwargs, "anthropic")
     _t0 = _time.time()
     resp = client.messages.create(**kwargs)
     # Cost metering (Part D): capture input AND output tokens for this call.
@@ -457,18 +479,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
-            # Egress gate: runs after payload assembly, before the HTTP call.
-            # Fail CLOSED: if the gate raises, block the send rather than
-            # forwarding the un-sealed payload to the cloud.
-            try:
-                from agent_friday.services.egress_gate import seal_outbound as _seal
-                payload = _seal(payload, "openai")
-            except Exception as _eg_err:
-                _log.error("egress gate error — BLOCKING cloud send (fail-closed): %s", _eg_err)
-                raise RuntimeError(
-                    "Egress gate failed; cloud send blocked to avoid leaking "
-                    f"unverified content: {_eg_err}"
-                ) from _eg_err
+            # Egress gate via the shared fail-closed wrapper (R3).
+            payload = _seal_or_block(payload, "openai")
             r = requests.post(f"{base_url}/chat/completions", headers=headers,
                               json=payload, timeout=180)
             r.raise_for_status()

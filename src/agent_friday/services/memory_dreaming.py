@@ -58,6 +58,12 @@ _NOISE_PATTERNS = [
     re.compile(r"^\s*(?:hi|hey|hello|thanks|thank you|ok|okay|yes|no|yep|nope|cool|great|got it)[!.\s]*$", re.I),
 ]
 
+# A `day` value reaches BOTH a SQL parameter and a FILENAME (dreams/<day>.md).
+# Accept only a literal YYYY-MM-DD date so hostile input like "../../evil" can
+# never traverse out of the dreams directory (POST /api/memory/dream passes the
+# caller's `day` straight through).
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 def _settings() -> Dict[str, Any]:
     try:
@@ -110,7 +116,9 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
     """
     if not _enabled():
         return {"ok": True, "skipped": True, "reason": "disabled"}
-    day = day or _yesterday()
+    day = str(day).strip() if day else _yesterday()
+    if not _DAY_RE.match(day):
+        return {"ok": False, "error": "invalid day — expected YYYY-MM-DD"}
     try:
         if memory is None:
             try:
@@ -159,6 +167,10 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
 
 
 def recent_dreams(n: int = 7) -> List[Dict[str, Any]]:
+    try:
+        n = max(1, min(100, int(n)))
+    except (TypeError, ValueError):
+        n = 7
     try:
         conn = _connect()
         rows = conn.execute(

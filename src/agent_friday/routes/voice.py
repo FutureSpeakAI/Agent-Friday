@@ -35,7 +35,7 @@ from agent_friday.core import (
     FRIDAY_PASSWORD,
     FRIDAY_WS_TOKEN,
     TEMP_AUDIO_DIR,
-    _API_SESSION_TOKEN,
+    _api_token_valid,
     _is_local_request,
     _load_agent_personality,
     _load_settings,
@@ -401,7 +401,7 @@ if sock is not None:
                     pass
                 return
         _ui_t = request.args.get('t', '')
-        _ui_tok_ok = bool(_ui_t) and _hmac.compare_digest(_ui_t, _API_SESSION_TOKEN)
+        _ui_tok_ok = _api_token_valid(_ui_t)
         if (FRIDAY_PASSWORD and not session.get("authenticated")
                 and not _loopback_trusted() and not _ui_tok_ok):
             try:
@@ -673,7 +673,7 @@ if sock is not None:
                     pass
                 return
         _ui_t = request.args.get('t', '')
-        _ui_tok_ok = bool(_ui_t) and _hmac.compare_digest(_ui_t, _API_SESSION_TOKEN)
+        _ui_tok_ok = _api_token_valid(_ui_t)
         if (FRIDAY_PASSWORD and not session.get("authenticated")
                 and not _loopback_trusted() and not _ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')

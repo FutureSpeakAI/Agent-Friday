@@ -84,7 +84,7 @@ def serve_ui():
         with open('index.html', encoding='utf-8') as _f:
             _html = _f.read()
         _token_script = (
-            f'<script>window.__FRIDAY_API_TOKEN="{core._API_SESSION_TOKEN}";</script>'  # pragma: allowlist secret
+            f'<script>window.__FRIDAY_API_TOKEN="{core._current_api_token()}";</script>'  # pragma: allowlist secret
         )
         # Inject early in <head> so the token is available before any fetch calls.
         _html = _html.replace('<head>', f'<head>\n{_token_script}', 1)

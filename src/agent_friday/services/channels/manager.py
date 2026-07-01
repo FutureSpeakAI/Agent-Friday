@@ -73,9 +73,21 @@ def configure_channel(name: str, opts: Dict[str, Any], *, token: Optional[str] =
         return {"ok": False, "error": f"unknown channel: {name}"}
     cfg = load_config()
     ch = cfg.get(name) or {}
-    for k in ("enabled", "allowlist", "poll_interval"):
-        if k in (opts or {}):
-            ch[k] = opts[k]
+    opts = opts or {}
+    # Validate every caller-supplied option — this arrives straight from a JSON
+    # body on the configure endpoint, so types are attacker-controllable.
+    if "enabled" in opts:
+        ch["enabled"] = bool(opts["enabled"])
+    if "allowlist" in opts:
+        raw = opts["allowlist"]
+        if not isinstance(raw, (list, tuple)):
+            return {"ok": False, "error": "allowlist must be a list of chat ids"}
+        ch["allowlist"] = [str(c).strip()[:64] for c in raw if str(c).strip()][:100]
+    if "poll_interval" in opts:
+        try:
+            ch["poll_interval"] = max(1.0, min(300.0, float(opts["poll_interval"])))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "poll_interval must be a number"}
     cfg[name] = ch
     res = save_config(cfg)
     if token:
@@ -231,6 +243,9 @@ def gate_reply(text: str, channel: str) -> str:
 def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
     """Funnel one inbound message → agent loop → egress gate → reply text."""
     channel = _norm(channel)
+    if not isinstance(text, str) or not text.strip():
+        return None
+    text = text[:8000]  # bound hostile/oversized payloads before the agent loop
     cfg = load_config()
     if not cfg.get("enabled", False):
         return None

@@ -42,11 +42,19 @@ class TelegramBridge(ChannelAdapter):
                           {"offset": self._offset, "timeout": 0, "limit": 20},
                           timeout=10.0)
         for update in resp.get("result", []) or []:
-            self._offset = max(self._offset, int(update.get("update_id", 0)) + 1)
+            if not isinstance(update, dict):
+                continue  # a malformed update must not kill the whole batch
+            try:
+                self._offset = max(self._offset, int(update.get("update_id", 0)) + 1)
+            except (TypeError, ValueError):
+                pass
             msg = update.get("message") or update.get("edited_message") or {}
+            if not isinstance(msg, dict):
+                continue
             text = msg.get("text")
-            chat = (msg.get("chat") or {}).get("id")
-            if text and chat is not None:
+            chat_obj = msg.get("chat")
+            chat = chat_obj.get("id") if isinstance(chat_obj, dict) else None
+            if isinstance(text, str) and text and chat is not None:
                 self._dispatch(str(chat), text)
 
     def send(self, chat_id: str, text: str) -> Dict[str, Any]:
@@ -64,9 +72,14 @@ class TelegramBridge(ChannelAdapter):
         """Extract (chat_id, text) pairs from a getUpdates payload. Pure."""
         out = []
         for update in (payload or {}).get("result", []) or []:
+            if not isinstance(update, dict):
+                continue
             msg = update.get("message") or update.get("edited_message") or {}
+            if not isinstance(msg, dict):
+                continue
             text = msg.get("text")
-            chat = (msg.get("chat") or {}).get("id")
-            if text and chat is not None:
+            chat_obj = msg.get("chat")
+            chat = chat_obj.get("id") if isinstance(chat_obj, dict) else None
+            if isinstance(text, str) and text and chat is not None:
                 out.append({"chat_id": str(chat), "text": text})
         return out
