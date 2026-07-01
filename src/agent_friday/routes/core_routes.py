@@ -95,12 +95,24 @@ def serve_ui():
 
 @core_bp.route('/static/<path:filename>')
 def serve_static_asset(filename):
-    return send_from_directory('static', filename)
+    # Relative send_from_directory paths resolve against Flask's root_path
+    # (inside the package) — not the process cwd that serve_ui's
+    # open('index.html') uses — so this route 404'd everything. Anchor to cwd.
+    return send_from_directory(os.path.abspath('static'), filename)
+
+
+@core_bp.route('/assets/<path:filename>')
+def serve_asset(filename):
+    # The dock loads its workspace icons from assets/icons/<id>.svg; without
+    # this route they 404'd and the emoji fallback always showed instead of
+    # the designed icon set.
+    return send_from_directory(os.path.abspath('assets'), filename)
 
 
 @core_bp.route('/favicon.ico')
 def serve_favicon():
-    return send_from_directory('static', 'favicon.ico', mimetype='image/x-icon')
+    return send_from_directory(os.path.abspath('static'), 'favicon.ico',
+                               mimetype='image/x-icon')
 
 
 @core_bp.route('/friday-live')
@@ -609,6 +621,7 @@ def analyze_file():
     try:
         from google import genai
         from google.genai import types
+        from agent_friday.services import egress_gate as _eg
         client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
 
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
@@ -630,9 +643,13 @@ def analyze_file():
                 with pdfplumber.open(io.BytesIO(content)) as pdf:
                     text = '\n'.join(page.extract_text() or '' for page in pdf.pages[:10])
                 if text.strip():
+                    # Egress gate: the PDF's extracted text is user content going to
+                    # a cloud provider (Gemini), which does not route through
+                    # seal_outbound. Gate it fail-closed before it leaves the device.
+                    _gated_pdf = _eg.gate_text(text[:8000], "gemini", "analyze_file.pdf")
                     response = client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=f'You are Friday. Summarize this PDF document concisely. If it looks like a job posting, evaluate the key requirements and note the role level.\n\n{text[:8000]}'
+                        contents=f'You are Friday. Summarize this PDF document concisely. If it looks like a job posting, evaluate the key requirements and note the role level.\n\n{_gated_pdf}'
                     )
                     return jsonify({"filename": filename, "type": "pdf", "analysis": response.text})
             except ImportError:
@@ -642,6 +659,9 @@ def analyze_file():
             text = content.decode('utf-8', errors='replace')[:8000]
             job_keywords = ['responsibilities', 'qualifications', 'salary', 'benefits', 'apply', 'experience required']
             is_job = sum(1 for kw in job_keywords if kw.lower() in text.lower()) >= 2
+            # Egress gate: uploaded file text is user content bound for Gemini
+            # (which bypasses seal_outbound). Gate fail-closed before it leaves.
+            text = _eg.gate_text(text, "gemini", "analyze_file.text")
             if is_job:
                 prompt = f'You are Friday. This looks like a job posting. Evaluate the key requirements, role level, and compensation signals. Rate attractiveness 1-10 and explain.\n\n{text}'
             else:

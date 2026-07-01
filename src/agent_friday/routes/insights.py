@@ -247,6 +247,48 @@ def get_behavioral_risk_score():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@insights_bp.route('/api/vault/status')
+def get_vault_status():
+    """Sovereign Vault card for Settings → Privacy.
+
+    `locked` means encrypted blobs exist on disk but no key is available to
+    read them; `encryption` reflects the LIVE AES-256-GCM state (a set
+    passphrase that fails derivation still reports "None" + error).
+    """
+    from agent_friday.services import agent as _agent
+    key = None
+    try:
+        key = _agent._get_vault_key()
+    except Exception:
+        pass
+    enc = core._VAULT_ENCRYPTION_STATE
+    entry_count = 0
+    encrypted_count = 0
+    try:
+        magic_len = len(_agent._vc.MAGIC) if _agent._HAS_VAULT_CRYPTO else 0
+        for p in (FRIDAY_DIR / "vault").iterdir():
+            if not p.is_file() or p.name.startswith('.'):
+                continue
+            entry_count += 1
+            if magic_len:
+                try:
+                    with p.open('rb') as fh:
+                        if _agent._vc.is_encrypted(fh.read(magic_len)):
+                            encrypted_count += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return jsonify({
+        "locked": bool(encrypted_count and key is None),
+        "encryption": "AES-256-GCM" if enc.get("enabled") else "None",
+        "entry_count": entry_count,
+        "encrypted_count": encrypted_count,
+        "warning": enc.get("warning", ""),
+        "error": enc.get("error", ""),
+    })
+
+
 @insights_bp.route('/api/memory/stats')
 def get_memory_stats():
     """Return enriched memory tier counts.
