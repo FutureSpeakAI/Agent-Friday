@@ -226,6 +226,14 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
         return None
     if not _allowed(channel, chat_id):
         return None
+    # DM pairing: channel messages deepen the relationship the same way the chat
+    # UI does — feed the LOCAL user model so Friday personalizes across surfaces.
+    # Best-effort; never blocks or fails the reply.
+    try:
+        from agent_friday.services import user_model as _um
+        _um.observe_message(text, role="user", workspace="chat")
+    except Exception:
+        pass
     try:
         reply = _run_agent(text)
     except Exception as e:
