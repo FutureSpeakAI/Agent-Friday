@@ -162,6 +162,23 @@ app.secret_key = _load_or_create_secret()
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 if os.environ.get("FRIDAY_COOKIE_SECURE", "") not in ("", "0", "false", "False"):
     app.config["SESSION_COOKIE_SECURE"] = True
+
+# Request-size cap (Fable 5 adversarial fixes): bound incoming bodies on every
+# endpoint so an oversized POST can't exhaust memory. The default leaves
+# generous headroom for audio/image uploads; tune with FRIDAY_MAX_REQUEST_MB.
+try:
+    _MAX_REQ_MB = max(1, int(os.environ.get("FRIDAY_MAX_REQUEST_MB", "25")))
+except ValueError:
+    _MAX_REQ_MB = 25
+app.config["MAX_CONTENT_LENGTH"] = _MAX_REQ_MB * 1024 * 1024
+
+
+@app.errorhandler(413)
+def _request_too_large(_e):
+    return jsonify({
+        "error": f"request body too large (limit {_MAX_REQ_MB} MB — "
+                 "set FRIDAY_MAX_REQUEST_MB to raise it)"
+    }), 413
 sock = Sock(app) if _HAS_SOCK else None
 
 # Server start time for uptime reporting
@@ -198,6 +215,51 @@ _HTTP_AUTH_KEY: str = (
 # X-Friday-Token header.  Rotating every restart means a captured token is
 # automatically invalidated the next time the server is restarted.
 _API_SESSION_TOKEN: str = secrets.token_hex(32)
+
+# Token rotation (Fable 5 adversarial fixes): a token minted at startup used to
+# live for the entire — possibly weeks-long — process lifetime, so a captured
+# token stayed valid until the next restart. It now rotates every
+# FRIDAY_API_TOKEN_ROTATE_HOURS (default 24 h; 0 disables). Rotation is LAZY —
+# checked on every use — so no background thread is needed, and the served HTML
+# always embeds the CURRENT token (serve_ui calls _current_api_token()). The
+# previous token stays valid for a short grace window so a page loaded moments
+# before rotation isn't instantly broken mid-session.
+_API_TOKEN_LOCK = threading.Lock()
+try:
+    _API_TOKEN_ROTATE_S: float = max(
+        0.0, float(os.environ.get("FRIDAY_API_TOKEN_ROTATE_HOURS", "24")) * 3600.0)
+except ValueError:
+    _API_TOKEN_ROTATE_S = 24 * 3600.0
+_API_TOKEN_GRACE_S = 300.0
+_API_TOKEN_ISSUED_AT: float = _time.time()
+_API_SESSION_TOKEN_PREV: str = ""
+
+
+def _current_api_token() -> str:
+    """Return the active API session token, rotating it first when expired."""
+    global _API_SESSION_TOKEN, _API_SESSION_TOKEN_PREV, _API_TOKEN_ISSUED_AT
+    if _API_TOKEN_ROTATE_S <= 0:
+        return _API_SESSION_TOKEN
+    with _API_TOKEN_LOCK:
+        if _time.time() - _API_TOKEN_ISSUED_AT >= _API_TOKEN_ROTATE_S:
+            _API_SESSION_TOKEN_PREV = _API_SESSION_TOKEN
+            _API_SESSION_TOKEN = secrets.token_hex(32)  # pragma: allowlist secret
+            _API_TOKEN_ISSUED_AT = _time.time()
+        return _API_SESSION_TOKEN
+
+
+def _api_token_valid(tok) -> bool:
+    """Constant-time check of an X-Friday-Token value against the current (or,
+    within a short grace window after rotation, the previous) session token."""
+    if not tok or not isinstance(tok, str):
+        return False
+    if _hmac.compare_digest(tok, _current_api_token()):
+        return True
+    if (_API_SESSION_TOKEN_PREV
+            and _time.time() - _API_TOKEN_ISSUED_AT < _API_TOKEN_GRACE_S
+            and _hmac.compare_digest(tok, _API_SESSION_TOKEN_PREV)):
+        return True
+    return False
 
 # When "0"/"false", same-machine (loopback) requests are NOT auto-trusted and
 # must authenticate like remote clients. Default "1" preserves the local-dev UX.
@@ -333,8 +395,8 @@ def login_required(f):
         if _loopback_trusted():
             session['authenticated'] = True
             return f(*args, **kwargs)
-        # Accept the ephemeral per-startup token embedded in the UI HTML.
-        if request.headers.get("X-Friday-Token") == _API_SESSION_TOKEN:
+        # Accept the ephemeral rotating token embedded in the UI HTML.
+        if _api_token_valid(request.headers.get("X-Friday-Token")):
             return f(*args, **kwargs)
         if not session.get("authenticated"):
             if request.is_json or request.path.startswith("/api/"):
@@ -538,6 +600,24 @@ def _bootstrap_env_from_launch_scripts():
 
 
 _bootstrap_env_from_launch_scripts()
+
+# Re-derive the auth/vault constants now that launch-script vars are loaded.
+# They are computed near the top of this module — BEFORE the bootstrap above
+# runs — so a FRIDAY_PASSWORD / FRIDAY_REMOTE_KEY / FRIDAY_VAULT_PASSPHRASE
+# that lives only in start.bat would otherwise silently leave HTTP auth
+# keyless (every remote request denied since the fail-closed fix) and the
+# vault in PLAINTEXT mode, even though the operator configured a password.
+# os.environ still wins: we only fill values that were empty pre-bootstrap.
+if not FRIDAY_PASSWORD:
+    FRIDAY_PASSWORD = os.environ.get("FRIDAY_PASSWORD", "")
+if not FRIDAY_VAULT_PASSPHRASE:
+    FRIDAY_VAULT_PASSPHRASE = (
+        os.environ.get("FRIDAY_VAULT_PASSPHRASE", "") or FRIDAY_PASSWORD
+    )
+if not _HTTP_AUTH_KEY:
+    _HTTP_AUTH_KEY = (
+        os.environ.get("FRIDAY_REMOTE_KEY", "") or FRIDAY_PASSWORD
+    )
 
 # ── Gemini Client (lazy init) ─────────────────────────────────
 _genai_client = None
@@ -1781,8 +1861,8 @@ def check_auth():
         return None
     if request.path.startswith('/ws/'):
         return None  # WebSocket upgrade handled inside ws_live (can't send HTTP redirect)
-    # Accept the ephemeral per-startup token (embedded in the served HTML).
-    if request.headers.get("X-Friday-Token") == _API_SESSION_TOKEN:
+    # Accept the ephemeral rotating token (embedded in the served HTML).
+    if _api_token_valid(request.headers.get("X-Friday-Token")):
         return None
     if not session.get("authenticated"):
         if request.is_json or request.path.startswith("/api/"):

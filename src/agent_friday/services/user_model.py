@@ -100,6 +100,20 @@ def _enabled() -> bool:
 
 # ── Traits ────────────────────────────────────────────────────────────────────
 def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Dict[str, Any]:
+    # Validate before touching the DB — keys and values come from callers all
+    # over the codebase (and, via routes, from clients).
+    if not key or not isinstance(key, str) or not key.strip():
+        return {"ok": False, "error": "invalid trait key"}
+    key = key.strip()[:80]
+    try:
+        confidence = max(0.0, min(1.0, float(confidence)))
+    except (TypeError, ValueError):
+        confidence = 0.6
+    try:
+        evidence = int(evidence)
+    except (TypeError, ValueError):
+        evidence = 1
+    value = str(value)[:500]
     with _LOCK:
         try:
             conn = _connect()
@@ -170,9 +184,11 @@ def get_trait(key: str, default=None):
 def observe_message(text: str, *, role: str = "user", workspace: str = "",
                     ts: Optional[float] = None) -> Dict[str, Any]:
     """Update communication + expertise signals from one user message."""
-    if not _enabled() or role != "user" or not text or not text.strip():
+    if not _enabled() or role != "user" or not isinstance(text, str) or not text.strip():
         return {"ok": True, "skipped": True}
-    low = text.lower()
+    # Bound the scan window — a megabyte paste must not cost a megabyte of
+    # substring scans per lexicon. Style/expertise signals are ample in 8 KB.
+    low = text[:8000].lower()
     try:
         # Formality: casual vs formal marker balance.
         casual = sum(1 for m in _CASUAL_MARKERS if m in low)
@@ -221,12 +237,18 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
 def note_fact(category: str, text: str, *, confidence: float = 0.6,
               source: str = "dream") -> Dict[str, Any]:
     """Store a durable fact (preference/expertise/workflow/bio). Dedups by text."""
-    if not text or not text.strip():
+    if not text or not isinstance(text, str) or not text.strip():
         return {"ok": False, "error": "empty fact"}
+    category = _slug(category) or "general"
+    source = str(source or "")[:80]
+    try:
+        confidence = max(0.0, min(1.0, float(confidence)))
+    except (TypeError, ValueError):
+        confidence = 0.6
     with _LOCK:
         try:
             conn = _connect()
-            norm = text.strip()
+            norm = text.strip()[:500]
             dup = conn.execute(
                 "SELECT fact_id, confidence, source FROM facts WHERE category=? AND text=?",
                 (category, norm)).fetchone()
@@ -330,7 +352,7 @@ def forget(category: Optional[str] = None) -> Dict[str, Any]:
         try:
             conn = _connect()
             if category:
-                conn.execute("DELETE FROM facts WHERE category=?", (category,))
+                conn.execute("DELETE FROM facts WHERE category=?", (_slug(category),))
             else:
                 conn.execute("DELETE FROM traits")
                 conn.execute("DELETE FROM facts")

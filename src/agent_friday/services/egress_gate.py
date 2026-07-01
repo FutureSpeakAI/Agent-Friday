@@ -18,6 +18,7 @@ Local providers (Ollama / 'local') bypass this gate; data stays on-device.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,49 @@ _LOCAL_PROVIDERS = {"ollama", "local"}
 
 _LOG_LOCK = threading.Lock()
 _DEFAULT_LOG = Path.home() / ".friday" / "vault" / "egress-log.jsonl"
+
+
+# ── Classifier rate limiting ──────────────────────────────────────────────────
+# The classifier's heavy layers (embeddings, NER) are expensive. Under a load
+# spike — many concurrent channel messages, a burst of parallel subagents —
+# unbounded concurrent classification can exhaust memory and make the classifier
+# raise, which trips the fail-closed path and blocks traffic that a paced
+# classifier would have passed. So excess callers QUEUE instead of crashing:
+# a token bucket admits at most FRIDAY_EGRESS_CLASSIFY_RATE calls per second
+# and briefly sleeps the rest. Pacing is best-effort (a bounded wait, then
+# proceed) — the CONTENT gate itself always still runs.
+try:
+    _RATE_MAX_PER_SEC = max(1, int(os.environ.get("FRIDAY_EGRESS_CLASSIFY_RATE", "40")))
+except ValueError:
+    _RATE_MAX_PER_SEC = 40
+_RATE_MAX_WAIT_S = 10.0
+_RATE_LOCK = threading.Lock()
+_rate_window_start = 0.0
+_rate_count = 0
+
+
+def _rate_limit() -> None:
+    """Pace classifier calls: queue (sleep) instead of crash under load spikes.
+
+    Never raises and never skips classification — after _RATE_MAX_WAIT_S the
+    caller proceeds anyway (all work is local; only the pacing is waived), so a
+    pathological burst degrades to slower classification, not a blocked gate.
+    """
+    global _rate_window_start, _rate_count
+    deadline = time.monotonic() + _RATE_MAX_WAIT_S
+    while True:
+        with _RATE_LOCK:
+            now = time.monotonic()
+            if now - _rate_window_start >= 1.0:
+                _rate_window_start = now
+                _rate_count = 0
+            if _rate_count < _RATE_MAX_PER_SEC:
+                _rate_count += 1
+                return
+            wait = 1.0 - (now - _rate_window_start)
+        if time.monotonic() >= deadline:
+            return  # never block a request indefinitely — pacing is best-effort
+        time.sleep(min(max(wait, 0.01), 0.25))
 
 
 def _is_cloud(provider: str) -> bool:
@@ -45,7 +89,11 @@ def _classify_cloud(text: str) -> int:
     0.50) is conservatively classified as PRIVATE before any keyword/regex match
     is required. This catches contextual PII ("my son lives with me on weekends")
     that keyword lists miss, while not blocking genuinely neutral conversations.
+
+    Calls are paced by _rate_limit() so a load spike queues briefly instead of
+    OOM-crashing the classifier (which would trip fail-closed and block traffic).
     """
+    _rate_limit()
     return _classify_impl(text, default=Tier.PUBLIC)
 
 
@@ -199,3 +247,45 @@ def seal_outbound(
         sealed["tools"] = _gate_tools(sealed["tools"], provider, log_path)
 
     return sealed
+
+
+# ── Startup self-test (R2, Fable 5 adversarial review) ────────────────────────
+_SELF_TEST_RESULT = None  # None = not yet run; dict {"ok": bool, ...} once run
+
+
+def startup_self_test() -> dict:
+    """Seal a known-SENSITIVE probe once and record whether the gate withheld it.
+
+    Called at server boot: if the gate cannot positively withhold a probe that
+    is unambiguously Tier-3 (SSN + bank-account keywords) — a layer failed to
+    import, the classifier crashed, or gating silently passed the text through —
+    cloud routing is refused (model_router._seal_or_block consults
+    gate_operational()) so the failure mode is caught at boot, not at first leak.
+    """
+    global _SELF_TEST_RESULT
+    probe = "My SSN is 123-45-6789 and my bank account number is 987654321."  # pragma: allowlist secret
+    try:
+        sealed = seal_outbound(
+            {"messages": [{"role": "user", "content": probe}]},
+            "selftest-cloud",
+            log_path=Path(os.devnull),
+        )
+        msgs = sealed.get("messages") or [{}]
+        out = str(msgs[0].get("content", "")) if isinstance(msgs[0], dict) else ""
+        ok = probe not in out and "123-45-6789" not in out  # pragma: allowlist secret
+        _SELF_TEST_RESULT = {"ok": ok}
+        if not ok:
+            _SELF_TEST_RESULT["error"] = "sensitive probe survived the gate"
+    except Exception as e:
+        _SELF_TEST_RESULT = {"ok": False, "error": str(e)}
+    return _SELF_TEST_RESULT
+
+
+def gate_operational() -> bool:
+    """False only when the startup self-test ran AND failed.
+
+    When the self-test has not run (unit tests, library embedding) the per-call
+    fail-closed wrapper in model_router remains the enforcement point, so the
+    default is True.
+    """
+    return _SELF_TEST_RESULT is None or bool(_SELF_TEST_RESULT.get("ok"))

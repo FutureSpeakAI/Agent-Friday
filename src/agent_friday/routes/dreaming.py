@@ -16,7 +16,10 @@ dreaming_bp = Blueprint("dreaming", __name__)
 @dreaming_bp.route("/api/memory/dreams", methods=["GET"])
 @login_required
 def list_dreams():
-    n = int(request.args.get("n", 7))
+    try:
+        n = int(request.args.get("n", 7))
+    except (TypeError, ValueError):
+        n = 7
     return jsonify({"ok": True, "dreams": memory_dreaming.recent_dreams(n)})
 
 

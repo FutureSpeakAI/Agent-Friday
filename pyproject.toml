@@ -83,6 +83,10 @@ all = [
     "headroom-ai[all]>=0.22",
     "pynacl>=1.5",
     "pdfplumber>=0.10",
+    # Egress-gate Layer 2 NER (R4, Fable 5 review): the recommended install
+    # ships with the FULL gate, not a weakened one.
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
     # Computer control + kill-switch: Windows-only (needs X11 headers on Linux)
     "pyautogui>=0.9; sys_platform == 'win32'",
     "pynput>=1.7; sys_platform == 'win32'",

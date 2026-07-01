@@ -106,6 +106,14 @@ def observe(task_type: str, prompt: str, *, approach: str, success: bool,
         ph = hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16]
         sat = _clamp01(satisfaction) if satisfaction is not None else (
             0.85 if success else 0.2)
+        # Defensive input coercion — a caller passing garbage types must degrade
+        # to safe defaults, never crash the observation path or poison a row.
+        revisions = _coerce_int(revisions, 0)
+        duration_s = _coerce_float(duration_s, 0.0)
+        tokens = _coerce_int(tokens, 0)
+        meta_json = json.dumps(meta or {}, default=str)
+        if len(meta_json) > 4096:  # cap meta blob growth from unbounded dicts
+            meta_json = "{}"
         with _LOCK:
             conn = _connect()
             conn.execute(
@@ -113,9 +121,9 @@ def observe(task_type: str, prompt: str, *, approach: str, success: bool,
                 "success,satisfaction,revisions,duration_s,tokens,workspace,meta_json)"
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (obs_id, time.time(), _norm(task_type), ph, _norm(approach),
-                 1 if success else 0, float(sat), int(revisions),
-                 float(duration_s), int(tokens), _norm(workspace),
-                 json.dumps(meta or {})))
+                 1 if success else 0, float(sat), revisions,
+                 duration_s, tokens, _norm(workspace),
+                 meta_json))
             conn.commit()
             conn.close()
         return {"ok": True, "obs_id": obs_id}
@@ -138,6 +146,12 @@ def mine_candidates(min_success: float = 0.7, min_samples: int = 3,
     """
     if not _enabled():
         return []
+    # Parameter hygiene — clamp caller-supplied knobs into sane bounds so a bad
+    # value (API caller, corrupted settings) can't mint unbounded skills.
+    min_success = _clamp01(min_success)
+    min_samples = max(1, _coerce_int(min_samples, 3))
+    min_distinct = max(1, _coerce_int(min_distinct, 2))
+    max_new = max(1, min(100, _coerce_int(max_new, 20)))
     try:
         import json
         with _LOCK:
@@ -189,6 +203,9 @@ def record_trial(skill_id: str, success: bool, satisfaction: Optional[float] = N
                  note: str = "") -> Dict[str, Any]:
     if not _enabled():
         return {"ok": True, "skipped": True}
+    if not skill_id or not isinstance(skill_id, str):
+        return {"ok": False, "error": "invalid skill_id"}
+    note = str(note or "")
     try:
         sat = _clamp01(satisfaction) if satisfaction is not None else (
             0.85 if success else 0.2)
@@ -252,6 +269,9 @@ def promote(threshold: float = _PROMOTE_THRESHOLD, min_trials: int = 3,
     `retire`. Respects max_active_skills."""
     if not _enabled():
         return []
+    threshold = _clamp01(threshold)
+    retire = _clamp01(retire)
+    min_trials = max(0, _coerce_int(min_trials, 3))
     changes: List[Dict[str, Any]] = []
     try:
         # Serialize the whole read-count/score/promote sequence: without this two
@@ -310,6 +330,7 @@ def active_skills(task_type: Optional[str] = None) -> List[Dict[str, Any]]:
 
 def render_heuristics_prompt(task_type: Optional[str] = None, limit: int = 10) -> str:
     """`== LEARNED HEURISTICS ==` block body for the system prompt (bounded)."""
+    limit = max(1, min(50, _coerce_int(limit, 10)))
     skills = active_skills(task_type)[:limit]
     if not skills:
         return ""
@@ -391,6 +412,20 @@ def _wilson_lower_bound(wins: int, n: int, z: float = 1.96) -> float:
     centre = phat + z * z / (2 * n)
     margin = z * math.sqrt((phat * (1 - phat) + z * z / (4 * n)) / n)
     return round(max(0.0, (centre - margin) / denom), 4)
+
+
+def _coerce_int(v, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(v, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
 
 
 def _clamp01(v) -> float:

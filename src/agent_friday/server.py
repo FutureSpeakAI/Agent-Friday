@@ -254,7 +254,7 @@ if __name__ == '__main__':
     _url = f"http://localhost:{_port}"
     print()
     print("  ╔══════════════════════════════════════════════╗")
-    print("  ║   FRIDAY Desktop v4.4 — Phase B OS          ║")
+    print("  ║   FRIDAY Desktop v5.0 — Super Agent         ║")
     print("  ╠══════════════════════════════════════════════╣")
     print(f"  ║  {_url:<42}║")
     print("  ║  Flask + Gemini API + Three.js Holographic   ║")
@@ -323,6 +323,28 @@ if __name__ == '__main__':
     _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
     _ssl_context = None
     if bind_host not in _LOOPBACK_HOSTS:
+        # R1 (Fable 5 adversarial fixes): refuse to start a network-exposed
+        # server with no remote auth key. The request-time guard already denies
+        # keyless remote requests (fail-closed), but refusing to boot at all is
+        # belt-and-suspenders — the operator finds out NOW, not via 403s later.
+        if not (os.environ.get("FRIDAY_REMOTE_KEY", "") or os.environ.get("FRIDAY_PASSWORD", "")):
+            if os.environ.get("FRIDAY_ALLOW_KEYLESS_BIND", "").lower() in ("1", "true", "yes"):
+                print("  WARNING: FRIDAY_ALLOW_KEYLESS_BIND=1 — network bind with NO auth key.")
+                print("           Every remote request will be REJECTED until a key is set.")
+            else:
+                print()
+                print("  ╔══════════════════════════════════════════════════════════════╗")
+                print("  ║  REFUSING TO START: network bind without an auth key         ║")
+                print("  ║                                                              ║")
+                print(f"  ║  FRIDAY_BIND_HOST={bind_host:<43}║")
+                print("  ║  exposes the server beyond this machine, but neither         ║")
+                print("  ║  FRIDAY_REMOTE_KEY nor FRIDAY_PASSWORD is set.               ║")
+                print("  ║                                                              ║")
+                print("  ║  Set FRIDAY_REMOTE_KEY to a strong unique value, or bind     ║")
+                print("  ║  to 127.0.0.1 (the default). To start anyway (all remote     ║")
+                print("  ║  requests still denied): FRIDAY_ALLOW_KEYLESS_BIND=1         ║")
+                print("  ╚══════════════════════════════════════════════════════════════╝")
+                sys.exit(1)
         _tls_cert = os.environ.get("FRIDAY_TLS_CERT", "")
         _tls_key_path = os.environ.get("FRIDAY_TLS_KEY", "")
         if _tls_cert and _tls_key_path:
@@ -349,6 +371,27 @@ if __name__ == '__main__':
             if os.environ.get("FRIDAY_REQUIRE_TLS", "").lower() in ("1", "true", "yes"):
                 print("  FRIDAY_REQUIRE_TLS=1 — refusing to start without TLS.")
                 sys.exit(1)
+
+    # R2 (Fable 5 adversarial fixes): egress-gate startup self-test. Seal a
+    # known-SENSITIVE probe once; if the gate cannot withhold it, cloud routing
+    # is disabled (model_router._seal_or_block refuses every cloud send) until
+    # the gate is fixed — the failure mode is caught at boot, not at first leak.
+    try:
+        from agent_friday.services.egress_gate import startup_self_test as _gate_self_test
+        _gate_res = _gate_self_test()
+        if _gate_res.get("ok"):
+            print("  Egress gate: self-test passed (sensitive probe withheld)")
+        else:
+            print()
+            print("  ╔══════════════════════════════════════════════════════════════╗")
+            print("  ║  SECURITY WARNING: EGRESS GATE SELF-TEST FAILED              ║")
+            print(f"  ║  {str(_gate_res.get('error', 'unknown'))[:58]:<60}║")
+            print("  ║  Cloud model routing is DISABLED until the gate is fixed.    ║")
+            print("  ║  Local models (Ollama) continue to work normally.            ║")
+            print("  ╚══════════════════════════════════════════════════════════════╝")
+            print()
+    except Exception as _gate_err:
+        print(f"  Egress gate: self-test errored ({_gate_err}) — cloud sends stay fail-closed per call")
 
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,
