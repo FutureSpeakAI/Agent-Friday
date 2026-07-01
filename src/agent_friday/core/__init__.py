@@ -324,8 +324,12 @@ def _login_attempt_reset(ip):
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Loopback stays trusted even with no key; a NON-loopback caller with no
+        # key configured is denied (fail-closed) rather than allowed through.
         if not _HTTP_AUTH_KEY:
-            return f(*args, **kwargs)
+            if _loopback_trusted():
+                return f(*args, **kwargs)
+            return jsonify({"error": "remote access disabled: no FRIDAY_REMOTE_KEY set"}), 403
         if _loopback_trusted():
             session['authenticated'] = True
             return f(*args, **kwargs)
@@ -1758,8 +1762,21 @@ def check_auth():
             session.permanent = True
             app.permanent_session_lifetime = timedelta(days=30)
         return None
+    # FAIL-CLOSED: a NON-loopback request reached here, so the server is exposed
+    # (e.g. via a Cloudflare Tunnel). If no remote auth key is configured we must
+    # NOT wave it through — an unset key previously left the ENTIRE API open to
+    # anyone who could reach the tunnel. Deny remote access until the operator
+    # sets FRIDAY_REMOTE_KEY (or FRIDAY_PASSWORD). Loopback is unaffected.
     if not _HTTP_AUTH_KEY:
-        return None
+        if request.endpoint in ('login', 'serve_static_asset', 'serve_favicon'):
+            return None
+        if request.is_json or request.path.startswith("/api/"):
+            return jsonify({"error": "remote access disabled: no FRIDAY_REMOTE_KEY set"}), 403
+        return Response(
+            "Remote access is disabled. Set FRIDAY_REMOTE_KEY on the server to "
+            "enable authenticated remote access.",
+            status=403, content_type="text/plain",
+        )
     if request.endpoint in ('login', 'serve_static_asset', 'serve_favicon'):
         return None
     if request.path.startswith('/ws/'):
