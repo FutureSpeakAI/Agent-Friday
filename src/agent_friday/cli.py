@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -47,6 +48,15 @@ except ImportError:
     from rich import box
     from rich.rule import Rule
     from rich.columns import Columns
+
+# Legacy Windows consoles (cp1252) can't encode the ✓/✗ glyphs rich emits;
+# degrade to '?' instead of crashing with UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(errors="replace")
+        except Exception:
+            pass
 
 console = Console()
 
@@ -146,9 +156,36 @@ def _is_existing_user() -> bool:
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY"):
         return True
     for batch_name in ("start.bat", "friday_startup.bat", "friday_startup.vbs"):
-        if (HERE / batch_name).exists():
+        # Launch scripts live at the project root, not inside the package.
+        if (PROJ_ROOT / batch_name).exists():
             return True
     return False
+
+
+def _launch_script_env(name: str) -> str:
+    """Read a `set NAME=VALUE` var from the launch scripts at the project root.
+
+    The server bootstraps its env from these scripts (core.__init__), so keys
+    that only live in start.bat ARE effective at runtime — doctor must look
+    there too or it reports a key as missing on a machine where `friday start`
+    works. Same precedence as the server: start.bat first. Never logs values.
+    """
+    _set_re = re.compile(
+        r'^\s*set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^"\r\n]*)"?\s*$', re.IGNORECASE)
+    for fname in ("start.bat", "launch_now.bat", "friday_startup.bat"):
+        p = PROJ_ROOT / fname
+        if not p.exists():
+            continue
+        try:
+            for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+                m = _set_re.match(line)
+                if m and m.group(1).upper() == name.upper():
+                    value = m.group(2).strip()
+                    if value and not value.startswith("%"):
+                        return value
+        except Exception:
+            continue
+    return ""
 
 
 def cmd_start():
@@ -530,8 +567,12 @@ def cmd_status():
     _check("Setup complete", SETUP_MARKER.exists(),
            "run: friday setup" if not SETUP_MARKER.exists() else "")
 
-    anthro_key = cfg.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
-    gemini_key  = cfg.get("gemini_api_key")   or os.environ.get("GEMINI_API_KEY", "")
+    anthro_key = (cfg.get("anthropic_api_key")
+                  or os.environ.get("ANTHROPIC_API_KEY", "")
+                  or _launch_script_env("ANTHROPIC_API_KEY"))
+    gemini_key = (cfg.get("gemini_api_key")
+                  or os.environ.get("GEMINI_API_KEY", "")
+                  or _launch_script_env("GEMINI_API_KEY"))
     _check("Anthropic API key set", bool(anthro_key),
            "run: friday setup" if not anthro_key else "")
     _check("Gemini API key set (optional)", bool(gemini_key),
