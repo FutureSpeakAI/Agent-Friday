@@ -119,3 +119,44 @@ def test_start_channel_requires_enabled():
     # channels master switch is off by default → start refused
     res = manager.start_channel("telegram")
     assert res["ok"] is False
+
+
+def test_handle_incoming_error_path_is_generic(monkeypatch):
+    # Regression: a raw agent exception (may embed vault paths / PII) must NOT
+    # be sent to the external channel.
+    cfg = manager.load_config()
+    cfg["enabled"] = True
+    cfg["telegram"]["enabled"] = True
+    cfg["telegram"]["allowlist"] = ["1"]
+    manager.save_config(cfg)
+
+    def boom(text):
+        raise RuntimeError("secret C:/Users/x/.friday/vault/key leaked here")
+    monkeypatch.setattr(manager, "_run_agent", boom)
+    reply = manager.handle_incoming("telegram", "1", "hi")
+    assert "secret" not in reply and "vault" not in reply
+    assert "internal error" in reply.lower()
+
+
+def test_gate_reply_backstop_default_denies(monkeypatch):
+    # Regression: on a double failure (gate raises AND classifier raises) the
+    # backstop must WITHHOLD, not leak ungated text.
+    from agent_friday.services import egress_gate, sensitivity_classifier as sc
+
+    def boom(*a, **k):
+        raise RuntimeError("down")
+    monkeypatch.setattr(egress_gate, "seal_outbound", boom)
+    monkeypatch.setattr(sc, "classify", boom)
+    out = manager.gate_reply("some private reply", "telegram")
+    assert "withheld" in out.lower()
+
+
+def test_gate_reply_backstop_allows_public(monkeypatch):
+    from agent_friday.services import egress_gate, sensitivity_classifier as sc
+
+    def boom(*a, **k):
+        raise RuntimeError("down")
+    monkeypatch.setattr(egress_gate, "seal_outbound", boom)
+    monkeypatch.setattr(sc, "classify", lambda t: sc.Tier.PUBLIC)
+    out = manager.gate_reply("hello world", "telegram")
+    assert out == "hello world"

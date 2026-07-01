@@ -105,7 +105,15 @@ def _make_adapter(name: str):
 def get_adapter(name: str):
     name = _norm(name)
     a = _ADAPTERS.get(name)
-    if a is None:
+    if a is not None:
+        return a
+    # Double-checked locking: without this two concurrent requests (Flask is
+    # threaded) can both build an adapter and both spawn a poll/gateway thread
+    # for the same bot, double-dispatching every message.
+    with _LOCK:
+        a = _ADAPTERS.get(name)
+        if a is not None:
+            return a
         a = _make_adapter(name)
         if a is None:
             return None
@@ -113,7 +121,7 @@ def get_adapter(name: str):
         a.configure(cfg)
         a.on_message(handle_incoming)
         _ADAPTERS[name] = a
-    return a
+        return a
 
 
 def start_channel(name: str) -> Dict[str, Any]:
@@ -205,15 +213,19 @@ def gate_reply(text: str, channel: str) -> str:
             return gated or "[withheld: reply contained private content]"
         return text
     except Exception:
-        # Fail-closed backstop: if gating errored, only send if clearly public.
+        # Fail-CLOSED backstop: the primary gate errored, so the content is
+        # unverified. Release it ONLY if the classifier positively rates it
+        # PUBLIC; on ANY non-public tier OR a second classifier failure, withhold.
+        # (classify() returns an int Tier where PUBLIC == 1 — there is no tier 0,
+        # so the previous `not in (0,)` check both misread the constant and, worse,
+        # fell through to `return text` on double-failure, leaking ungated text.)
         try:
             from agent_friday.services import sensitivity_classifier as sc
-            tier = sc.classify(text)
-            if getattr(tier, "value", tier) not in (0,):  # 0 == PUBLIC
-                return "[withheld: reply could not be safety-checked]"
+            if int(sc.classify(text)) == sc.Tier.PUBLIC:
+                return text
         except Exception:
             pass
-        return text
+        return "[withheld: reply could not be safety-checked]"
 
 
 def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
@@ -237,7 +249,12 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
     try:
         reply = _run_agent(text)
     except Exception as e:
-        return f"(Friday hit an error handling that: {e})"
+        # NEVER leak the raw exception to an external channel — it can embed vault
+        # paths, PII, or system-prompt fragments. Log the detail locally; send a
+        # fixed, content-free notice.
+        import logging
+        logging.getLogger("friday.channels").warning("channel agent error: %s", e)
+        return "(Friday hit an internal error handling that message.)"
     return gate_reply(reply, channel)
 
 

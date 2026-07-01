@@ -105,8 +105,13 @@ def load_soul() -> str:
         mtime = SOUL_FILE.stat().st_mtime
     except Exception:
         return _DEFAULT_SOUL
-    if _cache["text"] is not None and _cache["mtime"] == mtime:
-        return _cache["text"]
+    # Snapshot the cached value into a local BEFORE validating it: a concurrent
+    # save_soul()->_invalidate() can null _cache["text"] between the check and a
+    # second read, so re-reading _cache["text"] here could return None (the fn is
+    # typed -> str and documented to never raise).
+    cached = _cache["text"]
+    if cached is not None and _cache["mtime"] == mtime:
+        return cached
     text = _read_raw()
     if not text.strip():
         text = _DEFAULT_SOUL
@@ -130,14 +135,21 @@ def render_personality() -> str:
         s = ln.strip()
         if i == 0 and s.startswith("# "):
             continue  # drop the H1 title
-        if s.startswith("*") and s.endswith("*") and "edit" in s.lower():
+        # Editor note = an italic line (starts with '*', but NOT a '* ' markdown
+        # bullet) that mentions editing. A self-contained '*...*' note drops ONLY
+        # itself; an UNTERMINATED opening arms a multi-line skip to its closing
+        # '*' line. (The old code armed the multi-line skip on a self-contained
+        # note too, silently eating the real content that immediately followed
+        # it when there was no blank line in between.)
+        if (not skipping_note and s.startswith("*") and not s.startswith("* ")
+                and "edit" in s.lower()):
+            if s.endswith("*") and len(s) > 1:
+                continue  # self-contained single-line note → drop just this line
             skipping_note = True
             continue
         if skipping_note:
-            # the italic note may wrap several lines; end at the first blank line
-            if not s:
-                skipping_note = False
-            elif s.endswith("*"):
+            # end the note at the first blank OR '*'-terminated line; drop it too
+            if not s or s.endswith("*"):
                 skipping_note = False
             continue
         out.append(ln)

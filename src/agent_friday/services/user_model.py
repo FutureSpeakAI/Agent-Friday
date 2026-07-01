@@ -124,23 +124,32 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
 
 
 def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
-    """Move a 0..1 trait toward `target` by an EMA step; bump evidence + confidence."""
+    """Move a 0..1 trait toward `target` by an EMA step; bump evidence + confidence.
+
+    The whole SELECT-compute-UPDATE runs under _LOCK: the value write is a plain
+    overwrite of a Python-computed EMA derived from the SELECT, so two concurrent
+    observers (e.g. chat + a channel poll thread) would otherwise read the same
+    value and the later committer would clobber the earlier's nudge (lost update),
+    while the SQL-relative evidence+1 still counted both — drifting value vs.
+    evidence apart.
+    """
     try:
-        conn = _connect()
-        row = conn.execute("SELECT value, evidence FROM traits WHERE key=?",
-                           (key,)).fetchone()
-        cur = float(row[0]) if row and _isfloat(row[0]) else 0.5
-        ev = int(row[1] or 0) if row else 0
-        new = round(cur + (target - cur) * weight, 4)
-        new = max(0.0, min(1.0, new))
-        conf = min(0.95, 0.4 + 0.03 * (ev + 1))
-        conn.execute(
-            "INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=?, confidence=?, updated_ts=?, "
-            "evidence=evidence+1",
-            (key, str(new), conf, time.time(), ev + 1, str(new), conf, time.time()))
-        conn.commit()
-        conn.close()
+        with _LOCK:
+            conn = _connect()
+            row = conn.execute("SELECT value, evidence FROM traits WHERE key=?",
+                               (key,)).fetchone()
+            cur = float(row[0]) if row and _isfloat(row[0]) else 0.5
+            ev = int(row[1] or 0) if row else 0
+            new = round(cur + (target - cur) * weight, 4)
+            new = max(0.0, min(1.0, new))
+            conf = min(0.95, 0.4 + 0.03 * (ev + 1))
+            conn.execute(
+                "INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=?, confidence=?, updated_ts=?, "
+                "evidence=evidence+1",
+                (key, str(new), conf, time.time(), ev + 1, str(new), conf, time.time()))
+            conn.commit()
+            conn.close()
     except Exception:
         pass
 
@@ -219,13 +228,22 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
             conn = _connect()
             norm = text.strip()
             dup = conn.execute(
-                "SELECT fact_id, confidence FROM facts WHERE category=? AND text=?",
+                "SELECT fact_id, confidence, source FROM facts WHERE category=? AND text=?",
                 (category, norm)).fetchone()
             if dup:
-                # reinforce confidence rather than duplicate
-                conn.execute("UPDATE facts SET confidence=?, ts=? WHERE fact_id=?",
-                             (min(0.98, float(dup[1]) + 0.1), time.time(), dup[0]))
                 fid = dup[0]
+                # Reinforce confidence ONLY on genuinely NEW evidence — a
+                # different source than last time. Re-running the SAME day's dream
+                # (identical source, e.g. "dream:2026-06-30") must NOT inflate
+                # confidence toward the cap purely from re-processing the same
+                # turns; a different day mentioning the same fact legitimately does.
+                if source and source != (dup[2] or ""):
+                    conn.execute(
+                        "UPDATE facts SET confidence=?, source=?, ts=? WHERE fact_id=?",
+                        (min(0.98, float(dup[1]) + 0.1), source, time.time(), fid))
+                else:
+                    conn.execute("UPDATE facts SET ts=? WHERE fact_id=?",
+                                 (time.time(), fid))
             else:
                 fid = uuid.uuid4().hex[:12]
                 conn.execute(
@@ -341,17 +359,21 @@ def _record_signal(kind: str, value: str) -> None:
 
 
 def _bump_counter(key: str) -> None:
+    # Locked read-modify-write: the value is a Python-computed cur+1 from the
+    # SELECT, so two concurrent bumps would both read cur and both write cur+1,
+    # undercounting. (See _nudge_trait for the same hazard.)
     try:
-        conn = _connect()
-        row = conn.execute("SELECT value FROM traits WHERE key=?", (key,)).fetchone()
-        cur = int(float(row[0])) if row and _isfloat(row[0]) else 0
-        val = str(cur + 1)
-        conn.execute(
-            "INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=?, updated_ts=?, evidence=evidence+1",
-            (key, val, 1.0, time.time(), cur + 1, val, time.time()))
-        conn.commit()
-        conn.close()
+        with _LOCK:
+            conn = _connect()
+            row = conn.execute("SELECT value FROM traits WHERE key=?", (key,)).fetchone()
+            cur = int(float(row[0])) if row and _isfloat(row[0]) else 0
+            val = str(cur + 1)
+            conn.execute(
+                "INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=?, updated_ts=?, evidence=evidence+1",
+                (key, val, 1.0, time.time(), cur + 1, val, time.time()))
+            conn.commit()
+            conn.close()
     except Exception:
         pass
 

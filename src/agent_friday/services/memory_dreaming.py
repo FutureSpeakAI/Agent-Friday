@@ -5,7 +5,9 @@ FutureSpeak.AI · Asimov's Mind
 Overnight consolidation. While the user sleeps, Friday reviews the day's
 conversation turns (from the local ChromaDB conversation memory), extracts
 recurring topics and durable facts, writes consolidated long-term entries, and
-tags noise for pruning.
+counts low-value ("noise") turns. (It reports that count; it does not itself
+delete or tag turns in the conversation store — pruning is left to the retention
+policy so consolidation is never destructive.)
 
 Everything is LOCAL — heuristic pattern extraction over turns already on disk.
 No cloud call, no LLM. Ring-0.
@@ -16,6 +18,7 @@ Leaf module — no Flask; returns envelopes, never raises to the caller.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -32,6 +35,13 @@ DB_PATH = FRIDAY_DIR / "dreams.db"
 DREAMS_DIR = FRIDAY_DIR / "dreams"
 
 _LOCK = threading.Lock()
+_log = logging.getLogger("friday.dreaming")
+
+# Upper bound on how many recent turns we scan to find one day's messages. The
+# conversation memory has no date-scoped query, so we pull a window and filter;
+# this is generous enough that a normal day fits, and dream() flags 'capped' when
+# it doesn't (rather than silently under-consolidating).
+_PULL_WINDOW = 20000
 
 # Durable-fact patterns — sentences worth remembering long-term.
 _FACT_PATTERNS = [
@@ -42,7 +52,8 @@ _FACT_PATTERNS = [
     (re.compile(r"\bi'?m (?:working on|building|learning|trying to)\b", re.I), "workflow"),
     (re.compile(r"\bdon'?t (?:ever )?(?:show|send|use|include)\b", re.I), "preference"),
 ]
-# Low-value turns to tag for pruning (greetings, one-word clarifications).
+# Low-value turns to COUNT as noise (greetings, one-word clarifications). Counted
+# for reporting only — not deleted or tagged in the conversation store.
 _NOISE_PATTERNS = [
     re.compile(r"^\s*(?:hi|hey|hello|thanks|thank you|ok|okay|yes|no|yep|nope|cool|great|got it)[!.\s]*$", re.I),
 ]
@@ -107,17 +118,23 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
                 memory = get_conversation_memory()
             except Exception:
                 memory = None
-        turns = _pull_turns(memory, day)
+        turns, capped = _pull_turns(memory, day)
+        if capped:
+            _log.warning("dream(%s): recent()-window saturated at %d turns; some of "
+                         "that day's turns may be unconsolidated.", day, _PULL_WINDOW)
         if not turns:
             return {"ok": True, "day": day, "turns_reviewed": 0,
-                    "topics": [], "consolidated": [], "pruned": 0,
-                    "summary": "Nothing to consolidate."}
+                    "topics": [], "consolidated": [], "pruned": 0, "capped": capped,
+                    "summary": "Nothing to consolidate." if not capped else
+                    "Nothing to consolidate (turn window saturated — may be incomplete)."}
 
         topics = _extract_topics(turns)
         facts = _mine_facts(turns)
         pruned = _count_noise(turns)
 
-        # Hand durable, high-confidence facts to the user model.
+        # Hand durable, high-confidence facts to the user model. The source is
+        # day-scoped ("dream:<day>") so RE-running the same day does not inflate
+        # fact confidence — user_model.note_fact only reinforces on a new source.
         consolidated = []
         for f in facts:
             consolidated.append(f)
@@ -125,7 +142,8 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
                 try:
                     from agent_friday.services import user_model
                     user_model.note_fact(f["category"], f["text"],
-                                          confidence=f["confidence"], source="dream")
+                                          confidence=f["confidence"],
+                                          source=f"dream:{day}")
                 except Exception:
                     pass
 
@@ -135,7 +153,7 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
 
         return {"ok": True, "day": day, "turns_reviewed": len(turns),
                 "topics": topics, "consolidated": consolidated,
-                "pruned": pruned, "summary": summary}
+                "pruned": pruned, "capped": capped, "summary": summary}
     except Exception as e:
         return {"ok": False, "day": day, "error": str(e)}
 
@@ -179,21 +197,31 @@ def state() -> Dict[str, Any]:
 
 
 # ── extraction internals ──────────────────────────────────────────────────────
-def _pull_turns(memory, day: str) -> List[Dict[str, Any]]:
-    """All stored turns whose `date` == day. Pulls a generous recent window then
-    filters, so we don't depend on memory supporting date queries."""
+def _pull_turns(memory, day: str):
+    """Return (turns_for_day, capped).
+
+    The conversation memory exposes no date-scoped query, so we pull a generous
+    newest-first window and filter by date. `capped` is True when the window
+    filled AND its oldest row is still on/after `day` — meaning older turns from
+    `day` may have been cut off (so the caller can warn instead of silently
+    under-consolidating). Returns ([], False) when memory is unavailable.
+    """
     if memory is None:
-        return []
+        return [], False
     try:
-        rows = memory.recent(n=2000)
+        rows = memory.recent(n=_PULL_WINDOW) or []
     except Exception:
-        return []
+        return [], False
     out = []
-    for r in rows or []:
+    oldest_date = None  # rows are newest-first, so the last dated row is oldest
+    for r in rows:
         rdate = r.get("date") or (r.get("timestamp") or "")[:10]
+        if rdate:
+            oldest_date = rdate
         if rdate == day:
             out.append(r)
-    return out
+    capped = len(rows) >= _PULL_WINDOW and (oldest_date is None or oldest_date >= day)
+    return out, capped
 
 
 def _extract_topics(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -265,7 +293,7 @@ def _summarize(day, n_turns, topics, consolidated, pruned) -> str:
     return (f"Reviewed {n_turns} turns from {day}. "
             f"Top topics: {top}. "
             f"Consolidated {len(consolidated)} durable fact(s); "
-            f"flagged {pruned} low-value turn(s).")
+            f"counted {pruned} low-value turn(s).")
 
 
 def _persist(day, n_turns, topics, consolidated, pruned, summary) -> None:
@@ -289,7 +317,7 @@ def _write_markdown(day, n_turns, topics, consolidated, pruned, summary) -> None
     try:
         DREAMS_DIR.mkdir(parents=True, exist_ok=True)
         lines = [f"# Dream — {day}", "", f"*{summary}*", "",
-                 f"- Turns reviewed: {n_turns}", f"- Low-value turns flagged: {pruned}",
+                 f"- Turns reviewed: {n_turns}", f"- Low-value turns (counted): {pruned}",
                  "", "## Top topics"]
         for t in topics:
             lines.append(f"- {t['topic']} ({t['mentions']})")

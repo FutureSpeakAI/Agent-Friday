@@ -34,7 +34,9 @@ _HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
 FRIDAY_DIR = _HOME / ".friday"
 DB_PATH = FRIDAY_DIR / "learning.db"
 
-_LOCK = threading.Lock()
+# Reentrant: promote() holds the lock across a read-count/score/promote sequence
+# and calls score_skill(), which re-acquires it — a plain Lock would deadlock.
+_LOCK = threading.RLock()
 
 _PROMOTE_THRESHOLD = 0.65
 _RETIRE_THRESHOLD = 0.40
@@ -81,6 +83,9 @@ def _connect() -> sqlite3.Connection:
             trial_id TEXT PRIMARY KEY, skill_id TEXT, ts REAL, success INTEGER,
             satisfaction REAL, note TEXT
         );
+        -- Enforce the dedup invariant in the schema so a check-then-insert race
+        -- can't create two skills for the same pattern (INSERT OR IGNORE below).
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_pattern ON skills(pattern);
         """
     )
     conn.commit()
@@ -119,50 +124,62 @@ def observe(task_type: str, prompt: str, *, approach: str, success: bool,
 
 
 # ── Candidate mining ──────────────────────────────────────────────────────────
-def mine_candidates(min_success: float = 0.7, min_samples: int = 3) -> List[Dict[str, Any]]:
+def mine_candidates(min_success: float = 0.7, min_samples: int = 3,
+                    min_distinct: int = 2, max_new: int = 20) -> List[Dict[str, Any]]:
     """Cluster observations by (task_type, approach); emit skill candidates for
     clusters whose success-rate and sample-count clear the floor. Idempotent —
-    a pattern that already exists as a skill is reinforced, not duplicated."""
+    a pattern that already exists is skipped (UNIQUE index + INSERT OR IGNORE).
+
+    Anti-flood: a bucket must contain at least ``min_distinct`` DISTINCT prompts
+    (so N near-identical trivial observations can't mint a promotable skill), and
+    at most ``max_new`` candidates are minted per call (largest buckets first).
+    The whole check-and-insert runs under _LOCK so a concurrent epoch + API call
+    can't both insert for the same pattern.
+    """
     if not _enabled():
         return []
     try:
         import json
-        conn = _connect()
-        rows = conn.execute(
-            "SELECT task_type, approach, success, satisfaction, obs_id "
-            "FROM observations").fetchall()
-        buckets: Dict[tuple, Dict[str, Any]] = defaultdict(
-            lambda: {"n": 0, "wins": 0, "sat": 0.0, "obs": []})
-        for tt, ap, succ, sat, oid in rows:
-            b = buckets[(tt, ap)]
-            b["n"] += 1
-            b["wins"] += int(succ or 0)
-            b["sat"] += float(sat or 0)
-            b["obs"].append(oid)
-        created = []
-        for (tt, ap), b in buckets.items():
-            if b["n"] < min_samples:
-                continue
-            rate = b["wins"] / b["n"]
-            if rate < min_success:
-                continue
-            pattern = _pattern_text(tt, ap)
-            existing = conn.execute(
-                "SELECT skill_id FROM skills WHERE pattern=?", (pattern,)).fetchone()
-            if existing:
-                continue
-            sid = uuid.uuid4().hex[:12]
-            name = f"{tt}:{ap}"[:60]
-            conn.execute(
-                "INSERT INTO skills(skill_id,name,task_type,created_ts,pattern,"
-                "status,score,trials,wins,source_obs_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (sid, name, tt, time.time(), pattern, "candidate",
-                 round(rate, 4), 0, 0, json.dumps(b["obs"][:20])))
-            created.append({"skill_id": sid, "name": name, "pattern": pattern,
-                            "sample_rate": round(rate, 3), "samples": b["n"]})
-        conn.commit()
-        conn.close()
-        return created
+        with _LOCK:
+            conn = _connect()
+            rows = conn.execute(
+                "SELECT task_type, approach, success, satisfaction, obs_id, prompt_hash "
+                "FROM observations").fetchall()
+            buckets: Dict[tuple, Dict[str, Any]] = defaultdict(
+                lambda: {"n": 0, "wins": 0, "sat": 0.0, "obs": [], "hashes": set()})
+            for tt, ap, succ, sat, oid, ph in rows:
+                b = buckets[(tt, ap)]
+                b["n"] += 1
+                b["wins"] += int(succ or 0)
+                b["sat"] += float(sat or 0)
+                b["obs"].append(oid)
+                if ph:
+                    b["hashes"].add(ph)
+            created = []
+            # Largest buckets first so the per-call cap keeps the best-evidenced.
+            for (tt, ap), b in sorted(buckets.items(), key=lambda kv: -kv[1]["n"]):
+                if len(created) >= max_new:
+                    break
+                if b["n"] < min_samples or len(b["hashes"]) < min_distinct:
+                    continue
+                rate = b["wins"] / b["n"]
+                if rate < min_success:
+                    continue
+                pattern = _pattern_text(tt, ap)
+                sid = uuid.uuid4().hex[:12]
+                name = f"{tt}:{ap}"[:60]
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO skills(skill_id,name,task_type,created_ts,"
+                    "pattern,status,score,trials,wins,source_obs_json) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (sid, name, tt, time.time(), pattern, "candidate",
+                     round(rate, 4), 0, 0, json.dumps(b["obs"][:20])))
+                if cur.rowcount:  # a dup pattern is IGNOREd (rowcount 0)
+                    created.append({"skill_id": sid, "name": name, "pattern": pattern,
+                                    "sample_rate": round(rate, 3), "samples": b["n"]})
+            conn.commit()
+            conn.close()
+            return created
     except Exception:
         return []
 
@@ -237,28 +254,33 @@ def promote(threshold: float = _PROMOTE_THRESHOLD, min_trials: int = 3,
         return []
     changes: List[Dict[str, Any]] = []
     try:
-        conn = _connect()
-        skills = conn.execute(
-            "SELECT skill_id, status, trials FROM skills").fetchall()
-        conn.close()
-        active_count = _count_active()
-        max_active = _max_active()
-        for sid, status, trials in skills:
-            sc = score_skill(sid)
-            if status in ("candidate", "validating"):
-                ready = sc >= threshold and (trials == 0 or trials >= min_trials)
-                if ready and active_count < max_active:
-                    _set_status(sid, "active")
-                    active_count += 1
-                    changes.append({"skill_id": sid, "to": "active", "score": sc})
-                elif sc >= threshold and status == "candidate":
-                    _set_status(sid, "validating")
-                    changes.append({"skill_id": sid, "to": "validating", "score": sc})
-            elif status == "active" and sc < retire:
-                _set_status(sid, "retired")
-                active_count -= 1
-                changes.append({"skill_id": sid, "to": "retired", "score": sc})
-        return changes
+        # Serialize the whole read-count/score/promote sequence: without this two
+        # concurrent epochs (scheduler + POST /api/learning/epoch) both read
+        # active_count, both see room under the cap, and both promote — blowing
+        # past max_active_skills. _LOCK is an RLock so score_skill can re-enter.
+        with _LOCK:
+            conn = _connect()
+            skills = conn.execute(
+                "SELECT skill_id, status, trials FROM skills").fetchall()
+            conn.close()
+            active_count = _count_active()
+            max_active = _max_active()
+            for sid, status, trials in skills:
+                sc = score_skill(sid)
+                if status in ("candidate", "validating"):
+                    ready = sc >= threshold and (trials == 0 or trials >= min_trials)
+                    if ready and active_count < max_active:
+                        _set_status(sid, "active")
+                        active_count += 1
+                        changes.append({"skill_id": sid, "to": "active", "score": sc})
+                    elif sc >= threshold and status == "candidate":
+                        _set_status(sid, "validating")
+                        changes.append({"skill_id": sid, "to": "validating", "score": sc})
+                elif status == "active" and sc < retire:
+                    _set_status(sid, "retired")
+                    active_count -= 1
+                    changes.append({"skill_id": sid, "to": "retired", "score": sc})
+            return changes
     except Exception:
         return []
 

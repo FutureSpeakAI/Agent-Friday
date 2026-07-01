@@ -99,3 +99,29 @@ def test_complete_is_idempotent():
     r = ob.complete()
     assert r["complete"] is True
     assert ob.is_complete() is True
+
+
+def test_advance_null_answer_does_not_crash():
+    # Regression: a client POSTing {"answer": null} passes None; must not raise.
+    r = ob.advance(None)               # greet/name
+    assert r["ok"] is True
+    r = ob.advance(None)               # voice_test
+    assert r["ok"] is True
+    ob.advance("")                     # keys
+    ob.advance("")                     # identity
+    r = ob.advance(None)               # soul (None must not crash)
+    assert r["ok"] is True
+
+
+def test_key_save_failure_surfaces_warning(monkeypatch):
+    # Regression: a failed key store must not silently look like success.
+    from agent_friday.services import credential_store
+
+    def boom(p, k):
+        raise RuntimeError("keyring backend down")
+    monkeypatch.setattr(credential_store, "set_provider_key", boom)
+    ob.advance("Sam")                  # -> voice_test
+    ob.advance("hi")                   # -> keys
+    r = ob.advance("", key_provider="anthropic", key_value="sk-x")
+    assert r.get("key_saved") is False
+    assert "warning" in r
