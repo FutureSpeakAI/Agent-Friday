@@ -55,11 +55,17 @@ routed through the existing cLaws governance + egress gate.
 
 ### Fixed
 
-- **Repo-root `server.py` served zero API routes.** The root shim `exec()`s the
-  package server, which made blueprint auto-discovery resolve `__file__` to the
-  shim and glob a nonexistent `<repo>/routes` — silently registering **no**
-  blueprints (every `/api/*` 404'd) when launched via `python server.py`.
-  Discovery now derives the routes dir from the `agent_friday` package.
+- **Blueprint auto-discovery registered zero routes in two shipping paths** —
+  the entire API 404'd. (1) The repo-root `server.py` shim `exec()`s the package
+  server, so `__file__`-relative discovery globbed a nonexistent `<repo>/routes`.
+  (2) The packaged **AgentFriday.exe** never bundled `routes/*` at all: the spec's
+  `collect_submodules('agent_friday')` silently returned `[]` because `src` wasn't
+  on `sys.path` at spec-eval time, and the dynamically-imported route modules were
+  invisible to PyInstaller's static analysis. Fixed by enumerating routes via
+  `pkgutil` with an explicit `ROUTE_MODULES` fallback for the frozen build
+  (drift-guarded by `tests/api/test_blueprint_discovery.py`) and adding `src` to
+  the spec's path so the route modules are bundled. Verified: `python server.py`
+  and the frozen `.exe` both serve 200 on every endpoint.
 
 ### Notes
 
