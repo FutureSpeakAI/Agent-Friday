@@ -445,6 +445,25 @@ button:hover{background:linear-gradient(135deg,rgba(124,58,237,.45),rgba(124,58,
 </body>
 </html>"""
 
+# The two login banners are fixed, code-owned strings — no user input reaches
+# them today, so there is no live XSS. But LOGIN_HTML.replace('{{ error }}', error)
+# bypasses Jinja auto-escaping entirely: the day someone echoes the attempted
+# username into `error` (a common UX tweak) it becomes reflected XSS. This
+# allowlist makes that regression impossible — only the two known banners render:
+# anything else is escaped to inert text.
+_ALLOWED_LOGIN_ERRORS = {
+    '<div class="error">TOO MANY ATTEMPTS — WAIT AND RETRY</div>',
+    '<div class="error">ACCESS DENIED — INVALID CREDENTIALS</div>',
+}
+
+def _login_error_html(error: str) -> str:
+    if not error:
+        return ""
+    if error in _ALLOWED_LOGIN_ERRORS:
+        return error
+    from markupsafe import escape as _esc
+    return f'<div class="error">{_esc(error)}</div>'
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     # Loopback users are auto-authenticated — never show the form locally
@@ -461,7 +480,7 @@ def login():
         ip = request.remote_addr or 'unknown'
         if not _login_attempt_ok(ip):
             error = '<div class="error">TOO MANY ATTEMPTS — WAIT AND RETRY</div>'
-            html = LOGIN_HTML.replace('{{ error }}', error)
+            html = LOGIN_HTML.replace('{{ error }}', _login_error_html(error))
             return Response(html, content_type='text/html', status=429)
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')  # pragma: allowlist secret
@@ -474,7 +493,7 @@ def login():
             return redirect('/')
         _login_attempt_fail(ip)
         error = '<div class="error">ACCESS DENIED — INVALID CREDENTIALS</div>'
-    html = LOGIN_HTML.replace('{{ error }}', error)
+    html = LOGIN_HTML.replace('{{ error }}', _login_error_html(error))
     return Response(html, content_type='text/html')
 
 @app.route('/logout')
@@ -1890,6 +1909,14 @@ def _context_log_files(date_from=None, date_to=None):
 
 # ── Persistent Chat History ────────────────────────────────────
 CHAT_HISTORY_FILE = FRIDAY_DIR / "chat_history.json"
+# Flask runs threaded=True: two concurrent chat requests can each mutate and
+# persist CHAT_HISTORY. Without a lock their appends clobber each other, and a
+# plain write_text() (the prior implementation) that is interrupted by a crash
+# or a full disk mid-write leaves a half-written, unparseable chat_history.json —
+# on next boot _load_chat_history() silently returns [] and the user's history is
+# gone. Serialize writes and make them atomic (temp + fsync + replace), matching
+# the settings-write durability guarantee.
+_CHAT_HISTORY_LOCK = threading.Lock()
 
 def _load_chat_history():
     """Load chat history from disk, pruning entries older than 30 days (except pinned)."""
@@ -1903,9 +1930,17 @@ def _load_chat_history():
     return []
 
 def _save_chat_history(messages):
-    """Persist chat history to disk."""
-    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHAT_HISTORY_FILE.write_text(json.dumps(messages, indent=2), encoding='utf-8')
+    """Persist chat history to disk atomically under a lock (crash- and race-safe)."""
+    with _CHAT_HISTORY_LOCK:
+        CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _tmp = CHAT_HISTORY_FILE.with_suffix('.json.tmp')
+        _tmp.write_text(json.dumps(messages, indent=2), encoding='utf-8')
+        try:
+            with open(_tmp, 'rb') as _f:
+                os.fsync(_f.fileno())
+        except Exception:
+            pass
+        _tmp.replace(CHAT_HISTORY_FILE)
 
 CHAT_HISTORY = _load_chat_history()  # Load persistent history on startup
 

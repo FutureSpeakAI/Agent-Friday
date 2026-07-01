@@ -18,6 +18,7 @@ Local providers (Ollama / 'local') bypass this gate; data stays on-device.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -31,6 +32,13 @@ _LOCAL_PROVIDERS = {"ollama", "local"}
 
 _LOG_LOCK = threading.Lock()
 _DEFAULT_LOG = Path.home() / ".friday" / "vault" / "egress-log.jsonl"
+
+# Structured logger for the single most security-sensitive line in the codebase —
+# every cloud egress allow/block decision. Using `print()` here (the prior state)
+# meant that under pythonw.exe / a detached tray launch (no console) these decisions
+# were silently discarded, creating an invisible audit gap. Routing through the
+# friday.* hierarchy sends them to ~/.friday/friday.log alongside everything else.
+_dlog = logging.getLogger("friday.egress")
 
 
 # ── Classifier rate limiting ──────────────────────────────────────────────────
@@ -116,9 +124,12 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         "reason": reason,
     }
     verdict = "ALLOW" if action == "allow" else "BLOCK"
-    print(
-        f"  [EGRESS] {verdict} provider={provider} "
-        f"field={field} tier={Tier.NAMES.get(tier, tier)} ({reason})"
+    # Structured log (survives pythonw / no-console launches). INFO for allow,
+    # WARNING for a block so a withheld leak is visible even at a raised log level.
+    _dlog.log(
+        logging.INFO if action == "allow" else logging.WARNING,
+        "%s provider=%s field=%s tier=%s (%s)",
+        verdict, provider, field, Tier.NAMES.get(tier, tier), reason,
     )
     dest = log_path or _DEFAULT_LOG
     try:
@@ -206,6 +217,23 @@ def _gate_tools(tools: list, provider: str,
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+def gate_text(text: str, provider: str, field: str = "prompt",
+              log_path: Path | None = None) -> str:
+    """Gate a single user-supplied text string for a cloud provider.
+
+    Public wrapper around the field-level gate so call sites that do NOT go
+    through the Anthropic/OpenAI payload path — most importantly the Gemini
+    ``models.generate_content`` sites, which build their own ``contents`` and
+    never hit ``seal_outbound`` — can still enforce the boundary on the text
+    they send. Local providers pass through unchanged. Same fail-closed
+    semantics as ``seal_outbound``: SENSITIVE → "" (dropped), PRIVATE →
+    redacted placeholder, PUBLIC → unchanged.
+    """
+    if not _is_cloud(provider):
+        return text
+    return _gate_text(text, provider, field, log_path)
+
 
 def seal_outbound(
     payload: dict[str, Any],

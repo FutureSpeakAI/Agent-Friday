@@ -37,8 +37,12 @@ class Tier:
 
 
 # ── Layer 1a: Regex patterns for structured PII ────────────────────────────────
+# CC span MUST match core.__init__._CC_RE (13–19 digits). A narrower window here
+# (the prior 13–16) meant a 17–19-digit card classified PUBLIC by this layer while
+# core's PII redactor treated it as a card — the two security layers disagreeing on
+# what a card is, a live exfiltration seam for prepaid/UnionPay-length numbers.
 _SSN_RE     = re.compile(r'\b\d{3}[-\s]\d{2}[-\s]\d{4}\b')
-_CC_RE      = re.compile(r'\b(?:\d[ -]?){13,16}\b')
+_CC_RE      = re.compile(r'\b(?:\d[ -]?){13,19}\b')
 _ROUTING_RE = re.compile(r'\b\d{9}\b')
 _API_KEY_RE = re.compile(r'\b(?:sk-ant-|sk-|AQ\.|AIza)[A-Za-z0-9_\-]{16,}\b')
 
