@@ -138,6 +138,54 @@ Write-Info "Building UI..."
 & $PYTHON_VENV (Join-Path $INSTALL_DIR "build_ui.py") | Out-Null
 Write-Success "index.html built"
 
+# ── 6.5 Bundled model (Ollama + Gemma) — zero cloud key needed ───
+#  Friday runs a local Gemma model by default so chat works with NO API key.
+#  Best-effort and non-fatal; skip with FRIDAY_SKIP_MODEL=1.
+Write-Host ""
+$BundledModel = "gemma3:4b"
+if ($env:FRIDAY_SKIP_MODEL -eq "1") {
+    Write-Warn "Skipping local model bootstrap (FRIDAY_SKIP_MODEL=1)"
+}
+else {
+    Write-Info "Setting up local model ($BundledModel) for no-API-key chat..."
+    try {
+        $ollama = Get-Command ollama -ErrorAction SilentlyContinue
+        if (-not $ollama) {
+            Write-Info "Installing Ollama..."
+            $winget = Get-Command winget -ErrorAction SilentlyContinue
+            if ($winget) {
+                winget install --id Ollama.Ollama -e --accept-source-agreements --accept-package-agreements
+            }
+            else {
+                $installer = Join-Path $env:TEMP "OllamaSetup.exe"
+                Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile $installer
+                Start-Process -FilePath $installer -ArgumentList "/silent" -Wait
+            }
+            $env:PATH = "$env:PATH;$env:LOCALAPPDATA\Programs\Ollama"
+            $ollama = Get-Command ollama -ErrorAction SilentlyContinue
+        }
+        if ($ollama) {
+            Start-Process -FilePath "ollama" -ArgumentList "serve" -WindowStyle Hidden -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            $have = (ollama list 2>$null) -match "gemma3:4b"
+            if ($have) {
+                Write-Success "$BundledModel already present"
+            }
+            else {
+                Write-Info "Pulling $BundledModel (~3GB, one-time download)..."
+                ollama pull $BundledModel
+                Write-Success "$BundledModel ready — no cloud key required for chat"
+            }
+        }
+        else {
+            Write-Warn "Ollama unavailable — install later from https://ollama.com"
+        }
+    }
+    catch {
+        Write-Warn "Local model setup skipped ($($_.Exception.Message)). Run 'ollama pull $BundledModel' later."
+    }
+}
+
 # ── 7. Create friday.bat ─────────────────────────────────────────
 Write-Host ""
 Write-Info "Creating friday.bat..."

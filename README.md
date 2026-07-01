@@ -34,11 +34,19 @@ Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, a
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 pip install -e .
-friday doctor    # verify API keys, Python version, Ollama, disk
-friday start     # launches the server and opens http://localhost:3000
+friday doctor    # verify Python, Ollama, the bundled Gemma model, keys, disk
+friday start     # launches the server, runs voice-first onboarding, opens http://localhost:3000
 ```
 
-**No API key?** Friday boots in demo mode — explore the full UI first, connect a provider in Settings whenever you're ready.
+**No API key? No problem.** Agent Friday ships a bundled local model — **`gemma3:4b`**
+(Google's open Gemma 3 4B, runs on ~8 GB RAM). The installers auto-install Ollama and
+pull it, so **chat works fully offline with zero cloud keys**. On first run, Friday
+greets you by voice and walks you through setup. Cloud keys are *optional upgrades* for
+sharper reasoning, image/video generation, and richer voice — add them any time in
+Settings (creative/voice degrade gracefully with a clear notice until you do).
+
+> Bigger machine? Upgrade the local brain: `ollama pull gemma3:12b` (or `gemma3:27b`)
+> and set it in Settings → Models.
 
 Set your keys (no keys are stored in the repo):
 

@@ -464,6 +464,36 @@ def _try_import(mod: str) -> bool:
         return False
 
 
+BUNDLED_MODEL = "gemma3:4b"   # Google's open Gemma 3 4B-IT — Friday's default local brain
+
+
+def _ollama_probe(timeout: float = 2.0):
+    """Return (running: bool, installed_models: list[str]).
+
+    Zero-dependency probe of the local Ollama daemon (/api/tags). Never raises.
+    """
+    try:
+        import json as _json
+        import urllib.request
+        url = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/") + "/api/tags"
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        return True, [m.get("name", "") for m in data.get("models", [])]
+    except Exception:
+        return False, []
+
+
+def _ollama_installed() -> bool:
+    """True if the `ollama` binary is on PATH (even if the daemon is down)."""
+    return shutil.which("ollama") is not None
+
+
+def _has_model(models, name: str) -> bool:
+    """Match a model tag loosely (gemma3:4b matches 'gemma3:4b', 'gemma3:4b-...')."""
+    base = name.split(":")[0]
+    return any(m == name or m.startswith(name) or m.startswith(base + ":") for m in models)
+
+
 def cmd_status():
     """System health check — like hermes doctor."""
     cfg = _load_config()
@@ -527,6 +557,26 @@ def cmd_status():
             _check("Gemini key valid", False, msg)
         else:
             console.print(f"  [yellow]?[/yellow]  Gemini key  [dim]{msg}[/dim]")
+
+    # Local model / no-key mode (bundled Gemma via Ollama)
+    console.print()
+    console.print("  [bold]Local model (no-API-key mode)[/bold]")
+    ollama_bin = _ollama_installed()
+    _check("Ollama installed", ollama_bin,
+           "install from https://ollama.com" if not ollama_bin else "")
+    running, models = _ollama_probe()
+    _check("Ollama running", running,
+           "run: ollama serve" if ollama_bin and not running else
+           "" if running else "start Ollama")
+    gemma_ok = _has_model(models, BUNDLED_MODEL)
+    _check(f"{BUNDLED_MODEL} pulled", gemma_ok,
+           f"run: ollama pull {BUNDLED_MODEL}" if running and not gemma_ok else "")
+    if running and gemma_ok:
+        console.print("  [green]✓[/green]  [bold]No-key mode ready[/bold]  "
+                      "[dim]— chat works locally with zero cloud keys[/dim]")
+    elif not (anthro_key or gemini_key):
+        console.print("  [yellow]![/yellow]  No cloud keys and no local model yet — "
+                      f"[dim]run 'ollama pull {BUNDLED_MODEL}' for offline chat[/dim]")
 
     # Port
     console.print()
@@ -942,6 +992,16 @@ def cmd_health():
                       f"| VRAM={hw.get('vram_gb')}GB | Ollama={'up' if mgr.is_available() else 'down'}")
     except Exception as e:
         console.print(f"[yellow]hardware: {e}[/yellow]")
+
+    # Bundled Gemma (no-key mode)
+    try:
+        run_, models_ = _ollama_probe()
+        ready = _has_model(models_, BUNDLED_MODEL)
+        console.print(f"Bundled model ({BUNDLED_MODEL}): "
+                      + ("[green]ready — no-key mode available[/green]" if ready
+                         else f"[yellow]not pulled[/yellow] — run: ollama pull {BUNDLED_MODEL}"))
+    except Exception as e:
+        console.print(f"[yellow]bundled model: {e}[/yellow]")
 
     try:
         from agent_friday.services.local_voice import local_voice_health

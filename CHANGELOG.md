@@ -3,7 +3,70 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **4.5.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.0.0**
+
+---
+
+## [5.0.0] — 2026-07-01 — "Super Agent"
+
+The developer-tool → sovereign-consumer-product transformation. Adds a local,
+closed-loop learning system, overnight memory consolidation, user modeling, an
+editable personality file, a bundled zero-key local model, voice-first
+onboarding, and messaging-channel bridges — every one of them local-first and
+routed through the existing cLaws governance + egress gate.
+
+### Added
+
+- **Learning Loop Engine** (`services/learning_loop.py`). Observes task outcomes,
+  mines successful (task-type, tool-strategy) patterns into text *heuristics*,
+  scores them with a Wilson lower bound blended with satisfaction, and promotes
+  the best into the system prompt. Local-only, SQLite-backed (`learning.db`),
+  bounded by `max_active_skills`. **Skills are advisory text, never executable
+  code** — no new tool surface. Weekly `learning_epoch` scheduler job. API under
+  `/api/learning/*`.
+- **Memory Dreaming** (`services/memory_dreaming.py`). Nightly (03:00) local
+  consolidation: reviews the day's ChromaDB conversation turns, extracts topics
+  and durable facts (preferences/decisions/bio), feeds high-confidence facts to
+  the user model, tags noise, and writes `~/.friday/dreams/<day>.md`. Never
+  touches cloud. API under `/api/memory/dream*`.
+- **User Modeling** (`services/user_model.py`). Tracks communication style
+  (formality/verbosity), per-domain expertise, and workflow patterns from each
+  turn; injects a compact **TIER_1** `== USER MODEL ==` block into every system
+  prompt. SQLite-backed with a GDPR-style `forget()`. API under `/api/user-model/*`.
+- **SOUL.md personality config** (`services/soul.py`). Friday's personality now
+  lives in a user-editable `~/.friday/SOUL.md` (seeded from the shipped default,
+  versioned in `soul_history/`). `core._load_agent_personality()` reads it first.
+  API under `/api/soul*`.
+- **Bundled Gemma / no-API-key mode.** Default local model is now **`gemma3:4b`**
+  (Google's open Gemma 3 4B-IT, ~8 GB RAM). `install.{sh,ps1,bat}` auto-install
+  Ollama and pull the model (best-effort, skippable via `FRIDAY_SKIP_MODEL=1`).
+  Chat works fully offline with zero cloud keys; creative/voice degrade
+  gracefully. `friday doctor` / `friday health` now report Ollama + Gemma + a
+  "no-key mode ready" status.
+- **Voice-First Onboarding** (`services/onboarding.py`). First-run state machine
+  — greet → name → voice test → optional keys → Ed25519 identity → SOUL.md —
+  spoken via the local voice engine (no cloud key required). API under
+  `/api/onboarding/*`.
+- **Channel bridges** (`services/channels/`). Discord (`discord.py`, graceful
+  no-op when absent) and Telegram (stdlib, zero-dep) bots. Every inbound message
+  runs the shared agent loop; every reply passes the **egress gate** before send.
+  Disabled by default, allowlist-gated, bot tokens in the credential store. API
+  under `/api/channels/*`.
+
+### Fixed
+
+- **Repo-root `server.py` served zero API routes.** The root shim `exec()`s the
+  package server, which made blueprint auto-discovery resolve `__file__` to the
+  shim and glob a nonexistent `<repo>/routes` — silently registering **no**
+  blueprints (every `/api/*` 404'd) when launched via `python server.py`.
+  Discovery now derives the routes dir from the `agent_friday` package.
+
+### Notes
+
+- All v5 subsystems are **local-only** and pass through cLaws governance and the
+  egress gate. Nothing new introduces a default cloud dependency.
+- 3162 tests pass (64 new). See `docs/SUPER_AGENT_BUILD_SPEC.md` for the full
+  design and `docs/RELEASE_NOTES_v5.0.md` for the release summary.
 
 ---
 

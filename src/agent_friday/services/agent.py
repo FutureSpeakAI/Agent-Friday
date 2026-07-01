@@ -1523,6 +1523,18 @@ def _task_worker(task_id, name, prompt, description=''):
         verification_summary = ', '.join(dict.fromkeys(t['name'] for t in evidence[:10])) if evidence else 'no tools used'
         final_status = 'complete' if verified else 'completed_unverified'
 
+        # v5: feed the learning loop with this task's outcome. The *approach* is
+        # the tool strategy used (deduped tool names), so repeated tasks that
+        # share a strategy form mineable buckets — "for agent_task tasks,
+        # [search_web, browse_web] works well." Best-effort, local, never raises.
+        try:
+            from agent_friday.services import learning_loop as _ll
+            _ll.observe('agent_task', prompt or '',
+                        approach=(verification_summary or 'no_tools'),
+                        success=verified, workspace='task')
+        except Exception:
+            pass
+
         _task_log(task_id, 'Finalizing response')
         result_text = _summarize_task_outcome(name, reply, tool_trace, status=final_status)
         _task_set(task_id, status=final_status, result=result_text, ended=_time.time(),

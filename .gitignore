@@ -155,3 +155,8 @@ _scrub*.py
 # Internal scrub report — keep local, do not publish (contains the PII terms it documents)
 SCRUB_REPORT.md
 /openai
+
+# Stray copy of the agent's private auto-memory (lives under ~/.claude, not the
+# repo) + PyInstaller build log — NEVER commit to this public repo.
+/memory/
+pyinstaller_build.log

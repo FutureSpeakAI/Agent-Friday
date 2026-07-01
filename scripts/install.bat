@@ -58,10 +58,26 @@ REM   venv\Scripts\pip.exe install torch --index-url https://download.pytorch.or
 REM   venv\Scripts\pip.exe install -e .[voice-local-gpu]
 REM Then pick Settings -^> Audio ^& Voice -^> Voice Engine -^> Local GPU (NeMo).
 
-echo [3/4] Building the UI ^(index.html^)...
+echo [3/5] Building the UI ^(index.html^)...
 python build_ui.py
 
-echo [4/4] Post-install health check...
+echo [4/5] Setting up local model ^(gemma3:4b^) for no-API-key chat...
+if "%FRIDAY_SKIP_MODEL%"=="1" goto :skipmodel
+where ollama >nul 2>nul
+if errorlevel 1 (
+  echo       Ollama not found - install from https://ollama.com then run: ollama pull gemma3:4b
+  goto :skipmodel
+)
+ollama list 2>nul | findstr /C:"gemma3:4b" >nul
+if errorlevel 1 (
+  echo       Pulling gemma3:4b ^(~3GB, one-time download^)...
+  ollama pull gemma3:4b
+) else (
+  echo       gemma3:4b already present
+)
+:skipmodel
+
+echo [5/5] Post-install health check...
 python friday_cli.py health
 
 echo.

@@ -990,6 +990,10 @@ def process_remove(pid):
 # ── Agent Settings (Reasoning style, personality, response prefs) ──
 SETTINGS_FILE = FRIDAY_DIR / "settings.json"
 AGENT_PERSONALITY_FILE = FRIDAY_DIR / "agent-personality.txt"
+# v5: SOUL.md is the canonical, user-editable personality config. It wins over
+# the legacy agent-personality.txt when present. services/soul.py owns creation,
+# validation, and version history; core only reads it (services→core direction).
+SOUL_FILE = FRIDAY_DIR / "SOUL.md"
 
 # In-memory settings cache — avoids hammering the filesystem on every API call.
 # _load_settings_raw() returns a cached copy when the on-disk value is ≤2 s old;
@@ -1128,6 +1132,26 @@ DEFAULT_SETTINGS = {
     "repo_sync": {
         "repos": [],
     },
+    # ── v5 Super-Agent subsystems (all local-only, all cLaws-safe) ──
+    # Learning loop: observes task outcomes, mines successful patterns into text
+    # heuristics, promotes the best into the system prompt. No executable skills.
+    "learning_loop": {"enabled": True, "max_active_skills": 50, "epoch_weekday": 6},
+    # Memory dreaming: nightly local consolidation of the day's conversation
+    # turns into durable facts + topic summaries. Never touches cloud.
+    "memory_dreaming": {"enabled": True, "hour": 3, "keep_topics": 12},
+    # User modeling: tracks comm style, domain expertise, and workflow patterns;
+    # injects a TIER_1 behavioral summary into the system prompt.
+    "user_modeling": {"enabled": True, "inject_prompt": True},
+    # Bundled-model / no-key story. gemma3:4b (Google's open model, ~8GB RAM) is
+    # the default local brain; chat works with zero cloud keys.
+    "setup": {"bundled_model": "gemma3:4b", "no_key_mode": False},
+    # Channel bridges (Discord / Telegram). Disabled + allowlist-gated by default;
+    # every reply routes through the agent loop + egress gate.
+    "channels": {"enabled": False,
+                 "telegram": {"enabled": False, "allowlist": [], "poll_interval": 3.0},
+                 "discord": {"enabled": False, "allowlist": [], "poll_interval": 3.0}},
+    # Voice-first onboarding on first run (no ~/.friday/.setup_complete).
+    "onboarding": {"voice_first": True},
     # ── Experimental ──
     "computer_control_enabled": False,     # opt-in gate for the pyautogui subsystem; OFF by
                                            # default. Even when True, each runtime grant is a
@@ -1208,10 +1232,12 @@ DEFAULT_SETTINGS = {
         "default_cloud_model": "claude-opus-4-8",
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
-        # Default on-device model. Picked for every local route when installed
-        # (see model_router._pick_local_model). Gemma-4 is multimodal and does
-        # native OpenAI-style tool calling, so it can drive the full agent loop.
-        "local_model": "gemma4:latest",
+        # Default on-device model (v5): gemma3:4b — Google's open Gemma 3 4B-IT,
+        # runs on ~8GB RAM and is Friday's zero-cloud-key default brain. Picked
+        # for every local route when installed (see model_router._pick_local_model);
+        # if it isn't installed the picker degrades to any installed model. Users
+        # with more RAM can upgrade to gemma3:12b / gemma3:27b for better quality.
+        "local_model": "gemma3:4b",
         "local_inference_slots": 3,
         "fallback_to_cloud": True,
         "cost_tracking": True,
@@ -1270,7 +1296,7 @@ DEFAULT_SETTINGS = {
         "asr":            {"provider": "local-voice-lite", "model": "whisper-small"},
         "tts":            {"provider": "local-voice-lite", "model": "piper-en_US-amy-medium"},
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
-        "local":          {"provider": "ollama-local",  "model": "gemma4:latest"},
+        "local":          {"provider": "ollama-local",  "model": "gemma3:4b"},
     },
 }
 
@@ -1579,7 +1605,27 @@ def _offline_should_queue():
 
 
 def _load_agent_personality():
-    """Load custom agent personality, falling back to default."""
+    """Load Friday's personality.
+
+    Priority (v5): ~/.friday/SOUL.md (user-editable markdown) → the legacy
+    agent-personality.txt → the hardcoded DEFAULT_AGENT_PERSONALITY. The SOUL.md
+    body is rendered by services/soul.py (title/editor-note stripped) so the
+    model receives the substance; if that service is unavailable the raw file is
+    used as a fallback.
+    """
+    if SOUL_FILE.exists():
+        try:
+            from agent_friday.services import soul as _soul
+            text = _soul.render_personality().strip()
+            if text:
+                return text
+        except Exception:
+            try:
+                text = SOUL_FILE.read_text(encoding='utf-8').strip()
+                if text:
+                    return text
+            except Exception:
+                pass
     if AGENT_PERSONALITY_FILE.exists():
         try:
             text = AGENT_PERSONALITY_FILE.read_text(encoding='utf-8').strip()
