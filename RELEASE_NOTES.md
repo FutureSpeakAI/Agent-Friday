@@ -1,114 +1,99 @@
-# Agent Friday v4.5.0 — Creator Economy, Federation & Security Hardening
+# Agent Friday v5.0 — "Super Agent"
 
-Agent Friday is a sovereign AI assistant that runs entirely on your machine. v4.5.0 is a major release with three headline features: a full creator economy pipeline, a federated identity and marketplace layer, and a comprehensive security hardening pass. Every capability runs locally by default; cloud APIs are optional.
+*Release date: 2026-07-01 · FutureSpeak.AI · Asimov's Mind*
 
----
+Agent Friday grows up. v5 is the transformation from a powerful developer tool
+into a sovereign consumer product you can install in five minutes and talk to
+with **no cloud API key at all**. Under the hood, Friday now learns from her own
+work, consolidates memory overnight, models how *you* like to work, and reads
+her personality from a file you can edit.
 
-## What's New
-
-### Creator Economy — Layer 1: Production Engine
-
-The Studio workspace is now a real production system, not just a chat interface.
-
-- **Music generation** via Google Lyria 3 — compose original tracks with prompt-driven style, tempo, and mood controls; graceful demo mode when the API key is absent
-- **Video generation** via Google Veo — text-to-video and image-to-video with configurable duration and aspect ratio
-- **Image generation** via Google Imagen (Nano Banana Pro / Pro 2) — consistent character and scene rendering across a production
-- **FFmpeg timeline composition** — stitch music, video, and image sequences into a finished timeline export; Windows `drawtext`/GIF filter quirks handled
-- **Scene DNA** — per-production creative memory that keeps visual style, character appearances, and tone consistent across generations
-- **Series Bible** — define cast, world rules, and recurring motifs; cast looks propagate automatically into every new generation
-- **QA gates** — configurable quality thresholds block low-confidence outputs before they enter the timeline
-- **Full provenance chain** — every generated asset carries a C2PA-aligned content credential, signed with the user's Ed25519 key, before it leaves the pipeline
-
-### Creator Economy — Layer 2: Ownership & Provenance
-
-- **C2PA-aligned content credentials** — assets carry a signed provenance manifest (who created it, when, with which model, under what license)
-- **Ed25519 identity signing** — each Friday instance has a persistent keypair; credentials are cryptographically bound to the creator's identity
-- **Ownership registry** — local registry tracks all signed assets; supports transfer and co-creator attribution
-- **License enforcement** — per-asset license terms (CC0, CC-BY, proprietary, etc.) are embedded in credentials and checked at distribution time
-
-### Creator Economy — Layer 3: Federation Protocol
-
-- **Encrypted P2P transport** — peer connections use X25519 key exchange + ChaCha20-Poly1305 AEAD; no plaintext content on the wire
-- **Peer registry** — discover and connect to other Friday instances on the local network or via manual invite
-- **Marketplace** — two-layer commons/commerce model: free sharing in the commons tier, optional paid listings in the commerce tier
-- **Positron/Negatron economy** — net-charge accounting (ψ/η/Q) with a genesis bonus for early creators; charge accrues from community engagement, not from the platform
-- **Asimov-governed defederation** — community content policy packs define moderation rules (H1–H4 harm floors, family mode); peers who violate policy are defederated by consensus, not by central authority
-- **Moderation** — H1–H4 graduated harm classification; family mode overlays conservative defaults without replacing the base policy
-
-### Security Hardening
-
-Several security issues identified in a pre-release external review have been fixed.
-
-- **Fail-closed egress gate** — `seal_outbound()` is called before every cloud API request; a 4-layer classifier (sensitivity → PII → context → policy) blocks or scrubs data that shouldn't leave the device; the gate fails closed (blocks on error) rather than open
-- **FRIDAY_PASSWORD triple-coupling fix** — the password previously controlled vault decryption, API authentication, AND network binding simultaneously, making it impossible to use a strong vault passphrase without also locking out local API callers; these three concerns are now decoupled
-- **Static file serving security hole fixed** — path traversal in the static file handler was closed; requests are now canonicalized and validated against the intended root before serving
-- **Flask API session token authentication** — the `/api/*` surface now requires a session token for non-read endpoints; tokens are issued at startup and stored in the OS keychain
-- **TLS requirement for non-loopback binding** — if the server binds to a non-loopback address, TLS is now required; plain HTTP is rejected with a clear error pointing to `friday tls-init`
-- **Honest threat model** — `THREAT_MODEL.md` documents what the security model actually protects (local malware, network eavesdropping on LAN) and what it does not (physical access, OS-level compromise, supply chain)
-- **HMAC keychain** — governance and session keys are stored in the OS keychain (Windows Credential Manager / macOS Keychain) rather than on disk
-
-### Package & CLI Restructure
-
-- **`src/agent_friday/` package layout** — the codebase is now a proper Python package installable with `pip install -e .`
-- **`friday` CLI** — `friday start` launches the server, `friday doctor` checks dependencies and key availability, `friday version` prints build info, `friday vault-setup` initializes the encrypted vault, `friday tls-init` generates a self-signed TLS cert for LAN binding
-- **Professional README** — includes architecture overview, quick-start guide, and links to YouTube demo videos
-- **Community health files** — `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, GitHub issue templates (bug report, feature request)
-
-### UI Improvements
-
-- **Studio as social media timeline** — the Studio workspace now renders a scrollable card timeline (similar to a social feed) instead of a flat list; each card is expandable to show full metadata, provenance, and playback controls
-- **"Talk to Friday" buttons** — Studio and News workspaces now have a microphone button on each card/article; tapping it starts a voice session pre-seeded with that item's context (e.g. "discuss this article")
-- **Voice mode contextual discussion** — when a voice session is triggered from a card, Friday's opening turn references the specific content rather than starting cold
-
-### Infrastructure
-
-- **Internal scheduler** — replaces the previous `while True: sleep(86400)` daily loop with a proper job scheduler (`services/scheduler.py`); supports interval, daily, and weekly triggers; jobs are declared in `schedules.json` and visible in Settings → Scheduled Tasks
-- **Cost metering** — every cloud API call is metered (input + output tokens × per-direction price) and stored in a local SQLite `costs.db`; the Cost & Usage view in Settings shows spend by provider and date range
-- **Auto-compaction** — long-running agent conversations are automatically compacted (summarize-the-middle) to keep context within model limits without losing important earlier context
-- **PreToolUse / PostToolUse lifecycle hooks** — `services/tool_hooks.py` fires registered hooks before and after every tool execution; used internally for cost metering and audit logging, and exposed for user-defined extensions
+Everything new is **local-first** and passes through the same cLaws governance
+rings and egress gate as the rest of Friday. We absorbed the best ideas from
+Hermes and OpenClaw — and rejected their security postures.
 
 ---
 
-## Breaking Changes
+## Highlights
 
-- **FRIDAY_PASSWORD semantics changed** — if you were relying on the password to gate API access, you now need to set a separate session token. Run `friday vault-setup` to migrate.
-- **Static asset paths** — if you were loading custom assets from paths outside the `static/` directory via a URL trick, those paths no longer work after the path traversal fix.
+### 🧠 A learning agent, not a static one
+Friday now runs a **closed-loop learning engine**. She observes which approaches
+succeed for which kinds of task, mines the winners into concise *heuristics*, and
+promotes the best ones into her own system prompt. Scoring uses a Wilson lower
+bound blended with your satisfaction, so a lucky one-off never gets promoted.
+Skills are **advisory text, never executable code** — the loop changes what
+Friday is *reminded* of, never what she's *able* to do.
+
+### 💤 Memory that consolidates while you sleep
+Every night at 03:00, **memory dreaming** reviews the day's conversations
+locally, pulls out the durable facts ("I prefer dark mode", "we decided to ship
+Friday"), files them into long-term memory and your user model, and tags the
+noise. It writes a readable `~/.friday/dreams/<day>.md` you can browse. No part
+of this touches the cloud.
+
+### 👤 Friday learns *you*
+The new **user model** quietly tracks your communication style, your domain
+expertise, and your workflow, and folds a compact summary into every prompt — so
+Friday skips the basics in areas you know cold and explains more where you're
+new. It's behavioral preference text (TIER_1), never raw PII, and you can wipe it
+any time.
+
+### ✍️ SOUL.md — personality you can edit
+Friday's personality is no longer hardcoded. It lives in **`~/.friday/SOUL.md`**,
+a plain-markdown file you own. Edit it and Friday changes on the next turn.
+Ships with the current persona as the default; every save is versioned.
+
+### 🟢 Zero-friction, zero-key install
+Friday now ships a **bundled local model** — `gemma3:4b`, Google's open Gemma 3
+4B, which runs on ~8 GB of RAM. The installers auto-install Ollama and pull it,
+so **chat works fully offline with no cloud key**. First run greets you *by
+voice* and walks you through setup. Cloud keys become optional upgrades for
+sharper reasoning, image/video, and richer voice.
+
+### 💬 Friday, everywhere you already are
+New **channel bridges** connect Friday to **Discord** and **Telegram**. Every
+inbound message runs Friday's real agent loop; every reply passes the egress gate
+before it leaves. Bots are disabled by default, allowlist-gated, and their tokens
+live in the encrypted credential store.
 
 ---
 
-## Bug Fixes
+## Under the hood
 
-- Demo-mode guard in `_generate_agent` — keyless `/api/chat/send` no longer returns HTTP 500
-- Port-in-use probe no longer uses `SO_REUSEADDR` on Windows (was masking already-bound ports)
-- CI test failures from egress gate imports resolved
-- Pre-release audit blockers: duplicate `/api/security/*` routes, countdown `days_until` returning `"undefined"`, inline Babel parse error silently blanking the UI
+| Subsystem | Module | Storage | Scheduler |
+|-----------|--------|---------|-----------|
+| Learning loop | `services/learning_loop.py` | `learning.db` | weekly `learning_epoch` |
+| Memory dreaming | `services/memory_dreaming.py` | `dreams.db`, `dreams/` | nightly `memory_dreaming` |
+| User modeling | `services/user_model.py` | `user_model.db` | (per-turn) |
+| SOUL.md | `services/soul.py` | `SOUL.md`, `soul_history/` | — |
+| Onboarding | `services/onboarding.py` | `onboarding.json` | first-run |
+| Channels | `services/channels/` | `channels.json` + cred store | on-demand |
 
----
+New API surfaces (auto-discovered blueprints): `/api/soul*`, `/api/user-model*`,
+`/api/learning/*`, `/api/memory/dream*`, `/api/channels/*`, `/api/onboarding/*`.
 
-## Upgrade Notes
+## Bug fix worth calling out
+
+Launching via the repo-root `python server.py` previously registered **zero** API
+blueprints (the shim's `exec()` made discovery look in the wrong directory), so
+the entire API 404'd on that path. Fixed — discovery now anchors to the
+`agent_friday` package.
+
+## Compatibility
+
+- Default local model changed `gemma4:latest` → **`gemma3:4b`**. If you have a
+  different model installed, the local-model picker degrades gracefully to it.
+- No default cloud dependency was introduced anywhere.
+- 3162 tests pass (64 new).
+
+## Upgrading
 
 ```bash
-# Pull latest
-git pull origin main
-
-# Re-install dependencies (new packages: pynacl, cryptography updates)
-pip install -r requirements.txt
-
-# Re-run vault setup if you use FRIDAY_PASSWORD
-friday vault-setup
-
-# Restart the server
-friday start
+git pull
+pip install -e .
+friday doctor            # confirms Ollama + gemma3:4b + no-key-mode
+ollama pull gemma3:4b    # if the installer didn't already
 ```
 
----
-
-## Known Limitations
-
-- **Lyria 3 music generation**: the Google AI Python SDK 1.72 does not expose a batch `generate_music` endpoint; multi-track sessions fall back to demo mode (mock audio) until the SDK exposes the API
-- **NeMo Tier-2 voice (GPU)**: requires `torch` with CUDA; the default venv ships CPU-only `torch`. Install `torch` with the appropriate CUDA index URL separately if you have an RTX GPU
-- **Headroom compression**: no Windows wheel available for `headroom-ai` ≥ 0.21; compression falls back gracefully to a no-op ("0% saved")
-
----
-
-*Agent Friday is built by FutureSpeakAI. Contributions welcome — see CONTRIBUTING.md.*
+Your existing `agent-personality.txt` still works, but `SOUL.md` takes
+precedence once created — copy your persona into it to take over.
