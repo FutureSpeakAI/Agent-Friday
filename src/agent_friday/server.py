@@ -66,25 +66,55 @@ import importlib as _importlib
 from pathlib import Path as _Path
 from flask import Blueprint as _Blueprint
 
+# Explicit route-module manifest — the source of truth for the FROZEN (.exe)
+# build. In a normal source run, pkgutil auto-discovers the routes/ directory
+# (so a new route file is zero-touch), but a PyInstaller onefile has no loose
+# .py files to enumerate — the modules live in the packed archive — so filesystem
+# and TOC enumeration both come back empty and the entire API 404's. This list
+# is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
+# drifts from the actual routes/ directory, so it can't silently go stale.
+ROUTE_MODULES = [
+    'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'code',
+    'compute', 'connectors', 'contacts', 'context', 'control', 'core_routes',
+    'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming',
+    'ext_security', 'federation', 'finance_health', 'futurespeak', 'google',
+    'google_accounts', 'hooks', 'insights', 'jobs', 'learning', 'messages',
+    'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
+    'platform', 'projects', 'scheduler', 'skills', 'soul', 'tasks', 'todos',
+    'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
+    'workspace_studio',
+]
+
+
 def _discover_and_register_blueprints(flask_app):
-    # Derive the routes dir from the agent_friday PACKAGE, not __file__: when the
-    # repo-root server.py shim exec()s this file, __file__ resolves to the shim
-    # (repo root), so __file__-relative discovery would glob a nonexistent
-    # <repo>/routes and silently register ZERO blueprints — the whole API 404s.
-    # The package path is stable regardless of how the entry point was launched.
-    import agent_friday as _af_pkg
-    _routes_dir = _Path(_af_pkg.__file__).resolve().parent / "routes"
+    # Enumerate route modules over the PACKAGE, not a filesystem glob of
+    # Path(__file__).parent/"routes": that broke two ways — (1) the repo-root
+    # server.py shim exec()s this file so __file__ points at the shim, and (2) a
+    # PyInstaller-frozen build has no loose route files on disk. Either way the
+    # old glob registered ZERO blueprints and the whole API 404'd. We use
+    # pkgutil for source (auto-discovers new files) and fall back to the explicit
+    # ROUTE_MODULES manifest when nothing is found (the frozen .exe path).
+    import pkgutil
+    import agent_friday.routes as _routes_pkg
+    _prefix = _routes_pkg.__name__ + "."
+    _names: set = set()
+    try:
+        for _mi in pkgutil.iter_modules(_routes_pkg.__path__, _prefix):
+            _leaf = _mi.name.rsplit(".", 1)[-1]
+            if not _leaf.startswith("_"):
+                _names.add(_mi.name)
+    except Exception:
+        pass
+    if not _names:
+        _names = {_prefix + _n for _n in ROUTE_MODULES}
     _registered: list = []
     _failed: list = []
-    for _route_file in sorted(_routes_dir.glob("*.py")):
-        if _route_file.name.startswith("_"):
-            continue
-        _mod_name = f"agent_friday.routes.{_route_file.stem}"
+    for _name in sorted(_names):
         try:
-            _mod = _importlib.import_module(_mod_name)
+            _mod = _importlib.import_module(_name)
         except Exception as _e:
-            _failed.append((_route_file.stem, str(_e)))
-            _log.warning("failed to import %s: %s", _mod_name, _e)
+            _failed.append((_name, str(_e)))
+            _log.warning("failed to import %s: %s", _name, _e)
             continue
         for _val in vars(_mod).values():
             if isinstance(_val, _Blueprint) and _val not in _registered:

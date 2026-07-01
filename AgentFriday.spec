@@ -4,6 +4,16 @@
 # degrades gracefully without them (semantic context pruning + Headroom
 # compression fall back to no-ops). Run: pyinstaller AgentFriday.spec
 import os
+import sys
+# The package lives under src/ and is NOT pip-installed into site-packages in
+# every build environment, so collect_submodules('agent_friday') below silently
+# returns [] unless src is on sys.path first (collect_submodules import-fails →
+# empty). That is exactly how the routes/* modules — imported dynamically at
+# runtime and therefore invisible to PyInstaller's static analysis — went
+# unbundled, 404'ing the entire API in the frozen .exe. Put src on the path so
+# collect_submodules can actually enumerate the package. SPECPATH is the spec's
+# own directory (injected by PyInstaller).
+sys.path.insert(0, os.path.join(SPECPATH, 'src'))
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = [
