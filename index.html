@@ -147,6 +147,18 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* --- REACT UI LAYER STYLES --- */
 
+        /* Accessibility (H9): a visible keyboard-focus ring on every interactive
+           control. The holographic theme had none, so keyboard/switch users
+           couldn't see where focus was. :focus-visible only shows for keyboard
+           (not mouse) focus, so it doesn't disturb the pointer aesthetic. */
+        a:focus-visible, button:focus-visible, input:focus-visible,
+        select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible,
+        [role="button"]:focus-visible, [role="tab"]:focus-visible {
+            outline: 2px solid #00d4ff;
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
@@ -23588,6 +23600,130 @@ const WIZARD_STEPS = [{
   title: 'Ready to Launch',
   subtitle: 'Your agent is configured'
 }];
+// H5 — first-run bundled-Gemma pull. Shown in the hardware step: if Ollama is
+// running but the default local model (gemma3:4b) isn't pulled yet, offer a
+// one-click download so "works with zero keys" is actually true on first run.
+const BUNDLED_MODEL = 'gemma3:4b';
+function WizardGemmaPull({
+  hw
+}) {
+  const [state, setState] = React.useState('idle'); // idle|pulling|done|error|nollama
+  const [detail, setDetail] = React.useState('');
+  const pollRef = React.useRef(null);
+  React.useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+  const has = React.useMemo(() => {
+    const names = hw && hw.installed_models || [];
+    return names.some(n => String(n).startsWith('gemma3:4b') || String(n).startsWith('gemma3'));
+  }, [hw]);
+  if (!hw) return null;
+  if (!hw.ollama_available) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '10px 12px',
+        borderRadius: 8,
+        border: '1px solid rgba(245,158,11,0.25)',
+        background: 'rgba(245,158,11,0.05)',
+        marginBottom: 14,
+        fontSize: 11,
+        color: 'rgba(255,210,140,0.9)',
+        lineHeight: 1.6
+      }
+    }, "Install ", /*#__PURE__*/React.createElement("a", {
+      href: "https://ollama.com",
+      target: "_blank",
+      rel: "noreferrer",
+      style: {
+        color: '#00d4ff'
+      }
+    }, "Ollama"), " to run Friday fully offline with no cloud key. Then reopen this wizard to pull the bundled model.");
+  }
+  if (has || state === 'done') {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '10px 12px',
+        borderRadius: 8,
+        border: '1px solid rgba(52,211,153,0.25)',
+        background: 'rgba(52,211,153,0.05)',
+        marginBottom: 14,
+        fontSize: 11,
+        color: 'rgba(52,211,153,0.9)',
+        fontFamily: 'JetBrains Mono'
+      }
+    }, "\u2713 ", BUNDLED_MODEL, " ready \u2014 chat works offline, zero keys.");
+  }
+  const startPull = () => {
+    setState('pulling');
+    setDetail('Starting download…');
+    fetch('/api/ollama/pull', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: BUNDLED_MODEL
+      })
+    }).then(r => r.json()).then(d => {
+      if (d.status !== 'pulling') {
+        setState('error');
+        setDetail(d.message || 'Could not start pull');
+        return;
+      }
+      pollRef.current = setInterval(() => {
+        fetch('/api/ollama/status').then(r => r.json()).then(st => {
+          const models = (st.models || []).map(m => m.name || m);
+          if (models.some(n => String(n).startsWith('gemma3'))) {
+            clearInterval(pollRef.current);
+            setState('done');
+          } else setDetail('Downloading… (~3 GB, this can take a few minutes)');
+        }).catch(() => {});
+      }, 4000);
+    }).catch(() => {
+      setState('error');
+      setDetail('Could not reach the server');
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      borderRadius: 8,
+      border: '1px solid rgba(0,212,255,0.2)',
+      background: 'rgba(0,212,255,0.04)',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.6)',
+      marginBottom: 8,
+      lineHeight: 1.6
+    }
+  }, "Pull ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: '#00d4ff'
+    }
+  }, BUNDLED_MODEL), " (Google's open Gemma 3 4B, ~3 GB) so Friday chats fully on-device with no API key."), state === 'pulling' ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(0,212,255,0.8)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u23F3 ", detail) : /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12
+    },
+    onClick: startPull
+  }, "\u2193 Pull ", BUNDLED_MODEL), state === 'error' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#ff6b8a',
+      marginTop: 6,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u2717 ", detail));
+}
 function SetupWizard({
   step,
   data,
@@ -24214,7 +24350,9 @@ function SetupWizard({
       color: '#ddd',
       marginTop: 4
     }
-  }, hw.ram_gb ? hw.ram_gb + ' GB RAM' : '—', hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : ''))), hw.suggested_models && hw.suggested_models.length ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, hw.ram_gb ? hw.ram_gb + ' GB RAM' : '—', hw.vram_gb ? ' · ' + hw.vram_gb + ' GB VRAM' : ''))), /*#__PURE__*/React.createElement(WizardGemmaPull, {
+    hw: hw
+  }), hw.suggested_models && hw.suggested_models.length ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.5)',
@@ -24308,6 +24446,49 @@ function SetupWizard({
       color: 'rgba(245,158,11,0.9)'
     }
   }, "Demo mode \u2014 connect a provider anytime in Settings")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 22,
+      textAlign: 'left',
+      padding: '12px 14px',
+      borderRadius: 8,
+      border: '1px solid rgba(124,58,237,0.25)',
+      background: 'rgba(124,58,237,0.05)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(200,180,255,0.9)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 6,
+      letterSpacing: '.04em'
+    }
+  }, "\uD83D\uDD10 ENCRYPT YOUR VAULT (RECOMMENDED)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.45)',
+      marginBottom: 8,
+      lineHeight: 1.6
+    }
+  }, "A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain \u2014 never on disk. Leave blank to set it later in Settings \u2192 Privacy."), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: data.vault_passphrase || '',
+    onChange: e => onChange({
+      vault_passphrase: e.target.value
+    }),
+    placeholder: "Vault passphrase (optional)",
+    style: {
+      width: '100%',
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(124,58,237,0.3)',
+      borderRadius: 6,
+      padding: '9px 12px',
+      color: '#fff',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 12,
+      outline: 'none',
+      boxSizing: 'border-box'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'rgba(255,255,255,0.25)',
@@ -25077,9 +25258,53 @@ function SettingsTabPrivacy({
   save
 }) {
   const [vaultStatus, setVaultStatus] = useState(null);
-  useEffect(() => {
+  const [pass, setPass] = useState('');
+  const [armBusy, setArmBusy] = useState(false);
+  const [armMsg, setArmMsg] = useState('');
+  const [eraseConfirm, setEraseConfirm] = useState('');
+  const [eraseMsg, setEraseMsg] = useState('');
+  const refreshVault = useCallback(() => {
     apiFetch('/api/vault/status').then(r => r.json()).then(setVaultStatus).catch(() => {});
   }, []);
+  useEffect(() => {
+    refreshVault();
+  }, [refreshVault]);
+  const armPassphrase = () => {
+    if ((pass || '').trim().length < 6) {
+      setArmMsg('Passphrase must be at least 6 characters.');
+      return;
+    }
+    setArmBusy(true);
+    setArmMsg('');
+    apiFetch('/api/vault/passphrase', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        passphrase: pass
+      })
+    }).then(r => r.json()).then(d => {
+      setArmMsg(d.status === 'ok' ? '✓ ' + (d.note || 'Vault encryption armed.') : '✗ ' + (d.message || 'Failed'));
+      if (d.status === 'ok') {
+        setPass('');
+        refreshVault();
+      }
+    }).catch(() => setArmMsg('✗ Could not reach the server.')).finally(() => setArmBusy(false));
+  };
+  const eraseAll = () => {
+    setEraseMsg('');
+    apiFetch('/api/data/erase', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        confirm: eraseConfirm
+      })
+    }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
+  };
+  const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "SOVEREIGN VAULT"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
@@ -25123,7 +25348,58 @@ function SettingsTabPrivacy({
       fontSize: 12,
       color: x.c
     }
-  }, x.v))))), /*#__PURE__*/React.createElement(StToggle, {
+  }, x.v))))), !armed && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '12px 14px',
+      background: 'rgba(245,158,11,0.06)',
+      border: '1px solid rgba(245,158,11,0.25)',
+      borderRadius: 8,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,210,140,0.9)',
+      marginBottom: 8,
+      lineHeight: 1.6
+    }
+  }, "Your vault is ", /*#__PURE__*/React.createElement("b", null, "not encrypted at rest"), ". Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain \u2014 never on disk, never sent anywhere)."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: pass,
+    onChange: e => setPass(e.target.value),
+    placeholder: "Vault passphrase (min 6 chars)",
+    className: "input",
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      whiteSpace: 'nowrap'
+    },
+    disabled: armBusy,
+    onClick: armPassphrase
+  }, armBusy ? 'Arming…' : 'Encrypt Vault')), armMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: armMsg[0] === '✓' ? '#00ff80' : '#ff6b8a',
+      marginTop: 8,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, armMsg)), armed && armMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#00ff80',
+      marginBottom: 12,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, armMsg), /*#__PURE__*/React.createElement(StToggle, {
     label: "Local-Only Mode",
     value: !!s.vault_local_only,
     onChange: () => save({
@@ -25131,6 +25407,60 @@ function SettingsTabPrivacy({
     }),
     desc: "Force all AI processing to local models. Cloud providers receive no vault data."
   })), /*#__PURE__*/React.createElement(StSection, {
+    title: "YOUR DATA"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.4)',
+      marginBottom: 12,
+      lineHeight: 1.6
+    }
+  }, "Everything Friday knows lives on this device. Take it with you, or erase it completely \u2014 no server copy exists."), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      width: '100%',
+      fontSize: 12,
+      marginBottom: 10
+    },
+    onClick: () => window.open('/api/data/export', '_blank')
+  }, "\u2913 Export all my data (ZIP)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,180,180,0.75)',
+      marginBottom: 6,
+      lineHeight: 1.6
+    }
+  }, "Permanently delete ALL local data \u2014 vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type ", /*#__PURE__*/React.createElement("b", null, "ERASE"), " to confirm."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: eraseConfirm,
+    onChange: e => setEraseConfirm(e.target.value),
+    placeholder: "Type ERASE",
+    className: "input",
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      whiteSpace: 'nowrap',
+      borderColor: eraseConfirm === 'ERASE' ? 'rgba(255,0,80,0.5)' : undefined,
+      color: eraseConfirm === 'ERASE' ? '#ff6b8a' : undefined
+    },
+    disabled: eraseConfirm !== 'ERASE',
+    onClick: eraseAll
+  }, "Erase Everything")), eraseMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: eraseMsg[0] === '✓' ? '#00ff80' : '#ff6b8a',
+      marginTop: 8,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, eraseMsg)), /*#__PURE__*/React.createElement(StSection, {
     title: "EGRESS GATE"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -30275,6 +30605,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, "+ New Chat"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setChatOpen(false),
+    title: "Close chat",
+    "aria-label": "Close chat",
     style: {
       background: 'none',
       border: 'none',
@@ -30973,6 +31305,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, settingsSaveMsg), /*#__PURE__*/React.createElement("button", {
     onClick: () => setSettingsOpen(false),
+    title: "Close settings",
+    "aria-label": "Close settings",
     style: {
       background: 'none',
       border: 'none',
