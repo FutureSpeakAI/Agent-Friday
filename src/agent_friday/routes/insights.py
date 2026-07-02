@@ -289,6 +289,106 @@ def get_vault_status():
     })
 
 
+@insights_bp.route('/api/vault/passphrase', methods=['POST'])
+@login_required
+def set_vault_passphrase():
+    """Arm the vault passphrase from Settings → Privacy (H4).
+
+    Stores it in the OS keychain (same slot as `friday vault-setup`) and sets
+    it live for this session so encryption engages without a restart. The value
+    is never written to a file or logged.
+    """
+    data = request.get_json(silent=True) or {}
+    passphrase = (data.get('passphrase') or '').strip()
+    if len(passphrase) < 6:
+        return jsonify({"status": "error",
+                        "message": "Passphrase must be at least 6 characters."}), 400
+    keychain = False
+    try:
+        import keyring as _keyring
+        _keyring.set_password("agent-friday", "vault-passphrase", passphrase)
+        keychain = True
+    except Exception:
+        pass
+    os.environ["FRIDAY_VAULT_PASSPHRASE"] = passphrase
+    try:
+        core.FRIDAY_VAULT_PASSPHRASE = passphrase
+        # Force key re-derivation on next use so this session encrypts now.
+        from agent_friday.services import agent as _agent
+        _agent._VAULT_KEY = None
+        _agent._VAULT_KEY_READY = False
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "keychain": keychain,
+                    "note": ("Saved to OS keychain." if keychain else
+                             "Set for this session (install 'keyring' to persist).")})
+
+
+# ── GDPR/CCPA data rights (H6) — export / erase, mirroring the friday CLI ──────
+_EXPORT_SKIP_DIRS = {"audio-cache", "vibe-code-logs", "__pycache__"}
+
+
+@insights_bp.route('/api/data/export')
+@login_required
+def data_export():
+    """Right of access: stream ALL local Friday data as a portable zip.
+
+    Everything Friday knows already lives on-device under ~/.friday; this just
+    packages it. Mirrors `friday export` so the CLI and the Settings → Privacy
+    button produce the same archive.
+    """
+    if not FRIDAY_DIR.exists():
+        return jsonify({"status": "error", "message": "No Friday data found."}), 404
+    import io as _io
+    import zipfile
+    buf = _io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in FRIDAY_DIR.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(FRIDAY_DIR)
+            if set(rel.parts) & _EXPORT_SKIP_DIRS:
+                continue
+            try:
+                zf.write(path, arcname=str(Path(".friday") / rel))
+                count += 1
+            except Exception:
+                pass
+    buf.seek(0)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    resp = send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=f"friday-data-export-{stamp}.zip")
+    resp.headers["X-Friday-Export-Files"] = str(count)
+    return resp
+
+
+@insights_bp.route('/api/data/erase', methods=['POST'])
+@login_required
+def data_erase():
+    """Right to erasure: delete ALL local Friday data. Because Friday is
+    device-local with no server copy, this is a complete erasure. Guarded by an
+    explicit confirmation token so a stray click can't wipe everything."""
+    import shutil
+    data = request.get_json(silent=True) or {}
+    if (data.get('confirm') or '').strip() != "ERASE":
+        return jsonify({"status": "error",
+                        "message": 'Send {"confirm":"ERASE"} to proceed.'}), 400
+    if not FRIDAY_DIR.exists():
+        return jsonify({"status": "ok", "erased": False,
+                        "message": "No Friday data found."})
+    try:
+        count = sum(1 for p in FRIDAY_DIR.rglob("*") if p.is_file())
+    except Exception:
+        count = 0
+    try:
+        shutil.rmtree(FRIDAY_DIR)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Erase failed: {e}"}), 500
+    return jsonify({"status": "ok", "erased": True, "files": count,
+                    "message": "All local Friday data erased. Restart for a clean first run."})
+
+
 @insights_bp.route('/api/memory/stats')
 def get_memory_stats():
     """Return enriched memory tier counts.

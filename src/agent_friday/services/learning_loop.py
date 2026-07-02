@@ -89,6 +89,17 @@ def _connect() -> sqlite3.Connection:
         """
     )
     conn.commit()
+    # Additive migration for machines created by an earlier schema (H10). New
+    # columns land here; CREATE TABLE IF NOT EXISTS above never alters an
+    # existing table. Keep decls in sync with the CREATE statements.
+    try:
+        from agent_friday.services.db_util import ensure_schema
+        ensure_schema(conn, {
+            "observations": [("workspace", "TEXT"), ("meta_json", "TEXT")],
+            "skills": [("source_obs_json", "TEXT")],
+        })
+    except Exception:
+        pass
     return conn
 
 
