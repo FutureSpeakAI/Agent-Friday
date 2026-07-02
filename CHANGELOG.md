@@ -3,7 +3,55 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.0.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.0.1**
+
+---
+
+## [5.0.1] — 2026-07-01 — "Super Agent (hardening)"
+
+The post-release hardening pass — the full H1–H10 backlog from
+`docs/FABLE5_INTEGRATION_STORM_REPORT.md`, closing the egress gaps the boundary
+reviews missed and the fresh-user onboarding gaps the install audit found.
+
+### Security
+
+- **The agent tool loop and the user-text Gemini paths now pass the egress gate.**
+  `tool_result` blocks pulled mid-loop are classified before re-send (a withheld
+  result becomes an explanatory marker, never silent empty output); the creations,
+  outreach-draft, QA-vision-intent, image-gen, and voice-TTS Gemini calls gate
+  their user-authored text. Sensitive TTS routes to on-device voice instead of the
+  cloud. Image/camera bytes remain the documented can't-text-classify caveat.
+
+### Added
+
+- **Onboarding vault passphrase (H4).** The first-run wizard offers an optional
+  passphrase that arms AES-256-GCM before launch; Settings → Privacy shows an
+  "Encrypt Vault" prompt whenever the vault isn't armed. New `/api/vault/passphrase`.
+- **First-run Gemma pull (H5).** The wizard's hardware step offers a one-click
+  `gemma3:4b` download when Ollama is running but the model isn't present, so the
+  zero-key local path is real on first run.
+- **Data rights UI (H6).** Settings → Privacy → "Your Data": export everything as
+  a ZIP (`/api/data/export`) and a typed-ERASE-guarded wipe (`/api/data/erase`),
+  mirroring `friday export` / `friday erase`.
+- **SQLite migration helper (H10).** `services/db_util.py` adds forward-only
+  additive column migration so upgrading users' DBs gain new columns instead of
+  silently keeping the old schema.
+
+### Changed
+
+- **`friday setup` is the documented key path (H2).** README + INSTALLATION stop
+  steering users at plaintext `start.bat` env vars and correct the docs that
+  wrongly listed an Anthropic key as *required* — `gemma3:4b` is the zero-key default.
+- **Voice model id is validated at startup and in Settings → Voice (H8).** A
+  stale/renamed Gemini Live id (the opaque "voice broken" that looks like an auth
+  error) is now caught up front.
+
+### Fixed
+
+- **Accessibility (H9):** a global keyboard `:focus-visible` ring (the holographic
+  UI had none) and ARIA labels on icon-only close buttons.
+- **Cross-platform tests (H7):** the hermetic-home conftest now redirects POSIX
+  `HOME` too, not just Windows `USERPROFILE`.
 
 ---
 
