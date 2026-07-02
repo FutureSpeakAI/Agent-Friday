@@ -48,21 +48,19 @@ Settings (creative/voice degrade gracefully with a clear notice until you do).
 > Bigger machine? Upgrade the local brain: `ollama pull gemma3:12b` (or `gemma3:27b`)
 > and set it in Settings → Models.
 
-Set your keys (no keys are stored in the repo):
+**Adding cloud keys (optional).** The recommended way is `friday setup` — it
+stores each key **encrypted** via the credential store (DPAPI/AES-256-GCM),
+never in plaintext, never in the repo:
 
 ```bash
-# Linux / macOS
-export ANTHROPIC_API_KEY=your-key     # core reasoning
-export GEMINI_API_KEY=your-key        # voice + creative (optional)
-export OPENAI_API_KEY=your-key        # OpenRouter / any /v1 endpoint (optional)
+friday setup        # interactive: keys, model, vault passphrase — all encrypted at rest
 ```
 
-```powershell
-# Windows PowerShell
-$env:ANTHROPIC_API_KEY = "your-key"
-$env:GEMINI_API_KEY    = "your-key"
-$env:OPENAI_API_KEY    = "your-key"
-```
+Or add them any time in the running app under **Settings → Providers**. Both
+paths write to the encrypted store. Environment variables (`ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, `OPENAI_API_KEY`) still work for CI or advanced setups, but a
+plaintext key file (e.g. a hand-edited `start.bat`) is **not** the recommended
+pattern — prefer `friday setup`.
 
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, including the one-line shell installer, GPU setup, Ollama, and the Windows SmartScreen bypass.
 
@@ -99,9 +97,9 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
 ## Requirements
 
 - Python 3.10+
-- An Anthropic API key — for live Claude reasoning ([get one](https://console.anthropic.com/settings/keys))
-- Google Gemini API key — for voice and creative features ([get one](https://aistudio.google.com/apikey)) — *optional*
-- Ollama — for local models and vault-private queries ([ollama.com](https://ollama.com)) — *optional*
+- **Ollama + the bundled `gemma3:4b` model** — the zero-key default; chat runs fully local ([ollama.com](https://ollama.com), auto-installed by the installers)
+- Anthropic API key — *optional upgrade* for live Claude reasoning ([get one](https://console.anthropic.com/settings/keys))
+- Google Gemini API key — *optional* for voice and creative features ([get one](https://aistudio.google.com/apikey))
 
 ---
 

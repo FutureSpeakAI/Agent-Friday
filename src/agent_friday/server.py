@@ -393,6 +393,17 @@ if __name__ == '__main__':
     except Exception as _gate_err:
         print(f"  Egress gate: self-test errored ({_gate_err}) — cloud sends stay fail-closed per call")
 
+    # Voice model sanity check (H8): a stale/renamed Live model id surfaces as a
+    # connect failure that reads like an auth error but isn't. Warn once at boot
+    # so it's diagnosable; the same status shows in Settings → Voice.
+    try:
+        from agent_friday.services.voice_engine import validate_live_model as _vlm
+        _mv = _vlm()
+        if not _mv.get("ok") and _mv.get("status") == "unknown":
+            print(f"  Voice: {_mv.get('detail', 'configured voice model may be invalid')}")
+    except Exception:
+        pass
+
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,
                 ssl_context=_ssl_context)

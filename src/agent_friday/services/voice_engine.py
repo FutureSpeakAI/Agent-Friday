@@ -600,6 +600,37 @@ def _get_live_model():
     return _load_settings().get("voice_model") or LIVE_MODEL
 
 
+# Known-good Gemini Live / native-audio model IDs, plus the substrings that mark
+# a plausible Live model family. A stale/renamed model ID is the #1 cause of the
+# opaque "voice is broken" report (a 1007/1008 that looks like an auth failure),
+# so we validate the configured id up front and surface it, rather than letting
+# the user discover it mid-call.
+_KNOWN_LIVE_MODELS = {LIVE_MODEL, LIVE_MODEL_FALLBACK, LIVE_MODEL_FALLBACK2}
+_LIVE_MODEL_MARKERS = ("-live", "live-", "native-audio")
+
+
+def validate_live_model(model_id: str | None = None) -> dict:
+    """Validate a configured Gemini Live model id.
+
+    Returns {"ok": bool, "model": str, "status": "ok"|"unknown"|"empty",
+    "detail": str}. "unknown" (not a hard error) means the id doesn't match a
+    known-good model or the Live-family naming pattern — likely a typo or a
+    model that has been renamed/retired. The call chain still tries it and falls
+    back (LIVE_MODEL_FALLBACK/2), so this is advisory, surfaced in Settings→Voice.
+    """
+    model = (model_id if model_id is not None else _get_live_model()) or ""
+    model = model.strip()
+    if not model:
+        return {"ok": False, "model": model, "status": "empty",
+                "detail": "No voice model configured; using the built-in default."}
+    if model in _KNOWN_LIVE_MODELS or any(m in model for m in _LIVE_MODEL_MARKERS):
+        return {"ok": True, "model": model, "status": "ok", "detail": ""}
+    return {"ok": False, "model": model, "status": "unknown",
+            "detail": (f"'{model}' isn't a recognized Gemini Live model — voice "
+                       "may fail to connect (this looks like an auth error but "
+                       f"isn't). Known-good: {', '.join(sorted(_KNOWN_LIVE_MODELS))}.")}
+
+
 def _get_live_voice():
     """Return the currently configured Live API voice from settings.
 
