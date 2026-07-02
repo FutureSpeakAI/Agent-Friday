@@ -87,6 +87,15 @@ def _connect() -> sqlite3.Connection:
         """
     )
     conn.commit()
+    # Additive migration for DBs created by an earlier schema (H10).
+    try:
+        from agent_friday.services.db_util import ensure_schema
+        ensure_schema(conn, {
+            "traits": [("evidence", "INTEGER DEFAULT 0")],
+            "facts": [("source", "TEXT")],
+        })
+    except Exception:
+        pass
     return conn
 
 

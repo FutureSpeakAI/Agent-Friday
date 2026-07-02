@@ -421,6 +421,23 @@ def api_setup_complete():
                 cs.set_provider_key(pname, kv)
                 cs.hot_reload_provider_key(pname, kv)
 
+    # 1b) Vault passphrase (H4) → OS keychain, same slot friday vault-setup uses.
+    #     Arms AES-256-GCM at-rest encryption for the sovereign vault. Optional;
+    #     never written to a file. Live env is set too so this session encrypts
+    #     without a restart. Never logged.
+    vault_pass = (data.get('vault_passphrase') or '').strip()
+    if vault_pass:
+        try:
+            import keyring as _keyring
+            _keyring.set_password("agent-friday", "vault-passphrase", vault_pass)
+        except Exception:
+            pass  # keyring absent → fall through to env-only for this session
+        os.environ["FRIDAY_VAULT_PASSPHRASE"] = vault_pass
+        try:
+            core.FRIDAY_VAULT_PASSPHRASE = vault_pass
+        except Exception:
+            pass
+
     # 2) Settings delta (NO secrets) → _save_settings keeps routing congruent.
     delta = {}
     for k in ('agent_name', 'orchestrator_model', 'subagent_model', 'creative_model',
