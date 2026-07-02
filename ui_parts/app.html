@@ -5260,6 +5260,50 @@ const WIZARD_STEPS=[
   {id:'hardware',title:'Hardware Check',subtitle:'What this machine can run on-device'},
   {id:'done',title:'Ready to Launch',subtitle:'Your agent is configured'},
 ];
+// H5 — first-run bundled-Gemma pull. Shown in the hardware step: if Ollama is
+// running but the default local model (gemma3:4b) isn't pulled yet, offer a
+// one-click download so "works with zero keys" is actually true on first run.
+const BUNDLED_MODEL='gemma3:4b';
+function WizardGemmaPull({hw}){
+  const[state,setState]=React.useState('idle'); // idle|pulling|done|error|nollama
+  const[detail,setDetail]=React.useState('');
+  const pollRef=React.useRef(null);
+  React.useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current)},[]);
+  const has=React.useMemo(()=>{
+    const names=(hw&&hw.installed_models)||[];
+    return names.some(n=>String(n).startsWith('gemma3:4b')||String(n).startsWith('gemma3'));
+  },[hw]);
+  if(!hw)return null;
+  if(!hw.ollama_available){
+    return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(245,158,11,0.25)',background:'rgba(245,158,11,0.05)',marginBottom:14,fontSize:11,color:'rgba(255,210,140,0.9)',lineHeight:1.6}}>
+      Install <a href="https://ollama.com" target="_blank" rel="noreferrer" style={{color:'#00d4ff'}}>Ollama</a> to run Friday fully offline with no cloud key. Then reopen this wizard to pull the bundled model.
+    </div>;
+  }
+  if(has||state==='done'){
+    return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(52,211,153,0.25)',background:'rgba(52,211,153,0.05)',marginBottom:14,fontSize:11,color:'rgba(52,211,153,0.9)',fontFamily:'JetBrains Mono'}}>✓ {BUNDLED_MODEL} ready — chat works offline, zero keys.</div>;
+  }
+  const startPull=()=>{
+    setState('pulling');setDetail('Starting download…');
+    fetch('/api/ollama/pull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:BUNDLED_MODEL})})
+      .then(r=>r.json()).then(d=>{
+        if(d.status!=='pulling'){setState('error');setDetail(d.message||'Could not start pull');return;}
+        pollRef.current=setInterval(()=>{
+          fetch('/api/ollama/status').then(r=>r.json()).then(st=>{
+            const models=(st.models||[]).map(m=>m.name||m);
+            if(models.some(n=>String(n).startsWith('gemma3'))){clearInterval(pollRef.current);setState('done');}
+            else setDetail('Downloading… (~3 GB, this can take a few minutes)');
+          }).catch(()=>{});
+        },4000);
+      }).catch(()=>{setState('error');setDetail('Could not reach the server');});
+  };
+  return <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid rgba(0,212,255,0.2)',background:'rgba(0,212,255,0.04)',marginBottom:14}}>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.6)',marginBottom:8,lineHeight:1.6}}>Pull <b style={{color:'#00d4ff'}}>{BUNDLED_MODEL}</b> (Google's open Gemma 3 4B, ~3 GB) so Friday chats fully on-device with no API key.</div>
+    {state==='pulling'
+      ?<div style={{fontSize:10,color:'rgba(0,212,255,0.8)',fontFamily:'JetBrains Mono'}}>⏳ {detail}</div>
+      :<button className="settings-btn" style={{fontSize:12}} onClick={startPull}>↓ Pull {BUNDLED_MODEL}</button>}
+    {state==='error'&&<div style={{fontSize:10,color:'#ff6b8a',marginTop:6,fontFamily:'JetBrains Mono'}}>✗ {detail}</div>}
+  </div>;
+}
 function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
   const s=WIZARD_STEPS[step];
   const _mc=useModelCatalog();
@@ -5453,6 +5497,7 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
                     <div style={{fontSize:12,color:'#ddd',marginTop:4}}>{hw.ram_gb?hw.ram_gb+' GB RAM':'—'}{hw.vram_gb?' · '+hw.vram_gb+' GB VRAM':''}</div>
                   </div>
                 </div>
+                <WizardGemmaPull hw={hw}/>
                 {(hw.suggested_models&&hw.suggested_models.length)?(
                   <div>
                     <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',fontFamily:'JetBrains Mono',marginBottom:8}}>SUGGESTED LOCAL MODELS</div>
@@ -5481,6 +5526,12 @@ function SetupWizard({step,data,onChange,onNext,onBack,onComplete}){
               {enteredCount>0
                 ?<span style={{color:'rgba(52,211,153,0.9)'}}>✓ {enteredCount} provider{enteredCount>1?'s':''} connected</span>
                 :<span style={{color:'rgba(245,158,11,0.9)'}}>Demo mode — connect a provider anytime in Settings</span>}
+            </div>
+            <div style={{marginTop:22,textAlign:'left',padding:'12px 14px',borderRadius:8,border:'1px solid rgba(124,58,237,0.25)',background:'rgba(124,58,237,0.05)'}}>
+              <div style={{fontSize:11,color:'rgba(200,180,255,0.9)',fontFamily:'JetBrains Mono',marginBottom:6,letterSpacing:'.04em'}}>🔐 ENCRYPT YOUR VAULT (RECOMMENDED)</div>
+              <div style={{fontSize:11,color:'rgba(255,255,255,0.45)',marginBottom:8,lineHeight:1.6}}>A passphrase encrypts private data (finance, health, notes) at rest with AES-256-GCM. Stored in your OS keychain — never on disk. Leave blank to set it later in Settings → Privacy.</div>
+              <input type="password" value={data.vault_passphrase||''} onChange={e=>onChange({vault_passphrase:e.target.value})} placeholder="Vault passphrase (optional)"
+                style={{width:'100%',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(124,58,237,0.3)',borderRadius:6,padding:'9px 12px',color:'#fff',fontFamily:'JetBrains Mono',fontSize:12,outline:'none',boxSizing:'border-box'}}/>
             </div>
             <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',marginTop:20,fontFamily:'JetBrains Mono',letterSpacing:'.05em'}}>
               BY FUTURESPEAK.AI · ASIMOV'S CLAWS CERTIFIED
@@ -5721,7 +5772,27 @@ function SettingsTabVoice({s,save}){
 }
 function SettingsTabPrivacy({s,save}){
   const[vaultStatus,setVaultStatus]=useState(null);
-  useEffect(()=>{apiFetch('/api/vault/status').then(r=>r.json()).then(setVaultStatus).catch(()=>{})},[]);
+  const[pass,setPass]=useState('');
+  const[armBusy,setArmBusy]=useState(false);
+  const[armMsg,setArmMsg]=useState('');
+  const[eraseConfirm,setEraseConfirm]=useState('');
+  const[eraseMsg,setEraseMsg]=useState('');
+  const refreshVault=useCallback(()=>{apiFetch('/api/vault/status').then(r=>r.json()).then(setVaultStatus).catch(()=>{})},[]);
+  useEffect(()=>{refreshVault()},[refreshVault]);
+  const armPassphrase=()=>{
+    if((pass||'').trim().length<6){setArmMsg('Passphrase must be at least 6 characters.');return;}
+    setArmBusy(true);setArmMsg('');
+    apiFetch('/api/vault/passphrase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passphrase:pass})})
+      .then(r=>r.json()).then(d=>{setArmMsg(d.status==='ok'?('✓ '+(d.note||'Vault encryption armed.')):('✗ '+(d.message||'Failed'))); if(d.status==='ok'){setPass('');refreshVault();}})
+      .catch(()=>setArmMsg('✗ Could not reach the server.')).finally(()=>setArmBusy(false));
+  };
+  const eraseAll=()=>{
+    setEraseMsg('');
+    apiFetch('/api/data/erase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:eraseConfirm})})
+      .then(r=>r.json()).then(d=>setEraseMsg(d.status==='ok'?('✓ '+(d.message||'Erased.')):('✗ '+(d.message||'Failed'))))
+      .catch(()=>setEraseMsg('✗ Could not reach the server.'));
+  };
+  const armed=vaultStatus&&vaultStatus.encryption==='AES-256-GCM';
   return <div>
     <StSection title="SOVEREIGN VAULT">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
@@ -5729,7 +5800,26 @@ function SettingsTabPrivacy({s,save}){
           {[{l:'Status',v:vaultStatus.locked?'LOCKED':'UNLOCKED',c:vaultStatus.locked?'#f59e0b':'#00ff80'},{l:'Encryption',v:vaultStatus.encryption||'None',c:vaultStatus.encryption==='AES-256-GCM'?'#00ff80':'#f59e0b'},{l:'Entries',v:vaultStatus.entry_count??'—',c:'#00d4ff'}].map(x=><div key={x.l}><div style={{fontSize:10,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',marginBottom:3}}>{x.l}</div><div style={{fontFamily:'Orbitron',fontSize:12,color:x.c}}>{x.v}</div></div>)}
         </div>
       </div>}
+      {!armed&&<div style={{padding:'12px 14px',background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:8,marginBottom:14}}>
+        <div style={{fontSize:11,color:'rgba(255,210,140,0.9)',marginBottom:8,lineHeight:1.6}}>Your vault is <b>not encrypted at rest</b>. Set a passphrase to protect finance, health, and private notes with AES-256-GCM (stored in your OS keychain — never on disk, never sent anywhere).</div>
+        <div style={{display:'flex',gap:6}}>
+          <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="Vault passphrase (min 6 chars)" className="input" style={{flex:1}}/>
+          <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap'}} disabled={armBusy} onClick={armPassphrase}>{armBusy?'Arming…':'Encrypt Vault'}</button>
+        </div>
+        {armMsg&&<div style={{fontSize:10,color:armMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
+      </div>}
+      {armed&&armMsg&&<div style={{fontSize:10,color:'#00ff80',marginBottom:12,fontFamily:'JetBrains Mono'}}>{armMsg}</div>}
       <StToggle label="Local-Only Mode" value={!!s.vault_local_only} onChange={()=>save({vault_local_only:!s.vault_local_only})} desc="Force all AI processing to local models. Cloud providers receive no vault data."/>
+    </StSection>
+    <StSection title="YOUR DATA">
+      <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Everything Friday knows lives on this device. Take it with you, or erase it completely — no server copy exists.</div>
+      <button className="settings-btn" style={{width:'100%',fontSize:12,marginBottom:10}} onClick={()=>window.open('/api/data/export','_blank')}>⤓ Export all my data (ZIP)</button>
+      <div style={{fontSize:11,color:'rgba(255,180,180,0.75)',marginBottom:6,lineHeight:1.6}}>Permanently delete ALL local data — vault, wiki, memory, chat, credentials, identity. This cannot be undone. Type <b>ERASE</b> to confirm.</div>
+      <div style={{display:'flex',gap:6}}>
+        <input value={eraseConfirm} onChange={e=>setEraseConfirm(e.target.value)} placeholder="Type ERASE" className="input" style={{flex:1}}/>
+        <button className="settings-btn" style={{fontSize:12,whiteSpace:'nowrap',borderColor:eraseConfirm==='ERASE'?'rgba(255,0,80,0.5)':undefined,color:eraseConfirm==='ERASE'?'#ff6b8a':undefined}} disabled={eraseConfirm!=='ERASE'} onClick={eraseAll}>Erase Everything</button>
+      </div>
+      {eraseMsg&&<div style={{fontSize:10,color:eraseMsg[0]==='✓'?'#00ff80':'#ff6b8a',marginTop:8,fontFamily:'JetBrains Mono'}}>{eraseMsg}</div>}
     </StSection>
     <StSection title="EGRESS GATE">
       <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:12,lineHeight:1.6}}>Controls what data leaves the device. Tier 1 (public) passes through. Tier 2 (sensitive) is redacted. Tier 3 (private) is blocked.</div>
@@ -7795,7 +7885,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>FRIDAY CHAT</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button onClick={()=>{setChatMsgs([]);fetch('/api/chat/clear',{method:'POST'}).catch(()=>{})}} title="Start a new conversation (pinned messages preserved)" style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.2)',color:'#00d4ff',cursor:'pointer',fontSize:11,padding:'3px 8px',borderRadius:4,fontFamily:'Inter'}}>+ New Chat</button>
-          <button onClick={()=>setChatOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
+          <button onClick={()=>setChatOpen(false)} title="Close chat" aria-label="Close chat" style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
       <div style={{flex:1,overflowY:'auto',padding:12}}>
@@ -8026,7 +8116,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         <span style={{fontFamily:'Orbitron',fontSize:11,color:'#00d4ff'}}>QUICK SETTINGS</span>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           {settingsSaveMsg&&<span style={{fontSize:11,color:'#00ff80',fontFamily:'JetBrains Mono'}}>{settingsSaveMsg}</span>}
-          <button onClick={()=>setSettingsOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>&#x2715;</button>
+          <button onClick={()=>setSettingsOpen(false)} title="Close settings" aria-label="Close settings" style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:16}}>&#x2715;</button>
         </div>
       </div>
       <div style={{padding:'14px 16px'}}>

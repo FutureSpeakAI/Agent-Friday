@@ -349,8 +349,16 @@ def api_health_full():
         base = (settings.get("model_routing") or {}).get("ollama_url") or "http://localhost:11434"
         mgr = get_manager(base)
         hw = mgr.detect_hardware()
+        avail = mgr.is_available()
+        # installed_models (names only) lets the onboarding wizard skip the
+        # bundled-Gemma pull prompt when the model is already present (H5).
+        try:
+            installed = [m.get("name", "") for m in (mgr.list_models() if avail else [])]
+        except Exception:
+            installed = []
         out["hardware"] = {**hw, "suggested_models": mgr.recommend_models(hw),
-                           "ollama_available": mgr.is_available()}
+                           "ollama_available": avail,
+                           "installed_models": installed}
     except Exception as e:
         out["hardware"] = {"error": str(e)}
 

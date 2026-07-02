@@ -147,6 +147,18 @@ window.addEventListener('DOMContentLoaded',function(){
 
         /* --- REACT UI LAYER STYLES --- */
 
+        /* Accessibility (H9): a visible keyboard-focus ring on every interactive
+           control. The holographic theme had none, so keyboard/switch users
+           couldn't see where focus was. :focus-visible only shows for keyboard
+           (not mouse) focus, so it doesn't disturb the pointer aesthetic. */
+        a:focus-visible, button:focus-visible, input:focus-visible,
+        select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible,
+        [role="button"]:focus-visible, [role="tab"]:focus-visible {
+            outline: 2px solid #00d4ff;
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
