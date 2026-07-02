@@ -249,6 +249,30 @@ confident non-technical release; the rest are polish.
 
 ---
 
+## Backlog resolution (v5.0.1 — 2026-07-01)
+
+**All of H1–H10 are now implemented, tested, and shipped in v5.0.1.**
+
+| ID | Status | What landed |
+|----|--------|-------------|
+| H1 | ✅ done | User-text Gemini sites (creations, outreach, QA-vision intent, image gen, voice TTS) pass `egress_gate.gate_text`; image bytes documented in-code. |
+| H2 | ✅ done | README + INSTALLATION make `friday setup` the key path; corrected the "Anthropic key required" docs. |
+| H3 | ✅ done | `tool_result` blocks classified in `_gate_messages`; withheld → explanatory marker. +5 tests. |
+| H4 | ✅ done | Wizard vault-passphrase step + Settings "Encrypt Vault" prompt + `/api/vault/passphrase`. |
+| H5 | ✅ done | Wizard hardware-step one-click `gemma3:4b` pull; `installed_models` added to `/api/health/full`. |
+| H6 | ✅ done | Settings → Privacy "Your Data" export/erase + `/api/data/export` & `/api/data/erase`. +8 tests. |
+| H7 | ✅ done | conftest redirects POSIX `HOME`. |
+| H8 | ✅ done | `validate_live_model()` at boot + Settings → Voice. +7 tests. |
+| H9 | ✅ done | Global `:focus-visible` ring; ARIA on icon-only close buttons. |
+| H10 | ✅ done | `services/db_util.py` additive migration helper; adopted in learning_loop + user_model. +11 tests. |
+
+The B2 non-technical-user blockers are correspondingly closed: keys via encrypted
+`friday setup` (B2-1), first-run Gemma pull (B2-2), onboarding vault-passphrase
+arming (B2-3), and in-UI data-rights controls (B2-4). B2-5 (voice model-id
+validation) is H8.
+
+---
+
 ## Perspective notes (condensed)
 
 - **Fresh-Install Tester:** `pip install -e .` succeeds on Python 3.10; core imports clean; suite
