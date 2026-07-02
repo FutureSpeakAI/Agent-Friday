@@ -627,6 +627,10 @@ def analyze_file():
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
         if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp'):
+            # Image BYTES cannot be text-classified by the egress gate — this
+            # is the documented caveat (H1/H2 in FABLE5_INTEGRATION_STORM_REPORT):
+            # sending an uploaded image to Gemini vision is a conscious tradeoff,
+            # not a silent leak. The instruction prompt is fixed (no user text).
             mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
             response = client.models.generate_content(
                 model='gemini-2.5-flash',

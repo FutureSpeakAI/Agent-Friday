@@ -205,9 +205,14 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         mime = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
 
         from google.genai import types
+        from agent_friday.services import egress_gate as _eg
         client = ce._client()
+        # `intent` is user-authored and goes to cloud Gemini — gate it. (The
+        # image bytes below can't be text-classified: documented caveat.)
+        safe_intent = _eg.gate_text(intent or 'a high-quality, coherent image',
+                                    "gemini", "qa.vision.intent")
         prompt = (
-            f"Intent: {intent or 'a high-quality, coherent image'}.\n"
+            f"Intent: {safe_intent}.\n"
             "Score how well this image satisfies the intent. Respond with ONLY "
             'JSON: {"score": <0.0-1.0>, "critique": "<one sentence>", '
             '"suggestions": "<prompt tweaks, or empty>"}.')

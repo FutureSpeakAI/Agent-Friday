@@ -153,6 +153,56 @@ class TestMultiTurnLeak:
         assert "hello there" in joined
 
 
+# ── tool_result blocks — mid-loop tool output is classified, not passed raw ───
+
+class TestToolResultGating:
+    SSN_TEXT = "File contents: My SSN is 123-45-6789."  # pragma: allowlist secret
+
+    def _seal_tool_result(self, inner):
+        return eg.seal_outbound(
+            {"messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_1", "content": inner},
+            ]}]},
+            "anthropic", log_path=DEVNULL)
+
+    def test_string_tool_result_sensitive_withheld(self):
+        sealed = self._seal_tool_result(self.SSN_TEXT)
+        out = sealed["messages"][0]["content"][0]["content"]
+        assert "123-45-6789" not in out  # pragma: allowlist secret
+        # the model gets an explanation, not silence (empty reads as "no output")
+        assert "withheld" in out
+
+    def test_block_list_tool_result_sensitive_withheld(self):
+        sealed = self._seal_tool_result(
+            [{"type": "text", "text": self.SSN_TEXT},
+             {"type": "image", "source": {"data": "…"}}])
+        blocks = sealed["messages"][0]["content"][0]["content"]
+        assert "123-45-6789" not in blocks[0]["text"]  # pragma: allowlist secret
+        assert "withheld" in blocks[0]["text"]
+        # non-text blocks pass through structurally (image bytes are the
+        # documented can't-classify caveat)
+        assert blocks[1]["type"] == "image"
+
+    def test_public_tool_result_unchanged(self):
+        text = "The weather API returned sunny, 72F."
+        sealed = self._seal_tool_result(text)
+        assert sealed["messages"][0]["content"][0]["content"] == text
+
+    def test_tool_result_structure_preserved(self):
+        sealed = self._seal_tool_result("public output")
+        part = sealed["messages"][0]["content"][0]
+        assert part["type"] == "tool_result"
+        assert part["tool_use_id"] == "tu_1"
+
+    def test_local_provider_tool_result_untouched(self):
+        sealed = eg.seal_outbound(
+            {"messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t", "content": self.SSN_TEXT},
+            ]}]},
+            "ollama", log_path=DEVNULL)
+        assert sealed["messages"][0]["content"][0]["content"] == self.SSN_TEXT
+
+
 # ── Provider-switch bypass — routing to a different cloud provider still gates ─
 
 class TestProviderSwitchBypass:

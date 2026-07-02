@@ -507,6 +507,20 @@ def _synthesize_tts_wav_gemini(text, voice=None, style='briefing'):
     from google import genai
     from google.genai import types
 
+    # Gemini TTS is a CLOUD call — the spoken text leaves the device. If the
+    # egress gate classifies it above PUBLIC, raise so the caller's local
+    # (pyttsx3/Piper) fallback speaks it on-device instead of shipping it to
+    # Google. Better a robotic local voice than a sovereignty leak.
+    try:
+        from agent_friday.services import egress_gate as _eg
+        if _eg.gate_text(text, "gemini", "voice.tts") != text:
+            raise RuntimeError("TTS text withheld by egress gate (sensitive) — "
+                               "routing to local voice")
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # gate unavailable → don't block speech on an infra error
+
     client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
     if not voice:
         try:

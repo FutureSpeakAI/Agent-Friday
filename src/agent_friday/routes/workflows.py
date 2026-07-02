@@ -369,9 +369,12 @@ def outreach_draft():
     try:
         client = get_genai_client()
         if client:
+            # Gemini is cloud; the prompt embeds user-supplied contact name and
+            # context notes — gate it fail-closed before it leaves the device.
+            from agent_friday.services import egress_gate as _eg
             resp = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=prompt,
+                contents=_eg.gate_text(prompt, "gemini", "outreach.draft"),
             )
             draft_text = (getattr(resp, 'text', None) or '').strip()
     except Exception as e:

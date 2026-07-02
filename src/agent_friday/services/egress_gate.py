@@ -190,12 +190,52 @@ def _gate_messages(messages: list, provider: str,
                             f"message[{i}].content[{j}].text", log_path,
                         ),
                     })
+                elif isinstance(part, dict) and part.get("type") == "tool_result":
+                    new_parts.append(_gate_tool_result(
+                        part, provider, f"message[{i}].content[{j}]", log_path))
                 else:
                     new_parts.append(part)
             gated.append({**msg, "content": new_parts})
         else:
             gated.append(msg)
     return gated
+
+
+# What the model sees in place of a SENSITIVE tool result. An empty string
+# (what _gate_text returns for SENSITIVE) would read as "the tool returned
+# nothing" and send the agent loop into pointless retries; this marker lets it
+# report the withholding and move on.
+_TOOL_RESULT_WITHHELD = ("[tool result withheld by egress gate — SENSITIVE "
+                         "content stays on this device; use a local model to "
+                         "work with it]")
+
+
+def _gate_tool_result(part: dict, provider: str, field: str,
+                      log_path: Path | None = None) -> dict:
+    """Gate the text inside a tool_result block (file reads, command output —
+    whatever a tool pulled mid-loop). Anthropic allows `content` as a plain
+    string or a list of typed blocks; non-text blocks (images) pass through
+    untouched because a text classifier can't judge them (documented caveat)."""
+    def _gate_one(text: str, subfield: str) -> str:
+        out = _gate_text(text, provider, subfield, log_path)
+        return _TOOL_RESULT_WITHHELD if (text and out == "") else out
+
+    inner = part.get("content")
+    if isinstance(inner, str):
+        return {**part, "content": _gate_one(inner, f"{field}.tool_result")}
+    if isinstance(inner, list):
+        new_inner = []
+        for k, block in enumerate(inner):
+            if isinstance(block, dict) and block.get("type") == "text":
+                new_inner.append({
+                    **block,
+                    "text": _gate_one(block.get("text", ""),
+                                      f"{field}.tool_result[{k}]"),
+                })
+            else:
+                new_inner.append(block)
+        return {**part, "content": new_inner}
+    return part
 
 
 def _gate_tools(tools: list, provider: str,
