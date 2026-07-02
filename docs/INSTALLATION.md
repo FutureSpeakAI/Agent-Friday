@@ -204,9 +204,12 @@ Ollama enables local model routing — required for vault access to private data
 
 1. Download from [ollama.com](https://ollama.com/)
 2. Install and start the Ollama service
-3. Pull a model:
+3. Pull a model. **The installers already pull `gemma3:4b` (the bundled zero-key
+   default), so if you used `install.{sh,ps1,bat}` you can skip this.** These are
+   optional larger alternatives:
 
 ```bash
+ollama pull gemma3:4b    # bundled default — auto-installed, runs on ~8 GB RAM
 ollama pull qwen3:14b    # general purpose (8+ GB VRAM)
 ollama pull qwen3:8b     # lighter alternative (6+ GB VRAM)
 ollama pull qwen3:4b     # minimal (runs on CPU)

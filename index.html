@@ -13674,31 +13674,47 @@ function MarketplaceWS() {
   };
   const loadAll = () => {
     setLoading(true);
-    Promise.all([fetch('/api/marketplace/listings').then(r => r.json()).then(d => setListings(d.listings || [])).catch(() => {}), fetch('/api/marketplace/my-listings').then(r => r.json()).then(d => setMyListings(d.listings || [])).catch(() => {})]).finally(() => setLoading(false));
+    Promise.all([fetch('/api/marketplace/listings').then(r => r.json()).then(d => setListings(d.listings || [])).catch(() => {}), fetch('/api/marketplace/listings/mine').then(r => r.json()).then(d => setMyListings(d.listings || [])).catch(() => {})]).finally(() => setLoading(false));
   };
   useEffect(() => {
     loadAll();
   }, []);
   const buy = async id => {
+    // Backend is /api/marketplace/purchase with a two-step intent→confirm flow:
+    // the first POST returns an invoice; completion needs {confirm:true, invoice_id}.
     try {
-      const r = await fetch('/api/marketplace/buy', {
+      const hdr = {
+        'Content-Type': 'application/json'
+      };
+      const ir = await fetch('/api/marketplace/purchase', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: hdr,
         body: JSON.stringify({
           listing_id: id
         })
       });
-      const d = await r.json();
-      flash(d.ok ? 'Purchase complete' : 'Purchase failed: ' + (d.error || 'unknown error'));
+      const intent = await ir.json();
+      if (!intent.ok || !intent.invoice) {
+        return flash('Purchase failed: ' + (intent.error || 'unavailable'));
+      }
+      const cr = await fetch('/api/marketplace/purchase', {
+        method: 'POST',
+        headers: hdr,
+        body: JSON.stringify({
+          confirm: true,
+          listing_id: id,
+          invoice_id: intent.invoice.invoice_id
+        })
+      });
+      const done = await cr.json();
+      flash(done.ok ? 'Purchase complete' : 'Purchase failed: ' + (done.error || 'unknown error'));
     } catch (e) {
       flash('Purchase failed');
     }
   };
   const remove = async id => {
     try {
-      const r = await fetch('/api/marketplace/listings/' + id, {
+      const r = await fetch('/api/marketplace/listing/' + id, {
         method: 'DELETE'
       });
       const d = await r.json();
@@ -14152,17 +14168,17 @@ function WalletPanel() {
   };
   const load = () => {
     setLoading(true);
-    Promise.all([fetch('/api/wallet/balance').then(r => r.json()).then(d => {
-      setWallet(d.wallet || d);
-      setTxns(d.transactions || []);
-    }).catch(() => {})]).finally(() => setLoading(false));
+    Promise.all([
+    // Backend wallet endpoint is /api/economy/wallet → {ok, wallet}; transactions
+    // come from the separate /api/economy/transactions endpoint.
+    fetch('/api/economy/wallet').then(r => r.json()).then(d => setWallet(d.wallet || d)).catch(() => {}), fetch('/api/economy/transactions?limit=50').then(r => r.json()).then(d => setTxns(d.transactions || [])).catch(() => {})]).finally(() => setLoading(false));
   };
   useEffect(() => {
     load();
   }, []);
   const claimGenesis = async () => {
     try {
-      const r = await fetch('/api/wallet/genesis', {
+      const r = await fetch('/api/economy/wallet/genesis', {
         method: 'POST'
       });
       const d = await r.json();
@@ -14177,7 +14193,7 @@ function WalletPanel() {
     setSending(true);
     try {
       const mpsi = Math.round(parseFloat(transfer.amount) * 1000);
-      const r = await fetch('/api/wallet/transfer', {
+      const r = await fetch('/api/economy/transfer', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -14205,7 +14221,7 @@ function WalletPanel() {
     setSending(false);
   };
   const loadLeader = () => {
-    fetch('/api/wallet/leaderboard?limit=20').then(r => r.json()).then(d => setLeaderboard(d.leaderboard || [])).catch(() => {});
+    fetch('/api/economy/leaderboard?limit=20').then(r => r.json()).then(d => setLeaderboard(d.leaderboard || [])).catch(() => {});
     setShowLeader(true);
   };
   if (loading) return /*#__PURE__*/React.createElement("div", {

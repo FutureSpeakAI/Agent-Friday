@@ -151,9 +151,9 @@ routed through the existing cLaws governance + egress gate.
 
 - All v5 subsystems are **local-only** and pass through cLaws governance and the
   egress gate. Nothing new introduces a default cloud dependency.
-- 3,629 offline tests pass (plus the Playwright UI suite against a live
-  server). See `docs/SUPER_AGENT_BUILD_SPEC.md` for the full design and
-  `docs/RELEASE_NOTES_v5.0.md` for the release summary.
+- 3,162 tests pass (64 new). See `docs/SUPER_AGENT_BUILD_SPEC.md` for the full
+  design and `docs/RELEASE_NOTES_v5.0.md` for the release summary. (The suite
+  grew to 3,629 once the v5 test files were committed — see [5.0.1].)
 
 ---
 

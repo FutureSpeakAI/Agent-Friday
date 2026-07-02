@@ -87,7 +87,7 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
 - **Layered Safety Classifier** — Fail-closed egress gate with sensitivity classifier as single source of truth; HMAC-SHA256 signed behavioral constraints (Asimov's cLaws).
 - **Holographic UI** — Three.js WebGL interface with audio reactivity, process orbs, and personality evolution visualized as progressively complex geometric structures.
 - **Voice Mode** — Real-time WebSocket audio pipeline via Google Gemini Live; local Piper/Whisper fallback when offline.
-- **Universal Tool Loop** — Anthropic, Gemini, Ollama (gemma4 native tool calling), and OpenAI-compatible providers share a single agentic tool loop.
+- **Universal Tool Loop** — Anthropic, Gemini, Ollama (Gemma native tool calling), and OpenAI-compatible providers share a single agentic tool loop.
 - **Creator Economy Layer** — Music (Lyria 3), video (Veo), image generation (Nano Banana Pro/2), provenance (C2PA), federation (Ed25519 identity, X25519+ChaCha20-Poly1305 transport), marketplace, and economy engine.
 - **Self-Improvement** — Weekly epistemic calibration, SkillOpt nightly loop, closed-loop learning from real usage.
 - **Defederation & Moderation** — Asimov-governed defederation protocol, H1–H4 harm floor, community content-policy packs.
