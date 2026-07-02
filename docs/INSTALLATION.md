@@ -138,11 +138,11 @@ If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — c
 
 ## Step 4: Configure API Keys
 
-Friday needs at least one API key. **Keys are stored encrypted in `~/.friday/credential_store.enc` — never as plaintext in `settings.json` or source files.**
+Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted in `~/.friday/credential_store.enc` — never as plaintext in `settings.json` or source files.**
 
 ### Option A: Setup Wizard (Recommended)
 
-On first run, Friday opens a setup wizard in your browser. Enter your API keys there — they are immediately encrypted and stored in the credential store. This is the safest path.
+Run `friday setup`, or use the first-run wizard that opens in your browser. Either way, keys are immediately encrypted and stored in the credential store, and `friday setup` also arms the vault passphrase. This is the safest path — a hand-edited `start.bat` with a plaintext key is **not** recommended.
 
 ### Option B: Environment Variables
 
@@ -166,8 +166,9 @@ export GEMINI_API_KEY=AIza...
 
 | Key | Source | Required |
 |-----|--------|----------|
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Yes |
-| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/) | Optional (for TTS, creative, voice) |
+| *(none)* | Ollama + `gemma3:4b` | Default — fully local, zero keys |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Optional (sharper reasoning) |
+| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/) | Optional (TTS, creative, voice) |
 
 ### Vault Encryption with FRIDAY_PASSWORD
 

@@ -334,6 +334,17 @@ def voice_setup_status():
         steps.append({"id": "key", "label": "Gemini API Key",
                       "status": "ok" if key_ok else "missing",
                       "detail": "Set via Settings → Providers → Google Gemini" if not key_ok else ""})
+        # Validate the configured Live model id — a stale/renamed id surfaces as
+        # a connect failure that looks like an auth error but isn't (H8).
+        try:
+            from agent_friday.services.voice_engine import validate_live_model
+            mv = validate_live_model()
+            steps.append({"id": "model",
+                          "label": f"Voice model ({mv['model'] or 'default'})",
+                          "status": "ok" if mv["ok"] else "unknown",
+                          "detail": mv["detail"]})
+        except Exception as _e:
+            _log.warning("voice_setup_status: model validation failed: %s", _e)
         steps.append({"id": "mic", "label": "Microphone",
                       "status": "unknown",
                       "detail": "Browser will prompt for mic permission on first session."})
