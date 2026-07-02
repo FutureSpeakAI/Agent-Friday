@@ -567,6 +567,9 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         aspect_ratio = "1:1"
     api_model = resolve_image_model(model)
     full_prompt = _compose_image_prompt(prompt, style, aspect_ratio)
+    # Gemini image gen is cloud — gate the user's prompt before it leaves.
+    from agent_friday.services import egress_gate as _eg
+    full_prompt = _eg.gate_text(full_prompt, "gemini", "image.prompt")
 
     orb = _orb_start(f"Generating image — {(model or DEFAULT_IMAGE_MODEL)}…",
                      icon="🎨", name="Generating image")

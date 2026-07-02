@@ -28,6 +28,10 @@ os.environ["FRIDAY_TESTING"] = "1"
 os.environ["USERPROFILE"] = str(_TEST_HOME)
 os.environ["HOMEDRIVE"] = _TEST_HOME.drive or "C:"
 os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
+# Path.home() reads HOME on POSIX (USERPROFILE is Windows-only) — without this
+# a Linux/macOS run writes into the real ~/.friday and accumulates DB state
+# across runs (the economy/leaderboard flakes in the Chaos Engineer review).
+os.environ["HOME"] = str(_TEST_HOME)
 os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
 # FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
 # the backward-compat fallback.  Set both so tests exercise the new code path.

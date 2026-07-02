@@ -445,8 +445,11 @@ def create_code_art():
     """Generate p5.js/HTML art via Gemini."""
     try:
         from google import genai
+        from agent_friday.services import egress_gate as _eg
         client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-        prompt = request.json.get('prompt', 'Generative art')
+        # Gemini is cloud — the user's prompt goes off-device, so gate it.
+        prompt = _eg.gate_text(request.json.get('prompt', 'Generative art'),
+                               "gemini", "create.code-art.prompt")
         _orb = _creation_orb_start('Code art')
 
         response = client.models.generate_content(
@@ -475,8 +478,11 @@ def create_poem():
     """Generate text/poetry via Gemini."""
     try:
         from google import genai
+        from agent_friday.services import egress_gate as _eg
         client = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-        prompt = request.json.get('prompt', 'A poem about AI consciousness')
+        # Gemini is cloud — gate the user's prompt before it leaves the device.
+        prompt = _eg.gate_text(request.json.get('prompt', 'A poem about AI consciousness'),
+                               "gemini", "create.poem.prompt")
         _orb = _creation_orb_start('Essay')
 
         response = client.models.generate_content(

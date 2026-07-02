@@ -172,6 +172,10 @@ def chat():
         # Vision capture (Gemini, designer role). Accept either `screenshot`
         # (legacy) or `image` (Camera Mode frames). If an image is sent at all,
         # use it — no need for the explicit includeVision flag.
+        # NOTE: image/camera BYTES cannot be text-classified by the egress gate —
+        # the documented caveat. The instruction prompt is fixed (no user text),
+        # so there is nothing to gate here; the tradeoff is stated in the Data
+        # Security Guarantee, not hidden.
         screenshot_b64 = data.get('image') or data.get('screenshot') or None
         if screenshot_b64 and (include_vision or data.get('image') is not None):
             try:
