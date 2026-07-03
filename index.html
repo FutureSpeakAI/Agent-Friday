@@ -2843,6 +2843,12 @@ window.addEventListener('DOMContentLoaded',function(){
             if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
         }
 
+        // Debug/test handle: read-only snapshot of scene state (used by UI tests).
+        window.fridayDebugScene = function() {
+            return { structures: structures, currentStructure: currentStructure, targetStructure: targetStructure,
+                     transitionProgress: transitionProgress, scene: scene, camera: camera, moodLerpValues: moodLerpValues };
+        };
+
         function toggleTimeLapse() {
             timeLapseActive = !timeLapseActive;
             if (timeLapseActive) { timeLapseTimer = 0; }
@@ -5042,33 +5048,57 @@ function WorkspaceChat({
 }
 
 // ═══ ERROR WRAPPER ═══
-function Safe({
-  children,
-  name
-}) {
-  const [err, setErr] = useState(false);
-  if (err) return /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 20,
-      textAlign: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: '#ff0080',
-      fontSize: 13
-    }
-  }, "\u26A0\uFE0F ", name, " encountered an error"), /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      marginTop: 8
-    },
-    onClick: () => setErr(false)
-  }, "Retry"));
-  try {
-    return children;
-  } catch (e) {
-    setErr(true);
-    return null;
+// Must be a CLASS error boundary: a function component's try/catch around
+// `children` cannot catch render errors (children is an already-built element
+// tree; the throw happens later inside React's renderer), so one bad workspace
+// unmounted the ENTIRE app. getDerivedStateFromError contains the blast radius
+// to the failing window and leaves the rest of the desktop alive.
+class Safe extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      err: null
+    };
+  }
+  static getDerivedStateFromError(e) {
+    return {
+      err: e || true
+    };
+  }
+  componentDidCatch(e, info) {
+    try {
+      console.error('[Safe] ' + (this.props.name || 'component') + ' render error:', e, info && info.componentStack);
+    } catch (_) {}
+  }
+  render() {
+    if (this.state.err) return /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: 20,
+        textAlign: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#ff0080',
+        fontSize: 13
+      }
+    }, "\u26A0\uFE0F ", this.props.name, " encountered an error"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#8891a8',
+        fontSize: 11,
+        marginTop: 6,
+        fontFamily: 'JetBrains Mono',
+        whiteSpace: 'pre-wrap'
+      }
+    }, String(this.state.err && this.state.err.message || this.state.err || '')), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        marginTop: 8
+      },
+      onClick: () => this.setState({
+        err: null
+      })
+    }, "Retry"));
+    return this.props.children;
   }
 }
 
@@ -25182,8 +25212,8 @@ function SettingsTabVoice({
     key: m.id,
     value: m.id,
     disabled: m.available === false
-  }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), /*#__PURE__*/React.createElement(StRow, {
-    label: "TTS Voice"
+  }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), ((s.voice_engine || 'local') === 'gemini' || (s.voice_engine || 'local') === 'auto') && /*#__PURE__*/React.createElement(StRow, {
+    label: "TTS Voice (Gemini)"
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
     style: {
@@ -25195,7 +25225,22 @@ function SettingsTabVoice({
     })
   }, ['Aoede', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Zephyr'].map(v => /*#__PURE__*/React.createElement("option", {
     key: v
-  }, v))))), /*#__PURE__*/React.createElement(StSection, {
+  }, v)))), (s.voice_engine || 'local') !== 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+    label: "Local TTS Voice (Piper)",
+    desc: "On-device voice used by the local engines."
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    style: {
+      width: '100%'
+    },
+    value: s.local_voice_tts_voice || 'en_US-amy-medium',
+    onChange: e => save({
+      local_voice_tts_voice: e.target.value
+    })
+  }, [['en_US-amy-medium', 'Amy \u2014 US English (medium)'], ['en_US-lessac-medium', 'Lessac \u2014 US English (medium)']].map(([v, l]) => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, l))))), /*#__PURE__*/React.createElement(StSection, {
     title: "AUDIO"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Interruption Mode",
@@ -25662,7 +25707,7 @@ function SettingsTabEconomy() {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Positron (\u03A8) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge."), /*#__PURE__*/React.createElement(EconomyPanel, null), /*#__PURE__*/React.createElement("div", {
+  }, "Positron (\u03A8) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge."), /*#__PURE__*/React.createElement(WalletPanel, null), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 24
     }
@@ -25700,7 +25745,13 @@ function GoogleAccountsPanel() {
   const refresh = () => apiFetch('/api/google/accounts').then(r => r.json()).then(d => {
     if (d.status === 'ok') setAccounts(d.accounts || []);
   }).catch(() => {});
-  useEffect(refresh, []);
+  // NOTE: refresh is a concise arrow returning the fetch Promise; passing it
+  // straight to useEffect makes React call that Promise as the cleanup fn on
+  // unmount (TypeError, crashed the Settings window). Wrap it so the effect
+  // returns undefined.
+  useEffect(() => {
+    refresh();
+  }, []);
   const addAccount = async () => {
     setLoading(true);
     try {
@@ -26018,7 +26069,7 @@ function SettingsTabAbout() {
       color: 'rgba(255,255,255,0.45)',
       marginBottom: 8
     }
-  }, "v4.5.0 \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
+  }, 'v' + (h?.version || '5.0.0'), " \xB7 Desktop OS \xB7 Sovereign AI"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: 'Orbitron',
       fontSize: 10,
