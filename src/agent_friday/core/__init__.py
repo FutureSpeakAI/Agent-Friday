@@ -1412,6 +1412,29 @@ _CAP_FLAT_MAP = {
     "voice": "voice_model",
 }
 
+# provider_family() families → provider registry names.
+_FAMILY_PROVIDER = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "google-gemini",
+    "local": "ollama-local",
+}
+
+
+def _provider_for_model(model_id):
+    """Registry provider name a model id dispatches to, or None if unknown.
+
+    Keeps capability_routing[cap]["provider"] congruent with the model the flat
+    key actually routes to — without this, picking a local model in the UI left
+    provider at its old cloud value, which poisoned /api/capabilities badges and
+    the local-voice brain's vault-fidelity gate.
+    """
+    try:
+        from agent_friday.routing.model_router import provider_family
+        return _FAMILY_PROVIDER.get(provider_family(model_id))
+    except Exception:
+        return None
+
 
 def _sync_capability_routing(settings, changed=None):
     """Keep capability_routing (canonical) and the legacy flat *_model keys congruent.
@@ -1453,6 +1476,12 @@ def _sync_capability_routing(settings, changed=None):
             fv = settings.get(flat_key)
             if fv:
                 entry["model"] = fv
+                # Keep provider congruent with the model the flat key dispatches
+                # to (dispatch uses provider_family(model), never this field —
+                # but /api/capabilities and the voice vault gate read it).
+                prov = _provider_for_model(fv)
+                if prov:
+                    entry["provider"] = prov
         if not entry.get("provider"):
             entry["provider"] = defaults[cap]["provider"]
     return settings
@@ -1525,7 +1554,17 @@ def _save_settings(data):
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
     for k, v in (data or {}).items():
-        merged[k] = v
+        if (k == "capability_routing" and isinstance(v, dict)
+                and isinstance(existing.get(k), dict)):
+            # Deep-merge per capability: a partial routing delta (the wizard and
+            # Settings sections send only the caps they edited) must not reset
+            # every untouched capability back to defaults.
+            base = {ck: (dict(cv) if isinstance(cv, dict) else cv)
+                    for ck, cv in existing[k].items()}
+            base.update(v)
+            merged[k] = base
+        else:
+            merged[k] = v
     # Reconcile capability_routing ⇄ flat *_model keys before persisting so the
     # wizard, Settings UI and router never disagree about the active models.
     _sync_capability_routing(merged, data)

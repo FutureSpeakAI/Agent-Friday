@@ -590,9 +590,162 @@ LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview"
 # NOT support affective dialog / proactive audio (those are 2.5-only); the
 # config builder strips them automatically for non-native-audio models. The 2.5
 # models stay as fallbacks for resilience if 3.1 ever fails to connect mid-call.
-LIVE_MODEL_FALLBACK = "gemini-live-2.5-flash-preview"
+# NOTE (2026-07): gemini-live-2.5-flash-preview was RETIRED upstream — connecting
+# to it now closes 1008 "not found for API version …", which the old error
+# handler misreported as an API-key auth failure. Both fallbacks below are
+# verified-live bidiGenerateContent models on the AI Studio key tier.
+LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-latest"
 LIVE_MODEL_FALLBACK2 = "gemini-2.5-flash-native-audio-preview-12-2025"
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
+
+
+# ── Gemini API-key validation + multi-source resolution ──────────────────────
+# Root-cause hardening for the "voice broken for days" incident: the server
+# process env carried a rotated (revoked) key pinned by a stale launcher
+# script, while the WORKING key sat in the Windows user environment the whole
+# time. os.environ is frozen at process start, so "restart after updating the
+# key" only helps when the right launcher was edited. These helpers validate
+# candidates with a cheap cached REST probe and pick the first key Google
+# actually accepts — self-healing across rotations without a restart.
+
+_KEY_CHECK_CACHE = {}
+_KEY_CHECK_TTL = 600.0  # seconds; per-key verdicts are cached
+
+
+def validate_gemini_key(key, timeout=5.0, force=False):
+    """Does this Gemini API key authenticate? Returns (ok, detail).
+
+    Probes GET /v1beta/models?pageSize=1 with the key in the x-goog-api-key
+    header — the same auth path the google-genai SDK uses for BOTH REST and
+    the Live WebSocket, so a pass here means the key itself is good and any
+    remaining Live failure is model/config, not credentials. Network failures
+    return (True, "unverifiable…") so being offline never brands a key bad.
+    Never raises.
+    """
+    key = (key or "").strip()
+    if not key:
+        return False, "no key"
+    if os.environ.get("FRIDAY_TESTING"):
+        return True, "testing mode — not validated"
+    cache_id = _hashlib.sha256(key.encode()).hexdigest()[:16]
+    now = _time.time()
+    if not force:
+        hit = _KEY_CHECK_CACHE.get(cache_id)
+        if hit and now - hit[0] < _KEY_CHECK_TTL:
+            return hit[1], hit[2]
+    try:
+        import urllib.request as _rq
+        import urllib.error as _er
+        req = _rq.Request(
+            "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+            headers={"x-goog-api-key": key})
+        try:
+            with _rq.urlopen(req, timeout=timeout) as resp:
+                ok = 200 <= getattr(resp, "status", 200) < 300
+                detail = f"HTTP {getattr(resp, 'status', 200)}"
+        except _er.HTTPError as he:
+            body = ""
+            try:
+                body = he.read(300).decode("utf-8", "replace")
+            except Exception:
+                pass
+            ok = False
+            detail = f"HTTP {he.code}: {' '.join(body.split())[:160]}"
+    except Exception as e:
+        # DNS down / offline / proxy — NOT a key verdict; don't cache.
+        return True, f"unverifiable ({type(e).__name__}) — assuming ok"
+    _KEY_CHECK_CACHE[cache_id] = (now, ok, detail)
+    return ok, detail
+
+
+def _read_windows_user_env_key():
+    """Live-read the Gemini key from the per-user Windows registry env.
+
+    Catches the classic rotation trap: the user updates the key with setx /
+    System Properties (or one launcher of several), but the running process
+    env still holds the old value. Returns '' on non-Windows or when unset.
+    """
+    if os.name != "nt":
+        return ""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as hk:
+            for name in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+                try:
+                    val, _typ = winreg.QueryValueEx(hk, name)
+                except OSError:
+                    continue
+                val = str(val or "").strip()
+                if val:
+                    return val
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_gemini_key(update_core=True):
+    """Pick the freshest WORKING Gemini key across every known source.
+
+    Candidate order: process env GEMINI_API_KEY → process env GOOGLE_API_KEY →
+    settings.json gemini_api_key → Windows user-registry env → the value the
+    server booted with. First candidate that passes validate_gemini_key wins;
+    if none validates, the first non-empty candidate is returned with
+    valid=False so callers can degrade truthfully. With update_core=True the
+    winning key is installed into core.GEMINI_API_KEY (and the cached genai
+    client reset) so voice, TTS and creative endpoints all self-heal.
+    Returns {"key","source","valid","detail"}.
+    """
+    # Hermetic tests: the suite's seam is core.GEMINI_API_KEY (monkeypatched);
+    # never read the host env/registry or touch the network under test.
+    if os.environ.get("FRIDAY_TESTING"):
+        _tkey = (core.GEMINI_API_KEY or "").strip()
+        return {"key": _tkey, "source": "server startup value",
+                "valid": bool(_tkey), "detail": "testing mode — not validated"}
+
+    candidates = []
+
+    def _add(source, key):
+        key = (key or "").strip()
+        if key and all(key != k for _, k in candidates):
+            candidates.append((source, key))
+
+    _add("process env GEMINI_API_KEY (launcher script)",
+         os.environ.get("GEMINI_API_KEY", ""))
+    _add("process env GOOGLE_API_KEY (launcher script)",
+         os.environ.get("GOOGLE_API_KEY", ""))
+    try:
+        _add("settings.json (Settings → Providers)",
+             (_load_settings() or {}).get("gemini_api_key", ""))  # pragma: allowlist secret
+    except Exception:
+        pass
+    _add("Windows user environment (registry)", _read_windows_user_env_key())
+    _add("server startup value", core.GEMINI_API_KEY)
+
+    picked = {"key": "", "source": "none", "valid": False,
+              "detail": "no Gemini API key configured in any source"}
+    first_bad = None
+    for source, key in candidates:
+        ok, detail = validate_gemini_key(key)
+        if ok:
+            picked = {"key": key, "source": source, "valid": True,
+                      "detail": detail}
+            break
+        if first_bad is None:
+            first_bad = {"key": key, "source": source, "valid": False,
+                         "detail": detail}
+    else:
+        if first_bad is not None:
+            picked = first_bad
+    if update_core and picked["key"] and picked["key"] != core.GEMINI_API_KEY:
+        _old = (core.GEMINI_API_KEY[:8] + "...") if core.GEMINI_API_KEY else "MISSING"
+        core.GEMINI_API_KEY = picked["key"]  # pragma: allowlist secret
+        try:
+            core._genai_client = None  # rebuild lazily with the fresh key
+        except Exception:
+            pass
+        _log.info("GEMINI_API_KEY refreshed from %s: was=%s now=%s... (valid=%s)",
+                  picked["source"], _old, picked["key"][:8], picked["valid"])
+    return picked
 
 
 def _get_live_model():
