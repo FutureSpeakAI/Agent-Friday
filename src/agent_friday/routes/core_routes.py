@@ -214,16 +214,19 @@ def list_models():
             "roles": cat["roles"],
             "models": cat["models"],
             "providers": cat["providers"],
+            "voice_engines": cat.get("voice_engines", []),
             "selected": {
                 "orchestrator_model": settings.get("orchestrator_model"),
                 "subagent_model": settings.get("subagent_model"),
                 "creative_model": settings.get("creative_model"),
                 "voice_model": settings.get("voice_model"),
+                "voice_engine": settings.get("voice_engine"),
             },
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e),
-                        "roles": {}, "models": [], "providers": []}), 200
+                        "roles": {}, "models": [], "providers": [],
+                        "voice_engines": []}), 200
 
 
 # ═══════════════════════════════════════════════════════════════

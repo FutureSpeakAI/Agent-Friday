@@ -97,13 +97,20 @@ def test_voice_role_holds_flash_and_live_models():
     assert "veo-3" not in voice_ids
 
 
-def test_gemini_pro_is_a_text_reasoning_model():
-    """Gemini 2.5 Pro serves the agent (text/reasoning) roles, not creative."""
+def test_gemini_pro_not_offered_without_text_dispatch():
+    """Gemini 2.5 Pro is a text model, but routing/model_router.py has no
+    Gemini text/agentic dispatch (_apply_cloud_provider only retags
+    anthropic/openai/local) — a picked gemini-2.5-pro would silently run on a
+    different model. Never offer what can't dispatch: it stays out of every
+    picker role until a Gemini text path lands, at which point this test
+    should flip back to asserting membership."""
     cat = build_catalog()
     orch_ids = [e["id"] for e in cat["roles"]["orchestrator"]]
     sub_ids = [e["id"] for e in cat["roles"]["subagent"]]
-    assert "gemini-2.5-pro" in orch_ids
-    assert "gemini-2.5-pro" in sub_ids
+    creative_ids = [e["id"] for e in cat["roles"]["creative"]]
+    assert "gemini-2.5-pro" not in orch_ids
+    assert "gemini-2.5-pro" not in sub_ids
+    assert "gemini-2.5-pro" not in creative_ids
 
 
 def test_availability_reflects_env_keys(monkeypatch):
@@ -119,3 +126,98 @@ def test_availability_reflects_env_keys(monkeypatch):
     assert by_provider.get("anthropic") is True
     assert by_provider.get("openai") is False
     pr._registry = None  # don't leak state to other tests
+
+
+# ── Picker-hygiene regression suite ──────────────────────────────────────────
+# Bug report: "tons of models, many in there twice, some grayed out." Root
+# cause: live-installed Ollama models were merged into EVERY local-typed
+# provider (ollama + local-voice + nemo-local), so each installed model showed
+# three times in the agent roles — with the NeMo copies greyed out. These pin
+# the fix: single-owner Ollama merge, deduped role lists, engine backends out
+# of the picker, and key hints on unavailable entries.
+
+def test_no_duplicate_model_ids_within_any_role():
+    cat = build_catalog()
+    for role, entries in cat["roles"].items():
+        ids = [e["id"] for e in entries]
+        assert len(ids) == len(set(ids)), f"duplicate ids in role {role}: {ids}"
+
+
+def test_live_ollama_models_only_merge_into_ollama_provider(monkeypatch):
+    import agent_friday.services.model_catalog as mc
+    monkeypatch.setattr(mc, "_live_ollama_models", lambda _base: ["fake-live:latest"])
+    cat = mc.build_catalog()
+    owners = {e["provider"] for e in cat["models"] if e["id"] == "fake-live:latest"}
+    assert owners == {"ollama-local"}, f"live model leaked into: {owners}"
+    orch = [e for e in cat["roles"]["orchestrator"] if e["id"] == "fake-live:latest"]
+    assert len(orch) == 1
+    assert orch[0]["available"] is True
+
+
+def test_ollama_daemon_down_dims_static_models(monkeypatch):
+    import agent_friday.services.model_catalog as mc
+    monkeypatch.setattr(mc, "_live_ollama_models", lambda _base: None)
+    cat = mc.build_catalog()
+    entries = [e for e in cat["roles"]["orchestrator"] if e["provider"] == "ollama-local"]
+    assert entries, "static Ollama fallbacks should stay visible (dimmed) when the daemon is down"
+    assert all(e["available"] is False for e in entries)
+    assert all("Ollama" in (e["hint"] or "") for e in entries)
+
+
+def test_voice_role_excludes_engine_component_models():
+    """whisper/piper/nemo ids are ASR/TTS components of the voice ENGINES —
+    selecting one as `voice_model` (a Gemini Live model id) breaks voice."""
+    cat = build_catalog()
+    voice_ids = {e["id"] for e in cat["roles"]["voice"]}
+    for comp in ("whisper-small", "piper-en_US-amy-medium",
+                 "nemotron-3.5-asr-streaming-0.6b", "nemo-fastpitch-hifigan"):
+        assert comp not in voice_ids, f"{comp} leaked into the voice picker"
+    agent_ids = {e["id"] for e in cat["roles"]["orchestrator"]}
+    assert "whisper-small" not in agent_ids
+
+
+def test_voice_engines_reported():
+    cat = build_catalog()
+    engines = {e["id"]: e for e in cat["voice_engines"]}
+    assert set(engines) == {"auto", "local", "local-gpu", "gemini"}
+    for e in engines.values():
+        assert "label" in e and "available" in e and "short" in e
+    assert engines["auto"]["available"] is True
+
+
+def test_unavailable_entries_carry_key_hint(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    import agent_friday.services.provider_registry as pr
+    import agent_friday.services.credential_store as cs
+    monkeypatch.setattr(cs, "provider_key_status", lambda name: "missing")
+    pr._registry = None
+    try:
+        cat = build_catalog()
+        gpt = next(e for e in cat["models"] if e["id"] == "gpt-4o")
+        assert gpt["available"] is False
+        assert gpt["needs_key"] == "OPENAI_API_KEY"
+        assert "OPENAI_API_KEY" in (gpt["hint"] or "")
+    finally:
+        pr._registry = None  # don't leak state to other tests
+
+
+def test_anthropic_picker_lineup_and_order():
+    cat = build_catalog()
+    orch_ids = [e["id"] for e in cat["roles"]["orchestrator"]]
+    for mid in ("claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7",
+                "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5"):
+        assert mid in orch_ids, f"{mid} missing from orchestrator picker"
+    claude = [i for i in orch_ids if i.startswith("claude-")]
+    assert claude[0] == "claude-sonnet-5", "the default should lead the Claude section"
+    # Haiku left the picker lineup (still a router fallback, never a picker row).
+    assert "claude-haiku-4-5-20251001" not in orch_ids
+
+
+def test_lyria_absent_from_creative_picker():
+    cat = build_catalog()
+    creative_ids = [e["id"] for e in cat["roles"]["creative"]]
+    assert "lyria-clip" not in creative_ids
+    assert "lyria-pro" not in creative_ids
+    # Still in the flat catalog — the Music panel / music_model resolve them.
+    flat_ids = {e["id"] for e in cat["models"]}
+    assert {"lyria-clip", "lyria-pro"} <= flat_ids
