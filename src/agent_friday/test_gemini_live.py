@@ -24,7 +24,9 @@ if not GEMINI_API_KEY:
     sys.exit(1)
 
 print(f"[test] API key: {GEMINI_API_KEY[:8]}... (present)")
-MODEL = "gemini-live-2.5-flash-preview"
+# Default mirrors voice_engine.LIVE_MODEL; the old hardcoded id
+# (gemini-live-2.5-flash-preview) was retired upstream and now closes 1008.
+MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 print(f"[test] Model: {MODEL}")
 
 

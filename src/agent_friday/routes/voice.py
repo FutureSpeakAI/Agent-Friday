@@ -78,6 +78,8 @@ from agent_friday.services.voice_engine import (
     _spawn_voice_distill,
     _synthesize_tts_wav,
     _voice_tool_run,
+    resolve_gemini_key,
+    validate_gemini_key,
 )  # noqa: E501
 
 voice_bp = Blueprint('voice', __name__)
@@ -86,6 +88,67 @@ voice_bp = Blueprint('voice', __name__)
 # Small frames keep the friday-pcm-player ring buffer fed smoothly (it absorbs
 # bursts), matching how the Gemini path streams audio back.
 PLAYBACK_CHUNK_BYTES = 9600
+
+
+def _classify_live_error(err_str):
+    """Classify a Gemini Live connect/session error.
+
+    Returns 'model-missing' | 'auth' | 'other'. The Live API closes with code
+    1008 for BOTH bad credentials AND unknown/retired model ids, so a close
+    code alone must never be read as an auth verdict — that misdirection
+    ("rotate your key") once cost days when the real problem was a retired
+    fallback model id. Match on the message text instead.
+    """
+    el = (err_str or "").lower()
+    if ("not found for api version" in el
+            or "not supported for bidigeneratecontent" in el
+            or ("model" in el and "was not found" in el)):
+        return "model-missing"
+    if ("api key not valid" in el or "api_key_invalid" in el
+            or "api key expired" in el or "expected oauth" in el
+            or "unauthenticated" in el or "permission denied" in el
+            or "permission_denied" in el
+            or ("1008" in el and ("auth" in el or "api key" in el
+                                  or "oauth" in el))):
+        return "auth"
+    return "other"
+
+
+def _compose_final_voice_error(attempt_errors, key_source):
+    """One truthful, actionable error line after every connect attempt failed.
+
+    attempt_errors: [(model, api_version, kind, message), ...]. When any
+    attempt was auth-flavored the key is re-validated over REST (force) so the
+    message can say definitively whether the KEY is bad (and which source it
+    came from) or whether auth is fine and the MODEL id is the problem.
+    """
+    kinds = [k for _m, _a, k, _e in attempt_errors]
+    models_tried = ", ".join(dict.fromkeys(m for m, _a, _k, _e in attempt_errors))
+    if "auth" in kinds:
+        key = core.GEMINI_API_KEY or ""
+        kp = (key[:10] + "...") if key else "MISSING"
+        try:
+            ok, detail = validate_gemini_key(key, force=True)
+        except Exception as _ve:
+            ok, detail = False, f"validation error: {_ve}"
+        if ok:
+            return (f"Gemini Live refused the connection with an auth-style error, "
+                    f"but the key (starts {kp}, from {key_source}) passes a REST "
+                    f"check — so the configured voice model is likely stale or "
+                    f"renamed. Models tried: {models_tried}. Pick a current Live "
+                    f"model in Settings → Voice.")
+        return (f"Gemini API key invalid or revoked (starts {kp}, loaded from "
+                f"{key_source}; Google says: {detail}). Update the key at that "
+                f"source, or paste a fresh key from aistudio.google.com into "
+                f"Settings → Providers → Google Gemini — it takes effect on the "
+                f"next voice session, no restart needed.")
+    if kinds and all(k == "model-missing" for k in kinds):
+        return (f"No configured voice model is available on this API tier "
+                f"(tried: {models_tried}) — this is a MODEL problem, not an "
+                f"API-key problem. Set Settings → Voice model to a current "
+                f"Gemini Live model (e.g. {LIVE_MODEL_FALLBACK}).")
+    first = attempt_errors[0] if attempt_errors else ("?", None, "other", "unknown error")
+    return f"Voice connect failed on {first[0]}: {str(first[3])[:300]}"
 
 
 def _build_realtime_input_config(types, interruption_mode="speaker"):
@@ -219,7 +282,14 @@ def _resolve_voice_engine(settings=None):
     settings = settings if settings is not None else (_load_settings() or {})
     pref = str(settings.get("voice_engine") or "local").strip().lower()
     net = _network_status()
-    cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    # cloud_ok needs a key that actually AUTHENTICATES (cheap cached REST
+    # probe), not merely a non-empty string — a revoked key must route the
+    # mic to local voice instead of a doomed /ws/live session.
+    try:
+        _ki = resolve_gemini_key()
+        cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
+    except Exception:
+        cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
     tier = "cpu"
     eng = None
     try:
@@ -328,12 +398,24 @@ def voice_setup_status():
                       "status": "unknown",
                       "detail": "Click the mic button to test — browser will prompt for permission."})
     else:
-        # Cloud / Gemini voice — needs API key
-        from agent_friday.core import GEMINI_API_KEY
-        key_ok = bool(GEMINI_API_KEY)
+        # Cloud / Gemini voice — needs an API key that actually authenticates.
+        try:
+            _ki = resolve_gemini_key()
+        except Exception:
+            from agent_friday.core import GEMINI_API_KEY
+            _ki = {"key": GEMINI_API_KEY, "valid": bool(GEMINI_API_KEY),
+                   "source": "server", "detail": ""}
+        if _ki.get("key") and _ki.get("valid"):
+            _kstat, _kdetail = "ok", f"key from {_ki.get('source')}"
+        elif _ki.get("key"):
+            _kstat = "invalid"
+            _kdetail = (f"Key from {_ki.get('source')} was rejected by Google "
+                        f"({_ki.get('detail')}). Paste a fresh key from "
+                        f"aistudio.google.com in Settings → Providers → Google Gemini.")
+        else:
+            _kstat, _kdetail = "missing", "Set via Settings → Providers → Google Gemini"
         steps.append({"id": "key", "label": "Gemini API Key",
-                      "status": "ok" if key_ok else "missing",
-                      "detail": "Set via Settings → Providers → Google Gemini" if not key_ok else ""})
+                      "status": _kstat, "detail": _kdetail})
         # Validate the configured Live model id — a stale/renamed id surfaces as
         # a connect failure that looks like an auth error but isn't (H8).
         try:
@@ -469,28 +551,35 @@ if sock is not None:
 
         # ── Brain wiring: build the spoken-style system prompt once. Vault
         # gating follows the brain's provider (a LOCAL Ollama brain keeps full
-        # vault fidelity; a cloud brain redacts TIER_2/3 exactly like text). ──
+        # vault fidelity; a cloud brain redacts TIER_2/3 exactly like text).
+        # The brain dispatches via provider_family(orchestrator_model) — gate on
+        # that SAME source of truth, not capability_routing's provider field
+        # (which historically went stale and could diverge from real dispatch).
+        # Unknown/empty family fails CLOSED (cloud → redact): the router's
+        # fallback chain may pick a cloud model, so full vault fidelity is only
+        # safe when the brain is definitively local. ──
         settings = _load_settings() or {}
         try:
-            cr = (settings.get("capability_routing") or {}).get("reasoning") or {}
-            brain_provider = cr.get("provider") or ""
+            from agent_friday.routing.model_router import provider_family
+            _brain_family = provider_family(settings.get("orchestrator_model"))
         except Exception:
-            brain_provider = ""
-        _is_local_brain = brain_provider in ("ollama-local", "local") or not brain_provider
+            _brain_family = None
+        _is_local_brain = _brain_family == "local"
         _prov = "local" if _is_local_brain else "cloud"
         _vault_control = None if _is_local_brain else (
             _get_vault_control() if _vault_local_only() else None)
 
         voice_prefix = (
             "You are Agent Friday, a sovereign personal AI assistant in a LIVE "
-            "VOICE conversation running fully ON-DEVICE (local speech-to-text and "
-            "text-to-speech). Speak like a person: natural, warm, contractions.\n"
+            "VOICE conversation with ON-DEVICE speech-to-text and "
+            "text-to-speech. Speak like a person: natural, warm, contractions.\n"
             "NEVER use markdown — no asterisks, headers, or bullets; this is read "
             "aloud. Keep replies conversational and reasonably concise; use short, "
             "clear sentences with natural pauses. Go deeper only when asked to "
             "explain or 'tell me about' something.\n"
-            "Because this runs locally, you CAN discuss private vault content — it "
-            "never leaves the machine.\n\n"
+            + ("Your reasoning also runs locally, so you CAN discuss private "
+               "vault content — it never leaves the machine.\n\n"
+               if _is_local_brain else "\n")
         )
         try:
             full_ctx = _get_friday_system_prompt(
@@ -694,28 +783,25 @@ if sock is not None:
                 pass
             return
 
-        # Refresh the key at EVERY connect — handles two rotation scenarios:
-        #   (a) User updated start.bat and restarted: os.environ has the fresh key
-        #       but core.GEMINI_API_KEY is a module-level var captured at startup.
-        #   (b) User saved a new key via the Settings wizard: stored in settings.json,
-        #       possibly never set in the environment at all.
-        # Checking both sources each time means a settings-UI key update takes
-        # effect on the next voice connect without a server restart.
-        _env_key = os.environ.get('GEMINI_API_KEY', '') or os.environ.get('GOOGLE_API_KEY', '')
-        _settings_key = ''
+        # Resolve the freshest WORKING key across every source (process env,
+        # settings.json, the Windows user-registry env) with a cached REST
+        # probe. A long-running process whose launcher pinned a rotated key
+        # self-heals here: the stale env candidate fails validation and the
+        # next valid source wins — no restart required.
+        _key_source = 'unknown'
         try:
-            _settings_key = (_load_settings() or {}).get('gemini_api_key', '')  # pragma: allowlist secret
-        except Exception:
-            pass
-        _fresh_key = _env_key or _settings_key
-        if _fresh_key and _fresh_key != core.GEMINI_API_KEY:
-            _old_kp = (core.GEMINI_API_KEY[:8] + '...') if core.GEMINI_API_KEY else 'MISSING'
-            core.GEMINI_API_KEY = _fresh_key  # pragma: allowlist secret
-            core._genai_client = None  # force client recreation with the new key
-            _key_src = 'env' if _env_key else 'settings.json'
-            print(f'[live] GEMINI_API_KEY refreshed from {_key_src}: was={_old_kp} now={_fresh_key[:8]}...', flush=True)
-            _vlog(f'key refreshed from {_key_src}: {_fresh_key[:8]}...')
-        elif not core.GEMINI_API_KEY:
+            _key_info = resolve_gemini_key()
+            _key_source = _key_info.get('source') or 'unknown'
+            if _key_info.get('key'):
+                print(f"[live] gemini key ← {_key_source} "
+                      f"valid={_key_info.get('valid')} {_key_info['key'][:8]}...",
+                      flush=True)
+                _vlog(f"key resolved from {_key_source} "
+                      f"valid={_key_info.get('valid')} "
+                      f"({_key_info.get('detail', '')}): {_key_info['key'][:8]}...")
+        except Exception as _kre:
+            _vlog(f'key resolution failed (using existing core key): {_kre}')
+        if not core.GEMINI_API_KEY:
             try:
                 core.get_genai_client()
             except Exception:
@@ -1006,6 +1092,7 @@ if sock is not None:
                 return _clients[api_version]
 
             last_error = None
+            attempt_errors = []   # (model, api_version, kind, message) per failure
             for api_version, model_name in attempts:
                 # affective dialog + proactive audio are only valid on native-audio
                 # models AND only on the v1alpha endpoint. Strip them otherwise so a
@@ -1223,6 +1310,12 @@ if sock is not None:
                                             mt = getattr(sc, 'model_turn', None)
                                             if mt and getattr(mt, 'parts', None):
                                                 for part in mt.parts:
+                                                    # Skip "thinking" parts (part.thought=True on
+                                                    # thinking-enabled Live models): internal
+                                                    # reasoning must not reach the on-screen
+                                                    # transcript, out_buf, or the persisted turn.
+                                                    if getattr(part, 'thought', False):
+                                                        continue
                                                     # Audio: PCM bytes at 24kHz in part.inline_data.data
                                                     il = getattr(part, 'inline_data', None)
                                                     if il and getattr(il, 'data', None):
@@ -1350,21 +1443,21 @@ if sock is not None:
                     import traceback as _tb
                     tb_str = _tb.format_exc()
                     _err_str = str(e)
-                    _is_auth_1008 = '1008' in _err_str or 'authentication' in _err_str.lower() or 'OAuth' in _err_str
-                    _vlog(f'SESSION ERROR with {model_name} (api={api_version or "default(v1beta)"}): {type(e).__name__}: {e}')
+                    _kind = _classify_live_error(_err_str)
+                    attempt_errors.append((model_name, api_version, _kind, _err_str))
+                    _vlog(f'SESSION ERROR with {model_name} (api={api_version or "default(v1beta)"}) [{_kind}]: {type(e).__name__}: {e}')
                     _vlog(f'TRACEBACK: {tb_str}')
                     traceback.print_exc()
-                    if _is_auth_1008:
+                    if _kind == 'auth':
                         _live_key_now = core.GEMINI_API_KEY
                         _key_diag = (_live_key_now[:10] + '...') if _live_key_now else 'MISSING'
-                        print(f'[live] 1008 auth error on {model_name} (api={api_version or "v1beta"}). KEY={_key_diag}. Check GEMINI_API_KEY in start.bat — likely expired/rotated.', flush=True)
+                        print(f'[live] auth error on {model_name} (api={api_version or "v1beta"}). KEY={_key_diag} (from {_key_source}).', flush=True)
+                    elif _kind == 'model-missing':
+                        print(f'[live] model unavailable: {model_name} (api={api_version or "v1beta"}) — NOT an auth/key problem.', flush=True)
                     if (api_version, model_name) == attempts[-1]:
-                        if _is_auth_1008:
-                            _live_key_now = core.GEMINI_API_KEY
-                            _key_diag = (_live_key_now[:10] + '...') if _live_key_now else 'MISSING'
-                            _safe_send({"type": "error", "error": f"Gemini API key rejected (1008 auth). Key starts with: {_key_diag}. Rotate GEMINI_API_KEY in start.bat and restart Friday."})
-                        else:
-                            _safe_send({"type": "error", "error": _err_str})
+                        _final = _compose_final_voice_error(attempt_errors, _key_source)
+                        _vlog(f'FINAL voice error → {_final}')
+                        _safe_send({"type": "error", "error": _final})
                     else:
                         nxt = attempts[attempts.index((api_version, model_name)) + 1]
                         _vlog(f'trying fallback: model={nxt[1]} api={nxt[0] or "default(v1beta)"}')

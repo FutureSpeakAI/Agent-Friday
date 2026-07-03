@@ -94,6 +94,12 @@ def provider_family(model_id):
     m = (model_id or "").lower().strip()
     if not m:
         return None
+    # Ollama tags carry a ":" (gemma4:latest). No hosted Anthropic/OpenAI/Gemini
+    # id contains one, and this must outrank the cloud prefix checks: a locally
+    # installed "claude-x:latest" or "gemini-tuned:7b" that pattern-matched a
+    # cloud family would dispatch (and egress the prompt) to the wrong provider.
+    if ":" in m:
+        return "local"
     if m.startswith("claude"):
         return "anthropic"
     if m.startswith(("gpt-", "gpt4", "gpt-4", "o1", "o3", "o4-", "chatgpt", "davinci")):
@@ -103,9 +109,9 @@ def provider_family(model_id):
     # Local voice models (Tier-1 Piper/Whisper, Tier-2 NeMo) are on-device.
     if m.startswith(("piper-", "whisper-", "nemo-", "nemotron-")):
         return "local"
-    # Ollama tags carry a ":" (gemma4:latest) or a known local family prefix.
-    if ":" in m or m.startswith(("gemma", "llama", "mistral", "qwen", "phi",
-                                 "deepseek", "codellama", "mixtral")):
+    # Known local model family prefixes (untagged Ollama ids).
+    if m.startswith(("gemma", "llama", "mistral", "qwen", "phi",
+                     "deepseek", "codellama", "mixtral")):
         return "local"
     return None
 

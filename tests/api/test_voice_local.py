@@ -157,15 +157,21 @@ def test_session_info_reports_tier(client, monkeypatch):
     assert "GPU" in body["label"]
 
 
-# ── model catalog surfaces local voice in the voice role ──────────────────────
+# ── model catalog surfaces local voice as an ENGINE, not picker models ────────
 
 def test_models_route_lists_local_voice(client):
+    # Whisper/Piper are ASR/TTS components of the local engine — they must NOT
+    # appear as pickable voice models (picking one would overwrite voice_model,
+    # which is the Gemini Live model id, and break the Live session). The local
+    # engine is offered via voice_engines instead (settings key voice_engine).
     r = client.get("/api/models")
     assert r.status_code == 200
     body = r.get_json()
     voice_ids = {m["id"] for m in body["roles"]["voice"]}
-    assert "piper-en_US-amy-medium" in voice_ids
-    assert "whisper-small" in voice_ids
+    assert "piper-en_US-amy-medium" not in voice_ids
+    assert "whisper-small" not in voice_ids
+    engine_ids = {e["id"] for e in body["voice_engines"]}
+    assert {"auto", "local", "local-gpu", "gemini"} <= engine_ids
 
 
 # ── default settings: voice_engine is local; asr/tts route on-device ──────────
