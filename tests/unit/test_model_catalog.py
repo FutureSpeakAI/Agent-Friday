@@ -53,10 +53,17 @@ def test_orchestrator_spans_providers_not_just_cloud():
 
 
 def test_recalled_models_absent():
+    # Mythos 5 was never shipped. Fable 5 is now a live model (added v5.1).
     cat = build_catalog()
     ids = " ".join(e["id"] + e["label"] for e in cat["models"]).lower()
-    assert "fable" not in ids
     assert "mythos" not in ids
+
+
+def test_catalog_includes_sonnet5_and_fable5():
+    cat = build_catalog()
+    ids = [e["id"] for e in cat["models"]]
+    assert "claude-sonnet-5" in ids
+    assert "claude-fable-5" in ids
 
 
 def test_creative_holds_image_and_video_models_only():

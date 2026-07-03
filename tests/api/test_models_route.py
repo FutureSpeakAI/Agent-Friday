@@ -20,9 +20,17 @@ def test_models_route_reports_selected(client):
 
 
 def test_models_route_no_recalled_models(client):
+    # Mythos 5 was never shipped; Fable 5 is now a live model (added v5.1).
     data = client.get("/api/models").get_json()
     blob = " ".join(m["id"] + m["label"] for m in data["models"]).lower()
-    assert "fable" not in blob and "mythos" not in blob
+    assert "mythos" not in blob
+
+
+def test_models_route_includes_sonnet5_and_fable5(client):
+    data = client.get("/api/models").get_json()
+    ids = {m["id"] for m in data["models"]}
+    assert "claude-sonnet-5" in ids, "claude-sonnet-5 missing from catalog"
+    assert "claude-fable-5" in ids, "claude-fable-5 missing from catalog"
 
 
 def test_orchestrator_includes_openai_and_local(client):
