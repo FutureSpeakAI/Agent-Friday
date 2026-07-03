@@ -20879,27 +20879,42 @@ const _MODEL_FALLBACK = {
   creative: CREATIVE_MODELS,
   voice: VOICE_MODELS
 };
+// Invalidate the app-wide catalog cache AND tell every mounted useModelCatalog
+// consumer to refetch. Nulling the global alone never re-renders an already
+// mounted hook — the top-bar model menu would keep a stale (keyless →
+// everything-disabled) snapshot until a full page reload.
+function fridayInvalidateModelCatalog() {
+  window.__fridayModelCatalog = null;
+  try {
+    window.dispatchEvent(new Event('friday:model-catalog-invalidated'));
+  } catch (e) {}
+}
 // Fetch the catalog once, cache app-wide, and expose role lists + an id→meta map.
 // Components call this and render selectors from it — no hardcoded model lists.
 function useModelCatalog() {
   const [cat, setCat] = useState(window.__fridayModelCatalog || null);
   useEffect(() => {
-    if (window.__fridayModelCatalog) {
-      setCat(window.__fridayModelCatalog);
-      return;
-    }
-    apiFetch('/api/models').then(r => r.json()).then(d => {
-      if (d && d.status === 'ok' && d.roles) {
-        window.__fridayModelCatalog = d;
-        setCat(d);
+    const load = () => {
+      if (window.__fridayModelCatalog) {
+        setCat(window.__fridayModelCatalog);
+        return;
       }
-    }).catch(() => {});
+      apiFetch('/api/models').then(r => r.json()).then(d => {
+        if (d && d.status === 'ok' && d.roles) {
+          window.__fridayModelCatalog = d;
+          setCat(d);
+        }
+      }).catch(() => {});
+    };
+    load();
+    window.addEventListener('friday:model-catalog-invalidated', load);
+    return () => window.removeEventListener('friday:model-catalog-invalidated', load);
   }, []);
   const roles = cat && cat.roles || {};
-  const pick = r => {
-    const a = roles[r];
-    return a && a.length ? a : _MODEL_FALLBACK[r] || [];
-  };
+  // Static consts are ONLY the fetch-failed fallback. An empty role list from a
+  // successful catalog is truth (e.g. provider disabled) — render it empty
+  // rather than resurrecting hardcoded entries with no availability data.
+  const pick = r => cat ? roles[r] || [] : _MODEL_FALLBACK[r] || [];
   const out = {
     loaded: !!cat,
     orchestrator: pick('orchestrator'),
@@ -24873,9 +24888,11 @@ function SettingsTabModels({
       onChange: e => save({
         [key]: e.target.value
       })
-    }, !s[key] && /*#__PURE__*/React.createElement("option", {
+    }, /*#__PURE__*/React.createElement("option", {
       value: ""
-    }, "\u2014 default \u2014"), models.map(m => /*#__PURE__*/React.createElement("option", {
+    }, "\u2014 default \u2014"), s[key] && !models.some(m => m.id === s[key]) && /*#__PURE__*/React.createElement("option", {
+      value: s[key]
+    }, s[key] + ' (no longer offered)'), models.map(m => /*#__PURE__*/React.createElement("option", {
       key: m.id,
       value: m.id,
       disabled: m.available === false
@@ -25157,9 +25174,11 @@ function SettingsTabVoice({
     onChange: e => save({
       voice_model: e.target.value
     })
-  }, !s.voice_model && /*#__PURE__*/React.createElement("option", {
+  }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "\u2014 default \u2014"), mc.voice.map(m => /*#__PURE__*/React.createElement("option", {
+  }, "\u2014 default \u2014"), s.voice_model && !mc.voice.some(m => m.id === s.voice_model) && /*#__PURE__*/React.createElement("option", {
+    value: s.voice_model
+  }, s.voice_model + ' (no longer offered)'), mc.voice.map(m => /*#__PURE__*/React.createElement("option", {
     key: m.id,
     value: m.id,
     disabled: m.available === false
@@ -26426,7 +26445,7 @@ function App() {
     } catch (e) {}
     // Keys just landed — drop the cached model catalog so availability re-resolves.
     try {
-      window.__fridayModelCatalog = null;
+      fridayInvalidateModelCatalog();
     } catch (_) {}
     // Reflect the scalar choices now; never spread the providers object into settings.
     const {
@@ -27445,7 +27464,7 @@ function App() {
       [name]: ''
     }));
     try {
-      window.__fridayModelCatalog = null;
+      fridayInvalidateModelCatalog();
     } catch (_) {}
     refreshOnboarding();
   };
@@ -27456,7 +27475,7 @@ function App() {
       });
     } catch (e) {}
     try {
-      window.__fridayModelCatalog = null;
+      fridayInvalidateModelCatalog();
     } catch (_) {}
     refreshOnboarding();
   };
@@ -27594,14 +27613,17 @@ function App() {
     return () => document.removeEventListener('mousedown', h);
   }, [sceneMenuOpen]);
   const modelCatalog = useModelCatalog();
-  const orchModel = modelCatalog.byId[agentSettings.orchestrator_model] || modelCatalog.orchestrator[0] || {
-    label: agentSettings.orchestrator_model,
-    short: agentSettings.orchestrator_model
+  // An id the catalog no longer offers must display AS ITSELF (it is still the
+  // id being routed) — never masquerade as the first catalog model.
+  const _modelOf = (id, role) => modelCatalog.byId[id] || (id ? {
+    label: id,
+    short: id
+  } : null) || modelCatalog[role][0] || {
+    label: '—',
+    short: '—'
   };
-  const creativeModel = modelCatalog.byId[agentSettings.creative_model] || modelCatalog.creative[0] || {
-    label: agentSettings.creative_model,
-    short: agentSettings.creative_model
-  };
+  const orchModel = _modelOf(agentSettings.orchestrator_model, 'orchestrator');
+  const creativeModel = _modelOf(agentSettings.creative_model, 'creative');
 
   // ── Ollama / Model Routing state ──
   const [ollamaStatus, setOllamaStatus] = useState({

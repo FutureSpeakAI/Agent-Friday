@@ -1479,8 +1479,13 @@ def _sync_capability_routing(settings, changed=None):
                 # Keep provider congruent with the model the flat key dispatches
                 # to (dispatch uses provider_family(model), never this field —
                 # but /api/capabilities and the voice vault gate read it).
+                # Heal ONLY the four first-party provider names: an explicitly
+                # configured custom provider (groq/openrouter/…, which serve
+                # models of any family) must never be silently rewritten.
                 prov = _provider_for_model(fv)
-                if prov:
+                cur_prov = entry.get("provider")
+                if prov and prov != cur_prov and (
+                        not cur_prov or cur_prov in _FAMILY_PROVIDER.values()):
                     entry["provider"] = prov
         if not entry.get("provider"):
             entry["provider"] = defaults[cap]["provider"]

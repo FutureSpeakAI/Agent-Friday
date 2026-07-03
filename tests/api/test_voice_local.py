@@ -192,6 +192,29 @@ def test_capability_routing_sync_preserves_asr_tts():
     assert s["capability_routing"]["tts"]["provider"] == "local-voice-lite"
 
 
+def test_capability_routing_sync_heals_first_party_provider_mismatch():
+    # Picking a local model in the UI writes only the flat key; the stale cloud
+    # provider must heal to the model's real family (badges + voice vault gate
+    # read it). Regression: subagent stuck at {model: gemma4, provider: anthropic}.
+    s = {"subagent_model": "gemma4:latest",
+         "capability_routing": {"subagent": {"provider": "anthropic",
+                                             "model": "claude-sonnet-4-6"}}}
+    core._sync_capability_routing(s)
+    assert s["capability_routing"]["subagent"] == {
+        "provider": "ollama-local", "model": "gemma4:latest"}
+
+
+def test_capability_routing_sync_never_rewrites_custom_provider():
+    # An explicitly configured custom provider (groq/openrouter/… serve models
+    # of ANY family) must survive the healing pass untouched.
+    s = {"orchestrator_model": "gpt-4o",
+         "capability_routing": {"reasoning": {"provider": "groq",
+                                              "model": "gpt-4o"}}}
+    core._sync_capability_routing(s)
+    assert s["capability_routing"]["reasoning"]["provider"] == "groq"
+    assert s["capability_routing"]["reasoning"]["model"] == "gpt-4o"
+
+
 # ── demo mode: voice-only providers don't lift demo on their own ──────────────
 
 def test_local_voice_alone_does_not_lift_demo(monkeypatch):

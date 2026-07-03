@@ -94,10 +94,13 @@ def provider_family(model_id):
     m = (model_id or "").lower().strip()
     if not m:
         return None
-    # Ollama tags carry a ":" (gemma4:latest). No hosted Anthropic/OpenAI/Gemini
-    # id contains one, and this must outrank the cloud prefix checks: a locally
-    # installed "claude-x:latest" or "gemini-tuned:7b" that pattern-matched a
-    # cloud family would dispatch (and egress the prompt) to the wrong provider.
+    # Ollama tags carry a ":" (gemma4:latest). No first-party Anthropic/OpenAI/
+    # Gemini id contains one, and this must outrank the cloud prefix checks: a
+    # locally installed "claude-x:latest" or "gemini-tuned:7b" that pattern-
+    # matched a cloud family would dispatch (and egress the prompt) to the
+    # wrong provider. Caveat: aggregator ids (OpenRouter "org/model:tag") also
+    # land here — those are routed by the explicit model_routing.cloud_provider
+    # setting at dispatch time, never by family inference.
     if ":" in m:
         return "local"
     if m.startswith("claude"):
