@@ -39,3 +39,17 @@ def test_orchestrator_includes_openai_and_local(client):
     assert "openai" in providers
     assert "ollama-local" in providers
     assert "anthropic" in providers
+
+
+def test_models_route_reports_voice_engines(client):
+    data = client.get("/api/models").get_json()
+    ids = {e["id"] for e in data.get("voice_engines", [])}
+    assert {"auto", "local", "local-gpu", "gemini"} <= ids
+    assert "voice_engine" in data["selected"]
+
+
+def test_models_route_role_lists_have_no_duplicate_ids(client):
+    data = client.get("/api/models").get_json()
+    for role, entries in data["roles"].items():
+        ids = [e["id"] for e in entries]
+        assert len(ids) == len(set(ids)), f"duplicate ids in role {role}"

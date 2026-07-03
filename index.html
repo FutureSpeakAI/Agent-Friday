@@ -20804,61 +20804,41 @@ const ORCHESTRATOR_MODELS = [{
   label: 'Claude Sonnet 5',
   short: 'Sonnet 5'
 }, {
-  id: 'claude-fable-5',
-  label: 'Claude Fable 5',
-  short: 'Fable 5'
-}, {
   id: 'claude-opus-4-8',
   label: 'Claude Opus 4.8',
   short: 'Opus 4.8'
+}, {
+  id: 'claude-opus-4-7',
+  label: 'Claude Opus 4.7',
+  short: 'Opus 4.7'
+}, {
+  id: 'claude-opus-4-6',
+  label: 'Claude Opus 4.6',
+  short: 'Opus 4.6'
 }, {
   id: 'claude-sonnet-4-6',
   label: 'Claude Sonnet 4.6',
   short: 'Sonnet 4.6'
 }, {
-  id: 'claude-haiku-4-5-20251001',
-  label: 'Claude Haiku 4.5',
-  short: 'Haiku 4.5'
-}, {
-  id: 'gpt-4o',
-  label: 'GPT-4o',
-  short: 'GPT-4o'
-}, {
-  id: 'gpt-4o-mini',
-  label: 'GPT-4o mini',
-  short: '4o-mini'
-}, {
-  id: 'o3',
-  label: 'OpenAI o3',
-  short: 'o3'
-}, {
-  id: 'gemini-2.5-pro',
-  label: 'Gemini 2.5 Pro',
-  short: 'Pro'
+  id: 'claude-fable-5',
+  label: 'Claude Fable 5',
+  short: 'Fable 5'
 }];
 const SUBAGENT_MODELS = ORCHESTRATOR_MODELS;
 // Creative = image/video generation. Gemini 2.5 Flash (voice) and 2.5 Pro (text)
-// deliberately do NOT appear here.
+// deliberately do NOT appear here; Lyria (music) is picked in the Music panel.
 const CREATIVE_MODELS = [{
-  id: 'gemini-nano-banana-pro',
-  label: 'Gemini Nano Banana Pro (image)',
-  short: 'Nano BPro'
-}, {
   id: 'gemini-nano-banana-2',
   label: 'Gemini Nano Banana 2 (image)',
   short: 'Nano B2'
 }, {
+  id: 'gemini-nano-banana-pro',
+  label: 'Gemini Nano Banana Pro (image)',
+  short: 'Nano BPro'
+}, {
   id: 'veo-3',
   label: 'Google Veo (video)',
   short: 'Veo'
-}, {
-  id: 'lyria-clip',
-  label: 'Lyria 3 Clip (music · ≤30s)',
-  short: 'Lyria Clip'
-}, {
-  id: 'lyria-pro',
-  label: 'Lyria 3 Pro (music · full)',
-  short: 'Lyria Pro'
 }];
 const VOICE_MODELS = [{
   id: 'gemini-3.1-flash-live-preview',
@@ -20872,6 +20852,26 @@ const VOICE_MODELS = [{
   id: 'gemini-2.5-flash',
   label: 'Gemini 2.5 Flash',
   short: 'Flash'
+}];
+// Voice ENGINE choices (settings key `voice_engine`): Auto / Local CPU / Local
+// GPU / Gemini Live. Live availability comes from /api/models (voice_engines);
+// this const is the offline fallback only.
+const VOICE_ENGINES = [{
+  id: 'auto',
+  label: 'Auto',
+  short: 'Auto'
+}, {
+  id: 'local',
+  label: 'Local CPU (Whisper + Piper)',
+  short: 'Local CPU'
+}, {
+  id: 'local-gpu',
+  label: 'Local GPU (NeMo)',
+  short: 'Local GPU'
+}, {
+  id: 'gemini',
+  label: 'Gemini Live (cloud)',
+  short: 'Gemini Live'
 }];
 const _MODEL_FALLBACK = {
   orchestrator: ORCHESTRATOR_MODELS,
@@ -20906,6 +20906,7 @@ function useModelCatalog() {
     subagent: pick('subagent'),
     creative: pick('creative'),
     voice: pick('voice'),
+    voiceEngines: cat && cat.voice_engines && cat.voice_engines.length ? cat.voice_engines : VOICE_ENGINES,
     providers: cat && cat.providers || []
   };
   const byId = {};
@@ -24604,20 +24605,35 @@ function SetupWizard({
 function useSettings() {
   const [s, setS] = useState({});
   const [msg, setMsg] = useState('');
+  // GET /api/settings returns {status, settings, personality, default_personality};
+  // the controls read flat keys, so unwrap `settings` (personality is top-level).
   const load = () => {
     apiFetch('/api/settings').then(r => r.json()).then(d => {
-      if (d && d.status !== 'error') setS(d);
+      if (d && d.status !== 'error') setS({
+        ...(d.settings || {}),
+        personality: d.personality
+      });
     }).catch(() => {});
   };
   useEffect(load, []);
   const save = async patch => {
     try {
+      // POST expects {settings:{...}, personality?:string} — personality has its
+      // own store server-side, everything else rides inside `settings`.
+      const {
+        personality,
+        ...rest
+      } = patch;
+      const body = {
+        settings: rest
+      };
+      if (personality !== undefined) body.personality = personality;
       const r = await apiFetch('/api/settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(patch)
+        body: JSON.stringify(body)
       });
       const d = await r.json();
       if (d.status === 'ok') {
@@ -24861,8 +24877,9 @@ function SettingsTabModels({
       value: ""
     }, "\u2014 default \u2014"), models.map(m => /*#__PURE__*/React.createElement("option", {
       key: m.id,
-      value: m.id
-    }, m.label || m.id))));
+      value: m.id,
+      disabled: m.available === false
+    }, (m.label || m.id) + (m.available === false ? ' — needs ' + (m.needs_key || 'setup') : '')))));
   };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "CAPABILITY ROUTING"
@@ -24873,7 +24890,7 @@ function SettingsTabModels({
       marginBottom: 14,
       lineHeight: 1.6
     }
-  }, "Model assignments per capability. Changes apply next request \u2014 no restart needed."), mkSel('orchestrator', 'orchestrator_model', 'Orchestrator Model', 'Primary model for tool-using agentic loops.'), mkSel('subagent', 'subagent_model', 'Sub-agent Model', 'Model for parallel sub-tasks.'), mkSel('creative', 'creative_model', 'Creative Model', 'Image/video and creative writing.'), mkSel('voice', 'voice_model', 'Voice Model', 'Gemini Live model for real-time voice.')), /*#__PURE__*/React.createElement(StSection, {
+  }, "Model assignments per capability. Changes apply next request \u2014 no restart needed."), mkSel('orchestrator', 'orchestrator_model', 'Orchestrator Model', 'Primary model for tool-using agentic loops.'), mkSel('subagent', 'subagent_model', 'Sub-agent Model', 'Model for parallel sub-tasks.'), mkSel('creative', 'creative_model', 'Creative Model', 'Image/video and creative writing.')), /*#__PURE__*/React.createElement(StSection, {
     title: "REASONING"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "Temperature",
@@ -25079,6 +25096,13 @@ function SettingsTabVoice({
   save
 }) {
   const [showWizard, setShowWizard] = useState(false);
+  const mc = useModelCatalog();
+  const engineIcon = {
+    'local': '🔒 ',
+    'local-gpu': '⚡ ',
+    'gemini': '☁ ',
+    'auto': ''
+  };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -25104,29 +25128,42 @@ function SettingsTabVoice({
       gap: 6,
       flexWrap: 'wrap'
     }
-  }, [{
-    k: 'local',
-    label: '🔒 Local CPU'
-  }, {
-    k: 'local-gpu',
-    label: '⚡ Local GPU'
-  }, {
-    k: 'gemini',
-    label: '☁ Cloud'
-  }, {
-    k: 'auto',
-    label: 'Auto'
-  }].map(o => /*#__PURE__*/React.createElement("button", {
-    key: o.k,
-    className: `settings-btn ${(s.voice_engine || 'local') === o.k ? 'active' : ''}`,
+  }, mc.voiceEngines.map(o => {
+    const off = o.available === false;
+    return /*#__PURE__*/React.createElement("button", {
+      key: o.id,
+      className: `settings-btn ${(s.voice_engine || 'local') === o.id ? 'active' : ''}`,
+      style: {
+        fontSize: 12,
+        padding: '7px 14px',
+        opacity: off ? 0.4 : 1,
+        cursor: off ? 'not-allowed' : 'pointer'
+      },
+      "aria-disabled": off,
+      title: o.hint || o.label,
+      onClick: off ? undefined : () => save({
+        voice_engine: o.id
+      })
+    }, (engineIcon[o.id] || '') + (o.short || o.label));
+  }))), (s.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement(StRow, {
+    label: "Gemini Live Model",
+    desc: "Real-time speech-to-speech model for the cloud engine."
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
     style: {
-      fontSize: 12,
-      padding: '7px 14px'
+      width: '100%'
     },
-    onClick: () => save({
-      voice_engine: o.k
+    value: s.voice_model || '',
+    onChange: e => save({
+      voice_model: e.target.value
     })
-  }, o.label)))), /*#__PURE__*/React.createElement(StRow, {
+  }, !s.voice_model && /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "\u2014 default \u2014"), mc.voice.map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.id,
+    value: m.id,
+    disabled: m.available === false
+  }, (m.label || m.id) + (m.available === false ? ' — ' + (m.hint || 'unavailable') : ''))))), /*#__PURE__*/React.createElement(StRow, {
     label: "TTS Voice"
   }, /*#__PURE__*/React.createElement("select", {
     className: "input",
@@ -29968,11 +30005,6 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     subtitle: 'Image & video gen',
     key: 'creative_model',
     models: modelCatalog.creative
-  }, {
-    label: 'Voice',
-    subtitle: 'Live audio',
-    key: 'voice_model',
-    models: modelCatalog.voice
   }].map(cat => /*#__PURE__*/React.createElement("div", {
     key: cat.key,
     style: {
@@ -30005,21 +30037,23 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, cat.models.map(m => {
     const off = m.available === false;
+    const tip = off ? m.hint || (m.needs_key ? 'Requires ' + m.needs_key + ' — add it in Settings → Providers' : 'Provider unavailable') : (m.provider_label || '') + (m.local ? ' · on-device' : '');
     return /*#__PURE__*/React.createElement("button", {
       key: (m.provider || '') + m.id,
-      onClick: () => {
+      onClick: off ? undefined : () => {
         saveAgentSettings({
           [cat.key]: m.id
         });
       },
       className: "model-option-cloud",
-      title: (m.provider_label ? m.provider_label + (off ? ' — add API key in Settings' : '') : '') + (m.local ? ' · on-device' : ''),
+      "aria-disabled": off,
+      title: tip,
       style: {
         background: agentSettings[cat.key] === m.id ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
         border: '1px solid ' + (agentSettings[cat.key] === m.id ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
         borderRadius: 5,
         padding: '3px 7px',
-        cursor: 'pointer',
+        cursor: off ? 'not-allowed' : 'pointer',
         color: agentSettings[cat.key] === m.id ? '#00d4ff' : 'rgba(255,255,255,0.7)',
         fontSize: 10,
         fontFamily: 'JetBrains Mono',
@@ -30028,6 +30062,94 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }
     }, m.local ? '🏠 ' : '', m.label);
   })))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 12px 6px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 9,
+      color: 'rgba(0,212,255,0.8)',
+      letterSpacing: '0.06em'
+    }
+  }, "Voice"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: 'rgba(255,255,255,0.35)'
+    }
+  }, "Live audio engine")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 3,
+      flexWrap: 'wrap'
+    }
+  }, modelCatalog.voiceEngines.map(en => {
+    const off = en.available === false;
+    const cur = (agentSettings.voice_engine || 'local') === en.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: en.id,
+      onClick: off ? undefined : () => {
+        saveAgentSettings({
+          voice_engine: en.id
+        });
+      },
+      className: "model-option-cloud",
+      "aria-disabled": off,
+      title: off ? en.hint || 'Unavailable' : en.hint || en.label,
+      style: {
+        background: cur ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
+        border: '1px solid ' + (cur ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
+        borderRadius: 5,
+        padding: '3px 7px',
+        cursor: off ? 'not-allowed' : 'pointer',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.7)',
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono',
+        transition: 'all .15s',
+        opacity: off ? 0.4 : 1
+      }
+    }, en.short || en.label);
+  })), (agentSettings.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 3,
+      flexWrap: 'wrap',
+      marginTop: 4
+    }
+  }, modelCatalog.voice.map(m => {
+    const off = m.available === false;
+    const cur = agentSettings.voice_model === m.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: (m.provider || '') + m.id,
+      onClick: off ? undefined : () => {
+        saveAgentSettings({
+          voice_model: m.id
+        });
+      },
+      className: "model-option-cloud",
+      "aria-disabled": off,
+      title: off ? m.hint || (m.needs_key ? 'Requires ' + m.needs_key + ' — add it in Settings → Providers' : 'Provider unavailable') : 'Gemini Live model',
+      style: {
+        background: cur ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
+        border: '1px solid ' + (cur ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
+        borderRadius: 5,
+        padding: '3px 7px',
+        cursor: off ? 'not-allowed' : 'pointer',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.7)',
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono',
+        transition: 'all .15s',
+        opacity: off ? 0.4 : 1
+      }
+    }, m.label);
+  }))), /*#__PURE__*/React.createElement("div", {
     className: "model-selector-tier",
     style: {
       display: 'flex',

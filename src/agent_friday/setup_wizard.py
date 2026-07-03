@@ -60,9 +60,12 @@ PROVIDERS = [
         "key_hint": "sk-ant-...",
         "key_url": "console.anthropic.com",
         "models": [
-            ("claude-opus-4-8",           "Claude Opus 4.8",    "Most capable — deep reasoning, complex multi-step"),
-            ("claude-sonnet-4-6",         "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
-            ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",   "Ultra-fast — quick responses, high volume"),
+            ("claude-sonnet-5",   "Claude Sonnet 5",    "Frontier model — best cost/quality ratio"),
+            ("claude-opus-4-8",   "Claude Opus 4.8",    "Most capable — deep reasoning, complex multi-step"),
+            ("claude-opus-4-7",   "Claude Opus 4.7",    "Prior Opus — strong deep reasoning"),
+            ("claude-opus-4-6",   "Claude Opus 4.6",    "Prior Opus — dependable heavy lifter"),
+            ("claude-sonnet-4-6", "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
+            ("claude-fable-5",    "Claude Fable 5",     "Creative/narrative specialist — story and prose"),
         ],
     },
     {

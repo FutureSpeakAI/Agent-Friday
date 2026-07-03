@@ -38,28 +38,31 @@ DEFAULT_PROVIDERS = [
         "type": "anthropic",
         "base_url": "https://api.anthropic.com",
         "auth": {"type": "env_var", "key": "ANTHROPIC_API_KEY"},
-        "models": ["claude-sonnet-5", "claude-fable-5", "claude-opus-4-8",
-                   "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "models": ["claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7",
+                   "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5"],
         "capabilities": ["tools", "vision"],
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
         "cost_per_1k": {
             "claude-sonnet-5": 0.030,
             "claude-fable-5": 0.030,
             "claude-opus-4-8": 0.075,
+            "claude-opus-4-7": 0.075,
+            "claude-opus-4-6": 0.075,
             "claude-sonnet-4-6": 0.045,
-            "claude-haiku-4-5-20251001": 0.001,
         },
         "model_meta": {
             "claude-sonnet-5": {"label": "Claude Sonnet 5", "short": "Sonnet 5",
                                  "modalities": ["text", "vision", "tools"]},
-            "claude-fable-5": {"label": "Claude Fable 5", "short": "Fable 5",
-                                "modalities": ["text", "vision", "tools"]},
             "claude-opus-4-8": {"label": "Claude Opus 4.8", "short": "Opus 4.8",
+                                 "modalities": ["text", "vision", "tools"]},
+            "claude-opus-4-7": {"label": "Claude Opus 4.7", "short": "Opus 4.7",
+                                 "modalities": ["text", "vision", "tools"]},
+            "claude-opus-4-6": {"label": "Claude Opus 4.6", "short": "Opus 4.6",
                                  "modalities": ["text", "vision", "tools"]},
             "claude-sonnet-4-6": {"label": "Claude Sonnet 4.6", "short": "Sonnet 4.6",
                                    "modalities": ["text", "vision", "tools"]},
-            "claude-haiku-4-5-20251001": {"label": "Claude Haiku 4.5", "short": "Haiku 4.5",
-                                           "modalities": ["text", "vision", "tools"]},
+            "claude-fable-5": {"label": "Claude Fable 5", "short": "Fable 5",
+                                "modalities": ["text", "vision", "tools"]},
         },
         "enabled": True,
     },
@@ -113,11 +116,12 @@ DEFAULT_PROVIDERS = [
         #   * CREATIVE  — image generation (Nano Banana Pro / Nano Banana 2) and
         #                 video generation (Google Veo).
         "models": [
-            "gemini-2.5-flash", "gemini-2.5-pro",
-            "gemini-nano-banana-pro", "gemini-nano-banana-2", "veo-3",
+            "gemini-2.5-pro",
+            "gemini-nano-banana-2", "gemini-nano-banana-pro", "veo-3",
             "lyria-clip", "lyria-pro",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
+            "gemini-2.5-flash",
         ],
         "capabilities": ["tools", "vision", "audio", "live", "image", "video", "music"],
         # Mixed-role provider — every model overrides via model_meta below.
@@ -128,9 +132,13 @@ DEFAULT_PROVIDERS = [
             "gemini-2.5-flash": {"label": "Gemini 2.5 Flash", "short": "Flash",
                                   "roles": [ROLE_VOICE],
                                   "modalities": ["audio", "live"]},
-            # Text / reasoning — frontier model for the agent roles.
+            # Text / reasoning — Gemini's frontier text model, but roles:[] until
+            # a Gemini text/agentic dispatch exists in routing/model_router.py
+            # (_apply_cloud_provider only retags anthropic/openai/local, so a
+            # picked gemini-2.5-pro would silently fall back to another model —
+            # never offer what can't dispatch). Creations resolve Pro separately.
             "gemini-2.5-pro": {"label": "Gemini 2.5 Pro", "short": "Pro",
-                                "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
+                                "roles": [],
                                 "modalities": ["text", "vision", "tools"]},
             # Image generation.
             "gemini-nano-banana-pro": {"label": "Gemini Nano Banana Pro (image)",
@@ -144,10 +152,12 @@ DEFAULT_PROVIDERS = [
                        "roles": [ROLE_CREATIVE], "modalities": ["video"]},
             # Music generation (Lyria 3). lyria-clip = clips ≤30s, lyria-pro = full songs.
             # These friendly IDs are resolved to real API strings by music_engine.resolve_music_model().
+            # roles:[] — picked in the Studio Music panel via `music_model`, never
+            # via the creative_model picker (Lyria as the image model breaks gen).
             "lyria-clip": {"label": "Lyria 3 Clip (music · ≤30s)", "short": "Lyria Clip",
-                            "roles": [ROLE_CREATIVE], "modalities": ["audio", "music"]},
+                            "roles": [], "modalities": ["audio", "music"]},
             "lyria-pro": {"label": "Lyria 3 Pro (music · full)", "short": "Lyria Pro",
-                           "roles": [ROLE_CREATIVE], "modalities": ["audio", "music"]},
+                           "roles": [], "modalities": ["audio", "music"]},
             # Voice-only live models — only ever offered for the Voice role.
             "gemini-3.1-flash-live-preview": {
                 "label": "Gemini 3.1 Flash Live Preview", "short": "3.1 Live",
@@ -344,16 +354,23 @@ class ProviderRegistry:
                 return False
         auth = p.get("auth", {})
         if auth.get("type") == "env_var":
-            if os.environ.get(auth.get("key", "")):
+            key = auth.get("key", "")
+            if os.environ.get(key):
                 return True
             # Also count a key stored encrypted via the credential store — covers
             # the window after a wizard/Settings save but before bootstrap_provider_env
             # has run (or in a process that never ran it).
             try:
                 from agent_friday.services.credential_store import provider_key_status
-                return provider_key_status(name) == "connected"
+                if provider_key_status(name) == "connected":
+                    return True
             except Exception:
-                return False
+                pass
+            # Importing the credential store bootstraps launch-script keys into
+            # the environment as a side effect — re-check before reporting
+            # unavailable, or the FIRST catalog build after boot dims every
+            # cloud model even though the keys exist.
+            return bool(os.environ.get(key))
         return True
 
     def get_templates(self):
