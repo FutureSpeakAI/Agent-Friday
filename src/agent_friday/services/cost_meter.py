@@ -36,6 +36,8 @@ DB_PATH = FRIDAY_DIR / "costs.db"
 # Real pricing is input ≠ output. Unknown models fall back to the blended
 # provider_registry rate (used for both directions) or 0 for local/on-device.
 PRICING = {
+    "claude-sonnet-5":            {"in": 0.003, "out": 0.015},
+    "claude-fable-5":             {"in": 0.003, "out": 0.015},
     "claude-opus-4-8":            {"in": 0.015, "out": 0.075},
     "claude-sonnet-4-6":          {"in": 0.003, "out": 0.015},
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},

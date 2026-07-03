@@ -270,6 +270,8 @@ def cmd_setup(quick: bool = False):
 # ═══════════════════════════════════════════════════════════════════
 
 ORCHESTRATOR_MODELS = [
+    ("claude-sonnet-5",           "Claude Sonnet 5",    "Frontier model — best cost/quality ratio"),
+    ("claude-fable-5",            "Claude Fable 5",     "Creative/narrative specialist — story and prose"),
     ("claude-opus-4-8",           "Claude Opus 4.8",    "Most capable — deep reasoning, complex tasks"),
     ("claude-sonnet-4-6",         "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
     ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",   "Ultra-fast — quick responses, high volume"),
@@ -307,7 +309,7 @@ def cmd_model():
     console.rule("[bold cyan]MODEL SELECTION[/bold cyan]")
 
     console.print("\n  [bold]Orchestrator[/bold] (primary reasoning + tool use)")
-    new_orch = _pick_model(ORCHESTRATOR_MODELS, cfg.get("orchestrator_model", "claude-opus-4-8"), "")
+    new_orch = _pick_model(ORCHESTRATOR_MODELS, cfg.get("orchestrator_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Subagent[/bold] (background tasks)")
     new_sub = _pick_model(ORCHESTRATOR_MODELS, cfg.get("subagent_model", "claude-sonnet-4-6"), "")

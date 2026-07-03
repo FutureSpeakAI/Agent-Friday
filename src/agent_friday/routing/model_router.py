@@ -60,13 +60,14 @@ class TaskType:
     VAULT_ACCESS = "vault_access"
 
 
-# The top-priority cloud model and the ordered fallback chain. Claude Opus 4.8
-# is Anthropic's most capable currently-available model. When a cloud route does
-# not name a model explicitly, we use DEFAULT_CLOUD_MODEL; downstream callers can
-# walk CLOUD_MODEL_FALLBACK_CHAIN if the primary is unavailable.
-# (Claude Fable 5 and Mythos 5 were pulled/recalled and are no longer offered.)
-DEFAULT_CLOUD_MODEL = "claude-opus-4-8"
+# The top-priority cloud model and the ordered fallback chain. Claude Sonnet 5
+# is Anthropic's flagship frontier model (best cost/quality ratio). When a cloud
+# route does not name a model explicitly, we use DEFAULT_CLOUD_MODEL; downstream
+# callers can walk CLOUD_MODEL_FALLBACK_CHAIN if the primary is unavailable.
+DEFAULT_CLOUD_MODEL = "claude-sonnet-5"
 CLOUD_MODEL_FALLBACK_CHAIN = (
+    "claude-sonnet-5",
+    "claude-fable-5",
     "claude-opus-4-8",
     "claude-sonnet-4-6",
     "claude-haiku-4-5-20251001",
@@ -75,6 +76,8 @@ CLOUD_MODEL_FALLBACK_CHAIN = (
 
 # Cost estimates per 1K tokens (USD) — used for savings tracking.
 CLOUD_COST_PER_1K = {
+    "claude-sonnet-5": 0.030,
+    "claude-fable-5": 0.030,
     "claude-opus-4-8": 0.075,
     "claude-sonnet-4-6": 0.015,
     "claude-haiku-4-5-20251001": 0.001,

@@ -107,18 +107,19 @@ drive it — cloud `_call_claude_agent` tool loop only.
 
 ---
 
-## Regression checklist (recalled models)
+## Model defaults checklist (v5.1+)
 
-Fable 5 and Mythos 5 were pulled. Verify they appear **nowhere**:
+Sonnet 5 is the default orchestrator. Fable 5 is the creative/narrative specialist. Verify:
 
-- [ ] Header model badge reads "Opus 4.8" (☁️) — never "Fable 5".
-- [ ] Settings → AI Model → Orchestrator / Subagent / Creative dropdowns list
-      only Opus 4.8, Sonnet 4.6, Haiku 4.5, Gemini, and local Ollama models.
-- [ ] First-run setup wizard model step lists the same — no Fable/Mythos.
+- [ ] Header model badge reads "Sonnet 5" (☁️) on a fresh install.
+- [ ] Settings → AI Model → Orchestrator / Subagent dropdowns include
+      Sonnet 5, Fable 5, Opus 4.8, Sonnet 4.6, Haiku 4.5, Gemini, and local Ollama models.
+- [ ] First-run setup wizard model step lists Sonnet 5 as the selected default.
 - [ ] `~/.friday/settings.json`: `orchestrator_model` and
-      `model_routing.default_cloud_model` are `claude-opus-4-8`.
-- [ ] `grep -ri "fable\|mythos" index.html ui_parts/ *.py routes/ services/`
-      returns nothing (comments excepted only where explaining the removal).
+      `model_routing.default_cloud_model` are `claude-sonnet-5`.
+- [ ] Mythos 5 does **not** appear anywhere (it was never shipped).
+- [ ] `grep -ri "mythos" index.html ui_parts/ *.py routes/ services/`
+      returns nothing.
 
 This regression is automated in `friday_ui_full.spec.ts` →
 "Model selector reflects available models only".

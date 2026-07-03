@@ -664,7 +664,7 @@ def get_genai_client():
 
 # ── Anthropic Claude (text reasoning + chat) ───────────────────
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL_DEFAULT = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+ANTHROPIC_MODEL_DEFAULT = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 _anthropic_client = None
 
 
@@ -1261,11 +1261,11 @@ DEFAULT_SETTINGS = {
                                            # separate Ring-3 step (/api/control/permission).
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",
-    # Claude Opus 4.8 is Anthropic's most capable currently-available model and
-    # the top-priority cloud brain; fallback chain is
-    # Opus 4.8 → Sonnet 4.6 → Haiku 4.5 (see model_router.CLOUD_MODEL_FALLBACK_CHAIN).
-    # (Claude Fable 5 and Mythos 5 were pulled/recalled and are no longer offered.)
-    "orchestrator_model": "claude-opus-4-8",      # main agent brain
+    # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
+    # most tasks; Opus 4.8 remains available for max-reasoning work. Fallback
+    # chain: Sonnet 5 → Fable 5 → Opus 4.8 → Sonnet 4.6 → Haiku 4.5
+    # (see model_router.CLOUD_MODEL_FALLBACK_CHAIN).
+    "orchestrator_model": "claude-sonnet-5",      # main agent brain
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-nano-banana-2",   # image/creative generation (Nano Banana); video uses Veo
     "music_model": "lyria-clip",                # music generation (Lyria 3): 'lyria-clip' (≤30s) | 'lyria-pro' (full song)
@@ -1332,7 +1332,7 @@ DEFAULT_SETTINGS = {
     # mode: cloud_only (default, no change), smart, local_preferred, local_only
     "model_routing": {
         "mode": "cloud_only",
-        "default_cloud_model": "claude-opus-4-8",
+        "default_cloud_model": "claude-sonnet-5",
         "task_overrides": {},
         "ollama_url": "http://localhost:11434",
         # Default on-device model (v5): gemma3:4b — Google's open Gemma 3 4B-IT,
@@ -1386,7 +1386,7 @@ DEFAULT_SETTINGS = {
     # catalog and the voice/creative engines keep working unchanged. This is the
     # single source the wizard + Settings UI + services.capability_router share.
     "capability_routing": {
-        "reasoning":      {"provider": "anthropic",     "model": "claude-opus-4-8"},
+        "reasoning":      {"provider": "anthropic",     "model": "claude-sonnet-5"},
         "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-4-6"},
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
