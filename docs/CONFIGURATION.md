@@ -28,8 +28,8 @@ When the OpenAI-compatible cloud provider is enabled (see [Model Routing](#model
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `orchestrator_model` | string | `claude-opus-4-8` | Default Claude model for chat. Options: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`. |
-| `default_cloud_model` | string | `claude-opus-4-8` | Cloud model used by the router when no override is specified. |
+| `orchestrator_model` | string | `claude-sonnet-5` | Model for the main agent brain. Pick from Settings → Models (catalog-driven via `GET /api/models`): Claude Sonnet 5 / Opus 4.8 / 4.7 / 4.6 / Sonnet 4.6 / Fable 5, GPT-4o family, or any installed Ollama model. |
+| `default_cloud_model` | string | `claude-sonnet-5` | Cloud model used by the router when no override is specified. |
 
 ---
 
