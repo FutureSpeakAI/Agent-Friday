@@ -158,8 +158,55 @@ def friday_health():
 
     _vault_state = core._VAULT_ENCRYPTION_STATE
     _vault_warning = _vault_state.get("warning") or _vault_state.get("error") or ""
+
+    # -- About-panel enrichment (all fail-soft; the UI renders an em-dash for
+    # missing values). These keys were referenced by Settings->About since
+    # v4.x but never actually served, so Mood / Memory Entries / Vault Entries
+    # rendered permanently empty.
+    # Source checkouts: pyproject.toml wins (installed egg-info can be stale
+    # for editable installs). Frozen/pip installs fall back to package metadata.
+    _app_version = None
+    try:
+        import tomllib as _tomllib
+        _pp = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        if _pp.exists():
+            with _pp.open("rb") as _ppf:
+                _app_version = _tomllib.load(_ppf).get("project", {}).get("version")
+    except Exception:
+        _app_version = None
+    if not _app_version:
+        try:
+            from importlib.metadata import version as _pkg_version
+            _app_version = _pkg_version("agent-friday")
+        except Exception:
+            _app_version = "5.0.0"
+    _mood = None
+    try:
+        from agent_friday.services.model_router import _get_emotional_arc
+        _mood = (_get_emotional_arc().state() or {}).get("mood")
+    except Exception:
+        pass
+    _memory_entries = None
+    try:
+        _mem_dir = FRIDAY_DIR / "memory"
+        if _mem_dir.exists():
+            _memory_entries = sum(1 for _f in _mem_dir.rglob("*.json"))
+    except Exception:
+        pass
+    _vault_count = None
+    try:
+        _vault_dir = FRIDAY_DIR / "vault"
+        if _vault_dir.exists():
+            _vault_count = sum(1 for _p in _vault_dir.iterdir()
+                               if _p.is_file() and not _p.name.startswith("."))
+    except Exception:
+        pass
     return jsonify({
         "status": "ok",
+        "version": _app_version,
+        "mood": _mood,
+        "memory_entries": _memory_entries,
+        "vault_count": _vault_count,
         "uptime_seconds": uptime_s,
         "server_start": datetime.fromtimestamp(SERVER_START_TS).isoformat(),
         "creations_today": creations_today,

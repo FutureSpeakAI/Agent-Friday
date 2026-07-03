@@ -638,6 +638,12 @@
             if (dayText) dayText.innerText = `DAY ${idx + 1}: ${EVOLUTION_PATH[idx].name}`;
         }
 
+        // Debug/test handle: read-only snapshot of scene state (used by UI tests).
+        window.fridayDebugScene = function() {
+            return { structures: structures, currentStructure: currentStructure, targetStructure: targetStructure,
+                     transitionProgress: transitionProgress, scene: scene, camera: camera, moodLerpValues: moodLerpValues };
+        };
+
         function toggleTimeLapse() {
             timeLapseActive = !timeLapseActive;
             if (timeLapseActive) { timeLapseTimer = 0; }

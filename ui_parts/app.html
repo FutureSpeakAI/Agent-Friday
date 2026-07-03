@@ -406,10 +406,19 @@ function WorkspaceChat({wsId,label,emoji,seedPrompt,onClose}){
 }
 
 // ═══ ERROR WRAPPER ═══
-function Safe({children,name}){
-  const[err,setErr]=useState(false);
-  if(err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {name} encountered an error</div><button className="btn" style={{marginTop:8}} onClick={()=>setErr(false)}>Retry</button></div>);
-  try{return children}catch(e){setErr(true);return null}
+// Must be a CLASS error boundary: a function component's try/catch around
+// `children` cannot catch render errors (children is an already-built element
+// tree; the throw happens later inside React's renderer), so one bad workspace
+// unmounted the ENTIRE app. getDerivedStateFromError contains the blast radius
+// to the failing window and leaves the rest of the desktop alive.
+class Safe extends React.Component{
+  constructor(props){super(props);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e||true};}
+  componentDidCatch(e,info){try{console.error('[Safe] '+(this.props.name||'component')+' render error:',e,info&&info.componentStack)}catch(_){}}
+  render(){
+    if(this.state.err)return(<div style={{padding:20,textAlign:'center'}}><div style={{color:'#ff0080',fontSize:13}}>⚠️ {this.props.name} encountered an error</div><div style={{color:'#8891a8',fontSize:11,marginTop:6,fontFamily:'JetBrains Mono',whiteSpace:'pre-wrap'}}>{String((this.state.err&&this.state.err.message)||this.state.err||'')}</div><button className="btn" style={{marginTop:8}} onClick={()=>this.setState({err:null})}>Retry</button></div>);
+    return this.props.children;
+  }
 }
 
 // ═══ FRIDAY SAYS (proactive insight) ═══
@@ -5790,11 +5799,20 @@ function SettingsTabVoice({s,save}){
           {mc.voice.map(m=><option key={m.id} value={m.id} disabled={m.available===false}>{(m.label||m.id)+(m.available===false?' — '+(m.hint||'unavailable'):'')}</option>)}
         </select>
       </StRow>}
-      <StRow label="TTS Voice">
+      {/* TTS voice rows are engine-aware: the Gemini catalogue only applies
+          to the cloud engine, and the local engines speak through Piper
+          voices stored in local_voice_tts_voice. Showing the cloud list
+          under Local CPU made the picker a silent no-op. */}
+      {((s.voice_engine||'local')==='gemini'||(s.voice_engine||'local')==='auto')&&<StRow label="TTS Voice (Gemini)">
         <select className="input" style={{width:'100%'}} value={s.tts_voice||'Aoede'} onChange={e=>save({tts_voice:e.target.value})}>
           {['Aoede','Puck','Charon','Kore','Fenrir','Leda','Orus','Zephyr'].map(v=><option key={v}>{v}</option>)}
         </select>
-      </StRow>
+      </StRow>}
+      {((s.voice_engine||'local')!=='gemini')&&<StRow label="Local TTS Voice (Piper)" desc="On-device voice used by the local engines.">
+        <select className="input" style={{width:'100%'}} value={s.local_voice_tts_voice||'en_US-amy-medium'} onChange={e=>save({local_voice_tts_voice:e.target.value})}>
+          {[['en_US-amy-medium','Amy \u2014 US English (medium)'],['en_US-lessac-medium','Lessac \u2014 US English (medium)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+        </select>
+      </StRow>}
     </StSection>
     <StSection title="AUDIO">
       <StRow label="Interruption Mode" desc="Speaker mode prevents echo. Headphones mode allows barge-in.">
@@ -5912,7 +5930,7 @@ function SettingsTabFederation(){
 function SettingsTabEconomy(){
   return <div>
     <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:20,lineHeight:1.6}}>Positron (Ψ) economy: earn by contributing compute, spend on orchestrated tasks. Q-score = reputation charge.</div>
-    <EconomyPanel/>
+    <WalletPanel/>
     <div style={{marginTop:24}}><StSection title="WORKSPACE BUDGETS"><OrchestratorBudgetPanel/></StSection></div>
   </div>;
 }
@@ -5930,7 +5948,11 @@ function GoogleAccountsPanel(){
   const[label,setLabel]=useState('');
   const[loading,setLoading]=useState(false);
   const refresh=()=>apiFetch('/api/google/accounts').then(r=>r.json()).then(d=>{if(d.status==='ok')setAccounts(d.accounts||[])}).catch(()=>{});
-  useEffect(refresh,[]);
+  // NOTE: refresh is a concise arrow returning the fetch Promise; passing it
+  // straight to useEffect makes React call that Promise as the cleanup fn on
+  // unmount (TypeError, crashed the Settings window). Wrap it so the effect
+  // returns undefined.
+  useEffect(()=>{refresh()},[]);
   const addAccount=async()=>{
     setLoading(true);
     try{
@@ -6027,7 +6049,7 @@ function SettingsTabAbout(){
   return <div>
     <div style={{textAlign:'center',padding:'24px 16px 20px',background:'linear-gradient(135deg,rgba(245,158,11,0.05),rgba(0,212,255,0.03))',borderRadius:10,border:'1px solid rgba(245,158,11,0.1)',marginBottom:24}}>
       <div style={{fontFamily:'Orbitron',fontSize:22,color:'#f59e0b',letterSpacing:'.08em',fontWeight:700,marginBottom:4,textShadow:'0 0 20px rgba(245,158,11,0.35)'}}>AGENT FRIDAY</div>
-      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>v4.5.0 · Desktop OS · Sovereign AI</div>
+      <div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'rgba(255,255,255,0.45)',marginBottom:8}}>{'v'+(h?.version||'5.0.0')} · Desktop OS · Sovereign AI</div>
       <div style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'.2em'}}>BY FUTURESPEAK.AI</div>
     </div>
     <StSection title="SYSTEM HEALTH">
