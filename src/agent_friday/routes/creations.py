@@ -341,6 +341,93 @@ def music_available():
     return jsonify({"available": ok, "reason": reason or None})
 
 
+@creations_bp.route('/api/create/availability')
+def create_availability():
+    """Per-type availability for the Studio prompt bar (image / video / music /
+    text / code-art): can each engine actually generate right now, and if not,
+    why. The UI calls this once to annotate the type chips and point the user
+    at Settings → Providers BEFORE they burn a prompt on a dead end. Everything
+    here is a direct service check — the Studio creation flow never touches the
+    agent loop or a Claude Code terminal."""
+    from agent_friday.services import creative_engine, music_engine
+    gem = creative_engine.is_available()
+    key_msg = ("Requires a Gemini API key — add one in Settings → Providers "
+               "(or set GEMINI_API_KEY), then try again.")
+    try:
+        music_ok, music_reason = music_engine.cloud_music_available()
+    except Exception as e:
+        music_ok, music_reason = False, str(e)
+    try:
+        from agent_friday.services.demo_mode import is_demo
+        text_ok = not is_demo()
+    except Exception:
+        text_ok = True
+    return jsonify({"status": "ok", "types": {
+        "image": {"available": gem, "reason": None if gem else key_msg},
+        "video": {"available": gem, "reason": None if gem else key_msg},
+        "music": {"available": bool(music_ok),
+                  "reason": None if music_ok else (
+                      music_reason
+                      or "Cloud music (Lyria) is unavailable — generations "
+                         "save a demo preview.")},
+        "text": {"available": text_ok,
+                 "reason": None if text_ok else (
+                     "No text provider configured — add Anthropic, an "
+                     "OpenAI-compatible endpoint, or Ollama in "
+                     "Settings → Providers.")},
+        "code-art": {"available": gem, "reason": None if gem else key_msg},
+    }})
+
+
+@creations_bp.route('/api/create/text', methods=['POST'])
+def create_text():
+    """Generate a text piece (poem / essay / copy) for the Studio prompt bar
+    and save it to the gallery.
+
+    Runs on the ROUTED text provider (model_router._generate_text) — Anthropic,
+    OpenAI-compatible, or Ollama, exactly like chat — so it works with whatever
+    the user configured instead of hard-requiring a Gemini key the way the
+    legacy Gemini-only /api/create/poem does. This is a DIRECT engine call: no
+    agent loop, no Claude Code, no daily-creation task. Returns the standard
+    creative envelope (files[] + url) plus the raw text so the prompt bar can
+    render it inline. HTTP 200 by convention; the body carries the status."""
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get('prompt') or '').strip()
+    if not prompt:
+        return jsonify({"status": "error",
+                        "message": "Provide a 'prompt' describing what to write."})
+    try:
+        from agent_friday.services.demo_mode import is_demo
+        if is_demo():
+            return jsonify({
+                "status": "unavailable",
+                "message": ("Text generation needs a configured AI provider. "
+                            "Add Anthropic, an OpenAI-compatible endpoint, or "
+                            "Ollama in Settings → Providers, then try again.")})
+    except Exception:
+        pass
+    from agent_friday.services.model_router import _generate_text
+    _orb = _creation_orb_start('Text')
+    try:
+        text = _generate_text(
+            [{"role": "user", "content": prompt}],
+            system=("You are Friday, an AI with genuine creative depth. Write "
+                    "the piece the user asks for. Output only the piece itself "
+                    "in Markdown — no preamble, no meta-commentary."),
+            workspace='studio', orb_label='Studio text')
+        filename = (f"friday-text-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    f"-{uuid.uuid4().hex[:4]}.md")
+        (CREATIONS_DIR / filename).write_text(text, encoding='utf-8')
+        _notify_creation(filename, _orb)
+        url = f"/api/creations/{filename}"
+        return jsonify({"status": "ok", "kind": "text", "text": text,
+                        "filename": filename, "url": url,
+                        "files": [{"filename": filename, "url": url}]})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)})
+
+
 @creations_bp.route('/api/create/timeline', methods=['POST'])
 @creations_bp.route('/api/creations/compose', methods=['POST'])
 def create_timeline():
