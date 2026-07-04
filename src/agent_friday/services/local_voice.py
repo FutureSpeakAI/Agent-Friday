@@ -180,11 +180,16 @@ class VADEndpointer:
     """
 
     def __init__(self, rate=ASR_RATE, silence_ms=800, start_rms=600.0,
-                 min_speech_ms=200):
+                 min_speech_ms=200, use_silero=None):
         self.rate = rate
         self.silence_ms = silence_ms
         self.start_rms = start_rms
         self.min_speech_ms = min_speech_ms
+        # use_silero: None (default) = auto — prefer Silero when installed,
+        # skipped under FRIDAY_TESTING. False = always the energy gate. Tests
+        # pass False so their synthetic tones don't depend on which VAD backend
+        # happens to be installed (a real model rightly rejects square waves).
+        self._use_silero = use_silero
         self._buf = bytearray()
         self._in_speech = False
         self._speech_ms = 0.0
@@ -206,6 +211,8 @@ class VADEndpointer:
         return _pcm16_rms(pcm) >= self.start_rms
 
     def _maybe_silero(self):
+        if self._use_silero is False:
+            return None
         if self._silero_tried:
             return self._silero
         self._silero_tried = True
