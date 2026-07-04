@@ -1,8 +1,7 @@
 """
 routing/provider_descriptors.py — Provider Descriptor Schema v2 + Model Resolver.
 
-The foundation of the model-agnostic provider layer (MODEL_AGNOSTIC_PROVIDER_SPEC
-P0). Three responsibilities:
+The foundation of the model-agnostic provider layer. Three responsibilities:
 
   1. **Descriptor schema v2** — `normalize_descriptor()` upgrades any v1
      descriptor (the shipped defaults and every JSON in ~/.friday/providers/)

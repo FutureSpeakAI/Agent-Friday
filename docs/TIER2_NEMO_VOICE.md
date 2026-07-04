@@ -28,15 +28,16 @@ and the universal fallback — both tiers coexist.
 
 ## Install
 
-**Linux / macOS-NVIDIA:** `install.sh` detects `nvidia-smi` and offers the NeMo
-install. To do it by hand:
+The installers do not currently auto-detect GPUs — install Tier-2 by hand.
+
+**Linux / macOS-NVIDIA:**
 
 ```bash
 venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124
 venv/bin/pip install -e .[voice-local-gpu]
 ```
 
-**Windows:** `install.ps1` offers it when an NVIDIA GPU is present:
+**Windows:**
 
 ```powershell
 venv\Scripts\pip.exe install torch --index-url https://download.pytorch.org/whl/cu124
@@ -47,7 +48,7 @@ venv\Scripts\pip.exe install -e .[voice-local-gpu]
 > works with a recent torch-CUDA wheel, but the dependency stack can be fragile.
 > If a clean install proves painful, use **WSL2** (Ubuntu + the CUDA wheel) or a
 > conda env, or simply stay on Tier-1 — the engine falls back to CPU voice
-> automatically, so voice never breaks. (See VOICE_INTEGRATION_SPEC §14 R9.)
+> automatically, so voice never breaks.
 
 Models download lazily on first GPU voice activation into `~/.friday/models/nemo/`
 (~1.5 GB), with a one-time "Downloading NeMo voice models…" progress orb. Nothing
@@ -69,7 +70,7 @@ is vendored in the repo.
   latencies under `perf`, and a Tier-2 `gpu` sub-block (CUDA/VRAM/model readiness).
 - `GET /api/health` (providers) → the `nvidia-nemo` provider reports
   `ok` / `needs_download` / `down` / `missing` from `services.nemo_voice.nemo_health`.
-- `python friday_cli.py health` → prints both tiers + the active-tier latencies.
+- `friday health` → prints both tiers + the active-tier latencies.
 
 ## License
 
@@ -85,7 +86,7 @@ path is covered by `tests/unit/test_nemo_voice.py` and
 `tests/unit/test_local_voice.py`.
 
 1. **Install:** `.[voice-local-gpu]` + torch-CUDA (above).
-2. **Detect:** `python friday_cli.py health` → expect
+2. **Detect:** `friday health` → expect
    `Local voice (Tier-2 · NeMo GPU): needs_download` (deps + GPU detected, models
    not yet fetched) and a `Hardware: GPU=… VRAM=…GB` line.
 3. **Select:** Settings → Audio & Voice → Voice Engine → **Local GPU (NeMo)**.

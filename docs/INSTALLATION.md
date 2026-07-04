@@ -25,6 +25,19 @@ Headroom's native Rust core delivers 60-95% token compression. Without it, Frida
 
 ---
 
+## Option 0: Download the Packaged App (No Python Required)
+
+The fastest path on Windows needs no Python, Git, or terminal at all: download
+`AgentFriday.exe` from the
+[GitHub Releases page](https://github.com/FutureSpeakAI/Agent-Friday/releases)
+and run it. SmartScreen may warn on first launch — see the SmartScreen note
+below for the one-click bypass.
+
+The steps that follow are the from-source path, recommended for developers and
+anyone who wants to read or modify the code they run.
+
+---
+
 ## Step 1: Clone the Repository
 
 ```bash
@@ -43,12 +56,12 @@ ours are short and plain-text.)
 
 ### Windows — PowerShell execution policy
 
-If `.\install.ps1` fails with *"running scripts is disabled on this system"*,
+If `.\scripts\install.ps1` fails with *"running scripts is disabled on this system"*,
 run it once with a bypass scoped to that single command (it does **not** change
 your machine's policy):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
 If you downloaded the repo as a ZIP, Windows may mark files as "blocked." Clear
@@ -67,7 +80,7 @@ that hasn't yet built up download reputation; running from source with
 
 ### macOS — Gatekeeper ("cannot be opened because the developer cannot be verified")
 
-For the `install.sh` script there is no Gatekeeper prompt — run it normally. If
+For the `scripts/install.sh` script there is no Gatekeeper prompt — run it normally. If
 you ever run a downloaded **app bundle** and Gatekeeper blocks it, either
 right-click the app → **Open** (then confirm), or clear the quarantine flag:
 
@@ -106,9 +119,10 @@ pip install -e ".[all]"
 
 Prefer a leaner install? `pip install -e .` lands just the core dependencies
 (server + UI + Anthropic/Gemini paths); the heavier extras stay out and the
-features that need them degrade gracefully. The one-line installers
-(`install.ps1` / `install.bat` / `install.sh`) run the `.[all]` path for you
-and fall back to `requirements.txt` automatically if it errors.
+features that need them degrade gracefully. Of the one-line installers,
+`scripts\install.bat` runs the `.[all]` path for you and falls back to
+`requirements.txt` automatically if it errors; `scripts\install.ps1` and
+`scripts/install.sh` install from `requirements.txt` directly.
 
 `requirements.txt` remains as a direct fallback:
 
@@ -116,21 +130,26 @@ and fall back to `requirements.txt` automatically if it errors.
 pip install -r requirements.txt
 ```
 
-The core install includes:
+The full install (`.[all]` or `requirements.txt`) includes:
 
 | Package | Purpose |
 |---------|---------|
 | `flask` | Web server |
+| `flask-sock` | WebSocket support (live voice, real-time updates) |
 | `anthropic` | Claude API client |
 | `google-genai` | Gemini API (TTS, creative, voice) |
 | `rich` | Terminal formatting |
 | `colorama` | Windows terminal colors |
-| `pyautogui` | OS control (Ring 3 features) |
+| `pyautogui` | OS control (Ring 3 features) — extra: `windows` |
 | `beautifulsoup4` | HTML parsing for web search |
 | `requests` | HTTP requests |
 | `pyyaml` | Skill file parsing |
-| `sentence-transformers` | Embeddings for semantic context pruning |
-| `headroom-ai[all]` | Context compression (optional native core) |
+| `sentence-transformers` | Embeddings for semantic context pruning — extra: `local` |
+| `headroom-ai[all]` | Context compression (optional native core) — extra: `compression` |
+
+A lean `pip install -e .` covers everything above **except** the rows marked
+with an extra — those arrive only via `.[all]`, their named extra, or
+`requirements.txt`.
 
 If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — compression is disabled gracefully.
 
@@ -138,7 +157,7 @@ If `headroom-ai` fails to build (missing Rust/MSVC), Friday will still run — c
 
 ## Step 4: Configure API Keys
 
-Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted in `~/.friday/credential_store.enc` — never as plaintext in `settings.json` or source files.**
+Cloud keys are **optional** — with Ollama + `gemma3:4b`, chat runs fully local with no key at all. Add a key only to upgrade reasoning (Anthropic) or unlock voice/creative (Gemini). **Keys are stored encrypted per provider under `~/.friday/providers/keys/` (vault-passphrase or Windows DPAPI protection) — never as plaintext in `settings.json` or source files.**
 
 ### Option A: Setup Wizard (Recommended)
 
@@ -169,6 +188,11 @@ export GEMINI_API_KEY=AIza...
 | *(none)* | Ollama + `gemma3:4b` | Default — fully local, zero keys |
 | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) | Optional (sharper reasoning) |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/) | Optional (TTS, creative, voice) |
+| `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai/) | Optional (hundreds of models via one key) |
+
+Other OpenAI-compatible providers (Groq, Mistral, DeepSeek, xAI, Together,
+Fireworks, and more) can be added with their own keys through `friday setup`
+or **Settings → Providers**.
 
 ### Vault Encryption with FRIDAY_PASSWORD
 
@@ -268,7 +292,7 @@ On first launch:
 
 ### "ANTHROPIC_API_KEY is not set"
 
-Set the key via environment variable, setup wizard, or `~/.friday/settings.json`. Restart the server after changing.
+Set the key via environment variable, or run `friday setup` to store it encrypted in the credential store. Restart the server after changing.
 
 ### Headroom compression shows "0% saved"
 

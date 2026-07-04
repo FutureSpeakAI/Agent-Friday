@@ -129,13 +129,16 @@ Write-Host ""
 Write-Info "Installing dependencies..."
 & $PIP_VENV install --quiet --upgrade pip
 & $PIP_VENV install --quiet -r (Join-Path $INSTALL_DIR "requirements.txt")
+# Register the agent_friday package (and the `friday` console entry point) —
+# deps are already satisfied above, so this is fast and offline-safe.
+& $PIP_VENV install --quiet -e $INSTALL_DIR
 
 Write-Success "Dependencies installed"
 
 # ── 6. Build UI ──────────────────────────────────────────────────
 Write-Host ""
 Write-Info "Building UI..."
-& $PYTHON_VENV (Join-Path $INSTALL_DIR "build_ui.py") | Out-Null
+& $PYTHON_VENV (Join-Path $INSTALL_DIR "src\agent_friday\ui\build_ui.py") | Out-Null
 Write-Success "index.html built"
 
 # ── 6.5 Bundled model (Ollama + Gemma) — zero cloud key needed ───
@@ -196,7 +199,7 @@ $batContent = @"
 set FRIDAY_INSTALL_DIR=$INSTALL_DIR
 cd /d "$INSTALL_DIR"
 call "$VENV_DIR\Scripts\activate.bat"
-python "$INSTALL_DIR\friday_cli.py" %*
+python -m agent_friday.cli %*
 "@
 
 $batContent | Out-File -FilePath $CLI_BAT -Encoding ascii

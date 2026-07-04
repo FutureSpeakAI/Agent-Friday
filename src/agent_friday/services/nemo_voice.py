@@ -10,7 +10,7 @@ WebSocket contract, the browser audio plumbing, or the holographic signals.
     Tier-1 (CPU):  faster-whisper + Piper      → services/local_voice.py
     Tier-2 (GPU):  Nemotron-3.5 ASR + NeMo TTS → THIS module
 
-Models (verified June 2026, see VOICE_INTEGRATION_SPEC.md §3–4):
+Models (verified June 2026):
   * ASR — ``nvidia/nemotron-3.5-asr-streaming-0.6b`` (cache-aware FastConformer-
     RNNT, 600M params, GPU-only, ~2–3 GB VRAM single-stream). License OpenMDW-1.1.
   * TTS — FastPitch (``nvidia/tts_en_fastpitch``) + HiFi-GAN
@@ -34,7 +34,7 @@ Design rules (identical philosophy to Tier-1, so both tiers coexist cleanly):
 Windows note: NeMo is Linux-first. On Windows+RTX it usually works under a recent
 torch-CUDA wheel, but if a clean install proves painful the engine's automatic
 fallback to Tier-1 (onnxruntime, rock-solid on Windows) keeps voice working. See
-VOICE_INTEGRATION_SPEC §14 R9 + MANUAL_TEST_PROCEDURES.md.
+docs/TIER2_NEMO_VOICE.md + tests/MANUAL_TEST_PROCEDURES.md.
 """
 from __future__ import annotations
 
@@ -52,9 +52,9 @@ from agent_friday.services.local_voice import (
 )
 
 _HOME = Path(os.environ.get("FRIDAY_HOME") or Path.home())
-# Per VOICE_INTEGRATION_SPEC §6: cache the (large) NeMo/HF checkpoints under
-# ~/.friday/models/nemo so they survive, are inspectable, and never pollute the
-# Tier-1 ~/.friday/local_voice dir.
+# Cache the (large) NeMo/HF checkpoints under ~/.friday/models/nemo so they
+# survive reinstalls, are inspectable, and never pollute the Tier-1
+# ~/.friday/local_voice dir.
 NEMO_DIR = _HOME / ".friday" / "models" / "nemo"
 
 # Target models. Settings can override the ASR id (the TTS pair is fixed for v1).

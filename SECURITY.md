@@ -26,8 +26,9 @@ report a problem.
   `%USERPROFILE%` — never a hardcoded `C:\Users\<name>\…`, which would leak the
   OS username.
 
-`.env.example` ships as a **template with placeholder values only**. Copy it to
-your local environment and fill in real values there.
+No `.env` file is shipped or required. Keys are entered via the setup wizard
+(`friday setup`), which writes them into the local, gitignored startup script
+described above — real values never live in the repo.
 
 ## Runtime security posture
 

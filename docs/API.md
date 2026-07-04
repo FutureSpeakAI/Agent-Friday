@@ -32,23 +32,28 @@ Main chat endpoint. Sends a message through the full intelligence pipeline (cont
 ```json
 {
   "message": "What's on my calendar today?",
-  "history": [
-    {"role": "user", "content": "..."},
-    {"role": "assistant", "content": "..."}
-  ],
   "workspace": "garden:project-name",
-  "model": "claude-sonnet-4-6"
+  "workspaceContext": null,
+  "includeVision": false,
+  "voice_mode": false,
+  "cite_sources": false,
+  "image": "<base64, optional>"
 }
 ```
+
+Chat history is kept server-side (there is no `history` field), and model selection is controlled by settings and the model router rather than a per-request `model` field.
 
 **Response:**
 ```json
 {
-  "reply": "Here are today's events...",
-  "tool_results": [...],
-  "model_used": "claude-sonnet-4-6",
-  "provider": "cloud",
-  "routing": { "task_type": "tool_use", "reason": "..." }
+  "response": "Here are today's events...",
+  "user_msg": { ... },
+  "friday_msg": { ... },
+  "sources": [],
+  "tool_trace": [ ... ],
+  "actions": [ { "type": "navigate", "workspace": "..." } ],
+  "cite_sources": false,
+  "session_id": "..."
 }
 ```
 
@@ -200,6 +205,7 @@ Check Ollama availability and connection status.
 {
   "available": true,
   "url": "http://localhost:11434",
+  "models": [ ... ],
   "model_count": 3,
   "hardware": { "gpu": "NVIDIA RTX 4090", "vram_gb": 24.0, "ram_gb": 64.0 }
 }
@@ -215,6 +221,53 @@ Pull (download) a new Ollama model.
 ```json
 { "model": "qwen3:14b" }
 ```
+
+---
+
+## Providers & Model Catalog
+
+The provider layer (v5.1) is model-agnostic: OpenRouter and OpenAI-compatible providers can be registered, keyed, tested, and browsed at runtime. These endpoints back the Settings provider step, the Add Provider form, and the model picker.
+
+### `GET /api/providers`
+List all registered providers, enriched with availability, live health stats (latency/error-rate), catalog size, spend today, and origin.
+
+### `POST /api/providers`
+Register a new provider from a descriptor.
+
+### `PATCH /api/providers/<name>`
+Partial descriptor update (enable/disable, base URL, budget, …). Persists as a user override.
+
+### `DELETE /api/providers/<name>`
+Remove a user-added provider. A customized built-in provider reverts to its shipped default instead.
+
+### `POST /api/providers/<name>/key` · `DELETE /api/providers/<name>/key`
+Store (POST) or remove (DELETE) a provider's API key. Keys are encrypted at rest via the credential store and hot-reloaded into the running process.
+
+### `POST /api/providers/<name>/test`
+Test Connection: a deep, adapter-aware probe returning latency and the number of models the endpoint reports.
+
+### `POST /api/providers/<name>/reload-key`
+Re-read the stored key from the credential store (or env) and reinitialize the provider client without re-submitting the key.
+
+### `POST /api/providers/<name>/models/refresh`
+Force model discovery for one provider immediately (the ⟳ Refresh list button).
+
+### `GET /api/providers/health`
+Per-provider reachability/auth status. Shallow by default (offline-safe); pass `?deep=1` for a light endpoint probe.
+
+### `GET /api/providers/templates`
+Provider templates for the Add Provider form.
+
+### `POST /api/providers/validate`
+Dry-run descriptor validation for the Add Provider form — no write.
+
+### `GET /api/models`
+The available-model catalog grouped by UI role (orchestrator / subagent / creative / voice). Single source of truth for every model selector in the UI; each entry carries availability so unconfigured models can be shown but disabled. Also returns `voice_engines` and the currently `selected` models.
+
+### `GET /api/models/search`
+Search models across all registered providers (static + discovery caches). Powers the Model Browser.
+
+**Query params:** `q` (substring on id/label), `provider`, `free=1`, `tools=1`, `max_price_in` (USD per 1M tokens), `min_context`.
 
 ---
 
@@ -284,18 +337,27 @@ Returns epistemic calibration scores.
 ## Health & System
 
 ### `GET /api/health`
-System health check (uptime, API connectivity, memory, Ollama status, vault stats).
+System health check (uptime, version, active models, vault encryption state, and governance/ring info).
 
 **Response:**
 ```json
 {
-  "status": "healthy",
+  "status": "ok",
+  "version": "5.2.0",
+  "mood": "...",
+  "memory_entries": 128,
+  "vault_count": 42,
   "uptime_seconds": 3600,
-  "anthropic_connected": true,
-  "gemini_connected": true,
-  "ollama_available": false,
-  "vault_stats": { "allowed": 42, "denied": 3 },
-  "memory_mb": 256
+  "server_start": "2026-07-04T08:00:00",
+  "creations_today": 2,
+  "models": [ { "name": "...", "active": true } ],
+  "agent_name": "AGENT FRIDAY",
+  "orchestrator_model": "...",
+  "subagent_model": "...",
+  "creative_model": "...",
+  "voice_model": "...",
+  "vault": { "encryption_enabled": true, "warning": "" },
+  "governance": { "enabled": true, "policy": "cLaws", "ring_permissions": { ... }, "tool_counts_by_ring": { ... } }
 }
 ```
 
@@ -340,7 +402,7 @@ Read a specific career report.
 List tracked job opportunities.
 
 ### `POST /api/jobs/apply`
-Initiate a job application workflow.
+Placeholder — returns a stub response (`{ "status": "placeholder", "message": "Would apply to: ..." }`); no application workflow is executed yet.
 
 ---
 
@@ -387,6 +449,9 @@ Generate an image via Gemini.
 ### `POST /api/create/music`
 Generate music via Gemini.
 
+### `GET /api/create/music/available`
+Report whether cloud music generation (Lyria batch API) is available. Returns `{ "available": bool, "reason": "..." }`; the UI uses this to badge the music button.
+
 ### `POST /api/create/code-art`
 Generate code art via Claude.
 
@@ -396,9 +461,36 @@ Generate poetry via Claude.
 ### `POST /api/create/video`
 Generate video content via Gemini.
 
+### `POST /api/create/presentation`
+Generate a self-contained HTML slide deck (LLM outline rendered into a fixed template).
+
+### `POST /api/create/website`
+Generate a self-contained hash-routed website (LLM spec rendered into a fixed template).
+
+### `POST /api/create/timeline`
+Assemble clips + music into an exported production (timeline/video assembly). Accepts either a full `{ "timeline": { ... } }` contract or the simpler `{ "clips": [...], "music": ..., "transition": ..., "title": ..., "exports": ... }` shorthand. Alias of `POST /api/creations/compose`.
+
 ---
 
 ## Voice
+
+### `GET /api/voice/session-info`
+Engine selection for the mic button. Returns `{ "status": "ok", "engine": "...", "ws_url": "...", ... }`; clients connect to the returned `ws_url` — `/ws/voice-local` (local, default) or `/ws/live` (cloud opt-in).
+
+### `WS /ws/voice-local`
+Local Tier-1/Tier-2 voice WebSocket (faster-whisper/NeMo + Piper). Mirrors the `/ws/live` audio plumbing and event contract, so clients can switch engines by URL alone.
+
+### `GET /api/voice/fallback-status`
+Report which voice capabilities are available given the current network state.
+
+### `GET /api/voice/setup/status`
+Voice setup readiness for the first-run wizard. Returns `{ "ready": bool, "engine": "...", "steps": [ { "id": "deps"|"models"|"mic"|"key", "status": "...", "detail": "..." } ] }`.
+
+### `POST /api/voice/setup/test`
+Run a voice setup test.
+
+### `GET /api/voice/start-my-day`
+Assemble the sequential morning voice briefing (calendar → email → news → tasks).
 
 ### `POST /api/voice/tts`
 Text-to-speech via Gemini.
@@ -606,6 +698,24 @@ List files in the creations directory (`~/Desktop/friday-creations/`).
 ### `GET /api/creations/<filename>`
 Serve a specific creation file.
 
+### `POST /api/creations/generate`
+Unified generation endpoint for the Studio Generate panel — generates an image, or a video when `{ "kind": "video" }` is supplied. Always returns HTTP 200; success or failure is reported in the body's `status` field (`ok`|`blocked`|`unavailable`|`error`). Alias of `POST /api/create/image`.
+
+### `POST /api/creations/compose`
+Assemble clips + music into an exported production. Alias of `POST /api/create/timeline` (see Creative Tools).
+
+### `GET /api/creations/daily`
+List all daily creations (date, title, type, mood), newest first.
+
+### `GET /api/creations/daily/latest`
+The most recent daily creation (full record).
+
+### `GET /api/creations/daily/<date>`
+A specific daily creation by `YYYY-MM-DD`.
+
+### `POST /api/creations/daily/run`
+Generate today's creation on demand. Pass `?force=1` to regenerate if it already exists.
+
 ---
 
 ## Calendar & Countdowns
@@ -621,7 +731,7 @@ Get active countdowns.
 ## Email
 
 ### `POST /api/email/draft`
-Create an email draft.
+Placeholder — returns a stub response (`{ "status": "placeholder", ... }`); no draft is created. Real email drafting is exposed via `POST /api/messages/draft` and the outreach draft endpoints.
 
 ---
 
