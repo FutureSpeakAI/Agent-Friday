@@ -132,13 +132,17 @@ DEFAULT_PROVIDERS = [
         # so the picker never mixes them up:
         #   * VOICE     — Gemini 2.5 Flash (Gemini Live voice) + the live-audio
         #                 preview variants. NOT a text/creative model.
-        #   * TEXT      — Gemini 2.5 Pro (frontier reasoning/text) serves the
-        #                 orchestrator/subagent roles. NOT creative/generative.
+        #   * TEXT      — Gemini 3.5 Flash / 3.1 Pro / 3.1 Flash-Lite plus the
+        #                 2.5 generation (2.5 Pro/Flash sunset 2026-10-16). NOT
+        #                 creative/generative. (Gemini 3.5 Pro is not yet in the
+        #                 public API as of 2026-07.)
         #   * CREATIVE  — image generation (Nano Banana Pro / Nano Banana 2) and
-        #                 video generation (Google Veo).
+        #                 video generation (Google Veo + Gemini Omni Flash).
         "models": [
+            "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite",
             "gemini-2.5-pro",
             "gemini-nano-banana-2", "gemini-nano-banana-pro", "veo-3",
+            "gemini-omni-flash",
             "lyria-clip", "lyria-pro",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
@@ -147,7 +151,13 @@ DEFAULT_PROVIDERS = [
         "capabilities": ["tools", "vision", "audio", "live", "image", "video", "music"],
         # Mixed-role provider — every model overrides via model_meta below.
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
-        "cost_per_1k": {"gemini-3.1-flash-live-preview": 0.01},
+        # Blended (in+out)/2 per-1K display rates; the real split in/out
+        # pricing lives in services/cost_meter.PRICING.
+        "cost_per_1k": {"gemini-3.1-flash-live-preview": 0.01,
+                        "gemini-3.5-flash": 0.00525,
+                        "gemini-3.1-pro-preview": 0.007,
+                        "gemini-3.1-flash-lite": 0.000875,
+                        "gemini-omni-flash": 0.0095},
         "model_meta": {
             # Voice — Gemini 2.5 Flash is the Gemini Live voice model.
             "gemini-2.5-flash": {"label": "Gemini 2.5 Flash", "short": "Flash",
@@ -161,6 +171,21 @@ DEFAULT_PROVIDERS = [
             "gemini-2.5-pro": {"label": "Gemini 2.5 Pro", "short": "Pro",
                                 "roles": [],
                                 "modalities": ["text", "vision", "tools"]},
+            # Gemini 3.x text/reasoning — the July-2026 lineup. Same roles:[]
+            # deal as 2.5 Pro above: visible in the catalog/Model Browser, but
+            # never offered for orchestrator/subagent until a google text
+            # dispatch lands in routing/model_router.py. 3.5 Flash is the
+            # frontier agentic model (1M ctx); 3.1 Pro is the deep-reasoning
+            # preview; 3.1 Flash-Lite is the cheap high-volume tier.
+            "gemini-3.5-flash": {"label": "Gemini 3.5 Flash", "short": "3.5 Flash",
+                                  "roles": [],
+                                  "modalities": ["text", "vision", "tools"]},
+            "gemini-3.1-pro-preview": {"label": "Gemini 3.1 Pro (preview)",
+                                        "short": "3.1 Pro", "roles": [],
+                                        "modalities": ["text", "vision", "tools"]},
+            "gemini-3.1-flash-lite": {"label": "Gemini 3.1 Flash-Lite",
+                                       "short": "3.1 Lite", "roles": [],
+                                       "modalities": ["text", "vision", "tools"]},
             # Image generation.
             "gemini-nano-banana-pro": {"label": "Gemini Nano Banana Pro (image)",
                                         "short": "Nano BPro", "roles": [ROLE_CREATIVE],
@@ -171,6 +196,13 @@ DEFAULT_PROVIDERS = [
             # Video generation.
             "veo-3": {"label": "Google Veo (video)", "short": "Veo",
                        "roles": [ROLE_CREATIVE], "modalities": ["video"]},
+            # Gemini Omni Flash — any-to-any video generation/editing (I/O
+            # 2026). Friendly id: creative_engine resolves it to
+            # gemini-omni-flash-preview and dispatches via the Interactions
+            # API (NOT Veo’s long-running-operation path).
+            "gemini-omni-flash": {"label": "Gemini Omni Flash (video)",
+                                   "short": "Omni", "roles": [ROLE_CREATIVE],
+                                   "modalities": ["video"]},
             # Music generation (Lyria 3). lyria-clip = clips ≤30s, lyria-pro = full songs.
             # These friendly IDs are resolved to real API strings by music_engine.resolve_music_model().
             # roles:[] — picked in the Studio Music panel via `music_model`, never
