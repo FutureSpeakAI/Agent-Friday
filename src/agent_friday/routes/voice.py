@@ -89,6 +89,206 @@ voice_bp = Blueprint('voice', __name__)
 # bursts), matching how the Gemini path streams audio back.
 PLAYBACK_CHUNK_BYTES = 9600
 
+# ── Gemini Live liveness / continuity tuning ──────────────────────────────
+# LIVE_STALL_SECONDS: how long the bridge tolerates ZERO traffic from Gemini
+# while the user is audibly speaking before it declares the upstream socket
+# stalled and renews the session leg. With input transcription enabled Gemini
+# streams transcript events *while* the user talks, so sustained speech with a
+# silent upstream is definitively a sick connection — and a false positive
+# only costs a handle-based renewal the user never hears.
+LIVE_STALL_SECONDS = 40
+# RMS floor that counts a mic chunk as "speech" for the stall watchdog.
+# Room noise / speaker echo sits well below this; normal speech well above.
+LIVE_SPEECH_RMS = 400
+# Server → browser heartbeat period. Lets the CLIENT detect a half-open
+# socket (it force-reconnects when nothing arrives for ~3 beats) and lets the
+# SERVER notice a dead browser socket even while Gemini is silent.
+LIVE_HEARTBEAT_SECONDS = 15.0
+
+# ── Cross-connection Gemini Live resumption cache ─────────────────────────
+# When the BROWSER socket drops mid-conversation (wifi blip, sleep/wake, tab
+# reload) the client auto-reconnects to /ws/live. Without this cache the new
+# handler would start a fresh Gemini session — re-greeting, amnesiac. With it,
+# the newest session-resumption handle survives across WS handlers, so a
+# reconnect resumes the SAME Gemini conversation server-side and the user
+# hears no seam. Single-user app: one global slot, last-writer-wins. Cleared
+# on a clean user stop ({type:'end'}) so a deliberate new call starts fresh.
+_LIVE_RESUME_TTL_S = 600
+_LIVE_RESUME_LOCK = threading.Lock()
+_LIVE_RESUME = {"handle": None, "ts": 0.0, "model": None, "voice": None}
+# Connection-generation fence. Every /ws/live handler takes the next
+# generation number; only the CURRENT generation may write the resume cache
+# or renew session legs. A zombie handler on a half-open socket (browser gone,
+# TCP hasn't noticed) can therefore neither fight the reconnected handler for
+# the Gemini session nor re-pollute the cache after a deliberate stop.
+_LIVE_CONN_GEN = [0]
+
+
+def _live_conn_next():
+    with _LIVE_RESUME_LOCK:
+        _LIVE_CONN_GEN[0] += 1
+        return _LIVE_CONN_GEN[0]
+
+
+def _live_conn_current(gen):
+    with _LIVE_RESUME_LOCK:
+        return gen == _LIVE_CONN_GEN[0]
+
+
+def _live_resume_store(handle, model, voice, gen=None):
+    with _LIVE_RESUME_LOCK:
+        if gen is not None and gen != _LIVE_CONN_GEN[0]:
+            return   # stale handler — never clobber the live conversation's cache
+        _LIVE_RESUME.update(handle=handle, ts=_time.time(), model=model, voice=voice)
+
+
+def _live_resume_clear(gen=None):
+    with _LIVE_RESUME_LOCK:
+        if gen is not None and gen != _LIVE_CONN_GEN[0]:
+            return   # a zombie's late bye/end must not clear the new handler's cache
+        _LIVE_RESUME.update(handle=None, ts=0.0, model=None, voice=None)
+
+
+def _live_resume_load(model, voice):
+    """Return a fresh stored resumption handle for this (model, voice), else None."""
+    with _LIVE_RESUME_LOCK:
+        h = _LIVE_RESUME["handle"]
+        if not h:
+            return None
+        if (_time.time() - _LIVE_RESUME["ts"]) > _LIVE_RESUME_TTL_S:
+            return None
+        if _LIVE_RESUME["model"] != model or _LIVE_RESUME["voice"] != voice:
+            return None
+        return h
+
+
+# ── Barge-in (speaker mode) ───────────────────────────────────────────────
+# In "speaker" interruption mode Gemini runs with ActivityHandling.
+# NO_INTERRUPTION (the echo-safety fix), which per the Live API reference
+# means "The model's response will not be interrupted" — by ANYTHING the
+# VAD hears. So barge-in must be implemented by this bridge: detect the user
+# deliberately talking over Friday, stop her audio at the source, and cancel
+# the in-flight generation. The cancel uses the one documented client-side
+# interrupt: "A message here [BidiGenerateContentClientContent] will
+# interrupt any current model generation" (ai.google.dev/api/live).
+LIVE_BARGE_RMS_FLOOR = 550       # absolute RMS floor for deliberate speech
+LIVE_BARGE_BASELINE_MULT = 3.0   # ...and ≥3× the learned speaker-bleed level
+LIVE_BARGE_COOLDOWN_S = 1.5      # refractory period between barge firings
+
+
+class LiveBargeDetector:
+    """Echo-aware talk-over detector for open-speaker rigs.
+
+    The failure mode that killed the old client-side detector was speaker
+    bleed: Friday's own voice re-captured by the mic tripped a fixed RMS
+    threshold and clipped her mid-sentence. This detector is relative, not
+    absolute: during the GRACE window at the start of each spoken response it
+    only *learns* the bleed level (EMA of chunk RMS — that's what THIS device
+    at THIS volume leaks back), and afterwards it fires only on speech that is
+    both above an absolute floor AND ≥ `mult`× the learned bleed, sustained
+    for `sustain_ms`. Browser AEC (echoCancellation:true) keeps the bleed
+    small, so real speech clears the bar; the bleed itself never can, because
+    the bar is defined relative to it.
+
+    Single-threaded use (asyncio reader task); `reset_turn()` is called when a
+    model response starts speaking, `feed()` per mic chunk while it speaks.
+    """
+
+    # Bleed learning is CAPPED: with browser AEC on, real speaker bleed sits
+    # well under this, so anything hotter in the grace window is the user
+    # already talking (or a truly broken rig) — either way, learning it as
+    # "baseline" would raise the bar so high the user could never interrupt.
+    BLEED_EMA_CAP = 1500
+
+    def __init__(self, grace_ms=800, sustain_ms=200,
+                 floor=LIVE_BARGE_RMS_FLOOR, mult=LIVE_BARGE_BASELINE_MULT):
+        self.grace_ms = max(0, float(grace_ms))
+        self.sustain_ms = max(0, float(sustain_ms))
+        self.floor = float(floor)
+        self.mult = float(mult)
+        self.started_ts = 0.0
+        self.ema = 0.0
+        self.sustained = 0.0
+        self._grace_samples = []
+
+    def reset_turn(self, now=None):
+        """A new model response started speaking — relearn bleed from scratch."""
+        self.started_ts = now if now is not None else _time.time()
+        self.ema = 0.0
+        self.sustained = 0.0
+        self._grace_samples = []
+
+    def _learn(self, rms, alpha):
+        ema = rms if self.ema <= 0 else (1 - alpha) * self.ema + alpha * rms
+        self.ema = min(ema, self.BLEED_EMA_CAP)
+
+    def _seed_from_grace(self):
+        # Bleed is CONTINUOUS; user speech during the grace window is bursty.
+        # Seeding from the 25th percentile of the grace samples means an
+        # interjection over part of the window can't drag the baseline up to
+        # the user's own voice level and lock them out — only the quietest
+        # quartile (the actual bleed floor) defines the bar.
+        if self._grace_samples:
+            s = sorted(self._grace_samples)
+            self.ema = min(float(s[len(s) // 4]), self.BLEED_EMA_CAP)
+            self._grace_samples = []
+
+    def feed(self, rms, chunk_ms, now=None):
+        """Feed one mic chunk captured WHILE Friday is speaking.
+
+        Returns True when a deliberate talk-over is confirmed (caller applies
+        its own cooldown and fires the interrupt).
+        """
+        now = now if now is not None else _time.time()
+        elapsed_ms = (now - self.started_ts) * 1000.0
+        if elapsed_ms < self.grace_ms:
+            # Grace window: collect samples, never fire. The baseline is
+            # seeded from these AFTER the window (percentile — see above).
+            self._grace_samples.append(float(rms))
+            self.sustained = 0.0
+            return False
+        if self._grace_samples:
+            self._seed_from_grace()
+        threshold = max(self.floor, self.mult * self.ema)
+        if rms >= threshold:
+            self.sustained += max(0.0, float(chunk_ms))
+            return self.sustained >= self.sustain_ms
+        # Below the bar: this is bleed/room noise — keep tracking it slowly so
+        # volume changes mid-response don't stale the baseline.
+        self._learn(rms, alpha=0.1)
+        self.sustained = 0.0
+        return False
+
+
+def _quick_rms(pcm):
+    """Cheap RMS of a PCM16-LE chunk (samples ≤160 points) for speech gating."""
+    n = len(pcm) // 2
+    if n == 0:
+        return 0
+    import struct as _st
+    step = max(1, n // 160)
+    total = 0
+    count = 0
+    for i in range(0, n, step):
+        s = _st.unpack_from('<h', pcm, i * 2)[0]
+        total += s * s
+        count += 1
+    return int((total / max(1, count)) ** 0.5)
+
+
+def _duration_to_seconds(v):
+    """Best-effort parse of a Live API duration ('5s', timedelta, number) → float seconds."""
+    try:
+        if v is None:
+            return None
+        if hasattr(v, 'total_seconds'):
+            return float(v.total_seconds())
+        if isinstance(v, (int, float)):
+            return float(v)
+        return float(str(v).strip().rstrip('s'))
+    except Exception:
+        return None
+
 
 def _classify_live_error(err_str):
     """Classify a Gemini Live connect/session error.
@@ -659,8 +859,15 @@ if sock is not None:
                 except Exception:
                     pass
 
+        _last_hb = _time.time()
         try:
             while not done.is_set():
+                # Heartbeat: same contract as /ws/live. Lets the client's stall
+                # watchdog detect a half-open socket on the LOCAL path too, and
+                # surfaces a dead browser socket here via the failed send.
+                if _time.time() - _last_hb >= 15.0:
+                    _last_hb = _time.time()
+                    _send({"type": "hb", "ts": int(_last_hb)})
                 try:
                     raw = ws.receive(timeout=1.0)
                 except ConnectionClosed:
@@ -755,6 +962,10 @@ if sock is not None:
             print(f'[live] {msg}')
 
         _vlog(f'=== WS connection from {request.remote_addr} ===')
+        # Claim the connection generation: this handler is now the ONE owner
+        # of the resume cache and renewal rights; any earlier handler still
+        # alive on a half-open socket becomes a fenced-off zombie.
+        _conn_gen = _live_conn_next()
         _key_preview = (core.GEMINI_API_KEY[:10] + '...') if core.GEMINI_API_KEY else 'MISSING'
         print(f'[live] WS connect from {request.remote_addr} | auth={session.get("authenticated")} local={_is_local_request()} | GEMINI_KEY={_key_preview}', flush=True)
         _vlog(f'session.authenticated={session.get("authenticated")} local={_is_local_request()} GEMINI_KEY={_key_preview}')
@@ -963,6 +1174,20 @@ if sock is not None:
         # "headphones" restores true barge-in. See _build_realtime_input_config.
         live_interruption_mode = str(
             live_settings.get("voice_interruption_mode") or "speaker").strip().lower()
+        # Bridge-side barge-in is what makes the user able to interrupt in
+        # speaker mode at all (NO_INTERRUPTION disables Gemini's own barge-in).
+        # Headphones mode doesn't need it — START_OF_ACTIVITY_INTERRUPTS gives
+        # native, instant barge-in and there is no speaker bleed to worry about.
+        live_barge_enabled = live_interruption_mode not in (
+            "headphones", "headphone", "barge", "barge-in", "bargein")
+        try:
+            _barge_grace_ms = int(live_settings.get("voice_barge_grace_ms") or 800)
+        except (TypeError, ValueError):
+            _barge_grace_ms = 800
+        try:
+            _barge_sustain_ms = int(live_settings.get("voice_barge_sustain_ms") or 200)
+        except (TypeError, ValueError):
+            _barge_sustain_ms = 200
 
         _vlog(
             f'voice cfg: voice={live_voice}; lang={live_language or "default"}; '
@@ -1093,6 +1318,81 @@ if sock is not None:
 
             last_error = None
             attempt_errors = []   # (model, api_version, kind, message) per failure
+
+            # ── Per-CONVERSATION state, hoisted ABOVE the attempt loop. A
+            # mid-conversation fallback (renewal handle rejected, model retired
+            # under us) must keep the transcript buffers, the distill log and
+            # the greeted flag — the old per-attempt reset made Friday blurt a
+            # fresh greeting into the middle of an ongoing call and dropped the
+            # accumulated turn log. ──
+            _audio_chunks_received = 0
+            _gemini_chunks_received = 0
+            _audio_bytes_to_gemini = 0
+            _audio_bytes_from_gemini = 0
+            _safe_send_failures = 0
+            in_buf = []
+            out_buf = []
+            turn_log = []
+            resume_handle = [None]   # newest session-resumption handle from Gemini
+            _handle_model = [None]   # model id the handle belongs to (handles don't cross models)
+            greeted = [False]
+            # Liveness bookkeeping (single-element lists so closures can mutate).
+            _last_gemini_ts = [_time.time()]  # last time ANY chunk arrived from Gemini
+            _last_speech_ts = [0.0]           # last time browser mic audio looked like speech
+            _model_speaking = [False]         # audio parts seen since last turn_complete
+            _goaway_drain_deadline = [None]   # set when GoAway arrives mid-response
+            # Barge-in (speaker mode): detector + per-turn drop flag + cooldown.
+            _barge = LiveBargeDetector(grace_ms=_barge_grace_ms,
+                                       sustain_ms=_barge_sustain_ms)
+            _barged_turn = [False]            # swallow this turn's remaining audio
+            _last_barge_ts = [0.0]
+            _tool_inflight = [0]              # voice tool runs currently executing
+            # The barge window must track CLIENT PLAYBACK, not model streaming:
+            # Gemini generates faster than real-time, so the turn often finishes
+            # streaming seconds before Friday's voice finishes coming out of the
+            # speakers — and that's exactly when users interrupt. The client
+            # reports playback transitions ({type:'speaking',on}); older clients
+            # (the PWA) that don't are covered by an estimate accumulated from
+            # forwarded audio bytes (24 kHz mono PCM16 → 48000 bytes/second).
+            _client_playing = [False]
+            _client_signal_seen = [False]
+            _est_play_end_ts = [0.0]
+
+            def _play_window_open(now):
+                if _client_signal_seen[0]:
+                    return _client_playing[0]
+                return _model_speaking[0] or now < _est_play_end_ts[0]
+
+            def _flush_turn():
+                user_text = ''.join(in_buf).strip()
+                agent_text = ''.join(out_buf).strip()
+                in_buf.clear()
+                out_buf.clear()
+                if not user_text and not agent_text:
+                    return
+                try:
+                    _persist_voice_turn(user_text, agent_text)
+                except Exception as e:
+                    print(f'[live] persist_voice_turn error: {e}')
+                _safe_send({
+                    "type": "voice_turn_done",
+                    "user_text": user_text,
+                    "agent_text": agent_text,
+                })
+                turn_log.append((user_text, agent_text))
+                # Voice is an agent too: run the same deterministic
+                # open/navigate intent detection the text chat uses. UI
+                # navigation is sent to the browser to execute via the
+                # action bus; OS opens (folders/apps) are performed
+                # server-side inside the helper. Best-effort — an action
+                # must never break the voice turn.
+                try:
+                    _vacts = _voice_actions_for(user_text)
+                    if _vacts:
+                        _safe_send({"type": "action", "actions": _vacts})
+                except Exception as _ae:
+                    print(f'[live] voice action dispatch error: {_ae}')
+
             for api_version, model_name in attempts:
                 # affective dialog + proactive audio are only valid on native-audio
                 # models AND only on the v1alpha endpoint. Strip them otherwise so a
@@ -1111,49 +1411,40 @@ if sock is not None:
                 _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
                       f'affective={use_affective}, proactive={use_proactive})')
                 try:
-                    # ── Per-connection conversation state. Lives ACROSS the
-                    # transparent session renewals below so a reconnect seam never
-                    # loses an in-flight turn or the distill log. ──
-                    _audio_chunks_received = 0
-                    _gemini_chunks_received = 0
-                    _audio_bytes_to_gemini = 0
-                    _audio_bytes_from_gemini = 0
-                    _safe_send_failures = 0
-                    in_buf = []
-                    out_buf = []
-                    turn_log = []
-                    resume_handle = [None]   # newest session-resumption handle from Gemini
-                    greeted = [False]
-
-                    def _flush_turn():
-                        user_text = ''.join(in_buf).strip()
-                        agent_text = ''.join(out_buf).strip()
-                        in_buf.clear()
-                        out_buf.clear()
-                        if not user_text and not agent_text:
-                            return
+                    async def _fire_barge(sess, source):
+                        # The user is talking over Friday. Stop her at every
+                        # layer we control: (1) swallow the rest of this turn's
+                        # audio server-side, (2) flush what the browser has
+                        # buffered (its 'interrupted' handler already does
+                        # exactly that), (3) cancel the in-flight generation —
+                        # per the Live API reference, a client_content message
+                        # "will interrupt any current model generation", and
+                        # it is the ONLY documented client-side cancel (VAD
+                        # can't help under NO_INTERRUPTION). turn_complete=
+                        # False so the marker joins the user's in-progress
+                        # utterance instead of demanding its own response.
+                        _last_barge_ts[0] = _time.time()
+                        # Swallow streamed audio only if the turn is actually
+                        # still streaming — if generation already finished
+                        # (faster than real-time) the leftover flag would eat
+                        # the NEXT turn's audio.
+                        _barged_turn[0] = _model_speaking[0]
+                        _client_playing[0] = False
+                        _est_play_end_ts[0] = 0.0
+                        _barge.sustained = 0.0
+                        _vlog(f'BARGE-IN ({source}): dropping turn audio, flushing client, cancelling generation')
+                        _safe_send({"type": "interrupted"})
+                        _safe_send({"type": "status", "text": "listening"})
                         try:
-                            _persist_voice_turn(user_text, agent_text)
-                        except Exception as e:
-                            print(f'[live] persist_voice_turn error: {e}')
-                        _safe_send({
-                            "type": "voice_turn_done",
-                            "user_text": user_text,
-                            "agent_text": agent_text,
-                        })
-                        turn_log.append((user_text, agent_text))
-                        # Voice is an agent too: run the same deterministic
-                        # open/navigate intent detection the text chat uses. UI
-                        # navigation is sent to the browser to execute via the
-                        # action bus; OS opens (folders/apps) are performed
-                        # server-side inside the helper. Best-effort — an action
-                        # must never break the voice turn.
-                        try:
-                            _vacts = _voice_actions_for(user_text)
-                            if _vacts:
-                                _safe_send({"type": "action", "actions": _vacts})
-                        except Exception as _ae:
-                            print(f'[live] voice action dispatch error: {_ae}')
+                            await sess.send_client_content(
+                                turns={"role": "user", "parts": [{"text":
+                                    "[The user interrupted you mid-response — "
+                                    "stop talking and listen to what they say "
+                                    "next.]"}]},
+                                turn_complete=False,
+                            )
+                        except Exception as _be:
+                            _vlog(f'barge client_content send failed: {_be}')
 
                     async def _run_tool_calls(sess, tc):
                         # Gemini asked to call one or more tools. Execute each in a
@@ -1227,6 +1518,22 @@ if sock is not None:
                                     data = base64.b64decode(msg['data'])
                                     _audio_chunks_received += 1
                                     _audio_bytes_to_gemini += len(data)
+                                    _rms = _quick_rms(data)
+                                    if _rms >= LIVE_SPEECH_RMS:
+                                        _last_speech_ts[0] = _time.time()
+                                    # Bridge-side barge-in (speaker mode): under
+                                    # NO_INTERRUPTION Gemini never stops on its
+                                    # own, so deliberate talk-over is detected
+                                    # HERE, on the raw mic feed, for as long as
+                                    # Friday's voice is coming out of the
+                                    # speakers (client playback window — NOT
+                                    # model streaming, which ends much earlier).
+                                    _now_b = _time.time()
+                                    if (live_barge_enabled and _play_window_open(_now_b)
+                                            and (_now_b - _last_barge_ts[0]) > LIVE_BARGE_COOLDOWN_S):
+                                        # PCM16 @ 16 kHz → 32 bytes per ms.
+                                        if _barge.feed(_rms, len(data) / 32.0, now=_now_b):
+                                            await _fire_barge(sess, f'talk-over rms={_rms}')
                                     if _audio_chunks_received in (1, 5, 25) or _audio_chunks_received % 50 == 0:
                                         # Log RMS amplitude so we can tell speech from silence.
                                         try:
@@ -1253,6 +1560,29 @@ if sock is not None:
                                 elif t == 'text' and msg.get('text'):
                                     _vlog(f'browser->gemini: text {msg["text"]!r}')
                                     await sess.send_realtime_input(text=msg['text'])
+                                elif t == 'barge':
+                                    # EXPLICIT interrupt from the client (Escape
+                                    # key). Trust it unconditionally — no play-
+                                    # window gate: the client's own local flush
+                                    # may have already sent {'speaking',off}
+                                    # ahead of this frame, which would close the
+                                    # window and turn the barge into a no-op
+                                    # (the reviewed Escape-defeats-itself bug).
+                                    # Short manual cooldown only.
+                                    if (_time.time() - _last_barge_ts[0]) > 0.5:
+                                        await _fire_barge(sess, 'client request')
+                                elif t == 'speaking':
+                                    # Client playback transition — the precise
+                                    # barge window. A closed→open transition is
+                                    # the start of audible output: relearn the
+                                    # speaker-bleed baseline from that moment.
+                                    _client_signal_seen[0] = True
+                                    _on = bool(msg.get('on'))
+                                    if _on and not _client_playing[0]:
+                                        _barge.reset_turn()
+                                    if not _on:
+                                        _barge.sustained = 0.0
+                                    _client_playing[0] = _on
                                 elif t == 'end':
                                     _vlog('reader: browser sent end signal')
                                     # Explicitly flush audio stream so Gemini stops waiting for VAD.
@@ -1261,6 +1591,21 @@ if sock is not None:
                                         _vlog('sent audio_stream_end=True to gemini')
                                     except Exception as _e:
                                         _vlog(f'audio_stream_end send failed: {_e}')
+                                    # Deliberate stop: forget the resumption handle so
+                                    # the user's NEXT voice session starts fresh instead
+                                    # of resuming this one.
+                                    _live_resume_clear(gen=_conn_gen)
+                                    done.set()
+                                    return
+                                elif t == 'bye':
+                                    # Deliberate client stop (mic button) WITHOUT the
+                                    # audio_stream_end flush — the client doesn't want
+                                    # one last response generated into teardown. Clear
+                                    # the resumption cache so the next session starts
+                                    # fresh; an unexpected drop skips this, which is
+                                    # exactly what lets it resume.
+                                    _vlog('reader: browser sent bye (deliberate stop)')
+                                    _live_resume_clear(gen=_conn_gen)
                                     done.set()
                                     return
                             except Exception as e:
@@ -1276,21 +1621,32 @@ if sock is not None:
                                         return
                                     try:
                                         _gemini_chunks_received += 1
+                                        _last_gemini_ts[0] = _time.time()
                                         # Capture the newest resumption handle so the
-                                        # reconnect loop can renew this exact session.
+                                        # reconnect loop can renew this exact session —
+                                        # and mirror it to the module-level cache so a
+                                        # browser-side reconnect can resume it too.
                                         _sru = getattr(chunk, 'session_resumption_update', None)
                                         if _sru is not None and getattr(_sru, 'new_handle', None):
                                             resume_handle[0] = _sru.new_handle
+                                            _handle_model[0] = model_name
+                                            _live_resume_store(_sru.new_handle, model_name, live_voice, gen=_conn_gen)
                                         # GoAway: Gemini is about to retire this session
-                                        # (audio/context cap). End this leg cleanly so the
-                                        # reconnect loop renews it via the handle above —
-                                        # the user hears no break.
+                                        # (connection lifetime / context cap). Don't cut a
+                                        # response mid-word: if Friday is speaking, drain
+                                        # until turn_complete or the GoAway deadline, THEN
+                                        # end the leg so the reconnect loop renews it via
+                                        # the handle above — the user hears no break.
                                         _ga = getattr(chunk, 'go_away', None)
                                         if _ga is not None:
                                             _tl = getattr(_ga, 'time_left', None)
-                                            _vlog(f'GoAway from Gemini (time_left={_tl}) — renewing session via resumption handle')
-                                            sdone.set()
-                                            return
+                                            _secs = _duration_to_seconds(_tl)
+                                            _grace = max(0.5, min(_secs if _secs is not None else 3.0, 8.0))
+                                            _goaway_drain_deadline[0] = _time.time() + _grace
+                                            _vlog(f'GoAway from Gemini (time_left={_tl}) — draining ≤{_grace:.1f}s, then renewing via resumption handle')
+                                            if not _model_speaking[0]:
+                                                sdone.set()
+                                                return
                                         if _gemini_chunks_received <= 5 or _gemini_chunks_received % 20 == 0:
                                             _resume = _sru
                                             _va = getattr(chunk, 'voice_activity', None) or getattr(chunk, 'voice_activity_detection_signal', None)
@@ -1319,7 +1675,27 @@ if sock is not None:
                                                     # Audio: PCM bytes at 24kHz in part.inline_data.data
                                                     il = getattr(part, 'inline_data', None)
                                                     if il and getattr(il, 'data', None):
+                                                        if not _model_speaking[0] and not _client_signal_seen[0]:
+                                                            # New spoken response starting and
+                                                            # no client playback signal —
+                                                            # anchor the bleed-baseline grace
+                                                            # window here (best available
+                                                            # approximation of audio onset).
+                                                            _barge.reset_turn()
+                                                        _model_speaking[0] = True
                                                         _audio_bytes_from_gemini += len(il.data)
+                                                        if _barged_turn[0]:
+                                                            # User barged in — swallow the
+                                                            # rest of this turn's audio so
+                                                            # nothing more reaches the
+                                                            # speakers.
+                                                            continue
+                                                        # Playback-window estimate for clients
+                                                        # that don't report playback: 24 kHz
+                                                        # mono PCM16 plays at 48000 bytes/s.
+                                                        _est_play_end_ts[0] = max(
+                                                            _est_play_end_ts[0], _time.time(),
+                                                        ) + len(il.data) / 48000.0
                                                         if _audio_bytes_from_gemini <= 50000 or _gemini_chunks_received % 20 == 0:
                                                             _vlog(f'gemini->browser: audio {len(il.data)} bytes ({il.mime_type}); total {_audio_bytes_from_gemini}')
                                                         ok = _safe_send({
@@ -1334,10 +1710,17 @@ if sock is not None:
                                                         out_buf.append(pt)
                                                         _safe_send({"type": "text", "text": pt})
                                             if getattr(sc, 'turn_complete', False):
+                                                _model_speaking[0] = False
+                                                _barged_turn[0] = False
                                                 _vlog(f'turn_complete (audio out so far: {_audio_bytes_from_gemini} bytes)')
                                                 _flush_turn()
                                                 _safe_send({"type": "turn_end"})
                                             if getattr(sc, 'interrupted', False):
+                                                _model_speaking[0] = False
+                                                _barged_turn[0] = False
+                                                # The client flushes its buffer on
+                                                # this signal — playback stops now.
+                                                _est_play_end_ts[0] = 0.0
                                                 _vlog('interrupted')
                                                 _safe_send({"type": "interrupted"})
                                         # Agentic step: Gemini wants to call a tool.
@@ -1345,10 +1728,29 @@ if sock is not None:
                                         # model continues the turn from real data.
                                         _tc = getattr(chunk, 'tool_call', None)
                                         if _tc is not None and getattr(_tc, 'function_calls', None):
-                                            await _run_tool_calls(sess, _tc)
+                                            # Mark the tool run so the liveness
+                                            # watchdog doesn't mistake a long
+                                            # (blocking) tool call for a dead
+                                            # upstream and tear down the leg
+                                            # mid-run.
+                                            _tool_inflight[0] += 1
+                                            try:
+                                                await _run_tool_calls(sess, _tc)
+                                            finally:
+                                                _tool_inflight[0] -= 1
+                                                _last_gemini_ts[0] = _time.time()
                                         # Tool-call cancellation (barge-in during a
                                         # tool run): nothing to undo server-side —
                                         # the next turn supersedes it.
+                                        # GoAway drain: leave once the in-flight response
+                                        # finished (or the grace ran out) so the renewal
+                                        # can happen before Google hard-closes the socket.
+                                        if _goaway_drain_deadline[0] is not None and (
+                                                not _model_speaking[0]
+                                                or _time.time() >= _goaway_drain_deadline[0]):
+                                            _vlog('GoAway drain complete — ending leg for renewal')
+                                            sdone.set()
+                                            return
                                     except Exception as e:
                                         _vlog(f'recv processing ERROR: {type(e).__name__}: {e}')
                                         traceback.print_exc()
@@ -1379,32 +1781,142 @@ if sock is not None:
                             _vlog('WARNING: no audio chunks received from browser after 5s — mic likely silent or WS not flowing')
                             _safe_send({"type": "status", "text": "no mic audio reaching server"})
 
+                    async def liveness_watchdog(sdone):
+                        # Catches the silent-hang failure mode: the upstream
+                        # Gemini socket half-dies (no FIN — sleep/wake, NAT drop,
+                        # proxy), writer sits in receive() forever, and the user
+                        # keeps talking into a void while the UI still says
+                        # "live". With input transcription enabled Gemini streams
+                        # transcript events WHILE the user talks, so sustained
+                        # speech with zero upstream traffic means the leg is sick
+                        # → end it; the reconnect loop renews via the handle and
+                        # the conversation continues where it left off.
+                        while not done.is_set() and not sdone.is_set():
+                            try:
+                                await asyncio.sleep(5.0)
+                            except asyncio.CancelledError:
+                                return
+                            if done.is_set() or sdone.is_set():
+                                return
+                            if _tool_inflight[0] > 0:
+                                # A voice tool is executing (blocking network /
+                                # LLM work awaited inline by the writer) — the
+                                # upstream isn't stalled, the writer is busy.
+                                # Tearing down here would drop the tool result.
+                                continue
+                            now = _time.time()
+                            quiet_s = now - _last_gemini_ts[0]
+                            spoke_recently = (now - _last_speech_ts[0]) < 25.0
+                            speech_after_quiet = _last_speech_ts[0] > _last_gemini_ts[0] + 5.0
+                            if (quiet_s > LIVE_STALL_SECONDS and spoke_recently
+                                    and speech_after_quiet):
+                                _vlog(f'liveness watchdog: user speaking but no Gemini traffic for {quiet_s:.0f}s — forcing leg renewal')
+                                _safe_send({"type": "status", "text": "connection stalled — renewing"})
+                                sdone.set()
+                                return
+
+                    async def heartbeat(sdone):
+                        # Server→browser beat. The client force-reconnects when
+                        # nothing (not even this) arrives for ~3 beats, which is
+                        # how a half-open browser socket gets detected; and a DEAD
+                        # browser socket surfaces here as a failed send
+                        # (ConnectionClosed → done) even while Gemini is quiet.
+                        while not done.is_set() and not sdone.is_set():
+                            try:
+                                await asyncio.sleep(LIVE_HEARTBEAT_SECONDS)
+                            except asyncio.CancelledError:
+                                return
+                            if done.is_set() or sdone.is_set():
+                                return
+                            _safe_send({"type": "hb", "ts": int(_time.time())})
+
                     # ── Reconnect loop ──────────────────────────────────────────
-                    # A single Gemini Live session is capped (~10-15 min of audio,
-                    # plus a context-window cap). When Gemini sends GoAway / ends the
-                    # stream while the BROWSER is still connected, we renew the session
-                    # using the last resumption handle and keep going — Gemini restores
-                    # the conversation context server-side, so the user hears no seam.
-                    # If no handle was ever issued (resumption unsupported), this runs
-                    # exactly once and behaves like the old single-session path.
+                    # A single Gemini Live CONNECTION is capped (~10 min); the
+                    # logical session outlives it via resumption handles, and with
+                    # context compression on there is no session-duration cap —
+                    # together that is what makes an hours-long call possible.
+                    # Legs end on GoAway, stream end, or watchdog stall; each end
+                    # renews the session with the freshest handle so Gemini
+                    # restores the conversation server-side and the user hears no
+                    # seam. A brand-new WS connection can also RESUME a
+                    # conversation whose browser socket dropped (client
+                    # auto-reconnect) via the module-level handle cache.
+                    if resume_handle[0] is None and _supports_resumption:
+                        _stored = _live_resume_load(model_name, live_voice)
+                        if _stored:
+                            resume_handle[0] = _stored
+                            _handle_model[0] = model_name
+                            greeted[0] = True   # mid-conversation — never re-greet
+                            _vlog('browser reconnect: resuming previous conversation from stored handle')
+
                     leg = 0
+                    _quick_deaths = 0   # consecutive legs that died <10s after connect
                     while not done.is_set():
-                        if leg > 0 and resume_handle[0] is not None and _supports_resumption:
-                            _leg_kwargs = dict(per_model_kwargs)
-                            _leg_kwargs["session_resumption"] = types.SessionResumptionConfig(handle=resume_handle[0])
-                            _leg_cfg = types.LiveConnectConfig(**_leg_kwargs)
-                            _vlog(f'reconnecting voice session (renewal #{leg}) with resumption handle')
-                        else:
-                            _leg_cfg = per_model_cfg
-                        async with active_client.aio.live.connect(model=model_name, config=_leg_cfg) as session_ai:
-                            if leg == 0:
-                                _safe_send({"type": "status", "text": "live"})
+                        # Zombie fence: if a NEWER /ws/live handler has taken
+                        # over (browser reconnected while this handler's socket
+                        # is half-open), stop renewing — fighting the new
+                        # handler for the Gemini session corrupts the handle
+                        # cache and duplicates the conversation.
+                        if not _live_conn_current(_conn_gen):
+                            _vlog('superseded by a newer voice connection — zombie handler exiting')
+                            done.set()
+                            break
+                        _use_handle = (resume_handle[0]
+                                       if (_supports_resumption
+                                           and resume_handle[0] is not None
+                                           and _handle_model[0] == model_name)
+                                       else None)
+                        # Connect this leg. When we hold a handle, ride a short
+                        # retry ladder (handle, handle, fresh) — a renewal seam
+                        # must survive a transient connect failure instead of
+                        # killing an hours-long call or falling back to another
+                        # model mid-conversation.
+                        session_cm = None
+                        session_ai = None
+                        _max_tries = 3 if _use_handle else 1
+                        for _try in range(1, _max_tries + 1):
+                            _with_handle = _use_handle if (_use_handle and _try < _max_tries) else None
+                            if _with_handle:
+                                _kw = dict(per_model_kwargs)
+                                _kw["session_resumption"] = types.SessionResumptionConfig(handle=_with_handle)
+                                _cfg_try = types.LiveConnectConfig(**_kw)
+                            else:
+                                _cfg_try = per_model_cfg
+                            if _use_handle and not _with_handle:
+                                # Last rung: the handle keeps getting rejected —
+                                # drop it. A fresh session loses Gemini-side
+                                # context (the transcript log survives here) but
+                                # beats hanging up on the user.
+                                _vlog('renewal: handle attempts failed — reconnecting FRESH (server context resets)')
+                                _safe_send({"type": "status", "text": "reconnecting"})
+                                resume_handle[0] = None
+                            try:
+                                session_cm = active_client.aio.live.connect(model=model_name, config=_cfg_try)
+                                session_ai = await session_cm.__aenter__()
+                                break
+                            except Exception as _ce:
+                                session_cm = None
+                                _ckind = _classify_live_error(str(_ce))
+                                _vlog(f'leg connect failed (try {_try}/{_max_tries}) [{_ckind}]: {_ce}')
+                                if (_try >= _max_tries or done.is_set()
+                                        or _ckind in ('auth', 'model-missing')):
+                                    raise
+                                await asyncio.sleep(float(_try))
+                        if session_ai is None:
+                            break
+
+                        _leg_started = _time.time()
+                        try:
+                            if leg == 0 and _use_handle:
+                                _vlog(f'session resumed with {model_name} from stored handle')
+                            elif leg == 0:
                                 _vlog(f'session established with {model_name}')
                             else:
                                 _vlog(f'session renewed with {model_name} (renewal #{leg})')
+                            _safe_send({"type": "status", "text": "live"})
 
-                            # Greeting only on the very first leg — a renewal must not
-                            # re-greet (and Gemini already has the restored context).
+                            # Greeting only on a brand-new conversation — a renewal
+                            # or a resumed conversation must not re-greet.
                             if not greeted[0]:
                                 greeted[0] = True
                                 try:
@@ -1417,27 +1929,64 @@ if sock is not None:
                                     _vlog(f'greeting send failed: {_e}')
 
                             sdone = asyncio.Event()
-                            _tasks = [reader(session_ai, sdone), writer(session_ai, sdone)]
+                            _goaway_drain_deadline[0] = None
+                            _model_speaking[0] = False
+                            # A barge whose turn_complete never arrived (leg died
+                            # first) must not swallow the NEXT leg's audio; the
+                            # stale playback estimate must not hold the barge
+                            # window open either. Tool-inflight can also strand
+                            # if the leg was torn down mid-run.
+                            _barged_turn[0] = False
+                            _est_play_end_ts[0] = 0.0
+                            _tool_inflight[0] = 0
+                            _last_gemini_ts[0] = _time.time()
+                            _core = {asyncio.create_task(reader(session_ai, sdone)),
+                                     asyncio.create_task(writer(session_ai, sdone)),
+                                     asyncio.create_task(liveness_watchdog(sdone))}
+                            _aux = {asyncio.create_task(heartbeat(sdone))}
                             if leg == 0:
-                                _tasks.append(no_audio_watchdog())
-                            await asyncio.gather(*_tasks, return_exceptions=True)
+                                _aux.add(asyncio.create_task(no_audio_watchdog()))
+                            # First core exit ends the leg: reader (browser closed),
+                            # writer (stream ended / GoAway), or watchdog (stall).
+                            await asyncio.wait(_core, return_when=asyncio.FIRST_COMPLETED)
+                            sdone.set()
+                            # Give healthy tasks a moment to wind down; a writer
+                            # hung on a dead upstream socket is cancelled here —
+                            # without this, one stuck receive() froze the whole
+                            # call forever (the original silent-dropout bug).
+                            _all = _core | _aux
+                            _done_t, _pending = await asyncio.wait(_all, timeout=6.0)
+                            for _p in _pending:
+                                _p.cancel()
+                            await asyncio.gather(*_all, return_exceptions=True)
+                        finally:
+                            try:
+                                await session_cm.__aexit__(None, None, None)
+                            except Exception as _xe:
+                                _vlog(f'leg close error (ignored): {_xe}')
 
-                        # Browser gone, or no handle to renew with → terminal.
-                        if done.is_set() or resume_handle[0] is None or not _supports_resumption:
+                        if done.is_set():
                             break
+                        # Leg over but the browser is still here → keep the call
+                        # alive. Renew via handle when we have one; otherwise go
+                        # fresh rather than hanging up — unless legs are dying
+                        # immediately, which means something systemic is wrong and
+                        # surfacing the error beats a reconnect storm.
+                        if (_time.time() - _leg_started) < 10.0:
+                            _quick_deaths += 1
+                            if _quick_deaths >= 3:
+                                raise RuntimeError(
+                                    'voice session legs died <10s after connect '
+                                    '3 times in a row — giving up on this model')
+                        else:
+                            _quick_deaths = 0
+                        if not _supports_resumption or resume_handle[0] is None:
+                            _vlog('leg ended with no resumption handle — continuing with a FRESH session')
+                            _safe_send({"type": "status", "text": "reconnecting"})
                         leg += 1
                         _vlog(f'voice session leg ended without browser close — renewing (total renewals: {leg})')
 
-                    try:
-                        _flush_turn()
-                    except Exception:
-                        pass
-                    if turn_log:
-                        try:
-                            _spawn_voice_distill(turn_log)
-                        except Exception as e:
-                            print(f'[live] voice distill spawn error: {e}')
-                    break  # session completed successfully, don't try fallback
+                    break  # conversation over on this model — don't try fallbacks
                 except Exception as e:
                     last_error = e
                     import traceback as _tb
@@ -1461,6 +2010,19 @@ if sock is not None:
                     else:
                         nxt = attempts[attempts.index((api_version, model_name)) + 1]
                         _vlog(f'trying fallback: model={nxt[1]} api={nxt[0] or "default(v1beta)"}')
+
+            # Conversation over (or every attempt failed) — persist whatever we
+            # captured. Runs on ALL exits so a failed fallback can't eat the
+            # transcript or the distill.
+            try:
+                _flush_turn()
+            except Exception:
+                pass
+            if turn_log:
+                try:
+                    _spawn_voice_distill(turn_log)
+                except Exception as e:
+                    print(f'[live] voice distill spawn error: {e}')
 
         loop = asyncio.new_event_loop()
         try:

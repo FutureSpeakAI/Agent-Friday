@@ -46,6 +46,22 @@ if getattr(sys, "frozen", False):
     except Exception:
         pass
 
+
+def _res_file(name):
+    """Resolve a bundled data file with a repo-root fallback.
+
+    Frozen builds keep data files in _MEIPASS (= _RES_DIR). Source checkouts
+    keep the canonical hand-maintained copies (SELF.md, VOICE_DEMO.md) at the
+    REPO root — two levels above the package — where the src/ restructure left
+    them. Without this fallback those loaders silently returned "" in dev runs
+    and Friday lost all knowledge of itself and its own UI.
+    """
+    p = _RES_DIR / name
+    if p.exists():
+        return p
+    alt = _RES_DIR.parent.parent / name
+    return alt if alt.exists() else p
+
 from flask import Flask, jsonify, request, send_from_directory, send_file, session, redirect, url_for, Response, stream_with_context
 from functools import wraps
 
@@ -1802,7 +1818,7 @@ def _save_agent_personality(text):
 # ── Self-knowledge (SELF.md) ─────────────────────────────────
 _self_knowledge_cache = None
 _self_knowledge_mtime = 0.0
-SELF_MD_PATH = _RES_DIR / "SELF.md"
+SELF_MD_PATH = _res_file("SELF.md")
 
 
 def _load_self_knowledge():
@@ -1836,7 +1852,7 @@ def _load_self_knowledge():
 # the vault redacting his own product pitch.
 _voice_demo_cache = None
 _voice_demo_mtime = 0.0
-VOICE_DEMO_MD_PATH = _RES_DIR / "VOICE_DEMO.md"
+VOICE_DEMO_MD_PATH = _res_file("VOICE_DEMO.md")
 
 
 def _load_voice_demo():

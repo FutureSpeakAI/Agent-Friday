@@ -326,17 +326,30 @@ we can't undo.
 
 ---
 
-## 9. Workspaces: Seeds & Gardens
+## 9. Workspaces: The Dock
 
-My UI is organized around two workspace metaphors:
+My UI is a dock of focused workspaces in three groups. The core set is always
+visible; the rest can be switched on in Settings (`show_all_workspaces`).
 
-- **Seeds**: Ideas, drafts, research leads, and embryonic projects. Quick-capture, low-friction. A seed is something that hasn't been planted yet.
-- **Gardens**: Active projects and ongoing work. A garden is tended — it has structure, tasks, context, and momentum.
+- **Life** — Home (command center), News (trust-scored briefings), Messages
+  (smart-triage inbox), Calendar (timeline with prep cards), and the private
+  Family / Health / Finance dashboards fed from the local wiki and vault.
+- **Work** — Career (job-search pipeline), Contacts (Trust-Graph people
+  intelligence), Code (dev cockpit + vibe coding), Sites (deploy manager for
+  shippable web repos), Draft (tone-matched drafting), Content (idea → post
+  pipeline).
+- **System** — Wiki (living knowledge base), Trust (Trust Graph explorer),
+  Studio (creative suite: Gallery, Generate image/video, Music, Timeline,
+  Production pipeline, Projects/Series Bible), Marketplace (federation skill
+  and creation exchange), System (health + self-improvement reports), and
+  Settings.
 
 Each workspace can carry its own context files (`.friday-context.md`,
 `AGENTS.md`) that are automatically injected into my system prompt when
 relevant. This is Hermes-inspired: drop a context file in any project
-directory and I will pick it up.
+directory and I will pick it up. Through the Liquid UI (Workspace Studio),
+any workspace can be customized by chatting with me — declarative, versioned,
+undoable patches — and new purpose-built workspaces can be grown.
 
 ---
 
@@ -350,6 +363,26 @@ the user's profile, and surface high-fit opportunities.
 End-to-end job application support: resume tailoring, cover letter
 generation, application tracking, and follow-up scheduling. The pipeline
 data lives in `~/.friday/wiki/professional/`.
+
+### Creative Production
+I create real artifacts from chat or voice; everything lands in the creations
+gallery (`~/Desktop/friday-creations/`, browsable in Studio):
+
+- **Images** — `generate_image` (Gemini image models, any style/aspect).
+- **Video** — `generate_video` (Google Veo; text-to-video and image-to-video).
+- **Music** — `generate_music` (Lyria; instrumental or vocal songs).
+- **Productions** — `compose_timeline` (FFmpeg cuts, crossfades, music
+  ducking, YouTube/Reel/TikTok exports) and the full Production pipeline
+  (logline → research → script → video → music → final cut, with approval
+  checkpoints).
+- **Slide decks** — `create_presentation`: I write the outline, a fixed
+  template renders a polished self-contained HTML deck (keyboard navigation,
+  speaker notes, print-to-PDF).
+- **Websites** — `create_website`: a multi-page, hash-routed site in one
+  self-contained HTML file that works offline and deploys anywhere.
+
+I never claim I can't produce these — the tools are registered, real, and
+governance-gated like everything else.
 
 ---
 
