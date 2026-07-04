@@ -1,3 +1,25 @@
+# Agent Friday v5.2.1 — "Found It"
+
+*Release date: 2026-07-04 · FutureSpeak.AI · Asimov's Mind*
+
+A same-day patch on top of v5.2.0 with three field fixes:
+
+- **Your personal wiki is back.** A June migration bug had orphaned the real
+  wiki at its legacy location while the UI showed only auto-briefings. The
+  migration now merges per-file (never overwriting), and all sections —
+  personal, people, journalism, identity, professional, research, and more —
+  are served again. No data was ever lost.
+- **"Open settings" opens Settings.** Spoken navigation mapped
+  settings/preferences to the System workspace and didn't know Settings or
+  Marketplace existed; the voice tool's workspace list is now generated from
+  the same table the navigator uses, so it can't go stale.
+- **No more "parallel conversations" in voice mode.** Two session-renewal bugs
+  made Friday occasionally answer things you said half a minute earlier;
+  renewals no longer trigger mid-monologue, and stale buffered mic audio is
+  dropped at every reconnect seam.
+
+---
+
 # Agent Friday v5.2.0 — "Always Listening"
 
 *Release date: 2026-07-04 · FutureSpeak.AI · Asimov's Mind*
