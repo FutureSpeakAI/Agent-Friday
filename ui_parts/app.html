@@ -1752,16 +1752,170 @@ function ProjectsPanel(){
     </div>)}
   </div>);
 }
+// ── Studio › Prompt bar — the primary creation flow ─────────────────────────
+// One prominent prompt + type chips (Image / Video / Music / Text / Code art)
+// + Generate. Posts DIRECTLY to /api/create/<type>, which dispatches straight
+// to the engines: creative_engine (Nano Banana / Veo), music_engine (Lyria),
+// the routed text provider, or the Gemini code-art writer. Nothing here goes
+// near the agent loop or a Claude Code terminal — the old quick bar's
+// "Create Now" button launched the autonomous DAILY-creation agent task no
+// matter what was typed or which type was picked, which is exactly the
+// miswiring this replaces. The daily task now lives behind the clearly
+// labelled opt-in button next to the Creation Log (see runDailyAgent below).
+const STUDIO_TYPES=[
+  {id:'image',ico:'🖼️',label:'Image',ph:'A neon koi swimming through a rain-soaked Tokyo alley at night…'},
+  {id:'video',ico:'🎬',label:'Video',ph:'A slow cinematic drone shot rising over misty mountains at dawn…'},
+  {id:'music',ico:'🎵',label:'Music',ph:'Warm lo-fi hip-hop with mellow Rhodes, vinyl crackle, ~80 BPM…'},
+  {id:'text',ico:'✍️',label:'Text',ph:'A short story about a lighthouse keeper who befriends the fog…'},
+  {id:'code-art',ico:'⚡',label:'Code art',ph:'A hypnotic particle field that blooms where the cursor moves…'},
+];
+// Small fetch-and-render peek for Markdown results (demo previews and text
+// pieces land as .md files in the gallery).
+function StudioMdPeek({url}){
+  const[txt,setTxt]=useState('');
+  useEffect(()=>{let ok=true;fetch(url).then(r=>r.ok?r.text():'').then(t=>{if(ok)setTxt(t||'')}).catch(()=>{});return()=>{ok=false}},[url]);
+  if(!txt)return<div style={{fontSize:11,color:'#888'}}>Loading preview…</div>;
+  return(<div style={{maxHeight:300,overflowY:'auto',padding:'4px 8px',background:'rgba(255,255,255,0.02)',borderRadius:8}}><FridayDoc text={txt}/></div>);
+}
+function StudioPromptBar({onCreated}){
+  const mc=useModelCatalog();
+  const[type,setType]=useState('image');
+  const[prompt,setPrompt]=useState('');
+  const[busy,setBusy]=useState(false);const[elapsed,setElapsed]=useState(0);
+  const[result,setResult]=useState(null);const[err,setErr]=useState(null);
+  const[showOpts,setShowOpts]=useState(false);const[avail,setAvail]=useState(null);
+  const[copied,setCopied]=useState(false);
+  const[imgModel,setImgModel]=useState('');const[vidModel,setVidModel]=useState('');
+  const[style,setStyle]=useState('none');const[aspect,setAspect]=useState('1:1');const[vAspect,setVAspect]=useState('16:9');
+  const[count,setCount]=useState(1);const[vDur,setVDur]=useState('');const[mDur,setMDur]=useState('');const[mModel,setMModel]=useState('lyria-clip');
+  const abortRef=useRef(null);const timerRef=useRef(null);
+  const creative=mc.creative||[];
+  const imageModels=creative.filter(m=>(m.modalities||[]).includes('image'));
+  const videoModels=creative.filter(m=>(m.modalities||[]).includes('video'));
+  useEffect(()=>{if(!imgModel&&imageModels.length)setImgModel(imageModels[0].id);if(!vidModel&&videoModels.length)setVidModel(videoModels[0].id);},[mc.loaded]);
+  useEffect(()=>{fetch('/api/create/availability').then(r=>r.json()).then(d=>{if(d&&d.types)setAvail(d.types)}).catch(()=>{});},[]);
+  useEffect(()=>()=>{if(timerRef.current)clearInterval(timerRef.current);if(abortRef.current)abortRef.current.abort();},[]);
+  const T=STUDIO_TYPES.find(x=>x.id===type)||STUDIO_TYPES[0];
+  const typeAvail=avail&&avail[type];
+  const fmtEl=s=>s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s';
+  const openProviders=()=>{window.__fridaySettingsTab='providers';try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'providers'}}))}catch(_){}if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'settings'})};
+  const go=async()=>{
+    if(!prompt.trim()||busy)return;
+    setBusy(true);setErr(null);setResult(null);setElapsed(0);setCopied(false);
+    timerRef.current=setInterval(()=>setElapsed(s=>s+1),1000);
+    const ac=new AbortController();abortRef.current=ac;
+    const body=type==='image'?{prompt:prompt.trim(),model:imgModel||undefined,style:style==='none'?undefined:style,aspect_ratio:aspect,n:Number(count)||1}
+      :type==='video'?{prompt:prompt.trim(),model:vidModel||undefined,aspect_ratio:vAspect,duration_seconds:vDur?Number(vDur):undefined}
+      :type==='music'?{prompt:prompt.trim(),model:mModel,duration_seconds:mDur?Number(mDur):undefined}
+      :{prompt:prompt.trim()};
+    try{
+      const r=await fetch('/api/create/'+type,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ac.signal});
+      const d=await r.json();
+      if(d.status==='ok'||d.status==='demo'){
+        if(!d.files&&d.filename)d.files=[{filename:d.filename,url:d.url||('/api/creations/'+d.filename)}];
+        setResult(d);onCreated&&onCreated();
+      }else if(d.status==='unavailable')setErr({needsKey:true,message:d.message||('Add a Gemini key in Settings to generate '+T.label.toLowerCase()+'.')});
+      else setErr({message:d.reason||d.message||(T.label+' generation failed.')});
+    }catch(e){
+      if(e&&e.name==='AbortError')setErr({message:'Cancelled. If the engine had already started, the finished piece will still land in the gallery.'});
+      else setErr({message:'Request failed: '+e});
+    }
+    if(timerRef.current){clearInterval(timerRef.current);timerRef.current=null;}
+    abortRef.current=null;setBusy(false);
+  };
+  const cancel=()=>{if(abortRef.current)abortRef.current.abort()};
+  const copyText=()=>{try{navigator.clipboard.writeText((result&&result.text)||'');setCopied(true);setTimeout(()=>setCopied(false),1600)}catch(_){}};
+  const Lbl=({children})=><div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{children}</div>;
+  const dlName=f=>f.filename||((f.url||'').split('/').pop())||'creation';
+  const files=(result&&result.files)||[];
+  const isDemo=result&&result.status==='demo';
+  return(<div className="card" style={{marginBottom:12,padding:14,border:'1px solid rgba(0,212,255,0.18)'}}>
+    <textarea className="input" rows={2} style={{width:'100%',resize:'vertical',minHeight:46,marginBottom:8,boxSizing:'border-box'}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe what you want to create..." onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go();}}}/>
+    <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+      {STUDIO_TYPES.map(x=>{const off=avail&&avail[x.id]&&avail[x.id].available===false;return(
+        <button key={x.id} className={'btn '+(type===x.id?'':'btn-magenta')} style={{fontSize:11,opacity:off?0.6:1}} title={off?(avail[x.id].reason||'Unavailable'):('Create '+x.label.toLowerCase()+' — e.g. '+x.ph)} onClick={()=>{setType(x.id);setErr(null);setResult(null)}}>{x.ico} {x.label}{off?' ⚠':''}</button>);})}
+      <div style={{flex:1}}/>
+      <button className="btn btn-magenta" style={{fontSize:12,padding:'4px 10px'}} title="Generation settings — model, style, aspect ratio, duration" onClick={()=>setShowOpts(!showOpts)}>⚙</button>
+      <button className="btn" disabled={busy||!prompt.trim()} onClick={go} style={{fontSize:12,fontWeight:700,padding:'5px 16px'}}>{busy?'Generating…':'✨ Generate'}</button>
+    </div>
+    {showOpts&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:10}}>
+      {type==='image'&&<React.Fragment>
+        <div><Lbl>Model</Lbl><select className="input" style={{width:'100%'}} value={imgModel} onChange={e=>setImgModel(e.target.value)}>{(imageModels.length?imageModels:[{id:'gemini-nano-banana-pro',label:'Nano Banana Pro'}]).map(m=><option key={m.id} value={m.id} disabled={m.available===false}>{m.label}{m.available===false?' (needs key)':''}</option>)}</select></div>
+        <div><Lbl>Style</Lbl><select className="input" style={{width:'100%'}} value={style} onChange={e=>setStyle(e.target.value)}>{IMG_STYLES.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+        <div><Lbl>Aspect ratio</Lbl><select className="input" style={{width:'100%'}} value={aspect} onChange={e=>setAspect(e.target.value)}>{['1:1','3:4','4:3','9:16','16:9'].map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+        <div><Lbl>Count</Lbl><select className="input" style={{width:'100%'}} value={count} onChange={e=>setCount(e.target.value)}>{[1,2,3,4].map(n=><option key={n} value={n}>{n}</option>)}</select></div>
+      </React.Fragment>}
+      {type==='video'&&<React.Fragment>
+        <div><Lbl>Model</Lbl><select className="input" style={{width:'100%'}} value={vidModel} onChange={e=>setVidModel(e.target.value)}>{(videoModels.length?videoModels:[{id:'veo-3',label:'Google Veo'}]).map(m=><option key={m.id} value={m.id} disabled={m.available===false}>{m.label}{m.available===false?' (needs key)':''}</option>)}</select></div>
+        <div><Lbl>Aspect ratio</Lbl><select className="input" style={{width:'100%'}} value={vAspect} onChange={e=>setVAspect(e.target.value)}>{['16:9','9:16'].map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+        <div><Lbl>Duration</Lbl><select className="input" style={{width:'100%'}} value={vDur} onChange={e=>setVDur(e.target.value)}><option value="">auto</option>{[4,5,6,8].map(n=><option key={n} value={n}>{n}s</option>)}</select></div>
+        <div style={{display:'flex',alignItems:'flex-end',fontSize:10,color:'#7fb6c9'}}>Veo renders usually take 1–3 minutes.</div>
+      </React.Fragment>}
+      {type==='music'&&<React.Fragment>
+        <div><Lbl>Model</Lbl><select className="input" style={{width:'100%'}} value={mModel} onChange={e=>setMModel(e.target.value)}><option value="lyria-clip">Lyria 3 Clip (≤30s)</option><option value="lyria-pro">Lyria 3 Pro (full song)</option></select></div>
+        <div><Lbl>Duration</Lbl><select className="input" style={{width:'100%'}} value={mDur} onChange={e=>setMDur(e.target.value)}><option value="">auto</option>{[15,30,60,120].map(n=><option key={n} value={n}>{n}s</option>)}</select></div>
+        <div style={{gridColumn:'1 / -1',fontSize:10,color:'#7fb6c9'}}>Need lyrics, genres, or vocals? The 🎵 Music tab has the full composer.</div>
+      </React.Fragment>}
+      {(type==='text'||type==='code-art')&&<div style={{gridColumn:'1 / -1',fontSize:10,color:'#7fb6c9'}}>{type==='text'?'Text runs on your configured chat provider and saves to the gallery as Markdown.':'Code art writes a self-contained p5.js HTML piece via Gemini.'}</div>}
+    </div>}
+    {!busy&&!err&&typeAvail&&typeAvail.available===false&&<div style={{marginTop:10,padding:'7px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',fontSize:10,color:'#ffd166',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+      <span style={{flex:1,minWidth:180}}>⚠ {typeAvail.reason||('Cloud '+T.label.toLowerCase()+' generation is unavailable.')}</span>
+      <button className="btn" style={{fontSize:10,padding:'2px 9px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Providers</button>
+    </div>}
+    {busy&&<div style={{marginTop:10}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+        <span style={{fontSize:16}}>{T.ico}</span>
+        <span style={{fontSize:11,color:'#cfe8f0'}}>Generating {T.label.toLowerCase()}… {fmtEl(elapsed)}{type==='video'?' — Veo usually takes 1–3 min':''}</span>
+        <div style={{flex:1}}/>
+        <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 10px'}} onClick={cancel}>✕ Cancel</button>
+      </div>
+      <div style={{height:3,borderRadius:3,overflow:'hidden',background:'rgba(127,182,201,0.12)'}}><div className="liq-indet" style={{height:'100%',width:'40%',background:'linear-gradient(90deg,transparent,#00d4ff,transparent)'}}/></div>
+      {type==='video'&&<div style={{fontSize:10,color:'#7fb6c9',marginTop:6,textAlign:'center'}}>Watch the orb in the scene for render progress.</div>}
+    </div>}
+    {err&&(err.needsKey
+      ?<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',fontSize:11,color:'#ffd166',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+        <span style={{flex:1,minWidth:180}}>🔑 {err.message}</span>
+        <button className="btn" style={{fontSize:10,padding:'3px 10px',whiteSpace:'nowrap'}} onClick={openProviders}>Open Settings → Providers</button>
+      </div>
+      :<div style={{marginTop:10,padding:'8px 10px',borderRadius:6,background:'rgba(255,0,128,0.08)',border:'1px solid rgba(255,0,128,0.25)',color:'#ff7ab8',fontSize:11}}>{err.message}</div>)}
+    {result&&<div style={{marginTop:12}}>
+      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:6}}>
+        <Lbl>{isDemo?'Demo preview — saved to the gallery':'Result — saved to the gallery'}</Lbl>
+        <div style={{flex:1}}/>
+        {result.text&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px'}} onClick={copyText}>{copied?'✓ Copied':'⧉ Copy'}</button>}
+        {files[0]&&<a className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px',textDecoration:'none'}} href={files[0].url} download={dlName(files[0])}>⬇ Download</a>}
+        {files[0]&&<button className="btn btn-magenta" style={{fontSize:10,padding:'2px 9px'}} onClick={()=>window.open('/creation/'+dlName(files[0]),'_blank')}>↗ Tab</button>}
+      </div>
+      {isDemo&&<div style={{marginBottom:8,padding:'6px 9px',borderRadius:6,background:'rgba(255,190,0,0.07)',border:'1px dashed rgba(255,190,0,0.3)',fontSize:10,color:'#ffd166'}}>⚠ This is a preview of what WOULD be generated — {result.message||'cloud generation is unavailable.'}</div>}
+      {files.length>0&&<div style={{display:'grid',gridTemplateColumns:files.length>1?'1fr 1fr':'1fr',gap:8}}>
+        {files.map((f,i)=>{const fn=dlName(f);const fx=(fn.split('.').pop()||'').toLowerCase();return(
+          <div key={i}>
+            {['png','jpg','jpeg','webp','svg','gif'].includes(fx)&&<img src={f.url} alt={fn} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
+            {['mp4','webm','mov'].includes(fx)&&<video controls src={f.url} style={{width:'100%',borderRadius:8,background:'#0a0a0f'}}/>}
+            {['mp3','wav','ogg','m4a'].includes(fx)&&<AlbumArtPlayer name={fn} url={f.url}/>}
+            {fx==='html'&&<iframe src={f.url} sandbox="allow-scripts allow-pointer-lock" referrerPolicy="no-referrer" title={fn} style={{width:'100%',height:320,border:'none',borderRadius:8,background:'#0a0a0f'}}/>}
+            {fx==='md'&&!(result&&result.text)&&<StudioMdPeek url={f.url}/>}
+          </div>);})}
+      </div>}
+      {files.length>1&&<div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>{files.map((f,i)=><a key={i} className="btn btn-magenta" style={{fontSize:10,padding:'2px 7px',textDecoration:'none'}} href={f.url} download={dlName(f)}>⬇ {dlName(f).slice(0,24)}</a>)}</div>}
+      {result.text&&<div style={{maxHeight:340,overflowY:'auto',padding:'4px 8px',background:'rgba(255,255,255,0.02)',borderRadius:8,marginTop:files.length?8:0}}><FridayDoc text={result.text}/></div>}
+    </div>}
+  </div>);
+}
 function StudioWS(){
-  const[creations,setCreations]=useState([]);const[prompt,setPrompt]=useState('');const[gen,setGen]=useState(false);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
+  const[creations,setCreations]=useState([]);const[loading,setLoading]=useState(true);const[view,setView]=useState('gallery');
   const[selected,setSelected]=useState(null);const[preview,setPreview]=useState('');const[filter,setFilter]=useState('all');
   const[creationLog,setCreationLog]=useState('');const[logOpen,setLogOpen]=useState(false);const[minor,setMinor]=useState(false);
   const[expandedCard,setExpandedCard]=useState(null);const[imgErrors,setImgErrors]=useState({});
   const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🔊',ogg:'🔊',m4a:'🔊',mp4:'🎬',webm:'🎬',mov:'🎬'};
   const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
   useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{});fetch('/api/settings').then(r=>r.json()).then(d=>{const s=d.settings||d;setMinor(!!(s&&s.minor_mode))}).catch(()=>{})},[]);
-  const create=async t=>{if(!prompt)return;setGen(true);try{await fetch(`/api/create/${t}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt})});loadCreations()}catch(e){}setGen(false)};
-  const createNow=()=>{fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(()=>alert('Daily creation launched')).catch(()=>{})};
+  // Friday's AUTONOMOUS daily creation — an opt-in agent task that runs in a
+  // Claude Code terminal. Kept deliberately OUT of the prompt-bar flow: user
+  // prompts post straight to /api/create/<type> via StudioPromptBar; this
+  // launcher (the old mis-wired "Create Now" button) is the only Studio
+  // control that touches the terminal launcher, and it says so before it runs.
+  const runDailyAgent=()=>{if(!confirm("Launch Friday's autonomous daily-creation agent? This starts a Claude Code terminal task — it does not use the prompt bar."))return;fetch('/api/vibe-code/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['Run friday daily creation'],cwd:'~\\Projects\\friday-desktop'})}).then(r=>r.json()).then(d=>alert(d&&d.status==='ok'?'Daily creation agent launched — watch the Code workspace for progress.':'Could not launch: '+((d&&d.message)||'unknown error'))).catch(()=>alert('Could not launch the daily creation agent.'))};
   const openCreation=async f=>{setSelected(f);const ext=(f.name||'').split('.').pop().toLowerCase();if(ext==='md'){try{const r=await fetch('/api/creations/'+f.name);setPreview(await r.text())}catch(e){setPreview('')}}else{setPreview('')}};
   // Deep-link: a notification's "Open Document" button navigates here with
   // {workspace:'studio',creation:<filename>} — render that creation immediately.
@@ -1821,13 +1975,10 @@ function StudioWS(){
     {view==='timeline'&&<TimelinePanel onCreated={loadCreations}/>}
     {view==='production'&&<ProductionPanel onCreated={loadCreations}/>}
     {view!=='projects'&&view!=='music'&&view!=='timeline'&&view!=='production'&&(<React.Fragment>
-    <div style={{display:'flex',gap:6,marginBottom:10,alignItems:'center'}}>
-      <input className="input" style={{flex:1}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Describe a quick text/code creation..." onKeyDown={e=>e.key==='Enter'&&create('poem')}/>
-      <button className="btn" style={{fontSize:11,whiteSpace:'nowrap'}} onClick={createNow}>Create Now</button>
-    </div>
+    <StudioPromptBar onCreated={loadCreations}/>
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
-      {['image','poem','code-art','music','video'].map(t=><button key={t} className="btn" disabled={gen} onClick={()=>create(t)} style={{fontSize:11}}>{gen?'Creating...':t}</button>)}
       {creationLog&&<button className="btn btn-magenta" style={{fontSize:11}} onClick={()=>setLogOpen(!logOpen)}>{logOpen?'Hide Log':'Creation Log'}</button>}
+      <button className="btn btn-magenta" style={{fontSize:11}} title="Opt-in agent task: Friday runs her autonomous daily creation in a Claude Code terminal. Completely separate from the prompt bar above — it does not use your prompt." onClick={runDailyAgent}>🌅 Daily creation (agent)</button>
     </div>
     {logOpen&&<div className="card" style={{marginBottom:10}}><pre style={{whiteSpace:'pre-wrap',fontSize:11,color:'#888',fontFamily:'JetBrains Mono',maxHeight:150,overflow:'auto'}}>{creationLog}</pre></div>}
     <div style={{display:'flex',gap:4,marginBottom:10,flexWrap:'wrap'}}>
