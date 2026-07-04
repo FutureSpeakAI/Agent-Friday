@@ -7,6 +7,47 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [5.1.1] — 2026-07-04 — "Gemini July-2026 model lineup"
+
+Registry/catalog refresh against the live Gemini API surface (verified
+against ai.google.dev model cards, pricing, and deprecation tables,
+2026-07-04).
+
+### Added
+
+- **Gemini 3.5 Flash** (`gemini-3.5-flash`, stable), **Gemini 3.1 Pro**
+  (`gemini-3.1-pro-preview`) and **Gemini 3.1 Flash-Lite**
+  (`gemini-3.1-flash-lite`) in the google-gemini provider, catalog meta,
+  and cost tables. Text roles stay `[]` until a google text dispatch
+  exists in `routing/model_router.py` — same "never offer what can't
+  dispatch" deal as Gemini 2.5 Pro. (Gemini 3.5 Pro is not yet in the
+  public API as of 2026-07.)
+- **Gemini Omni Flash** (`gemini-omni-flash` → `gemini-omni-flash-preview`):
+  any-to-any conversational video generation/editing (I/O 2026), wired
+  end-to-end — creative role in the registry, offline-fallback picker
+  entry, pricing ($1.50/1M in; $17.50/1M video out ≈ $0.10/s of 720p),
+  and a new Interactions-API dispatch branch in
+  `creative_engine.generate_video()` (Omni renders synchronously — it is
+  not a Veo-style long-running operation).
+- Nano Banana Lite aliases → `gemini-3.1-flash-lite-image`.
+
+### Fixed
+
+- **Every Veo alias pointed at a dead endpoint**:
+  `veo-3.0-*-generate-preview` shut down 2025-11-12, and the `veo-3.0` /
+  `veo-2.0` GA models retired 2026-06-30. All aliases now resolve to the
+  live `veo-3.1-*-generate-preview` family, with new `veo-3.1`,
+  `veo-3.1-fast`, and `veo-3.1-lite` ids exposed.
+- **Nano Banana Pro resolved to `gemini-3-pro-image-preview`** — shut
+  down 2026-06-25 — now the stable `gemini-3-pro-image`. Nano Banana 2
+  now maps to the actual NB2 model (`gemini-3.1-flash-image`) instead of
+  the 2.5-era original, which stays reachable as plain `nano-banana`
+  (sunsets 2026-10-02).
+- New Gemini 3.x text ids added to `_FORBIDDEN_CREATIVE` so a text model
+  can never be picked as a creative target.
+
+---
+
 ## [5.1.0] — 2026-07-04 — "Model-Agnostic (provider layer P0–P2)"
 
 The first three phases of `docs/MODEL_AGNOSTIC_PROVIDER_SPEC.md`: Friday routes

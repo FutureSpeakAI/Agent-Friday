@@ -61,23 +61,43 @@ CREATIVE_META_DIR = FRIDAY_DIR / "creations_meta"
 
 # Nano Banana = Google's nickname for the Gemini native image models.
 _IMAGE_MODEL_MAP = {
-    "gemini-nano-banana-pro": "gemini-3-pro-image-preview",
-    "nano-banana-pro":        "gemini-3-pro-image-preview",
-    "nano_banana_pro":        "gemini-3-pro-image-preview",
-    "gemini-nano-banana-2":   "gemini-2.5-flash-image",
-    "nano-banana-2":          "gemini-2.5-flash-image",
-    "nano_banana_2":          "gemini-2.5-flash-image",
+    # gemini-3-pro-image-preview was shut down 2026-06-25 → stable id.
+    "gemini-nano-banana-pro": "gemini-3-pro-image",
+    "nano-banana-pro":        "gemini-3-pro-image",
+    "nano_banana_pro":        "gemini-3-pro-image",
+    # Nano Banana 2 = the Gemini 3.1 Flash image model (stable 2026-05-28).
+    # gemini-2.5-flash-image is the ORIGINAL Nano Banana (sunsets 2026-10-02)
+    # and stays reachable via the bare "nano-banana" alias.
+    "gemini-nano-banana-2":   "gemini-3.1-flash-image",
+    "nano-banana-2":          "gemini-3.1-flash-image",
+    "nano_banana_2":          "gemini-3.1-flash-image",
     "nano-banana":            "gemini-2.5-flash-image",
+    # Nano Banana Lite — ultra-low-latency image tier (new in 2026).
+    "nano-banana-lite":       "gemini-3.1-flash-lite-image",
+    "gemini-nano-banana-lite": "gemini-3.1-flash-lite-image",
 }
 _VIDEO_MODEL_MAP = {
-    "veo":          "veo-3.0-generate-preview",
-    "gemini-veo":   "veo-3.0-generate-preview",
-    "google-veo":   "veo-3.0-generate-preview",
-    "veo-3":        "veo-3.0-generate-preview",
-    "veo-3.0":      "veo-3.0-generate-preview",
-    "veo-3-fast":   "veo-3.0-fast-generate-preview",
-    "veo-2":        "veo-2.0-generate-001",
-    "veo-2.0":      "veo-2.0-generate-001",
+    # veo-3.0-*-preview endpoints were shut down 2025-11-12 and the
+    # veo-3.0 / veo-2.0 GA models on 2026-06-30 — every Veo alias now
+    # lands on the live 3.1 previews.
+    "veo":          "veo-3.1-generate-preview",
+    "gemini-veo":   "veo-3.1-generate-preview",
+    "google-veo":   "veo-3.1-generate-preview",
+    "veo-3":        "veo-3.1-generate-preview",
+    "veo-3.0":      "veo-3.1-generate-preview",
+    "veo-3.1":      "veo-3.1-generate-preview",
+    "veo-3-fast":   "veo-3.1-fast-generate-preview",
+    "veo-3.1-fast": "veo-3.1-fast-generate-preview",
+    "veo-3.1-lite": "veo-3.1-lite-generate-preview",
+    "veo-2":        "veo-3.1-generate-preview",   # veo-2.0-generate-001
+    "veo-2.0":      "veo-3.1-generate-preview",   # retired 2026-06-30
+    # Gemini Omni Flash — conversational any-to-any video (I/O 2026).
+    # Dispatched via the Interactions API, NOT Veo’s LRO path — see
+    # _generate_video_omni().
+    "gemini-omni-flash": "gemini-omni-flash-preview",
+    "gemini-omni":       "gemini-omni-flash-preview",
+    "omni-flash":        "gemini-omni-flash-preview",
+    "omni":              "gemini-omni-flash-preview",
 }
 
 DEFAULT_IMAGE_MODEL = "gemini-nano-banana-pro"
@@ -86,6 +106,7 @@ DEFAULT_VIDEO_MODEL = "veo"
 # Voice / text models that must NEVER be used for creative output.
 _FORBIDDEN_CREATIVE = (
     "gemini-2.5-flash", "gemini-2.5-pro",
+    "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite",
     "gemini-3.1-flash-live-preview",
     "gemini-2.5-flash-native-audio-preview-12-2025",
     "gemini-2.5-flash-preview-tts",
@@ -661,7 +682,7 @@ def _extract_and_save_images(response, prompt: str, single: bool = False) -> Lis
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  VIDEO GENERATION  (Google Veo — text-to-video & image-to-video)
+#  VIDEO GENERATION  (Google Veo + Gemini Omni Flash — text/image-to-video)
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Veo runs as a long-running operation. We poll it and drive the orb's progress
@@ -710,6 +731,18 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
                     "message": f"Could not read seed image: {image_path}"}
 
     mode = "image-to-video" if seed_bytes else "text-to-video"
+
+    # Gemini Omni Flash renders synchronously over the Interactions API —
+    # an entirely different call shape from Veo’s long-running operation.
+    if _is_omni_model(api_model):
+        return _generate_video_omni(prompt, api_model=api_model,
+                                    requested_model=model,
+                                    aspect_ratio=aspect_ratio,
+                                    seed_bytes=seed_bytes, seed_mime=seed_mime,
+                                    mode=mode, duration_seconds=duration_seconds,
+                                    image_path=image_path,
+                                    project_id=project_id, license=license)
+
     orb = _orb_start(f"Generating video (~{_VIDEO_EST_SECONDS // 60 or 1}-2 min)…",
                      icon="🎬", name="Generating video")
     try:
@@ -882,6 +915,150 @@ def _video_bytes(video, client) -> Optional[bytes]:
             except Exception:
                 pass
             return data
+    except Exception:
+        pass
+    return None
+
+# ── Gemini Omni Flash (Interactions API) ──────────────────────────────
+
+_OMNI_MODEL_PREFIX = "gemini-omni"
+
+
+def _is_omni_model(api_model) -> bool:
+    return bool(api_model) and str(api_model).startswith(_OMNI_MODEL_PREFIX)
+
+
+def _generate_video_omni(prompt, *, api_model, requested_model, aspect_ratio,
+                         seed_bytes, seed_mime, mode, duration_seconds,
+                         image_path, project_id, license=None):
+    """Gemini Omni Flash video generation via the Interactions API.
+
+    Omni is NOT a Veo-style long-running operation: interactions.create()
+    blocks until the ~10s clip (with native audio) is rendered and hands
+    back base64 MP4. duration_seconds is recorded in metadata but not sent
+    — clip length is model-controlled in the current preview. Requires a
+    google-genai new enough to expose client.interactions; older SDKs get
+    a clear upgrade message instead of an AttributeError.
+    """
+    orb = _orb_start("Generating video with Gemini Omni…", icon="🎬",
+                     name="Generating video")
+    try:
+        client = _client()
+        interactions = getattr(client, "interactions", None)
+        if interactions is None:
+            _orb_fail(orb)
+            return {"status": "error",
+                    "message": "Gemini Omni needs the Interactions API — "
+                               "update the SDK: pip install -U google-genai"}
+        _orb_update(orb, progress=0.15, label="Submitting to Gemini Omni…")
+
+        if seed_bytes:
+            payload = [
+                {"type": "image",
+                 "data": base64.b64encode(seed_bytes).decode("ascii"),
+                 "mime_type": seed_mime or "image/png"},
+                {"type": "text", "text": prompt},
+            ]
+        else:
+            payload = prompt
+        kwargs = {"model": api_model, "input": payload,
+                  "response_format": {"type": "video",
+                                      "aspect_ratio": aspect_ratio}}
+        if seed_bytes:
+            kwargs["generation_config"] = {
+                "video_config": {"task": "image_to_video"}}
+
+        _orb_update(orb, progress=0.35, label="Rendering with Omni…")
+        interaction = interactions.create(**kwargs)
+
+        data = _omni_video_bytes(interaction)
+        if not data:
+            _orb_fail(orb)
+            return {"status": "error",
+                    "message": "Gemini Omni finished but returned no video "
+                               "(it may have been filtered). Try a "
+                               "different prompt."}
+
+        _orb_update(orb, progress=0.92, label="Saving video…")
+        fname = f"friday-video-{_timestamp()}-{uuid.uuid4().hex[:4]}.mp4"
+        _save_bytes(data, fname)
+        files = [_file_record(fname, "video")]
+
+        created = datetime.now().isoformat()
+        for f in files:
+            _write_metadata(f["filename"], {
+                "kind": "video", "mode": mode, "prompt": prompt,
+                "model": requested_model or DEFAULT_VIDEO_MODEL,
+                "api_model": api_model,
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": duration_seconds,
+                "seed_image": Path(image_path).name if image_path else None,
+                "created": created,
+            })
+            _write_creative_provenance(f, "video", prompt,
+                                       requested_model or DEFAULT_VIDEO_MODEL,
+                                       api_model, license=license)
+        if project_id:
+            try:
+                from agent_friday.services import creative_memory
+                for f in files:
+                    creative_memory.add_asset(project_id, f["filename"])
+            except Exception:
+                pass
+        _orb_update(orb, status="completed", progress=1.0, label="Done")
+        _defer(3.0, _safe_remove, orb)
+        for f in files:
+            _notify(f["filename"])
+        return {"status": "ok", "kind": "video", "mode": mode,
+                "files": files,
+                "model": requested_model or DEFAULT_VIDEO_MODEL,
+                "api_model": api_model, "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "duration_seconds": duration_seconds}
+    except Exception as e:
+        _orb_fail(orb)
+        import traceback
+        traceback.print_exc()
+        return {"status": "error",
+                "message": f"Video generation failed: {e}"}
+
+
+def _omni_video_bytes(interaction):
+    """Extract MP4 bytes from an Interactions response (SDK or raw shape)."""
+    def _b(data):
+        try:
+            return base64.b64decode(data) if isinstance(data, str) else bytes(data)
+        except Exception:
+            return None
+    try:
+        out = getattr(interaction, "output_video", None)
+        data = getattr(out, "data", None) if out is not None else None
+        if data:
+            got = _b(data)
+            if got:
+                return got
+    except Exception:
+        pass
+    # Raw/REST-ish shape: steps[].content[] with type == "video".
+    try:
+        steps = (getattr(interaction, "steps", None)
+                 or (interaction.get("steps")
+                     if isinstance(interaction, dict) else None) or [])
+        for step in steps:
+            content = (getattr(step, "content", None)
+                       or (step.get("content")
+                           if isinstance(step, dict) else None) or [])
+            for part in content:
+                ptype = getattr(part, "type", None) or (
+                    part.get("type") if isinstance(part, dict) else None)
+                if ptype != "video":
+                    continue
+                data = getattr(part, "data", None) or (
+                    part.get("data") if isinstance(part, dict) else None)
+                if data:
+                    got = _b(data)
+                    if got:
+                        return got
     except Exception:
         pass
     return None

@@ -1,4 +1,4 @@
-﻿"""Unit tests for the creative generation engine (services/creative_engine.py).
+"""Unit tests for the creative generation engine (services/creative_engine.py).
 
 Offline-only: the google-genai client is replaced with hand-rolled fakes, so no
 network call and no API key are ever needed. Covers model resolution, the
@@ -146,8 +146,10 @@ def test_safety_blocks_empty_and_overlong():
 
 # ── Model resolution ────────────────────────────────────────────────────────
 def test_resolve_image_model_maps_catalog_ids():
-    assert ce.resolve_image_model("gemini-nano-banana-pro") == "gemini-3-pro-image-preview"
-    assert ce.resolve_image_model("gemini-nano-banana-2") == "gemini-2.5-flash-image"
+    assert ce.resolve_image_model("gemini-nano-banana-pro") == "gemini-3-pro-image"
+    assert ce.resolve_image_model("gemini-nano-banana-2") == "gemini-3.1-flash-image"
+    # The ORIGINAL 2.5-era Nano Banana stays reachable via the bare alias.
+    assert ce.resolve_image_model("nano-banana") == "gemini-2.5-flash-image"
     # Default + None
     assert ce.resolve_image_model(None) == ce.resolve_image_model("gemini-nano-banana-pro")
 
@@ -163,9 +165,14 @@ def test_resolve_image_model_passthrough_raw_id():
 
 
 def test_resolve_video_model_maps_catalog_ids():
-    assert ce.resolve_video_model("veo") == "veo-3.0-generate-preview"
-    assert ce.resolve_video_model("veo-3") == "veo-3.0-generate-preview"
-    assert ce.resolve_video_model(None) == "veo-3.0-generate-preview"
+    assert ce.resolve_video_model("veo") == "veo-3.1-generate-preview"
+    assert ce.resolve_video_model("veo-3") == "veo-3.1-generate-preview"
+    assert ce.resolve_video_model(None) == "veo-3.1-generate-preview"
+    # Gemini Omni Flash rides the video picker but dispatches via the
+    # Interactions API — resolution must land on the -preview wire id.
+    assert ce.resolve_video_model("gemini-omni-flash") == "gemini-omni-flash-preview"
+    assert ce._is_omni_model("gemini-omni-flash-preview")
+    assert not ce._is_omni_model("veo-3.1-generate-preview")
 
 
 # ── Availability / blocked envelopes ────────────────────────────────────────
@@ -194,7 +201,7 @@ def test_generate_image_writes_file_and_metadata(gemini_key, tame, monkeypatch):
     res = ce.generate_image("a neon koi", model="gemini-nano-banana-2",
                             style="cinematic", aspect_ratio="16:9", n=1)
     assert res["status"] == "ok"
-    assert res["api_model"] == "gemini-2.5-flash-image"
+    assert res["api_model"] == "gemini-3.1-flash-image"
     assert res["files"], "expected at least one saved file"
     f = res["files"][0]
     saved = ce.CREATIONS_DIR / f["filename"]

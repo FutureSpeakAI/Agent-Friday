@@ -49,6 +49,16 @@ PRICING = {
     "gemini-2.5-pro":             {"in": 0.00125, "out": 0.010},
     "gemini-2.5-flash":           {"in": 0.0003, "out": 0.0025},
     "gemini-3.1-flash-live-preview": {"in": 0.0005, "out": 0.002},
+    # Gemini 3.x lineup (ai.google.dev/gemini-api/docs/pricing, 2026-07).
+    # 3.1 Pro uses the <=200k-token tier ($2/$12 per 1M).
+    "gemini-3.5-flash":           {"in": 0.0015, "out": 0.009},
+    "gemini-3.1-pro-preview":     {"in": 0.002, "out": 0.012},
+    "gemini-3.1-flash-lite":      {"in": 0.00025, "out": 0.0015},
+    # Omni Flash bills video output at $17.50/1M tokens (5,792 tok/s of
+    # 720p ≈ $0.10/s); text output is $9/1M. Use the video rate — video
+    # is the product. Both the friendly id and the wire id are metered.
+    "gemini-omni-flash":          {"in": 0.0015, "out": 0.0175},
+    "gemini-omni-flash-preview":  {"in": 0.0015, "out": 0.0175},
 }
 
 
