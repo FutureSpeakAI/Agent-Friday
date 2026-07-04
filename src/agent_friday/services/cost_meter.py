@@ -39,6 +39,8 @@ PRICING = {
     "claude-sonnet-5":            {"in": 0.003, "out": 0.015},
     "claude-fable-5":             {"in": 0.003, "out": 0.015},
     "claude-opus-4-8":            {"in": 0.015, "out": 0.075},
+    "claude-opus-4-7":            {"in": 0.015, "out": 0.075},
+    "claude-opus-4-6":            {"in": 0.015, "out": 0.075},
     "claude-sonnet-4-6":          {"in": 0.003, "out": 0.015},
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},
     "gpt-4o":                     {"in": 0.0025, "out": 0.010},
@@ -63,9 +65,12 @@ def price_for(model):
     except Exception:
         pass
     # Fallback: blended provider_registry rate applied to both directions.
+    # (list_providers is a method on the registry object, not the module —
+    # the old module-level hasattr check made this loop dead code and every
+    # unknown cloud model metered at $0.)
     try:
-        from agent_friday.services import provider_registry as _pr
-        for prov in _pr.list_providers() if hasattr(_pr, "list_providers") else []:
+        from agent_friday.services.provider_registry import get_provider_registry
+        for prov in get_provider_registry().list_providers():
             rate = (prov.get("cost_per_1k") or {}).get(model)
             if rate:
                 return {"in": float(rate), "out": float(rate)}

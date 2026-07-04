@@ -27,6 +27,49 @@ def test_local_models_free():
     assert cm.price_for("llama3.1:8b") == {"in": 0.0, "out": 0.0}
 
 
+def test_every_registry_text_cloud_model_is_priced():
+    # Every model the token-metered cloud providers (anthropic/openai) offer in
+    # the picker must meter at a nonzero rate — a $0 entry silently underreports
+    # Cost & Usage and budget alerts never trip. Regression: claude-opus-4-7 /
+    # 4-6 were added to the registry (251d88f) without PRICING entries and
+    # metered $0. (Gemini creative models — Veo/Nano Banana/Lyria — are metered
+    # by the creation budget, not per-token, so they're out of scope here.)
+    from agent_friday.services.provider_registry import get_provider_registry
+    reg = get_provider_registry()
+    for pname in ("anthropic", "openai"):
+        prov = reg.get_provider(pname)
+        assert prov, f"provider {pname} missing from registry"
+        for mid in prov.get("models") or []:
+            p = cm.price_for(mid)
+            assert p["in"] > 0 and p["out"] > 0, (
+                f"{pname}/{mid} meters at $0 — add it to "
+                f"cost_meter.PRICING or the provider's cost_per_1k")
+            assert cm.cost_for(mid, 10000, 10000) > 0
+
+
+def test_opus_47_46_priced_like_opus_48():
+    for mid in ("claude-opus-4-7", "claude-opus-4-6"):
+        assert cm.price_for(mid) == {"in": 0.015, "out": 0.075}
+        assert cm.cost_for(mid, 10000, 10000) == pytest.approx(0.9)
+
+
+def test_price_for_falls_back_to_registry_blended_rate(monkeypatch):
+    # Unknown cloud model ids must pick up the provider's blended cost_per_1k
+    # rate for both directions instead of $0. (The old fallback loop checked
+    # hasattr(module, "list_providers") — a method on the registry OBJECT —
+    # so it always iterated [] and was dead code.)
+    import agent_friday.services.provider_registry as pr
+
+    class _StubRegistry:
+        def list_providers(self):
+            return [{"name": "custom",
+                     "cost_per_1k": {"acme-frontier-1": 0.02}}]
+
+    monkeypatch.setattr(pr, "get_provider_registry", lambda: _StubRegistry())
+    assert cm.price_for("acme-frontier-1") == {"in": 0.02, "out": 0.02}
+    assert cm.cost_for("acme-frontier-1", 1000, 1000) == pytest.approx(0.04)
+
+
 def test_record_and_summary():
     cm.record("anthropic", "claude-opus-4-8", 1000, 1000,
               workspace="research", kind="chat")
