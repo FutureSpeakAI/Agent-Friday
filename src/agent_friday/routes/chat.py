@@ -537,13 +537,18 @@ def chat():
 
         if not _routed_local:
             if _provider == 'openai':
-                # OpenAI-compatible cloud path (OpenRouter / any /v1 endpoint),
-                # with a full agentic tool loop. Records its own cost.
+                # OpenAI-compatible cloud path with a full agentic tool loop.
+                # The route decision carries the RESOLVED registry provider
+                # (openrouter / groq / huggingface / a custom endpoint ...), so
+                # each request hits that provider's own base_url + credentials
+                # (multi-provider dispatch, GAP-3 fix). provider_name=None
+                # keeps the legacy single-slot settings behavior.
                 reply, tool_trace = _call_openai(
                     messages, system=system_prompt, model=_route_info.get('model'),
                     temperature=settings.get('temperature'),
                     orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
                     tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    provider=_route_info.get('provider_name'),
                 )
             else:
                 # Honor the user's chosen Claude model (orchestrator selection)

@@ -3,7 +3,71 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.0.1**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.1.0**
+
+---
+
+## [5.1.0] — 2026-07-04 — "Model-Agnostic (provider layer P0–P2)"
+
+The first three phases of `docs/MODEL_AGNOSTIC_PROVIDER_SPEC.md`: Friday routes
+by REGISTRY, not by model-name guessing, speaks to any number of
+OpenAI-compatible providers concurrently, and ships OpenRouter first-class.
+
+### Added
+
+- **Provider descriptor schema v2** (`routing/provider_descriptors.py`):
+  adapter/type aliasing, auth env-var chains with aliases (`HF_TOKEN` /
+  `HUGGINGFACE_API_KEY`), per-provider network/discovery/pricing/budget/feature
+  blocks, and real validation with actionable errors — a bad
+  `~/.friday/providers/*.json` is skipped, logged, and surfaced in
+  `/api/health/full` + Settings instead of vanishing. YAML descriptors accepted.
+- **Ten new built-in providers**: OpenRouter (enabled, first-class), Hugging
+  Face Inference Providers router, Groq, Together, Fireworks, Mistral,
+  DeepSeek, xAI, Perplexity, Cohere — one key press each in Settings.
+- **OpenRouter first-class** (GAP-1): live model discovery from
+  `/api/v1/models` (pricing, context, modalities, tool support, `:free`
+  detection) cached with TTL + stale-while-revalidate; usage accounting
+  (`usage.cost` is the authoritative billed figure in the ledger); server-side
+  `models[]` fallback support; 429 `Retry-After` etiquette.
+- **Model resolver** (`resolve_model`, GAP-4 fix): registry-first model→provider
+  attribution. `meta-llama/llama-4-maverick:free` resolves to OpenRouter (the
+  `:` no longer misroutes aggregator ids to Ollama), `gemma3:4b` to the local
+  daemon, `claude-x:latest` (installed) to Ollama even with a cloud-looking
+  name, `provider::model` is always explicit.
+- **Multi-provider dispatch** (GAP-3 fix): `_call_openai(provider=…)` reads the
+  endpoint, credentials, and headers from THAT provider's descriptor — Groq
+  subagent + OpenRouter orchestrator + local Ollama vault in one session. The
+  single-slot `model_routing.openai_*` settings keep working (legacy path).
+- **Provider health measurement plane**: per-provider rolling p50/p95 latency,
+  error rate, last success/failure, and a 5-failure circuit breaker with 60s
+  cooldown — recorded from every adapter call, surfaced in
+  `GET /api/providers(/health)`, and consulted by the generation ladders
+  (a 'down' provider is tried last, never first).
+- **Provider management API**: `POST /api/providers/validate` (dry-run),
+  `PATCH /api/providers/<name>` (enable/disable/edit),
+  `POST /api/providers/<name>/test` (latency + models_seen + optional 1-token
+  ping), `POST /api/providers/<name>/models/refresh`, and
+  `GET /api/models/search` across every provider's statics + discovery cache.
+- **Settings → Providers tab**: health-dot provider list (measured, not
+  assumed), encrypted key management, Test Connection, model-list refresh,
+  per-provider spend today + budget cap display, Add Provider from templates
+  (classification radio gated to private hosts), and a cross-provider Model
+  Browser with free/tools/price metadata.
+- **Pricing service** (`services/pricing.py`): discovery-cache → descriptor →
+  dataset → v1-blended lookup; unknown price is `None`, never treated as $0.
+
+### Security
+
+- **Egress classification is registry-driven** (GAP-9 fix): the gate's local
+  bypass now requires `classification: "local"` + a local-capable adapter + a
+  loopback/RFC1918/`.local` base_url **re-verified at call time**. A descriptor
+  *typed* `ollama` pointing at a remote URL is classified cloud and sealed; a
+  genuine LAN vLLM/LM Studio finally gets the legit local bypass. The old
+  `{"ollama", "local"}` set survives only as the fallback for non-registry
+  family names.
+- Descriptors are data, never secrets: raw `api_key` fields are rejected with a
+  400 pointing at the encrypted key endpoint, and `extra_headers` cannot set
+  `Authorization`.
 
 ---
 

@@ -219,8 +219,12 @@ def flush():
 
 def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
            session_ctx=None, workspace=None, kind=None, schedule_id=None,
-           run_id=None):
+           run_id=None, cost_usd=None):
     """Record one model call. Buffered; flushed off the hot path.
+
+    ``cost_usd`` overrides the locally computed price — used when the provider
+    reports an authoritative figure (OpenRouter usage accounting returns the
+    exact billed cost per response, which beats local price math).
 
     Also mirrors into the legacy in-memory CostTracker so existing savings stats
     keep working. Never raises — metering must not break a model call.
@@ -231,7 +235,21 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
         attr = _resolve_attr(session_ctx, {
             "workspace": workspace, "kind": kind,
             "schedule_id": schedule_id, "run_id": run_id})
-        cost = cost_for(model, input_tokens, output_tokens)
+        if cost_usd is not None:
+            cost = round(float(cost_usd), 6)
+        else:
+            cost = cost_for(model, input_tokens, output_tokens)
+            if cost == 0.0 and provider:
+                # Enrichment tier: the pricing service knows discovery-cache and
+                # descriptor prices for models the static PRICING table doesn't.
+                try:
+                    from agent_friday.services import pricing as _pricing
+                    live = _pricing.cost_usd(provider, model,
+                                             input_tokens, output_tokens)
+                    if live is not None:
+                        cost = live
+                except Exception:
+                    pass
         row = (_time.time(), provider or "", model or "", input_tokens,
                output_tokens, cost, int(duration_ms or 0),
                attr.get("workspace") or "", attr.get("kind") or "chat",
@@ -264,7 +282,9 @@ def record(provider, model, input_tokens=0, output_tokens=0, *, duration_ms=0,
 def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None):
     """Record from a provider ``usage`` object/dict. Maps both Anthropic
     (input_tokens/output_tokens) and OpenAI (prompt_tokens/completion_tokens)
-    shapes onto the per-direction schema."""
+    shapes onto the per-direction schema. An OpenRouter-style ``usage.cost``
+    (exact billed USD, present when usage accounting is requested) is honored
+    as the authoritative cost for the row."""
     def _get(obj, *keys):
         for k in keys:
             if isinstance(obj, dict):
@@ -277,8 +297,13 @@ def meter(provider, model, usage, *, duration_ms=0, session_ctx=None, kind=None)
         return 0.0
     in_tok = _get(usage, "input_tokens", "prompt_tokens")
     out_tok = _get(usage, "output_tokens", "completion_tokens")
+    reported = _get(usage, "cost")  # OpenRouter usage accounting (USD)
+    try:
+        cost_usd = float(reported) if reported not in (0, None, "") else None
+    except (TypeError, ValueError):
+        cost_usd = None
     return record(provider, model, in_tok, out_tok, duration_ms=duration_ms,
-                  session_ctx=session_ctx, kind=kind)
+                  session_ctx=session_ctx, kind=kind, cost_usd=cost_usd)
 
 
 # ── Queries ──────────────────────────────────────────────────────────────────

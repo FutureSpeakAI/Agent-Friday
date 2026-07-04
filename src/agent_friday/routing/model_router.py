@@ -344,7 +344,7 @@ class ModelRouter:
         """
         try:
             from agent_friday.services.provider_registry import get_provider_registry
-            for p in get_provider_registry():
+            for p in get_provider_registry().list_providers():
                 if p.get("type") in ("ollama", "local-voice", "nemo-local"):
                     if model_id in (p.get("models") or []):
                         return True
@@ -357,20 +357,42 @@ class ModelRouter:
         return False
 
     def _apply_cloud_provider(self, result, ctx):
-        """Retag a 'cloud' decision as 'openai' when an OpenAI-compatible cloud
-        provider is configured, so the server dispatches to _call_openai.
+        """Retag a 'cloud' decision by RESOLVING the model to the provider that
+        actually owns it (registry-first, GAP-4 fix), so the server dispatches
+        to the right executor.
 
-        Covers OpenRouter (hundreds of models) and any /v1 base_url endpoint
-        (Together, Groq, Fireworks, vLLM, LM Studio, OpenAI itself). is_local
-        stays False in _finalize, so PII scrubbing and vault gating still apply
-        exactly as they do for Anthropic. Vault routing is intentionally left on
-        the trusted Anthropic 'cloud' path (handled in _route_vault).
+        Resolution goes through routing/provider_descriptors.resolve_model():
+        aggregator ids (`org/model[:variant]`) route to OpenRouter/HuggingFace,
+        Ollama tags to the local daemon, `claude-*` to Anthropic, and any model
+        listed by exactly one enabled provider to that provider — no more
+        substring guessing. The decision gains `provider_name` (the registry
+        name, e.g. "openrouter"/"groq") while `provider` keeps the legacy enum
+        {cloud, openai, local} for un-migrated callers.
+
+        The legacy single-slot behavior (settings.model_routing.cloud_provider
+        = openai/openrouter/compatible + openai_model) is preserved for ids the
+        resolver attributes to Anthropic or cannot attribute at all. is_local
+        stays False in _finalize for cloud results, so PII scrubbing and vault
+        gating apply exactly as before. Vault routing is intentionally left on
+        _route_vault.
         """
         if result.get("provider") != "cloud":
             return result
         model = str(result.get("model") or "")
         cp = str(self.config.get("cloud_provider") or "anthropic").lower()
         fam = provider_family(model)
+        explicit_oai = cp in ("openai", "openrouter", "openai_compatible", "compatible")
+
+        def _legacy_openai_retag():
+            result["provider"] = "openai"
+            result["model"] = (
+                ctx.get("openai_model")
+                or (model if fam == "openai" else None)
+                or self.config.get("openai_model")
+                or model
+            )
+            result["reason"] = (result.get("reason") or "") + " (openai-compatible)"
+            return result
 
         # Registry check: if the model is explicitly listed under an Ollama (or
         # other local-type) provider, it's local regardless of its name — an
@@ -380,10 +402,53 @@ class ModelRouter:
             result["reason"] = (result.get("reason") or "") + " (local per registry)"
             return result
 
+        # ── Registry-first resolution (GAP-4 fix) ──────────────────────────
+        resolved = None
+        try:
+            from agent_friday.routing.provider_descriptors import (
+                resolve_model, adapter_of, classification_of)
+            resolved = resolve_model(model, config=self.config)
+        except Exception:
+            resolved = None
+        if resolved is not None:
+            prov, actual_model = resolved
+            pname = prov.get("name") or ""
+            adapter = adapter_of(prov)
+            if adapter in ("ollama",) or classification_of(prov) == "local":
+                # Resolved to an on-device provider — the picker chose a local
+                # brain. Safe: vault detection already ran (non-vault request).
+                result["provider"] = "local"
+                result["model"] = actual_model
+                result["provider_name"] = pname
+                result["reason"] = (result.get("reason") or "") + \
+                    f" (local per resolver: {pname})"
+                return result
+            if explicit_oai:
+                # The user explicitly pointed the cloud slot at an
+                # OpenAI-compatible endpoint (legacy single-slot config, kept
+                # working per the migration contract) — that wins for every
+                # non-local result, exactly as before this refactor.
+                return _legacy_openai_retag()
+            if adapter == "anthropic":
+                result["provider_name"] = pname
+                return result
+            if adapter == "openai-compatible":
+                # Any OpenAI-compatible provider — OpenAI itself, OpenRouter,
+                # HuggingFace, Groq, a LAN vLLM… — dispatches to _call_openai
+                # against ITS OWN base_url/credentials (multi-provider, GAP-3).
+                result["provider"] = "openai"
+                result["model"] = actual_model
+                result["provider_name"] = pname
+                result["reason"] = (result.get("reason") or "") + \
+                    f" (openai-compatible: {pname})"
+                return result
+            # google + anything else: no text dispatch yet — fall through to
+            # the legacy handling below.
+
+        # ── Legacy heuristics (unresolved ids) ─────────────────────────────
         # The model picker is authoritative: a selected model id that clearly
         # belongs to a local family (gemma4:…, llama3.1:…) routes on-device even
-        # in cloud_only mode — the user explicitly chose a local brain. Safe here
-        # because vault detection already ran (this is a non-vault request).
+        # in cloud_only mode — the user explicitly chose a local brain.
         if fam == "local":
             result["provider"] = "local"
             result["reason"] = (result.get("reason") or "") + " (local model selected)"
@@ -391,18 +456,9 @@ class ModelRouter:
 
         # An OpenAI-family model id (gpt-4o, o3, …) — or an explicitly configured
         # OpenAI-compatible cloud_provider (OpenRouter/Together/Groq/vLLM/etc.) —
-        # dispatches to _call_openai. is_local stays False so PII scrubbing and
-        # vault gating apply exactly as for Anthropic.
-        explicit_oai = cp in ("openai", "openrouter", "openai_compatible", "compatible")
+        # dispatches to _call_openai.
         if fam == "openai" or explicit_oai:
-            result["provider"] = "openai"
-            result["model"] = (
-                ctx.get("openai_model")
-                or (model if fam == "openai" else None)
-                or self.config.get("openai_model")
-                or model
-            )
-            result["reason"] = (result.get("reason") or "") + " (openai-compatible)"
+            return _legacy_openai_retag()
         return result
 
     def _route_basic(self, messages, ctx):

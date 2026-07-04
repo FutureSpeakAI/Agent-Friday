@@ -13,7 +13,11 @@ These are separate by design. The router can be wrong or bypassed; the gate is
 the last line of defense and cannot be bypassed without modifying this module.
 
 Default: REDACT on uncertainty — fail-closed, not fail-open.
-Local providers (Ollama / 'local') bypass this gate; data stays on-device.
+Local providers bypass this gate; data stays on-device. "Local" is decided by
+the provider REGISTRY's egress classification (classification: "local" + a
+local-capable adapter + a loopback/RFC1918 base_url verified at call time —
+see is_local_provider), with the legacy {"ollama", "local"} family names kept
+only as a fallback for non-registry provider strings.
 """
 from __future__ import annotations
 
@@ -28,7 +32,54 @@ from typing import Any
 from agent_friday.services.sensitivity_classifier import classify as _classify_impl, Tier
 
 # ── Provider classification ────────────────────────────────────────────────────
+# Legacy family names that historically bypassed the gate. Kept ONLY as the
+# belt-and-braces fallback for provider strings that are not registry names
+# (the executor's family enums). The primary check is registry-driven:
+# is_local_provider() below (GAP-9 fix, spec §9.2).
 _LOCAL_PROVIDERS = {"ollama", "local"}
+
+
+def is_local_provider(name: str) -> bool:
+    """Registry-driven local classification (spec §9.2) — the gate bypass test.
+
+    A provider earns the local bypass only when ALL of:
+      1. its registry descriptor says `classification: "local"` (effective —
+         normalize demotes unearned claims at load),
+      2. its adapter is a local-capable transport (ollama / local-voice /
+         nemo-local / openai-compatible), and
+      3. its base_url resolves to a loopback / RFC1918 / *.local host —
+         re-checked HERE at call time, so a settings edit between registry
+         load and the call cannot open a hole.
+
+    A descriptor typed "ollama" but pointing at a REMOTE url therefore
+    classifies CLOUD and gets sealed — the inverse of GAP-9. Names not in the
+    registry fall back to the legacy family set (defense in depth), so the
+    executor's "ollama"/"local" enums keep bypassing and everything else —
+    including unknown/empty names — is cloud (fail-closed).
+    """
+    n = (name or "").lower().strip()
+    if not n:
+        return False  # unknown provenance → cloud → gated
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.routing.provider_descriptors import (
+            classification_of, adapter_of, is_private_host,
+            LOCAL_CAPABLE_ADAPTERS,
+        )
+        p = get_provider_registry().get_provider(n)
+    except Exception:
+        # Registry unavailable (early boot, tests importing the gate alone):
+        # the conservative legacy set is the only authority.
+        return n in _LOCAL_PROVIDERS
+    if p is None:
+        return n in _LOCAL_PROVIDERS  # legacy belt-and-braces
+    if classification_of(p) != "local":
+        return False
+    if adapter_of(p) not in LOCAL_CAPABLE_ADAPTERS:
+        return False
+    # Call-time re-verification of the actual host (DNS re-resolved, cached
+    # briefly inside is_private_host).
+    return is_private_host(p.get("base_url"))
 
 _LOG_LOCK = threading.Lock()
 _DEFAULT_LOG = Path.home() / ".friday" / "vault" / "egress-log.jsonl"
@@ -85,7 +136,13 @@ def _rate_limit() -> None:
 
 
 def _is_cloud(provider: str) -> bool:
-    return (provider or "").lower().strip() not in _LOCAL_PROVIDERS
+    """True when the provider's payloads leave the device (must be gated).
+
+    Registry-first via is_local_provider(): the registry's egress
+    classification decides, with the hardcoded family set only as fallback
+    for non-registry names. Default on uncertainty: CLOUD (gated).
+    """
+    return not is_local_provider(provider)
 
 
 def _classify_cloud(text: str) -> int:
