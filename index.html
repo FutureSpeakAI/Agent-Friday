@@ -25927,6 +25927,801 @@ function GoogleAccountsPanel() {
     }
   }, msg));
 }
+// ─── Settings → Providers — the model-agnostic provider layer (P1/P2) ───
+// Lists every registered provider with live health (status dot + p50 latency),
+// catalog size, spend today, encrypted key management, Test Connection, model
+// list refresh, enable/disable, and remove/revert. Add Provider works from the
+// built-in templates (OpenRouter, HuggingFace, Groq, …) or a custom endpoint.
+// The Model Browser searches every connected provider via /api/models/search.
+function ProviderStatusDot({
+  prov
+}) {
+  const h = prov.health || {};
+  const avail = h.availability;
+  let color = '#555',
+    title = 'no traffic yet';
+  if (!prov.enabled) {
+    color = '#555';
+    title = 'disabled';
+  } else if (!prov.available) {
+    color = '#f59e0b';
+    title = 'needs attention (no key)';
+  } else if (avail === 'ok' || avail === 'unknown') {
+    color = '#00ff80';
+    title = avail === 'ok' ? 'healthy' : 'ready';
+  } else if (avail === 'degraded') {
+    color = '#f59e0b';
+    title = 'degraded — elevated error rate';
+  } else if (avail === 'down') {
+    color = '#ef4444';
+    title = 'down — circuit breaker open';
+  }
+  return /*#__PURE__*/React.createElement("span", {
+    title: title,
+    style: {
+      display: 'inline-block',
+      width: 9,
+      height: 9,
+      borderRadius: 5,
+      background: color,
+      boxShadow: `0 0 6px ${color}`,
+      flexShrink: 0
+    }
+  });
+}
+function ProviderRow({
+  prov,
+  onChanged
+}) {
+  const [keyDraft, setKeyDraft] = useState('');
+  const [busy, setBusy] = useState('');
+  const [testRes, setTestRes] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+  const h = prov.health || {};
+  const envKey = (prov.auth || {}).key || '';
+  const needsKey = (prov.auth || {}).type === 'env_var';
+  const isLocal = prov.classification === 'local';
+  const canDiscover = (prov.discovery || {}).mode === 'api';
+  const saveKey = async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    setBusy('key');
+    try {
+      await apiFetch('/api/providers/' + prov.name + '/key', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          key
+        })
+      });
+    } catch (e) {}
+    setKeyDraft('');
+    setBusy('');
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    onChanged();
+  };
+  const removeKey = async () => {
+    setBusy('key');
+    try {
+      await apiFetch('/api/providers/' + prov.name + '/key', {
+        method: 'DELETE'
+      });
+    } catch (e) {}
+    setBusy('');
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    onChanged();
+  };
+  const runTest = async () => {
+    setBusy('test');
+    setTestRes(null);
+    try {
+      const r = await apiFetch('/api/providers/' + prov.name + '/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      });
+      setTestRes(await r.json());
+    } catch (e) {
+      setTestRes({
+        status: 'error',
+        detail: String(e)
+      });
+    }
+    setBusy('');
+  };
+  const refreshModels = async () => {
+    setBusy('models');
+    try {
+      const r = await apiFetch('/api/providers/' + prov.name + '/models/refresh', {
+        method: 'POST'
+      });
+      const d = await r.json();
+      setTestRes({
+        status: d.ok ? 'ok' : 'error',
+        detail: d.ok ? `Fetched ${d.count} models` : d.error || 'refresh failed',
+        models_seen: d.count
+      });
+    } catch (e) {
+      setTestRes({
+        status: 'error',
+        detail: String(e)
+      });
+    }
+    setBusy('');
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    onChanged();
+  };
+  const toggleEnabled = async () => {
+    setBusy('en');
+    try {
+      await apiFetch('/api/providers/' + prov.name, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          enabled: !prov.enabled
+        })
+      });
+    } catch (e) {}
+    setBusy('');
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    onChanged();
+  };
+  const removeProvider = async () => {
+    const verb = prov.origin === 'builtin' ? 'Reset ' + prov.name + ' to its shipped default?' : 'Remove provider ' + prov.name + '?';
+    if (!window.confirm(verb)) return;
+    setBusy('rm');
+    try {
+      await apiFetch('/api/providers/' + prov.name, {
+        method: 'DELETE'
+      });
+    } catch (e) {}
+    setBusy('');
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+    onChanged();
+  };
+  const spend = prov.spend_today_usd || 0;
+  const dailyCap = (prov.budget || {}).daily_usd;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: 8,
+      padding: '10px 14px',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      cursor: 'pointer'
+    },
+    onClick: () => setExpanded(v => !v)
+  }, /*#__PURE__*/React.createElement(ProviderStatusDot, {
+    prov: prov
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: 600
+    }
+  }, prov.label || prov.name), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      padding: '1px 6px',
+      borderRadius: 4,
+      background: isLocal ? 'rgba(0,255,128,0.08)' : 'rgba(0,212,255,0.08)',
+      color: isLocal ? '#00ff80' : '#00d4ff',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, isLocal ? 'local' : 'cloud'), prov.origin !== 'builtin' && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      padding: '1px 6px',
+      borderRadius: 4,
+      background: 'rgba(168,85,247,0.1)',
+      color: '#a855f7',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, prov.origin === 'file' ? 'custom (file)' : 'custom'), !prov.enabled && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: '#777',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "disabled")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.38)',
+      fontFamily: 'JetBrains Mono',
+      marginTop: 2,
+      display: 'flex',
+      gap: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", null, prov.model_count || 0, " models", prov.catalog_stale ? ' ⚠ stale list' : ''), h.latency_p50_ms != null && /*#__PURE__*/React.createElement("span", null, h.latency_p50_ms, "ms p50"), h.requests > 0 && /*#__PURE__*/React.createElement("span", null, Math.round((h.error_rate || 0) * 100), "% err"), spend > 0 && /*#__PURE__*/React.createElement("span", null, "$", spend.toFixed(2), " today", dailyCap ? ` / $${dailyCap} cap` : ''), prov.available === false && needsKey && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b'
+    }
+  }, "needs ", envKey))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.3)',
+      fontSize: 11
+    }
+  }, expanded ? '▾' : '▸')), expanded && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      paddingTop: 10,
+      borderTop: '1px solid rgba(255,255,255,0.05)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.35)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 8,
+      wordBreak: 'break-all'
+    }
+  }, prov.base_url || '(no endpoint — in-process engine)'), needsKey && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "password",
+    style: {
+      flex: 1,
+      fontSize: 11
+    },
+    value: keyDraft,
+    onChange: e => setKeyDraft(e.target.value),
+    onClick: e => e.stopPropagation(),
+    placeholder: prov.available ? envKey + ' configured — paste to replace' : 'Paste ' + envKey + ' (stored encrypted)'
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11,
+      color: '#00d4ff'
+    },
+    disabled: busy === 'key' || !keyDraft.trim(),
+    onClick: saveKey
+  }, "Save key"), prov.available && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11,
+      color: '#ff6060'
+    },
+    disabled: busy === 'key',
+    onClick: removeKey
+  }, "Remove key")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy === 'test',
+    onClick: runTest
+  }, busy === 'test' ? 'Testing…' : 'Test Connection'), canDiscover && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy === 'models',
+    onClick: refreshModels
+  }, busy === 'models' ? 'Fetching…' : '⟳ Refresh models'), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy === 'en',
+    onClick: toggleEnabled
+  }, prov.enabled ? 'Disable' : 'Enable'), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11,
+      color: '#ff6060'
+    },
+    disabled: busy === 'rm',
+    onClick: removeProvider
+  }, prov.origin === 'builtin' ? 'Reset' : 'Remove')), testRes && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: '6px 10px',
+      background: 'rgba(0,0,0,0.3)',
+      borderRadius: 6,
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono',
+      color: testRes.status === 'ok' ? '#00ff80' : testRes.status === 'unauthorized' ? '#f59e0b' : '#ef4444'
+    }
+  }, testRes.status === 'ok' ? `✓ OK${testRes.latency_ms != null ? ' · ' + testRes.latency_ms + 'ms' : ''}${testRes.models_seen != null ? ' · ' + testRes.models_seen + ' models' : ''}${testRes.auth === 'valid' ? ' · auth valid' : ''}` : `✗ ${testRes.status}${testRes.detail ? ' — ' + testRes.detail : ''}`)));
+}
+function AddProviderForm({
+  templates,
+  onDone,
+  onCancel
+}) {
+  const tplNames = Object.keys(templates || {});
+  const [tpl, setTpl] = useState(tplNames.includes('custom') ? 'custom' : tplNames[0] || '');
+  const [name, setName] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [classification, setClassification] = useState('cloud');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const t = templates[tpl];
+    if (!t) return;
+    setName(tpl === 'custom' ? '' : t.name || tpl);
+    setBaseUrl(t.base_url || '');
+    setClassification(t.classification || 'cloud');
+  }, [tpl, templates]);
+  const localOk = /^(https?:\/\/)?(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|\[::1\]|[^\/]+\.(local|lan|internal))/i.test(baseUrl.trim());
+  const submit = async () => {
+    const t = templates[tpl] || {};
+    const provName = (name || '').trim().toLowerCase();
+    if (!provName) {
+      setMsg('Name is required');
+      return;
+    }
+    setBusy(true);
+    setMsg('');
+    const descriptor = {
+      ...t,
+      name: provName,
+      base_url: baseUrl.trim(),
+      classification,
+      enabled: true
+    };
+    delete descriptor.api_key; // keys NEVER ride in descriptors
+    try {
+      const vr = await apiFetch('/api/providers/validate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(descriptor)
+      });
+      const vd = await vr.json();
+      if (!vd.ok) {
+        setMsg((vd.errors || []).join(' · ') || 'Invalid descriptor');
+        setBusy(false);
+        return;
+      }
+      if (apiKey.trim()) {
+        await apiFetch('/api/providers/' + provName + '/key', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            key: apiKey.trim()
+          })
+        });
+      }
+      const r = await apiFetch('/api/providers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(descriptor)
+      });
+      const d = await r.json();
+      if (d.error) {
+        setMsg(d.error);
+        setBusy(false);
+        return;
+      }
+      setApiKey('');
+      try {
+        fridayInvalidateModelCatalog();
+      } catch (_) {}
+      onDone(provName);
+    } catch (e) {
+      setMsg('Failed: ' + e.message);
+    }
+    setBusy(false);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(0,212,255,0.03)',
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 10,
+      color: '#00d4ff',
+      letterSpacing: '.1em',
+      marginBottom: 10
+    }
+  }, "ADD PROVIDER"), /*#__PURE__*/React.createElement(StRow, {
+    label: "Template"
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    style: {
+      width: '100%'
+    },
+    value: tpl,
+    onChange: e => setTpl(e.target.value)
+  }, tplNames.map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: n
+  }, (templates[n].label || n) + (n === 'custom' ? ' (any /v1 endpoint)' : ''))))), /*#__PURE__*/React.createElement(StRow, {
+    label: "Name",
+    desc: "a-z, 0-9, hyphens"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%'
+    },
+    value: name,
+    onChange: e => setName(e.target.value),
+    placeholder: "my-provider"
+  })), /*#__PURE__*/React.createElement(StRow, {
+    label: "Base URL"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%'
+    },
+    value: baseUrl,
+    onChange: e => setBaseUrl(e.target.value),
+    placeholder: "https://api.example.com/v1"
+  })), /*#__PURE__*/React.createElement(StRow, {
+    label: "API Key",
+    desc: "Stored encrypted on-device \u2014 never written to settings.json."
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    type: "password",
+    style: {
+      width: '100%'
+    },
+    value: apiKey,
+    onChange: e => setApiKey(e.target.value),
+    placeholder: "sk-\u2026"
+  })), /*#__PURE__*/React.createElement(StRow, {
+    label: "Classification",
+    desc: localOk ? 'Local providers bypass the egress gate — data stays on this machine.' : 'Local requires a loopback/LAN base URL (localhost, 10.x, 192.168.x, *.local).'
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 14,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: '#ddd',
+      display: 'flex',
+      gap: 5,
+      alignItems: 'center',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    checked: classification === 'cloud',
+    onChange: () => setClassification('cloud')
+  }), "Cloud \u2014 egress-gated"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: localOk ? '#ddd' : '#666',
+      display: 'flex',
+      gap: 5,
+      alignItems: 'center',
+      cursor: localOk ? 'pointer' : 'not-allowed'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    disabled: !localOk,
+    checked: classification === 'local',
+    onChange: () => setClassification('local')
+  }), "Local \u2014 on-device"))), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#f59e0b',
+      marginBottom: 8,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, msg), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      justifyContent: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12
+    },
+    onClick: onCancel
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      color: '#00d4ff'
+    },
+    disabled: busy,
+    onClick: submit
+  }, busy ? 'Saving…' : 'Save & Enable')));
+}
+function ModelBrowser({
+  save
+}) {
+  const [q, setQ] = useState('');
+  const [freeOnly, setFreeOnly] = useState(false);
+  const [results, setResults] = useState([]);
+  const [searched, setSearched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const runSearch = async () => {
+    setBusy(true);
+    try {
+      const params = new URLSearchParams({
+        q,
+        limit: '50'
+      });
+      if (freeOnly) params.set('free', '1');
+      const r = await apiFetch('/api/models/search?' + params.toString());
+      const d = await r.json();
+      setResults(d.models || []);
+      setSearched(true);
+    } catch (e) {
+      setResults([]);
+    }
+    setBusy(false);
+  };
+  const useAs = (role, id) => {
+    save({
+      [role]: id
+    });
+  };
+  const fmtCtx = c => !c ? '—' : c >= 1e6 ? c / 1e6 + 'M' : c >= 1e3 ? Math.round(c / 1e3) + 'K' : String(c);
+  const fmtPrice = m => m.free ? 'free' : m.price_in == null ? '—' : `$${m.price_in}/${m.price_out ?? '—'}`;
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 10,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: 1,
+      minWidth: 180,
+      fontSize: 12
+    },
+    value: q,
+    onChange: e => setQ(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') runSearch();
+    },
+    placeholder: "Search all providers \u2014 llama, deepseek, sonnet\u2026"
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#aaa',
+      display: 'flex',
+      gap: 5,
+      alignItems: 'center',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: freeOnly,
+    onChange: e => setFreeOnly(e.target.checked)
+  }), "Free only"), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      color: '#00d4ff'
+    },
+    disabled: busy,
+    onClick: runSearch
+  }, busy ? '…' : 'Search')), searched && results.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'rgba(255,255,255,0.38)'
+    }
+  }, "No models matched. Add a provider key and hit \u27F3 Refresh models to widen the catalog."), results.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 280,
+      overflowY: 'auto',
+      border: '1px solid rgba(255,255,255,0.05)',
+      borderRadius: 8
+    }
+  }, results.map((m, i) => /*#__PURE__*/React.createElement("div", {
+    key: m.provider + '/' + m.id,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '7px 12px',
+      borderBottom: '1px solid rgba(255,255,255,0.04)',
+      background: i % 2 ? 'rgba(255,255,255,0.015)' : 'none'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: m.available ? '#fff' : '#888',
+      fontFamily: 'JetBrains Mono',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    },
+    title: m.id
+  }, m.id), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.35)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key')), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px'
+    },
+    title: "Use as orchestrator (main brain)",
+    onClick: () => useAs('orchestrator_model', m.id)
+  }, "Orchestrator"), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px'
+    },
+    title: "Use as sub-agent model",
+    onClick: () => useAs('subagent_model', m.id)
+  }, "Subagent")))));
+}
+function SettingsTabProviders({
+  s,
+  save
+}) {
+  const [provs, setProvs] = useState([]);
+  const [templates, setTemplates] = useState({});
+  const [descErrors, setDescErrors] = useState([]);
+  const [adding, setAdding] = useState(false);
+  const refresh = useCallback(() => {
+    apiFetch('/api/providers').then(r => r.json()).then(d => {
+      setProvs(d.providers || []);
+      setDescErrors(d.descriptor_errors || []);
+    }).catch(() => {});
+    apiFetch('/api/providers/templates').then(r => r.json()).then(d => setTemplates(d.templates || {})).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  // Chat/engine providers only — voice engine backends surface in the Voice tab.
+  const rows = provs.filter(p => !['local-voice', 'nemo-local'].includes(p.type));
+  const enabled = rows.filter(p => p.enabled),
+    disabled = rows.filter(p => !p.enabled);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "MODEL PROVIDERS"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.4)',
+      lineHeight: 1.5,
+      paddingRight: 12
+    }
+  }, "Friday is model-agnostic: OpenRouter, Hugging Face, Groq, DeepSeek, a LAN vLLM box \u2014 add a key and its models appear in every picker. Keys are encrypted on-device; every cloud provider passes the egress gate."), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      color: '#00d4ff',
+      whiteSpace: 'nowrap'
+    },
+    onClick: () => setAdding(v => !v)
+  }, adding ? '✕ Close' : '＋ Add Provider')), adding && /*#__PURE__*/React.createElement(AddProviderForm, {
+    templates: templates,
+    onCancel: () => setAdding(false),
+    onDone: () => {
+      setAdding(false);
+      refresh();
+    }
+  }), descErrors.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '8px 12px',
+      background: 'rgba(239,68,68,0.06)',
+      border: '1px solid rgba(239,68,68,0.2)',
+      borderRadius: 6,
+      marginBottom: 10
+    }
+  }, descErrors.map((e, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      fontSize: 11,
+      color: '#ef4444',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u26A0 ", e.file, ": ", e.error))), enabled.map(p => /*#__PURE__*/React.createElement(ProviderRow, {
+    key: p.name,
+    prov: p,
+    onChanged: refresh
+  })), disabled.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.3)',
+      fontFamily: 'JetBrains Mono',
+      margin: '14px 0 8px',
+      letterSpacing: '.08em'
+    }
+  }, "AVAILABLE \u2014 ONE CLICK TO ENABLE"), disabled.map(p => /*#__PURE__*/React.createElement(ProviderRow, {
+    key: p.name,
+    prov: p,
+    onChanged: refresh
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.28)',
+      fontFamily: 'JetBrains Mono',
+      marginTop: 10
+    }
+  }, "\u25CF healthy \xB7 \u25D0 needs attention \xB7 \u25CB disabled \u2014 dot color is measured health (p50 latency / error rate / circuit breaker)")), /*#__PURE__*/React.createElement(StSection, {
+    title: "MODEL BROWSER"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.4)',
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Search every connected provider's catalog \u2014 including OpenRouter's full list once its model list has been refreshed."), /*#__PURE__*/React.createElement(ModelBrowser, {
+    save: save
+  })));
+}
 function SettingsTabConnectors({
   s,
   save
@@ -26244,6 +27039,10 @@ function SettingsWS() {
     label: 'Models',
     ico: '🧠'
   }, {
+    id: 'providers',
+    label: 'Providers',
+    ico: '🧩'
+  }, {
     id: 'voice',
     label: 'Voice',
     ico: '🎤'
@@ -26343,6 +27142,9 @@ function SettingsWS() {
     s: s,
     save: save
   }), tab === 'models' && /*#__PURE__*/React.createElement(SettingsTabModels, {
+    s: s,
+    save: save
+  }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {

@@ -3,16 +3,37 @@ Agent Friday — Declarative Provider Registry
 Inspired by patterns in Goose (Apache-2.0). All code is original.
 
 JSON-based provider registration enabling zero-code provider addition.
+
+v2 (model-agnostic provider layer): descriptors are normalized through
+routing/provider_descriptors.normalize_descriptor on load (v1 JSONs keep
+working — `type` aliases to `adapter`, classification is inferred), validated
+on add, and the built-in set grows to sixteen providers: the six originals
+below plus OpenRouter (first-class), HuggingFace, Groq, Together, Fireworks,
+Mistral, DeepSeek, xAI, Perplexity, and Cohere from
+routing/provider_descriptors.BUILTIN_EXTRA_PROVIDERS. YAML descriptors
+(*.yaml/*.yml) are accepted alongside JSON in ~/.friday/providers/.
 """
-import json, os
+import json, logging, os
 from pathlib import Path
+
+from agent_friday.routing.provider_descriptors import (
+    BUILTIN_EXTRA_PROVIDERS,
+    normalize_descriptor,
+    provider_env_keys,
+    validate_descriptor,
+)
+
+_log = logging.getLogger("friday.provider_registry")
 
 PROVIDERS_DIR = Path.home() / ".friday" / "providers"
 PROVIDERS_DIR.mkdir(parents=True, exist_ok=True)
 
-PROVIDER_SCHEMA_KEYS = {"name", "type", "base_url", "auth", "models",
+PROVIDER_SCHEMA_KEYS = {"name", "type", "adapter", "base_url", "auth", "models",
                         "capabilities", "cost_per_1k", "enabled",
-                        "label", "roles", "model_meta"}
+                        "label", "roles", "model_meta", "classification",
+                        "discovery", "pricing", "budget", "features",
+                        "network", "priority", "schema_version",
+                        "model_format", "extra_headers"}
 
 # UI selector roles a model can be offered for. A provider declares which roles
 # its models default to; individual models can override via `model_meta`.
@@ -222,84 +243,79 @@ DEFAULT_PROVIDERS = [
     },
 ]
 
-# Commonly requested providers users can add via JSON drop
+# One-click provider templates for the Add Provider UI. Built from the same
+# v2 descriptors that ship as built-ins (disabled copies), plus the generic
+# "custom" endpoint recipe — covers vLLM, LM Studio, TGI, Azure OpenAI, or any
+# /v1 server the user points it at.
 PROVIDER_TEMPLATES = {
-    "openrouter": {
-        "name": "openrouter",
-        "type": "openai-compatible",
-        "base_url": "https://openrouter.ai/api/v1",
-        "auth": {"type": "env_var", "key": "OPENROUTER_API_KEY"},
-        "models": [],
-        "capabilities": ["tools"],
-        "cost_per_1k": {},
-        "enabled": False
-    },
-    "together": {
-        "name": "together",
-        "type": "openai-compatible",
-        "base_url": "https://api.together.xyz/v1",
-        "auth": {"type": "env_var", "key": "TOGETHER_API_KEY"},
-        "models": [],
-        "capabilities": ["tools"],
-        "cost_per_1k": {},
-        "enabled": False
-    },
-    "groq": {
-        "name": "groq",
-        "type": "openai-compatible",
-        "base_url": "https://api.groq.com/openai/v1",
-        "auth": {"type": "env_var", "key": "GROQ_API_KEY"},
-        "models": [],
-        "capabilities": ["tools"],
-        "cost_per_1k": {},
-        "enabled": False
-    },
-    "fireworks": {
-        "name": "fireworks",
-        "label": "Fireworks AI",
-        "type": "openai-compatible",
-        "base_url": "https://api.fireworks.ai/inference/v1",
-        "auth": {"type": "env_var", "key": "FIREWORKS_API_KEY"},
-        "models": [],
-        "capabilities": ["tools"],
-        "cost_per_1k": {},
-        "enabled": False
-    },
-    # Generic OpenAI-compatible endpoint — user supplies base_url + key. Covers
-    # vLLM, LM Studio, Mistral, DeepSeek, Azure OpenAI, or any /v1 server.
-    "custom": {
-        "name": "custom",
-        "label": "Custom endpoint",
-        "type": "openai-compatible",
-        "base_url": "https://your-endpoint.example/v1",
-        "auth": {"type": "env_var", "key": "CUSTOM_API_KEY"},
-        "models": [],
-        "capabilities": ["tools"],
-        "cost_per_1k": {},
-        "enabled": False
-    },
+    p["name"]: {**normalize_descriptor(p), "enabled": False}
+    for p in BUILTIN_EXTRA_PROVIDERS
 }
+PROVIDER_TEMPLATES["custom"] = normalize_descriptor({
+    "name": "custom",
+    "label": "Custom endpoint",
+    "type": "openai-compatible",
+    "base_url": "https://your-endpoint.example/v1",
+    "auth": {"type": "env_var", "key": "CUSTOM_API_KEY"},
+    "models": [],
+    "capabilities": ["tools"],
+    "cost_per_1k": {},
+    "enabled": False,
+})
 
 
 class ProviderRegistry:
     def __init__(self):
         self._providers = {}
+        self._origins = {}      # name -> "builtin" | "file" | "ui"
+        self._load_errors = []  # [{file, error}] — surfaced in /api/health/full
         self._load_defaults()
         self._load_custom()
 
     def _load_defaults(self):
-        for p in DEFAULT_PROVIDERS:
-            self._providers[p["name"]] = p
+        for p in DEFAULT_PROVIDERS + BUILTIN_EXTRA_PROVIDERS:
+            norm = normalize_descriptor(p)
+            self._providers[norm["name"]] = norm
+            self._origins[norm["name"]] = "builtin"
 
     def _load_custom(self):
-        for f in PROVIDERS_DIR.glob("*.json"):
+        """Load user descriptors from ~/.friday/providers/ (*.json + *.yaml).
+
+        Bad files are SKIPPED with a logged, surfaced error — never a silent
+        `pass` — so a typo'd descriptor shows up in /api/health/full instead
+        of vanishing.
+        """
+        self._load_errors = []
+        files = sorted(list(PROVIDERS_DIR.glob("*.json"))
+                       + list(PROVIDERS_DIR.glob("*.yaml"))
+                       + list(PROVIDERS_DIR.glob("*.yml")))
+        for f in files:
             try:
                 with open(f, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                if "name" in data:
-                    self._providers[data["name"]] = data
-            except Exception:
-                pass
+                    if f.suffix in (".yaml", ".yml"):
+                        import yaml
+                        data = yaml.safe_load(fh)
+                    else:
+                        data = json.load(fh)
+                if not isinstance(data, dict) or "name" not in data:
+                    raise ValueError("descriptor must be an object with a 'name'")
+                ok, errors, _warnings = validate_descriptor(data)
+                if not ok:
+                    raise ValueError("; ".join(errors))
+                norm = normalize_descriptor(data)
+                self._providers[norm["name"]] = norm
+                self._origins[norm["name"]] = "file"
+            except Exception as e:
+                _log.warning("skipping provider descriptor %s: %s", f.name, e)
+                self._load_errors.append({"file": f.name, "error": str(e)[:300]})
+
+    def load_errors(self):
+        """Descriptor files that failed to load this session (name + reason)."""
+        return list(self._load_errors)
+
+    def provider_origin(self, name: str) -> str:
+        """'builtin' | 'file' | 'ui' | 'unknown' — where a descriptor came from."""
+        return self._origins.get(name, "unknown")
 
     def list_providers(self):
         return list(self._providers.values())
@@ -307,22 +323,73 @@ class ProviderRegistry:
     def get_provider(self, name: str):
         return self._providers.get(name)
 
-    def add_provider(self, data: dict) -> str:
-        name = data.get("name", "custom")
-        self._providers[name] = data
+    def add_provider(self, data: dict, validate: bool = True) -> str:
+        """Validate, normalize, register, and persist a descriptor.
+
+        Raises ValueError with a joined error message on an invalid descriptor
+        so callers (routes) can 400 with actionable detail.
+        """
+        if validate:
+            ok, errors, _warnings = validate_descriptor(data)
+            if not ok:
+                raise ValueError("; ".join(errors))
+        norm = normalize_descriptor(data)
+        name = norm.get("name", "custom")
+        self._providers[name] = norm
+        self._origins[name] = "ui" if self._origins.get(name) != "file" else "file"
         path = PROVIDERS_DIR / f"{name}.json"
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(norm, f, indent=2)
         return str(path)
 
+    def update_provider(self, name: str, patch: dict) -> dict:
+        """Merge a partial update into an existing descriptor and persist.
+
+        Returns the updated descriptor; raises KeyError when the provider does
+        not exist and ValueError when the merged result fails validation.
+        """
+        current = self._providers.get(name)
+        if current is None:
+            raise KeyError(name)
+        merged = {**current, **(patch or {}), "name": name}
+        ok, errors, _warnings = validate_descriptor(merged)
+        if not ok:
+            raise ValueError("; ".join(errors))
+        norm = normalize_descriptor(merged)
+        self._providers[name] = norm
+        path = PROVIDERS_DIR / f"{name}.json"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(norm, f, indent=2)
+        if self._origins.get(name) == "builtin":
+            self._origins[name] = "ui"
+        return norm
+
     def remove_provider(self, name: str) -> bool:
-        if name in self._providers:
-            del self._providers[name]
-            path = PROVIDERS_DIR / f"{name}.json"
+        """Remove a provider. A user-added provider disappears; a customized
+        BUILT-IN reverts to its shipped default (the override file is deleted
+        and the built-in descriptor reloads)."""
+        if name not in self._providers:
+            return False
+        for suffix in (".json", ".yaml", ".yml"):
+            path = PROVIDERS_DIR / f"{name}{suffix}"
             if path.exists():
-                path.unlink()
-            return True
-        return False
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+        builtin = next((p for p in DEFAULT_PROVIDERS + BUILTIN_EXTRA_PROVIDERS
+                        if p.get("name") == name), None)
+        if builtin is not None:
+            self._providers[name] = normalize_descriptor(builtin)
+            self._origins[name] = "builtin"
+        else:
+            del self._providers[name]
+            self._origins.pop(name, None)
+        return True
+
+    def is_builtin(self, name: str) -> bool:
+        return any(p.get("name") == name
+                   for p in DEFAULT_PROVIDERS + BUILTIN_EXTRA_PROVIDERS)
 
     def get_enabled_providers(self):
         return [p for p in self._providers.values() if p.get("enabled", True)]
@@ -354,8 +421,9 @@ class ProviderRegistry:
                 return False
         auth = p.get("auth", {})
         if auth.get("type") == "env_var":
-            key = auth.get("key", "")
-            if os.environ.get(key):
+            # Primary env var + any aliases (HF_TOKEN vs HUGGINGFACE_API_KEY).
+            env_keys = provider_env_keys(p)
+            if any(os.environ.get(k) for k in env_keys):
                 return True
             # Also count a key stored encrypted via the credential store — covers
             # the window after a wizard/Settings save but before bootstrap_provider_env
@@ -370,7 +438,7 @@ class ProviderRegistry:
             # the environment as a side effect — re-check before reporting
             # unavailable, or the FIRST catalog build after boot dims every
             # cloud model even though the keys exist.
-            return bool(os.environ.get(key))
+            return any(os.environ.get(k) for k in env_keys)
         return True
 
     def get_templates(self):

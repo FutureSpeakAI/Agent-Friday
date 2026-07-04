@@ -92,6 +92,20 @@ def _needs_key(provider: dict):
     return auth.get("key") if auth.get("type") == "env_var" else None
 
 
+def _discovered_models(provider: dict):
+    """Discovery-cache models for an api-discovery provider (disk only, never
+    the network — discovery fetches happen on the background sweep / explicit
+    refresh). Returns (models list, stale bool); ([], False) when the provider
+    has no API discovery."""
+    if (provider.get("discovery") or {}).get("mode") != "api":
+        return [], False
+    try:
+        from agent_friday.services.model_discovery import cached_models
+        return cached_models(provider.get("name", ""))
+    except Exception:
+        return [], False
+
+
 def _model_entries_for(provider: dict, registry) -> list:
     """Expand one provider into per-model catalog entries."""
     pname = provider.get("name", "")
@@ -129,16 +143,33 @@ def _model_entries_for(provider: dict, registry) -> list:
         elif engine_backend:
             hint = "Run the Voice Setup Wizard to enable this engine"
 
+    # Live-discovered models (OpenRouter's 300+, HF router's warm set, …) merge
+    # AFTER the statics: statics keep their declared order (and any model_meta
+    # overrides), discovery adds the long tail with wire-reported metadata.
+    discovered, disc_stale = _discovered_models(provider)
+    disc_by_id = {m.get("id"): m for m in discovered if m.get("id")}
+
     entries = []
-    for mid in ids:
+    seen_ids = set()
+    for mid in ids + [m for m in disc_by_id if m not in set(ids)]:
+        if mid in seen_ids:
+            continue
+        seen_ids.add(mid)
         m = dict(_humanize(mid))
+        disc = disc_by_id.get(mid)
+        if disc:
+            if disc.get("label"):
+                m["label"] = disc["label"]
+                m["short"] = disc["label"][:16]
+            if disc.get("modalities"):
+                m["modalities"] = list(disc["modalities"])
         m.update({k: v for k, v in (meta.get(mid) or {}).items() if v is not None})
         # Respect an explicit `roles: []` (e.g. Lyria — picked in the Studio
         # Music panel via `music_model`, never via the creative_model picker).
         roles = m["roles"] if isinstance(m.get("roles"), list) else list(prov_roles)
         if engine_backend:
             roles = []  # engine components are not pickable models
-        entries.append({
+        entry = {
             "id": mid,
             "label": m.get("label") or mid,
             "short": m.get("short") or mid,
@@ -151,7 +182,29 @@ def _model_entries_for(provider: dict, registry) -> list:
             "needs_key": needs_key,
             "hint": hint,
             "cost_per_1k": costs.get(mid),
-        })
+        }
+        if disc:
+            # Discovery metadata (spec §6.3) — additive fields; the UI contract
+            # (id/label/roles/available…) is untouched.
+            entry.update({
+                "context_window": disc.get("context_window"),
+                "max_output": disc.get("max_output"),
+                "supports_tools": disc.get("supports_tools"),
+                "price_in": disc.get("price_in"),
+                "price_out": disc.get("price_out"),
+                "free": bool(disc.get("free")),
+                "source": "discovery",
+                "catalog_stale": bool(disc_stale),
+            })
+            if entry.get("cost_per_1k") is None and disc.get("price_in") is not None:
+                # Blended per-1K display figure from the per-1M wire prices.
+                try:
+                    entry["cost_per_1k"] = round(
+                        ((disc.get("price_in") or 0) + (disc.get("price_out") or 0))
+                        / 2.0 / 1000.0, 6)
+                except Exception:
+                    pass
+        entries.append(entry)
     return entries
 
 
@@ -194,6 +247,14 @@ def build_catalog() -> dict:
     local, available, needs_key, hint, cost_per_1k.
     """
     registry = get_provider_registry()
+    # Kick the model-discovery background sweep (async, off the hot path, no-op
+    # under tests) so api-discovery providers (OpenRouter…) populate their
+    # caches shortly after first use and the picker fills in without a restart.
+    try:
+        from agent_friday.services.model_discovery import ensure_background_refresh
+        ensure_background_refresh()
+    except Exception:
+        pass
     flat, seen = [], set()
     for provider in registry.get_enabled_providers():
         for e in _model_entries_for(provider, registry):

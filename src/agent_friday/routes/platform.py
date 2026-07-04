@@ -109,13 +109,57 @@ def api_recipes_run(name):
 
 # ── Providers ────────────────────────────────────────────────────────────────
 
+def _provider_spend_today():
+    """provider name -> USD spent today (from the cost ledger). Best-effort."""
+    try:
+        from agent_friday.services import cost_meter
+        summ = cost_meter.summary("today") or {}
+        return {name: round(float((row or {}).get("usd") or 0), 4)
+                for name, row in (summ.get("by_provider") or {}).items()}
+    except Exception:
+        return {}
+
+
 @platform_bp.route("/api/providers", methods=["GET"])
 def api_providers_list():
+    """All registered providers, enriched with availability, live health stats
+    (latency/error-rate ring buffers), catalog size, spend today, and origin
+    (builtin / file / ui)."""
     reg = get_provider_registry()
+    spend = _provider_spend_today()
+    include_stats = (request.args.get("stats") or "1").lower() not in ("0", "false")
     out = []
     for p in reg.list_providers():
-        out.append({**p, "available": reg.is_provider_available(p["name"])})
-    return jsonify({"providers": out})
+        name = p.get("name", "")
+        entry = {**p, "available": reg.is_provider_available(name),
+                 "origin": reg.provider_origin(name)}
+        # Model count: statics ∪ discovery cache (disk only, no network).
+        model_count = len(p.get("models") or [])
+        catalog_stale = False
+        if (p.get("discovery") or {}).get("mode") == "api":
+            try:
+                from agent_friday.services.model_discovery import cached_models
+                cached, stale = cached_models(name)
+                model_count = len({*(p.get("models") or []),
+                                   *(m.get("id") for m in cached if m.get("id"))})
+                catalog_stale = bool(cached) and stale
+            except Exception:
+                pass
+        entry["model_count"] = model_count
+        entry["catalog_stale"] = catalog_stale
+        entry["spend_today_usd"] = spend.get(name, 0.0)
+        if include_stats:
+            try:
+                from agent_friday.services import provider_health
+                entry["health"] = provider_health.stats(name)
+            except Exception:
+                entry["health"] = None
+        out.append(entry)
+    resp = {"providers": out}
+    errors = reg.load_errors()
+    if errors:
+        resp["descriptor_errors"] = errors
+    return jsonify(resp)
 
 
 @platform_bp.route("/api/providers/templates", methods=["GET"])
@@ -128,24 +172,281 @@ def api_providers_add():
     data = request.get_json(silent=True) or {}
     if not (data.get("name") or "").strip():
         return jsonify({"error": "provider requires a 'name'"}), 400
-    path = get_provider_registry().add_provider(data)
+    try:
+        path = get_provider_registry().add_provider(data)
+    except ValueError as e:
+        return jsonify({"error": str(e),
+                        "errors": [s.strip() for s in str(e).split(";")]}), 400
+    # A new/changed provider may serve models the picker should show.
+    try:
+        from agent_friday.services.model_discovery import invalidate_cache
+        invalidate_cache(data.get("name", ""))
+    except Exception:
+        pass
     return jsonify({"ok": True, "path": path})
+
+
+@platform_bp.route("/api/providers/validate", methods=["POST"])
+def api_providers_validate():
+    """Dry-run descriptor validation for the Add Provider form — no write."""
+    from agent_friday.routing.provider_descriptors import validate_descriptor
+    data = request.get_json(silent=True) or {}
+    ok, errors, warnings = validate_descriptor(data)
+    return jsonify({"ok": ok, "errors": errors, "warnings": warnings})
+
+
+@platform_bp.route("/api/providers/<name>", methods=["PATCH"])
+def api_providers_patch(name):
+    """Partial descriptor update (enable/disable, base_url, budget, …).
+    Persists the merged descriptor as a user override."""
+    data = request.get_json(silent=True) or {}
+    data.pop("name", None)  # the URL is authoritative
+    try:
+        updated = get_provider_registry().update_provider(name, data)
+    except KeyError:
+        return jsonify({"error": f"provider '{name}' not found"}), 404
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "provider": updated})
 
 
 @platform_bp.route("/api/providers/<name>", methods=["DELETE"])
 def api_providers_remove(name):
-    if not get_provider_registry().remove_provider(name):
+    """Remove a user-added provider; a customized BUILT-IN reverts to its
+    shipped default instead (its override file is deleted)."""
+    reg = get_provider_registry()
+    was_builtin = reg.is_builtin(name)
+    if not reg.remove_provider(name):
         return jsonify({"error": f"provider '{name}' not found"}), 404
-    return jsonify({"ok": True})
+    try:
+        from agent_friday.services.model_discovery import invalidate_cache
+        invalidate_cache(name)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "reverted_to_builtin": was_builtin})
 
 
 @platform_bp.route("/api/providers/health", methods=["GET"])
 def api_providers_health():
     """Per-provider reachability/auth status for the wizard + Settings provider step.
-    Shallow by default (offline-safe); pass ?deep=1 for a light endpoint probe."""
+    Shallow by default (offline-safe); pass ?deep=1 for a light endpoint probe.
+    Each entry also carries the measured stats block (latency percentiles,
+    error rate, availability) when any calls have been recorded."""
     from agent_friday.services import provider_health
     deep = (request.args.get("deep") or "").lower() in ("1", "true", "yes")
-    return jsonify({"providers": provider_health.check_all(deep=deep)})
+    checks = provider_health.check_all(deep=deep)
+    for c in checks:
+        try:
+            c["stats"] = provider_health.stats(c.get("provider", ""))
+        except Exception:
+            c["stats"] = None
+    return jsonify({"providers": checks})
+
+
+@platform_bp.route("/api/providers/<name>/test", methods=["POST"])
+def api_provider_test(name):
+    """Test Connection: a deep, adapter-aware probe returning latency and the
+    number of models the endpoint reports. Body {"ping": true} additionally
+    runs a 1-token completion (openai-compatible providers only) to verify the
+    key end-to-end. Never echoes key material."""
+    import time as _t
+    reg = get_provider_registry()
+    prov = reg.get_provider(name)
+    if not prov:
+        return jsonify({"error": f"provider '{name}' not found"}), 404
+    body = request.get_json(silent=True) or {}
+    do_ping = bool(body.get("ping"))
+    ptype = prov.get("type", "")
+    from agent_friday.routing.provider_descriptors import (
+        provider_api_key, auth_headers)
+    result = {"provider": name, "status": "error", "latency_ms": None,
+              "auth": None, "models_seen": None, "ping": None, "detail": None}
+
+    api_key = provider_api_key(prov)  # pragma: allowlist secret
+    auth_required = (prov.get("auth") or {}).get("type", "env_var") == "env_var"
+    result["auth"] = "configured" if (api_key or not auth_required) else "missing"
+
+    if ptype == "ollama":
+        try:
+            from agent_friday.routing.ollama_manager import get_manager
+            t0 = _t.time()
+            mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
+            ok = mgr.is_available()
+            models = mgr.list_models() if ok else []
+            result.update(status="ok" if ok else "down",
+                          latency_ms=int((_t.time() - t0) * 1000),
+                          models_seen=len(models or []),
+                          detail=None if ok else "Ollama daemon not reachable")
+        except Exception as e:
+            result["detail"] = str(e)[:200]
+        return jsonify(result)
+
+    if ptype in ("local-voice", "nemo-local"):
+        from agent_friday.services import provider_health
+        chk = provider_health.check_provider(name, deep=True, use_cache=False)
+        result.update(status=chk.get("status"), detail=chk.get("detail"))
+        return jsonify(result)
+
+    import requests
+    base = (prov.get("base_url") or "").rstrip("/")
+    if not base:
+        result["detail"] = "provider has no base_url"
+        return jsonify(result), 400
+    headers = auth_headers(prov, api_key)
+    t0 = _t.time()
+    try:
+        if ptype == "anthropic":
+            r = requests.get(base + "/v1/models",
+                             headers={"x-api-key": api_key or "",
+                                      "anthropic-version": "2023-06-01"},
+                             timeout=10)
+        elif ptype == "google":
+            r = requests.get(base + "/v1beta/models",
+                             params={"key": api_key or ""}, timeout=10)
+        else:  # openai-compatible
+            r = requests.get(base + "/models", headers=headers, timeout=10)
+        latency = int((_t.time() - t0) * 1000)
+        result["latency_ms"] = latency
+        if r.status_code in (401, 403):
+            result.update(status="unauthorized", auth="invalid",
+                          detail=f"HTTP {r.status_code} — check the API key")
+        elif r.status_code >= 400:
+            result.update(status="error", detail=f"HTTP {r.status_code}")
+        else:
+            try:
+                payload = r.json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                if data is None and isinstance(payload, dict):
+                    data = payload.get("models")
+                result["models_seen"] = len(data) if isinstance(data, list) else None
+            except Exception:
+                result["models_seen"] = None
+            result["status"] = "ok"
+            if api_key:
+                result["auth"] = "valid"
+        try:
+            from agent_friday.services import provider_health
+            provider_health.record(name, result["status"] == "ok",
+                                   latency_ms=latency, status=r.status_code,
+                                   kind="probe")
+        except Exception:
+            pass
+    except Exception as e:
+        result.update(status="down",
+                      latency_ms=int((_t.time() - t0) * 1000),
+                      detail=f"{type(e).__name__}: {e}"[:200])
+
+    if do_ping and result["status"] == "ok" and ptype == "openai-compatible":
+        model = body.get("model") or (prov.get("models") or [None])[0]
+        if not model:
+            try:
+                from agent_friday.services.model_discovery import cached_model_ids
+                ids = cached_model_ids(name)
+                model = ids[0] if ids else None
+            except Exception:
+                model = None
+        if model:
+            try:
+                t0 = _t.time()
+                r = requests.post(
+                    base + "/chat/completions", headers=headers,
+                    json={"model": model, "max_tokens": 1,
+                          "messages": [{"role": "user", "content": "ping"}]},
+                    timeout=30)
+                result["ping"] = {"model": model, "ok": r.status_code < 400,
+                                  "latency_ms": int((_t.time() - t0) * 1000),
+                                  "status": r.status_code}
+            except Exception as e:
+                result["ping"] = {"model": model, "ok": False,
+                                  "error": str(e)[:200]}
+        else:
+            result["ping"] = {"ok": False,
+                              "error": "no model available to ping — refresh "
+                                       "the model list first"}
+    return jsonify(result)
+
+
+@platform_bp.route("/api/providers/<name>/models/refresh", methods=["POST"])
+def api_provider_models_refresh(name):
+    """Force model discovery for one provider NOW (the ⟳ Refresh list button)."""
+    from agent_friday.services.model_discovery import refresh_models
+    res = refresh_models(name)
+    status = 200 if res.get("ok") else 502
+    if res.get("error") == "no such provider":
+        status = 404
+    elif (res.get("error") or "").startswith(("provider has no", "no API key")):
+        status = 400
+    return jsonify(res), status
+
+
+@platform_bp.route("/api/models/search", methods=["GET"])
+def api_models_search():
+    """Search models across ALL registered providers (statics + discovery
+    caches). Filters: q (substring on id/label), provider, free=1, tools=1,
+    max_price_in (USD per 1M), min_context. Powers the Model Browser."""
+    q = (request.args.get("q") or "").strip().lower()
+    want_provider = (request.args.get("provider") or "").strip()
+    want_free = (request.args.get("free") or "") in ("1", "true", "yes")
+    want_tools = (request.args.get("tools") or "") in ("1", "true", "yes")
+    try:
+        max_price_in = float(request.args.get("max_price_in"))
+    except (TypeError, ValueError):
+        max_price_in = None
+    try:
+        min_context = int(request.args.get("min_context"))
+    except (TypeError, ValueError):
+        min_context = None
+    try:
+        limit = max(1, min(int(request.args.get("limit") or 100), 500))
+    except (TypeError, ValueError):
+        limit = 100
+
+    reg = get_provider_registry()
+    results = []
+    for prov in reg.get_enabled_providers():
+        name = prov.get("name", "")
+        if want_provider and name != want_provider:
+            continue
+        if prov.get("type") in ("local-voice", "nemo-local"):
+            continue  # engine backends are not pickable chat models
+        available = reg.is_provider_available(name)
+        rows = {}
+        for mid in (prov.get("models") or []):
+            rows[mid] = {"id": mid, "label": mid, "source": "static"}
+        if (prov.get("discovery") or {}).get("mode") == "api":
+            try:
+                from agent_friday.services.model_discovery import cached_models
+                for m in cached_models(name)[0]:
+                    if m.get("id"):
+                        rows[m["id"]] = {**m, "source": "discovery"}
+            except Exception:
+                pass
+        for mid, m in rows.items():
+            label = str(m.get("label") or mid)
+            if q and q not in mid.lower() and q not in label.lower():
+                continue
+            if want_free and not m.get("free"):
+                continue
+            if want_tools and m.get("supports_tools") is False:
+                continue
+            if max_price_in is not None and (m.get("price_in") or 0) > max_price_in:
+                continue
+            if min_context is not None and (m.get("context_window") or 0) < min_context:
+                continue
+            results.append({
+                "id": mid, "label": label, "provider": name,
+                "provider_label": prov.get("label") or name,
+                "context_window": m.get("context_window"),
+                "price_in": m.get("price_in"), "price_out": m.get("price_out"),
+                "free": bool(m.get("free")),
+                "supports_tools": m.get("supports_tools"),
+                "available": available, "source": m.get("source", "static"),
+            })
+    # Free + cheap first within name matches, then alphabetical — stable and useful.
+    results.sort(key=lambda r: (0 if r["available"] else 1,
+                                r["provider_label"], r["id"]))
+    return jsonify({"query": q, "count": len(results),
+                    "models": results[:limit]})
 
 
 @platform_bp.route("/api/providers/<name>/key", methods=["POST", "DELETE"])
@@ -331,6 +632,15 @@ def api_health_full():
         out["providers"] = provider_health.check_all(deep=False)
     except Exception as e:
         out["providers"] = {"error": str(e)}
+
+    # Descriptor files that failed validation/parse this session — surfaced so
+    # a typo'd ~/.friday/providers/*.json shows up here instead of vanishing.
+    try:
+        errs = get_provider_registry().load_errors()
+        if errs:
+            out["provider_descriptor_errors"] = errs
+    except Exception:
+        pass
 
     try:
         from agent_friday.services import capability_router

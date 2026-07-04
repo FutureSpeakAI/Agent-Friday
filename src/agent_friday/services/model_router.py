@@ -155,7 +155,22 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     # shared fail-closed wrapper (R3: one enforcement point for all providers).
     kwargs = _seal_or_block(kwargs, "anthropic")
     _t0 = _time.time()
-    resp = client.messages.create(**kwargs)
+    try:
+        resp = client.messages.create(**kwargs)
+    except Exception:
+        try:
+            from agent_friday.services import provider_health as _ph
+            _ph.record("anthropic", False,
+                       latency_ms=int((_time.time() - _t0) * 1000))
+        except Exception:
+            pass
+        raise
+    try:
+        from agent_friday.services import provider_health as _ph
+        _ph.record("anthropic", True,
+                   latency_ms=int((_time.time() - _t0) * 1000), status=200)
+    except Exception:
+        pass
     # Cost metering (Part D): capture input AND output tokens for this call.
     try:
         from agent_friday.services import cost_meter as _cm
@@ -189,6 +204,32 @@ def resolve_workspace_temperature(workspace, explicit=None):
         return max(0.0, min(1.0, float(val)))
     except Exception:
         return None
+
+
+def _health_order(attempts, routed_provider_name=None):
+    """Stable-sort a provider-attempt ladder so 'down' providers go last.
+
+    `attempts` is [(name, fn, model), …] where name ∈ {cloud, openai, local}.
+    Health is measured per REGISTRY provider (provider_health.record from every
+    adapter call); the family names map to their registry providers here. Only
+    a hard 'down' (open circuit breaker) demotes an attempt — 'degraded' and
+    'unknown' keep their position, so cold starts and mild blips never shuffle
+    the user's configured preference order.
+    """
+    try:
+        from agent_friday.services import provider_health as _ph
+        fam_to_registry = {'cloud': 'anthropic', 'local': 'ollama-local',
+                           'openai': routed_provider_name or 'openai'}
+
+        def _down(attempt):
+            reg_name = fam_to_registry.get(attempt[0], attempt[0])
+            try:
+                return 1 if _ph.availability(reg_name) == 'down' else 0
+            except Exception:
+                return 0
+        return sorted(attempts, key=_down)  # stable: preserves order within tiers
+    except Exception:
+        return attempts
 
 
 def _generate_text(messages, system=None, model=None, max_tokens=16384,
@@ -231,7 +272,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
 
     settings = _load_settings()
     routing_cfg = settings.get('model_routing') or {}
-    provider, routed_model = 'cloud', model
+    provider, routed_model, routed_provider_name = 'cloud', model, None
     try:
         from agent_friday.routing.model_router import get_router
         route = get_router(routing_cfg).route(messages, task_context={
@@ -241,6 +282,7 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         })
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
+        routed_provider_name = route.get('provider_name')
     except Exception as _re:
         print(f"  [GEN] routing failed, defaulting to cloud: {_re}")
 
@@ -255,9 +297,12 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
                             max_tokens=max_tokens, temperature=temperature)
 
     def _via_openai(use_model):
+        # The routed model rides its RESOLVED provider (openrouter/groq/…);
+        # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(messages, system=system, model=use_model,
                             max_tokens=max_tokens, temperature=temperature,
-                            orb_label=orb_label)[0]
+                            orb_label=orb_label,
+                            provider=routed_provider_name if use_model else None)[0]
 
     def _via_ollama(use_model):
         return _call_ollama(messages, system=system, model=use_model,
@@ -281,6 +326,12 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         attempts = [('cloud', _via_claude, routed_model),
                     ('openai', _via_openai, None),
                     ('local', _via_ollama, None)]
+
+    # Health-aware ordering: a provider whose circuit breaker is open ('down',
+    # 5 consecutive failures within cooldown) moves to the END of the ladder —
+    # still tried as a last resort (a desktop agent should limp, not refuse),
+    # but healthy providers get the request first.
+    attempts = _health_order(attempts, routed_provider_name)
 
     errors = []
     for name, fn, use_model in attempts:
@@ -369,11 +420,28 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 convo.append({"role": m.get("role", "user"), "content": content})
 
         def _send(_convo, _oai_tools):
-            return ollama.chat_completion(
-                _convo, model=model, tools=_oai_tools,
-                temperature=temperature if temperature is not None else 0.7,
-                max_tokens=max_tokens,
-            )
+            _t0 = _time.time()
+            try:
+                resp = ollama.chat_completion(
+                    _convo, model=model, tools=_oai_tools,
+                    temperature=temperature if temperature is not None else 0.7,
+                    max_tokens=max_tokens,
+                )
+            except Exception:
+                try:
+                    from agent_friday.services import provider_health as _ph
+                    _ph.record("ollama-local", False,
+                               latency_ms=int((_time.time() - _t0) * 1000))
+                except Exception:
+                    pass
+                raise
+            try:
+                from agent_friday.services import provider_health as _ph
+                _ph.record("ollama-local", True,
+                           latency_ms=int((_time.time() - _t0) * 1000), status=200)
+            except Exception:
+                pass
+            return resp
 
         return _oai_agentic_loop(
             convo, oai_tools, _send, provider='local', model=model,
@@ -395,20 +463,40 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
 
 def _call_openai(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='☁️',
-                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
+                 tools=None, pii_lookup=None, session_ctx=None, max_iters=50,
+                 provider=None, fallback_models=None):
     """Call any OpenAI-compatible chat endpoint. Returns (text, tool_trace).
 
-    Unlocks OpenRouter + any /v1 base_url (Together, Groq, Fireworks, vLLM,
-    LM Studio, OpenAI). Configured via settings['model_routing']:
-      openai_base_url  — e.g. https://openrouter.ai/api/v1
-      openai_model     — model id at that endpoint
-      openai_api_key   — blank falls back to env OPENAI_API_KEY / OPENROUTER_API_KEY
+    Two configuration paths:
+
+    * ``provider`` (registry name or descriptor dict) — the multi-provider
+      path (GAP-3 fix). The endpoint, credentials (env chain + encrypted
+      credential store — never settings.json), extra headers, and feature
+      flags all come from THAT provider's descriptor, so OpenRouter, Groq,
+      HuggingFace, a LAN vLLM, … can be used concurrently in one session.
+      OpenRouter first-class behaviors ride the descriptor's ``features``:
+        - usage accounting (``usage: {include: true}`` → authoritative cost)
+        - server-side model fallback (``models: [...]`` body param via
+          ``fallback_models``)
+        - 429 handling honoring Retry-After (one wait, then raise → the
+          caller's chain advances)
+      A provider whose effective classification is LOCAL (openai-compatible
+      on a loopback/RFC1918 host — LM Studio/vLLM/TGI) bypasses the egress
+      seal exactly like Ollama, after re-verifying the host at call time.
+
+    * ``provider=None`` — the legacy single-slot path, unchanged: settings
+      ``model_routing.openai_base_url / openai_model / openai_api_key`` with
+      env OPENAI_API_KEY / OPENROUTER_API_KEY fallback.
 
     When `tools` (the Anthropic CLAUDE_TOOLS list) is supplied, runs a full
     agentic tool loop with parity to _call_claude_agent: tool calls are gated by
     the same zero-trust vault check and executed via _execute_tool (which applies
     the governance rings + sandbox). PII is scrubbed upstream and the reply is
     rehydrated by the shared caller, so privacy matches the Anthropic path.
+
+    Every HTTP round is health-recorded (provider_health.record) so routing
+    can prefer healthy providers, and every response is cost-metered under the
+    provider's REGISTRY name.
     """
     import requests
     # Lazy for the same reason as in _call_ollama: defined in the upper layer.
@@ -416,15 +504,72 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
 
     settings = _load_settings()
     cfg = settings.get('model_routing') or {}
-    base_url = (cfg.get('openai_base_url') or 'https://api.openai.com/v1').rstrip('/')
-    api_key = (cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')  # pragma: allowlist secret
-               or os.environ.get('OPENROUTER_API_KEY') or '')
-    model = model or cfg.get('openai_model') or 'gpt-4o-mini'
-    if not api_key:
-        raise RuntimeError(
-            "No OpenAI-compatible API key set (model_routing.openai_api_key or "
-            "env OPENAI_API_KEY / OPENROUTER_API_KEY)."
+
+    # ── Resolve the endpoint: provider descriptor (multi-provider) or the
+    #    legacy single settings slot. ──
+    prov = None
+    if provider is not None:
+        if isinstance(provider, dict):
+            prov = provider
+        else:
+            try:
+                from agent_friday.services.provider_registry import get_provider_registry
+                prov = get_provider_registry().get_provider(str(provider))
+            except Exception:
+                prov = None
+
+    features = {}
+    local_bypass = False
+    timeout_s = 180
+    if prov is not None:
+        from agent_friday.routing.provider_descriptors import (
+            provider_api_key, auth_headers, classification_of, adapter_of,
+            is_private_host, LOCAL_CAPABLE_ADAPTERS)
+        pname = prov.get('name') or 'openai'
+        base_url = (prov.get('base_url') or '').rstrip('/')
+        if not base_url:
+            raise RuntimeError(f"Provider '{pname}' has no base_url configured.")
+        api_key = provider_api_key(prov) or ''  # pragma: allowlist secret
+        auth_required = (prov.get('auth') or {}).get('type', 'env_var') == 'env_var'
+        if auth_required and not api_key:
+            env_hint = (prov.get('auth') or {}).get('key') or f"{pname} API key"
+            raise RuntimeError(
+                f"No API key configured for provider '{pname}' — set {env_hint} "
+                f"or add it in Settings → Providers.")
+        model = model or (prov.get('models') or [None])[0] or cfg.get('openai_model')
+        if not model:
+            raise RuntimeError(f"No model specified for provider '{pname}'.")
+        headers = {"Content-Type": "application/json",
+                   **auth_headers(prov, api_key)}
+        features = prov.get('features') or {}
+        timeout_s = int((prov.get('network') or {}).get('timeout_s') or 180)
+        # Call-time local verification (spec §9.2): classification must say
+        # local AND the adapter must be local-capable AND the URL we are about
+        # to POST to must resolve on-device/LAN — re-checked here so a
+        # descriptor edit after registry load cannot open a hole.
+        local_bypass = (
+            classification_of(prov) == 'local'
+            and adapter_of(prov) in LOCAL_CAPABLE_ADAPTERS
+            and is_private_host(base_url)
         )
+    else:
+        pname = 'openai'
+        base_url = (cfg.get('openai_base_url') or 'https://api.openai.com/v1').rstrip('/')
+        api_key = (cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')  # pragma: allowlist secret
+                   or os.environ.get('OPENROUTER_API_KEY') or '')
+        model = model or cfg.get('openai_model') or 'gpt-4o-mini'
+        if not api_key:
+            raise RuntimeError(
+                "No OpenAI-compatible API key set (model_routing.openai_api_key or "
+                "env OPENAI_API_KEY / OPENROUTER_API_KEY)."
+            )
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            # OpenRouter etiquette headers; ignored by other providers.
+            "HTTP-Referer": "https://futurespeak.ai",
+            "X-Title": "Agent Friday",
+        }
 
     # Convert Anthropic tool schemas → OpenAI function-tool schemas.
     oai_tools = None
@@ -452,6 +597,13 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             except Exception:
                 pass
 
+    def _health(ok, latency_ms, status=None):
+        try:
+            from agent_friday.services import provider_health as _ph
+            _ph.record(pname, ok, latency_ms=latency_ms, status=status)
+        except Exception:
+            pass
+
     try:
         convo = []
         if system:
@@ -460,14 +612,6 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             content = m.get("content", "")
             if isinstance(content, str):
                 convo.append({"role": m.get("role", "user"), "content": content})
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            # OpenRouter etiquette headers; ignored by other providers.
-            "HTTP-Referer": "https://futurespeak.ai",
-            "X-Title": "Agent Friday",
-        }
 
         def _send(_convo, _oai_tools):
             payload = {
@@ -479,19 +623,65 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
-            # Egress gate via the shared fail-closed wrapper (R3).
-            payload = _seal_or_block(payload, "openai")
-            r = requests.post(f"{base_url}/chat/completions", headers=headers,
-                              json=payload, timeout=180)
-            r.raise_for_status()
-            return r.json()
+            # OpenRouter first-class features (descriptor-driven, harmless to
+            # omit for providers that don't declare them):
+            if features.get('usage_accounting'):
+                payload["usage"] = {"include": True}   # exact billed cost back
+            if features.get('fallback_models_param') and fallback_models:
+                # Server-side model fallback: one HTTP call covers N models.
+                payload["models"] = [model] + [m for m in fallback_models
+                                               if m and m != model]
+            # Egress gate via the shared fail-closed wrapper (R3). A verified
+            # LOCAL provider (LM Studio/vLLM on loopback/LAN) bypasses the seal
+            # — data stays on-device — exactly like the Ollama path.
+            if not local_bypass:
+                payload = _seal_or_block(payload, pname)
+            _t0 = _time.time()
+            try:
+                r = requests.post(f"{base_url}/chat/completions", headers=headers,
+                                  json=payload, timeout=timeout_s)
+            except Exception:
+                _health(False, int((_time.time() - _t0) * 1000))
+                raise
+            # 429: honor Retry-After once (rate-limit etiquette), then raise so
+            # the caller's fallback chain advances instead of hammering.
+            if r.status_code == 429:
+                _health(False, int((_time.time() - _t0) * 1000), status=429)
+                retry_after = 0.0
+                try:
+                    retry_after = min(float(r.headers.get('Retry-After') or 0), 15.0)
+                except (TypeError, ValueError):
+                    retry_after = 0.0
+                if retry_after > 0:
+                    _time.sleep(retry_after)
+                    _t0 = _time.time()
+                    r = requests.post(f"{base_url}/chat/completions",
+                                      headers=headers, json=payload,
+                                      timeout=timeout_s)
+            try:
+                r.raise_for_status()
+            except Exception:
+                _health(False, int((_time.time() - _t0) * 1000),
+                        status=getattr(r, 'status_code', None))
+                raise
+            _health(True, int((_time.time() - _t0) * 1000),
+                    status=getattr(r, 'status_code', 200))
+            resp = r.json()
+            # Attribute cost to the model the provider ACTUALLY served (an
+            # OpenRouter fallback may answer with a different model than asked).
+            served = resp.get('model')
+            if served and served != model and isinstance(resp, dict):
+                resp.setdefault('_served_model', served)
+            return resp
 
         # Same shared agentic loop the local Ollama path uses — unified tool
-        # registry, vault gate, and _execute_tool governance.
+        # registry, vault gate, and _execute_tool governance. Metering rows are
+        # attributed to the REGISTRY provider name so per-provider spend works.
         return _oai_agentic_loop(
             convo, oai_tools, _send, provider='openai', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
+            meter_provider=pname,
         )
     except Exception:
         _orb(status='error', label='Error', progress=1.0)

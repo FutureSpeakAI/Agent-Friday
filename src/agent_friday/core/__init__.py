@@ -1428,7 +1428,18 @@ def _provider_for_model(model_id):
     key actually routes to — without this, picking a local model in the UI left
     provider at its old cloud value, which poisoned /api/capabilities badges and
     the local-voice brain's vault-fidelity gate.
+
+    Registry-first (resolver) so aggregator ids map to their OWNING provider —
+    an OpenRouter "org/model:variant" pick labels as openrouter, not as local
+    on the strength of its ':'. Family heuristics remain the fallback.
     """
+    try:
+        from agent_friday.routing.provider_descriptors import resolve_provider_name
+        name = resolve_provider_name(model_id)
+        if name:
+            return name
+    except Exception:
+        pass
     try:
         from agent_friday.routing.model_router import provider_family
         return _FAMILY_PROVIDER.get(provider_family(model_id))

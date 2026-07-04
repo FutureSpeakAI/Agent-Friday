@@ -119,7 +119,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
 
     settings = _load_settings()
     routing_cfg = settings.get('model_routing') or {}
-    provider, routed_model = 'cloud', model
+    provider, routed_model, routed_provider_name = 'cloud', model, None
     route = {}
     try:
         from agent_friday.routing.model_router import get_router
@@ -130,6 +130,7 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         }) or {}
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
+        routed_provider_name = route.get('provider_name')
     except Exception as _re:
         print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
 
@@ -157,12 +158,15 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         )
 
     def _via_openai(use_model):
-        # Full agentic tool loop with parity to _call_claude_agent.
+        # Full agentic tool loop with parity to _call_claude_agent. The routed
+        # model rides its RESOLVED provider (openrouter/groq/…, GAP-3 fix);
+        # the fallback attempt (use_model=None) keeps the legacy single-slot.
         return _call_openai(
             messages, system=system, model=use_model,
             max_tokens=max_tokens, temperature=temperature,
             orb_label=orb_label, tools=CLAUDE_TOOLS,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
+            provider=routed_provider_name if use_model else None,
         )
 
     def _via_ollama(use_model):
@@ -193,6 +197,16 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
         attempts = [('cloud', _via_claude, routed_model),
                     ('openai', _via_openai, None),
                     ('local', _via_ollama, None)]
+
+    # Health-aware ordering: an open circuit breaker ('down') demotes that
+    # provider to the end of the ladder — same rule as _generate_text. The
+    # vault-forced single-attempt list is untouched (sorting one item is a
+    # no-op), so vault guarantees are unaffected.
+    try:
+        from agent_friday.services.model_router import _health_order
+        attempts = _health_order(attempts, routed_provider_name)
+    except Exception:
+        pass
 
     errors = []
     for name, fn, use_model in attempts:
@@ -3807,7 +3821,8 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 # ══════════════════════════════════════════════════════════════
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
-                      pii_lookup=None, session_ctx=None, max_iters=50, orb=None):
+                      pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
+                      meter_provider=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -3818,15 +3833,19 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     into each provider. The only per-provider differences — how a single round
     trip is sent and how the orb is labelled — are injected via callbacks.
 
-      convo       — the running message list (system + history); mutated in place
-      oai_tools   — OpenAI function-tool schemas, or None for single-shot text
+      convo          — the running message list (system + history); mutated in place
+      oai_tools      — OpenAI function-tool schemas, or None for single-shot text
       send_fn(convo, oai_tools) -> raw OpenAI-format response dict (one round)
-      provider    — "local" | "openai", used for cost tracking + vault default
-      orb(**kw)   — optional process-orb updater (no-op if omitted)
+      provider       — "local" | "openai", used for loop semantics + vault default
+      meter_provider — REGISTRY provider name ("openrouter", "groq", …) for
+                       cost-ledger attribution; defaults to `provider` so
+                       existing call sites are unchanged
+      orb(**kw)      — optional process-orb updater (no-op if omitted)
 
     Returns (final_text, tool_trace). Tool-less calls do exactly one round.
     """
     _orb = orb or (lambda **kw: None)
+    _meter_as = meter_provider or provider
     tool_trace = []
     # Auto-compaction (Part C): condense a long transcript before the loop.
     try:
@@ -3839,10 +3858,14 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         resp = send_fn(convo, oai_tools)
 
         usage = resp.get("usage", {}) or {}
+        # Attribute spend to the model the provider ACTUALLY served when it
+        # differs (OpenRouter's server-side fallback reports it in `model`,
+        # surfaced by the transport as `_served_model`).
+        _meter_model = resp.get("_served_model") or model
         try:
             from agent_friday.routing.model_router import get_router
             get_router().cost_tracker.record(
-                provider, model,
+                _meter_as, _meter_model,
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
             )
@@ -3851,7 +3874,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # Cost metering (Part D): durable per-direction ledger with attribution.
         try:
             from agent_friday.services import cost_meter as _cm
-            _cm.meter(provider, model, usage, session_ctx=session_ctx)
+            _cm.meter(_meter_as, _meter_model, usage, session_ctx=session_ctx)
         except Exception:
             pass
 
