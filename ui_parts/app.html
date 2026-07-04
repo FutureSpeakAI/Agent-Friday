@@ -4603,7 +4603,12 @@ function useModelCatalog(){
              voiceEngines:(cat&&cat.voice_engines&&cat.voice_engines.length)?cat.voice_engines:VOICE_ENGINES,
              providers:(cat&&cat.providers)||[]};
   const byId={};
+  // Role lists first (curated copies win), then the FLAT catalog — role lists
+  // exclude the discovery long tail, but an id assigned from the Model Browser
+  // must still resolve to its label everywhere (pill, selects) — then the
+  // offline fallback consts.
   [].concat(out.orchestrator,out.subagent,out.creative,out.voice,
+            (cat&&cat.models)||[],
             ORCHESTRATOR_MODELS,CREATIVE_MODELS,VOICE_MODELS)
     .forEach(m=>{if(m&&m.id&&!byId[m.id])byId[m.id]=m;});
   out.byId=byId;
@@ -6337,7 +6342,15 @@ function SettingsTabAbout(){
   </div>;
 }
 function SettingsWS(){
-  const[tab,setTab]=useState('general');
+  // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
+  // Settings straight onto Providers. The global covers a window that is
+  // about to MOUNT (set before open); the event covers one already mounted.
+  const[tab,setTab]=useState(()=>{const t=window.__fridaySettingsTab;window.__fridaySettingsTab=null;return t||'general'});
+  useEffect(()=>{
+    const h=e=>{const t=e&&e.detail&&e.detail.tab;if(t)setTab(t);window.__fridaySettingsTab=null;};
+    window.addEventListener('friday:settings-tab',h);
+    return()=>window.removeEventListener('friday:settings-tab',h);
+  },[]);
   const{s,save,msg}=useSettings();
   const TABS=[
     {id:'general',label:'General',ico:'⚡️'},
@@ -6809,6 +6822,7 @@ function App(){
   useEffect(()=>{if(!qdTaskId)return;qdPollRef.current=setInterval(async()=>{try{const r=await fetch('/api/tasks/'+qdTaskId);const t=await r.json();if(t.status==='complete'){clearInterval(qdPollRef.current);setQdTaskId(null);setQdLoading(false);setQdResult(t.result||'')}else if(t.status==='failed'){clearInterval(qdPollRef.current);setQdTaskId(null);setQdLoading(false);setQdResult('[Error] '+(t.result||'Failed'))}}catch(e){clearInterval(qdPollRef.current);setQdTaskId(null);setQdLoading(false)}},1500);return()=>clearInterval(qdPollRef.current)},[qdTaskId]);
   const qdCopy=async()=>{if(!qdResult)return;try{await fetch('/api/draft/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:qdResult,destination:'clipboard'})});setQdCopied(true);setTimeout(()=>setQdCopied(false),2000)}catch(e){}};
   const[modelMenuOpen,setModelMenuOpen]=useState(false);
+  const[modelMenuRole,setModelMenuRole]=useState(null); // which By-Role row is expanded (one at a time)
   const modelMenuRef=useRef(null);
   useEffect(()=>{
     if(!modelMenuOpen)return;
@@ -6830,6 +6844,35 @@ function App(){
   const _modelOf=(id,role)=>modelCatalog.byId[id]||(id?{label:id,short:id}:null)||modelCatalog[role][0]||{label:'—',short:'—'};
   const orchModel=_modelOf(agentSettings.orchestrator_model,'orchestrator');
   const creativeModel=_modelOf(agentSettings.creative_model,'creative');
+  const subagentModel=_modelOf(agentSettings.subagent_model,'subagent');
+  // ── Top-bar model menu (quick switcher) ── available-only, compact views.
+  // The dropdown is a channel switcher, not the catalog: only models the user
+  // can route to right now (available !== false — the offline-fallback statics
+  // carry no availability field and must not vanish), a handful per role, zero
+  // greyed-out rows, zero duplicates. The FULL browsable catalog with all the
+  // per-model metadata lives in Settings → Providers.
+  const _mmAvail=m=>!!m&&m.available!==false;
+  const _mmRole=r=>(modelCatalog[r]||[]).filter(_mmAvail);
+  const curOrchId=agentSettings.orchestrator_model||orchModel.id||'';
+  // Quick Switch list: current orchestrator pinned first (even if its provider
+  // just lost its key — it IS still the routed id), then up to 4 available
+  // alternatives: one per provider first so the list spans providers (e.g.
+  // Sonnet → Opus, Gemini, local Gemma), then fill remaining slots in catalog
+  // order (available-first, provider-declared).
+  const quickSwitch=(()=>{
+    const pool=_mmRole('orchestrator');
+    const cur=pool.find(m=>m.id===curOrchId)||(curOrchId?{id:curOrchId,label:orchModel.label||curOrchId,short:orchModel.short||curOrchId,provider:orchModel.provider,provider_label:orchModel.provider_label,local:!!orchModel.local}:null);
+    const out=cur?[cur]:[];
+    const seen=new Set(out.map(m=>m.id));
+    const provs=new Set(out.filter(m=>m.provider).map(m=>m.provider));
+    for(const m of pool){if(out.length>=5)break;if(seen.has(m.id)||(m.provider&&provs.has(m.provider)))continue;seen.add(m.id);if(m.provider)provs.add(m.provider);out.push(m)}
+    for(const m of pool){if(out.length>=5)break;if(seen.has(m.id))continue;seen.add(m.id);out.push(m)}
+    return out;
+  })();
+  const voiceEngine=agentSettings.voice_engine||'local';
+  const voiceEngineMeta=(modelCatalog.voiceEngines||[]).find(e=>e.id===voiceEngine)||{id:voiceEngine,label:voiceEngine,short:voiceEngine};
+  const mmVoiceEngines=(modelCatalog.voiceEngines||[]).filter(_mmAvail);
+  const mmVoiceModels=_mmRole('voice').slice(0,5);
 
   // ── Ollama / Model Routing state ──
   const[ollamaStatus,setOllamaStatus]=useState({available:false,models:[],model_count:0});
@@ -8139,119 +8182,143 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         <span aria-hidden="true" style={{color:'rgba(255,255,255,0.28)',fontSize:13,userSelect:'none'}}>|</span>
         {/* Model selector pill — click to open dropdown with routing */}
         <div ref={modelMenuRef} style={{position:'relative'}}>
-          <button onClick={()=>{setModelMenuOpen(o=>!o);setSceneMenuOpen(false)}}
+          <button onClick={()=>{setModelMenuOpen(o=>!o);setModelMenuRole(null);setSceneMenuOpen(false)}}
             style={{background:'rgba(0,0,0,0.35)',border:'1px solid '+(routingMode!=='cloud_only'?'rgba(245,158,11,0.35)':'rgba(255,255,255,0.18)'),borderRadius:10,padding:'3px 9px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.88)',display:'flex',alignItems:'center',gap:6,transition:'border-color .2s,background .2s'}}
             title="Model selection & routing"
             aria-label="Model selection">
-            <span style={{fontSize:11}}>{routingMode!=='cloud_only'?(ollamaStatus.available?'🏠':'☁️'):'☁️'}</span>
-            {orchModel.short}{routingMode!=='cloud_only'&&ollamaStatus.available?' + Local':''}
+            {orchModel.short}
             <span style={{fontSize:10,opacity:0.85}} aria-hidden="true">▾</span>
           </button>
-          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:360,background:'rgba(10,14,26,0.85)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'6px 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
-            {/* Routing Mode */}
-            <div className="model-selector-tier">Routing Mode</div>
-            <div style={{padding:'2px 12px 8px',display:'flex',gap:4}}>
-              {[{id:'cloud_only',label:'Cloud Only'},{id:'smart',label:'Smart'},{id:'local_preferred',label:'Local Preferred'},{id:'local_only',label:'Local Only'}].map(rm=>(
-                <button key={rm.id} onClick={()=>setRoutingMode(rm.id)}
-                  style={{background:routingMode===rm.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(routingMode===rm.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),borderRadius:5,padding:'3px 8px',cursor:'pointer',color:routingMode===rm.id?'#00d4ff':'rgba(255,255,255,0.65)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s'}}>
+          {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.9)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'4px 0 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
+            {/* ── 1 · Quick Switch — the current orchestrator + up to 4 available
+                 alternatives. Pick one, menu closes. TV remote, not phone book. */}
+            <div className="model-selector-tier">Quick Switch</div>
+            {quickSwitch.length===0&&<div style={{padding:'2px 12px 8px',fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>No providers configured — add an API key below</div>}
+            {quickSwitch.map(m=>{
+              const cur=m.id===curOrchId;
+              return(
+              <button key={m.id} onClick={()=>{saveAgentSettings({orchestrator_model:m.id});setModelMenuOpen(false);setModelMenuRole(null)}}
+                className="model-option-cloud" title={cur?'Current orchestrator':'Switch orchestrator to '+m.label}
+                style={{width:'100%',textAlign:'left',border:'none',borderLeft:cur?'2px solid rgba(0,212,255,0.7)':'2px solid transparent',background:cur?'rgba(0,212,255,0.12)':'transparent',color:cur?'#00d4ff':'rgba(255,255,255,0.8)'}}>
+                <span style={{width:15,flexShrink:0,textAlign:'center',fontSize:10}} aria-hidden="true">{m.local?'🏠':(cur?'●':'')}</span>
+                <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.label}</span>
+                {m.provider_label?<span style={{fontSize:9,color:'rgba(255,255,255,0.3)',flexShrink:0}}>{m.provider_label}</span>:null}
+              </button>
+            )})}
+            {/* ── 2 · By Role — collapsed to the active model; ▾ expands ONE role at
+                 a time with at most 5 available options. */}
+            <div className="model-selector-tier" style={{borderTop:'1px solid rgba(255,255,255,0.06)',marginTop:4,paddingTop:8}}>By Role</div>
+            {[
+              {id:'orchestrator',ico:'🧠',label:'Orchestrator',key:'orchestrator_model',active:orchModel},
+              {id:'subagent',ico:'🔧',label:'Subagent',key:'subagent_model',active:subagentModel},
+              {id:'creative',ico:'🎨',label:'Creative',key:'creative_model',active:creativeModel},
+            ].map(row=>{
+              const open=modelMenuRole===row.id;
+              const opts=_mmRole(row.id).slice(0,5);
+              return(
+              <div key={row.id}>
+                <button onClick={()=>setModelMenuRole(open?null:row.id)} aria-expanded={open}
+                  title={open?'Collapse':'Change '+row.label.toLowerCase()+' model'}
+                  style={{display:'flex',alignItems:'center',gap:7,width:'100%',textAlign:'left',background:open?'rgba(0,212,255,0.06)':'transparent',border:'none',padding:'4px 12px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.8)'}}>
+                  <span style={{width:15,flexShrink:0,textAlign:'center'}} aria-hidden="true">{row.ico}</span>
+                  <span style={{color:'rgba(255,255,255,0.5)',flexShrink:0}}>{row.label}</span>
+                  <span style={{flex:1,color:'#00d4ff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}}>{row.active.short||row.active.label}</span>
+                  <span style={{fontSize:9,opacity:0.7,flexShrink:0}} aria-hidden="true">{open?'▴':'▾'}</span>
+                </button>
+                {open&&<div style={{paddingBottom:4}}>
+                  {opts.length===0&&<div style={{padding:'2px 12px 4px 34px',fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>No available models — add a provider key</div>}
+                  {opts.map(m=>{
+                    const cur=agentSettings[row.key]===m.id;
+                    return(
+                    <button key={m.id} onClick={()=>{saveAgentSettings({[row.key]:m.id});setModelMenuRole(null)}}
+                      className="model-option-cloud" title={(m.provider_label||'')+(m.local?' · on-device':'')}
+                      style={{width:'100%',textAlign:'left',border:'none',padding:'3px 12px 3px 34px',fontSize:10,background:cur?'rgba(0,212,255,0.10)':'transparent',color:cur?'#00d4ff':'rgba(255,255,255,0.75)'}}>
+                      <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.local?'🏠 ':''}{m.label}</span>
+                      {cur?<span style={{flexShrink:0}} aria-hidden="true">✓</span>:null}
+                    </button>
+                  )})}
+                </div>}
+              </div>
+            )})}
+            {/* Voice is engine-first: pick the audio engine; the Gemini Live model
+                 list only matters (and only shows) when the cloud engine is active. */}
+            <div>
+              <button onClick={()=>setModelMenuRole(modelMenuRole==='voice'?null:'voice')} aria-expanded={modelMenuRole==='voice'}
+                title={modelMenuRole==='voice'?'Collapse':'Change voice engine'}
+                style={{display:'flex',alignItems:'center',gap:7,width:'100%',textAlign:'left',background:modelMenuRole==='voice'?'rgba(0,212,255,0.06)':'transparent',border:'none',padding:'4px 12px',cursor:'pointer',fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.8)'}}>
+                <span style={{width:15,flexShrink:0,textAlign:'center'}} aria-hidden="true">🎤</span>
+                <span style={{color:'rgba(255,255,255,0.5)',flexShrink:0}}>Voice</span>
+                <span style={{flex:1,color:'#00d4ff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}}>{voiceEngineMeta.short||voiceEngineMeta.label}</span>
+                <span style={{fontSize:9,opacity:0.7,flexShrink:0}} aria-hidden="true">{modelMenuRole==='voice'?'▴':'▾'}</span>
+              </button>
+              {modelMenuRole==='voice'&&<div style={{paddingBottom:4}}>
+                {mmVoiceEngines.map(en=>{
+                  const cur=voiceEngine===en.id;
+                  return(
+                  <button key={en.id} onClick={()=>{saveAgentSettings({voice_engine:en.id});if(en.id!=='gemini')setModelMenuRole(null)}}
+                    className="model-option-cloud" title={en.hint||en.label}
+                    style={{width:'100%',textAlign:'left',border:'none',padding:'3px 12px 3px 34px',fontSize:10,background:cur?'rgba(0,212,255,0.10)':'transparent',color:cur?'#00d4ff':'rgba(255,255,255,0.75)'}}>
+                    <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{en.label}</span>
+                    {cur?<span style={{flexShrink:0}} aria-hidden="true">✓</span>:null}
+                  </button>
+                )})}
+                {voiceEngine==='gemini'&&mmVoiceModels.length>0&&<div>
+                  <div style={{padding:'4px 12px 2px 34px',fontFamily:'Orbitron',fontSize:8,color:'rgba(0,212,255,0.55)',letterSpacing:'0.1em',textTransform:'uppercase'}}>Gemini Live model</div>
+                  {mmVoiceModels.map(m=>{
+                    const cur=agentSettings.voice_model===m.id;
+                    return(
+                    <button key={m.id} onClick={()=>{saveAgentSettings({voice_model:m.id});setModelMenuRole(null)}}
+                      className="model-option-cloud" title="Gemini Live model"
+                      style={{width:'100%',textAlign:'left',border:'none',padding:'3px 12px 3px 34px',fontSize:10,background:cur?'rgba(0,212,255,0.10)':'transparent',color:cur?'#00d4ff':'rgba(255,255,255,0.75)'}}>
+                      <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.label}</span>
+                      {cur?<span style={{flexShrink:0}} aria-hidden="true">✓</span>:null}
+                    </button>
+                  )})}
+                </div>}
+              </div>}
+            </div>
+            {/* ── 3 · Routing Mode ── */}
+            <div className="model-selector-tier" style={{borderTop:'1px solid rgba(255,255,255,0.06)',marginTop:4,paddingTop:8}}>Routing Mode</div>
+            <div style={{padding:'2px 12px 6px',display:'flex',gap:4}}>
+              {[{id:'cloud_only',label:'Cloud Only'},{id:'smart',label:'Smart'},{id:'local_preferred',label:'Local Pref.'},{id:'local_only',label:'Local Only'}].map(rm=>(
+                <button key={rm.id} onClick={()=>setRoutingMode(rm.id)} title={rm.id==='local_preferred'?'Local Preferred':rm.label}
+                  style={{background:routingMode===rm.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(routingMode===rm.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.1)'),borderRadius:5,padding:'3px 6px',cursor:'pointer',color:routingMode===rm.id?'#00d4ff':'rgba(255,255,255,0.65)',fontSize:9,fontFamily:'JetBrains Mono',transition:'all .15s',flex:1,whiteSpace:'nowrap'}}>
                   {rm.label}
                 </button>
               ))}
             </div>
-            {/* Stats summary */}
-            {routingMode!=='cloud_only'&&<div style={{padding:'4px 12px 8px',fontSize:10,color:'rgba(255,255,255,0.55)',fontFamily:'JetBrains Mono',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-              Today: {routingStats.local_requests} local, {routingStats.cloud_requests} cloud{routingStats.local_tokens>0?`, ${routingStats.local_tokens.toLocaleString()} local tokens`:''}
+            {routingMode!=='cloud_only'&&<div style={{padding:'0 12px 6px',fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>
+              Today: {routingStats.local_requests} local · {routingStats.cloud_requests} cloud{!ollamaStatus.available?' · Ollama offline':''}
             </div>}
-            {/* Per-role model assignment — spans every available provider */}
-            <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6}}>
-              <span>🧠 Model Roles</span>
-            </div>
-            {[
-              {label:'Orchestrator',subtitle:'Main agent brain',key:'orchestrator_model',models:modelCatalog.orchestrator},
-              {label:'Subagent',subtitle:'Background tasks & drafts',key:'subagent_model',models:modelCatalog.subagent},
-              {label:'Creative',subtitle:'Image & video gen',key:'creative_model',models:modelCatalog.creative},
-            ].map(cat=>(
-              <div key={cat.key} style={{padding:'4px 12px 6px'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                  <span style={{fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.8)',letterSpacing:'0.06em'}}>{cat.label}</span>
-                  <span style={{fontSize:9,color:'rgba(255,255,255,0.35)'}}>{cat.subtitle}</span>
+            {/* Local default — ONLY when Ollama is actually running (daemon down =
+                 no section at all; the routing line above says "Ollama offline").
+                 Click sets model_routing.local_model, the routing fallback. */}
+            {ollamaStatus.available&&<div>
+              <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6,borderTop:'1px solid rgba(255,255,255,0.06)',marginTop:4,paddingTop:8}}>
+                <span>🏠 Local Models</span>
+                <span className="ollama-status-dot online" title="Ollama running"/>
+              </div>
+              {(ollamaStatus.models||[]).length===0&&<div style={{padding:'2px 12px 6px',fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>No models installed</div>}
+              {(ollamaStatus.models||[]).slice(0,4).map(m=>{
+                const active=((agentSettings.model_routing||{}).local_model||'gemma4:latest')===m.name;
+                return(
+                <div key={m.name} onClick={()=>setLocalModel(m.name)} title={active?'Default local model':'Click to set as default local model'}
+                  className="model-option-local" style={{background:active?'rgba(0,255,128,0.08)':'transparent'}}>
+                  <span className="ollama-status-dot online"/>
+                  <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:active?'#00ff80':undefined}}>{m.name}</span>
+                  {active&&<span style={{fontSize:9,color:'#00ff80',fontFamily:'JetBrains Mono'}}>DEFAULT</span>}
                 </div>
-                <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
-                  {cat.models.map(m=>{
-                    const off=m.available===false;
-                    const tip=off?(m.hint||(m.needs_key?'Requires '+m.needs_key+' — add it in Settings → Providers':'Provider unavailable'))
-                                 :(m.provider_label||'')+(m.local?' · on-device':'');
-                    return(
-                    <button key={(m.provider||'')+m.id}
-                      onClick={off?undefined:()=>{saveAgentSettings({[cat.key]:m.id})}}
-                      className="model-option-cloud" aria-disabled={off}
-                      title={tip}
-                      style={{background:agentSettings[cat.key]===m.id?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(agentSettings[cat.key]===m.id?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),borderRadius:5,padding:'3px 7px',cursor:off?'not-allowed':'pointer',color:agentSettings[cat.key]===m.id?'#00d4ff':'rgba(255,255,255,0.7)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s',opacity:off?0.4:1}}>
-                      {m.local?'🏠 ':''}{m.label}
-                    </button>
-                  )})}
-                </div>
-              </div>
-            ))}
-            {/* Voice — engine choice first; the Gemini Live model only matters when the cloud engine is active */}
-            <div style={{padding:'4px 12px 6px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
-                <span style={{fontFamily:'Orbitron',fontSize:9,color:'rgba(0,212,255,0.8)',letterSpacing:'0.06em'}}>Voice</span>
-                <span style={{fontSize:9,color:'rgba(255,255,255,0.35)'}}>Live audio engine</span>
-              </div>
-              <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
-                {modelCatalog.voiceEngines.map(en=>{
-                  const off=en.available===false;
-                  const cur=(agentSettings.voice_engine||'local')===en.id;
-                  return(
-                  <button key={en.id}
-                    onClick={off?undefined:()=>{saveAgentSettings({voice_engine:en.id})}}
-                    className="model-option-cloud" aria-disabled={off}
-                    title={off?(en.hint||'Unavailable'):(en.hint||en.label)}
-                    style={{background:cur?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(cur?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),borderRadius:5,padding:'3px 7px',cursor:off?'not-allowed':'pointer',color:cur?'#00d4ff':'rgba(255,255,255,0.7)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s',opacity:off?0.4:1}}>
-                    {en.short||en.label}
-                  </button>
-                )})}
-              </div>
-              {(agentSettings.voice_engine||'local')==='gemini'&&<div style={{display:'flex',gap:3,flexWrap:'wrap',marginTop:4}}>
-                {modelCatalog.voice.map(m=>{
-                  const off=m.available===false;
-                  const cur=agentSettings.voice_model===m.id;
-                  return(
-                  <button key={(m.provider||'')+m.id}
-                    onClick={off?undefined:()=>{saveAgentSettings({voice_model:m.id})}}
-                    className="model-option-cloud" aria-disabled={off}
-                    title={off?(m.hint||(m.needs_key?'Requires '+m.needs_key+' — add it in Settings → Providers':'Provider unavailable')):'Gemini Live model'}
-                    style={{background:cur?'rgba(0,212,255,0.15)':'rgba(255,255,255,0.04)',border:'1px solid '+(cur?'rgba(0,212,255,0.5)':'rgba(255,255,255,0.08)'),borderRadius:5,padding:'3px 7px',cursor:off?'not-allowed':'pointer',color:cur?'#00d4ff':'rgba(255,255,255,0.7)',fontSize:10,fontFamily:'JetBrains Mono',transition:'all .15s',opacity:off?0.4:1}}>
-                    {m.label}
-                  </button>
-                )})}
-              </div>}
-            </div>
-            {/* Local Models */}
-            <div className="model-selector-tier" style={{display:'flex',alignItems:'center',gap:6,borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:10}}>
-              <span>🏠 Local Models</span>
-              <span className={'ollama-status-dot '+(ollamaStatus.available?'online':'offline')} title={ollamaStatus.available?'Ollama running':'Ollama offline'}/>
-              {!ollamaStatus.available&&<span style={{fontSize:9,color:'rgba(255,255,255,0.4)'}}>Ollama not running</span>}
-            </div>
-            {ollamaStatus.available&&ollamaStatus.models&&ollamaStatus.models.length>0?(
-              <div style={{padding:'2px 12px 6px'}}>
-                {ollamaStatus.models.map(m=>{
-                  const active=((agentSettings.model_routing||{}).local_model||'gemma4:latest')===m.name;
-                  return(
-                  <div key={m.name} onClick={()=>setLocalModel(m.name)} title={active?'Default local model':'Click to set as default local model'}
-                    className="model-option-local" style={{padding:'4px 6px',margin:'1px 0',borderRadius:6,cursor:'pointer',
-                      background:active?'rgba(0,255,128,0.10)':'transparent',
-                      borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
-                    <span className="ollama-status-dot online"/>
-                    <span style={{flex:1,color:active?'#00ff80':undefined}}>{m.name}</span>
-                    {active&&<span style={{fontSize:9,color:'#00ff80',fontFamily:'JetBrains Mono',marginRight:6}}>DEFAULT</span>}
-                    <span className="model-badge-local">{m.size_gb}GB{m.parameter_size?' · '+m.parameter_size:''}</span>
-                  </div>
-                  );
-                })}
-              </div>
-            ):(ollamaStatus.available?<div style={{padding:'6px 12px',fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>No models installed</div>:null)}
+              )})}
+              {(ollamaStatus.models||[]).length>4&&<div style={{padding:'1px 12px 6px',fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>+{(ollamaStatus.models||[]).length-4} more in Browse All Models</div>}
+            </div>}
+            {/* ── 4 · Footer — the FULL catalog (every provider, every model, all
+                 metadata, key management) lives in Settings → Providers. */}
+            <button onClick={()=>{setModelMenuOpen(false);setModelMenuRole(null);window.__fridaySettingsTab='providers';try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'providers'}}))}catch(_){}if(openWins.has('settings')){bringFront('settings')}else{toggle('settings')}}}
+              style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,width:'100%',background:'rgba(0,212,255,0.04)',border:'none',borderTop:'1px solid rgba(255,255,255,0.08)',marginTop:4,padding:'8px 12px',cursor:'pointer',color:'rgba(0,212,255,0.85)',fontFamily:'JetBrains Mono',fontSize:10,letterSpacing:'.05em',borderRadius:'0 0 9px 9px',transition:'background .15s'}}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,212,255,0.10)'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,212,255,0.04)'}}>
+              <span aria-hidden="true">⚙️</span> Browse All Models
+            </button>
           </div>}
         </div>
         {/* Local inference slots indicator */}

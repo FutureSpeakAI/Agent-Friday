@@ -27028,7 +27028,23 @@ function SettingsTabAbout() {
   }, "Headroom"), " by Tejas Chopra \u2014 Apache 2.0.")));
 }
 function SettingsWS() {
-  const [tab, setTab] = useState('general');
+  // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
+  // Settings straight onto Providers. The global covers a window that is
+  // about to MOUNT (set before open); the event covers one already mounted.
+  const [tab, setTab] = useState(() => {
+    const t = window.__fridaySettingsTab;
+    window.__fridaySettingsTab = null;
+    return t || 'general';
+  });
+  useEffect(() => {
+    const h = e => {
+      const t = e && e.detail && e.detail.tab;
+      if (t) setTab(t);
+      window.__fridaySettingsTab = null;
+    };
+    window.addEventListener('friday:settings-tab', h);
+    return () => window.removeEventListener('friday:settings-tab', h);
+  }, []);
   const {
     s,
     save,
@@ -28450,6 +28466,7 @@ function App() {
     } catch (e) {}
   };
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuRole, setModelMenuRole] = useState(null); // which By-Role row is expanded (one at a time)
   const modelMenuRef = useRef(null);
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -28481,6 +28498,57 @@ function App() {
   };
   const orchModel = _modelOf(agentSettings.orchestrator_model, 'orchestrator');
   const creativeModel = _modelOf(agentSettings.creative_model, 'creative');
+  const subagentModel = _modelOf(agentSettings.subagent_model, 'subagent');
+  // ── Top-bar model menu (quick switcher) ── available-only, compact views.
+  // The dropdown is a channel switcher, not the catalog: only models the user
+  // can route to right now (available !== false — the offline-fallback statics
+  // carry no availability field and must not vanish), a handful per role, zero
+  // greyed-out rows, zero duplicates. The FULL browsable catalog with all the
+  // per-model metadata lives in Settings → Providers.
+  const _mmAvail = m => !!m && m.available !== false;
+  const _mmRole = r => (modelCatalog[r] || []).filter(_mmAvail);
+  const curOrchId = agentSettings.orchestrator_model || orchModel.id || '';
+  // Quick Switch list: current orchestrator pinned first (even if its provider
+  // just lost its key — it IS still the routed id), then up to 4 available
+  // alternatives: one per provider first so the list spans providers (e.g.
+  // Sonnet → Opus, Gemini, local Gemma), then fill remaining slots in catalog
+  // order (available-first, provider-declared).
+  const quickSwitch = (() => {
+    const pool = _mmRole('orchestrator');
+    const cur = pool.find(m => m.id === curOrchId) || (curOrchId ? {
+      id: curOrchId,
+      label: orchModel.label || curOrchId,
+      short: orchModel.short || curOrchId,
+      provider: orchModel.provider,
+      provider_label: orchModel.provider_label,
+      local: !!orchModel.local
+    } : null);
+    const out = cur ? [cur] : [];
+    const seen = new Set(out.map(m => m.id));
+    const provs = new Set(out.filter(m => m.provider).map(m => m.provider));
+    for (const m of pool) {
+      if (out.length >= 5) break;
+      if (seen.has(m.id) || m.provider && provs.has(m.provider)) continue;
+      seen.add(m.id);
+      if (m.provider) provs.add(m.provider);
+      out.push(m);
+    }
+    for (const m of pool) {
+      if (out.length >= 5) break;
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push(m);
+    }
+    return out;
+  })();
+  const voiceEngine = agentSettings.voice_engine || 'local';
+  const voiceEngineMeta = (modelCatalog.voiceEngines || []).find(e => e.id === voiceEngine) || {
+    id: voiceEngine,
+    label: voiceEngine,
+    short: voiceEngine
+  };
+  const mmVoiceEngines = (modelCatalog.voiceEngines || []).filter(_mmAvail);
+  const mmVoiceModels = _mmRole('voice').slice(0, 5);
 
   // ── Ollama / Model Routing state ──
   const [ollamaStatus, setOllamaStatus] = useState({
@@ -30973,6 +31041,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setModelMenuOpen(o => !o);
+      setModelMenuRole(null);
       setSceneMenuOpen(false);
     },
     style: {
@@ -31006,14 +31075,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       position: 'absolute',
       top: 'calc(100% + 6px)',
       left: 0,
-      width: 360,
-      background: 'rgba(10,14,26,0.85)',
+      width: 320,
+      background: 'rgba(10,14,26,0.9)',
       backdropFilter: 'blur(16px) saturate(1.2)',
       WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
       border: '1px solid rgba(0,212,255,0.15)',
       borderRadius: 10,
       zIndex: 200,
-      padding: '6px 0',
+      padding: '4px 0 0',
       boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
       fontFamily: 'Inter',
       fontSize: 11,
@@ -31022,9 +31091,315 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "model-selector-tier"
-  }, "Routing Mode"), /*#__PURE__*/React.createElement("div", {
+  }, "Quick Switch"), quickSwitch.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '2px 12px 8px',
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "No providers configured \u2014 add an API key below"), quickSwitch.map(m => {
+    const cur = m.id === curOrchId;
+    return /*#__PURE__*/React.createElement("button", {
+      key: m.id,
+      onClick: () => {
+        saveAgentSettings({
+          orchestrator_model: m.id
+        });
+        setModelMenuOpen(false);
+        setModelMenuRole(null);
+      },
+      className: "model-option-cloud",
+      title: cur ? 'Current orchestrator' : 'Switch orchestrator to ' + m.label,
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        borderLeft: cur ? '2px solid rgba(0,212,255,0.7)' : '2px solid transparent',
+        background: cur ? 'rgba(0,212,255,0.12)' : 'transparent',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.8)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 15,
+        flexShrink: 0,
+        textAlign: 'center',
+        fontSize: 10
+      },
+      "aria-hidden": "true"
+    }, m.local ? '🏠' : cur ? '●' : ''), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, m.label), m.provider_label ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        color: 'rgba(255,255,255,0.3)',
+        flexShrink: 0
+      }
+    }, m.provider_label) : null);
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "model-selector-tier",
+    style: {
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+      marginTop: 4,
+      paddingTop: 8
+    }
+  }, "By Role"), [{
+    id: 'orchestrator',
+    ico: '🧠',
+    label: 'Orchestrator',
+    key: 'orchestrator_model',
+    active: orchModel
+  }, {
+    id: 'subagent',
+    ico: '🔧',
+    label: 'Subagent',
+    key: 'subagent_model',
+    active: subagentModel
+  }, {
+    id: 'creative',
+    ico: '🎨',
+    label: 'Creative',
+    key: 'creative_model',
+    active: creativeModel
+  }].map(row => {
+    const open = modelMenuRole === row.id;
+    const opts = _mmRole(row.id).slice(0, 5);
+    return /*#__PURE__*/React.createElement("div", {
+      key: row.id
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setModelMenuRole(open ? null : row.id),
+      "aria-expanded": open,
+      title: open ? 'Collapse' : 'Change ' + row.label.toLowerCase() + ' model',
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        width: '100%',
+        textAlign: 'left',
+        background: open ? 'rgba(0,212,255,0.06)' : 'transparent',
+        border: 'none',
+        padding: '4px 12px',
+        cursor: 'pointer',
+        fontFamily: 'JetBrains Mono',
+        fontSize: 11,
+        color: 'rgba(255,255,255,0.8)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 15,
+        flexShrink: 0,
+        textAlign: 'center'
+      },
+      "aria-hidden": "true"
+    }, row.ico), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'rgba(255,255,255,0.5)',
+        flexShrink: 0
+      }
+    }, row.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        color: '#00d4ff',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        textAlign: 'right'
+      }
+    }, row.active.short || row.active.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        opacity: 0.7,
+        flexShrink: 0
+      },
+      "aria-hidden": "true"
+    }, open ? '▴' : '▾')), open && /*#__PURE__*/React.createElement("div", {
+      style: {
+        paddingBottom: 4
+      }
+    }, opts.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '2px 12px 4px 34px',
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono'
+      }
+    }, "No available models \u2014 add a provider key"), opts.map(m => {
+      const cur = agentSettings[row.key] === m.id;
+      return /*#__PURE__*/React.createElement("button", {
+        key: m.id,
+        onClick: () => {
+          saveAgentSettings({
+            [row.key]: m.id
+          });
+          setModelMenuRole(null);
+        },
+        className: "model-option-cloud",
+        title: (m.provider_label || '') + (m.local ? ' · on-device' : ''),
+        style: {
+          width: '100%',
+          textAlign: 'left',
+          border: 'none',
+          padding: '3px 12px 3px 34px',
+          fontSize: 10,
+          background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
+          color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }
+      }, m.local ? '🏠 ' : '', m.label), cur ? /*#__PURE__*/React.createElement("span", {
+        style: {
+          flexShrink: 0
+        },
+        "aria-hidden": "true"
+      }, "\u2713") : null);
+    })));
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModelMenuRole(modelMenuRole === 'voice' ? null : 'voice'),
+    "aria-expanded": modelMenuRole === 'voice',
+    title: modelMenuRole === 'voice' ? 'Collapse' : 'Change voice engine',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      width: '100%',
+      textAlign: 'left',
+      background: modelMenuRole === 'voice' ? 'rgba(0,212,255,0.06)' : 'transparent',
+      border: 'none',
+      padding: '4px 12px',
+      cursor: 'pointer',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.8)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 15,
+      flexShrink: 0,
+      textAlign: 'center'
+    },
+    "aria-hidden": "true"
+  }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.5)',
+      flexShrink: 0
+    }
+  }, "Voice"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      color: '#00d4ff',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      textAlign: 'right'
+    }
+  }, voiceEngineMeta.short || voiceEngineMeta.label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      opacity: 0.7,
+      flexShrink: 0
+    },
+    "aria-hidden": "true"
+  }, modelMenuRole === 'voice' ? '▴' : '▾')), modelMenuRole === 'voice' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      paddingBottom: 4
+    }
+  }, mmVoiceEngines.map(en => {
+    const cur = voiceEngine === en.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: en.id,
+      onClick: () => {
+        saveAgentSettings({
+          voice_engine: en.id
+        });
+        if (en.id !== 'gemini') setModelMenuRole(null);
+      },
+      className: "model-option-cloud",
+      title: en.hint || en.label,
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        padding: '3px 12px 3px 34px',
+        fontSize: 10,
+        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, en.label), cur ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      },
+      "aria-hidden": "true"
+    }, "\u2713") : null);
+  }), voiceEngine === 'gemini' && mmVoiceModels.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 12px 2px 34px',
+      fontFamily: 'Orbitron',
+      fontSize: 8,
+      color: 'rgba(0,212,255,0.55)',
+      letterSpacing: '0.1em',
+      textTransform: 'uppercase'
+    }
+  }, "Gemini Live model"), mmVoiceModels.map(m => {
+    const cur = agentSettings.voice_model === m.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: m.id,
+      onClick: () => {
+        saveAgentSettings({
+          voice_model: m.id
+        });
+        setModelMenuRole(null);
+      },
+      className: "model-option-cloud",
+      title: "Gemini Live model",
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        padding: '3px 12px 3px 34px',
+        fontSize: 10,
+        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, m.label), cur ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      },
+      "aria-hidden": "true"
+    }, "\u2713") : null);
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "model-selector-tier",
+    style: {
+      borderTop: '1px solid rgba(255,255,255,0.06)',
+      marginTop: 4,
+      paddingTop: 8
+    }
+  }, "Routing Mode"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '2px 12px 6px',
       display: 'flex',
       gap: 4
     }
@@ -31036,220 +31411,55 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     label: 'Smart'
   }, {
     id: 'local_preferred',
-    label: 'Local Preferred'
+    label: 'Local Pref.'
   }, {
     id: 'local_only',
     label: 'Local Only'
   }].map(rm => /*#__PURE__*/React.createElement("button", {
     key: rm.id,
     onClick: () => setRoutingMode(rm.id),
+    title: rm.id === 'local_preferred' ? 'Local Preferred' : rm.label,
     style: {
       background: routingMode === rm.id ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
       border: '1px solid ' + (routingMode === rm.id ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
       borderRadius: 5,
-      padding: '3px 8px',
+      padding: '3px 6px',
       cursor: 'pointer',
       color: routingMode === rm.id ? '#00d4ff' : 'rgba(255,255,255,0.65)',
-      fontSize: 10,
+      fontSize: 9,
       fontFamily: 'JetBrains Mono',
-      transition: 'all .15s'
+      transition: 'all .15s',
+      flex: 1,
+      whiteSpace: 'nowrap'
     }
   }, rm.label))), routingMode !== 'cloud_only' && /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: '4px 12px 8px',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.55)',
-      fontFamily: 'JetBrains Mono',
-      borderBottom: '1px solid rgba(255,255,255,0.06)'
-    }
-  }, "Today: ", routingStats.local_requests, " local, ", routingStats.cloud_requests, " cloud", routingStats.local_tokens > 0 ? `, ${routingStats.local_tokens.toLocaleString()} local tokens` : ''), /*#__PURE__*/React.createElement("div", {
-    className: "model-selector-tier",
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83E\uDDE0 Model Roles")), [{
-    label: 'Orchestrator',
-    subtitle: 'Main agent brain',
-    key: 'orchestrator_model',
-    models: modelCatalog.orchestrator
-  }, {
-    label: 'Subagent',
-    subtitle: 'Background tasks & drafts',
-    key: 'subagent_model',
-    models: modelCatalog.subagent
-  }, {
-    label: 'Creative',
-    subtitle: 'Image & video gen',
-    key: 'creative_model',
-    models: modelCatalog.creative
-  }].map(cat => /*#__PURE__*/React.createElement("div", {
-    key: cat.key,
-    style: {
-      padding: '4px 12px 6px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'baseline',
-      marginBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron',
+      padding: '0 12px 6px',
       fontSize: 9,
-      color: 'rgba(0,212,255,0.8)',
-      letterSpacing: '0.06em'
+      color: 'rgba(255,255,255,0.45)',
+      fontFamily: 'JetBrains Mono'
     }
-  }, cat.label), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      color: 'rgba(255,255,255,0.35)'
-    }
-  }, cat.subtitle)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 3,
-      flexWrap: 'wrap'
-    }
-  }, cat.models.map(m => {
-    const off = m.available === false;
-    const tip = off ? m.hint || (m.needs_key ? 'Requires ' + m.needs_key + ' — add it in Settings → Providers' : 'Provider unavailable') : (m.provider_label || '') + (m.local ? ' · on-device' : '');
-    return /*#__PURE__*/React.createElement("button", {
-      key: (m.provider || '') + m.id,
-      onClick: off ? undefined : () => {
-        saveAgentSettings({
-          [cat.key]: m.id
-        });
-      },
-      className: "model-option-cloud",
-      "aria-disabled": off,
-      title: tip,
-      style: {
-        background: agentSettings[cat.key] === m.id ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
-        border: '1px solid ' + (agentSettings[cat.key] === m.id ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-        borderRadius: 5,
-        padding: '3px 7px',
-        cursor: off ? 'not-allowed' : 'pointer',
-        color: agentSettings[cat.key] === m.id ? '#00d4ff' : 'rgba(255,255,255,0.7)',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        transition: 'all .15s',
-        opacity: off ? 0.4 : 1
-      }
-    }, m.local ? '🏠 ' : '', m.label);
-  })))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 12px 6px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'baseline',
-      marginBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'Orbitron',
-      fontSize: 9,
-      color: 'rgba(0,212,255,0.8)',
-      letterSpacing: '0.06em'
-    }
-  }, "Voice"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      color: 'rgba(255,255,255,0.35)'
-    }
-  }, "Live audio engine")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 3,
-      flexWrap: 'wrap'
-    }
-  }, modelCatalog.voiceEngines.map(en => {
-    const off = en.available === false;
-    const cur = (agentSettings.voice_engine || 'local') === en.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: en.id,
-      onClick: off ? undefined : () => {
-        saveAgentSettings({
-          voice_engine: en.id
-        });
-      },
-      className: "model-option-cloud",
-      "aria-disabled": off,
-      title: off ? en.hint || 'Unavailable' : en.hint || en.label,
-      style: {
-        background: cur ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
-        border: '1px solid ' + (cur ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-        borderRadius: 5,
-        padding: '3px 7px',
-        cursor: off ? 'not-allowed' : 'pointer',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.7)',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        transition: 'all .15s',
-        opacity: off ? 0.4 : 1
-      }
-    }, en.short || en.label);
-  })), (agentSettings.voice_engine || 'local') === 'gemini' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 3,
-      flexWrap: 'wrap',
-      marginTop: 4
-    }
-  }, modelCatalog.voice.map(m => {
-    const off = m.available === false;
-    const cur = agentSettings.voice_model === m.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: (m.provider || '') + m.id,
-      onClick: off ? undefined : () => {
-        saveAgentSettings({
-          voice_model: m.id
-        });
-      },
-      className: "model-option-cloud",
-      "aria-disabled": off,
-      title: off ? m.hint || (m.needs_key ? 'Requires ' + m.needs_key + ' — add it in Settings → Providers' : 'Provider unavailable') : 'Gemini Live model',
-      style: {
-        background: cur ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
-        border: '1px solid ' + (cur ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.08)'),
-        borderRadius: 5,
-        padding: '3px 7px',
-        cursor: off ? 'not-allowed' : 'pointer',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.7)',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        transition: 'all .15s',
-        opacity: off ? 0.4 : 1
-      }
-    }, m.label);
-  }))), /*#__PURE__*/React.createElement("div", {
+  }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", !ollamaStatus.available ? ' · Ollama offline' : ''), ollamaStatus.available && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "model-selector-tier",
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 6,
       borderTop: '1px solid rgba(255,255,255,0.06)',
-      paddingTop: 10
+      marginTop: 4,
+      paddingTop: 8
     }
   }, /*#__PURE__*/React.createElement("span", null, "\uD83C\uDFE0 Local Models"), /*#__PURE__*/React.createElement("span", {
-    className: 'ollama-status-dot ' + (ollamaStatus.available ? 'online' : 'offline'),
-    title: ollamaStatus.available ? 'Ollama running' : 'Ollama offline'
-  }), !ollamaStatus.available && /*#__PURE__*/React.createElement("span", {
+    className: "ollama-status-dot online",
+    title: "Ollama running"
+  })), (ollamaStatus.models || []).length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 9,
-      color: 'rgba(255,255,255,0.4)'
+      padding: '2px 12px 6px',
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      fontFamily: 'JetBrains Mono'
     }
-  }, "Ollama not running")), ollamaStatus.available && ollamaStatus.models && ollamaStatus.models.length > 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '2px 12px 6px'
-    }
-  }, ollamaStatus.models.map(m => {
+  }, "No models installed"), (ollamaStatus.models || []).slice(0, 4).map(m => {
     const active = ((agentSettings.model_routing || {}).local_model || 'gemma4:latest') === m.name;
     return /*#__PURE__*/React.createElement("div", {
       key: m.name,
@@ -31257,38 +31467,78 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       title: active ? 'Default local model' : 'Click to set as default local model',
       className: "model-option-local",
       style: {
-        padding: '4px 6px',
-        margin: '1px 0',
-        borderRadius: 6,
-        cursor: 'pointer',
-        background: active ? 'rgba(0,255,128,0.10)' : 'transparent',
-        borderBottom: '1px solid rgba(255,255,255,0.03)'
+        background: active ? 'rgba(0,255,128,0.08)' : 'transparent'
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: "ollama-status-dot online"
     }), /*#__PURE__*/React.createElement("span", {
       style: {
         flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
         color: active ? '#00ff80' : undefined
       }
     }, m.name), active && /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 9,
         color: '#00ff80',
-        fontFamily: 'JetBrains Mono',
-        marginRight: 6
+        fontFamily: 'JetBrains Mono'
       }
-    }, "DEFAULT"), /*#__PURE__*/React.createElement("span", {
-      className: "model-badge-local"
-    }, m.size_gb, "GB", m.parameter_size ? ' · ' + m.parameter_size : ''));
-  })) : ollamaStatus.available ? /*#__PURE__*/React.createElement("div", {
+    }, "DEFAULT"));
+  }), (ollamaStatus.models || []).length > 4 && /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: '6px 12px',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.4)',
+      padding: '1px 12px 6px',
+      fontSize: 9,
+      color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "No models installed") : null)), routingMode !== 'cloud_only' && ollamaStatus.available && /*#__PURE__*/React.createElement("span", {
+  }, "+", (ollamaStatus.models || []).length - 4, " more in Browse All Models")), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setModelMenuOpen(false);
+      setModelMenuRole(null);
+      window.__fridaySettingsTab = 'providers';
+      try {
+        window.dispatchEvent(new CustomEvent('friday:settings-tab', {
+          detail: {
+            tab: 'providers'
+          }
+        }));
+      } catch (_) {}
+      if (openWins.has('settings')) {
+        bringFront('settings');
+      } else {
+        toggle('settings');
+      }
+    },
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      width: '100%',
+      background: 'rgba(0,212,255,0.04)',
+      border: 'none',
+      borderTop: '1px solid rgba(255,255,255,0.08)',
+      marginTop: 4,
+      padding: '8px 12px',
+      cursor: 'pointer',
+      color: 'rgba(0,212,255,0.85)',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 10,
+      letterSpacing: '.05em',
+      borderRadius: '0 0 9px 9px',
+      transition: 'background .15s'
+    },
+    onMouseEnter: e => {
+      e.currentTarget.style.background = 'rgba(0,212,255,0.10)';
+    },
+    onMouseLeave: e => {
+      e.currentTarget.style.background = 'rgba(0,212,255,0.04)';
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\u2699\uFE0F"), " Browse All Models"))), routingMode !== 'cloud_only' && ollamaStatus.available && /*#__PURE__*/React.createElement("span", {
     className: "inference-slots",
     title: "Local inference slots"
   }, "\uD83C\uDFE0 ", routingStats.local_requests > 0 ? '●' : '○', "/", (agentSettings.model_routing || {}).local_inference_slots || 3)), /*#__PURE__*/React.createElement("div", {
