@@ -1116,8 +1116,15 @@ _WORKSPACE_ALIASES = {
     'studio': 'studio', 'creations': 'studio', 'gallery': 'studio',
     'create': 'studio', 'art': 'studio', 'creative': 'studio',
     'trust': 'trust', 'trust graph': 'trust', 'reputation': 'trust', 'trust score': 'trust',
-    'system': 'system', 'settings': 'system', 'system settings': 'system',
-    'config': 'system', 'preferences': 'system', 'setting': 'system',
+    'system': 'system', 'system health': 'system', 'health check': 'system',
+    # Settings is its OWN workspace (dock id 'settings') — for months this
+    # table sent "open settings" to the System workspace and Friday looked
+    # like she didn't know her own UI.
+    'settings': 'settings', 'setting': 'settings', 'settings menu': 'settings',
+    'system settings': 'settings', 'preferences': 'settings',
+    'options': 'settings', 'config': 'settings', 'configuration': 'settings',
+    'marketplace': 'marketplace', 'market': 'marketplace',
+    'store': 'marketplace', 'shop': 'marketplace', 'skill store': 'marketplace',
     'news': 'news', 'headlines': 'news', 'feed': 'news', 'newsfeed': 'news',
     'front page': 'news', 'frontpage': 'news', 'top stories': 'news',
     'breaking news': 'news', 'newspaper': 'news', 'the news': 'news',
@@ -1146,7 +1153,8 @@ _WORKSPACE_LABELS = {
     'code': 'Code', 'finance': 'Finance', 'health': 'Health',
     'contacts': 'Contacts', 'content': 'Content', 'messages': 'Messages',
     'calendar': 'Calendar', 'family': 'Family',
-    'futurespeak': 'FutureSpeak',
+    'futurespeak': 'FutureSpeak', 'settings': 'Settings',
+    'marketplace': 'Marketplace',
 }
 
 
@@ -1166,7 +1174,7 @@ def _resolve_workspace(name):
     if hit:
         return hit
     # Fall back to stripping a trailing UI-noise word: "news tab" → "news".
-    stripped = re.sub(r'\s+(workspace|tab|panel|page|screen|view|window|section)$', '', low).strip()
+    stripped = re.sub(r'\s+(workspace|tab|panel|page|screen|view|window|section|menu)$', '', low).strip()
     return _WORKSPACE_ALIASES.get(stripped)
 
 

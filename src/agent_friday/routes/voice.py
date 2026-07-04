@@ -1806,10 +1806,18 @@ if sock is not None:
                                 continue
                             now = _time.time()
                             quiet_s = now - _last_gemini_ts[0]
-                            spoke_recently = (now - _last_speech_ts[0]) < 25.0
+                            speech_ended_s = now - _last_speech_ts[0]
                             speech_after_quiet = _last_speech_ts[0] > _last_gemini_ts[0] + 5.0
-                            if (quiet_s > LIVE_STALL_SECONDS and spoke_recently
-                                    and speech_after_quiet):
+                            # Fire ONLY after the user has FINISHED talking and
+                            # Gemini still hasn't answered. The old "user is
+                            # speaking + upstream quiet" condition false-fired
+                            # in the middle of long monologues (models that
+                            # don't stream input transcription mid-turn look
+                            # "quiet" the whole time), and every needless
+                            # renewal desynced the conversation.
+                            if (quiet_s > LIVE_STALL_SECONDS
+                                    and speech_after_quiet
+                                    and 8.0 <= speech_ended_s <= 90.0):
                                 _vlog(f'liveness watchdog: user speaking but no Gemini traffic for {quiet_s:.0f}s — forcing leg renewal')
                                 _safe_send({"type": "status", "text": "connection stalled — renewing"})
                                 sdone.set()
@@ -1913,6 +1921,45 @@ if sock is not None:
                                 _vlog(f'session established with {model_name}')
                             else:
                                 _vlog(f'session renewed with {model_name} (renewal #{leg})')
+
+                            # Renewal/resume seam hygiene: mic audio that piled
+                            # up in the socket buffer while we were between
+                            # sessions must NOT be burst-fed into the fresh
+                            # session — Gemini would transcribe a flood of
+                            # half-minute-old speech and answer utterances the
+                            # user has already moved past ("two parallel
+                            # conversations"). Drain and drop stale audio;
+                            # honor any control frames found in the backlog.
+                            if leg > 0 or _use_handle:
+                                _stale_audio = 0
+                                while not done.is_set():
+                                    try:
+                                        _raw0 = ws.receive(timeout=0)
+                                    except Exception:
+                                        break
+                                    if _raw0 is None:
+                                        break
+                                    try:
+                                        if isinstance(_raw0, bytes):
+                                            _raw0 = _raw0.decode('utf-8')
+                                        _m0 = json.loads(_raw0)
+                                    except Exception:
+                                        continue
+                                    _t0 = _m0.get('type')
+                                    if _t0 == 'audio':
+                                        _stale_audio += 1
+                                    elif _t0 in ('bye', 'end'):
+                                        _live_resume_clear(gen=_conn_gen)
+                                        done.set()
+                                    elif _t0 == 'speaking':
+                                        _client_signal_seen[0] = True
+                                        _client_playing[0] = bool(_m0.get('on'))
+                                    # 'barge'/'text' in a seam backlog are moot —
+                                    # they targeted the previous leg.
+                                if _stale_audio:
+                                    _vlog(f'seam drain: dropped {_stale_audio} stale mic chunks buffered during reconnect')
+                            if done.is_set():
+                                break
                             _safe_send({"type": "status", "text": "live"})
 
                             # Greeting only on a brand-new conversation — a renewal

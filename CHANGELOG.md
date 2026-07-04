@@ -3,7 +3,41 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.2.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.2.1**
+
+---
+
+## [5.2.1] — 2026-07-04 — "Found It (wiki restore + voice fixes)"
+
+### Fixed
+
+- **The personal wiki is back.** Since the 2026-06-27 security refactor moved
+  `WIKI_DIR` to `~/.friday/wiki`, the one-shot migration from the legacy
+  `~/wiki` was guarded by `not WIKI_DIR.exists()` — always False on long-lived
+  installs (auto-briefings had created the directory years of commits earlier)
+  — so it silently no-oped and the user's real wiki (46 files: personal,
+  people, journalism, identity, professional, research, ai-personality, meta)
+  was orphaned while the UI showed only briefings. The migration is now a
+  per-file, never-overwrite, idempotent merge that renames the legacy dir only
+  after a fully successful copy. (The encrypted `vault/wiki-*` dirs are stale
+  April snapshots from the predecessor app's vault — kept as a backup, never a
+  serving path.)
+- **"Open settings" opened the System workspace.** The spoken-navigation alias
+  table mapped settings/preferences/config to `system`, and neither `settings`
+  nor `marketplace` existed as navigation targets — while the voice tool's
+  hard-coded workspace list predated both, so Gemini couldn't even name them.
+  Settings and Marketplace are now first-class targets, "…menu" phrasing
+  resolves, the tool's workspace list is derived from the resolver's alias
+  table (single source of truth), and VOICE_DEMO.md stops teaching that
+  settings lives inside System.
+- **Voice turn-desync ("two parallel conversations").** Two renewal-seam bugs:
+  the liveness watchdog could false-fire in the middle of a long user
+  monologue (models that don't stream mid-turn transcription look "quiet"),
+  forcing needless session renewals; and mic audio buffered during any
+  renewal seam was burst-fed into the fresh session, making Gemini respond to
+  utterances from half a minute earlier. The watchdog now fires only after
+  speech has ENDED with no reply, and every renewed/resumed leg drains stale
+  buffered audio before listening.
 
 ---
 
