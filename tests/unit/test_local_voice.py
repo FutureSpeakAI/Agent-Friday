@@ -53,9 +53,17 @@ def test_rms_distinguishes_speech_from_silence():
 
 
 # ── VAD endpointer ────────────────────────────────────────────────────────────
+# use_silero=False everywhere: these tests feed constant-value square waves,
+# which only the RMS energy gate treats as "speech" — a real Silero model
+# rightly rejects them (that exact mismatch made the first test fail when
+# silero-vad landed in the venv before the FRIDAY_TESTING guard existed).
+# Forcing the energy path keeps them deterministic regardless of installed
+# packages or env vars. The endpointing math itself is pure sample-count
+# arithmetic — no wall clock — so no fake clock is needed.
 
 def test_vad_fires_after_trailing_silence():
-    vad = VADEndpointer(silence_ms=800, start_rms=600, min_speech_ms=200)
+    vad = VADEndpointer(silence_ms=800, start_rms=600, min_speech_ms=200,
+                        use_silero=False)
     fired = None
     # 3 × 100ms of speech (loud), then silence until the 800ms trailing gate.
     for _ in range(3):
@@ -71,17 +79,27 @@ def test_vad_fires_after_trailing_silence():
 
 
 def test_vad_ignores_pure_silence():
-    vad = VADEndpointer(silence_ms=800, start_rms=600)
+    vad = VADEndpointer(silence_ms=800, start_rms=600, use_silero=False)
     for _ in range(20):
         assert vad.feed(_pcm(0, 100)) is None
 
 
 def test_vad_requires_min_speech():
     # A single short blip below min_speech_ms must not finalize a turn.
-    vad = VADEndpointer(silence_ms=300, start_rms=600, min_speech_ms=500)
+    vad = VADEndpointer(silence_ms=300, start_rms=600, min_speech_ms=500,
+                        use_silero=False)
     vad.feed(_pcm(6000, 100))           # only 100ms of speech
     fired = any(vad.feed(_pcm(0, 100)) for _ in range(6))
     assert not fired
+
+
+def test_vad_use_silero_false_never_loads_a_model():
+    # The deterministic switch must hold even when silero-vad IS installed and
+    # FRIDAY_TESTING is absent — the exact combination behind the original
+    # flake. _maybe_silero() must short-circuit before any import attempt.
+    vad = VADEndpointer(use_silero=False)
+    assert vad._maybe_silero() is None
+    assert vad._silero_tried is False  # never even probed for the package
 
 
 # ── sentence splitting (per-sentence TTS streaming) ───────────────────────────
