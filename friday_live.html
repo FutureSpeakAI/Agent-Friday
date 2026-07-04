@@ -259,14 +259,26 @@ function playPcm16(int16, rate){
   src.buffer = buf; src.connect(audioCtx.destination);
   src.start(startAt);
   playCursor = startAt + buf.duration;
+  // Track every scheduled source so an interruption can actually SILENCE the
+  // buffered tail — Gemini streams faster than real-time, so by barge-in time
+  // the whole response is usually already scheduled here.
+  playQueue.push(src);
   orb.classList.add('speaking'); orb.classList.remove('listening');
   setStatus('live', 'SPEAKING');
   src.onended = () => {
+    const qi = playQueue.indexOf(src); if (qi >= 0) playQueue.splice(qi, 1);
     if (playCursor - audioCtx.currentTime < 0.05){
       orb.classList.remove('speaking'); orb.classList.add('listening');
       setStatus('live', 'LISTENING');
     }
   };
+}
+
+function flushPlayback(){
+  // Stop + release every scheduled source (barge-in / server interrupt).
+  playQueue.forEach(s => { try { s.onended = null; s.stop(); } catch(_){} try { s.disconnect(); } catch(_){} });
+  playQueue = [];
+  playCursor = audioCtx ? audioCtx.currentTime : 0;
 }
 
 // ── WebSocket bridge ──
@@ -292,7 +304,7 @@ async function connect(){
     } else if (m.type === 'turn_end'){
       // Natural pause — nothing to clear yet
     } else if (m.type === 'interrupted'){
-      playCursor = audioCtx ? audioCtx.currentTime : 0;
+      flushPlayback();
       orb.classList.remove('speaking'); orb.classList.add('listening');
       setStatus('live', 'LISTENING');
     } else if (m.type === 'status'){

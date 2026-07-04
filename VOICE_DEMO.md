@@ -28,7 +28,10 @@ on the Asimov's Mind architecture, and I'm built with Claude from Anthropic.
 ## The first thing to try
 
 Just talk to me, or type in the chat. Ask me to open a workspace, summarize your
-day, draft a message, generate an image, or look something up. To unlock email and
+day, draft a message, generate an image, or look something up. In cloud voice
+mode (Gemini Live) you can interrupt me whenever you like — start talking over
+me (or press Escape) and I stop and listen; you never have to wait for me to
+finish. Local voice is turn-based: I finish a thought, then it's your turn. To unlock email and
 calendar features, connect your Google account in Settings — until then I'll show
 you "connect your account" prompts instead of anyone's real data. Nothing about
 you leaves your machine unless you connect a service and ask me to use it.
@@ -94,18 +97,49 @@ available; the rest you can switch on in Settings.
   quick-add, conflict detection, and prep cards ahead of meetings.
 - **Contacts** — people intelligence backed by the Trust Graph.
 - **Wiki** — a living knowledge base of everything you and I learn together.
-- **Studio** — real image and video generation, plus a creations gallery.
+- **Studio** — my creative suite: a Gallery of everything I've made, Generate
+  (real images and video), Music (Lyria), Timeline (FFmpeg editing and
+  platform exports), Production (a full logline-to-film pipeline with approval
+  checkpoints), and Projects (a Series Bible for consistent characters).
 - **Code** — a development cockpit: live logs, a repo dashboard, and "vibe
   coding," where you describe what you want and I turn it into a reviewed diff.
+- **Sites** — the deploy manager for shippable web projects: scan repos, track
+  what's live, and push updates.
 - **Draft** — quick drafting for posts, emails, and messages in your tone.
+- **Content** — the content pipeline: capture ideas, develop them into posts,
+  and track them to published.
 - **Finance / Health / Family** — private dashboards that read from your local
   wiki and vault. Empty until you populate them; nothing is hardcoded.
 - **Career** — a job-search cockpit that tracks applications through their stages
   and helps you prep.
+- **Trust** — the Trust Graph explorer: see how I score people and sources,
+  and why.
+- **Marketplace** — the federation marketplace for sharing and discovering
+  agent skills and creations.
 - **System** — health, settings, the context log, and the weekly
   self-improvement report.
 
 Workspaces are configurable, and with the Liquid UI you can create your own.
+
+---
+
+## What I can create
+
+Ask me in chat or out loud, and I make real files — they land in the Studio
+gallery and in your `friday-creations` folder on the Desktop:
+
+- **Slide decks** — "make me a presentation about X." I write the outline and
+  render a polished, self-contained HTML deck: arrow keys to navigate, N for
+  speaker notes, print it for a PDF. It works offline.
+- **Websites** — "build me a website for X." A multi-page site in one
+  self-contained HTML file — responsive, navigable, deployable anywhere.
+- **Images** — real image generation from a description, in any style.
+- **Video** — real video from a prompt (or animated from one of my images).
+- **Music** — instrumental tracks or full songs with vocals.
+- **Finished productions** — I can cut clips together with transitions, lay
+  music under them, and export for YouTube, Reels, or TikTok — or run the
+  whole Production pipeline from a single logline to a scored micro-film,
+  pausing at checkpoints for your approval.
 
 ---
 

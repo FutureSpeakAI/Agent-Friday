@@ -1993,6 +1993,45 @@ CLAUDE_TOOLS.append({
         "required": ["clips"],
     },
 })
+CLAUDE_TOOLS.append({
+    "name": "create_presentation",
+    "description": (
+        "Create a REAL, polished slide deck as a self-contained HTML file in the "
+        "user's creations folder (opens in the Studio gallery; arrow keys / space "
+        "navigate, N toggles speaker notes, printing exports to PDF). Use when "
+        "the user asks you to 'make/build/create a presentation/slideshow/deck/"
+        "slides about X'. You write the outline; a fixed template renders it — "
+        "the result is always clean and works offline. You CAN make slide decks "
+        "— do not say you can't."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "What the deck is about — include audience and key points to hit if known."},
+            "slides": {"type": "integer", "description": "Content slide count (3-16, default 8)."},
+            "style": {"type": "string", "description": "Optional tone/style hints, e.g. 'investor pitch', 'technical deep-dive', 'playful'."},
+        },
+        "required": ["topic"],
+    },
+})
+CLAUDE_TOOLS.append({
+    "name": "create_website",
+    "description": (
+        "Create a REAL multi-page website as ONE self-contained HTML file (hash "
+        "navigation between pages, responsive, works offline, deploys anywhere) "
+        "saved to the user's creations folder and viewable in the Studio "
+        "gallery. Use when the user asks you to 'make/build/create a website/"
+        "site/landing page for X'. You write the content spec; a fixed template "
+        "renders it. You CAN build websites — do not say you can't."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "brief": {"type": "string", "description": "What the site is for: product/subject, audience, pages wanted, key messages."},
+            "pages": {"type": "integer", "description": "Page count (1-6, default 4). First page is the landing page."},
+            "style": {"type": "string", "description": "Optional tone/style hints, e.g. 'startup landing', 'portfolio', 'documentation'."},
+        },
+        "required": ["brief"],
+    },
+})
 
 
 def _tool_generate_image(inp):
@@ -2072,6 +2111,36 @@ def _tool_compose_timeline(inp):
                 "exports": inp.get("exports") or ["mp4-1080p"]}
     res = timeline_engine.compose(timeline)
     return _creative_result_summary(res, "production")
+
+
+def _tool_create_presentation(inp):
+    """Generate a self-contained HTML slide deck via the showcase engine."""
+    from agent_friday.services.showcase_engine import generate_presentation
+    inp = inp or {}
+    topic = (inp.get("topic") or "").strip()
+    if not topic:
+        return "create_presentation error: 'topic' is required."
+    res = generate_presentation(
+        topic, slides=inp.get("slides"), style=inp.get("style"))
+    if res.get("status") != "ok":
+        return res.get("message") or "Presentation generation failed."
+    return json.dumps({"status": "ok", "message": res.get("message"),
+                       "files": res.get("files")}, default=str)
+
+
+def _tool_create_website(inp):
+    """Generate a self-contained hash-routed website via the showcase engine."""
+    from agent_friday.services.showcase_engine import generate_website
+    inp = inp or {}
+    brief = (inp.get("brief") or "").strip()
+    if not brief:
+        return "create_website error: 'brief' is required."
+    res = generate_website(
+        brief, pages=inp.get("pages"), style=inp.get("style"))
+    if res.get("status") != "ok":
+        return res.get("message") or "Website generation failed."
+    return json.dumps({"status": "ok", "message": res.get("message"),
+                       "files": res.get("files")}, default=str)
 
 
 def _creative_result_summary(res, kind):
@@ -2156,6 +2225,8 @@ CLAUDE_TOOL_HANDLERS = {
     "generate_video": _tool_generate_video,
     "generate_music": _tool_generate_music,
     "compose_timeline": _tool_compose_timeline,
+    "create_presentation": _tool_create_presentation,
+    "create_website": _tool_create_website,
 }
 
 
@@ -2461,6 +2532,8 @@ TOOL_RINGS: dict[str, int] = {
     "generate_video":       2,   # calls the Google Veo API (network)
     "generate_music":       2,   # calls the Lyria 3 API (network)
     "compose_timeline":     1,   # local FFmpeg assembly — no network
+    "create_presentation":  2,   # routed text model may be a cloud provider
+    "create_website":       2,   # routed text model may be a cloud provider
     # Ring 3 — FULL OS CONTROL (requires CC permission)
     "install_package":      3,
     "move_mouse":           3,

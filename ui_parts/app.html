@@ -5816,7 +5816,7 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="AUDIO">
-      <StRow label="Interruption Mode" desc="Speaker mode prevents echo. Headphones mode allows barge-in.">
+      <StRow label="Interruption Mode" desc="Speaker: echo-safe — talk over Friday (or press Esc) and she stops and listens. Headphones: instant native barge-in.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{k:'speaker',l:'🔊 Speaker (echo-safe)'},{k:'headphones',l:'🎧 Headphones'}].map(o=>(
             <button key={o.k} className={`settings-btn ${(s.voice_interruption_mode||'speaker')===o.k?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
@@ -6875,6 +6875,19 @@ function App(){
   const refreshAudioDevicesRef=useRef(null);
   const voiceStartRef=useRef(null);
   const voiceStopRef=useRef(null);
+  // Voice session continuity. `wanted` = the USER wants voice on (set on start,
+  // cleared only by an explicit stop / fatal error) — when the socket dies while
+  // wanted, we auto-reconnect with capped backoff instead of silently going
+  // inert. The server keeps a session-resumption handle for ~10 min, so a
+  // successful reconnect resumes the SAME Gemini conversation: no re-greeting,
+  // no lost context. Lives OUTSIDE voiceRef because teardown resets that ref.
+  const voiceKeepRef=useRef({wanted:false,attempts:0,timer:null,lastMsgTs:0,sawHb:false,fatalTs:0});
+  // Start-attempt generation. voiceStart crosses several awaits (worklet load,
+  // getUserMedia, session-info fetch); if the user stops voice while one is in
+  // flight, the stale attempt must ABANDON — releasing whatever it just
+  // acquired — instead of finishing and leaking a hot mic / ghost socket.
+  // Bumped by every start AND every stop.
+  const voiceGenRef=useRef(0);
   // News Anchor Mode: a text turn queued to fire the moment the live session's
   // socket opens (e.g. "read me the Front Page"). Sent once, then cleared, so a
   // reconnect mid-session doesn't replay it.
@@ -6884,6 +6897,17 @@ function App(){
   // the old turn are discarded on arrival. Used by the stop button (disengage)
   // and by Gemini's server-side interrupt ({type:'interrupted'} WS frame). A
   // safety timer re-opens the gate so a flush can never permanently mute playback.
+  // Report playback transitions to the server: {type:'speaking', on:bool}.
+  // This is the server's barge-in window — Gemini streams audio FASTER than
+  // real-time, so "the model is streaming" ends long before Friday's voice
+  // stops coming out of the speakers, and users interrupt during PLAYBACK.
+  // Deduped; safe no-op when the socket is down.
+  const _wsSpeak=(on)=>{
+    const v=voiceRef.current;
+    if(v._spkLast===on)return;
+    v._spkLast=on;
+    try{if(v.ws&&v.ws.readyState===WebSocket.OPEN)v.ws.send(JSON.stringify({type:'speaking',on:!!on}))}catch(_){}
+  };
   const flushPlaybackRef=useRef(null);
   flushPlaybackRef.current=(caller)=>{
     const v=voiceRef.current;
@@ -6895,6 +6919,7 @@ function App(){
     // stops, and clear the speaking flag (+ its drain hangover) so the mic reopens.
     if(v.playerNode){try{v.playerNode.port.postMessage({type:'flush'})}catch(_){}}
     v.fridaySpeaking=false;if(v._drainT){try{clearTimeout(v._drainT)}catch(_){}v._drainT=null;}
+    _wsSpeak(false);
     if(v.activeSources){
       v.activeSources.forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}});
       v.activeSources=[];
@@ -6903,8 +6928,13 @@ function App(){
     try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
     v.cancelResetTimer=setTimeout(()=>{const vv=voiceRef.current;if(vv){vv.playbackCancelled=false;window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: 2s safety timer fired — playbackCancelled reset to FALSE (caller was: '+(caller||'unknown')+')')}},2000);
   };
-  voiceStartRef.current=async()=>{
-    if(voiceOn)return;
+  voiceStartRef.current=async(opts)=>{
+    const _isReconnect=!!(opts&&opts.reconnect);
+    if(voiceOn&&!_isReconnect)return;
+    voiceKeepRef.current.wanted=true;
+    if(!_isReconnect){voiceKeepRef.current.attempts=0;voiceKeepRef.current.fatalTs=0;}
+    const _vgen=++voiceGenRef.current;
+    const _stale=()=>_vgen!==voiceGenRef.current;
     const PCM_IN_RATE=16000,PCM_OUT_RATE=24000;
     const v=voiceRef.current;
     const f2pcm=(float32,outRate,inRate)=>{const ratio=inRate/outRate;const outLen=Math.floor(float32.length/ratio);const out=new Int16Array(outLen);for(let i=0;i<outLen;i++){const src=i*ratio,i0=Math.floor(src),i1=Math.min(i0+1,float32.length-1),f=src-i0;const s=Math.max(-1,Math.min(1,float32[i0]*(1-f)+float32[i1]*f));out[i]=s<0?s*0x8000:s*0x7FFF}return out};
@@ -7000,8 +7030,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           // spurious server-side VAD interrupt.
           v.playerNode.port.onmessage=(e)=>{
             const t=e.data&&e.data.type;
-            if(t==='active'){v.fridaySpeaking=true;if(v._drainT){clearTimeout(v._drainT);v._drainT=null}}
-            else if(t==='drained'){if(v._drainT)clearTimeout(v._drainT);v._drainT=setTimeout(()=>{v.fridaySpeaking=false;v._drainT=null},250)}
+            if(t==='active'){v.fridaySpeaking=true;_wsSpeak(true);if(v._drainT){clearTimeout(v._drainT);v._drainT=null}}
+            else if(t==='drained'){if(v._drainT)clearTimeout(v._drainT);v._drainT=setTimeout(()=>{v.fridaySpeaking=false;v._drainT=null;_wsSpeak(false)},250)}
           };
           v.usePlayerWorklet=true;
           window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: AudioWorklet PCM player active (ctxRate='+v.audioCtx.sampleRate+', srcRate='+PCM_OUT_RATE+') — continuous resampling + jitter buffer on the audio thread; no per-chunk scheduling drift');
@@ -7042,6 +7072,13 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         });
       };
       v.micStream=await _acquire(true);
+      if(_stale()){
+        // User stopped voice while getUserMedia was pending — release the
+        // just-acquired mic (Chrome's recording dot) and abandon this attempt.
+        try{v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+        try{v.audioCtx&&v.audioCtx.close()}catch(_){}
+        return;
+      }
       v.micLabel=v.micStream.getAudioTracks()[0]?.label||'unknown';
       console.log('[voice] mic acquired:',v.micLabel,'sampleRate=',v.audioCtx.sampleRate);
       _wireTrackHandlers();
@@ -7152,6 +7189,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if(_si&&_si.engine==='demo'){setVoiceStatus('voice unavailable — install local voice or connect a cloud key');try{voiceStopRef.current?.()}catch(_){}return;}
       if(_engine==='local'&&_si&&_si.models_ready===false)setVoiceStatus('preparing local voice…');
     }catch(_){/* default to local */}
+    if(_stale()){
+      // Stopped during the session-info fetch — don't open a ghost socket.
+      try{v.micStream&&v.micStream.getTracks().forEach(t=>t.stop())}catch(_){}
+      try{v.audioCtx&&v.audioCtx.close()}catch(_){}
+      return;
+    }
     v.engine=_engine;
     // Pass the ephemeral UI session token so the WS handler can auth non-loopback
     // connections without requiring a full cookie-based session.
@@ -7161,7 +7204,32 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     let wsOpened=false;
     setVoiceStatus('connecting…');
     ws.onopen=()=>{
+      // User stopped voice (or a newer start superseded us) while this
+      // (re)connect was in flight — abandon it.
+      if(!voiceKeepRef.current.wanted||_stale()){try{ws.close()}catch(_){}return;}
       wsOpened=true;setVoiceOn(true);setVoiceStatus('listening');
+      const K=voiceKeepRef.current;K.attempts=0;K.lastMsgTs=Date.now();
+      // Half-open-socket watchdog: the server heartbeats every ~15s on the live
+      // path, so >50s of TOTAL silence (not even a heartbeat) means the socket
+      // is dead in a way TCP hasn't noticed (sleep/wake, NAT drop). Force-close
+      // it — onclose then runs the auto-reconnect, which resumes the same
+      // conversation via the server's resumption handle. Only armed once a
+      // heartbeat has actually been seen, so engines without heartbeats never
+      // false-trigger.
+      v.stallTimer=setInterval(()=>{
+        const KK=voiceKeepRef.current;
+        if(!KK.sawHb)return;
+        // Cloud engine only: the LOCAL path's heartbeat runs inline in its
+        // receive loop and legitimately starves while a slow local model
+        // thinks (>50s), so force-closing there would cut off a healthy
+        // loopback session mid-turn. Loopback sockets don't go half-open;
+        // this watchdog exists for the internet path.
+        if(v.engine!=='gemini')return;
+        if(Date.now()-KK.lastMsgTs>50000){
+          console.warn('[voice] no server traffic for >50s — forcing reconnect');
+          try{ws.close()}catch(_){}
+        }
+      },10000);
       // News Anchor Mode: if a text turn was queued before connecting (e.g. the
       // Front Page briefing script), send it now so Friday starts reading. A
       // short delay lets the Gemini Live session finish spinning up server-side
@@ -7185,6 +7253,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     };
     ws.onmessage=ev=>{
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
+      const K=voiceKeepRef.current;K.lastMsgTs=Date.now();
+      if(m.type==='hb'){K.sawHb=true;return;}
       if(m.type==='audio'){
         const _approxBytes=m.data?Math.floor(m.data.length*3/4):0;
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
@@ -7198,7 +7268,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           // Worklet path: hand raw float PCM to the ring buffer and let the audio
           // thread resample + play it gaplessly. No per-chunk nodes, no playCursor.
           const f32=new Float32Array(int16.length);for(let i=0;i<int16.length;i++)f32[i]=int16[i]/32768;
-          v.fridaySpeaking=true;if(v._drainT){clearTimeout(v._drainT);v._drainT=null}
+          v.fridaySpeaking=true;_wsSpeak(true);if(v._drainT){clearTimeout(v._drainT);v._drainT=null}
           try{v.playerNode.port.postMessage({type:'samples',data:f32},[f32.buffer])}catch(_){}
           setVoiceStatus('speaking');
           return;
@@ -7211,8 +7281,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // self-evict from the queue when it finishes cleanly.
         if(!v.activeSources)v.activeSources=[];
         v.activeSources.push(src);
-        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
+        src.onended=()=>{const i=v.activeSources?v.activeSources.indexOf(src):-1;if(i>=0)v.activeSources.splice(i,1);if(!v.activeSources||v.activeSources.length===0)_wsSpeak(false);window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk ended naturally, remaining='+(v.activeSources?v.activeSources.length:0))};
         src.start(startAt);
+        _wsSpeak(true);
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
@@ -7288,6 +7359,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           setVoiceStatus('Session expired — refreshing…');
           setTimeout(()=>{try{window.location.reload()}catch(_){}},600);
         }else{
+          // Structured server error (bad key, no usable model, …). Mark it so
+          // the imminent onclose does NOT auto-reconnect into the same failure
+          // over and over — the message on screen is the actionable part.
+          voiceKeepRef.current.fatalTs=Date.now();
           setVoiceStatus('error: '+(m.error||'unknown'));
         }
       }
@@ -7318,6 +7393,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       try{v2.diagTimer&&clearInterval(v2.diagTimer)}catch(_){}
       try{v2.meterTimer&&clearInterval(v2.meterTimer)}catch(_){}
       try{v2.frameTimer&&clearInterval(v2.frameTimer)}catch(_){}
+      try{v2.stallTimer&&clearInterval(v2.stallTimer)}catch(_){}
       // Stop any audio still scheduled/playing before tearing down the context.
       try{(v2.activeSources||[]).forEach(s=>{try{s.onended=null;s.stop()}catch(_){}try{s.disconnect()}catch(_){}})}catch(_){}
       try{v2._drainT&&clearTimeout(v2._drainT)}catch(_){}
@@ -7332,12 +7408,49 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false;
       voiceRef.current={ws:null,audioCtx:null,micStream:null,micSource:null,micNode:null,playCursor:0,activeSources:[],playbackCancelled:false};
       setMicLevel(0);
+      // ── Auto-reconnect ──
+      // The user did NOT stop voice — the socket died under us (server-side
+      // session end, network blip, half-open socket force-closed by the stall
+      // watchdog). Reconnect with capped backoff; the server's stored
+      // resumption handle means the SAME conversation continues, so an
+      // hours-long call survives every one of these seams. A recent fatal
+      // {type:'error'} (bad key etc.) disarms this — retrying can't fix those.
+      const K=voiceKeepRef.current;
+      const _fatal=K.fatalTs&&(Date.now()-K.fatalTs)<5000;
+      if(K.wanted&&!_fatal&&K.attempts<20){
+        const delay=Math.min(15000,1000*Math.pow(2,Math.min(K.attempts,4)));
+        K.attempts++;
+        setVoiceStatus('reconnecting… ('+K.attempts+')');
+        try{K.timer&&clearTimeout(K.timer)}catch(_){}
+        K.timer=setTimeout(()=>{
+          if(voiceKeepRef.current.wanted)voiceStartRef.current?.({reconnect:true});
+        },delay);
+        return; // keep voiceOn true — the mic button stays a stop button
+      }
+      if(K.wanted&&!_fatal&&K.attempts>=20){
+        K.wanted=false;
+        setVoiceStatus('voice connection lost — tap 🎤 to retry');
+      }else if(_fatal){
+        K.wanted=false;
+      }
       setVoiceOn(false);
-      setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error'))?s:'');
+      setVoiceStatus(s=>s&&(s.startsWith('error:')||s.startsWith('socket error')||s.startsWith('voice connection lost'))?s:'');
     };
   };
   voiceStopRef.current=()=>{
     const v=voiceRef.current;
+    // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
+    //    so the onclose that follows doesn't resurrect the session.
+    const K=voiceKeepRef.current;
+    K.wanted=false;K.attempts=0;K.fatalTs=0;
+    voiceGenRef.current++;   // invalidate any voiceStart still crossing an await
+    try{K.timer&&clearTimeout(K.timer)}catch(_){}
+    K.timer=null;
+    try{v.stallTimer&&clearInterval(v.stallTimer)}catch(_){}
+    // Tell the server this is a DELIBERATE stop so it clears its resumption
+    // cache — the next session should start fresh, not resume this one.
+    // (Unexpected drops skip this, which is exactly what lets them resume.)
+    try{if(v.ws&&v.ws.readyState===WebSocket.OPEN)v.ws.send(JSON.stringify({type:'bye'}))}catch(_){}
     // 1) Kill audio output FIRST — stop every scheduled/playing source and
     //    flush the queue so nothing keeps speaking as we tear down.
     try{flushPlaybackRef.current?.('voiceStop (stop button / disengage)')}catch(_){}
@@ -7373,6 +7486,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   };
   const toggleVoice=()=>{voiceOn?voiceStopRef.current?.():voiceStartRef.current?.()};
   useEffect(()=>()=>{voiceStopRef.current?.()},[]);
+  // Barge-in hotkey: Escape while Friday is speaking interrupts her. Flush
+  // locally for instant silence (gate stays closed so in-flight stale chunks
+  // are dropped), then tell the server — it stops forwarding this turn's
+  // audio, cancels the generation, and its {type:'interrupted'} reply is what
+  // re-opens the playback gate for the next turn. Talking over her does the
+  // same thing hands-free (server-side detector); this is the deterministic
+  // fallback for demos and quiet talkers.
+  useEffect(()=>{
+    if(!voiceOn)return;
+    const onKey=(e)=>{
+      if(e.key!=='Escape')return;
+      const v=voiceRef.current;
+      const speaking=v.usePlayerWorklet?!!v.fridaySpeaking:(v.activeSources&&v.activeSources.length>0);
+      if(!speaking)return;
+      // barge FIRST, flush second: the flush emits {speaking:false}, and if
+      // that arrived ahead of the barge the server would see playback as
+      // already over. (The server also trusts explicit barges regardless —
+      // this ordering is belt-and-suspenders.)
+      try{if(v.ws&&v.ws.readyState===WebSocket.OPEN)v.ws.send(JSON.stringify({type:'barge'}))}catch(_){}
+      try{flushPlaybackRef.current?.('Escape barge-in')}catch(_){}
+      setVoiceStatus('listening');
+    };
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
+  },[voiceOn]);
   // ─── Voice Everywhere: start a context-loaded voice session ───
   // Workspace voice buttons + "Start my day" fetch a server-assembled opening
   // turn, queue it via voicePendingTextRef (sent the moment the Live socket

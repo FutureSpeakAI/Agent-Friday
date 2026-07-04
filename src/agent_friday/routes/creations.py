@@ -501,6 +501,37 @@ def create_poem():
         return jsonify({"status": "error", "message": str(e)})
 
 
+@creations_bp.route('/api/create/presentation', methods=['POST'])
+def create_presentation():
+    """Generate a self-contained HTML slide deck (LLM outline → fixed template).
+
+    The routed text provider writes a strict JSON outline; a deterministic
+    template renders it. Lands in the Studio gallery like any other creation."""
+    from agent_friday.services.showcase_engine import generate_presentation
+    data = request.get_json(silent=True) or {}
+    result = generate_presentation(
+        data.get('topic') or data.get('prompt') or '',
+        slides=data.get('slides'),
+        style=data.get('style'),
+        workspace=data.get('workspace'),
+    )
+    return jsonify(result)
+
+
+@creations_bp.route('/api/create/website', methods=['POST'])
+def create_website():
+    """Generate a self-contained hash-routed website (LLM spec → fixed template)."""
+    from agent_friday.services.showcase_engine import generate_website
+    data = request.get_json(silent=True) or {}
+    result = generate_website(
+        data.get('brief') or data.get('prompt') or '',
+        pages=data.get('pages'),
+        style=data.get('style'),
+        workspace=data.get('workspace'),
+    )
+    return jsonify(result)
+
+
 @creations_bp.route('/api/create/video', methods=['POST'])
 def create_video():
     """Generate video (Google Veo) via the creative engine. Supports text-to-
