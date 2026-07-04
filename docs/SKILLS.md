@@ -84,7 +84,7 @@ success_criteria:
   - Includes recent external context
   - Provides actionable talking points
 license: MIT
-source: https://example.com/skills/meeting-prep
+source: imported
 ---
 
 # Meeting Prep
@@ -105,7 +105,7 @@ Research {person} and prepare a meeting briefing:
 | `tool_chain` | string[] | Tools the procedure relies on. |
 | `success_criteria` | string[] | Conditions for a successful run. |
 | `license` | string | License of the portable skill. |
-| `source` | string | Origin / attribution for the skill. |
+| `source` | string | Origin tag: `friday` \| `imported` \| `openclaw` \| `bundled` (set automatically on import). |
 
 ### Loading & matching
 
@@ -121,13 +121,13 @@ Skills are portable. They can be imported from a folder, a `.zip`, a legacy `.ya
 
 ### Closed-loop learning
 
-`skill_capture.py` records turn trajectories and feeds real usage metrics back to the SkillOpt engine (see below). A nightly `skillopt-nightly` job (3:30 AM Central) runs auto-research over the fleet.
+`skill_capture.py` records turn trajectories and feeds real usage metrics back to the SkillOpt engine (see below). A nightly `skillopt-nightly` auto-research job exists but is disabled in the general release (it will be re-enabled once the skill fleet is large enough); auto-research can still be triggered programmatically via `maybe_autoresearch()`.
 
 ---
 
 ## SkillOpt Engine
 
-The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Microsoft's SkillOpt research.
+The SkillOpt engine (`skillopt_engine.py`) tracks skill performance over time and evolves skills through an optimization loop inspired by Andrej Karpathy's SkillOpt work.
 
 ### Architecture
 
@@ -255,23 +255,23 @@ Each entry in `metrics.jsonl`:
 
 ## CLI
 
-The SkillOpt engine includes a CLI for inspection:
+The SkillOpt engine includes a CLI for inspection (run as a module after `pip install -e .`):
 
 ```bash
 # Fleet status
-python skillopt_engine.py status
+python -m agent_friday.skillopt_engine status
 
 # Show a specific skill
-python skillopt_engine.py show meeting-prep
+python -m agent_friday.skillopt_engine show meeting-prep
 
 # List versions
-python skillopt_engine.py versions meeting-prep
+python -m agent_friday.skillopt_engine versions meeting-prep
 
 # Export full fleet state as JSON
-python skillopt_engine.py export
+python -m agent_friday.skillopt_engine export
 
 # Register a skill from a file
-python skillopt_engine.py register meeting-prep skills/meeting-prep.md
+python -m agent_friday.skillopt_engine register meeting-prep skills/meeting-prep.md
 ```
 
 ---

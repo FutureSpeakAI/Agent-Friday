@@ -59,7 +59,7 @@ REM   venv\Scripts\pip.exe install -e .[voice-local-gpu]
 REM Then pick Settings -^> Audio ^& Voice -^> Voice Engine -^> Local GPU (NeMo).
 
 echo [3/5] Building the UI ^(index.html^)...
-python build_ui.py
+python src\agent_friday\ui\build_ui.py
 
 echo [4/5] Setting up local model ^(gemma3:4b^) for no-API-key chat...
 if "%FRIDAY_SKIP_MODEL%"=="1" goto :skipmodel
@@ -78,7 +78,7 @@ if errorlevel 1 (
 :skipmodel
 
 echo [5/5] Post-install health check...
-python friday_cli.py health
+python -m agent_friday.cli health
 
 echo.
 echo ==== Done ====

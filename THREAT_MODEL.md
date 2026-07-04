@@ -126,7 +126,10 @@ mandatory ones.
 
 This guarantee holds as long as:
 - `services/egress_gate.py` is not modified
-- The `seal_outbound()` call is present in `_call_claude()` and `_call_openai._send()`
+- The shared fail-closed wrapper `_seal_or_block()` in `services/model_router.py`
+  is present and called at every cloud provider call site — `_call_claude()` and
+  `_call_openai`'s `_send()` — covering Anthropic and all OpenAI-compatible
+  providers, including OpenRouter
 - The sensitivity classifier (`services/sensitivity_classifier.py`) is not modified
   to return PUBLIC for content it should classify as PRIVATE/SENSITIVE
 
@@ -150,14 +153,16 @@ The privacy posture is visible in the setup wizard and in Settings → Privacy.
 |-----|----------|---------|
 | HMAC governance key | OS keychain (keyring) → `~/.friday/vault/.governance-key` (fallback) | Signs cLaws and behavioral constraints |
 | Ed25519 attestation keypair | `~/.friday/vault/.attestation-key-ed25519` | Federation and peer attestation |
-| Anthropic / Gemini API keys | `~/.friday/settings.json` (encrypted via credential_store) | Cloud model access |
+| Provider API keys (Anthropic / Gemini / OpenRouter / OpenAI-compatible) | `~/.friday/providers/keys/<provider>.key` (encrypted via credential_store: vault AES-256-GCM → Windows DPAPI → warned plaintext fallback) | Cloud model access |
 
-API keys are encrypted at rest in settings.json. The governance key and Ed25519
+API keys are encrypted at rest in per-provider files under
+`~/.friday/providers/keys/` and decrypted into the process environment at
+startup by `bootstrap_provider_env()`. The governance key and Ed25519
 private key are stored in the OS credential store when available; both are
 confined to `~/.friday/vault/` with 600 permissions as a fallback.
 
 ---
 
-*Last updated: 2026-06-27. This document should be updated whenever the security
+*Last updated: 2026-07-04. This document should be updated whenever the security
 architecture changes. The egress gate guarantee is a functional invariant — any
 PR that weakens it requires explicit security review.*

@@ -13,15 +13,16 @@ health checks.
 
 ## 1. Network Monitor (`_network_monitor_loop`)
 
-**What it does:** Pings a reliable external host (currently `8.8.8.8` / Google
-DNS) every 30 seconds to determine whether Friday is online or offline.
+**What it does:** Attempts a TCP connection to port 443 of `dns.google`,
+falling back to `8.8.8.8` (Google DNS) and then `1.1.1.1` (Cloudflare DNS),
+every 30 seconds to determine whether Friday is online or offline.
 
 **Why:** When offline, Friday automatically switches the model router to
 local-only inference (Ollama) so you keep getting responses even without
 internet. The probe result also drives the offline badge in the UI.
 
-**Data sent:** A single ICMP echo (ping) or TCP handshake — no payload, no
-identity, no headers.
+**Data sent:** A bare TCP handshake (no ICMP ping) — no payload, no identity,
+no headers.
 
 **Disable:** Set `offline_auto_local: false` in Settings → Privacy, or set
 `FRIDAY_TESTING=1`. The probe still runs but the offline overlay is not applied.
@@ -45,7 +46,7 @@ headers, no user identifiers, no content from your conversations.
 ## 3. Connector Health Monitor (`connector_health_monitor_loop`)
 
 **What it does:** Polls the health of connected services (Google OAuth token
-validity, MCP server reachability) roughly every 5 minutes. Fires a
+validity, MCP server reachability) roughly every 2 minutes. Fires a
 notification if a connector you rely on goes down.
 
 **Data sent:** Lightweight presence/status checks. For Google: a token
@@ -89,7 +90,8 @@ fires registered background jobs (daily briefing generation, self-improvement
 report, repo-sync, etc.) at their configured times.
 
 **Network activity:** Depends on which jobs are scheduled. Briefing generation
-makes LLM API calls (Anthropic / Gemini) and fetches news RSS. Repo-sync runs
+makes LLM API calls to your configured provider (Anthropic / Gemini /
+OpenRouter / other OpenAI-compatible endpoints) and fetches news RSS. Repo-sync runs
 `git pull` on repositories you specify. All scheduled jobs are listed in
 `~/.friday/schedules.json` and can be removed there.
 
@@ -101,8 +103,9 @@ Scheduled Tasks.
 ## 7. Provider Key Bootstrap (`bootstrap_provider_env`)
 
 **What it does:** Reads encrypted provider API keys from the credential store
-(`~/.friday/credentials/`) and sets them in the process environment so the
-Anthropic / Gemini SDK clients can find them.
+(`~/.friday/providers/keys/`) and sets them in the process environment so the
+configured provider clients (Anthropic, Gemini, OpenRouter, and other
+OpenAI-compatible providers) can find them.
 
 **Network activity:** None — this is a local decryption step.
 
@@ -112,11 +115,11 @@ Anthropic / Gemini SDK clients can find them.
 
 | Thread | Destination | Frequency | Disable |
 |--------|------------|-----------|---------|
-| Network monitor | 8.8.8.8 (ping) | Every 30s | `offline_auto_local: false` |
+| Network monitor | dns.google / 8.8.8.8 / 1.1.1.1 (TCP :443) | Every 30s | `offline_auto_local: false` |
 | News archiver | RSS feed URLs | Hourly (briefing cadence) | Clear `news_priorities` |
-| Connector health | Google OAuth · MCP servers | Every 5min | Disconnect connector |
+| Connector health | Google OAuth · MCP servers | Every 2min | Disconnect connector |
 | MCP boot | Local stdio (+ whatever MCP servers call) | Once at startup | Remove from mcp_servers.json |
-| Scheduler jobs | Anthropic / Gemini APIs · git remotes | Per schedule | Delete job from schedules.json |
+| Scheduler jobs | Configured LLM provider APIs · git remotes | Per schedule | Delete job from schedules.json |
 | Predictive prewarm | None (local only) | Boot + periodic | n/a |
 | Key bootstrap | None (local only) | Once at startup | n/a |
 

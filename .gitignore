@@ -36,7 +36,7 @@ verify_tts.wav
 .setup_complete
 
 # Per-user generated config — stays out of source
-# (NOTE: API keys are stored encrypted in ~/.friday/credential_store.enc, not in settings.json)
+# (NOTE: API keys are stored encrypted per provider under ~/.friday/providers/keys/, not in settings.json)
 # Match only at project root — skill default configs under skills/*/config.yaml ship.
 /settings.json
 /config.yaml
@@ -160,3 +160,6 @@ SCRUB_REPORT.md
 # repo) + PyInstaller build log — NEVER commit to this public repo.
 /memory/
 pyinstaller_build.log
+
+# Internal working docs - local only, not for the public tree
+AGENT_BEST_PRACTICES.md

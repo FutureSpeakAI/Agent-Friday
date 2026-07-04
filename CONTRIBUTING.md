@@ -23,7 +23,7 @@ Open an issue using the [feature request template](.github/ISSUE_TEMPLATE/featur
 ### Submitting a pull request
 
 1. **Fork** the repo and create a branch from `main`.
-2. **Install** in editable mode: `pip install -e ".[dev]"`
+2. **Install** in editable mode: `pip install -e .` then `pip install pytest`
 3. **Run the tests** before and after your change: `pytest tests/unit tests/api -q`
 4. **Keep changes focused** — one logical change per PR. Refactors and bug fixes belong in separate PRs.
 5. **No new external dependencies** without prior discussion in an issue.
@@ -42,7 +42,8 @@ venv\Scripts\activate
 # Linux / macOS
 source venv/bin/activate
 
-pip install -e ".[dev]"
+pip install -e .
+pip install pytest
 pytest tests/unit tests/api -q
 ```
 
@@ -51,10 +52,10 @@ pytest tests/unit tests/api -q
 ```
 src/agent_friday/    # Python package (Flask app)
   server.py          # entry point, Flask app object
-  core.py            # shared state, settings, bootstrap
+  core/              # shared state, DEFAULT_SETTINGS, auth, config, vault helpers
   cli.py             # `friday` CLI entry point
-  services/          # background services (58 modules)
-  routes/            # Flask Blueprints (38 route files)
+  services/          # background services
+  routes/            # Flask Blueprints, one per domain
   routing/           # model router, Ollama manager
   privacy/           # vault access, crypto
   pipeline/          # context pruner, compressor

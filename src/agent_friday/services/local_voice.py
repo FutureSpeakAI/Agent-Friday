@@ -27,7 +27,7 @@ Design goals
 * **Identical client contract** — TTS output is resampled server-side to 24 kHz
   PCM16 mono so it flows through the same ``{type:'audio'}`` frames + worklet +
   analyser the Gemini path uses. The holographic cube is therefore source-
-  agnostic by construction (see VOICE_INTEGRATION_SPEC §11).
+  agnostic by construction.
 """
 from __future__ import annotations
 

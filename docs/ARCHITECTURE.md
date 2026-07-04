@@ -34,6 +34,7 @@ graph TB
     subgraph Providers["Model Providers"]
         Claude["Anthropic Claude<br/>(Cloud)"]
         Gemini["Google Gemini<br/>(Cloud + Voice)"]
+        OAI["OpenAI-compatible<br/>(OpenRouter · OpenAI · Groq · Together<br/>HuggingFace · vLLM · LM Studio)"]
         Ollama["Ollama<br/>(Local Models)"]
     end
 
@@ -61,6 +62,8 @@ graph TB
     Evolution --> Intelligence
 ```
 
+Any provider exposing an OpenAI-compatible `/v1` endpoint (OpenRouter, OpenAI, Groq, Together, HuggingFace, vLLM, LM Studio, ...) dispatches through the same shared agentic tool loop.
+
 ---
 
 ## Chat Pipeline
@@ -85,7 +88,7 @@ flowchart TD
 
     H --> I{Vault keywords<br/>detected in message?}
     I -->|Yes| J{Local model<br/>available via Ollama?}
-    I -->|No| K["Route by mode:<br/>cloud_only / local_preferred / smart"]
+    I -->|No| K["Route by mode:<br/>cloud_only / local_preferred / smart / local_only"]
 
     J -->|Yes| L["Force-route to<br/>Ollama local model<br/>(vault_allowed=true)"]
     J -->|No| M{vault_cloud_fallback<br/>setting?}
@@ -134,6 +137,7 @@ flowchart TD
     ModeCheck -->|cloud_only| CloudOnly["Route to Claude<br/>(default_cloud_model)"]
     ModeCheck -->|local_preferred| LocalPref[Try Ollama first]
     ModeCheck -->|smart| SmartRoute[Classify task type]
+    ModeCheck -->|local_only| LocalOnly["First available Ollama model<br/>(never falls back to cloud)"]
 
     LocalPref --> OllamaCheck{Ollama available<br/>with models?}
     OllamaCheck -->|Yes| PickLocal["Pick best local model<br/>by task type + size"]
@@ -214,6 +218,13 @@ Contact, phone number, home address, family, partner, personal note, memory, tru
 
 ## Voice Mode Pipeline
 
+Voice supports two engines behind one mic button. When the user clicks the microphone, the client calls `GET /api/voice/session-info`, which returns the WebSocket URL for the active engine:
+
+- **`/ws/voice-local`** — the default, fully on-device pipeline: Tier-1 (faster-whisper ASR + Piper TTS on CPU) or Tier-2 (NeMo on GPU, with automatic CPU fallback).
+- **`/ws/live`** — the cloud branch (Gemini Live), used only when the user selects the `gemini` voice engine; it auto-reconnects if the session drops.
+
+The audio plumbing and event contract are identical on both paths. The sequence below shows the cloud (Gemini Live) branch:
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -222,6 +233,7 @@ sequenceDiagram
     participant Gemini as Gemini Live API<br/>(gemini-3.1-flash-live-preview)
 
     User->>Browser: Click microphone
+    Browser->>Flask: GET /api/voice/session-info → ws_url
     Browser->>Flask: WebSocket connect /ws/live
     Flask->>Gemini: Open Gemini Live session
     Flask->>Browser: Send greeting audio
@@ -276,7 +288,7 @@ flowchart TD
 
     NewVersion --> Epoch["Training Epoch<br/>Score candidate vs baseline<br/>over evaluation batch"]
 
-    Epoch --> Gate{"Validation Gate<br/>1. Within 5% of all-time best?<br/>2. Beats baseline by ≥0.5%?"}
+    Epoch --> Gate{"Validation Gate<br/>1. Within 5% of all-time best?<br/>2. Beats or matches baseline?<br/>(gains under 0.5% = marginal pass, not rejected)"}
 
     Gate -->|Pass| Promote["Promote new version<br/>Update best_skill.md<br/>Demote previous champion"]
     Gate -->|Fail| Reject["Reject candidate<br/>Log reason<br/>AutoResearch continues"]
@@ -334,11 +346,11 @@ graph LR
     end
 
     subgraph Ring2["Ring 2 — Network (Authenticated)"]
-        R2["search_web · browse_web · search_email<br/>draft_email · open_url · spawn_task<br/>run_command · install_package"]
+        R2["search_web · browse_web · search_email<br/>draft_email · open_url · spawn_task<br/>run_command"]
     end
 
     subgraph Ring3["Ring 3 — OS Control (User-enabled)"]
-        R3["move_mouse · click · type_text<br/>press_key · screenshot · scroll"]
+        R3["install_package · move_mouse · click<br/>type_text · press_key · screenshot · scroll"]
     end
 
     Ring0 --> Ring1 --> Ring2 --> Ring3
@@ -352,7 +364,7 @@ graph LR
 Every tool call passes through the governance gate, which:
 1. Checks the privilege ring
 2. Verifies the HMAC-SHA256 signature on behavioral constraints
-3. Applies rate limiting (max 20 OS actions/second for Ring 3)
+3. Applies rate limiting (token bucket: 20 Ring-3 actions/minute, 60 Ring-2 actions/minute; configurable via the `rate_limiter` setting)
 4. Blocks destructive operations (`rm`, `del`, `format`, `shutdown`, `reg delete`)
 5. Logs the decision to `~/.friday/vault/decision-bom.jsonl`
 
@@ -362,7 +374,9 @@ Every tool call passes through the governance gate, which:
 
 ```
 ~/.friday/
-├── settings.json              # All configuration (API keys, routing, etc.)
+├── settings.json              # All configuration (routing, capability_routing, etc. — NO secrets)
+├── providers/
+│   └── keys/                  # Provider API keys, encrypted via the credential store
 ├── personality.json           # Personality evolution state
 ├── epistemic_scores.json      # Epistemic self-calibration
 ├── trust_graph.json           # Relationship trust scores

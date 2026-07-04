@@ -11,7 +11,7 @@
 
 ## What is this?
 
-**Agent Friday** is a privacy-first, self-improving personal AI that runs entirely on your machine. It features a tiered data vault that keeps sensitive information off the cloud, a holographic Three.js interface, a layered content-safety classifier, and a skill-evolution engine — all served by a local Flask app backed by Anthropic Claude, Google Gemini, and/or Ollama.
+**Agent Friday** is a privacy-first, self-improving personal AI that runs entirely on your machine. It features a tiered data vault that keeps sensitive information off the cloud, a holographic Three.js interface, a layered content-safety classifier, and a skill-evolution engine — all served by a local Flask app backed by Anthropic Claude, Google Gemini, Ollama, or any OpenAI-compatible provider (OpenRouter first-class, ten providers built in).
 
 Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, and a zero-trust data policy.
 
@@ -30,12 +30,14 @@ Think Jarvis with a sharp newsroom editor's instincts, a sovereign conscience, a
 
 ## Quick Start
 
+**Easiest (Windows):** download `AgentFriday.exe` from the [latest GitHub release](https://github.com/FutureSpeakAI/Agent-Friday/releases/latest) and run it — no Python required. Or install from source:
+
 ```bash
 git clone https://github.com/FutureSpeakAI/Agent-Friday.git
 cd Agent-Friday
 pip install -e .
 friday doctor    # verify Python, Ollama, the bundled Gemma model, keys, disk
-friday start     # launches the server, runs voice-first onboarding, opens http://localhost:3000
+friday           # launches the server, runs voice-first onboarding, opens http://localhost:3000
 ```
 
 **No API key? No problem.** Agent Friday ships a bundled local model — **`gemma3:4b`**
@@ -86,9 +88,10 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the complete setup guide, i
 - **Sovereign Vault** — TIER 1/2/3 access control; TIER_2 (private) and TIER_3 (sensitive) data never leave the local model. AES-256-GCM + Argon2id at rest.
 - **Layered Safety Classifier** — Fail-closed egress gate with sensitivity classifier as single source of truth; HMAC-SHA256 signed behavioral constraints (Asimov's cLaws).
 - **Holographic UI** — Three.js WebGL interface with audio reactivity, process orbs, and personality evolution visualized as progressively complex geometric structures.
-- **Voice Mode** — Real-time WebSocket audio pipeline via Google Gemini Live; local Piper/Whisper fallback when offline.
+- **Voice Mode** — Real-time WebSocket audio pipeline; on-device Whisper + Piper by default (Tier-1 CPU, Tier-2 NeMo GPU), or optional Google Gemini Live cloud voice with barge-in interruption and auto-reconnecting hours-long sessions.
 - **Universal Tool Loop** — Anthropic, Gemini, Ollama (Gemma native tool calling), and OpenAI-compatible providers share a single agentic tool loop.
 - **Creator Economy Layer** — Music (Lyria 3), video (Veo), image generation (Nano Banana Pro/2), provenance (C2PA), federation (Ed25519 identity, X25519+ChaCha20-Poly1305 transport), marketplace, and economy engine.
+- **Creation Tools** — Ask in chat or voice for a slide deck (`create_presentation`) or a multi-page website (`create_website`); a deterministic template renders a polished, self-contained HTML artifact into the Studio gallery — keyboard-nav decks with speaker notes and print-to-PDF, responsive sites that deploy anywhere.
 - **Self-Improvement** — Weekly epistemic calibration, SkillOpt nightly loop, closed-loop learning from real usage.
 - **Defederation & Moderation** — Asimov-governed defederation protocol, H1–H4 harm floor, community content-policy packs.
 
