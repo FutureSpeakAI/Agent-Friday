@@ -116,8 +116,10 @@ available; the rest you can switch on in Settings.
   and why.
 - **Marketplace** — the federation marketplace for sharing and discovering
   agent skills and creations.
-- **System** — health, settings, the context log, and the weekly
+- **System** — system health, the context log, and the weekly
   self-improvement report.
+- **Settings** — its own workspace (say "open settings"): providers and keys,
+  model routing, voice engine and interruption mode, privacy, and appearance.
 
 Workspaces are configurable, and with the Liquid UI you can create your own.
 

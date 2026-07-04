@@ -527,16 +527,55 @@ HOME = Path(os.path.expanduser("~"))
 FRIDAY_DIR = HOME / ".friday"
 WIKI_DIR = FRIDAY_DIR / "wiki"
 
-# Migrate wiki from ~/wiki (legacy location) to ~/.friday/wiki on first run.
+# Migrate wiki from ~/wiki (legacy location) to ~/.friday/wiki.
+#
+# The original guard here was `not WIKI_DIR.exists()` — all-or-nothing. On
+# long-lived installs that was ALWAYS False (auto-briefings had created
+# ~/.friday/wiki long before the move), so the user's real wiki at ~/wiki was
+# silently orphaned and the Wiki UI showed only briefings — a "my wiki is
+# gone!" data scare. This merge is per-FILE and idempotent: copy every legacy
+# file whose destination is missing, never overwrite anything, and rename the
+# legacy dir (preserving it) only after a fully successful merge.
 _LEGACY_WIKI = HOME / "wiki"
-if _LEGACY_WIKI.exists() and not WIKI_DIR.exists():
-    try:
-        import shutil as _shutil
-        _shutil.copytree(str(_LEGACY_WIKI), str(WIKI_DIR))
-        _LEGACY_WIKI.rename(_LEGACY_WIKI.parent / "wiki_migrated_to_friday")
-    except Exception as _mig_err:
-        import logging as _log
-        _log.getLogger(__name__).warning("wiki migration ~/wiki → ~/.friday/wiki failed: %s", _mig_err)
+
+
+def _merge_legacy_wiki():
+    if not _LEGACY_WIKI.exists() or not _LEGACY_WIKI.is_dir():
+        return
+    import logging as _log
+    import shutil as _shutil
+    logger = _log.getLogger(__name__)
+    copied, skipped, failed = 0, 0, 0
+    for src in _LEGACY_WIKI.rglob("*"):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(_LEGACY_WIKI)
+        dst = WIKI_DIR / rel
+        if dst.exists():
+            skipped += 1   # never overwrite — ~/.friday/wiki may have newer auto-content
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.copy2(str(src), str(dst))
+            copied += 1
+        except Exception as _ce:
+            failed += 1
+            logger.warning("wiki merge: could not copy %s: %s", rel, _ce)
+    logger.warning("wiki merge ~/wiki → ~/.friday/wiki: %d copied, %d already present, %d failed",
+                   copied, skipped, failed)
+    if failed == 0:
+        try:
+            _LEGACY_WIKI.rename(_LEGACY_WIKI.parent / "wiki_migrated_to_friday")
+        except Exception as _re:
+            logger.warning("wiki merge: legacy rename failed (data intact at ~/wiki): %s", _re)
+
+
+try:
+    _merge_legacy_wiki()
+except Exception as _mig_err:
+    import logging as _log
+    _log.getLogger(__name__).warning(
+        "wiki migration ~/wiki → ~/.friday/wiki failed: %s", _mig_err)
 # Captured ONCE, before anything creates ~/.friday: True only for a pristine
 # first run. Drives the `show_all_workspaces` default — existing installs keep
 # the full dock; fresh installs get the trimmed core set from the setup wizard.

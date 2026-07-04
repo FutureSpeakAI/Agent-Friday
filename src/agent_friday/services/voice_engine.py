@@ -247,12 +247,27 @@ _VOICE_LIVE_TOOLS = [
      "user JUST asked to go there in their last message ('show me the calendar'), "
      "call it right away with confirmed=true. If YOU are proposing the move, ask "
      "first ('I can switch to the News workspace — shall I?') and only call with "
-     "confirmed=true after they agree. Workspaces: home, career, wiki, studio, "
-     "trust, system, news, draft, code, finance, health, contacts, content, "
-     "messages, calendar, family, futurespeak.",
-     {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'calendar'."),
+     "confirmed=true after they agree. Workspaces: {workspace_ids}.",
+     {"workspace": ("string", "Workspace id or spoken name, e.g. 'news', 'settings'."),
       "confirmed": ("boolean", "True if the user asked for this workspace or has agreed to the switch.")}, ["workspace"]),
 ]
+
+
+def _navigate_tool_description(desc):
+    """Fill the {workspace_ids} placeholder from the SAME alias table the
+    navigation resolver uses. One source of truth — the hard-coded list this
+    replaces had gone stale (no settings/marketplace), so Gemini told users it
+    was 'opening settings' while the resolver sent them to System."""
+    if "{workspace_ids}" not in desc:
+        return desc
+    try:
+        from agent_friday.services.agent import _WORKSPACE_ALIASES
+        ids = ", ".join(sorted(set(_WORKSPACE_ALIASES.values())))
+    except Exception:
+        ids = ("calendar, career, code, contacts, content, draft, family, "
+               "finance, futurespeak, health, home, marketplace, messages, "
+               "news, settings, studio, system, trust, wiki")
+    return desc.replace("{workspace_ids}", ids)
 
 
 def _build_voice_live_tools(types):
@@ -275,7 +290,7 @@ def _build_voice_live_tools(types):
             for pname, (ptype, pdesc) in props.items()
         }
         decls.append(types.FunctionDeclaration(
-            name=name, description=desc,
+            name=name, description=_navigate_tool_description(desc),
             parameters=types.Schema(type=types.Type.OBJECT,
                                     properties=schema_props,
                                     required=list(required) or None),
