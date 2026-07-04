@@ -3,7 +3,81 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.1.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.2.0**
+
+---
+
+## [5.2.0] — 2026-07-04 — "Always Listening (voice continuity + creation tools)"
+
+Voice mode you can trust through an hours-long conversation — and interrupt
+mid-sentence — plus real slide-deck and website generation from chat or voice.
+
+### Fixed
+
+- **You can interrupt Friday again (speaker-mode barge-in).** Speaker mode
+  runs Gemini Live with `ActivityHandling.NO_INTERRUPTION` (the echo-safety
+  fix), which — per the Live API reference — means the model NEVER stops on
+  its own; and the old client-side interrupt detector had been removed, so no
+  layer implemented barge-in and Friday talked straight through the user. The
+  bridge now detects deliberate talk-over itself (`LiveBargeDetector`: seeds a
+  speaker-bleed RMS baseline from the quietest quartile of a per-response
+  grace window — capped, so a user who talks through the grace can't raise
+  the bar against themselves — then fires on ≥200 ms of speech above
+  max(550, 3× the bleed)). The detection window tracks CLIENT PLAYBACK
+  (`{type:'speaking'}` transitions from the browser, with a bytes÷48000
+  estimate fallback for the PWA) because Gemini streams faster than
+  real-time and users interrupt during playback, long after streaming ends.
+  On fire: the rest of the turn's audio is swallowed server-side, the client
+  is flushed via `{type:'interrupted'}`, and the in-flight generation is
+  cancelled with the documented `client_content` interrupt. Escape is a
+  deterministic manual barge hotkey; headphones mode keeps native
+  `START_OF_ACTIVITY_INTERRUPTS`. Verified end-to-end against a live
+  session: `interrupted` fired 0.19 s after talk-over began, zero straggler
+  audio. An adversarial multi-agent review then hardened the seams: explicit
+  client barges are trusted unconditionally (the Escape flush could close
+  the play window ahead of its own barge frame), barge/tool/playback state
+  resets at every session-leg start, the liveness watchdog stands down while
+  a voice tool call runs, zombie WS handlers are generation-fenced away from
+  the resume cache, stopping voice mid-reconnect can no longer leak a hot
+  mic, and the phone PWA now actually silences scheduled audio on interrupt.
+
+- **Hours-long Gemini Live voice sessions.** The "voice randomly goes silent
+  while the mic still shows live" dropout is fixed on both ends. Server
+  (`/ws/live`): a per-leg liveness watchdog force-renews the session when the
+  user is audibly speaking but Gemini has gone quiet (the hung-receive case that
+  used to freeze a call forever); GoAway now drains the in-flight sentence
+  before renewing; renewal connects ride a retry ladder (handle → handle →
+  fresh) instead of falling back to an amnesiac session; conversation state is
+  hoisted above the model-fallback loop so a mid-call fallback no longer
+  re-greets or drops the transcript; and the newest resumption handle is cached
+  across WebSocket connections so a reconnecting browser resumes the SAME
+  conversation. Client: voice mode now auto-reconnects with capped backoff when
+  the socket dies unexpectedly, and a heartbeat-based stall watchdog force-cycles
+  half-open sockets; a deliberate stop sends `{type:'bye'}` so the next session
+  starts fresh.
+- **Friday knows itself again.** `SELF.md` / `VOICE_DEMO.md` silently stopped
+  loading after the `src/` restructure (they stayed at the repo root while core
+  resolved them against the package root) — every system prompt shipped with
+  ZERO self-knowledge. `_res_file()` now falls back to the repo root, and both
+  docs were rewritten to match the real dock (Sites, Content, Trust,
+  Marketplace, the full Studio suite) and the real creation tools.
+
+### Added
+
+- **`create_presentation` + `create_website`** — chat/voice agent tools, POST
+  `/api/create/presentation` and `/api/create/website`, and
+  `services/showcase_engine.py`. The routed text model writes a strict JSON
+  spec; a deterministic template renders a polished, self-contained HTML
+  artifact into the Studio gallery (deck: keyboard nav, speaker notes,
+  print-to-PDF; site: multi-page hash routing, responsive, deploys anywhere).
+  The LLM never writes HTML — same output quality every run, offline-safe.
+
+### Docs
+
+- Repo cleanup for release: internal working artifacts (storm reports, review
+  logs, UI test results, competitive analyses, stale release-note files, the
+  release plan) removed from the tree; design specs consolidated under
+  `docs/`; `CHANGELOG.md` + GitHub Releases are now the single history.
 
 ---
 

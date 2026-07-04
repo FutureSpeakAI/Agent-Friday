@@ -1,99 +1,57 @@
-# Agent Friday v5.0 — "Super Agent"
+# Agent Friday v5.2.0 — "Always Listening"
 
-*Release date: 2026-07-01 · FutureSpeak.AI · Asimov's Mind*
+*Release date: 2026-07-04 · FutureSpeak.AI · Asimov's Mind*
 
-Agent Friday grows up. v5 is the transformation from a powerful developer tool
-into a sovereign consumer product you can install in five minutes and talk to
-with **no cloud API key at all**. Under the hood, Friday now learns from her own
-work, consolidates memory overnight, models how *you* like to work, and reads
-her personality from a file you can edit.
-
-Everything new is **local-first** and passes through the same cLaws governance
-rings and egress gate as the rest of Friday. We absorbed the best ideas from
-Hermes and OpenClaw — and rejected their security postures.
+This release is about trust in a conversation: voice mode now survives an
+hours-long call without a single silent gap, you can interrupt Friday
+mid-sentence just by talking over her, and she can produce real deliverables —
+slide decks, websites, video — from a spoken or typed request.
 
 ---
 
-## Highlights
+## Voice you can actually talk to
 
-### 🧠 A learning agent, not a static one
-Friday now runs a **closed-loop learning engine**. She observes which approaches
-succeed for which kinds of task, mines the winners into concise *heuristics*, and
-promotes the best ones into her own system prompt. Scoring uses a Wilson lower
-bound blended with your satisfaction, so a lucky one-off never gets promoted.
-Skills are **advisory text, never executable code** — the loop changes what
-Friday is *reminded* of, never what she's *able* to do.
+**Interrupt her any time.** On open speakers, just start talking over Friday —
+she stops within a fraction of a second and listens. The bridge detects
+deliberate talk-over with an echo-aware detector (it learns what *her own
+voice* sounds like leaking back into your mic, and only ever triggers on
+speech well above that), so she never clips herself off the way early
+barge-in builds did. Escape is a guaranteed manual interrupt; headphone users
+keep Gemini's native instant barge-in.
 
-### 💤 Memory that consolidates while you sleep
-Every night at 03:00, **memory dreaming** reviews the day's conversations
-locally, pulls out the durable facts ("I prefer dark mode", "we decided to ship
-Friday"), files them into long-term memory and your user model, and tags the
-noise. It writes a readable `~/.friday/dreams/<day>.md` you can browse. No part
-of this touches the cloud.
+**Hours-long sessions, no dead air.** Gemini Live caps individual connections;
+Friday now rides through every cap invisibly. Sessions renew with resumption
+handles before you can hear a seam, a liveness watchdog force-recovers the
+"talking into a void" hang, the browser auto-reconnects with backoff if the
+socket dies, and a reconnect resumes the *same* conversation — no re-greeting,
+no lost context.
 
-### 👤 Friday learns *you*
-The new **user model** quietly tracks your communication style, your domain
-expertise, and your workflow, and folds a compact summary into every prompt — so
-Friday skips the basics in areas you know cold and explains more where you're
-new. It's behavioral preference text (TIER_1), never raw PII, and you can wipe it
-any time.
+**Friday knows herself again.** A packaging regression had silently emptied
+Friday's self-knowledge from every prompt. Fixed — and the knowledge itself
+was rewritten to match today's UI, workspaces, and tools.
 
-### ✍️ SOUL.md — personality you can edit
-Friday's personality is no longer hardcoded. It lives in **`~/.friday/SOUL.md`**,
-a plain-markdown file you own. Edit it and Friday changes on the next turn.
-Ships with the current persona as the default; every save is versioned.
+## Create real things from chat or voice
 
-### 🟢 Zero-friction, zero-key install
-Friday now ships a **bundled local model** — `gemma3:4b`, Google's open Gemma 3
-4B, which runs on ~8 GB of RAM. The installers auto-install Ollama and pull it,
-so **chat works fully offline with no cloud key**. First run greets you *by
-voice* and walks you through setup. Cloud keys become optional upgrades for
-sharper reasoning, image/video, and richer voice.
+- **Slide decks** — "make me a presentation about X" produces a polished,
+  self-contained HTML deck in the Studio gallery: keyboard navigation,
+  speaker notes, print-to-PDF. Works offline.
+- **Websites** — "build me a website for X" produces a multi-page, hash-routed
+  site in a single HTML file that deploys anywhere.
+- **Video** — Veo generation, timeline editing, and the full production
+  pipeline now run on the live July-2026 model lineup (Veo 3.1 family,
+  Gemini 3 Pro Image, Nano Banana 2/Lite, Gemini Omni Flash).
 
-### 💬 Friday, everywhere you already are
-New **channel bridges** connect Friday to **Discord** and **Telegram**. Every
-inbound message runs Friday's real agent loop; every reply passes the egress gate
-before it leaves. Bots are disabled by default, allowlist-gated, and their tokens
-live in the encrypted credential store.
+## Provider layer (5.1.x, first shipped in this release)
+
+Friday routes by registry, not model-name guessing: ten new OpenAI-compatible
+providers (OpenRouter first-class with live model discovery and real usage
+accounting), multi-provider dispatch in one session, per-provider health
+measurement with circuit breakers, and registry-driven egress classification
+so only genuinely local endpoints bypass the privacy gate.
 
 ---
 
-## Under the hood
-
-| Subsystem | Module | Storage | Scheduler |
-|-----------|--------|---------|-----------|
-| Learning loop | `services/learning_loop.py` | `learning.db` | weekly `learning_epoch` |
-| Memory dreaming | `services/memory_dreaming.py` | `dreams.db`, `dreams/` | nightly `memory_dreaming` |
-| User modeling | `services/user_model.py` | `user_model.db` | (per-turn) |
-| SOUL.md | `services/soul.py` | `SOUL.md`, `soul_history/` | — |
-| Onboarding | `services/onboarding.py` | `onboarding.json` | first-run |
-| Channels | `services/channels/` | `channels.json` + cred store | on-demand |
-
-New API surfaces (auto-discovered blueprints): `/api/soul*`, `/api/user-model*`,
-`/api/learning/*`, `/api/memory/dream*`, `/api/channels/*`, `/api/onboarding/*`.
-
-## Bug fix worth calling out
-
-Launching via the repo-root `python server.py` previously registered **zero** API
-blueprints (the shim's `exec()` made discovery look in the wrong directory), so
-the entire API 404'd on that path. Fixed — discovery now anchors to the
-`agent_friday` package.
-
-## Compatibility
-
-- Default local model changed `gemma4:latest` → **`gemma3:4b`**. If you have a
-  different model installed, the local-model picker degrades gracefully to it.
-- No default cloud dependency was introduced anywhere.
-- 3162 tests pass (64 new).
-
-## Upgrading
-
-```bash
-git pull
-pip install -e .
-friday doctor            # confirms Ollama + gemma3:4b + no-key-mode
-ollama pull gemma3:4b    # if the installer didn't already
-```
-
-Your existing `agent-personality.txt` still works, but `SOUL.md` takes
-precedence once created — copy your persona into it to take over.
+**Install:** download `AgentFriday.exe` from this release, or
+`pip install -e .` from source — see `docs/INSTALLATION.md`.
+**Upgrade note:** no settings migration required; voice improvements apply on
+first launch.
