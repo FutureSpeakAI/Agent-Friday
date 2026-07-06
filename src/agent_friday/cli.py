@@ -233,6 +233,12 @@ def cmd_start():
     if cfg.get("gemini_api_key") and not env.get("GEMINI_API_KEY"):
         env["GEMINI_API_KEY"] = cfg["gemini_api_key"]
 
+    # The child runs the package file as a script, so agent_friday must be
+    # importable: in a source checkout (not pip-installed) that means src/ has
+    # to be on the child's PYTHONPATH or the import dies instantly.
+    _src = str(PROJ_ROOT / "src")
+    env["PYTHONPATH"] = _src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+
     proc = subprocess.Popen([sys.executable, str(server_script)], env=env, cwd=str(PROJ_ROOT))
 
     console.print("  [dim]Waiting for server...[/dim]")
@@ -240,7 +246,12 @@ def cmd_start():
         console.print(f"  [green]✓ Ready[/green]  Opening {SERVER_URL}")
         webbrowser.open(SERVER_URL)
     else:
-        console.print(f"  [yellow]Server took too long to respond — open {SERVER_URL} manually.[/yellow]")
+        _rc = proc.poll()
+        if _rc is not None:
+            console.print(f"  [red]Server exited with code {_rc} before becoming ready — "
+                          f"run it directly to see the error: python {server_script}[/red]")
+        else:
+            console.print(f"  [yellow]Server took too long to respond — open {SERVER_URL} manually.[/yellow]")
 
     try:
         proc.wait()
@@ -262,7 +273,12 @@ def cmd_setup(quick: bool = False):
     args = [sys.executable, str(wizard_script)]
     if quick:
         args.append("--quick")
-    subprocess.run(args)
+    # Same non-installed-checkout deal as cmd_start: the wizard imports
+    # agent_friday.* so src/ must be on the child's PYTHONPATH.
+    env = os.environ.copy()
+    _src = str(PROJ_ROOT / "src")
+    env["PYTHONPATH"] = _src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    subprocess.run(args, env=env)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -686,8 +702,9 @@ def cmd_update():
     console.rule("[bold cyan]UPDATE AGENT FRIDAY[/bold cyan]")
     console.print()
 
-    # Check git
-    if not (HERE / ".git").exists():
+    # Check git — repo-root paths, NOT the package dir (HERE is src/agent_friday;
+    # .git, requirements.txt live at PROJ_ROOT, and build_ui moved to ui/).
+    if not (PROJ_ROOT / ".git").exists():
         console.print("  [yellow]Not a git repository — manual update required.[/yellow]")
         console.print(f"  Download latest from https://github.com/FutureSpeakAI/friday-desktop")
         return
@@ -695,7 +712,7 @@ def cmd_update():
     # git pull
     console.print("  [dim]Pulling latest changes...[/dim]")
     result = subprocess.run(["git", "pull", "origin", "main"],
-                            capture_output=True, text=True, cwd=str(HERE))
+                            capture_output=True, text=True, cwd=str(PROJ_ROOT))
     if result.returncode == 0:
         console.print(f"  [green]✓[/green]  {result.stdout.strip()}")
     else:
@@ -707,17 +724,17 @@ def cmd_update():
     pip_args = [sys.executable, "-m", "pip", "install", "--quiet",
                 "flask", "anthropic", "google-genai", "rich", "colorama",
                 "pyautogui", "beautifulsoup4", "requests", "pyyaml"]
-    req = HERE / "requirements.txt"
+    req = PROJ_ROOT / "requirements.txt"
     if req.exists():
         pip_args = [sys.executable, "-m", "pip", "install", "--quiet", "-r", str(req)]
     subprocess.run(pip_args, check=False)
     console.print("  [green]✓[/green]  Dependencies up to date")
 
-    # Rebuild UI
-    build = HERE / "build_ui.py"
+    # Rebuild UI (build_ui.py writes index.html at the repo root)
+    build = HERE / "ui" / "build_ui.py"
     if build.exists():
         console.print("  [dim]Rebuilding UI...[/dim]")
-        subprocess.run([sys.executable, str(build)], capture_output=True, cwd=str(HERE))
+        subprocess.run([sys.executable, str(build)], capture_output=True, cwd=str(PROJ_ROOT))
         console.print("  [green]✓[/green]  index.html rebuilt")
 
     console.print()

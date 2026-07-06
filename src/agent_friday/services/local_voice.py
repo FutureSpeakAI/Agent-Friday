@@ -196,6 +196,12 @@ class VADEndpointer:
         self._silence_ms = 0.0
         self._silero = None
         self._silero_tried = False
+        # Pre-roll: the last few non-speech chunks, prepended when speech
+        # starts. Without it, the chunk in which the utterance BEGINS (often
+        # classified non-speech when the onset sits late in the chunk) was
+        # discarded outright, clipping the first syllables off transcripts.
+        self._preroll = []
+        self._preroll_max = 3  # ~250 ms at the client's ~85 ms chunks
 
     def _chunk_ms(self, pcm: bytes) -> float:
         return (len(pcm) / 2) / self.rate * 1000.0
@@ -233,8 +239,18 @@ class VADEndpointer:
                 if arr.size < 512:
                     return _pcm16_rms(pcm) >= self.start_rms
                 import torch
-                prob = float(model(torch.from_numpy(arr[:512]), self.rate).item())
-                return prob >= 0.5
+                # Score EVERY full 512-sample window and max-pool. The client
+                # sends ~1365-sample (~85 ms) chunks; judging only arr[:512]
+                # (the first 32 ms) classified chunks whose speech starts later
+                # as silence — clipping utterance onsets and endpointing
+                # mid-sentence. Sequential windows also keep Silero's streaming
+                # state fed with contiguous audio instead of disjoint slices.
+                best = 0.0
+                for off in range(0, arr.size - 511, 512):
+                    prob = float(model(torch.from_numpy(arr[off:off + 512]), self.rate).item())
+                    if prob > best:
+                        best = prob
+                return best >= 0.5
 
             self._silero = _decide
         except Exception:
@@ -248,6 +264,12 @@ class VADEndpointer:
         dur = self._chunk_ms(pcm)
         speech = self._is_speech(pcm)
         if speech:
+            if not self._in_speech and self._preroll:
+                # Utterance onset: include the immediately-preceding audio so
+                # the decoder sees the first syllables the VAD missed.
+                for _pre in self._preroll:
+                    self._buf.extend(_pre)
+                self._preroll.clear()
             self._in_speech = True
             self._speech_ms += dur
             self._silence_ms = 0.0
@@ -260,6 +282,10 @@ class VADEndpointer:
             if (self._silence_ms >= self.silence_ms
                     and self._speech_ms >= self.min_speech_ms):
                 return self.flush()
+        else:
+            self._preroll.append(pcm)
+            if len(self._preroll) > self._preroll_max:
+                self._preroll.pop(0)
         return None
 
     def flush(self):
@@ -273,6 +299,7 @@ class VADEndpointer:
         self._in_speech = False
         self._speech_ms = 0.0
         self._silence_ms = 0.0
+        self._preroll = []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -349,7 +376,28 @@ class PiperTTS:
             if progress:
                 progress(f"Downloading voice ({self.voice})…")
             tmp = dest.with_suffix(dest.suffix + ".part")
-            urllib.request.urlretrieve(url, str(tmp))
+            # Streamed download with a socket timeout. urlretrieve has NO
+            # timeout: a stalled connection here blocked forever while holding
+            # the engine lock, silently hanging every voice session until a
+            # server restart.
+            try:
+                with urllib.request.urlopen(url, timeout=30) as resp, \
+                        open(tmp, "wb") as out:
+                    while True:
+                        block = resp.read(1 << 16)
+                        if not block:
+                            break
+                        out.write(block)
+            except Exception as e:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Voice model download failed for '{self.voice}' "
+                    f"({type(e).__name__}: {e}) — check your connection and "
+                    f"retry, or pick a different voice in Settings → Voice."
+                ) from e
             tmp.replace(dest)
         return path
 
@@ -441,6 +489,8 @@ class LocalVoiceEngine:
         self._ready = False
         self._tier = None          # "cpu" | "gpu" | None (unselected → cpu)
         self._lock = threading.Lock()
+        self.last_error = ""       # last model-load failure, surfaced in health()
+        self.last_downgrade = ""   # why an explicit GPU preference got CPU instead
         # Rolling perf so users can compare Tier-1 vs Tier-2 (spec §"Performance
         # Monitoring"). Surfaced in health() + /api/health/full.
         self._perf = {
@@ -478,10 +528,30 @@ class LocalVoiceEngine:
         s = settings if settings is not None else self._settings()
         pref = str(s.get("voice_engine") or "local").strip().lower()
         if pref in ("local-gpu", "gpu", "nemo", "nvidia-nemo"):
-            return "gpu" if self._gpu_tier_ready() else "cpu"
+            if self._gpu_tier_ready():
+                self.last_downgrade = ""
+                return "gpu"
+            # The user EXPLICITLY chose the GPU tier — record why they are not
+            # getting it so the session can announce the downgrade instead of
+            # silently running CPU voice (auto mode stays quiet by design).
+            self.last_downgrade = self._gpu_unready_reason()
+            return "cpu"
         if pref == "auto":
+            self.last_downgrade = ""
             return "gpu" if self._gpu_tier_ready() else "cpu"
+        self.last_downgrade = ""
         return "cpu"
+
+    def _gpu_unready_reason(self) -> str:
+        """One-line, actionable reason the GPU tier can't run right now."""
+        try:
+            from agent_friday.services.nemo_voice import nemo_health
+            h = nemo_health() or {}
+            detail = h.get("detail") or h.get("status") or "GPU tier not ready"
+        except Exception:
+            detail = "GPU tier not ready"
+        return (f"GPU voice unavailable ({detail}) — using local CPU voice. "
+                f"See Settings → Voice to set up the GPU tier.")
 
     def _swap_tier(self, tier):
         """Drop current backends and arm the engine for ``tier`` (next load builds it)."""
@@ -579,12 +649,16 @@ class LocalVoiceEngine:
                     progress("GPU voice not ready — using local CPU voice")
                 self._swap_tier("cpu")
             if not self._active_tier_deps_ok():
+                self.last_error = ("Tier-1 voice dependencies not installed "
+                                   "(pip install -e .[voice-local-lite])")
                 return False
             try:
                 self._get_asr().load(progress=progress)
                 self._get_tts().load(progress=progress)
                 self._ready = True
+                self.last_error = ""
             except Exception as e:  # pragma: no cover - real model load only
+                self.last_error = f"{type(e).__name__}: {e}"
                 print(f"[local_voice] {self.active_tier()} model load failed: {e}")
                 # GPU load failed → one graceful retry on the CPU tier.
                 if self.active_tier() == "gpu" and deps_installed():
@@ -595,7 +669,9 @@ class LocalVoiceEngine:
                         self._get_asr().load(progress=progress)
                         self._get_tts().load(progress=progress)
                         self._ready = True
+                        self.last_error = ""
                     except Exception as e2:  # pragma: no cover
+                        self.last_error = f"{type(e2).__name__}: {e2}"
                         print(f"[local_voice] CPU fallback load failed: {e2}")
                         self._ready = False
                 else:
@@ -661,6 +737,8 @@ class LocalVoiceEngine:
             "tts_voice": s.get("local_voice_tts_voice") or DEFAULT_PIPER_VOICE,
             "active_tier": self.active_tier(),
             "perf": self.perf_stats(),
+            "last_error": self.last_error,
+            "downgrade": self.last_downgrade,
         }
         # Tier-2 (GPU/NeMo) readiness — best-effort, never fatal to this block.
         try:

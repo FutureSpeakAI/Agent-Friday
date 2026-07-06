@@ -200,6 +200,13 @@ def test_models_refresh_populates_catalog(client, monkeypatch):
     assert entry["provider"] == "openrouter"
     assert entry.get("free") is True
     assert entry.get("source") == "discovery"
+    assert entry.get("curated") is False
+
+    # …but NOT in the curated role pickers — the discovery long tail is
+    # Model-Browser/search material, never quick-switcher noise.
+    for role, entries in cat["roles"].items():
+        assert all(m["id"] != "meta-llama/llama-4-maverick:free"
+                   for m in entries), f"discovery model leaked into {role}"
 
     # …and in the search endpoint.
     hits = client.get("/api/models/search?q=maverick").get_json()
@@ -246,6 +253,52 @@ def test_search_perplexity_statics_present(client):
         assert any(m["provider"] == "perplexity" for m in hits["models"])
     finally:
         client.delete("/api/providers/perplexity")
+
+
+def test_search_rows_carry_modalities_and_local(client):
+    """The Model Browser filters on capability and shows the on-device
+    marker — every row must carry modalities[] and local."""
+    hits = client.get("/api/models/search?q=").get_json()
+    assert hits["models"]
+    for m in hits["models"]:
+        assert isinstance(m.get("modalities"), list) and m["modalities"]
+        assert isinstance(m.get("local"), bool)
+
+
+def test_search_modality_filter(client):
+    """modality=image returns only image-capable models (Gemini's Nano
+    Banana statics carry the tag via model_meta)."""
+    hits = client.get("/api/models/search?q=&modality=image").get_json()
+    assert hits["models"], "no image-capable models found"
+    assert all("image" in m["modalities"] for m in hits["models"])
+
+
+def test_search_local_filter(client):
+    """local=1 keeps only on-device providers, filtered SERVER-side so the
+    rows survive sort+limit truncation (Ollama entries are unpriced and
+    would fall off the page under a client-side price sort)."""
+    hits = client.get("/api/models/search?q=&local=1&sort=price").get_json()
+    assert hits["models"], "no local models found"
+    assert all(m["local"] for m in hits["models"])
+    assert any(m["provider"] == "ollama-local" for m in hits["models"])
+
+
+def test_search_price_sort_unpriced_last(client):
+    """sort=price orders cheapest-first with unpriced entries last
+    (unknown ≠ free) — and sorts BEFORE the limit truncates."""
+    hits = client.get("/api/models/search?q=&sort=price").get_json()
+    models = hits["models"]
+    assert models
+    seen_unpriced = False
+    last_price = None
+    for m in models:
+        if m.get("price_in") is None:
+            seen_unpriced = True
+            continue
+        assert not seen_unpriced, "priced entry after an unpriced one"
+        if last_price is not None:
+            assert m["price_in"] >= last_price
+        last_price = m["price_in"]
 
 
 # ── Health endpoint enrichment ───────────────────────────────────────────────

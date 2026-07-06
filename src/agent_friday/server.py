@@ -75,7 +75,8 @@ from flask import Blueprint as _Blueprint
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
     'ambient', 'budget_policy', 'calendar', 'channels', 'chat', 'code',
-    'compute', 'connectors', 'contacts', 'context', 'control', 'core_routes',
+    'compute', 'connectors', 'contacts', 'content_pipeline', 'context',
+    'control', 'core_routes',
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'google',
     'google_accounts', 'hooks', 'insights', 'jobs', 'learning', 'messages',
@@ -179,6 +180,16 @@ if not _TESTING:
     # and retries. Registers built-ins, seeds/reconciles schedules.json, and
     # starts the 60s tick thread (replaces _register_default_daily_jobs +
     # _daily_scheduler_loop).
+    #
+    # Content pipeline publisher (docs/CONTENT_PIPELINE_SPEC.md §6.2): register
+    # the content_publisher/content_analytics builtin tasks BEFORE the scheduler
+    # seeds schedules.json so they materialize on first run. Tolerant while the
+    # publisher module lands — a missing/broken module never blocks boot.
+    try:
+        from agent_friday.services import publisher as _content_publisher
+        _content_publisher.start()
+    except Exception as _cp_err:
+        print(f"  Content publisher: skipped ({_cp_err})")
     start_scheduler()
 
     if _notif_engine:
@@ -399,7 +410,7 @@ if __name__ == '__main__':
     try:
         from agent_friday.services.voice_engine import validate_live_model as _vlm
         _mv = _vlm()
-        if not _mv.get("ok") and _mv.get("status") == "unknown":
+        if not _mv.get("ok") and _mv.get("status") in ("unknown", "retired"):
             print(f"  Voice: {_mv.get('detail', 'configured voice model may be invalid')}")
     except Exception:
         pass
@@ -408,8 +419,35 @@ if __name__ == '__main__':
         app.run(host=bind_host, port=_port, debug=False, threaded=True,
                 ssl_context=_ssl_context)
     except OSError as _bind_err:
-        print()
-        print(f"  Could not start the server on port {_port}: {_bind_err}")
-        print(f"  Another program may be using it. Free the port or set a")
-        print(f"  different one, e.g.  FRIDAY_PORT=3010 python server.py")
+        # This branch historically vanished: the tray spawns the server under
+        # pythonw, so print() goes nowhere and a "restart" that lost the port
+        # race to a stale server died in total silence — the user kept using
+        # the OLD server without knowing. Diagnose the occupant, log loudly,
+        # and on Windows raise a visible message box.
+        _msg = (f"Agent Friday could not start on port {_port}: {_bind_err}.")
+        try:
+            import urllib.request as _ur, json as _j
+            with _ur.urlopen(f"http://127.0.0.1:{_port}/api/health", timeout=3) as _r:
+                _h = _j.load(_r)
+            _since = _h.get("server_start", "?")
+            _msg = (f"Agent Friday could not start: port {_port} is still held by "
+                    f"an OLDER Agent Friday server (running since {_since}). "
+                    f"Quit it from the tray icon — or kill the python process "
+                    f"listening on port {_port} — then relaunch.")
+        except Exception:
+            _msg += (" Another program may be using the port. Free it or set "
+                     "FRIDAY_PORT to a different one.")
+        print(f"\n  {_msg}")
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.server").error(_msg)
+        except Exception:
+            pass
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(None, _msg,
+                                                 "Agent Friday failed to start", 0x10)
+            except Exception:
+                pass
         sys.exit(1)

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -343,10 +343,13 @@ def _compose_final_voice_error(attempt_errors, key_source):
                 f"Settings → Providers → Google Gemini — it takes effect on the "
                 f"next voice session, no restart needed.")
     if kinds and all(k == "model-missing" for k in kinds):
+        # Don't recommend a specific model here: every ID in our own chain was
+        # just tried and failed, so naming one would send the user in a circle.
         return (f"No configured voice model is available on this API tier "
                 f"(tried: {models_tried}) — this is a MODEL problem, not an "
-                f"API-key problem. Set Settings → Voice model to a current "
-                f"Gemini Live model (e.g. {LIVE_MODEL_FALLBACK}).")
+                f"API-key problem. Open Settings → Voice and pick a different "
+                f"Live model — or clear the Voice model setting to use the "
+                f"built-in verified default.")
     first = attempt_errors[0] if attempt_errors else ("?", None, "other", "unknown error")
     return f"Voice connect failed on {first[0]}: {str(first[3])[:300]}"
 
@@ -481,6 +484,29 @@ def _resolve_voice_engine(settings=None):
     """
     settings = settings if settings is not None else (_load_settings() or {})
     pref = str(settings.get("voice_engine") or "local").strip().lower()
+    # Auto-correct stale/retired voice model — the #1 cause of "voice is broken"
+    # reports. A retired model id surfaces as a connect failure that looks like
+    # an auth error but isn't. Fix it HERE so the user's next voice session
+    # just works instead of failing 3 times through the fallback chain.
+    if pref == "gemini":
+        try:
+            from agent_friday.services.voice_engine import validate_live_model, LIVE_MODEL
+            mv = validate_live_model()
+            if not mv.get("ok") and mv.get("status") in ("unknown", "retired"):
+                # The configured model is stale/retired — reset to the default
+                _log.warning("Auto-correcting stale voice model %r → %s",
+                             mv.get("model"), LIVE_MODEL)
+                settings["voice_model"] = LIVE_MODEL
+                try:
+                    from agent_friday.core import _save_settings
+                    # Persist ONLY the delta: `settings` came from _load_settings(),
+                    # which applies the never-persist offline routing overlay —
+                    # writing the whole dict would pin local_only routing to disk.
+                    _save_settings({"voice_model": LIVE_MODEL})
+                except Exception:
+                    pass
+        except Exception:
+            pass
     net = _network_status()
     # cloud_ok needs a key that actually AUTHENTICATES (cheap cached REST
     # probe), not merely a non-empty string — a revoked key must route the
@@ -578,19 +604,41 @@ def voice_setup_status():
         try:
             from agent_friday.services.local_voice import local_voice_health
             lv = local_voice_health()
+            # Derive each step from the dedicated health fields, not the combined
+            # status string: health() emits 'missing'/'needs_download'/'ok'/'error'
+            # (never 'unavailable'), and needs_download does NOT mean deps missing.
             steps.append({
                 "id": "deps",
                 "label": "Python dependencies (faster-whisper / piper)",
-                "status": lv.get("status", "unknown"),
-                "detail": lv.get("detail", ""),
+                "status": "ok" if lv.get("available") else "missing",
+                "detail": lv.get("detail", "") if not lv.get("available")
+                          else "Tier-1 voice dependencies installed.",
             })
-            model_ok = lv.get("status") not in ("unavailable", "needs_download")
+            if not lv.get("available"):
+                models_status, models_detail = "unknown", "Install dependencies first."
+            elif lv.get("models_ready"):
+                models_status, models_detail = "ok", "Voice models downloaded."
+            else:
+                models_status = "needs_download"
+                models_detail = lv.get("detail", "Models download on first voice session.")
             steps.append({
                 "id": "models",
                 "label": "ASR / TTS model files (~300 MB, one-time download)",
-                "status": "ok" if model_ok else "needs_download",
-                "detail": lv.get("detail", "Models download on first voice session."),
+                "status": models_status,
+                "detail": models_detail,
             })
+            # Tier-2 (GPU/NeMo) — informational: never gates Tier-1 readiness,
+            # but a user who owns a capable GPU should SEE the upgrade path
+            # (and a user who picked local-gpu should see why they're on CPU).
+            gpu = lv.get("gpu") or {}
+            if gpu:
+                _gpu_ready = str(gpu.get("status", "")) == "ok"
+                steps.append({
+                    "id": "gpu",
+                    "label": "GPU voice tier (NVIDIA NeMo) — optional",
+                    "status": "ok" if _gpu_ready else "unknown",
+                    "detail": gpu.get("detail", ""),
+                })
         except Exception as _e:
             steps.append({"id": "deps", "label": "Local voice deps",
                           "status": "unavailable", "detail": str(_e)})
@@ -621,9 +669,12 @@ def voice_setup_status():
         try:
             from agent_friday.services.voice_engine import validate_live_model
             mv = validate_live_model()
+            # A failed model check must GATE readiness ('invalid'), not hide in
+            # 'unknown' (which the readiness aggregate deliberately excludes —
+            # that state is reserved for cannot-check items like mic permission).
             steps.append({"id": "model",
                           "label": f"Voice model ({mv['model'] or 'default'})",
-                          "status": "ok" if mv["ok"] else "unknown",
+                          "status": "ok" if mv["ok"] else "invalid",
                           "detail": mv["detail"]})
         except Exception as _e:
             _log.warning("voice_setup_status: model validation failed: %s", _e)
@@ -646,11 +697,19 @@ def voice_setup_test():
     text = data.get("text", "Hello, I'm Friday. Voice setup is complete.").strip()
     try:
         from agent_friday.services.voice_engine import _synthesize_tts_wav
-        wav_bytes = _synthesize_tts_wav(text, allow_local=True)
+        wav_buf = _synthesize_tts_wav(text, allow_local=True)  # io.BytesIO, pos 0
         import base64 as _b64
+        wav_data = wav_buf.getvalue() if wav_buf is not None else b""
+        if not wav_data:
+            return jsonify({
+                "status": "error",
+                "message": "TTS produced no audio — no TTS engine is available. "
+                           "Install local voice (Settings → Voice → Setup Wizard) "
+                           "or configure a Gemini API key.",
+            }), 503
         return jsonify({
             "status": "ok",
-            "audio_b64": _b64.b64encode(wav_bytes).decode() if wav_bytes else None,
+            "audio_b64": _b64.b64encode(wav_data).decode(),
             "format": "wav",
         })
     except Exception as e:
@@ -660,6 +719,36 @@ def voice_setup_test():
             "message": f"TTS synthesis failed: {type(e).__name__} — {e}. "
                        f"Check that voice dependencies are installed.",
         }), 500
+
+
+@voice_bp.route('/api/voice/setup/install', methods=['POST'])
+@login_required
+def voice_setup_install():
+    """Start a background install of a voice tier (allowlisted targets only).
+
+    Body: {"target": "voice-local-lite" | "voice-local-gpu" | "tier1-models"}.
+    Long-running (torch-CUDA is multi-GB) — poll /api/voice/setup/install/status.
+    """
+    data = request.get_json(silent=True) or {}
+    target = str(data.get("target") or "").strip()
+    from agent_friday.services import voice_installer
+    job = voice_installer.start(target)
+    code = 200 if job.get("state") == "running" else 400
+    return jsonify(job), code
+
+
+@voice_bp.route('/api/voice/setup/install/status', methods=['GET'])
+@login_required
+def voice_setup_install_status():
+    from agent_friday.services import voice_installer
+    return jsonify(voice_installer.status())
+
+
+@voice_bp.route('/api/voice/setup/install/cancel', methods=['POST'])
+@login_required
+def voice_setup_install_cancel():
+    from agent_friday.services import voice_installer
+    return jsonify(voice_installer.cancel())
 
 
 if sock is not None:
@@ -731,6 +820,10 @@ if sock is not None:
         # Hot-swaps backends without a server restart; a gpu pick that can't run
         # gracefully degrades to cpu inside ensure_ready below.
         tier = engine.select_tier_from_settings()
+        if getattr(engine, "last_downgrade", ""):
+            # The user explicitly picked the GPU tier and is getting CPU —
+            # announce the downgrade with the reason instead of running silent.
+            _send({"type": "status", "text": engine.last_downgrade})
         _send({"type": "status",
                "text": ("starting local GPU voice (NeMo)" if tier == "gpu"
                         else "starting local voice")})
@@ -742,8 +835,11 @@ if sock is not None:
         elif not engine.models_ready():
             _send({"type": "status", "text": "Downloading voice models… (one-time setup)"})
         if not engine.ensure_ready(progress=lambda m: _send({"type": "status", "text": m})):
+            _cause = getattr(engine, "last_error", "") or "unknown error"
             _send({"type": "error", "error": "local_voice_load_failed",
-                   "detail": "Could not load the local voice models."})
+                   "detail": f"Could not load the local voice models ({_cause}). "
+                             f"Check your network/disk and retry, or reset the "
+                             f"voice settings in Settings → Voice."})
             return
         # The tier may have changed (gpu → cpu fallback) during ensure_ready.
         _send({"type": "status",
@@ -1406,11 +1502,16 @@ if sock is not None:
                     per_model_kwargs.pop("enable_affective_dialog", None)
                 if not use_proactive:
                     per_model_kwargs.pop("proactivity", None)
-                per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
-                active_client = _client_for(api_version)
                 _vlog(f'connecting to model: {model_name} (api={api_version or "default(v1beta)"}, '
                       f'affective={use_affective}, proactive={use_proactive})')
                 try:
+                    # Config/client construction stays INSIDE the per-attempt
+                    # try: LiveConnectConfig is a pydantic model that raises
+                    # ValidationError on fields an older google-genai lacks —
+                    # outside the try, that skipped the error frame entirely
+                    # and the browser hung on a dead socket with no message.
+                    per_model_cfg = types.LiveConnectConfig(**per_model_kwargs)
+                    active_client = _client_for(api_version)
                     async def _fire_barge(sess, source):
                         # The user is talking over Friday. Stop her at every
                         # layer we control: (1) swallow the rest of this turn's
@@ -1473,6 +1574,21 @@ if sock is not None:
                             if not isinstance(result, str):
                                 result = str(result)
                             result = result[:8000]
+                            # Tool results are CLOUD EGRESS: emails, wiki
+                            # excerpts, calendar attendees ship to Google here.
+                            # Run the same gate as the text-chat path; a fully
+                            # withheld result becomes an explanatory marker so
+                            # the model reports the withholding instead of
+                            # retrying the tool.
+                            try:
+                                from agent_friday.services import egress_gate as _eg
+                                _gated = _eg._gate_text(result, "google-gemini",
+                                                        f"live.tool.{fname}")
+                                if result and not _gated:
+                                    _gated = _eg._TOOL_RESULT_WITHHELD
+                                result = _gated
+                            except Exception as _ge:
+                                _vlog(f'tool-result gating unavailable: {_ge}')
                             _kw = {"name": fname, "response": {"result": result}}
                             if fid is not None:
                                 _kw["id"] = fid
@@ -1559,7 +1675,17 @@ if sock is not None:
                                     )
                                 elif t == 'text' and msg.get('text'):
                                     _vlog(f'browser->gemini: text {msg["text"]!r}')
-                                    await sess.send_realtime_input(text=msg['text'])
+                                    # Typed turns are cloud egress like any chat
+                                    # message — gate them, and never forward an
+                                    # emptied string (Gemini treats it as noise).
+                                    _txt = msg['text']
+                                    try:
+                                        from agent_friday.services import egress_gate as _eg2
+                                        _g = _eg2._gate_text(_txt, "google-gemini", "live.text")
+                                        _txt = _g if _g else _eg2._MESSAGE_WITHHELD
+                                    except Exception:
+                                        pass
+                                    await sess.send_realtime_input(text=_txt)
                                 elif t == 'barge':
                                     # EXPLICIT interrupt from the client (Escape
                                     # key). Trust it unconditionally — no play-
@@ -2078,6 +2204,17 @@ if sock is not None:
             import traceback as _tb2
             _vlog(f'TOP-LEVEL runner error: {type(_top_e).__name__}: {_top_e}')
             _vlog(f'TRACEBACK: {_tb2.format_exc()}')
+            # The browser must never sit on a dead socket with no explanation:
+            # _vlog is a no-op unless FRIDAY_VOICE_DEBUG=1, so without this
+            # frame a runner crash was completely silent to the user.
+            try:
+                ws.send(json.dumps({
+                    "type": "error",
+                    "error": f"voice session crashed: {type(_top_e).__name__}: "
+                             f"{str(_top_e)[:200]}",
+                }))
+            except Exception:
+                pass
         finally:
             done.set()
             try:

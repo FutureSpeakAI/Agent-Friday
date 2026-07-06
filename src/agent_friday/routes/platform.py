@@ -382,12 +382,20 @@ def api_provider_models_refresh(name):
 @platform_bp.route("/api/models/search", methods=["GET"])
 def api_models_search():
     """Search models across ALL registered providers (statics + discovery
-    caches). Filters: q (substring on id/label), provider, free=1, tools=1,
-    max_price_in (USD per 1M), min_context. Powers the Model Browser."""
+    caches, live Ollama installs). Filters: q (substring on id/label),
+    provider, free=1, tools=1, local=1 (on-device providers only), modality
+    (exact member of the modalities list, e.g. vision/image/video),
+    max_price_in (USD per 1M), min_context. sort=price|price_desc|context
+    orders BEFORE the limit truncates, so "cheapest 50 of 350" is exact —
+    which is also why every filter (including local) must run server-side.
+    Powers the Model Browser."""
     q = (request.args.get("q") or "").strip().lower()
     want_provider = (request.args.get("provider") or "").strip()
     want_free = (request.args.get("free") or "") in ("1", "true", "yes")
     want_tools = (request.args.get("tools") or "") in ("1", "true", "yes")
+    want_local = (request.args.get("local") or "") in ("1", "true", "yes")
+    want_modality = (request.args.get("modality") or "").strip().lower()
+    sort = (request.args.get("sort") or "").strip().lower()
     try:
         max_price_in = float(request.args.get("max_price_in"))
     except (TypeError, ValueError):
@@ -402,6 +410,7 @@ def api_models_search():
         limit = 100
 
     reg = get_provider_registry()
+    from agent_friday.routing.provider_descriptors import classification_of
     results = []
     for prov in reg.get_enabled_providers():
         name = prov.get("name", "")
@@ -410,9 +419,27 @@ def api_models_search():
         if prov.get("type") in ("local-voice", "nemo-local"):
             continue  # engine backends are not pickable chat models
         available = reg.is_provider_available(name)
+        is_local = classification_of(prov) == "local"
+        if want_local and not is_local:
+            continue
+        meta = prov.get("model_meta") or {}
+        ids = list(prov.get("models") or [])
+        if prov.get("type") == "ollama":
+            # Live daemon truth, like the catalog builder — the browser must
+            # list what is actually installed, not the descriptor's hints.
+            try:
+                from agent_friday.services.model_catalog import _live_ollama_models
+                live = _live_ollama_models(prov.get("base_url"))
+                if live is not None:
+                    ids = live
+            except Exception:
+                pass
         rows = {}
-        for mid in (prov.get("models") or []):
-            rows[mid] = {"id": mid, "label": mid, "source": "static"}
+        for mid in ids:
+            mm = meta.get(mid) or {}
+            rows[mid] = {"id": mid, "label": mm.get("label") or mid,
+                         "modalities": mm.get("modalities") or ["text"],
+                         "source": "static"}
         if (prov.get("discovery") or {}).get("mode") == "api":
             try:
                 from agent_friday.services.model_discovery import cached_models
@@ -429,6 +456,9 @@ def api_models_search():
                 continue
             if want_tools and m.get("supports_tools") is False:
                 continue
+            if want_modality and want_modality not in (m.get("modalities")
+                                                       or ["text"]):
+                continue
             if max_price_in is not None and (m.get("price_in") or 0) > max_price_in:
                 continue
             if min_context is not None and (m.get("context_window") or 0) < min_context:
@@ -440,11 +470,22 @@ def api_models_search():
                 "price_in": m.get("price_in"), "price_out": m.get("price_out"),
                 "free": bool(m.get("free")),
                 "supports_tools": m.get("supports_tools"),
+                "modalities": m.get("modalities") or ["text"],
+                "local": is_local,
                 "available": available, "source": m.get("source", "static"),
             })
-    # Free + cheap first within name matches, then alphabetical — stable and useful.
-    results.sort(key=lambda r: (0 if r["available"] else 1,
-                                r["provider_label"], r["id"]))
+    # Default: available first, then provider, then id — stable and useful.
+    # Price sorts put unpriced entries LAST (unknown ≠ free, pricing.py's rule).
+    if sort in ("price", "price_desc"):
+        rev = sort == "price_desc"
+        results.sort(key=lambda r: (r.get("price_in") is None,
+                                    (r.get("price_in") or 0)
+                                    * (-1 if rev else 1)))
+    elif sort == "context":
+        results.sort(key=lambda r: -(r.get("context_window") or 0))
+    else:
+        results.sort(key=lambda r: (0 if r["available"] else 1,
+                                    r["provider_label"], r["id"]))
     return jsonify({"query": q, "count": len(results),
                     "models": results[:limit]})
 
@@ -603,8 +644,18 @@ def _optional_dep_status() -> dict:
         "local": ["requests"],
         "memory": ["chromadb", "sentence_transformers"],
     }
-    return {g: all(importlib.util.find_spec(m) is not None for m in mods)
-            for g, mods in groups.items()}
+    out = {g: all(importlib.util.find_spec(m) is not None for m in mods)
+           for g, mods in groups.items()}
+    if out.get("voice-local-gpu"):
+        # Importability is not runnability for the GPU tier: a CPU-only torch
+        # wheel imports fine but NeMo can never run on it. Require actual CUDA
+        # so onboarding never tells the user the GPU tier is ready when it isn't.
+        try:
+            from agent_friday.services.nemo_voice import gpu_status
+            out["voice-local-gpu"] = bool(gpu_status().get("cuda"))
+        except Exception:
+            out["voice-local-gpu"] = False
+    return out
 
 
 @platform_bp.route("/api/health/full", methods=["GET"])

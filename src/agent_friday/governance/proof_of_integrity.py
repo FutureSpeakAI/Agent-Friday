@@ -295,7 +295,7 @@ class IntegrityEngine:
                     "orchestrator": s.get("orchestrator_model", "claude-opus-4-8"),
                     "subagent": s.get("subagent_model", "claude-sonnet-4-6"),
                     "creative": s.get("creative_model", "gemini-nano-banana-2"),
-                    "voice": s.get("voice_model", "gemini-3.1-flash-live-preview"),
+                    "voice": s.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
                 }
         except Exception:
             pass

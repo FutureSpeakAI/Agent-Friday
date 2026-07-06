@@ -127,9 +127,14 @@ def gpu_status() -> dict:
                 info["detail"] = (f"CUDA {info['device']} — "
                                   f"{info['vram_free_gb']}GB free / {info['vram_gb']}GB")
                 return info
+            # torch is installed but CPU-only. Do NOT return here: fall through
+            # to the nvidia-smi probe so a physical GPU is still detected and
+            # the "install torch-CUDA" remediation can surface. Early-returning
+            # made an RTX 4070 invisible to health/diagnostics whenever the
+            # venv shipped a +cpu torch wheel — exactly the machine state the
+            # Tier-2 upgrade hint was written for.
             info["source"] = "torch"
             info["detail"] = "torch installed but CUDA not available"
-            return info
         except Exception as e:
             info["detail"] = f"torch probe failed: {str(e)[:80]}"
 
@@ -140,12 +145,18 @@ def gpu_status() -> dict:
         gpu = hw.get("gpu")
         vram = float(hw.get("vram_gb") or 0)
         if gpu and "nvidia" in str(gpu).lower():
+            _cpu_only_torch = info["source"] == "torch"
             info["device"] = gpu
             info["vram_gb"] = vram
             info["vram_free_gb"] = vram  # free unknown without torch — assume total
             info["sufficient"] = vram >= MIN_VRAM_GB
             info["source"] = "nvidia-smi"
-            info["detail"] = (f"{gpu} ({vram}GB) — install torch-CUDA to run NeMo")
+            if _cpu_only_torch:
+                info["detail"] = (f"{gpu} ({vram}GB) detected, but the installed "
+                                  f"torch is CPU-only — install a torch-CUDA wheel "
+                                  f"to enable GPU voice")
+            else:
+                info["detail"] = (f"{gpu} ({vram}GB) — install torch-CUDA to run NeMo")
     except Exception as e:
         if not info["detail"]:
             info["detail"] = str(e)[:120]

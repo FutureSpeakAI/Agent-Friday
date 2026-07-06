@@ -49,6 +49,10 @@ PRICING = {
     "gemini-2.5-pro":             {"in": 0.00125, "out": 0.010},
     "gemini-2.5-flash":           {"in": 0.0003, "out": 0.0025},
     "gemini-3.1-flash-live-preview": {"in": 0.0005, "out": 0.002},
+    # Native-audio Live models bill at the same live-session rate.
+    "gemini-2.5-flash-native-audio-latest":          {"in": 0.0005, "out": 0.002},
+    "gemini-2.5-flash-native-audio-preview-09-2025": {"in": 0.0005, "out": 0.002},
+    "gemini-2.5-flash-native-audio-preview-12-2025": {"in": 0.0005, "out": 0.002},
     # Gemini 3.x lineup (ai.google.dev/gemini-api/docs/pricing, 2026-07).
     # 3.1 Pro uses the <=200k-token tier ($2/$12 per 1M).
     "gemini-3.5-flash":           {"in": 0.0015, "out": 0.009},

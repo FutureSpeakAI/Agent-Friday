@@ -53,3 +53,24 @@ def test_models_route_role_lists_have_no_duplicate_ids(client):
     for role, entries in data["roles"].items():
         ids = [e["id"] for e in entries]
         assert len(ids) == len(set(ids)), f"duplicate ids in role {role}"
+
+
+def test_models_route_role_lists_are_curated(client):
+    """Role pickers carry only descriptor-declared (curated) models; the
+    discovery long tail (OpenRouter's 300+) is Model-Browser material and
+    stays in the flat `models` list."""
+    data = client.get("/api/models").get_json()
+    for role, entries in data["roles"].items():
+        for e in entries:
+            assert e.get("curated") is True, \
+                f"non-curated entry {e['id']} in role {role}"
+            assert e.get("source") != "discovery", \
+                f"discovery entry {e['id']} leaked into role {role}"
+
+
+def test_models_route_selected_includes_creative_video(client):
+    """Video has no flat *_model mirror — the route surfaces the
+    capability_routing.creative_video pick so the UI's video selector can
+    show the current value."""
+    data = client.get("/api/models").get_json()
+    assert "creative_video_model" in data["selected"]

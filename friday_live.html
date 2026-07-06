@@ -110,15 +110,19 @@ let micNode = null, micSource = null, playQueue = [], playCursor = 0;
 let camFacing = 'environment', camTimer = null, camCanvas = null;
 let wakeLock = null, keepAliveOsc = null;
 let micOn = false, camOn = false, sessionActive = false;
+let reconnectAttempts = 0, fatalError = false, everConnected = false;
+const RECONNECT_MAX = 8;
 
 function setStatus(mode, text){
   statusEl.className = 'status ' + mode;
   statusText.textContent = text;
 }
-function showError(msg){
+function showError(msg, sticky){
   errBanner.textContent = '⚠ ' + msg;
   errBanner.classList.add('show');
-  setTimeout(() => errBanner.classList.remove('show'), 6000);
+  // Sticky errors (fatal session failures) stay until the user acts — a 6 s
+  // auto-hide made the carefully composed actionable message unreadable.
+  if (!sticky) setTimeout(() => errBanner.classList.remove('show'), 6000);
 }
 function setTranscript(text, self){
   transcriptEl.textContent = text || '';
@@ -284,10 +288,14 @@ function flushPlayback(){
 // ── WebSocket bridge ──
 async function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws/live');
+  // Pass the API token when the shell injected one (FRIDAY_WS_TOKEN setups) —
+  // without it every connect is 'unauthorized' and used to reconnect-storm.
+  const tok = window.__FRIDAY_API_TOKEN ? ('?t=' + encodeURIComponent(window.__FRIDAY_API_TOKEN)) : '';
+  ws = new WebSocket(proto + '//' + location.host + '/ws/live' + tok);
   setStatus('connecting', 'CONNECTING');
   orbCore.textContent = 'CONNECTING';
   ws.onopen = () => {
+    reconnectAttempts = 0; everConnected = true;
     setStatus('live', 'LISTENING');
     orbCore.textContent = 'LIVE';
     orb.classList.add('listening');
@@ -310,8 +318,14 @@ async function connect(){
     } else if (m.type === 'status'){
       setTranscript('· ' + m.text + ' ·', true);
     } else if (m.type === 'error'){
-      showError(m.error || 'live session error');
+      // A structured server error before any audio flowed is FATAL (bad key,
+      // retired model, unauthorized, missing SDK) — reconnecting replays the
+      // same failure forever, burning server-side connect attempts each time.
+      fatalError = true;
+      sessionActive = false;
+      showError(m.detail || m.error || 'live session error', true);
       setStatus('error', 'ERROR');
+      orbCore.textContent = 'TAP TO RETRY';
     }
   };
   ws.onerror = () => {
@@ -322,11 +336,19 @@ async function connect(){
     setStatus('', 'DISCONNECTED');
     orbCore.textContent = 'TAP TO RESTART';
     orb.classList.remove('speaking', 'listening');
-    // Auto-reconnect with backoff if the user didn't explicitly end the session
-    if (sessionActive){
-      setStatus('connecting', 'RECONNECTING');
+    // Auto-reconnect with real (exponential, capped) backoff — but never
+    // after a fatal structured error, and never forever.
+    if (sessionActive && !fatalError){
+      if (reconnectAttempts >= RECONNECT_MAX){
+        sessionActive = false;
+        showError('Connection lost — could not reconnect after ' + RECONNECT_MAX + ' attempts. Tap to retry.', true);
+        return;
+      }
+      reconnectAttempts++;
+      const delay = Math.min(15000, 1000 * Math.pow(2, reconnectAttempts - 1));
+      setStatus('connecting', 'RECONNECTING (' + reconnectAttempts + '/' + RECONNECT_MAX + ')');
       orbCore.textContent = 'RECONNECTING';
-      setTimeout(() => { if (sessionActive) connect().catch(()=>{}); }, 1500);
+      setTimeout(() => { if (sessionActive && !fatalError) connect().catch(()=>{}); }, delay);
     }
   };
 }
@@ -346,10 +368,21 @@ document.addEventListener('visibilitychange', async () => {
 async function startSession(){
   if (sessionActive) return;
   sessionActive = true;
+  fatalError = false; reconnectAttempts = 0;
+  errBanner.classList.remove('show');
   await openAudioContext();
   await requestWakeLock();
   await connect();
-  await startMic();
+  try {
+    await startMic();
+  } catch(e){
+    // getUserMedia rejection (permission denied / no mic) was an unhandled
+    // promise rejection: the orb said LIVE with no audio flowing.
+    showError('Microphone unavailable: ' + (e && e.message ? e.message : e) +
+              ' — check browser mic permission for this site.', true);
+    setStatus('error', 'NO MIC');
+    return;
+  }
   // Request notification permission quietly — persistent notification lives on service worker
   if ('Notification' in window && Notification.permission === 'default'){
     try { await Notification.requestPermission(); } catch(_){}
@@ -387,7 +420,11 @@ async function endSession(){
 // ── Button wiring ──
 orb.addEventListener('click', startSession);
 orbCore.addEventListener('click', startSession);
-btnMic.addEventListener('click', async () => { if (!sessionActive) return startSession(); micOn ? stopMic() : await startMic(); });
+btnMic.addEventListener('click', async () => {
+  if (!sessionActive) return startSession();
+  try { micOn ? stopMic() : await startMic(); }
+  catch(e){ showError('Microphone unavailable: ' + (e && e.message ? e.message : e), true); }
+});
 btnCam.addEventListener('click', async () => { camOn ? stopCam() : await startCam(camFacing); });
 btnFlip.addEventListener('click', flipCam);
 btnEnd.addEventListener('click', endSession);

@@ -1220,6 +1220,12 @@ DEFAULT_SETTINGS = {
     "local_voice_gpu_asr_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
     "local_voice_gpu_tts": "fastpitch-hifigan",
     "voice_silence_ms": 800,               # trailing silence (ms) that ends a local-voice turn
+    # These three are written by the Settings→Voice UI. _load_settings_raw()
+    # drops any persisted key absent from DEFAULT_SETTINGS, so a key missing
+    # here silently reverts on every reload even though the save "succeeded".
+    "voice_tools": True,                   # let live voice sessions call Friday's tools
+    "audio_input_device_id": "",           # preferred mic (browser deviceId); "" = system default
+    "audio_output_device_id": "",          # preferred speaker (browser deviceId); "" = system default
     # ── Offline-first resilience ──
     # When the network monitor reports OFFLINE, _load_settings overlays
     # model_routing.mode='local_only' so every provider consumer auto-switches
@@ -1324,7 +1330,7 @@ DEFAULT_SETTINGS = {
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-nano-banana-2",   # image/creative generation (Nano Banana); video uses Veo
     "music_model": "lyria-clip",                # music generation (Lyria 3): 'lyria-clip' (≤30s) | 'lyria-pro' (full song)
-    "voice_model": "gemini-3.1-flash-live-preview",  # live audio (3.1 Flash Live: server-side VAD barge-in; affective/proactive auto-stripped). Gemini 2.5 Flash is the voice family; Pro is text/reasoning, NOT voice/creative.
+    "voice_model": "gemini-2.5-flash-native-audio-latest",  # live audio. The -latest alias tracks Google's current native-audio model, so it survives preview retirements. MUST stay in sync with voice_engine.LIVE_MODEL — settings always win over that constant.
     # ── Creator Economy / Production (Layer 1) ──
     # Daily creation now chooses FREELY across all media (text/code/image/music/
     # video/full production), weighted by recent work + ambient mood + budget —
@@ -1446,7 +1452,7 @@ DEFAULT_SETTINGS = {
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
         "creative_music": {"provider": "google-gemini", "model": "lyria-clip"},
-        "voice":          {"provider": "google-gemini", "model": "gemini-3.1-flash-live-preview"},
+        "voice":          {"provider": "google-gemini", "model": "gemini-2.5-flash-native-audio-latest"},
         # Local voice splits into asr + tts; both default to the on-device Tier-1
         # engine (the cloud "voice" entry above is used only when the user opts
         # into Gemini Live). A single user-facing `voice_engine` selector drives
@@ -1455,6 +1461,13 @@ DEFAULT_SETTINGS = {
         "tts":            {"provider": "local-voice-lite", "model": "piper-en_US-amy-medium"},
         "embedding":      {"provider": "local",         "model": "all-MiniLM-L6-v2"},
         "local":          {"provider": "ollama-local",  "model": "gemma3:4b"},
+    },
+    # ── Content pipeline (docs/CONTENT_PIPELINE_SPEC.md) ──
+    "content": {
+        "enabled": True,                 # master switch for the publish pipeline
+        "conflict_window_hours": 2,      # same-platform proximity warning (§6.8)
+        "psi_daily_cap": 200,            # engagement→ψ daily minting cap (§8.7)
+        "staging_base_url": "",          # public staging host for URL-pull platforms (§7.4)
     },
 }
 

@@ -11,6 +11,12 @@ provider/model on the backend (or dropping a provider JSON in
 
 Picker-hygiene invariants (regression: "tons of models, many in there twice,
 some grayed out"):
+  * Role lists carry ONLY curated entries — models a provider declares in its
+    descriptor (or live Ollama installs). The discovery long tail (OpenRouter's
+    300+) stays in the flat `models` list for the Model Browser and
+    /api/models/search; it used to flood every role picker with hundreds of
+    grayed-out entries. The top-bar quick switcher renders from these curated
+    role lists, which is what keeps it under ~15 entries.
   * Live Ollama models merge ONLY into providers of type "ollama" — never into
     the voice engine backends (local-voice / nemo-local), which used to
     triplicate every installed model in the agent roles.
@@ -149,6 +155,11 @@ def _model_entries_for(provider: dict, registry) -> list:
     discovered, disc_stale = _discovered_models(provider)
     disc_by_id = {m.get("id"): m for m in discovered if m.get("id")}
 
+    # `ids` is final here: descriptor statics, or the live Ollama install list.
+    # These are the curated, human-sized set that may enter role pickers; the
+    # discovery-only tail is browse/search material.
+    curated_ids = set(ids)
+
     entries = []
     seen_ids = set()
     for mid in ids + [m for m in disc_by_id if m not in set(ids)]:
@@ -182,6 +193,7 @@ def _model_entries_for(provider: dict, registry) -> list:
             "needs_key": needs_key,
             "hint": hint,
             "cost_per_1k": costs.get(mid),
+            "curated": mid in curated_ids,
         }
         if disc:
             # Discovery metadata (spec §6.3) — additive fields; the UI contract
@@ -238,13 +250,13 @@ def build_catalog() -> dict:
     Shape:
       {
         "roles": { "orchestrator": [entry, ...], "subagent": [...],
-                   "creative": [...], "voice": [...] },   # deduped by id
+                   "creative": [...], "voice": [...] },   # curated, deduped by id
         "models": [entry, ...],          # flat, de-duplicated by (id, provider)
         "providers": [ {name, label, type, available, needs_key}, ... ],
         "voice_engines": [ {id, label, short, available, hint}, ... ],
       }
     Each entry: id, label, short, provider, provider_label, roles, modalities,
-    local, available, needs_key, hint, cost_per_1k.
+    local, available, needs_key, hint, cost_per_1k, curated.
     """
     registry = get_provider_registry()
     # Kick the model-discovery background sweep (async, off the hot path, no-op
@@ -272,14 +284,15 @@ def build_catalog() -> dict:
         return (0 if e["available"] else 1, e["provider_label"], e["_ord"])
     flat.sort(key=_sort_key)
 
-    # Role lists: at most ONE entry per model id. The picker stores only the
-    # id, so a second provider offering the same id is pure noise; the
+    # Role lists: curated entries only (discovery's long tail stays in `models`
+    # for the Model Browser), at most ONE entry per model id. The picker stores
+    # only the id, so a second provider offering the same id is pure noise; the
     # available copy wins because flat is sorted available-first.
     roles = {r: [] for r in ALL_ROLES}
     for r in roles:
         seen_ids = set()
         for e in flat:
-            if r in e["roles"] and e["id"] not in seen_ids:
+            if r in e["roles"] and e.get("curated") and e["id"] not in seen_ids:
                 seen_ids.add(e["id"])
                 roles[r].append(e)
 
