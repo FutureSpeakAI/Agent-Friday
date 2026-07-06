@@ -10,7 +10,13 @@ from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
 
 
 @pytest.fixture
-def seeded_store(tmp_path):
+def seeded_store(tmp_path, monkeypatch):
+    # Pin the vault key: ent_bbb is TIER_2, so without a key the store's
+    # fail-closed path (correctly) withholds it — and _get_vault_key() is
+    # process-cached, so full-suite runs inherit whatever an earlier test
+    # left there. The suite for that behavior is test_knowledge_graph_store.
+    from agent_friday.services.knowledge_graph import store as store_mod
+    monkeypatch.setattr(store_mod, "_vault_key", lambda: b"k" * 32)
     store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
     store.save("entities", [
         {"id": "ent_aaa", "title": "GraphRAG", "type": "concept",

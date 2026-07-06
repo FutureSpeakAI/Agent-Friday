@@ -47,8 +47,18 @@ class RecordingLLM:
 
 @pytest.fixture
 def wiki_home(tmp_path, monkeypatch):
-    """Point the indexer at a tiny wiki inside the hermetic home."""
-    wiki = Path.home() / ".friday" / "wiki"
+    """Point the indexer at a tiny, exclusive wiki.
+
+    Uses the import-time WIKI_DIR constant (tests/test_egress_adversarial.py
+    leaks a Path.home() redirect session-wide) and wipes it first — these
+    tests assert exact entity counts, so leftover pages from earlier tests
+    would skew them.
+    """
+    import shutil
+    from agent_friday.core import WIKI_DIR
+    wiki = WIKI_DIR
+    if wiki.exists():
+        shutil.rmtree(wiki)
     (wiki / "research").mkdir(parents=True, exist_ok=True)
     (wiki / "research" / "notes.md").write_text(
         "# Notes\n\nGraphRAG and Friday work together.\n", encoding="utf-8")

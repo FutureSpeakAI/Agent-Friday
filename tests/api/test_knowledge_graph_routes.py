@@ -7,8 +7,14 @@ import pytest
 
 @pytest.fixture
 def seeded_wiki():
-    """Write a small wiki into the hermetic test home and mark the graph dirty."""
-    wiki = Path.home() / ".friday" / "wiki"
+    """Seed a small wiki at the import-time WIKI_DIR and mark the graph dirty.
+
+    WIKI_DIR (not Path.home()): tests/test_egress_adversarial.py leaks a
+    USERPROFILE redirect session-wide, but the graph reads the constant
+    frozen at first import.
+    """
+    from agent_friday.core import WIKI_DIR
+    wiki = WIKI_DIR
     (wiki / "research").mkdir(parents=True, exist_ok=True)
     (wiki / "projects").mkdir(parents=True, exist_ok=True)
     (wiki / "research" / "graphrag.md").write_text(

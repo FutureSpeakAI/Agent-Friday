@@ -1,13 +1,16 @@
 """Phase 2 — Tier B reindex route (sync mode for determinism)."""
 
-from pathlib import Path
-
 import pytest
 
 
 @pytest.fixture
 def seeded_wiki():
-    wiki = Path.home() / ".friday" / "wiki"
+    # Use the import-time constant, not Path.home(): tests/test_egress_adversarial.py
+    # rebinds USERPROFILE at import and the redirect leaks session-wide, while the
+    # indexer reads WIKI_DIR frozen at first import. Writing anywhere else means
+    # the indexer scans a different (empty) wiki.
+    from agent_friday.core import WIKI_DIR
+    wiki = WIKI_DIR
     (wiki / "research").mkdir(parents=True, exist_ok=True)
     (wiki / "research" / "kb.md").write_text(
         "# KB\n\nGraphRAG and Friday together.\n", encoding="utf-8")
