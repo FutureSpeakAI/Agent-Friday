@@ -3187,6 +3187,118 @@ TOOL_RINGS.update({
 })
 
 
+def _tool_knowledge_query(inp):
+    """Structural knowledge-graph query — zero LLM calls, works offline."""
+    question = ((inp or {}).get("question") or "").strip()
+    if not question:
+        return "knowledge_query needs a question."
+    from agent_friday.services.knowledge_graph import structural_query
+    result = structural_query.query(question)
+    return json.dumps(result, ensure_ascii=False)
+
+
+CLAUDE_TOOLS.append({
+    "name": "knowledge_query",
+    "description": (
+        "Query Friday's knowledge graph (the wiki as a linked graph). "
+        "Answers from graph structure alone — instant, offline, no LLM: "
+        "ranked candidate pages, multi-hop paths ('how is X related to Y'), "
+        "hub pages, and a should_read shortlist of the 2-3 pages worth "
+        "opening with read_wiki for full detail. Use this BEFORE reading "
+        "wiki pages speculatively."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string",
+                         "description": "Natural-language question about the knowledge base."},
+        },
+        "required": ["question"],
+    },
+})
+
+def _tool_knowledge_related(inp):
+    """Neighbours of a graph node (ego-graph) — structural, no LLM."""
+    node_id = ((inp or {}).get("node") or "").strip()
+    depth = min(max(int((inp or {}).get("depth") or 1), 1), 3)
+    if not node_id:
+        return "knowledge_related needs a node id or title."
+    from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+    store = KnowledgeGraphStore()
+    ents = store.load("entities")
+    node = next((e for e in ents if e["id"] == node_id
+                 or e.get("title", "").lower() == node_id.lower()), None)
+    if node is None:
+        return f"No graph node matching '{node_id}'."
+    rels = store.load("relationships")
+    frontier, seen = {node["id"]}, {node["id"]}
+    adj = {}
+    for r in rels:
+        adj.setdefault(r["source"], set()).add(r["target"])
+        adj.setdefault(r["target"], set()).add(r["source"])
+    for _ in range(depth):
+        frontier = {nb for n in frontier for nb in adj.get(n, ())} - seen
+        seen |= frontier
+    related = [e for e in ents if e["id"] in seen and e["id"] != node["id"]]
+    return json.dumps({"node": {"id": node["id"], "title": node["title"]},
+                       "related": [{"id": e["id"], "title": e["title"],
+                                    "type": e.get("type")}
+                                   for e in related[:30]]}, ensure_ascii=False)
+
+
+def _tool_knowledge_communities(inp):
+    """Thematic map of the knowledge base: communities + LLM reports."""
+    from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+    store = KnowledgeGraphStore()
+    comms = store.load("communities")
+    reports = {r.get("community"): r for r in store.load("community_reports")}
+    out = []
+    for c in sorted(comms, key=lambda c: -c.get("size", 0))[:20]:
+        rep = reports.get(c.get("community"))
+        out.append({"id": c["id"], "title": c.get("title"),
+                    "size": c.get("size"),
+                    "summary": (rep or {}).get("summary", "")})
+    return json.dumps({"communities": out}, ensure_ascii=False)
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "knowledge_related",
+        "description": (
+            "List graph neighbours of a knowledge-graph node (wiki page or "
+            "extracted entity) up to depth 3. Structural — instant, no LLM."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node": {"type": "string",
+                         "description": "Node id (e.g. page:research/graphrag) or exact title."},
+                "depth": {"type": "integer", "description": "1-3 hops (default 1)."},
+            },
+            "required": ["node"],
+        },
+    },
+    {
+        "name": "knowledge_communities",
+        "description": (
+            "The thematic map of Friday's knowledge base: communities of "
+            "related pages/entities with their LLM-written summaries. Use "
+            "for 'what are the big areas of what I know' questions."),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "knowledge_query": _tool_knowledge_query,
+    "knowledge_related": _tool_knowledge_related,
+    "knowledge_communities": _tool_knowledge_communities,
+})
+
+TOOL_RINGS.update({
+    "knowledge_query": 0,         # read-only, fully local
+    "knowledge_related": 0,
+    "knowledge_communities": 0,
+})
+
+
 _GOVERNANCE_KEY: bytes | None = None
 
 

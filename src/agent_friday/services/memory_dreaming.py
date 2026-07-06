@@ -159,6 +159,20 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
         _persist(day, len(turns), topics, consolidated, pruned, summary)
         _write_markdown(day, len(turns), topics, consolidated, pruned, summary)
 
+        # Post-step: high-confidence facts become knowledge-graph nodes and
+        # ignite live in the 3D explorer (idempotent by content hash).
+        for f in consolidated:
+            if f.get("confidence", 0) >= 0.6:
+                try:
+                    from agent_friday.services.knowledge_graph.integration import (
+                        ingest_fact)
+                    ingest_fact(f.get("text", ""),
+                                source_kind="conversation",
+                                source_key=f"dream:{day}",
+                                category=f.get("category", "fact"))
+                except Exception:
+                    pass
+
         return {"ok": True, "day": day, "turns_reviewed": len(turns),
                 "topics": topics, "consolidated": consolidated,
                 "pruned": pruned, "capped": capped, "summary": summary}

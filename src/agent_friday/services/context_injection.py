@@ -132,6 +132,13 @@ def build_injected_context(workspace: str = "", message: str = "",
     parts += _project_block(max_chars=int(max_chars * 0.6))
     parts += _preferences_block(settings)
     parts += _workspace_block(workspace, settings)
+    # Graph-aware wiki pointers for the current message (structural, no LLM).
+    try:
+        from agent_friday.services.knowledge_graph.integration import (
+            knowledge_context_block)
+        parts += knowledge_context_block(message)
+    except Exception:
+        pass
 
     body = "\n".join(p for p in parts if p).strip()
     if not body:
