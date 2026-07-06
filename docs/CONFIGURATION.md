@@ -213,13 +213,35 @@ stored via `friday vault-setup`; `FRIDAY_PASSWORD` works as a legacy fallback):
 
 ---
 
+## Knowledge Graph
+
+The two-tier knowledge graph behind the 🌌 Knowledge Galaxy workspace. All
+keys live under one `knowledge_graph` object; defaults apply when the block
+is absent. Derived artifacts live in `~/.friday/knowledge-graph/` and are
+always safe to delete (the wiki is the source of truth). Records derived
+from encrypted wiki sections or other TIER_2/3 sources are vault-encrypted
+at rest.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `knowledge_graph.enabled` | bool | `true` | Master switch for graph builds, context injection, and live fact ignition. |
+| `knowledge_graph.indexing_mode` | string | `local_only` | Where Tier-B LLM extraction runs. `local_only` = nothing ever leaves the machine. `gated_cloud` = TIER_1 (public) chunks may use the routed cloud model through the egress gate; TIER_2/3 stay local in every mode, and a failed gate self-test disables cloud indexing outright. |
+| `knowledge_graph.index_sources` | object | all `true` | Which corpora Tier B indexes: `wiki`, `soul`, `conversations`, `cognitive`. |
+| `knowledge_graph.mention_edges` | bool | `true` | Tier-A implicit edges from page titles appearing in other pages' bodies — what keeps a vault without authored `[[wikilinks]]` connected. |
+| `knowledge_graph.community_mode` | string | `auto` | How pages cluster into constellations: `section` (wiki folders), `links` (label propagation over explicit links), `auto` (links when authored wikilinks are dense enough, else sections). |
+| `knowledge_graph.nightly_reindex` | bool | `true` | 03:30 daily job (after memory dreaming): Tier A rebuild + Tier B delta. |
+| `knowledge_graph.max_visible_nodes` | int | `2000` | `/graph` node cap; above ~2.5k the 3D view switches to community super-nodes. |
+| `knowledge_graph.layout_seed` | int | `1337` | Seed for the deterministic 3D layout. |
+
+---
+
 ## Voice
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `voice_engine` | string | `local` | Voice engine: `local` (Tier-1 on-device, faster-whisper + Piper on CPU — private/offline), `local-gpu` (Tier-2 NVIDIA NeMo on GPU, falls back to Tier-1 without CUDA), `gemini` (Gemini Live cloud voice — needs a key + network), `auto` (GPU tier when ready, else CPU; local preferred over cloud). |
 | `voice_model` | string | `gemini-3.1-flash-live-preview` | Gemini Live model used when `voice_engine` is `gemini`. |
-| `voice_interruption_mode` | string | `speaker` | `speaker` = no barge-in (echo-safe — Friday always finishes her turn); `headphones` = true barge-in (only safe with no speaker bleed). |
+| `voice_interruption_mode` | string | `speaker` | Barge-in (`START_OF_ACTIVITY_INTERRUPTS`) is the default in every mode — speak and Friday stops within a frame. `speaker` keeps echo mitigations on (LOW start sensitivity + browser echo cancellation); choose the explicit "no interruption (open speakers)" opt-out only if loud speaker bleed makes Friday cut herself off. |
 | `local_voice_asr_model` | string | `small` | Tier-1 faster-whisper model size: `tiny`, `base`, `small`, `medium`. |
 | `local_voice_tts_voice` | string | `en_US-amy-medium` | Tier-1 Piper voice id. |
 | `voice_silence_ms` | integer | `800` | Trailing silence (ms) that ends a local-voice turn. |
