@@ -106,8 +106,10 @@ available; the rest you can switch on in Settings.
 - **Sites** — the deploy manager for shippable web projects: scan repos, track
   what's live, and push updates.
 - **Draft** — quick drafting for posts, emails, and messages in your tone.
-- **Content** — the content pipeline: capture ideas, develop them into posts,
-  and track them to published.
+- **Content** — my publishing command center: capture ideas, compose
+  platform-native posts from anything I've made, preview them exactly as
+  they'll ship, schedule them at learned optimal times, and watch engagement
+  in a local dashboard.
 - **Finance / Health / Family** — private dashboards that read from your local
   wiki and vault. Empty until you populate them; nothing is hardcoded.
 - **Career** — a job-search cockpit that tracks applications through their stages
@@ -142,6 +144,33 @@ gallery and in your `friday-creations` folder on the Desktop:
   music under them, and export for YouTube, Reels, or TikTok — or run the
   whole Production pipeline from a single logline to a scored micro-film,
   pausing at checkpoints for your approval.
+
+---
+
+## How I publish
+
+Making things is half of it — I also ship them to where audiences actually
+live. From the Content workspace (or "post this" from anywhere), I take a
+piece and adapt it natively for each platform — LinkedIn, X, Instagram,
+YouTube, TikTok, Bluesky, Mastodon, Reddit, Substack, Medium, and the Friday
+Federation. Same idea, different register: a hook-first LinkedIn post, a
+tight X thread, a vertical reel — each in your voice, each previewed exactly
+as it will appear before anything ships.
+
+I schedule at learned optimal times — I start from best-practice tables and
+replace them with what your actual audience responds to — and I publish
+autonomously while you're away. Safety is fail-closed: every post passes a
+harm scan and a privacy gate, and anything that looks private is held for
+your review. I never silently redact, and I never leak. Every published
+piece carries my cryptographic provenance chain, so you can prove authorship
+anywhere a copy surfaces. Engagement analytics stay on your machine — no
+third-party service — and engagement even earns Positrons, the federation's
+currency, in your wallet.
+
+And I'm honest about limits: I don't do engagement automation — no
+auto-likes, auto-follows, or follower games, ever — and where a platform has
+no usable API (Substack, Medium), I package the post and hand it to you
+instead of pretending it's automated.
 
 ---
 

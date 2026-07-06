@@ -247,6 +247,15 @@ def _is_due(rec, now) -> bool:
         last = rec.get("last_run_ts") or 0
         return (now.timestamp() - last) >= every * 60
 
+    if trig == "once":
+        # One-shot (§6.2 scheduler extension): spec {at: <epoch>}. Fires when
+        # the instant passes, exactly once — dispatch() auto-disables it.
+        try:
+            at = float(spec.get("at") or 0)
+        except (TypeError, ValueError):
+            return False
+        return at > 0 and not rec.get("last_run_ts") and now.timestamp() >= at
+
     today = now.strftime("%Y-%m-%d")
     if rec.get("last_run_date") == today:
         return False
@@ -272,6 +281,9 @@ def _next_run_ts(rec, now):
             every = max(1, int(spec.get("every_minutes", 60)))
             base = rec.get("last_run_ts") or now.timestamp()
             return base + every * 60
+        if trig == "once":
+            at = float(spec.get("at") or 0)
+            return at if (at > 0 and not rec.get("last_run_ts")) else None
         from datetime import timedelta
         hour, minute = _spec_hm(spec)
         cand = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -445,7 +457,11 @@ def dispatch(rec, *, manual=False):
     now = _now_central()
 
     # Mark-before-run so a long job can't double-fire on the next tick.
-    _patch_record(sid, last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"))
+    # A 'once' trigger auto-disables at fire time — it never runs twice.
+    _mark = dict(last_run_ts=started, last_run_date=now.strftime("%Y-%m-%d"))
+    if rec.get("trigger") == "once":
+        _mark["enabled"] = False
+    _patch_record(sid, **_mark)
 
     orb_id = f"sched-{sid}-{run_id[-6:]}"
     try:

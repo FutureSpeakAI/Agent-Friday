@@ -5283,6 +5283,10 @@ function SendTo({
     label: 'Draft Email',
     dest: 'gmail_draft',
     ico: '✉️'
+  }, {
+    label: 'Share / Post…',
+    dest: 'content_pipeline',
+    ico: '📤'
   }];
   const opts = (options || defaultOpts).filter(o => {
     if (o.needsPerson && !personName) return false;
@@ -5290,6 +5294,22 @@ function SendTo({
     return true;
   });
   const send = async dest => {
+    // Content pipeline destination opens the Quick-Post modal locally (spec §10.2)
+    // — the draft is created by the modal, not by /api/flow, so the user always
+    // reviews platform previews before anything leaves the machine.
+    if (dest === 'content_pipeline') {
+      setOpen(false);
+      const c = typeof content === 'function' ? content() : content;
+      if (window.fridayQuickPost) window.fridayQuickPost({
+        title: personName || '',
+        content: typeof c === 'string' ? c : JSON.stringify(c),
+        source: {
+          kind: 'flow',
+          ref: dataType || 'general'
+        }
+      });
+      return;
+    }
     setStatus('sending');
     setOpen(false);
     try {
@@ -11845,6 +11865,23 @@ function StudioWS() {
       }
     }, selected.name), /*#__PURE__*/React.createElement("button", {
       className: "btn",
+      onClick: () => window.fridayQuickPost && window.fridayQuickPost({
+        title: (selected.name || '').replace(/[-_]/g, ' ').replace(/\.[^.]+$/, ''),
+        content: preview || '',
+        asset: {
+          filename: selected.name
+        },
+        source: {
+          kind: 'creation',
+          ref: selected.name
+        }
+      }),
+      style: {
+        fontSize: 11
+      },
+      title: "Quick-post this creation to your platforms"
+    }, "\uD83D\uDCE4 Share / Post\u2026"), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
       onClick: () => window.open('/creation/' + selected.name, '_blank'),
       style: {
         fontSize: 11
@@ -12390,7 +12427,28 @@ function StudioWS() {
         fontSize: 10,
         padding: '2px 9px'
       }
-    }))));
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10,
+        padding: '2px 8px'
+      },
+      onClick: e => {
+        e.stopPropagation();
+        window.fridayQuickPost && window.fridayQuickPost({
+          title: title,
+          content: summary || title,
+          asset: {
+            filename: f.name
+          },
+          source: {
+            kind: 'creation',
+            ref: f.name
+          }
+        });
+      },
+      title: "Quick-post this creation to your platforms"
+    }, "\uD83D\uDCE4 Share"))));
   }))));
 }
 // ═══ DEFEDERATION PANEL ═══
@@ -21494,13 +21552,21 @@ const CREATIVE_MODELS = [{
   short: 'Omni'
 }];
 const VOICE_MODELS = [{
-  id: 'gemini-3.1-flash-live-preview',
-  label: 'Gemini 3.1 Flash Live Preview',
+  id: 'gemini-2.5-flash-native-audio-latest',
+  label: 'Gemini 2.5 Flash Native Audio (latest)',
   short: 'Gemini Live'
 }, {
+  id: 'gemini-2.5-flash-native-audio-preview-09-2025',
+  label: 'Gemini 2.5 Flash Audio Preview (09-2025)',
+  short: 'Gemini 2.5 09'
+}, {
+  id: 'gemini-3.1-flash-live-preview',
+  label: 'Gemini 3.1 Flash Live Preview',
+  short: '3.1 Live'
+}, {
   id: 'gemini-2.5-flash-native-audio-preview-12-2025',
-  label: 'Gemini 2.5 Flash Audio Preview',
-  short: 'Gemini 2.5'
+  label: 'Gemini 2.5 Flash Audio Preview (12-2025)',
+  short: 'Gemini 2.5 12'
 }, {
   id: 'gemini-2.5-flash',
   label: 'Gemini 2.5 Flash',
@@ -23045,7 +23111,11 @@ function ContactsWS() {
     }, c.evidence_count || 0, " evidence"));
   })));
 }
-function ContentWS() {
+// ═══ CONTENT — IDEAS KANBAN (the v1 pipeline, kept verbatim as the 💡 Ideas
+// tab of ContentWS v2 — spec §3.4/§10.1; items graduate into real posts) ═══
+function ContentIdeasTab({
+  onGraduate
+}) {
   const [pipe, setPipe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
@@ -23344,7 +23414,16 @@ function ContentWS() {
       style: {
         fontSize: 11
       }
-    }, "\uD83D\uDCE4 Save as doc")), toast && /*#__PURE__*/React.createElement("div", {
+    }, "\uD83D\uDCE4 Save as doc"), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      onClick: () => onGraduate && onGraduate(selected),
+      style: {
+        fontSize: 11,
+        color: '#a78bfa',
+        fontWeight: 600
+      },
+      title: "Graduate this idea into a real cross-platform post \u2014 opens the Compose tab"
+    }, "\uD83D\uDE80 \u2192 Compose")), toast && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,
         color: '#00d4ff',
@@ -23750,6 +23829,3061 @@ function ContentWS() {
       }
     }, (it.tags || []).slice(0, 3).join(' · ')))));
   }))));
+}
+// ═══ CONTENT PIPELINE v2 (spec §10) ═══
+// Compose · Calendar · Queue · Analytics · Accounts · Ideas — the full
+// make→shape→time→ship→measure surface over the /api/content/* v2 routes.
+// Existing components/classes only (card/btn/input/badge-cyan, FridaySays,
+// ProvenanceBar, useNavTarget, SendTo) — no new visual system.
+const CONTENT_PLATFORMS = {
+  linkedin: {
+    ico: '💼',
+    label: 'LinkedIn',
+    color: '#0a66c2',
+    limit: 3000,
+    formats: ['post', 'article', 'image_post']
+  },
+  twitter: {
+    ico: '🐦',
+    label: 'X / Twitter',
+    color: '#1d9bf0',
+    limit: 280,
+    formats: ['post', 'thread']
+  },
+  instagram: {
+    ico: '📸',
+    label: 'Instagram',
+    color: '#e1306c',
+    limit: 2200,
+    formats: ['image_post', 'reel', 'story']
+  },
+  youtube: {
+    ico: '🎬',
+    label: 'YouTube',
+    color: '#ff4444',
+    limit: 5000,
+    formats: ['video_upload', 'short']
+  },
+  bluesky: {
+    ico: '🦋',
+    label: 'Bluesky',
+    color: '#0085ff',
+    limit: 300,
+    formats: ['post', 'thread'],
+    tokenPaste: true
+  },
+  mastodon: {
+    ico: '🐘',
+    label: 'Mastodon',
+    color: '#6364ff',
+    limit: 500,
+    formats: ['post', 'thread'],
+    tokenPaste: true
+  },
+  reddit: {
+    ico: '👽',
+    label: 'Reddit',
+    color: '#ff4500',
+    limit: 40000,
+    formats: ['post', 'link_post', 'image_post']
+  },
+  substack: {
+    ico: '📬',
+    label: 'Substack',
+    color: '#ff6719',
+    limit: 0,
+    formats: ['article'],
+    manual: true
+  },
+  medium: {
+    ico: '📖',
+    label: 'Medium',
+    color: '#00ab6c',
+    limit: 0,
+    formats: ['article'],
+    manual: true
+  },
+  tiktok: {
+    ico: '🎵',
+    label: 'TikTok',
+    color: '#69c9d0',
+    limit: 2200,
+    formats: ['short']
+  },
+  federation: {
+    ico: '🛰️',
+    label: 'Federation',
+    color: '#7c3aed',
+    limit: 0,
+    formats: ['listing']
+  },
+  discord: {
+    ico: '🎮',
+    label: 'Discord',
+    color: '#5865f2',
+    limit: 2000,
+    formats: ['announce']
+  },
+  telegram: {
+    ico: '✈️',
+    label: 'Telegram',
+    color: '#229ed9',
+    limit: 4096,
+    formats: ['announce']
+  }
+};
+const cpMeta = p => CONTENT_PLATFORMS[p] || {
+  ico: '🌐',
+  label: p || '?',
+  color: '#8891a8',
+  limit: 0,
+  formats: ['post']
+};
+// Plain-language scope fallbacks (spec §12.3) — the backend's scopes_plain wins
+// when present; these keep the "Cannot:" negative space honest either way.
+const CP_SCOPE_TEXT = {
+  linkedin: {
+    can: ['Publish posts, images and video as you', 'Read your own post statistics'],
+    cannot: ['Read your messages or feed', 'Act as you anywhere else']
+  },
+  twitter: {
+    can: ['Publish and delete posts and threads', 'Read your post metrics'],
+    cannot: ['Read your DMs', 'Follow, like, or reply on your behalf']
+  },
+  instagram: {
+    can: ['Publish feed posts, carousels and reels', 'Read post insights'],
+    cannot: ['Read or send DMs', 'See your private activity']
+  },
+  youtube: {
+    can: ['Upload and schedule videos on your channel', 'Read channel analytics'],
+    cannot: ['Read comments as you', 'Touch any other Google data']
+  },
+  bluesky: {
+    can: ['Publish posts and threads', 'Read your own post counts'],
+    cannot: ['Read your DMs', 'Follow or like on your behalf']
+  },
+  mastodon: {
+    can: ['Publish statuses and media', 'Read your own post counts'],
+    cannot: ['Read your DMs', 'Boost or follow on your behalf']
+  },
+  reddit: {
+    can: ['Submit posts to subreddits you choose', 'Read your post scores'],
+    cannot: ['Vote, comment, or message as you']
+  },
+  substack: {
+    can: ['Prepare a ready-to-paste package on your machine'],
+    cannot: ['Touch your Substack account — no API exists; you publish']
+  },
+  medium: {
+    can: ['Publish via a legacy integration token if you hold one', 'Prepare a handoff package otherwise'],
+    cannot: ['Read your stats (Medium exposes none)']
+  },
+  tiktok: {
+    can: ['Upload videos (private drafts until the app is audited)', 'Read your video counts'],
+    cannot: ['Read DMs or act on other videos']
+  },
+  federation: {
+    can: ['List works on your marketplace with your license and price', 'Announce to trusted peers, encrypted'],
+    cannot: ['Ship anything without your Ed25519 signature']
+  }
+};
+const cpFmtN = v => v == null || v === '' || isNaN(Number(v)) ? '—' : Number(v) >= 1000 ? (Number(v) / 1000).toFixed(1) + 'k' : String(v);
+const cpPad = n => String(n).padStart(2, '0');
+const cpLocalInput = iso => {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.getFullYear() + '-' + cpPad(d.getMonth() + 1) + '-' + cpPad(d.getDate()) + 'T' + cpPad(d.getHours()) + ':' + cpPad(d.getMinutes());
+  } catch (_) {
+    return '';
+  }
+};
+const cpTime = iso => {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso || '';
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (_) {
+    return iso || '';
+  }
+};
+const cpNextSlot = s => {
+  const now = new Date();
+  const d = new Date(now);
+  const wd = s.weekday != null ? s.weekday : now.getDay();
+  d.setDate(now.getDate() + (wd - now.getDay() + 7) % 7);
+  d.setHours(s.hour != null ? s.hour : 9, 0, 0, 0);
+  if (d <= now) d.setDate(d.getDate() + 7);
+  return cpLocalInput(d.toISOString());
+};
+const cpStatusCol = {
+  PENDING: '#7fb6c9',
+  PREPARING: '#f59e0b',
+  SENT: '#00d4ff',
+  CONFIRMED: '#00ff80',
+  HELD: '#f59e0b',
+  FAILED: '#ff5470',
+  SKIPPED: '#888',
+  CANCELLED: '#888',
+  DRAFT: '#888',
+  SCHEDULED: '#7c3aed',
+  PUBLISHING: '#00d4ff',
+  PUBLISHED: '#00ff80',
+  PARTIAL: '#f59e0b'
+};
+
+// Platform-styled preview mockup — renders the exact composer payload (D6):
+// avatar, adapted text (thread cards for segments), media, grapheme meter,
+// hashtag toggles, warnings, and the alt-text nag.
+function CpPreviewCard({
+  platform,
+  preview,
+  account,
+  assets,
+  altMissing,
+  tagsOn,
+  allTags,
+  extraTags,
+  onToggleTag,
+  onAddTag
+}) {
+  const m = cpMeta(platform);
+  const pv = preview || {};
+  const bodyTxt = pv.adapted_body || '';
+  const used = pv.char_used != null ? pv.char_used : bodyTxt.length;
+  const lim = pv.char_limit || m.limit || 0;
+  const over = lim > 0 && used > lim;
+  const segs = (pv.segments || []).length > 1 ? pv.segments : null;
+  const img = (assets || []).find(a => a.kind === 'image');
+  const [tagInput, setTagInput] = useState('');
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 10,
+      borderTop: '2px solid ' + m.color
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 26,
+      height: 26,
+      borderRadius: '50%',
+      background: m.color + '33',
+      border: '1px solid ' + m.color,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: 13,
+      flexShrink: 0
+    }
+  }, m.ico), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      fontWeight: 600,
+      color: '#e8e8f0',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, account || 'You'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9.5,
+      color: m.color
+    }
+  }, m.label, pv.format ? ' · ' + pv.format : ''))), segs ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 5
+    }
+  }, segs.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      fontSize: 11.5,
+      color: '#ddd',
+      lineHeight: 1.5,
+      whiteSpace: 'pre-wrap',
+      background: 'rgba(255,255,255,0.03)',
+      borderLeft: '2px solid ' + m.color + '66',
+      borderRadius: 6,
+      padding: '6px 8px'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: m.color,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, i + 1 + '/' + segs.length), /*#__PURE__*/React.createElement("br", null), s))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: '#ddd',
+      lineHeight: 1.55,
+      whiteSpace: 'pre-wrap',
+      minHeight: 32
+    }
+  }, bodyTxt || (preview ? '' : '…adapting preview…')), img && /*#__PURE__*/React.createElement("img", {
+    src: '/api/creations/' + img.filename,
+    alt: img.alt_text || img.filename,
+    style: {
+      width: '100%',
+      maxHeight: 120,
+      objectFit: 'cover',
+      borderRadius: 6,
+      marginTop: 6,
+      background: '#0a0a0f'
+    }
+  }), lim > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "progress-bar",
+    style: {
+      height: 3
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "progress-fill",
+    style: {
+      width: Math.min(100, Math.round(used / lim * 100)) + '%',
+      background: over ? '#ff5470' : m.color
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9.5,
+      color: over ? '#ff5470' : '#8891a8',
+      fontFamily: 'JetBrains Mono',
+      marginTop: 2
+    }
+  }, used, " / ", lim, over ? ' — over the limit' : '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      flexWrap: 'wrap',
+      marginTop: 6,
+      alignItems: 'center'
+    }
+  }, (allTags || []).map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    onClick: () => onToggleTag && onToggleTag(t, false),
+    style: {
+      fontSize: 9.5,
+      padding: '1px 6px',
+      borderRadius: 4,
+      cursor: 'pointer',
+      border: '1px solid ' + m.color + '55',
+      background: (tagsOn || []).includes(t) ? m.color + '26' : 'transparent',
+      color: (tagsOn || []).includes(t) ? '#fff' : '#777',
+      textDecoration: (tagsOn || []).includes(t) ? 'none' : 'line-through'
+    }
+  }, t)), (extraTags || []).map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    onClick: () => onToggleTag && onToggleTag(t, true),
+    style: {
+      fontSize: 9.5,
+      padding: '1px 6px',
+      borderRadius: 4,
+      cursor: 'pointer',
+      border: '1px solid rgba(0,212,255,0.4)',
+      background: 'rgba(0,212,255,0.12)',
+      color: '#bfeaff'
+    }
+  }, t, " \xD7")), onAddTag && /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      fontSize: 9.5,
+      padding: '1px 6px',
+      width: 70
+    },
+    placeholder: "#add",
+    value: tagInput,
+    onChange: e => setTagInput(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') {
+        onAddTag(tagInput);
+        setTagInput('');
+      }
+    }
+  })), (pv.warnings || []).map((w, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      fontSize: 10,
+      color: '#f59e0b',
+      marginTop: 4
+    }
+  }, "\u26A0 ", typeof w === 'string' ? w : w.message || JSON.stringify(w))), altMissing && img && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#f59e0b',
+      marginTop: 4
+    }
+  }, "\u26A0 Add alt text \u2014 this platform supports it and your audience deserves it."));
+}
+
+// ✍️ Compose — StudioPromptBar pattern aimed at posts (spec §10.1):
+// canonical body → connection-aware platform chips → live preview rail via
+// POST /api/content/preview → hashtags/variants/alt-text → ship.
+function ContentComposeTab({
+  platforms,
+  prefillPost,
+  slot,
+  onNavAccounts
+}) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [sel, setSel] = useState([]);
+  const [fmt, setFmt] = useState({});
+  const [previews, setPreviews] = useState({});
+  const [tags, setTags] = useState({});
+  const [assets, setAssets] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [gallery, setGallery] = useState([]);
+  const [variants, setVariants] = useState([]);
+  const [schedOpen, setSchedOpen] = useState(false);
+  const [schedAt, setSchedAt] = useState('');
+  const [optimal, setOptimal] = useState(true);
+  const [slots, setSlots] = useState([]);
+  const [postId, setPostId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState('');
+  const flash = t => {
+    setToast(t);
+    setTimeout(() => setToast(''), 3000);
+  };
+  const didInit = useRef(false);
+  const connected = p => {
+    const e = (platforms || []).find(x => x.name === p);
+    return !!(e && e.status && e.status.connected);
+  };
+  const chipList = platforms && platforms.length ? platforms.map(p => p.name) : Object.keys(CONTENT_PLATFORMS).filter(p => p !== 'discord' && p !== 'telegram');
+  useEffect(() => {
+    if (didInit.current) return;
+    const conn = chipList.filter(connected);
+    if (conn.length) {
+      didInit.current = true;
+      setSel(s => s.length ? s : conn.slice(0, 4));
+    }
+  }, [platforms]);
+  // Deep-link / Ideas-graduation prefill: load the draft post into the composer.
+  useEffect(() => {
+    if (!prefillPost) return;
+    setPostId(prefillPost);
+    fetch('/api/content/posts/' + prefillPost).then(r => r.json()).then(d => {
+      const p = d.post || d;
+      if (p && (p.body !== undefined || p.title !== undefined)) {
+        didInit.current = true;
+        setTitle(p.title || '');
+        setBody(p.body || '');
+        const pl = (p.platforms || []).map(t => t.platform || t).filter(Boolean);
+        if (pl.length) setSel(pl);
+        setAssets(p.assets || []);
+        setVariants(p.variants || []);
+      }
+    }).catch(() => {});
+  }, [prefillPost]);
+  // Calendar "compose into this slot" handoff.
+  useEffect(() => {
+    if (!slot) return;
+    if (slot.platform) setSel(s => s.includes(slot.platform) ? s : [...s, slot.platform]);
+    if (slot.at) {
+      setSchedAt(cpLocalInput(slot.at));
+      setOptimal(false);
+      setSchedOpen(true);
+    }
+  }, [slot]);
+  // Live preview — the preview IS the payload (D6); debounced per keystroke.
+  useEffect(() => {
+    if (!body.trim() || sel.length === 0) {
+      setPreviews({});
+      return;
+    }
+    const t = setTimeout(() => {
+      sel.forEach(p => {
+        fetch('/api/content/preview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            body,
+            title,
+            assets,
+            platform: p,
+            format: fmt[p] || (cpMeta(p).formats || ['post'])[0]
+          })
+        }).then(r => r.json()).then(d => setPreviews(pr => ({
+          ...pr,
+          [p]: d
+        }))).catch(() => {});
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [body, title, sel.join(','), JSON.stringify(fmt), JSON.stringify(assets)]);
+  useEffect(() => {
+    if (!schedOpen) return;
+    fetch('/api/content/best-times' + (sel[0] ? '?platform=' + sel[0] : '')).then(r => r.json()).then(d => setSlots((d.suggestions || d.slots || []).slice(0, 4))).catch(() => setSlots([]));
+  }, [schedOpen]);
+  const openPicker = () => {
+    setPickerOpen(!pickerOpen);
+    if (!gallery.length) fetch('/api/creations').then(r => r.json()).then(d => setGallery(d.files || [])).catch(() => {});
+  };
+  const addAsset = f => {
+    const ext = (f.name || '').split('.').pop().toLowerCase();
+    const kind = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext) ? 'image' : ['mp4', 'webm', 'mov'].includes(ext) ? 'video' : ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) ? 'audio' : 'document';
+    setAssets(a => a.some(x => x.filename === f.name) ? a : [...a, {
+      filename: f.name,
+      content_hash: f.content_hash || '',
+      kind,
+      alt_text: ''
+    }]);
+    setPickerOpen(false);
+  };
+  const enabledTags = p => {
+    const pv = previews[p] || {};
+    const st = tags[p] || {
+      off: {},
+      extra: []
+    };
+    return (pv.hashtags || []).filter(t => !st.off[t]).concat(st.extra);
+  };
+  const toggleTag = (p, t, isExtra) => setTags(s => {
+    const st = s[p] || {
+      off: {},
+      extra: []
+    };
+    if (isExtra) return {
+      ...s,
+      [p]: {
+        ...st,
+        extra: st.extra.filter(x => x !== t)
+      }
+    };
+    return {
+      ...s,
+      [p]: {
+        ...st,
+        off: {
+          ...st.off,
+          [t]: !st.off[t]
+        }
+      }
+    };
+  });
+  const addTag = (p, raw) => {
+    let t = (raw || '').trim();
+    if (!t) return;
+    if (t[0] !== '#') t = '#' + t;
+    setTags(s => {
+      const st = s[p] || {
+        off: {},
+        extra: []
+      };
+      return st.extra.includes(t) ? s : {
+        ...s,
+        [p]: {
+          ...st,
+          extra: [...st.extra, t]
+        }
+      };
+    });
+  };
+  const warnCount = sel.reduce((n, p) => n + ((previews[p] || {}).warnings || []).length, 0);
+  const altMissing = assets.some(a => a.kind === 'image' && !(a.alt_text || '').trim());
+  const ship = async action => {
+    if (busy) return;
+    if (!body.trim()) {
+      flash('Write the post first');
+      return;
+    }
+    if (sel.length === 0) {
+      flash('Select at least one platform');
+      return;
+    }
+    setBusy(true);
+    try {
+      const targets = sel.map(p => ({
+        platform: p,
+        format: fmt[p] || (cpMeta(p).formats || ['post'])[0],
+        hashtags: enabledTags(p)
+      }));
+      const payload = {
+        title,
+        body,
+        assets,
+        platforms: targets,
+        variants,
+        source: {
+          kind: 'compose'
+        }
+      };
+      let id = postId;
+      if (id) {
+        await fetch('/api/content/posts/' + id, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        const r = await fetch('/api/content/posts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        id = d.post && d.post.id || d.id || null;
+        if (!id) {
+          flash(d.message || d.reason || 'Could not create the post — is the content pipeline backend running?');
+          setBusy(false);
+          return;
+        }
+        setPostId(id);
+      }
+      await fetch('/api/content/posts/' + id + '/compose', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          platforms: sel
+        })
+      }).catch(() => {});
+      if (action === 'draft') flash('💾 Draft saved');else if (action === 'now') {
+        const r = await fetch('/api/content/posts/' + id + '/publish-now', {
+          method: 'POST'
+        });
+        const d = await r.json().catch(() => ({}));
+        flash(d && d.ok === false ? d.message || d.reason || 'Publish failed' : '🚀 Publishing — watch the Queue tab');
+      } else if (action === 'schedule') {
+        const sc = {
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        };
+        if (schedAt) sc.publish_at = new Date(schedAt).toISOString();else sc.optimal_time = true;
+        const r = await fetch('/api/content/posts/' + id + '/schedule', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(sc)
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d && d.conflicts && d.conflicts.length) flash('⚠ Scheduled with ' + d.conflicts.length + ' conflict warning(s) — see the Calendar');else flash(d && d.ok === false ? d.message || 'Schedule failed' : '📅 Scheduled');
+        setSchedOpen(false);
+      }
+    } catch (e) {
+      flash('Request failed — is the content pipeline backend running?');
+    }
+    setBusy(false);
+  };
+  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginBottom: 8
+    }
+  }, toast), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 12,
+      padding: 14,
+      border: '1px solid rgba(0,212,255,0.18)'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: '100%',
+      marginBottom: 6,
+      fontSize: 12,
+      boxSizing: 'border-box'
+    },
+    value: title,
+    onChange: e => setTitle(e.target.value),
+    placeholder: "Working title (YouTube, Reddit and articles use it)\u2026"
+  }), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 4,
+    style: {
+      width: '100%',
+      resize: 'vertical',
+      minHeight: 72,
+      marginBottom: 8,
+      boxSizing: 'border-box',
+      fontSize: 12.5,
+      lineHeight: 1.55
+    },
+    value: body,
+    onChange: e => setBody(e.target.value),
+    placeholder: "Write the canonical post \u2014 Friday adapts it to each platform's native voice and limits\u2026"
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 5,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginBottom: 6
+    }
+  }, chipList.map(p => {
+    const m = cpMeta(p);
+    const on = sel.includes(p);
+    const conn = connected(p);
+    return /*#__PURE__*/React.createElement("button", {
+      key: p,
+      className: "btn",
+      onClick: () => {
+        if (!conn) {
+          onNavAccounts && onNavAccounts();
+          return;
+        }
+        setSel(s => on ? s.filter(x => x !== p) : [...s, p]);
+      },
+      title: conn ? on ? 'Deselect ' + m.label : 'Adapt for ' + m.label : m.label + ' is not connected — open Accounts to connect',
+      style: {
+        fontSize: 11,
+        padding: '3px 9px',
+        opacity: conn ? 1 : 0.45,
+        background: on ? m.color + '2e' : 'rgba(255,255,255,0.03)',
+        border: '1px solid ' + (on ? m.color : 'rgba(255,255,255,0.1)'),
+        color: on ? '#fff' : '#a8a8b4'
+      }
+    }, m.ico, " ", m.label, !conn && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        marginLeft: 4,
+        color: '#f59e0b'
+      }
+    }, "connect \u2197"));
+  })), sel.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginBottom: 8
+    }
+  }, sel.map(p => {
+    const m = cpMeta(p);
+    const fmts = m.formats || ['post'];
+    return /*#__PURE__*/React.createElement("label", {
+      key: p,
+      style: {
+        fontSize: 10,
+        color: m.color,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4
+      }
+    }, m.ico, /*#__PURE__*/React.createElement("select", {
+      className: "input",
+      style: {
+        fontSize: 10,
+        padding: '1px 4px'
+      },
+      value: fmt[p] || fmts[0],
+      onChange: e => setFmt(f => ({
+        ...f,
+        [p]: e.target.value
+      }))
+    }, fmts.map(x => /*#__PURE__*/React.createElement("option", {
+      key: x,
+      value: x
+    }, x))));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginBottom: assets.length ? 6 : 0
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    onClick: openPicker
+  }, "\uD83D\uDDBC Attach from gallery"), assets.map(a => /*#__PURE__*/React.createElement("span", {
+    key: a.filename,
+    className: "badge-cyan",
+    style: {
+      fontSize: 10,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4
+    }
+  }, a.kind === 'image' ? '🖼' : a.kind === 'video' ? '🎬' : a.kind === 'audio' ? '🎵' : '📄', " ", a.filename.slice(0, 28), /*#__PURE__*/React.createElement("span", {
+    style: {
+      cursor: 'pointer',
+      color: '#ff8aa0'
+    },
+    onClick: () => setAssets(x => x.filter(y => y.filename !== a.filename))
+  }, "\xD7")))), pickerOpen && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      maxHeight: 180,
+      overflowY: 'auto',
+      marginBottom: 8
+    }
+  }, gallery.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888'
+    }
+  }, "Gallery is empty (or still loading).") : gallery.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", {
+    key: f.name,
+    onClick: () => addAsset(f),
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      padding: '3px 6px',
+      cursor: 'pointer',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, f.name))), assets.filter(a => a.kind === 'image').map(a => /*#__PURE__*/React.createElement("div", {
+    key: 'alt-' + a.filename,
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: (a.alt_text || '').trim() ? '#00ff80' : '#f59e0b',
+      whiteSpace: 'nowrap'
+    }
+  }, (a.alt_text || '').trim() ? '✓ alt' : '⚠ alt text'), /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: 1,
+      fontSize: 11,
+      padding: '3px 8px'
+    },
+    value: a.alt_text || '',
+    placeholder: 'Describe ' + a.filename + ' for screen readers…',
+    onChange: e => setAssets(x => x.map(y => y.filename === a.filename ? {
+      ...y,
+      alt_text: e.target.value
+    } : y))
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    title: "A/B alternates \u2014 each variant is assignable per platform",
+    onClick: () => setVariants(v => [...v, {
+      id: 'var_' + Math.random().toString(36).slice(2, 8),
+      label: 'Hook ' + String.fromCharCode(65 + v.length),
+      body
+    }])
+  }, "\uFF0B Variant"), variants.map(v => /*#__PURE__*/React.createElement("span", {
+    key: v.id,
+    className: "badge-cyan",
+    style: {
+      fontSize: 10,
+      display: 'inline-flex',
+      gap: 4,
+      alignItems: 'center'
+    }
+  }, v.label, /*#__PURE__*/React.createElement("span", {
+    style: {
+      cursor: 'pointer',
+      color: '#ff8aa0'
+    },
+    onClick: () => setVariants(x => x.filter(y => y.id !== v.id))
+  }, "\xD7")))), variants.map(v => /*#__PURE__*/React.createElement("div", {
+    key: 've-' + v.id,
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      fontSize: 10,
+      marginBottom: 3,
+      padding: '2px 6px'
+    },
+    value: v.label,
+    onChange: e => setVariants(x => x.map(y => y.id === v.id ? {
+      ...y,
+      label: e.target.value
+    } : y))
+  }), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 2,
+    style: {
+      width: '100%',
+      fontSize: 11,
+      boxSizing: 'border-box'
+    },
+    value: v.body,
+    onChange: e => setVariants(x => x.map(y => y.id === v.id ? {
+      ...y,
+      body: e.target.value
+    } : y))
+  })))), sel.length > 0 && body.trim() && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(250px,1fr))',
+      gap: 10,
+      marginBottom: 12
+    }
+  }, sel.map(p => /*#__PURE__*/React.createElement(CpPreviewCard, {
+    key: p,
+    platform: p,
+    preview: previews[p],
+    account: (() => {
+      const e = (platforms || []).find(x => x.name === p);
+      return e && e.status && e.status.account;
+    })(),
+    assets: assets,
+    altMissing: altMissing,
+    tagsOn: enabledTags(p),
+    allTags: (previews[p] || {}).hashtags || [],
+    extraTags: (tags[p] || {
+      extra: []
+    }).extra,
+    onToggleTag: (t, ex) => toggleTag(p, t, ex),
+    onAddTag: t => addTag(p, t)
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      padding: '2px 8px',
+      borderRadius: 4,
+      background: warnCount ? 'rgba(245,158,11,0.12)' : 'rgba(0,255,128,0.1)',
+      color: warnCount ? '#f59e0b' : '#00e87a',
+      border: '1px solid ' + (warnCount ? 'rgba(245,158,11,0.35)' : 'rgba(0,232,122,0.25)')
+    }
+  }, warnCount ? '⚠ ' + warnCount + ' pre-check warning' + (warnCount > 1 ? 's' : '') : '✓ pre-check clear'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => ship('draft')
+  }, "\uD83D\uDCBE Save draft"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => setSchedOpen(!schedOpen)
+  }, "\uD83D\uDCC5 Schedule\u2026"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      fontWeight: 700
+    },
+    disabled: busy,
+    onClick: () => ship('now')
+  }, busy ? 'Working…' : '🚀 Post now')), assets[0] && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement(ProvenanceBar, {
+    filename: assets[0].filename
+  })), schedOpen && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginTop: 8,
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Pick a slot"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "datetime-local",
+    className: "input",
+    style: {
+      fontSize: 11
+    },
+    value: schedAt,
+    onChange: e => {
+      setSchedAt(e.target.value);
+      setOptimal(false);
+    }
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#a8a8b4',
+      display: 'flex',
+      gap: 4,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: optimal && !schedAt,
+    onChange: e => {
+      setOptimal(e.target.checked);
+      if (e.target.checked) setSchedAt('');
+    }
+  }), " \u2728 Let Friday pick the optimal time")), slots.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 5,
+      flexWrap: 'wrap',
+      marginBottom: 6
+    }
+  }, slots.map((s, i) => {
+    const at = s.at ? cpLocalInput(s.at) : cpNextSlot(s);
+    return /*#__PURE__*/React.createElement("button", {
+      key: i,
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10,
+        borderStyle: 'dashed'
+      },
+      onClick: () => {
+        setSchedAt(at);
+        setOptimal(false);
+      }
+    }, cpMeta(s.platform || sel[0]).ico, " ", at.replace('T', ' '), " \xB7 ", s.source === 'learned' || s.learned ? 'learned from your audience' : 'general best practice');
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      fontWeight: 600
+    },
+    disabled: busy,
+    onClick: () => ship('schedule')
+  }, "Confirm schedule")));
+}
+
+// 📅 Calendar — month + week, platform-colored pills, drag-to-reschedule,
+// optimal-slot ghost pills (learned vs general), conflict amber (spec §10.1).
+function ContentCalendarTab({
+  onCompose,
+  onEdit
+}) {
+  const [view, setView] = useState('month');
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [pills, setPills] = useState([]);
+  const [sugg, setSugg] = useState([]);
+  const [detail, setDetail] = useState(null);
+  const [toast, setToast] = useState('');
+  const flash = t => {
+    setToast(t);
+    setTimeout(() => setToast(''), 2500);
+  };
+  const load = () => {
+    const a = new Date(anchor);
+    let from, to;
+    if (view === 'month') {
+      from = new Date(a.getFullYear(), a.getMonth(), 1);
+      from.setDate(1 - from.getDay());
+      to = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+      to.setDate(to.getDate() + (6 - to.getDay()));
+    } else {
+      from = new Date(a);
+      from.setDate(a.getDate() - a.getDay());
+      to = new Date(from);
+      to.setDate(from.getDate() + 6);
+    }
+    fetch('/api/content/calendar?from=' + from.toISOString().slice(0, 10) + '&to=' + to.toISOString().slice(0, 10)).then(r => r.json()).then(d => {
+      setPills((d.pills || d.posts || d.items || []).map(p => ({
+        id: p.post_id || p.id,
+        at: p.at || p.publish_at,
+        title: p.title || (p.body || '').slice(0, 48),
+        platforms: p.platforms || (p.platform ? [p.platform] : []),
+        conflict: !!p.conflict,
+        recurring: !!(p.recurring || p.recurrence && p.recurrence !== 'none'),
+        status: p.status || ''
+      })).filter(p => p.at && p.id));
+      setSugg((d.suggestions || d.optimal_slots || []).map(s => ({
+        at: s.at || s.when,
+        platform: s.platform,
+        learned: s.source === 'learned' || !!s.learned
+      })).filter(s => s.at));
+    }).catch(() => {});
+  };
+  useEffect(load, [anchor.getTime(), view]);
+  const resched = (id, iso) => {
+    fetch('/api/content/posts/' + id + '/schedule', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        publish_at: iso
+      })
+    }).then(r => r.json()).then(d => {
+      if (d && d.conflicts && d.conflicts.length) flash('⚠ Rescheduled — ' + d.conflicts.length + ' conflict warning(s)');else flash('📅 Rescheduled');
+      load();
+    }).catch(() => flash('Reschedule failed'));
+  };
+  const sameDay = (iso, day) => {
+    const d = new Date(iso);
+    return d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+  };
+  const dragStart = (e, p) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({
+      id: p.id,
+      at: p.at
+    }));
+  };
+  const dropOnDay = (e, day) => {
+    e.preventDefault();
+    try {
+      const p = JSON.parse(e.dataTransfer.getData('text/plain'));
+      const old = new Date(p.at);
+      const nd = new Date(day);
+      nd.setHours(old.getHours(), old.getMinutes(), 0, 0);
+      resched(p.id, nd.toISOString());
+    } catch (_) {}
+  };
+  const dropOnSlot = (e, day, h) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mins = e.clientY - rect.top > rect.height / 2 ? 30 : 0;
+    try {
+      const p = JSON.parse(e.dataTransfer.getData('text/plain'));
+      const nd = new Date(day);
+      nd.setHours(h, mins, 0, 0);
+      resched(p.id, nd.toISOString());
+    } catch (_) {}
+  };
+  const Pill = ({
+    p,
+    compact
+  }) => {
+    const prim = cpMeta((p.platforms || [])[0]);
+    return /*#__PURE__*/React.createElement("div", {
+      draggable: true,
+      onDragStart: e => dragStart(e, p),
+      onClick: e => {
+        e.stopPropagation();
+        setDetail(p);
+      },
+      title: (p.title || 'post') + ' · ' + cpTime(p.at) + (p.conflict ? ' · ⚠ another post lands nearby on the same platform' : ''),
+      style: {
+        fontSize: 9,
+        padding: '1px 5px',
+        borderRadius: 4,
+        marginBottom: 2,
+        cursor: 'grab',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        background: prim.color + '26',
+        border: (p.recurring ? '1px dashed ' : '1px solid ') + (p.conflict ? '#f59e0b' : prim.color + '66'),
+        color: '#dde',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 3
+      }
+    }, (p.platforms || []).slice(0, 3).map(x => /*#__PURE__*/React.createElement("span", {
+      key: x,
+      style: {
+        width: 5,
+        height: 5,
+        borderRadius: '50%',
+        background: cpMeta(x).color,
+        display: 'inline-block',
+        flexShrink: 0
+      }
+    })), p.recurring && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#a78bfa'
+      }
+    }, "\u21BB"), !compact && /*#__PURE__*/React.createElement("span", {
+      style: {
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, p.title || 'post'));
+  };
+  const Ghost = ({
+    s
+  }) => {
+    const m = cpMeta(s.platform);
+    return /*#__PURE__*/React.createElement("div", {
+      onClick: e => {
+        e.stopPropagation();
+        onCompose && onCompose({
+          at: s.at,
+          platform: s.platform
+        });
+      },
+      title: 'Suggested slot — ' + (s.learned ? 'learned from your audience' : 'general best practice') + '. Click to compose for it.',
+      style: {
+        fontSize: 9,
+        padding: '1px 5px',
+        borderRadius: 4,
+        marginBottom: 2,
+        cursor: 'pointer',
+        border: '1px dashed ' + m.color + '88',
+        color: m.color,
+        background: 'transparent',
+        boxShadow: '0 0 6px ' + m.color + '22',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, m.ico, " ", cpPad(new Date(s.at).getHours()), ":", cpPad(new Date(s.at).getMinutes()), " \xB7 ", s.learned ? 'learned' : 'general');
+  };
+  const monthDays = () => {
+    const a = new Date(anchor);
+    const first = new Date(a.getFullYear(), a.getMonth(), 1);
+    const start = new Date(first);
+    start.setDate(1 - first.getDay());
+    const out = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      out.push(d);
+    }
+    return out;
+  };
+  const weekDays = () => {
+    const a = new Date(anchor);
+    const start = new Date(a);
+    start.setDate(a.getDate() - a.getDay());
+    return [...Array(7)].map((_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return d;
+    });
+  };
+  const nav = dir => {
+    const a = new Date(anchor);
+    if (view === 'month') a.setMonth(a.getMonth() + dir);else a.setDate(a.getDate() + 7 * dir);
+    setAnchor(a);
+  };
+  const hdr = view === 'month' ? anchor.toLocaleString(undefined, {
+    month: 'long',
+    year: 'numeric'
+  }) : 'Week of ' + weekDays()[0].toLocaleDateString();
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginBottom: 6
+    }
+  }, toast), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => nav(-1)
+  }, "\u2039"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 12,
+      color: '#00d4ff',
+      flex: 1,
+      textAlign: 'center'
+    }
+  }, hdr), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => nav(1)
+  }, "\u203A"), /*#__PURE__*/React.createElement("button", {
+    className: 'btn ' + (view === 'month' ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11
+    },
+    onClick: () => setView('month')
+  }, "Month"), /*#__PURE__*/React.createElement("button", {
+    className: 'btn ' + (view === 'week' ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11
+    },
+    onClick: () => setView('week')
+  }, "Week")), view === 'month' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(7,1fr)',
+      gap: 3,
+      marginBottom: 3
+    }
+  }, DOW.map(d => /*#__PURE__*/React.createElement("div", {
+    key: d,
+    style: {
+      fontSize: 9,
+      color: '#777',
+      textAlign: 'center',
+      fontFamily: 'Orbitron'
+    }
+  }, d))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(7,1fr)',
+      gap: 3
+    }
+  }, monthDays().map((day, i) => {
+    const inMonth = day.getMonth() === anchor.getMonth();
+    const today = sameDay(new Date().toISOString(), day);
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      onDragOver: e => e.preventDefault(),
+      onDrop: e => dropOnDay(e, day),
+      style: {
+        minHeight: 64,
+        borderRadius: 6,
+        padding: 3,
+        background: inMonth ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.015)',
+        border: '1px solid ' + (today ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.04)')
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: inMonth ? '#999' : '#555',
+        fontFamily: 'JetBrains Mono',
+        marginBottom: 2
+      }
+    }, day.getDate()), pills.filter(p => sameDay(p.at, day)).map(p => /*#__PURE__*/React.createElement(Pill, {
+      key: p.id + p.at,
+      p: p
+    })), sugg.filter(s => sameDay(s.at, day)).slice(0, 2).map((s, j) => /*#__PURE__*/React.createElement(Ghost, {
+      key: 'g' + j,
+      s: s
+    })));
+  }))), view === 'week' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '34px repeat(7,1fr)',
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement("div", null), weekDays().map((d, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      fontSize: 9,
+      color: '#999',
+      textAlign: 'center',
+      fontFamily: 'Orbitron'
+    }
+  }, DOW[i], " ", d.getDate())), [...Array(17)].map((_, ri) => {
+    const h = ri + 6;
+    return /*#__PURE__*/React.createElement(React.Fragment, {
+      key: h
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 8.5,
+        color: '#666',
+        fontFamily: 'JetBrains Mono',
+        textAlign: 'right',
+        paddingRight: 3
+      }
+    }, cpPad(h), ":00"), weekDays().map((day, ci) => /*#__PURE__*/React.createElement("div", {
+      key: ci,
+      onDragOver: e => e.preventDefault(),
+      onDrop: e => dropOnSlot(e, day, h),
+      title: "Drop a pill here \u2014 top half = :00, bottom half = :30",
+      style: {
+        minHeight: 26,
+        borderRadius: 3,
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.03)',
+        padding: 1
+      }
+    }, pills.filter(p => sameDay(p.at, day) && new Date(p.at).getHours() === h).map(p => /*#__PURE__*/React.createElement(Pill, {
+      key: p.id + p.at,
+      p: p,
+      compact: true
+    })), sugg.filter(s => sameDay(s.at, day) && new Date(s.at).getHours() === h).map((s, j) => /*#__PURE__*/React.createElement(Ghost, {
+      key: 'g' + j,
+      s: s
+    })))));
+  })), detail && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginTop: 8,
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#e8e8f0'
+    }
+  }, detail.title || 'Post'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: () => setDetail(null)
+  }, "\xD7 Close")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#a8a8b4',
+      marginBottom: 6
+    }
+  }, cpTime(detail.at), " \xB7 ", (detail.platforms || []).map(p => cpMeta(p).label).join(' · '), detail.conflict && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b'
+    }
+  }, " \xB7 \u26A0 conflict window"), detail.recurring && ' · ↻ recurring'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => {
+      onEdit && onEdit(detail.id);
+      setDetail(null);
+    }
+  }, "\u270F\uFE0F Edit"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    onClick: () => {
+      fetch('/api/content/posts/' + detail.id + '/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: '{}'
+      }).then(() => {
+        setDetail(null);
+        load();
+        flash('Cancelled');
+      }).catch(() => flash('Cancel failed'));
+    }
+  }, "\u2715 Cancel post"))));
+}
+
+// 📋 Queue — the truth about what will and did happen: HELD pinned on top with
+// flagged spans + Release/Edit, upcoming target rows, history, pause-all (§10.1).
+function ContentQueueTab({
+  onEdit
+}) {
+  const [q, setQ] = useState(null);
+  const [toast, setToast] = useState('');
+  const flash = t => {
+    setToast(t);
+    setTimeout(() => setToast(''), 2500);
+  };
+  const load = () => {
+    fetch('/api/content/queue').then(r => r.json()).then(setQ).catch(() => setQ({}));
+  };
+  useEffect(load, []);
+  const upcoming = q && (q.upcoming || q.queue) || [];
+  const held = q && q.held || [];
+  const history = q && q.history || [];
+  const paused = !!(q && (q.paused || q.pause_all));
+  const post = (url, payload, msg) => fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload || {})
+  }).then(r => r.json()).then(d => {
+    flash(d && d.ok === false ? d.message || d.reason || 'Failed' : msg);
+    load();
+  }).catch(() => flash('Request failed'));
+  const pauseAll = () => post('/api/content/pause', {
+    paused: !paused
+  }, paused ? '▶ Publishing resumed' : '⏸ Publishing paused');
+  const Chip = ({
+    s
+  }) => /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      padding: '1px 6px',
+      borderRadius: 4,
+      fontFamily: 'Orbitron',
+      letterSpacing: '.04em',
+      background: (cpStatusCol[s] || '#888') + '22',
+      color: cpStatusCol[s] || '#888',
+      border: '1px solid ' + (cpStatusCol[s] || '#888') + '44'
+    }
+  }, s);
+  const Row = ({
+    t
+  }) => {
+    const m = cpMeta(t.platform);
+    return /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center',
+        padding: '7px 10px',
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 14
+      }
+    }, m.ico), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: '#dde',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, t.title || t.adapted_title || (t.adapted_body || t.body || '').slice(0, 60) || t.post_id), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9.5,
+        color: '#8891a8',
+        fontFamily: 'JetBrains Mono'
+      }
+    }, cpTime(t.publish_at || t.at), t.variant_id ? ' · variant ' + t.variant_id : '', t.attempt ? ' · attempt ' + t.attempt : '')), /*#__PURE__*/React.createElement(Chip, {
+      s: t.status || 'PENDING'
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10,
+        padding: '2px 7px'
+      },
+      title: "Publish this post immediately (still fully gated)",
+      onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/publish-now', {}, '🚀 Dispatched')
+    }, "\u25B6 now"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10,
+        padding: '2px 7px'
+      },
+      title: "Reschedule",
+      onClick: () => {
+        const v = window.prompt('New time (YYYY-MM-DD HH:MM, your local time):');
+        if (!v) return;
+        const d = new Date(v.replace(' ', 'T'));
+        if (isNaN(d)) {
+          flash('Could not parse that time');
+          return;
+        }
+        post('/api/content/posts/' + (t.post_id || t.id) + '/schedule', {
+          publish_at: d.toISOString()
+        }, '📅 Rescheduled');
+      }
+    }, "\u21BA"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10,
+        padding: '2px 7px',
+        color: '#ff8aa0'
+      },
+      title: "Cancel this target",
+      onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/cancel', {
+        target_id: t.id
+      }, 'Cancelled')
+    }, "\u2715"));
+  };
+  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginBottom: 6
+    }
+  }, toast), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: '#999',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, upcoming.length, " queued \xB7 ", held.length, " held"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: load
+  }, "\u21BB"), /*#__PURE__*/React.createElement("button", {
+    className: 'btn ' + (paused ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11,
+      color: paused ? '#f59e0b' : undefined
+    },
+    title: "Global kill switch \u2014 nothing publishes anywhere while paused",
+    onClick: pauseAll
+  }, paused ? '⏸ Paused — resume' : '⏸ Pause all')), held.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: '1px solid rgba(245,158,11,0.4)',
+      borderRadius: 8,
+      padding: 8,
+      marginBottom: 10,
+      background: 'rgba(245,158,11,0.05)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 11,
+      color: '#f59e0b',
+      letterSpacing: '.05em',
+      marginBottom: 6
+    }
+  }, "\u26A0 HELD FOR YOUR REVIEW \u2014 nothing ships until you release it"), held.map((t, i) => {
+    const m = cpMeta(t.platform);
+    const spans = t.flagged_spans || t.evidence || t.spans || [];
+    return /*#__PURE__*/React.createElement("div", {
+      key: t.id || i,
+      className: "card",
+      style: {
+        padding: '8px 10px',
+        marginBottom: 4,
+        borderColor: 'rgba(245,158,11,0.3)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6,
+        alignItems: 'center',
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", null, m.ico), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: '#dde',
+        flex: 1
+      }
+    }, t.title || t.adapted_title || t.post_id || ''), /*#__PURE__*/React.createElement(Chip, {
+      s: "HELD"
+    })), (t.adapted_body || t.body) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: '#bbb',
+        whiteSpace: 'pre-wrap',
+        marginBottom: 4,
+        maxHeight: 80,
+        overflow: 'auto'
+      }
+    }, t.adapted_body || t.body), spans.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 4,
+        flexWrap: 'wrap',
+        marginBottom: 6
+      }
+    }, spans.map((s, j) => /*#__PURE__*/React.createElement("span", {
+      key: j,
+      style: {
+        fontSize: 10,
+        padding: '1px 6px',
+        borderRadius: 4,
+        background: 'rgba(245,158,11,0.18)',
+        color: '#ffd166',
+        border: '1px solid rgba(245,158,11,0.4)'
+      }
+    }, "\u201C", typeof s === 'string' ? s : s.text || s.span || JSON.stringify(s), "\u201D"))), t.error && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: '#f59e0b',
+        marginBottom: 4
+      }
+    }, t.error), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10,
+        color: '#00e87a'
+      },
+      title: "Publish anyway \u2014 I reviewed this and it's intentional",
+      onClick: () => post('/api/content/posts/' + (t.post_id || t.id) + '/release', {
+        target_id: t.id,
+        ack: true
+      }, '✓ Released — publishing')
+    }, "\u2713 Release"), /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10
+      },
+      onClick: () => onEdit && onEdit(t.post_id || t.id)
+    }, "\u270F\uFE0F Edit")));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Upcoming"), upcoming.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '8px 0 14px'
+    }
+  }, "Nothing queued. Compose something \u270D\uFE0F") : upcoming.map((t, i) => /*#__PURE__*/React.createElement(Row, {
+    key: t.id || i,
+    t: t
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11,
+      marginTop: 10
+    }
+  }, "History"), history.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      padding: '8px 0'
+    }
+  }, "No publishes yet.") : history.slice(0, 40).map((h, i) => {
+    const m = cpMeta(h.platform);
+    const out = (h.outcome || h.status || '').toUpperCase();
+    const ok = out === 'CONFIRMED' || out === 'SENT' || out === 'OK' || out === 'PUBLISHED';
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center',
+        padding: '4px 6px',
+        fontSize: 10.5,
+        color: '#a8a8b4',
+        borderBottom: '1px solid rgba(255,255,255,0.03)'
+      }
+    }, /*#__PURE__*/React.createElement("span", null, m.ico), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: 'JetBrains Mono',
+        color: '#777'
+      }
+    }, cpTime(h.at || h.ts || h.published_at)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, h.title || h.post_id || h.target_id || ''), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: ok ? '#00e87a' : '#ff5470'
+      }
+    }, out || '—'), h.post_url && /*#__PURE__*/React.createElement("a", {
+      href: h.post_url,
+      target: "_blank",
+      rel: "noopener",
+      style: {
+        color: '#00d4ff'
+      }
+    }, "view \u2197"), !ok && h.post_id && /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 9,
+        padding: '1px 6px'
+      },
+      onClick: () => post('/api/content/posts/' + h.post_id + '/publish-now', {}, 'Retrying')
+    }, "retry"), h.error && /*#__PURE__*/React.createElement("span", {
+      title: h.error,
+      style: {
+        color: '#f59e0b',
+        cursor: 'help'
+      }
+    }, "\u24D8"));
+  }));
+}
+
+// 📈 Analytics — local dashboard, no external service. "—" means the platform
+// cannot report the metric (missing ≠ zero, spec §8.2).
+function ContentAnalyticsTab() {
+  const [sum, setSum] = useState(null);
+  const [ins, setIns] = useState([]);
+  const [drill, setDrill] = useState(null);
+  useEffect(() => {
+    fetch('/api/content/analytics/summary?days=30').then(r => r.json()).then(d => setSum(d.summary || d)).catch(() => setSum({}));
+    fetch('/api/content/insights').then(r => r.json()).then(d => setIns(d.insights || d.cards || [])).catch(() => {});
+  }, []);
+  const openDrill = id => {
+    setDrill({
+      id,
+      loading: true
+    });
+    fetch('/api/content/analytics/post/' + id).then(r => r.json()).then(d => setDrill({
+      id,
+      data: d
+    })).catch(() => setDrill({
+      id,
+      data: {}
+    }));
+  };
+  const s = sum || {};
+  const rate = s.engagement_rate != null ? (Number(s.engagement_rate) * 100).toFixed(1) + '%' : null;
+  const cards = [['Impressions · 7d', s.impressions_7d], ['Impressions · 30d', s.impressions_30d != null ? s.impressions_30d : s.impressions], ['Engagement rate', rate], ['ψ earned from content', s.psi_earned != null ? s.psi_earned : s.psi]];
+  const series = s.series && typeof s.series === 'object' ? s.series : {};
+  const seriesKeys = Object.keys(series).filter(k => Array.isArray(series[k]) && series[k].length > 1);
+  const top = s.top_posts || s.best_posts || [];
+  const perPlat = s.per_platform && typeof s.per_platform === 'object' ? s.per_platform : {};
+  const M = ['impressions', 'likes', 'comments', 'shares', 'saves', 'clicks', 'video_views', 'follows_gained'];
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))',
+      gap: 8,
+      marginBottom: 10
+    }
+  }, cards.map(([l, v]) => /*#__PURE__*/React.createElement("div", {
+    key: l,
+    className: "card",
+    style: {
+      padding: '8px 10px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stat",
+    style: {
+      fontSize: 18,
+      color: '#00d4ff'
+    }
+  }, v == null ? '—' : typeof v === 'string' ? v : cpFmtN(v)), /*#__PURE__*/React.createElement("div", {
+    className: "stat-label",
+    style: {
+      fontSize: 10,
+      color: '#8891a8'
+    }
+  }, l)))), seriesKeys.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 10,
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Impressions \xB7 per platform"), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 300 80",
+    style: {
+      width: '100%',
+      height: 90
+    }
+  }, seriesKeys.map(k => {
+    const pts = series[k];
+    const vals = pts.map(p => Number(p.impressions != null ? p.impressions : p.value != null ? p.value : p.views) || 0);
+    const mx = Math.max(1, ...vals);
+    const d = vals.map((v, i) => (i / Math.max(1, vals.length - 1) * 300).toFixed(1) + ',' + (78 - v / mx * 74).toFixed(1)).join(' ');
+    return /*#__PURE__*/React.createElement("polyline", {
+      key: k,
+      points: d,
+      fill: "none",
+      stroke: cpMeta(k).color,
+      strokeWidth: "1.5",
+      opacity: "0.85"
+    });
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, seriesKeys.map(k => /*#__PURE__*/React.createElement("span", {
+    key: k,
+    style: {
+      fontSize: 9.5,
+      color: cpMeta(k).color
+    }
+  }, "\u25CF ", cpMeta(k).label)))), Object.keys(perPlat).length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 10,
+      padding: '10px 12px',
+      overflowX: 'auto'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Per-platform \u2014 a \u201C\u2014\u201D means that platform can't report the metric"), /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: '100%',
+      fontSize: 10.5,
+      color: '#bbb',
+      borderCollapse: 'collapse'
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: 'left',
+      padding: '2px 6px',
+      color: '#777',
+      fontWeight: 400
+    }
+  }, "platform"), M.map(m => /*#__PURE__*/React.createElement("th", {
+    key: m,
+    style: {
+      textAlign: 'right',
+      padding: '2px 6px',
+      color: '#777',
+      fontWeight: 400
+    }
+  }, m.replace(/_/g, ' '))))), /*#__PURE__*/React.createElement("tbody", null, Object.keys(perPlat).map(p => {
+    const row = perPlat[p] || {};
+    const mm = row.metrics || row;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: p,
+      style: {
+        borderTop: '1px solid rgba(255,255,255,0.04)'
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: '3px 6px',
+        color: cpMeta(p).color
+      }
+    }, cpMeta(p).ico, " ", cpMeta(p).label), M.map(m => /*#__PURE__*/React.createElement("td", {
+      key: m,
+      style: {
+        textAlign: 'right',
+        padding: '3px 6px',
+        fontFamily: 'JetBrains Mono'
+      }
+    }, mm[m] == null ? '—' : cpFmtN(mm[m]))));
+  })))), ins.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))',
+      gap: 8,
+      marginBottom: 10
+    }
+  }, ins.map((c, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "card",
+    style: {
+      padding: '8px 10px',
+      borderLeft: '2px solid #7c3aed'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      fontWeight: 600,
+      color: '#c4b5fd',
+      marginBottom: 3
+    }
+  }, "\uD83D\uDCA1 ", c.title || c.headline || 'Insight'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: '#a8a8b4',
+      lineHeight: 1.5
+    }
+  }, c.body || c.detail || c.text || '', c.n != null && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#666'
+    }
+  }, " (n=", c.n, ")")), c.action && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      marginTop: 5
+    },
+    onClick: () => fridayNavigate({
+      workspace: 'content',
+      tab: 'compose'
+    })
+  }, typeof c.action === 'string' ? c.action : 'Act on this')))), top.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Best-performing posts"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))',
+      gap: 8
+    }
+  }, top.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    key: p.id || i,
+    className: "card",
+    style: {
+      padding: '8px 10px',
+      cursor: 'pointer'
+    },
+    onClick: () => p.id && openDrill(p.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: '#dde',
+      fontWeight: 600,
+      marginBottom: 3,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, p.title || (p.body || '').slice(0, 48) || 'Post'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#8891a8'
+    }
+  }, (p.platforms || (p.platform ? [p.platform] : [])).map(x => cpMeta(x).ico).join(' '), " \xB7 rate ", p.engagement_rate != null ? (Number(p.engagement_rate) * 100).toFixed(1) + '%' : '—'), p.post_url && /*#__PURE__*/React.createElement("a", {
+    href: p.post_url,
+    target: "_blank",
+    rel: "noopener",
+    style: {
+      fontSize: 9.5,
+      color: '#00d4ff'
+    },
+    onClick: e => e.stopPropagation()
+  }, "view live \u2197"))))), (!sum || cards.every(c => c[1] == null) && seriesKeys.length === 0 && top.length === 0) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888',
+      textAlign: 'center',
+      padding: 20
+    }
+  }, "No engagement data yet \u2014 analytics build up locally after your first published posts. Nothing here ever leaves your machine."), drill && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#e8e8f0'
+    }
+  }, "Post drilldown"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: () => setDrill(null)
+  }, "\xD7 Close")), drill.loading ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#888'
+    }
+  }, "Loading\u2026") : (() => {
+    const d = drill.data || {};
+    const snaps = d.snapshots || [];
+    const tgts = d.targets || d.post && d.post.platforms || [];
+    return /*#__PURE__*/React.createElement("div", null, snaps.length > 1 && /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 300 60",
+      style: {
+        width: '100%',
+        height: 70,
+        marginBottom: 6
+      }
+    }, (() => {
+      const vals = snaps.map(x => {
+        const mm = x.metrics || x;
+        return Number(mm.impressions != null ? mm.impressions : mm.likes) || 0;
+      });
+      const mx = Math.max(1, ...vals);
+      return /*#__PURE__*/React.createElement("polyline", {
+        points: vals.map((v, i) => (i / Math.max(1, vals.length - 1) * 300).toFixed(1) + ',' + (58 - v / mx * 54).toFixed(1)).join(' '),
+        fill: "none",
+        stroke: "#00d4ff",
+        strokeWidth: "1.5"
+      });
+    })()), tgts.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: '#888'
+      }
+    }, "No per-platform data for this post yet."), tgts.map((t, i) => {
+      const m = cpMeta(t.platform);
+      const mm = t.engagement && t.engagement.metrics || t.metrics || {};
+      return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: {
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          fontSize: 10.5,
+          color: '#bbb',
+          padding: '3px 0',
+          borderBottom: '1px solid rgba(255,255,255,0.03)'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: m.color,
+          whiteSpace: 'nowrap'
+        }
+      }, m.ico, " ", m.label), /*#__PURE__*/React.createElement("span", {
+        style: {
+          flex: 1,
+          fontFamily: 'JetBrains Mono',
+          color: '#8891a8',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }
+      }, M.slice(0, 5).map(k => k + ' ' + (mm[k] == null ? '—' : cpFmtN(mm[k]))).join(' · ')), t.post_url && /*#__PURE__*/React.createElement("a", {
+        href: t.post_url,
+        target: "_blank",
+        rel: "noopener",
+        style: {
+          color: '#00d4ff'
+        }
+      }, "\u2197"), t.id && /*#__PURE__*/React.createElement("button", {
+        className: "btn",
+        style: {
+          fontSize: 9,
+          padding: '1px 6px'
+        },
+        title: "Manual metrics refresh (budget-aware)",
+        onClick: () => {
+          fetch('/api/content/analytics/refresh/' + t.id, {
+            method: 'POST'
+          }).then(() => openDrill(drill.id)).catch(() => {});
+        }
+      }, "\u21BB"));
+    }));
+  })()));
+}
+
+// 🔗 Accounts — the easy-connect trust surface (spec §10.1/§12.3): one card per
+// platform, big Connect (OAuth popup / token paste / manual explainer),
+// plain-language scopes + the "Cannot:" negative space, expiry countdown,
+// rate budget, Test post, Disconnect, global controls.
+function ContentAccountsTab({
+  platforms,
+  reload
+}) {
+  const [toast, setToast] = useState('');
+  const [authOpen, setAuthOpen] = useState('');
+  const [authVals, setAuthVals] = useState({});
+  const [paused, setPaused] = useState(false);
+  const [staging, setStaging] = useState('');
+  const [confWin, setConfWin] = useState('2');
+  const flash = t => {
+    setToast(t);
+    setTimeout(() => setToast(''), 3000);
+  };
+  useEffect(() => {
+    fetch('/api/content/queue').then(r => r.json()).then(d => setPaused(!!(d.paused || d.pause_all))).catch(() => {});
+  }, []);
+  const list = platforms && platforms.length ? platforms : Object.keys(CONTENT_PLATFORMS).filter(p => p !== 'discord' && p !== 'telegram').map(name => ({
+    name,
+    label: cpMeta(name).label,
+    status: {
+      connected: false
+    }
+  }));
+  const setAV = (name, k, v) => setAuthVals(s => ({
+    ...s,
+    [name]: {
+      ...(s[name] || {}),
+      [k]: v
+    }
+  }));
+  const connect = async p => {
+    const name = p.name;
+    const m = cpMeta(name);
+    if (m.manual || p.auth_mode === 'manual' || m.tokenPaste || p.auth_mode === 'app_password' || p.auth_mode === 'token') {
+      setAuthOpen(authOpen === name ? '' : name);
+      return;
+    }
+    try {
+      const r = await fetch('/api/content/platforms/' + name + '/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: '{}'
+      });
+      const d = await r.json();
+      if (d.connect_url) {
+        window.open(d.connect_url, 'friday-oauth-' + name, 'width=560,height=720');
+        flash('Complete the sign-in in the popup — this card refreshes automatically.');
+        setTimeout(() => reload && reload(), 4000);
+      } else flash(d.message || d.reason || 'The connect flow is not available yet.');
+    } catch (e) {
+      flash('Connect failed — is the content pipeline backend running?');
+    }
+  };
+  const submitAuth = async name => {
+    try {
+      const r = await fetch('/api/content/platforms/' + name + '/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(authVals[name] || {})
+      });
+      const d = await r.json();
+      // The backend verifies the pasted credential live (creates the session /
+      // probes the token) — only claim success when it actually connected.
+      const bad = !d || d.ok === false || d.verified === false || d.status && d.status.connected === false;
+      flash(bad ? d && (d.error || d.message || d.reason) || 'Connect failed — the credential did not verify' : '✓ Connected — session verified');
+      if (!bad) {
+        setAuthOpen('');
+        setAuthVals(v => ({
+          ...v,
+          [name]: {}
+        }));
+      }
+      reload && reload();
+    } catch (e) {
+      flash('Connect failed');
+    }
+  };
+  const disconnect = async name => {
+    if (!window.confirm('Disconnect ' + cpMeta(name).label + '? Friday revokes the platform-side grant where the API allows it and purges the local credential.')) return;
+    try {
+      await fetch('/api/content/platforms/' + name, {
+        method: 'DELETE'
+      });
+      flash('Disconnected');
+      reload && reload();
+    } catch (e) {
+      flash('Disconnect failed');
+    }
+  };
+  const testPost = async name => {
+    try {
+      const r = await fetch('/api/content/platforms/' + name + '/test', {
+        method: 'POST'
+      });
+      const d = await r.json();
+      flash(d && d.ok === false ? d.message || 'Test failed' : d.message || '✓ Test post sent (private/self where the platform allows)');
+    } catch (e) {
+      flash('Test failed');
+    }
+  };
+  const pauseAll = () => fetch('/api/content/pause', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      paused: !paused
+    })
+  }).then(r => r.json()).then(() => {
+    setPaused(!paused);
+    flash(!paused ? '⏸ All publishing paused' : '▶ Publishing resumed');
+  }).catch(() => flash('Pause endpoint unavailable'));
+  const saveGlobals = () => fetch('/api/settings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      content_staging_base_url: staging,
+      content_conflict_window_hours: Number(confWin) || 2
+    })
+  }).then(() => flash('Saved')).catch(() => flash('Save failed'));
+  const daysLeft = iso => {
+    if (!iso) return null;
+    const d = Math.ceil((new Date(iso) - Date.now()) / 86400000);
+    return isNaN(d) ? null : d;
+  };
+  return /*#__PURE__*/React.createElement("div", null, toast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginBottom: 6
+    }
+  }, toast), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill,minmax(270px,1fr))',
+      gap: 10,
+      marginBottom: 12
+    }
+  }, list.map(p => {
+    const name = p.name;
+    const m = cpMeta(name);
+    const st = p.status || {};
+    const conn = !!st.connected;
+    const sc = p.scopes_plain || CP_SCOPE_TEXT[name] || {
+      can: [],
+      cannot: []
+    };
+    const rb = p.rate_budget || {};
+    const left = rb.limit != null && rb.used != null ? rb.limit - rb.used : null;
+    const exp = daysLeft(st.expires_at);
+    const isManual = m.manual || p.auth_mode === 'manual';
+    const pasteAuth = m.tokenPaste || p.auth_mode === 'app_password' || p.auth_mode === 'token';
+    return /*#__PURE__*/React.createElement("div", {
+      key: name,
+      className: "card",
+      style: {
+        padding: '10px 12px',
+        borderTop: '2px solid ' + m.color
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 6
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 18
+      }
+    }, m.ico), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: '#e8e8f0'
+      }
+    }, p.label || m.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: conn ? '#00e87a' : '#8891a8'
+      }
+    }, conn ? '● Connected' + (st.account ? ' — ' + st.account : '') : isManual ? '○ Manual mode' : '○ Not connected', st.tier ? ' · ' + st.tier : '')), conn && exp != null && /*#__PURE__*/React.createElement("span", {
+      title: 'Token expires ' + st.expires_at,
+      style: {
+        fontSize: 9.5,
+        padding: '1px 6px',
+        borderRadius: 4,
+        background: exp <= 7 ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.05)',
+        color: exp <= 7 ? '#f59e0b' : '#8891a8'
+      }
+    }, "\u23F3 ", exp, "d")), conn && rb.limit != null && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 6
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "progress-bar",
+      style: {
+        height: 3
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "progress-fill",
+      style: {
+        width: Math.min(100, Math.round((rb.used || 0) / (rb.limit || 1) * 100)) + '%',
+        background: m.color
+      }
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9.5,
+        color: '#8891a8',
+        fontFamily: 'JetBrains Mono',
+        marginTop: 2
+      }
+    }, left != null ? left + ' of ' + rb.limit + ' posts left this ' + (rb.window || 'day') : '')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: '#9fe0b8',
+        lineHeight: 1.5
+      }
+    }, (sc.can || []).map((c, i) => /*#__PURE__*/React.createElement("div", {
+      key: i
+    }, "\u2713 ", c))), (sc.cannot || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        lineHeight: 1.5,
+        marginBottom: 6
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: '#8891a8',
+        marginTop: 2
+      }
+    }, "Cannot:"), (sc.cannot || []).map((c, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        color: '#c98a8a'
+      }
+    }, "\u2717 ", c))), st.last_error && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: '#ff8aa0',
+        marginBottom: 6
+      }
+    }, "\u26A0 ", st.last_error), isManual && !conn && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: '#a8a8b4',
+        lineHeight: 1.5,
+        marginBottom: 6,
+        fontStyle: 'italic'
+      }
+    }, "No public API. Friday prepares a ready-to-paste package and opens the editor \u2014 you paste, publish, and confirm the URL back. Honest handoff, never fake automation."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 5,
+        flexWrap: 'wrap'
+      }
+    }, !conn && /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 11,
+        fontWeight: 700,
+        padding: '4px 14px'
+      },
+      onClick: () => connect(p)
+    }, isManual ? 'Enable manual mode' : '🔗 Connect'), conn && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10
+      },
+      onClick: () => connect(p)
+    }, "Re-authenticate"), conn && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10
+      },
+      onClick: () => testPost(name)
+    }, "Test post"), conn && /*#__PURE__*/React.createElement("button", {
+      className: "btn btn-magenta",
+      style: {
+        fontSize: 10,
+        color: '#ff8aa0'
+      },
+      onClick: () => disconnect(name)
+    }, "Disconnect")), authOpen === name && pasteAuth && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8
+      }
+    }, name === 'bluesky' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: "Handle (you.bsky.social)",
+      value: (authVals[name] || {}).identifier || '',
+      onChange: e => setAV(name, 'identifier', e.target.value)
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "password",
+      className: "input",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: "App password (Settings \u2192 App Passwords)",
+      value: (authVals[name] || {}).secret || '',
+      onChange: e => setAV(name, 'secret', e.target.value)
+    })), name === 'mastodon' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+      className: "input",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: "Instance (https://mastodon.social)",
+      value: (authVals[name] || {}).instance || '',
+      onChange: e => setAV(name, 'instance', e.target.value)
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "password",
+      className: "input",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: "Access token (Preferences \u2192 Development)",
+      value: (authVals[name] || {}).secret || '',
+      onChange: e => setAV(name, 'secret', e.target.value)
+    })), name !== 'bluesky' && name !== 'mastodon' && /*#__PURE__*/React.createElement("input", {
+      type: "password",
+      className: "input",
+      style: {
+        width: '100%',
+        fontSize: 11,
+        marginBottom: 4,
+        boxSizing: 'border-box'
+      },
+      placeholder: "Paste access token",
+      value: (authVals[name] || {}).secret || '',
+      onChange: e => setAV(name, 'secret', e.target.value)
+    }), /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10,
+        fontWeight: 600
+      },
+      onClick: () => submitAuth(name)
+    }, "Save & connect"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: '#666',
+        marginTop: 3
+      }
+    }, "Stored encrypted in Friday's credential vault \u2014 never plaintext, never logged.")), authOpen === name && isManual && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 8
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 10
+      },
+      onClick: () => submitAuth(name)
+    }, "Enable manual handoff")));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      fontSize: 11
+    }
+  }, "Global controls"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: 'btn ' + (paused ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11,
+      color: paused ? '#f59e0b' : undefined
+    },
+    onClick: pauseAll
+  }, paused ? '⏸ Publishing paused — resume' : '⏸ Pause all publishing'), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 10.5,
+      color: '#a8a8b4',
+      display: 'flex',
+      gap: 4,
+      alignItems: 'center'
+    }
+  }, "Conflict window (hours)", /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      width: 44,
+      fontSize: 11,
+      padding: '2px 6px'
+    },
+    value: confWin,
+    onChange: e => setConfWin(e.target.value)
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: '#a8a8b4',
+      marginBottom: 4
+    }
+  }, "Staging host \u2014 a public base URL ", /*#__PURE__*/React.createElement("i", null, "you"), " control, used only when Instagram/TikTok insist on fetching media from a URL. Assets are staged at unguessable paths and deleted after publish confirms. Leave empty to hold such posts instead \u2014 Friday never exposes a port on her own."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input",
+    style: {
+      flex: 1,
+      fontSize: 11,
+      boxSizing: 'border-box'
+    },
+    placeholder: "https://your-host.example/staging (optional)",
+    value: staging,
+    onChange: e => setStaging(e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: saveGlobals
+  }, "Save"))));
+}
+
+// 📤 Quick-Post modal (spec §10.2) — reachable from any workspace via
+// window.fridayQuickPost(payload): SendTo destination, Studio Share buttons,
+// notification actions. One compact preview; full composer one click away.
+function QuickPostModal({
+  payload,
+  onClose
+}) {
+  const [plats, setPlats] = useState([]);
+  const [sel, setSel] = useState([]);
+  const [body, setBody] = useState(payload.content || payload.text || '');
+  const [title] = useState(payload.title || '');
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState('');
+  const assets = payload.asset && payload.asset.filename ? [(() => {
+    const ext = (payload.asset.filename || '').split('.').pop().toLowerCase();
+    const kind = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext) ? 'image' : ['mp4', 'webm', 'mov'].includes(ext) ? 'video' : ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) ? 'audio' : 'document';
+    return {
+      filename: payload.asset.filename,
+      content_hash: payload.asset.content_hash || '',
+      kind,
+      alt_text: payload.asset.alt_text || ''
+    };
+  })()] : [];
+  const flash = t => {
+    setToast(t);
+    setTimeout(() => setToast(''), 2500);
+  };
+  useEffect(() => {
+    fetch('/api/content/platforms').then(r => r.json()).then(d => {
+      const ps = d.platforms || [];
+      setPlats(ps);
+      const conn = ps.filter(x => x.status && x.status.connected).map(x => x.name);
+      setSel(conn.slice(0, 2));
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!body.trim() || !sel[0]) {
+      setPreview(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch('/api/content/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          body,
+          title,
+          assets,
+          platform: sel[0],
+          format: 'post'
+        })
+      }).then(r => r.json()).then(setPreview).catch(() => {});
+    }, 600);
+    return () => clearTimeout(t);
+  }, [body, sel.join(',')]);
+  const createDraft = async () => {
+    const r = await fetch('/api/content/posts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title,
+        body,
+        assets,
+        platforms: sel.map(p => ({
+          platform: p,
+          format: 'post'
+        })),
+        source: payload.source || {
+          kind: payload.asset ? 'creation' : 'chat',
+          ref: payload.asset && payload.asset.filename || ''
+        }
+      })
+    });
+    const d = await r.json();
+    return d.post && d.post.id || d.id || null;
+  };
+  const ship = async mode => {
+    if (busy) return;
+    if (!body.trim()) {
+      flash('Write something first');
+      return;
+    }
+    if (mode !== 'composer' && sel.length === 0) {
+      flash('Pick a platform');
+      return;
+    }
+    setBusy(true);
+    try {
+      const id = await createDraft();
+      if (!id) {
+        flash('Could not create the post — is the content pipeline backend running?');
+        setBusy(false);
+        return;
+      }
+      if (mode === 'composer') {
+        if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({
+          workspace: 'content'
+        });
+        fridayNavigate({
+          workspace: 'content',
+          tab: 'compose',
+          post: id
+        });
+        onClose();
+        return;
+      }
+      await fetch('/api/content/posts/' + id + '/compose', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          platforms: sel
+        })
+      }).catch(() => {});
+      if (mode === 'now') {
+        await fetch('/api/content/posts/' + id + '/publish-now', {
+          method: 'POST'
+        });
+        flash('🚀 Publishing — check Content → Queue');
+      } else {
+        await fetch('/api/content/posts/' + id + '/schedule', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            optimal_time: true,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+          })
+        });
+        flash('📅 Scheduled at the next optimal slot');
+      }
+      setTimeout(onClose, 1200);
+    } catch (e) {
+      flash('Request failed');
+    }
+    setBusy(false);
+  };
+  const chipSet = plats.length ? plats : Object.keys(CONTENT_PLATFORMS).filter(p => p !== 'discord' && p !== 'telegram').map(name => ({
+    name,
+    status: {
+      connected: false
+    }
+  }));
+  return /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 210,
+      background: 'rgba(0,0,0,0.7)',
+      backdropFilter: 'blur(6px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: {
+      width: 'min(560px,92vw)',
+      maxHeight: '85vh',
+      overflowY: 'auto',
+      background: 'rgba(10,10,18,0.97)',
+      border: '1px solid rgba(0,212,255,0.25)',
+      borderRadius: 12,
+      padding: 16,
+      boxShadow: '0 12px 40px rgba(0,0,0,0.8)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 12,
+      color: '#00d4ff',
+      letterSpacing: '.08em'
+    }
+  }, "\uD83D\uDCE4 QUICK POST", title ? ' · ' + title.slice(0, 40) : ''), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: onClose
+  }, "\xD7 Close")), toast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginBottom: 6
+    }
+  }, toast), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    rows: 4,
+    style: {
+      width: '100%',
+      boxSizing: 'border-box',
+      fontSize: 12,
+      marginBottom: 8,
+      resize: 'vertical'
+    },
+    value: body,
+    onChange: e => setBody(e.target.value),
+    placeholder: "What do you want to say?"
+  }), assets[0] && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#8891a8',
+      marginBottom: 6
+    }
+  }, "\uD83D\uDCCE ", assets[0].filename), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 5,
+      flexWrap: 'wrap',
+      marginBottom: 8
+    }
+  }, chipSet.map(p => {
+    const m = cpMeta(p.name);
+    const on = sel.includes(p.name);
+    const conn = !!(p.status && p.status.connected);
+    return /*#__PURE__*/React.createElement("button", {
+      key: p.name,
+      className: "btn",
+      disabled: !conn,
+      title: conn ? m.label : m.label + ' not connected — open Content → Accounts',
+      onClick: () => setSel(s => on ? s.filter(x => x !== p.name) : [...s, p.name]),
+      style: {
+        fontSize: 10,
+        padding: '2px 8px',
+        opacity: conn ? 1 : 0.35,
+        background: on ? m.color + '2e' : 'rgba(255,255,255,0.03)',
+        border: '1px solid ' + (on ? m.color : 'rgba(255,255,255,0.1)')
+      }
+    }, m.ico, " ", m.label);
+  })), preview && sel[0] && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement(CpPreviewCard, {
+    platform: sel[0],
+    preview: preview,
+    assets: assets,
+    altMissing: false,
+    tagsOn: preview.hashtags || [],
+    allTags: preview.hashtags || [],
+    extraTags: []
+  }), sel.length > 1 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: '#666',
+      textAlign: 'center',
+      marginTop: 2
+    }
+  }, "preview of ", cpMeta(sel[0]).label, " \u2014 the full composer previews every platform")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      fontWeight: 700
+    },
+    disabled: busy,
+    onClick: () => ship('schedule')
+  }, "\uD83D\uDCC5 Schedule (next optimal)"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => ship('now')
+  }, "\uD83D\uDE80 Post now"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => ship('composer')
+  }, "Open full composer \u2192"))));
+}
+function QuickPostHost() {
+  const [payload, setPayload] = useState(null);
+  useEffect(() => {
+    window.fridayQuickPost = p => setPayload(p || {});
+    return () => {
+      window.fridayQuickPost = null;
+    };
+  }, []);
+  if (!payload) return null;
+  return /*#__PURE__*/React.createElement(QuickPostModal, {
+    payload: payload,
+    onClose: () => setPayload(null)
+  });
+}
+
+// ═══ CONTENT WORKSPACE v2 — the tab shell (spec §10.1) ═══
+function ContentWS() {
+  const [tab, setTab] = useState('compose');
+  const [plats, setPlats] = useState([]);
+  const [qsum, setQsum] = useState(null);
+  const [prefillPost, setPrefillPost] = useState(null);
+  const [slot, setSlot] = useState(null);
+  const loadPlats = () => fetch('/api/content/platforms').then(r => r.json()).then(d => setPlats(d.platforms || [])).catch(() => {});
+  useEffect(() => {
+    loadPlats();
+    fetch('/api/content/queue').then(r => r.json()).then(setQsum).catch(() => {});
+  }, []);
+  useNavTarget('content', t => {
+    if (!t) return;
+    if (t.tab) setTab(t.tab);
+    if (t.post) setPrefillPost(t.post);
+  });
+  // §3.4 graduation: idea → ContentPost draft, item advances to 'published'.
+  const graduate = async item => {
+    try {
+      const plat = CONTENT_PLATFORMS[item.channel] ? item.channel : {
+        blog: 'medium'
+      }[item.channel] || 'linkedin';
+      const r = await fetch('/api/content/posts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: item.title || '',
+          body: item.draft || item.notes || '',
+          platforms: [{
+            platform: plat,
+            format: 'post'
+          }],
+          source: {
+            kind: 'idea',
+            ref: item.id
+          }
+        })
+      });
+      const d = await r.json();
+      const id = d.post && d.post.id || d.id || null;
+      if (!id) return;
+      fetch('/api/content/item/' + item.id, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          stage: 'published',
+          post_id: id
+        })
+      }).catch(() => {});
+      setPrefillPost(id);
+      setTab('compose');
+    } catch (_) {/* backend absent — stay on Ideas */}
+  };
+  const TABS = [['compose', '✍️ Compose'], ['calendar', '📅 Calendar'], ['queue', '📋 Queue'], ['analytics', '📈 Analytics'], ['accounts', '🔗 Accounts'], ['ideas', '💡 Ideas']];
+  const connN = plats.filter(p => p.status && p.status.connected).length;
+  const heldN = (qsum && qsum.held || []).length;
+  const upN = (qsum && (qsum.upcoming || qsum.queue) || []).length;
+  const expSoon = plats.map(p => p.status && p.status.expires_at).filter(Boolean).map(x => Math.ceil((new Date(x) - Date.now()) / 86400000)).filter(d => d > 0 && d <= 14).sort((a, b) => a - b)[0];
+  const says = upN || heldN || connN ? upN + ' post' + (upN === 1 ? '' : 's') + ' queued' + (heldN ? ' · ' + heldN + ' held for your review' : '') + ' · ' + connN + ' platform' + (connN === 1 ? '' : 's') + ' connected' + (expSoon != null ? ' · a token expires in ' + expSoon + ' day' + (expSoon === 1 ? '' : 's') : '') + '.' : 'Make it in Studio, shape it per platform here, ship it everywhere — connect your first platform under 🔗 Accounts.';
+  return /*#__PURE__*/React.createElement("div", null, tab !== 'ideas' && /*#__PURE__*/React.createElement(FridaySays, {
+    text: says
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      marginBottom: 10,
+      flexWrap: 'wrap'
+    }
+  }, TABS.map(([id, label]) => /*#__PURE__*/React.createElement("button", {
+    key: id,
+    className: 'btn ' + (tab === id ? '' : 'btn-magenta'),
+    style: {
+      fontSize: 11,
+      fontWeight: tab === id ? 700 : 400
+    },
+    onClick: () => setTab(id)
+  }, label, id === 'queue' && heldN > 0 ? ' ⚠' : ''))), tab === 'compose' && /*#__PURE__*/React.createElement(ContentComposeTab, {
+    platforms: plats,
+    prefillPost: prefillPost,
+    slot: slot,
+    onNavAccounts: () => setTab('accounts')
+  }), tab === 'calendar' && /*#__PURE__*/React.createElement(ContentCalendarTab, {
+    onCompose: s => {
+      setSlot(s);
+      setTab('compose');
+    },
+    onEdit: id => {
+      setPrefillPost(id);
+      setTab('compose');
+    }
+  }), tab === 'queue' && /*#__PURE__*/React.createElement(ContentQueueTab, {
+    onEdit: id => {
+      setPrefillPost(id);
+      setTab('compose');
+    }
+  }), tab === 'analytics' && /*#__PURE__*/React.createElement(ContentAnalyticsTab, null), tab === 'accounts' && /*#__PURE__*/React.createElement(ContentAccountsTab, {
+    platforms: plats,
+    reload: loadPlats
+  }), tab === 'ideas' && /*#__PURE__*/React.createElement(ContentIdeasTab, {
+    onGraduate: graduate
+  }));
 }
 // ═══ CAMERA MODE ═══
 // Source can be 'screen' | 'webcam' | 'both'. Captures a JPEG frame from each
@@ -25315,6 +28449,15 @@ function useSettings() {
         }));
         setMsg('Saved ✓');
         setTimeout(() => setMsg(''), 2000);
+        // Model-selection saves must reach the App-level agentSettings too
+        // (pill / Quick Switch current-model highlight) — useSettings and
+        // agentSettings are parallel stores over the same POST endpoint, so
+        // broadcast the invalidation both consume.
+        if (['orchestrator_model', 'subagent_model', 'creative_model', 'voice_model', 'voice_engine', 'capability_routing'].some(k => k in patch)) {
+          try {
+            fridayInvalidateModelCatalog();
+          } catch (_) {}
+        }
       } else {
         setMsg('Error');
         setTimeout(() => setMsg(''), 2000);
@@ -25549,7 +28692,7 @@ function SettingsTabModels({
       value: ""
     }, "\u2014 default \u2014"), s[key] && !models.some(m => m.id === s[key]) && /*#__PURE__*/React.createElement("option", {
       value: s[key]
-    }, s[key] + ' (no longer offered)'), models.map(m => /*#__PURE__*/React.createElement("option", {
+    }, mc.byId[s[key]] ? (mc.byId[s[key]].label || s[key]) + ' (via Model Browser)' : s[key] + ' (no longer offered)'), models.map(m => /*#__PURE__*/React.createElement("option", {
       key: m.id,
       value: m.id,
       disabled: m.available === false
@@ -25618,11 +28761,63 @@ function VoiceSetupWizard({
   const [status, setStatus] = useState(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [job, setJob] = useState(null);
+  const jobPollRef = useRef(null);
+  const refresh = () => apiFetch('/api/voice/setup/status').then(r => r.json()).then(setStatus).catch(e => setStatus({
+    error: String(e)
+  }));
   useEffect(() => {
-    apiFetch('/api/voice/setup/status').then(r => r.json()).then(setStatus).catch(e => setStatus({
-      error: String(e)
-    }));
+    refresh();
+    // Resume the status poll if an install is already running (e.g. the user
+    // closed and reopened the wizard mid-download).
+    apiFetch('/api/voice/setup/install/status').then(r => r.json()).then(j => {
+      if (j && j.state === 'running') {
+        setJob(j);
+        startPoll();
+      }
+    }).catch(() => {});
+    return () => {
+      if (jobPollRef.current) clearInterval(jobPollRef.current);
+    };
   }, []);
+  const startPoll = () => {
+    if (jobPollRef.current) clearInterval(jobPollRef.current);
+    jobPollRef.current = setInterval(async () => {
+      try {
+        const j = await (await apiFetch('/api/voice/setup/install/status')).json();
+        setJob(j);
+        if (j.state !== 'running') {
+          clearInterval(jobPollRef.current);
+          jobPollRef.current = null;
+          refresh();
+        }
+      } catch (e) {}
+    }, 2000);
+  };
+  const startInstall = async target => {
+    try {
+      const r = await apiFetch('/api/voice/setup/install', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          target
+        })
+      });
+      const j = await r.json();
+      setJob(j);
+      if (j.state === 'running') startPoll();
+    } catch (e) {
+      setJob({
+        state: 'error',
+        error: String(e)
+      });
+    }
+  };
+  const cancelInstall = () => apiFetch('/api/voice/setup/install/cancel', {
+    method: 'POST'
+  }).then(r => r.json()).then(setJob).catch(() => {});
   const runTest = async () => {
     setTesting(true);
     setTestResult(null);
@@ -25638,6 +28833,24 @@ function VoiceSetupWizard({
       });
       const d = await r.json();
       setTestResult(d);
+      if (d.status === 'ok' && d.audio_b64) {
+        // Actually PLAY the audio — the test must exercise the speaker path,
+        // not just prove the server produced bytes.
+        try {
+          const bytes = Uint8Array.from(atob(d.audio_b64), c => c.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes], {
+            type: 'audio/wav'
+          }));
+          const a = new Audio(url);
+          a.onended = () => URL.revokeObjectURL(url);
+          await a.play();
+        } catch (pe) {
+          setTestResult({
+            status: 'error',
+            message: 'Audio generated but playback failed: ' + pe
+          });
+        }
+      }
     } catch (e) {
       setTestResult({
         status: 'error',
@@ -25647,8 +28860,25 @@ function VoiceSetupWizard({
       setTesting(false);
     }
   };
-  const statusIcon = s => s === 'ok' ? '✓' : s === 'needs_download' ? '⬇' : s === 'missing' ? '✗' : s === 'unavailable' ? '✗' : '?';
-  const statusColor = s => s === 'ok' ? '#00ff80' : s === 'needs_download' ? '#f59e0b' : s === 'missing' || s === 'unavailable' ? '#ef4444' : '#a8a8b4';
+  const statusIcon = s => s === 'ok' ? '✓' : s === 'needs_download' ? '⬇' : s === 'missing' ? '✗' : s === 'unavailable' || s === 'invalid' ? '✗' : '?';
+  const statusColor = s => s === 'ok' ? '#00ff80' : s === 'needs_download' ? '#f59e0b' : s === 'missing' || s === 'unavailable' || s === 'invalid' ? '#ef4444' : '#a8a8b4';
+  // Which one-click install fixes which wizard step.
+  const stepAction = step => {
+    if (job && job.state === 'running') return null;
+    if (step.id === 'deps' && step.status !== 'ok') return {
+      target: 'voice-local-lite',
+      label: 'Install'
+    };
+    if (step.id === 'models' && step.status === 'needs_download') return {
+      target: 'tier1-models',
+      label: 'Download'
+    };
+    if (step.id === 'gpu' && step.status !== 'ok') return {
+      target: 'voice-local-gpu',
+      label: 'Install GPU tier (~6 GB)'
+    };
+    return null;
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(0,0,0,0.5)',
@@ -25692,35 +28922,84 @@ function VoiceSetupWizard({
     style: {
       marginBottom: 14
     }
-  }, (status.steps || []).map(step => /*#__PURE__*/React.createElement("div", {
-    key: step.id,
+  }, (status.steps || []).map(step => {
+    const act = stepAction(step);
+    return /*#__PURE__*/React.createElement("div", {
+      key: step.id,
+      style: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 10,
+        padding: '7px 0',
+        borderBottom: '1px solid rgba(255,255,255,0.04)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: 'JetBrains Mono',
+        fontSize: 14,
+        color: statusColor(step.status),
+        minWidth: 18,
+        textAlign: 'center'
+      }
+    }, statusIcon(step.status)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: '#ddd'
+      }
+    }, step.label), step.detail && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: '#888',
+        marginTop: 2
+      }
+    }, step.detail)), act && /*#__PURE__*/React.createElement("button", {
+      className: "btn",
+      style: {
+        fontSize: 11,
+        whiteSpace: 'nowrap'
+      },
+      onClick: () => startInstall(act.target)
+    }, "\u2B07 ", act.label));
+  })), job && job.state !== 'idle' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12,
+      padding: '8px 12px',
+      background: 'rgba(0,0,0,0.35)',
+      borderRadius: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      alignItems: 'flex-start',
-      gap: 10,
-      padding: '7px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.04)'
+      justifyContent: 'space-between',
+      alignItems: 'center'
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontFamily: 'JetBrains Mono',
-      fontSize: 14,
-      color: statusColor(step.status),
-      minWidth: 18,
-      textAlign: 'center'
-    }
-  }, statusIcon(step.status)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#ddd'
-    }
-  }, step.label), step.detail && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: '#888',
-      marginTop: 2
+      color: job.state === 'running' ? '#00d4ff' : job.state === 'done' ? '#00ff80' : '#ef4444',
+      fontFamily: 'JetBrains Mono'
     }
-  }, step.detail))))), /*#__PURE__*/React.createElement("div", {
+  }, job.state === 'running' ? '⏳ Installing: ' + (job.label || job.target) : job.state === 'done' ? '✓ Install complete' : job.state === 'cancelled' ? 'Install cancelled' : '✗ Install failed: ' + (job.error || 'unknown')), job.state === 'running' && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    },
+    onClick: cancelInstall
+  }, "Cancel")), (job.log || []).length > 0 && /*#__PURE__*/React.createElement("pre", {
+    style: {
+      marginTop: 6,
+      maxHeight: 120,
+      overflow: 'auto',
+      fontSize: 10,
+      color: '#9aa',
+      whiteSpace: 'pre-wrap'
+    }
+  }, (job.log || []).slice(-12).join('\n'))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
@@ -25745,7 +29024,7 @@ function VoiceSetupWizard({
     },
     onClick: () => {
       setStatus(null);
-      apiFetch('/api/voice/setup/status').then(r => r.json()).then(setStatus).catch(() => {});
+      refresh();
     }
   }, "Refresh"), /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -25763,7 +29042,7 @@ function VoiceSetupWizard({
       fontSize: 11,
       color: testResult.status === 'ok' ? '#00ff80' : '#ef4444'
     }
-  }, testResult.status === 'ok' ? 'TTS test audio generated successfully.' : testResult.message || 'TTS test failed.')));
+  }, testResult.status === 'ok' ? 'TTS test audio played — did you hear it?' : testResult.message || 'TTS test failed.')));
 }
 function SettingsTabVoice({
   s,
@@ -27113,40 +30392,92 @@ function AddProviderForm({
 function ModelBrowser({
   save
 }) {
+  // The FULL catalog (statics ∪ discovery caches — OpenRouter's 300+): search,
+  // provider + capability filters, price/context sort. Server-side filter+sort
+  // (before the limit truncates) so "cheapest 200 of 350" is exact; only the
+  // `local` capability filters client-side (it is provider metadata, not a
+  // search param). Assigning here invalidates the app-wide catalog cache so
+  // the top-bar quick switcher resolves the new id immediately.
+  const mc = useModelCatalog();
   const [q, setQ] = useState('');
-  const [freeOnly, setFreeOnly] = useState(false);
+  const [provider, setProvider] = useState('');
+  const [cap, setCap] = useState('');
+  const [sort, setSort] = useState('');
   const [results, setResults] = useState([]);
+  const [total, setTotal] = useState(0);
   const [searched, setSearched] = useState(false);
   const [busy, setBusy] = useState(false);
+  const seqRef = useRef(0);
+  const CAPS = [['', 'All capabilities'], ['tools', 'Tool calling'], ['vision', 'Vision'], ['image', 'Image gen'], ['video', 'Video gen'], ['free', 'Free'], ['local', 'Local (on-device)']];
   const runSearch = async () => {
+    // Monotonic token: filter changes auto-fire and responses can land out of
+    // order — only the LATEST request may write state, or a slow modality=image
+    // response would overwrite fresher video results.
+    const my = ++seqRef.current;
     setBusy(true);
     try {
       const params = new URLSearchParams({
         q,
-        limit: '50'
+        limit: '200'
       });
-      if (freeOnly) params.set('free', '1');
+      if (provider) params.set('provider', provider);
+      if (cap === 'free') params.set('free', '1');else if (cap === 'tools') params.set('tools', '1');
+      // `local` filters SERVER-side (before sort+limit truncation) — Ollama
+      // rows are unpriced and sort past the 200-row page, so a client-side
+      // filter over the page would return nothing under price/context sorts.
+      else if (cap === 'local') params.set('local', '1');else if (cap) params.set('modality', cap);
+      if (sort) params.set('sort', sort);
       const r = await apiFetch('/api/models/search?' + params.toString());
       const d = await r.json();
-      setResults(d.models || []);
+      if (my !== seqRef.current) return;
+      const list = d.models || [];
+      setResults(list);
+      setTotal(d.count || list.length);
       setSearched(true);
     } catch (e) {
-      setResults([]);
+      if (my === seqRef.current) {
+        setResults([]);
+        setTotal(0);
+      }
     }
-    setBusy(false);
+    if (my === seqRef.current) setBusy(false);
   };
+  useEffect(() => {
+    runSearch();
+  }, [provider, cap, sort]); // fires on mount too — browser opens populated
   const useAs = (role, id) => {
     save({
       [role]: id
     });
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
   };
+  const useAsVideo = m => {
+    save({
+      capability_routing: {
+        creative_video: {
+          model: m.id,
+          provider: m.provider
+        }
+      }
+    });
+    try {
+      fridayInvalidateModelCatalog();
+    } catch (_) {}
+  };
+  const provOptions = (mc.providers || []).filter(p => !['local-voice', 'nemo-local'].includes(p.type));
   const fmtCtx = c => !c ? '—' : c >= 1e6 ? c / 1e6 + 'M' : c >= 1e3 ? Math.round(c / 1e3) + 'K' : String(c);
-  const fmtPrice = m => m.free ? 'free' : m.price_in == null ? '—' : `$${m.price_in}/${m.price_out ?? '—'}`;
+  const fmtPrice = m => m.free ? 'free' : m.price_in == null ? 'unpriced' : `$${m.price_in} in / $${m.price_out ?? '—'} out per 1M`;
+  const modIcons = m => {
+    const mods = m.modalities || [];
+    return (mods.includes('image') ? '🖼 ' : '') + (mods.includes('video') ? '🎬 ' : '') + (mods.includes('vision') ? '👁 ' : '');
+  };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8,
-      marginBottom: 10,
+      marginBottom: 8,
       alignItems: 'center',
       flexWrap: 'wrap'
     }
@@ -27154,7 +30485,7 @@ function ModelBrowser({
     className: "input",
     style: {
       flex: 1,
-      minWidth: 180,
+      minWidth: 160,
       fontSize: 12
     },
     value: q,
@@ -27163,20 +30494,7 @@ function ModelBrowser({
       if (e.key === 'Enter') runSearch();
     },
     placeholder: "Search all providers \u2014 llama, deepseek, sonnet\u2026"
-  }), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#aaa',
-      display: 'flex',
-      gap: 5,
-      alignItems: 'center',
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: freeOnly,
-    onChange: e => setFreeOnly(e.target.checked)
-  }), "Free only"), /*#__PURE__*/React.createElement("button", {
+  }), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 12,
@@ -27184,14 +30502,70 @@ function ModelBrowser({
     },
     disabled: busy,
     onClick: runSearch
-  }, busy ? '…' : 'Search')), searched && results.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, busy ? '…' : 'Search')), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 12,
-      color: 'rgba(255,255,255,0.38)'
+      display: 'flex',
+      gap: 6,
+      marginBottom: 10,
+      alignItems: 'center',
+      flexWrap: 'wrap'
     }
-  }, "No models matched. Add a provider key and hit \u27F3 Refresh models to widen the catalog."), results.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "input",
     style: {
-      maxHeight: 280,
+      fontSize: 11,
+      flex: 1,
+      minWidth: 120
+    },
+    value: provider,
+    onChange: e => setProvider(e.target.value),
+    title: "Filter by provider"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "All providers"), provOptions.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.name,
+    value: p.name
+  }, p.label || p.name, p.available ? '' : ' (no key)'))), /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    style: {
+      fontSize: 11,
+      flex: 1,
+      minWidth: 120
+    },
+    value: cap,
+    onChange: e => setCap(e.target.value),
+    title: "Filter by capability"
+  }, CAPS.map(([v, l]) => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, l))), /*#__PURE__*/React.createElement("select", {
+    className: "input",
+    style: {
+      fontSize: 11,
+      flex: 1,
+      minWidth: 120
+    },
+    value: sort,
+    onChange: e => setSort(e.target.value),
+    title: "Sort order"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Available first"), /*#__PURE__*/React.createElement("option", {
+    value: "price"
+  }, "Price \u2014 cheapest first"), /*#__PURE__*/React.createElement("option", {
+    value: "price_desc"
+  }, "Price \u2014 highest first"), /*#__PURE__*/React.createElement("option", {
+    value: "context"
+  }, "Context \u2014 largest first"))), searched && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.35)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 6
+    }
+  }, results.length === 0 ? 'No models matched. Add a provider key and hit ⟳ Refresh models to widen the catalog.' : `${results.length}${total > results.length ? ' of ' + total : ''} models`), results.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 320,
       overflowY: 'auto',
       border: '1px solid rgba(255,255,255,0.05)',
       borderRadius: 8
@@ -27221,13 +30595,13 @@ function ModelBrowser({
       whiteSpace: 'nowrap'
     },
     title: m.id
-  }, m.id), /*#__PURE__*/React.createElement("div", {
+  }, m.local ? '🏠 ' : '', m.id), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       color: 'rgba(255,255,255,0.35)',
       fontFamily: 'JetBrains Mono'
     }
-  }, m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key')), /*#__PURE__*/React.createElement("button", {
+  }, modIcons(m), m.provider_label, " \xB7 ctx ", fmtCtx(m.context_window), " \xB7 ", fmtPrice(m), m.supports_tools === true ? ' · tools ✓' : m.supports_tools === false ? ' · no tools' : '', m.available ? '' : ' · needs key')), /*#__PURE__*/React.createElement("button", {
     className: "settings-btn",
     style: {
       fontSize: 10,
@@ -27243,7 +30617,23 @@ function ModelBrowser({
     },
     title: "Use as sub-agent model",
     onClick: () => useAs('subagent_model', m.id)
-  }, "Subagent")))));
+  }, "Subagent"), (m.modalities || []).includes('image') && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px'
+    },
+    title: "Use as image generation model",
+    onClick: () => useAs('creative_model', m.id)
+  }, "Image"), (m.modalities || []).includes('video') && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px'
+    },
+    title: "Use as video generation model",
+    onClick: () => useAsVideo(m)
+  }, "Video")))));
 }
 function SettingsTabProviders({
   s,
@@ -27893,6 +31283,33 @@ function App() {
   const [notifs, setNotifs] = useState([]);
   const [wikiPending, setWikiPending] = useState(0);
   const [msgActionable, setMsgActionable] = useState(0);
+  // Content pipeline dock badge — HELD + FAILED counts (spec §10.3). Gated on
+  // the connector-health bus: only servers that actually expose the content
+  // pipeline connector get polled, so older builds see zero 404 noise.
+  const [contentAlerts, setContentAlerts] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () => {
+      if (!(window.__fridayConnByWs && window.__fridayConnByWs.content)) return;
+      fetch('/api/content/queue').then(r => r.ok ? r.json() : null).then(d => {
+        if (!d || cancelled) return;
+        const c = d.counts || {};
+        if (c.held != null || c.failed != null) {
+          setContentAlerts((c.held || 0) + (c.failed || 0));
+          return;
+        }
+        const held = (d.held || []).length;
+        const failed = (d.upcoming || []).concat(d.history || []).filter(x => String(x.status || x.outcome || '').toUpperCase() === 'FAILED').length;
+        setContentAlerts(held + failed);
+      }).catch(() => {});
+    };
+    pull();
+    const iv = setInterval(pull, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, []);
   // Predictive workspaces — ids Friday predicts you'll want now (dock glow).
   const [suggestedWs, setSuggestedWs] = useState(new Set());
   const [countdowns, setCountdowns] = useState([]);
@@ -29090,6 +32507,7 @@ function App() {
   };
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelMenuRole, setModelMenuRole] = useState(null); // which By-Role row is expanded (one at a time)
+  const [localAllOpen, setLocalAllOpen] = useState(false); // Local Models: full installed list vs top 4
   const modelMenuRef = useRef(null);
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -29110,6 +32528,22 @@ function App() {
     return () => document.removeEventListener('mousedown', h);
   }, [sceneMenuOpen]);
   const modelCatalog = useModelCatalog();
+  // Settings saved from the SettingsWS window (Model Browser assigns, the
+  // AI-Models tab selects) live in useSettings' own state, not agentSettings —
+  // without this bridge the pill and Quick Switch would show the OLD model
+  // until a full reload. The catalog-invalidated event is the shared signal.
+  useEffect(() => {
+    const h = () => {
+      apiFetch('/api/settings').then(r => r.json()).then(d => {
+        if (d && d.status !== 'error' && d.settings) setAgentSettings(a => ({
+          ...a,
+          ...d.settings
+        }));
+      }).catch(() => {});
+    };
+    window.addEventListener('friday:model-catalog-invalidated', h);
+    return () => window.removeEventListener('friday:model-catalog-invalidated', h);
+  }, []);
   // An id the catalog no longer offers must display AS ITSELF (it is still the
   // id being routed) — never masquerade as the first catalog model.
   const _modelOf = (id, role) => modelCatalog.byId[id] || (id ? {
@@ -29172,6 +32606,16 @@ function App() {
   };
   const mmVoiceEngines = (modelCatalog.voiceEngines || []).filter(_mmAvail);
   const mmVoiceModels = _mmRole('voice').slice(0, 5);
+  // Creative splits by modality. Image routes via the flat creative_model key;
+  // video has NO flat mirror (_CAP_FLAT_MAP) and writes
+  // capability_routing.creative_video directly. When the catalog carries no
+  // modality tags (offline fallback consts), the image group shows the whole
+  // creative list rather than rendering empty.
+  const _mmHasMod = (m, mod) => (m.modalities || []).includes(mod);
+  const _mmCreative = _mmRole('creative');
+  const mmCreativeImg = (_mmCreative.some(m => _mmHasMod(m, 'image')) ? _mmCreative.filter(m => _mmHasMod(m, 'image')) : _mmCreative).slice(0, 4);
+  const mmCreativeVid = _mmCreative.filter(m => _mmHasMod(m, 'video')).slice(0, 4);
+  const creativeVideoId = ((agentSettings.capability_routing || {}).creative_video || {}).model || '';
 
   // ── Ollama / Model Routing state ──
   const [ollamaStatus, setOllamaStatus] = useState({
@@ -29716,9 +33160,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         }
       }, 1500);
     } catch (e) {
-      setVoiceStatus('mic denied: ' + e.message);
+      // Map the getUserMedia failure to an actionable message. Without this
+      // detail — and without voiceStop PRESERVING it (see voiceStop) — an early
+      // mic failure tore down so fast the user just saw "nothing happens".
+      const _n = e && e.name || '';
+      let _m;
+      if (_n === 'NotFoundError' || _n === 'OverconstrainedError' || _n === 'DevicesNotFoundError') _m = '⚠ No microphone found. Plug one in (or pick a device via 🎙), then click the mic again.';else if (_n === 'NotAllowedError' || _n === 'SecurityError') _m = '⚠ Microphone blocked. Click the 🔒/camera icon in the address bar → allow the mic for this site, then reload.';else if (_n === 'NotReadableError' || _n === 'TrackStartError') _m = '⚠ Microphone is in use by another app (Zoom/Teams/etc.). Close it, then click the mic again.';else _m = '⚠ Mic error (' + (_n || 'unknown') + '): ' + (e && e.message || e);
       try {
-        voiceStopRef.current?.();
+        voiceStopRef.current?.({
+          status: _m
+        });
       } catch (_) {}
       return;
     }
@@ -29735,9 +33186,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         _engine = _si.engine || 'local';
       }
       if (_si && _si.engine === 'demo') {
-        setVoiceStatus('voice unavailable — install local voice or connect a cloud key');
         try {
-          voiceStopRef.current?.();
+          voiceStopRef.current?.({
+            status: '⚠ Voice unavailable — install local voice (Settings → Voice → Setup Wizard) or add a Gemini key.'
+          });
         } catch (_) {}
         return;
       }
@@ -30019,7 +33471,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           // the imminent onclose does NOT auto-reconnect into the same failure
           // over and over — the message on screen is the actionable part.
           voiceKeepRef.current.fatalTs = Date.now();
-          setVoiceStatus('error: ' + (m.error || 'unknown'));
+          // m.detail carries the actionable text (install command, key fix,
+          // model fix) — the bare error code alone left users stranded.
+          setVoiceStatus('error: ' + (m.detail || m.error || 'unknown'));
         }
       }
     };
@@ -30151,7 +33605,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       setVoiceStatus(s => s && (s.startsWith('error:') || s.startsWith('socket error') || s.startsWith('voice connection lost')) ? s : '');
     };
   };
-  voiceStopRef.current = () => {
+  voiceStopRef.current = opts => {
+    // opts.status: a message to LEAVE on screen after teardown (mic/device
+    // errors). Without this, the final setVoiceStatus('') below wiped every
+    // early-failure message and the mic click looked like a silent no-op.
+    const _keepStatus = opts && opts.status;
     const v = voiceRef.current;
     // 0) This is a DELIBERATE stop: disarm auto-reconnect before anything else
     //    so the onclose that follows doesn't resurrect the session.
@@ -30256,7 +33714,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     };
     setMicLevel(0);
     setVoiceOn(false);
-    setVoiceStatus('');
+    setVoiceStatus(_keepStatus || '');
   };
   const toggleVoice = () => {
     voiceOn ? voiceStopRef.current?.() : voiceStartRef.current?.();
@@ -31665,6 +35123,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     onClick: () => {
       setModelMenuOpen(o => !o);
       setModelMenuRole(null);
+      setLocalAllOpen(false);
       setSceneMenuOpen(false);
     },
     style: {
@@ -31779,12 +35238,6 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     label: 'Subagent',
     key: 'subagent_model',
     active: subagentModel
-  }, {
-    id: 'creative',
-    ico: '🎨',
-    label: 'Creative',
-    key: 'creative_model',
-    active: creativeModel
   }].map(row => {
     const open = modelMenuRole === row.id;
     const opts = _mmRole(row.id).slice(0, 5);
@@ -31883,6 +35336,154 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       }, "\u2713") : null);
     })));
   }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModelMenuRole(modelMenuRole === 'creative' ? null : 'creative'),
+    "aria-expanded": modelMenuRole === 'creative',
+    title: modelMenuRole === 'creative' ? 'Collapse' : 'Change creative models',
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      width: '100%',
+      textAlign: 'left',
+      background: modelMenuRole === 'creative' ? 'rgba(0,212,255,0.06)' : 'transparent',
+      border: 'none',
+      padding: '4px 12px',
+      cursor: 'pointer',
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.8)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 15,
+      flexShrink: 0,
+      textAlign: 'center'
+    },
+    "aria-hidden": "true"
+  }, "\uD83C\uDFA8"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.5)',
+      flexShrink: 0
+    }
+  }, "Creative"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      color: '#00d4ff',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      textAlign: 'right'
+    }
+  }, creativeModel.short || creativeModel.label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      opacity: 0.7,
+      flexShrink: 0
+    },
+    "aria-hidden": "true"
+  }, modelMenuRole === 'creative' ? '▴' : '▾')), modelMenuRole === 'creative' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      paddingBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 12px 2px 34px',
+      fontFamily: 'Orbitron',
+      fontSize: 8,
+      color: 'rgba(0,212,255,0.55)',
+      letterSpacing: '0.1em',
+      textTransform: 'uppercase'
+    }
+  }, "Image model"), mmCreativeImg.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '2px 12px 4px 34px',
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "No available models \u2014 add a provider key"), mmCreativeImg.map(m => {
+    const cur = agentSettings.creative_model === m.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: m.id,
+      onClick: () => {
+        saveAgentSettings({
+          creative_model: m.id
+        });
+        setModelMenuRole(null);
+      },
+      className: "model-option-cloud",
+      title: (m.provider_label || '') + (m.local ? ' · on-device' : ''),
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        padding: '3px 12px 3px 34px',
+        fontSize: 10,
+        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, m.local ? '🏠 ' : '', m.label), cur ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      },
+      "aria-hidden": "true"
+    }, "\u2713") : null);
+  }), mmCreativeVid.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '4px 12px 2px 34px',
+      fontFamily: 'Orbitron',
+      fontSize: 8,
+      color: 'rgba(0,212,255,0.55)',
+      letterSpacing: '0.1em',
+      textTransform: 'uppercase'
+    }
+  }, "Video model"), mmCreativeVid.map(m => {
+    const cur = creativeVideoId === m.id;
+    return /*#__PURE__*/React.createElement("button", {
+      key: m.id,
+      onClick: () => {
+        saveAgentSettings({
+          capability_routing: {
+            creative_video: {
+              model: m.id,
+              provider: m.provider
+            }
+          }
+        });
+        setModelMenuRole(null);
+      },
+      className: "model-option-cloud",
+      title: (m.provider_label || '') + ' · video',
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        border: 'none',
+        padding: '3px 12px 3px 34px',
+        fontSize: 10,
+        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
+        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, m.label), cur ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        flexShrink: 0
+      },
+      "aria-hidden": "true"
+    }, "\u2713") : null);
+  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
     onClick: () => setModelMenuRole(modelMenuRole === 'voice' ? null : 'voice'),
     "aria-expanded": modelMenuRole === 'voice',
     title: modelMenuRole === 'voice' ? 'Collapse' : 'Change voice engine',
@@ -32058,7 +35659,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       color: 'rgba(255,255,255,0.45)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", !ollamaStatus.available ? ' · Ollama offline' : ''), ollamaStatus.available && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", routingStats.local_tokens > 0 ? ` · ${routingStats.local_tokens.toLocaleString()} local tokens` : '', !ollamaStatus.available ? ' · Ollama offline' : ''), ollamaStatus.available && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "model-selector-tier",
     style: {
       display: 'flex',
@@ -32078,41 +35679,59 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       color: 'rgba(255,255,255,0.45)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "No models installed"), (ollamaStatus.models || []).slice(0, 4).map(m => {
-    const active = ((agentSettings.model_routing || {}).local_model || 'gemma4:latest') === m.name;
-    return /*#__PURE__*/React.createElement("div", {
-      key: m.name,
-      onClick: () => setLocalModel(m.name),
-      title: active ? 'Default local model' : 'Click to set as default local model',
-      className: "model-option-local",
-      style: {
-        background: active ? 'rgba(0,255,128,0.08)' : 'transparent'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "ollama-status-dot online"
-    }), /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        color: active ? '#00ff80' : undefined
-      }
-    }, m.name), active && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 9,
-        color: '#00ff80',
-        fontFamily: 'JetBrains Mono'
-      }
-    }, "DEFAULT"));
-  }), (ollamaStatus.models || []).length > 4 && /*#__PURE__*/React.createElement("div", {
+  }, "No models installed"), (() => {
+    const all = ollamaStatus.models || [];
+    const curName = (agentSettings.model_routing || {}).local_model || 'gemma4:latest';
+    const head = all.slice(0, 4);
+    const pinned = !localAllOpen && !head.some(m => m.name === curName) ? all.find(m => m.name === curName) : null;
+    const shown = localAllOpen ? all : pinned ? [pinned, ...head.slice(0, 3)] : head;
+    return shown.map(m => {
+      const active = curName === m.name;
+      return /*#__PURE__*/React.createElement("div", {
+        key: m.name,
+        onClick: () => setLocalModel(m.name),
+        title: active ? 'Default local model' : 'Click to set as default local model',
+        className: "model-option-local",
+        style: {
+          background: active ? 'rgba(0,255,128,0.08)' : 'transparent'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "ollama-status-dot online"
+      }), /*#__PURE__*/React.createElement("span", {
+        style: {
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          color: active ? '#00ff80' : undefined
+        }
+      }, m.name), active && /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 9,
+          color: '#00ff80',
+          fontFamily: 'JetBrains Mono',
+          marginRight: 6
+        }
+      }, "DEFAULT"), /*#__PURE__*/React.createElement("span", {
+        className: "model-badge-local"
+      }, m.size_gb, "GB", m.parameter_size ? ' · ' + m.parameter_size : ''));
+    });
+  })(), (ollamaStatus.models || []).length > 4 && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setLocalAllOpen(o => !o),
+    "aria-expanded": localAllOpen,
     style: {
-      padding: '1px 12px 6px',
+      display: 'block',
+      width: '100%',
+      textAlign: 'left',
+      background: 'transparent',
+      border: 'none',
+      padding: '2px 12px 6px',
+      cursor: 'pointer',
       fontSize: 9,
-      color: 'rgba(255,255,255,0.35)',
+      color: 'rgba(0,212,255,0.6)',
       fontFamily: 'JetBrains Mono'
     }
-  }, "+", (ollamaStatus.models || []).length - 4, " more in Browse All Models")), /*#__PURE__*/React.createElement("button", {
+  }, localAllOpen ? '▴ show fewer' : `▸ ${(ollamaStatus.models || []).length - 4} more installed`)), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setModelMenuOpen(false);
       setModelMenuRole(null);
@@ -33006,6 +36625,62 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       margin: '5px 0'
     }
   }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      padding: '4px 10px'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px',
+      flex: 1
+    },
+    onClick: testMicrophone,
+    disabled: micTestActive
+  }, micTestActive ? 'Listening…' : '🎙 Test Mic'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '3px 8px',
+      flex: 1
+    },
+    onClick: testSpeaker,
+    disabled: speakerTestActive
+  }, speakerTestActive ? 'Playing…' : '🔊 Test Speaker')), micTestActive && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '2px 10px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 6,
+      background: 'rgba(255,255,255,0.08)',
+      borderRadius: 3,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: '100%',
+      width: Math.min(100, Math.round(micTestLevel * 100)) + '%',
+      background: micTestLevel > 0.02 ? '#00ff80' : '#f59e0b',
+      transition: 'width .08s'
+    }
+  }))), micTestMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '3px 10px',
+      fontSize: 10,
+      color: micTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
+      whiteSpace: 'normal'
+    }
+  }, micTestMsg), speakerTestMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '3px 10px',
+      fontSize: 10,
+      color: speakerTestMsg.startsWith('✓') ? '#00ff80' : '#f59e0b',
+      whiteSpace: 'normal'
+    }
+  }, speakerTestMsg), /*#__PURE__*/React.createElement("div", {
     onClick: () => {
       refreshAudioDevicesRef.current?.();
     },
@@ -33663,7 +37338,27 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       justifyContent: 'center',
       boxShadow: '0 0 8px rgba(0,212,255,0.7)'
     }
-  }, msgActionable)))), /*#__PURE__*/React.createElement("div", {
+  }, msgActionable), w.id === 'content' && contentAlerts > 0 && /*#__PURE__*/React.createElement("span", {
+    title: "Held or failed posts need your attention \u2014 Content \u2192 Queue",
+    style: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      minWidth: 14,
+      height: 14,
+      padding: '0 4px',
+      borderRadius: 7,
+      background: '#f59e0b',
+      color: '#0a0a0f',
+      fontSize: 9,
+      fontWeight: 700,
+      fontFamily: 'Orbitron',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: '0 0 8px rgba(245,158,11,0.7)'
+    }
+  }, contentAlerts)))), /*#__PURE__*/React.createElement("div", {
     className: "dock-group-label"
   }, g.name))))), paletteOpen && /*#__PURE__*/React.createElement(CommandPalette, {
     onClose: () => setPaletteOpen(false),
@@ -33672,7 +37367,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       setPaletteOpen(false);
     },
     openWins: openWins
-  }), taskResultModal && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(QuickPostHost, null), taskResultModal && /*#__PURE__*/React.createElement("div", {
     onClick: () => setTaskResultModal(null),
     style: {
       position: 'fixed',
