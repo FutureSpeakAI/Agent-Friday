@@ -549,6 +549,21 @@ def _register_default_daily_jobs():
     # continuity note at 11:30 PM Central. The job backfills the last few days,
     # so a server that was off overnight still catches up on its next start.
     register_daily_job("session-summary", 23, 30, _run_session_summary_job)
+    # Nightly knowledge-graph reindex at 03:30 — after memory dreaming (03:00)
+    # so freshly consolidated facts make it into the graph. Tier A rebuild +
+    # Tier B delta; local-only unless the user opted into gated cloud.
+    register_daily_job("knowledge-graph-reindex", 3, 30,
+                       _run_knowledge_reindex_job)
+
+
+def _run_knowledge_reindex_job():
+    try:
+        from agent_friday.services.knowledge_graph.integration import (
+            run_nightly_reindex)
+        return run_nightly_reindex()
+    except Exception as e:
+        print(f"  [KG] nightly reindex failed: {e}")
+        return {"error": str(e)}
 
 
 def _trigger_message_cache():

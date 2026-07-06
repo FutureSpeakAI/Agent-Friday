@@ -39,6 +39,7 @@ const DOCK_GROUPS=[
   ]},
   {name:'System',items:[
     {id:'wiki',ico:'📚',label:'Wiki',core:true},
+    {id:'knowledge',ico:'🌌',label:'Knowledge',core:true},
     {id:'trust',ico:'🔗',label:'Trust'},
     {id:'studio',ico:'🎨',label:'Studio'},
     {id:'marketplace',ico:'🛒',label:'Marketplace'},
@@ -766,6 +767,585 @@ function OutreachPanel(){
     </div>
   </div>);
 }
+// ═══ KNOWLEDGE GALAXY — 3D explorer over the knowledge graph ═══
+// Vanilla Three.js r128 (vendored globals). Instanced star nodes, merged edge
+// filaments, community nebulae, UnrealBloom. Entrance: camera fly-in while
+// communities ignite one by one. Server precomputes x/y/z — no client sim.
+const KG_PALETTE=['#00d4ff','#ff00aa','#00ff80','#8a2be2','#ff6600','#5fa8ff','#ff8bcb','#4ecdc4','#feca57','#ff6b6b','#7de1ff','#b0ffc8'];
+const KG_LOD_THRESHOLD=2500; // above this, render community super-nodes first
+
+function KnowledgeGraphWS(){
+  const mountRef=useRef(null);
+  const kgRef=useRef({});                       // all mutable three.js state
+  const [status,setStatus]=useState('loading'); // loading|ready|empty|error
+  const [stats,setStats]=useState(null);
+  const [fps,setFps]=useState(0);
+  const [hover,setHover]=useState(null);
+  const [selected,setSelected]=useState(null);
+  const [searchQ,setSearchQ]=useState('');
+  const [searchHits,setSearchHits]=useState([]);
+  const [focusComm,setFocusComm]=useState(null);
+  const [lodMode,setLodMode]=useState(false);
+
+  useNavTarget('knowledge',(t)=>{
+    if(t.query){setSearchQ(t.query);runSearch(t.query)}
+  });
+
+  const openWikiPage=(ent)=>{
+    const path=ent&&ent.provenance&&ent.provenance.wiki_pages&&ent.provenance.wiki_pages[0];
+    if(!path||ent.type==='soul')return;
+    fridayNavigate({workspace:'wiki',path});
+    if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'wiki',path});
+  };
+
+  const runSearch=(q)=>{
+    const S=kgRef.current;
+    if(!S.entities){setSearchHits([]);return}
+    const qq=(q||'').trim().toLowerCase();
+    if(!qq){setSearchHits([]);S.setHighlight(null);return}
+    const hits=S.entities.filter(e=>((e.title||'')+' '+(e.description||'')).toLowerCase().includes(qq));
+    setSearchHits(hits.slice(0,8));
+    S.setHighlight(new Set(hits.map(e=>e.id)));
+  };
+
+  useEffect(()=>{
+    const mount=mountRef.current;
+    if(!mount||typeof THREE==='undefined')return;
+    const S=kgRef.current;
+    let disposed=false;
+
+    // ── renderer / scene / camera ────────────────────────────
+    const scene=new THREE.Scene();
+    scene.fog=new THREE.FogExp2(0x000308,0.0016);
+    const camera=new THREE.PerspectiveCamera(58,1,0.1,4000);
+    const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+    renderer.setClearColor(0x000208,1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    mount.appendChild(renderer.domElement);
+    renderer.domElement.style.cssText='width:100%;height:100%;display:block;border-radius:8px;cursor:grab';
+
+    let composer=null,bloomPass=null,bloomOn=true;
+    const buildComposer=(w,h)=>{
+      composer=new THREE.EffectComposer(renderer);
+      composer.addPass(new THREE.RenderPass(scene,camera));
+      bloomPass=new THREE.UnrealBloomPass(new THREE.Vector2(w,h),1.15,0.65,0.12);
+      composer.addPass(bloomPass);
+    };
+
+    const grp=new THREE.Group();scene.add(grp);   // rotates for idle spin
+
+    // Distant starfield backdrop (ported GalaxyBackground design).
+    (()=>{
+      const N=2600,pos=new Float32Array(N*3),col=new Float32Array(N*3);
+      let sd=987654321;const rnd=()=>{sd=(sd*1103515245+12345)&0x7fffffff;return sd/0x7fffffff};
+      for(let i=0;i<N;i++){
+        const r=1100+rnd()*700,th=rnd()*Math.PI*2,ph=Math.acos(2*rnd()-1);
+        pos[i*3]=r*Math.sin(ph)*Math.cos(th);pos[i*3+1]=r*Math.cos(ph)*0.6;pos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+        const t=rnd();col[i*3]=0.25+0.15*t;col[i*3+1]=0.55+0.25*t;col[i*3+2]=0.85+0.1*t;
+      }
+      const g=new THREE.BufferGeometry();
+      g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      g.setAttribute('color',new THREE.BufferAttribute(col,3));
+      const m=new THREE.PointsMaterial({size:2.2,vertexColors:true,transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true});
+      const pts=new THREE.Points(g,m);S.starfield=pts;scene.add(pts);
+    })();
+
+    // ── camera rig ───────────────────────────────────────────
+    const cam={r:760,theta:0.6,phi:1.15,target:new THREE.Vector3(0,0,0)};
+    const camGoal={r:760,theta:0.6,phi:1.15,target:new THREE.Vector3(0,0,0)};
+    const applyCam=()=>{
+      camera.position.set(
+        cam.target.x+cam.r*Math.sin(cam.phi)*Math.cos(cam.theta),
+        cam.target.y+cam.r*Math.cos(cam.phi),
+        cam.target.z+cam.r*Math.sin(cam.phi)*Math.sin(cam.theta));
+      camera.lookAt(cam.target);
+    };
+
+    // ── graph content (rebuilt per load) ─────────────────────
+    let content=new THREE.Group();grp.add(content);
+    const clock=new THREE.Clock();
+    let entranceT0=-1;                 // seconds at load-complete
+    let igniteOrder=[];                // [{comm, start}]
+    let idleSpin=true,userTouched=false;
+    let pulses=[];                     // [{idx,t0}]
+    const raycaster=new THREE.Raycaster();
+    const pointer=new THREE.Vector2();
+
+    const hexToColor=(h)=>new THREE.Color(h);
+    const commColor=(ci)=>hexToColor(KG_PALETTE[ci%KG_PALETTE.length]);
+
+    const disposeContent=()=>{
+      content.traverse(o=>{
+        if(o.geometry)o.geometry.dispose();
+        if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{if(m.map)m.map.dispose();m.dispose()})}
+      });
+      grp.remove(content);content=new THREE.Group();grp.add(content);
+    };
+
+    // Soft radial disc texture so nebula points glow instead of rendering
+    // as hard squares.
+    const softDisc=(()=>{
+      const c=document.createElement('canvas');c.width=c.height=64;
+      const x=c.getContext('2d');
+      const g=x.createRadialGradient(32,32,0,32,32,32);
+      g.addColorStop(0,'rgba(255,255,255,1)');
+      g.addColorStop(0.35,'rgba(255,255,255,0.55)');
+      g.addColorStop(1,'rgba(255,255,255,0)');
+      x.fillStyle=g;x.fillRect(0,0,64,64);
+      const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;return t;
+    })();
+
+    const makeLabel=(text,color,scale)=>{
+      const c=document.createElement('canvas');const px=64;
+      const ctx=c.getContext('2d');ctx.font='700 '+px+'px Orbitron, sans-serif';
+      const w=Math.min(1400,ctx.measureText(text).width+40);
+      c.width=w;c.height=px+28;
+      const ctx2=c.getContext('2d');
+      ctx2.font='700 '+px+'px Orbitron, sans-serif';
+      ctx2.fillStyle=color;ctx2.shadowColor=color;ctx2.shadowBlur=26;
+      ctx2.textBaseline='middle';ctx2.fillText(text,20,c.height/2);
+      const tex=new THREE.CanvasTexture(c);tex.minFilter=THREE.LinearFilter;
+      const mat=new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0,depthWrite:false});
+      const spr=new THREE.Sprite(mat);
+      const s=scale||0.14;spr.scale.set(c.width*s,c.height*s,1);
+      return spr;
+    };
+
+    // Build the full scene from API data.
+    const buildScene=(data,opts)=>{
+      disposeContent();
+      const entities=data.entities||[],rels=data.relationships||[],comms=data.communities||[];
+      S.entities=entities;S.relationships=rels;S.communities=comms;
+      S.entById={};entities.forEach(e=>{S.entById[e.id]=e});
+      const commIdx={};comms.forEach((c,i)=>{commIdx[String(c.community)]=i});
+      const ciOf=(e)=>commIdx[String(e.community)]!==undefined?commIdx[String(e.community)]:0;
+
+      // — nodes (one InstancedMesh, one draw call) —
+      const n=entities.length;
+      const geo=new THREE.SphereGeometry(1,14,10);
+      const mat=new THREE.MeshBasicMaterial({transparent:true,opacity:0.98});
+      const mesh=new THREE.InstancedMesh(geo,mat,n);
+      mesh.frustumCulled=false;
+      const dummy=new THREE.Object3D();
+      const baseScale=new Float32Array(n);
+      const baseColor=new Float32Array(n*3);
+      const dark=new THREE.Color(0x061018);
+      for(let i=0;i<n;i++){
+        const e=entities[i];
+        const s=(e.type==='soul'?3.4:1.5+Math.min(e.degree||0,22)*0.11);
+        baseScale[i]=s;
+        dummy.position.set(e.x||0,e.y||0,e.z||0);
+        dummy.scale.setScalar(s);dummy.updateMatrix();
+        mesh.setMatrixAt(i,dummy.matrix);
+        const c=e.type==='soul'?new THREE.Color('#eafcff'):commColor(ciOf(e));
+        baseColor[i*3]=c.r;baseColor[i*3+1]=c.g;baseColor[i*3+2]=c.b;
+        mesh.setColorAt(i,opts&&opts.instant?c:dark);
+        e.__idx=i;e.__ci=ciOf(e);
+      }
+      if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+      content.add(mesh);
+      S.mesh=mesh;S.baseScale=baseScale;S.baseColor=baseColor;
+
+      // — edges (merged LineSegments) —
+      if(rels.length){
+        const pos=new Float32Array(rels.length*6),col=new Float32Array(rels.length*6);
+        let k=0;
+        rels.forEach(r=>{
+          const a=S.entById[r.source],b=S.entById[r.target];
+          if(!a||!b)return;
+          const ca=a.type==='soul'?new THREE.Color('#9adfff'):commColor(a.__ci);
+          const cb=b.type==='soul'?new THREE.Color('#9adfff'):commColor(b.__ci);
+          const w=r.weight||0.5,f=0.16+w*0.34;
+          pos[k]=a.x;pos[k+1]=a.y;pos[k+2]=a.z;pos[k+3]=b.x;pos[k+4]=b.y;pos[k+5]=b.z;
+          col[k]=ca.r*f;col[k+1]=ca.g*f;col[k+2]=ca.b*f;col[k+3]=cb.r*f;col[k+4]=cb.g*f;col[k+5]=cb.b*f;
+          k+=6;
+        });
+        const eg=new THREE.BufferGeometry();
+        eg.setAttribute('position',new THREE.BufferAttribute(pos,3));
+        eg.setAttribute('color',new THREE.BufferAttribute(col,3));
+        const em=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:opts&&opts.instant?0.55:0,blending:THREE.AdditiveBlending,depthWrite:false});
+        const lines=new THREE.LineSegments(eg,em);
+        content.add(lines);S.edgeMat=em;
+      } else S.edgeMat=null;
+
+      // — community nebulae + labels —
+      S.nebulae=[];S.labels=[];
+      const centers={};
+      comms.forEach((c,ci)=>{
+        const members=entities.filter(e=>e.__ci===ci);
+        if(!members.length)return;
+        const cx=members.reduce((s,e)=>s+e.x,0)/members.length;
+        const cy=members.reduce((s,e)=>s+e.y,0)/members.length;
+        const cz=members.reduce((s,e)=>s+e.z,0)/members.length;
+        centers[ci]=[cx,cy,cz];
+        const spread=Math.max(16,Math.sqrt(members.reduce((s,e)=>s+((e.x-cx)**2+(e.y-cy)**2+(e.z-cz)**2),0)/members.length)*1.15);
+        const NP=Math.min(90,14+members.length*4);
+        const ppos=new Float32Array(NP*3);
+        let sd=1000+ci;const rnd=()=>{sd=(sd*1103515245+12345)&0x7fffffff;return sd/0x7fffffff};
+        for(let i=0;i<NP;i++){
+          const g=(rnd()+rnd()+rnd()-1.5)/1.5;   // ~gaussian
+          const th=rnd()*Math.PI*2,ph=Math.acos(2*rnd()-1),rr=spread*(0.35+0.75*Math.abs(g));
+          ppos[i*3]=cx+rr*Math.sin(ph)*Math.cos(th);
+          ppos[i*3+1]=cy+rr*Math.cos(ph);
+          ppos[i*3+2]=cz+rr*Math.sin(ph)*Math.sin(th);
+        }
+        const pg=new THREE.BufferGeometry();
+        pg.setAttribute('position',new THREE.BufferAttribute(ppos,3));
+        const pm=new THREE.PointsMaterial({color:commColor(ci),size:13,map:softDisc,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending,sizeAttenuation:true});
+        const neb=new THREE.Points(pg,pm);
+        content.add(neb);S.nebulae[ci]=pm;
+        const lbl=makeLabel((c.title||('cluster '+ci)).toUpperCase(),KG_PALETTE[ci%KG_PALETTE.length],0.105);
+        lbl.position.set(cx,cy+spread+11,cz);
+        content.add(lbl);S.labels[ci]=lbl.material;
+      });
+      S.centers=centers;
+
+      // — entrance schedule —
+      if(opts&&opts.instant){entranceT0=-2;S.nebulae.forEach(m=>{if(m)m.opacity=0.1});S.labels.forEach(m=>{if(m)m.opacity=0.8})}
+      else{
+        entranceT0=clock.getElapsedTime();
+        const order=comms.map((c,ci)=>ci).filter(ci=>centers[ci])
+          .sort((a,b)=>(comms[b].size||0)-(comms[a].size||0));
+        igniteOrder=order.map((ci,i)=>({ci,start:2.0+i*0.22}));
+        cam.r=760;cam.theta=0.6;cam.phi=1.15;cam.target.set(0,0,0);
+        camGoal.r=Math.max(190,(data.layout&&data.layout.radius||150)*1.45);
+        camGoal.theta=1.5;camGoal.phi=1.05;camGoal.target.set(0,0,0);
+        idleSpin=true;userTouched=false;
+      }
+      S.highlight=null;S.applyColors=applyColors;
+      applyCam();
+    };
+
+    // Recolor instances for hover/search state (only when state changes).
+    const applyColors=()=>{
+      const mesh=S.mesh;if(!mesh)return;
+      const hl=S.highlight,hov=S.hoverSet;
+      const c=new THREE.Color();
+      for(let i=0;i<S.entities.length;i++){
+        c.setRGB(S.baseColor[i*3],S.baseColor[i*3+1],S.baseColor[i*3+2]);
+        if(hl&&hl.size){
+          if(hl.has(S.entities[i].id))c.multiplyScalar(1.5);
+          else c.multiplyScalar(0.16);
+        }
+        if(hov&&hov.has(i))c.multiplyScalar(1.6);
+        mesh.setColorAt(i,c);
+      }
+      if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+    };
+    S.setHighlight=(set)=>{S.highlight=set;if(entranceT0<-1||clock.getElapsedTime()-entranceT0>4.6)applyColors()};
+
+    // ── data load ────────────────────────────────────────────
+    const loadGraph=(community,opts)=>{
+      setStatus('loading');
+      const url='/api/knowledge-graph/graph'+(community!=null?('?community='+encodeURIComponent(community)):'');
+      apiFetch(url).then(r=>r.json()).then(d=>{
+        if(disposed)return;
+        if(d.status!=='ok'){setStatus('error');return}
+        if(!(d.entities||[]).length){setStatus('empty');return}
+        if(community==null&&d.entities.length>KG_LOD_THRESHOLD){
+          setLodMode(true);buildSuperNodes(d);setStatus('ready');
+        } else {
+          setLodMode(false);buildScene(d,opts);setStatus('ready');
+        }
+        setStats({nodes:d.entities.length,edges:(d.relationships||[]).length,comms:(d.communities||[]).length});
+      }).catch(()=>{if(!disposed)setStatus('error')});
+    };
+    S.loadGraph=loadGraph;
+
+    // Community-LOD: one bright super-node per community (spec §8 lever).
+    const buildSuperNodes=(data)=>{
+      disposeContent();
+      const comms=data.communities||[];
+      S.entities=[];S.superComms=comms;
+      const n=comms.length;
+      const geo=new THREE.SphereGeometry(1,18,14);
+      const mat=new THREE.MeshBasicMaterial({transparent:true,opacity:0.95});
+      const mesh=new THREE.InstancedMesh(geo,mat,n);
+      mesh.frustumCulled=false;
+      const dummy=new THREE.Object3D();
+      const centers=(data.layout&&data.layout.community_centers)||{};
+      comms.forEach((c,i)=>{
+        const p=centers[String(c.community)]||[0,0,0];
+        dummy.position.set(p[0],p[1],p[2]);
+        dummy.scale.setScalar(4+Math.log2(1+(c.size||1))*3.2);
+        dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+        mesh.setColorAt(i,commColor(i));
+        const lbl=makeLabel((c.title||'').toUpperCase()+' · '+(c.size||0),KG_PALETTE[i%KG_PALETTE.length],0.16);
+        lbl.position.set(p[0],p[1]+16,p[2]);lbl.material.opacity=0.85;
+        content.add(lbl);
+      });
+      if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+      content.add(mesh);S.superMesh=mesh;S.mesh=null;
+      entranceT0=-2;applyCam();
+    };
+
+    // ── interaction ──────────────────────────────────────────
+    let dragging=false,moved=0,px=0,py=0;
+    const onDown=(e)=>{dragging=true;moved=0;px=e.clientX;py=e.clientY;renderer.domElement.style.cursor='grabbing'};
+    const onMove=(e)=>{
+      const rect=renderer.domElement.getBoundingClientRect();
+      pointer.x=((e.clientX-rect.left)/rect.width)*2-1;
+      pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;
+      if(dragging){
+        const dx=e.clientX-px,dy=e.clientY-py;px=e.clientX;py=e.clientY;moved+=Math.abs(dx)+Math.abs(dy);
+        camGoal.theta-=dx*0.0055;camGoal.phi=Math.max(0.15,Math.min(3.0,camGoal.phi-dy*0.0055));
+        idleSpin=false;userTouched=true;
+      }
+      S.pointerDirty=true;
+    };
+    const onUp=(e)=>{
+      renderer.domElement.style.cursor='grab';
+      const wasDrag=moved>6;dragging=false;
+      if(wasDrag)return;
+      // click-pick
+      raycaster.setFromCamera(pointer,camera);
+      if(S.superMesh){
+        const hit=raycaster.intersectObject(S.superMesh);
+        if(hit.length){const c=S.superComms[hit[0].instanceId];setFocusComm(c.community);loadGraph(c.community);return}
+      }
+      if(!S.mesh)return;
+      const hits=raycaster.intersectObject(S.mesh);
+      if(hits.length){
+        const ent=S.entities[hits[0].instanceId];
+        setSelected(ent);
+        flyTo(ent);
+      } else setSelected(null);
+    };
+    const onDbl=()=>{
+      raycaster.setFromCamera(pointer,camera);
+      const hits=S.mesh?raycaster.intersectObject(S.mesh):[];
+      const ent=hits.length?S.entities[hits[0].instanceId]:S.lastHoverEnt;
+      if(ent)openWikiPage(ent);
+    };
+    const onWheel=(e)=>{e.preventDefault();camGoal.r=Math.max(40,Math.min(1200,camGoal.r*(1+e.deltaY*0.0011)));idleSpin=false;userTouched=true};
+    const flyTo=(ent)=>{
+      camGoal.target.set(ent.x,ent.y,ent.z);
+      camGoal.r=Math.max(60,cam.r*0.45);
+      idleSpin=false;
+    };
+    S.flyTo=flyTo;
+    // Debug/test hook: project entity i to screen coords (used by smoke tests).
+    window.__kgPick=(i)=>{
+      const e=S.entities&&S.entities[i];if(!e)return null;
+      const v=new THREE.Vector3(e.x,e.y,e.z);content.localToWorld(v);v.project(camera);
+      const r=renderer.domElement.getBoundingClientRect();
+      return {x:r.x+(v.x*0.5+0.5)*r.width,y:r.y+(-v.y*0.5+0.5)*r.height,id:e.id,title:e.title,behind:v.z>1};
+    };
+    renderer.domElement.addEventListener('pointerdown',onDown);
+    window.addEventListener('pointermove',onMove);
+    window.addEventListener('pointerup',onUp);
+    renderer.domElement.addEventListener('dblclick',onDbl);
+    renderer.domElement.addEventListener('wheel',onWheel,{passive:false});
+
+    // ── resize ───────────────────────────────────────────────
+    const resize=()=>{
+      const w=mount.clientWidth||10,h=mount.clientHeight||10;
+      camera.aspect=w/h;camera.updateProjectionMatrix();
+      renderer.setSize(w,h,false);
+      if(composer)composer.setSize(w,h);else buildComposer(w,h);
+    };
+    const ro=new ResizeObserver(resize);ro.observe(mount);resize();
+
+    // ── SSE live events ──────────────────────────────────────
+    let es=null;
+    try{
+      es=new EventSource('/api/knowledge-graph/events');
+      es.onmessage=(ev)=>{
+        try{
+          const msg=JSON.parse(ev.data);
+          if(msg.type==='reindexed')loadGraph(S.focus,{instant:true});
+          else if(msg.type==='node_ignited'){
+            const e=S.entById&&S.entById[msg.id];
+            if(e)pulses.push({idx:e.__idx,t0:clock.getElapsedTime()});
+            else loadGraph(S.focus,{instant:true});
+          }
+        }catch(x){}
+      };
+      es.onerror=()=>{};
+    }catch(x){}
+
+    // ── animation loop ───────────────────────────────────────
+    const easeIO=(t)=>t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+    let frames=0,lastFpsT=performance.now(),slowStreak=0;
+    const animate=()=>{
+      if(disposed)return;
+      S.raf=requestAnimationFrame(animate);
+      const dt=Math.min(clock.getDelta(),0.1);
+      const t=clock.getElapsedTime();
+
+      // camera easing toward goal
+      const k=1-Math.pow(0.0015,dt);
+      cam.r+=(camGoal.r-cam.r)*k;
+      cam.theta+=(camGoal.theta-cam.theta)*k;
+      cam.phi+=(camGoal.phi-cam.phi)*k;
+      cam.target.lerp(camGoal.target,k);
+
+      // entrance: fly-in + sequential ignition
+      if(entranceT0>=0){
+        const et=t-entranceT0;
+        if(et<2.4){const p=easeIO(Math.min(1,et/2.4));cam.r=760+(camGoal.r-760)*p;cam.theta=0.6+(camGoal.theta-0.6)*p}
+        const mesh=S.mesh,dark=new THREE.Color(0x061018),c=new THREE.Color();
+        if(mesh){
+          let dirty=false;
+          igniteOrder.forEach(({ci,start})=>{
+            const lp=(et-start)/0.65;
+            if(lp<0)return;
+            const p=Math.min(1,lp),pe=easeIO(p);
+            for(let i=0;i<S.entities.length;i++){
+              if(S.entities[i].__ci!==ci)continue;
+              c.setRGB(S.baseColor[i*3],S.baseColor[i*3+1],S.baseColor[i*3+2]);
+              const flash=p<0.45?(1+1.3*Math.sin(Math.PI*p/0.45)):1;
+              c.lerpColors(dark,c,pe).multiplyScalar(flash);
+              mesh.setColorAt(i,c);dirty=true;
+            }
+            if(S.nebulae[ci])S.nebulae[ci].opacity=0.1*pe;
+            if(S.labels[ci])S.labels[ci].opacity=0.85*pe;
+          });
+          if(dirty&&mesh.instanceColor)mesh.instanceColor.needsUpdate=true;
+        }
+        if(S.edgeMat){const ep=Math.min(1,Math.max(0,(et-2.6)/1.6));S.edgeMat.opacity=0.55*easeIO(ep)}
+        if(et>2.0+igniteOrder.length*0.22+1.8){entranceT0=-2;applyColors()}
+      }
+
+      // idle spin until first interaction
+      if(idleSpin&&!userTouched)camGoal.theta+=dt*0.045;
+      if(S.starfield)S.starfield.rotation.y+=dt*0.004;
+
+      // ignite pulses (live learning events)
+      if(pulses.length&&S.mesh){
+        const dummy=new THREE.Object3D();
+        pulses=pulses.filter(p=>{
+          const age=t-p.t0,e=S.entities[p.idx];
+          if(!e)return false;
+          const s=S.baseScale[p.idx]*(age<1.2?1+2.4*Math.sin(Math.PI*Math.min(1,age/1.2)):1);
+          dummy.position.set(e.x,e.y,e.z);dummy.scale.setScalar(s);dummy.updateMatrix();
+          S.mesh.setMatrixAt(p.idx,dummy.matrix);
+          S.mesh.instanceMatrix.needsUpdate=true;
+          return age<1.2;
+        });
+      }
+
+      // hover raycast (only when pointer moved)
+      if(S.pointerDirty&&S.mesh&&entranceT0<-1){
+        S.pointerDirty=false;
+        raycaster.setFromCamera(pointer,camera);
+        const hits=raycaster.intersectObject(S.mesh);
+        if(hits.length){
+          const idx=hits[0].instanceId,ent=S.entities[idx];
+          if(S.lastHoverIdx!==idx){
+            S.lastHoverIdx=idx;S.lastHoverEnt=ent;
+            const nb=new Set([idx]);
+            (S.relationships||[]).forEach(r=>{
+              if(r.source===ent.id&&S.entById[r.target])nb.add(S.entById[r.target].__idx);
+              if(r.target===ent.id&&S.entById[r.source])nb.add(S.entById[r.source].__idx);
+            });
+            S.hoverSet=nb;applyColors();
+            setHover({title:ent.title,section:ent.section||'',degree:ent.degree});
+          }
+          renderer.domElement.style.cursor='pointer';
+        } else if(S.lastHoverIdx!==undefined){
+          S.lastHoverIdx=undefined;S.lastHoverEnt=null;S.hoverSet=null;applyColors();
+          setHover(null);renderer.domElement.style.cursor=dragging?'grabbing':'grab';
+        }
+      }
+
+      applyCam();
+      if(composer&&bloomOn)composer.render();else renderer.render(scene,camera);
+
+      // fps meter + graceful degradation
+      frames++;
+      const now=performance.now();
+      if(now-lastFpsT>=1000){
+        const f=Math.round(frames*1000/(now-lastFpsT));
+        frames=0;lastFpsT=now;
+        setFps(f);window.__kgFps=f;
+        if(f<28){slowStreak++;if(slowStreak===3){
+          if(bloomOn){bloomOn=false}
+          else renderer.setPixelRatio(1);
+        }}else slowStreak=0;
+      }
+    };
+    animate();
+    loadGraph(null);
+    S.focus=null;
+
+    return ()=>{
+      disposed=true;
+      cancelAnimationFrame(S.raf);
+      ro.disconnect();
+      if(es){try{es.close()}catch(x){}}
+      renderer.domElement.removeEventListener('pointerdown',onDown);
+      window.removeEventListener('pointermove',onMove);
+      window.removeEventListener('pointerup',onUp);
+      renderer.domElement.removeEventListener('dblclick',onDbl);
+      renderer.domElement.removeEventListener('wheel',onWheel);
+      disposeContent();
+      scene.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{if(m.map)m.map.dispose();m.dispose()})}});
+      renderer.dispose();
+      try{mount.removeChild(renderer.domElement)}catch(x){}
+    };
+  },[]);
+
+  // focus-community change from LOD click
+  useEffect(()=>{
+    const S=kgRef.current;
+    if(S.loadGraph&&focusComm!=null){S.focus=focusComm}
+  },[focusComm]);
+
+  const reindex=()=>{
+    apiFetch('/api/knowledge-graph/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:'A'})})
+      .then(r=>r.json()).then(()=>{const S=kgRef.current;S.loadGraph&&S.loadGraph(S.focus||null)}).catch(()=>{});
+  };
+
+  return(<div style={{display:'flex',flexDirection:'column',height:'100%',gap:6}}>
+    {/* HUD bar */}
+    <div style={{display:'flex',gap:8,alignItems:'center'}}>
+      <input value={searchQ} onChange={e=>{setSearchQ(e.target.value);runSearch(e.target.value)}}
+        placeholder="🔭 Light up a constellation..."
+        style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(170,120,255,0.25)',borderRadius:6,padding:'6px 10px',color:'#ddd',fontSize:12,fontFamily:'Inter',outline:'none'}}/>
+      {focusComm!=null&&<button className="btn" style={{fontSize:11,padding:'4px 9px'}}
+        onClick={()=>{setFocusComm(null);const S=kgRef.current;S.focus=null;S.loadGraph(null,{instant:true})}}>← all constellations</button>}
+      <button className="btn" title="Rebuild the graph from the wiki" style={{fontSize:11,padding:'4px 9px'}} onClick={reindex}>↻</button>
+      {stats&&<span style={{fontSize:11,color:'#8fa8c8',fontFamily:'JetBrains Mono',whiteSpace:'nowrap'}}>
+        ★ {stats.nodes} · ─ {stats.edges} · ☁ {stats.comms} · {fps} fps</span>}
+    </div>
+
+    {/* search hits */}
+    {searchHits.length>0&&<div style={{maxHeight:110,overflowY:'auto',border:'1px solid rgba(170,120,255,0.2)',borderRadius:6,background:'rgba(10,5,25,0.5)',padding:4}}>
+      {searchHits.map(h=>(<div key={h.id} style={{padding:'4px 8px',cursor:'pointer',fontSize:12,color:'#cfe6ff',display:'flex',justifyContent:'space-between',gap:8}}
+        onClick={()=>{const S=kgRef.current;S.flyTo&&S.flyTo(h);setSelected(h)}}>
+        <span>✦ {h.title}</span><span style={{color:'#667',fontSize:11}}>{h.section}</span>
+      </div>))}
+    </div>}
+
+    {/* 3D canvas */}
+    <div ref={mountRef} style={{flex:1,minHeight:0,position:'relative',borderRadius:8,overflow:'hidden',border:'1px solid rgba(90,60,160,0.35)'}}>
+      {status==='loading'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#8a7bd8',fontFamily:'Orbitron',fontSize:13,letterSpacing:'.15em',zIndex:2}}>CHARTING THE GALAXY…</div>}
+      {status==='empty'&&<div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',gap:10,alignItems:'center',justifyContent:'center',color:'#8fa8c8',fontSize:13,zIndex:2}}>
+        <div>The knowledge graph is empty — write some wiki pages first.</div>
+        <button className="btn" onClick={reindex}>Build index</button>
+      </div>}
+      {status==='error'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#ff7098',fontSize:13,zIndex:2}}>Knowledge graph unavailable.</div>}
+      {hover&&<div style={{position:'absolute',left:12,bottom:12,background:'rgba(5,8,20,0.85)',border:'1px solid rgba(0,212,255,0.3)',borderRadius:6,padding:'6px 10px',zIndex:3,pointerEvents:'none'}}>
+        <div style={{fontSize:12,color:'#00d4ff',fontFamily:'Orbitron'}}>{hover.title}</div>
+        <div style={{fontSize:11,color:'#8fa8c8'}}>{hover.section||'core'} · {hover.degree} links · double-click to open</div>
+      </div>}
+      {lodMode&&<div style={{position:'absolute',top:10,left:12,fontSize:11,color:'#c9a8ff',fontFamily:'Orbitron',letterSpacing:'.1em',zIndex:3}}>CONSTELLATION VIEW — click a cluster to enter</div>}
+    </div>
+
+    {/* selected node panel */}
+    {selected&&<div style={{display:'flex',gap:10,alignItems:'center',border:'1px solid rgba(0,212,255,0.22)',borderRadius:6,background:'rgba(0,212,255,0.04)',padding:'7px 10px'}}>
+      <div style={{flex:1,minWidth:0}}>
+        <span style={{fontSize:13,color:'#00d4ff',fontFamily:'Orbitron'}}>{selected.title}</span>
+        <span style={{fontSize:11,color:'#8fa8c8',marginLeft:10}}>{selected.description}</span>
+      </div>
+      {selected.type!=='soul'&&<button className="btn" style={{fontSize:11,padding:'4px 10px',color:'#00ff80',borderColor:'rgba(0,255,128,0.4)',whiteSpace:'nowrap'}}
+        onClick={()=>openWikiPage(selected)}>📖 Open page</button>}
+      <button className="btn" style={{fontSize:11,padding:'4px 8px'}} onClick={()=>{setSelected(null);const S=kgRef.current;S.setHighlight&&S.setHighlight(null)}}>✕</button>
+    </div>}
+  </div>);
+}
+
 function WikiWS(){
   const[struct,setStruct]=useState(null);
   const[recent,setRecent]=useState([]);
@@ -804,6 +1384,10 @@ function WikiWS(){
   };
 
   const loadPath=(p)=>{const [s,...rest]=p.split('/');const fn=rest.join('/');load(s,fn)};
+
+  // Deep-link target: fridayNavigate({workspace:'wiki', path}) — used by the
+  // Knowledge Galaxy's click-to-open and by chat navigate actions.
+  useNavTarget('wiki',(t)=>{if(t&&t.path)loadPath(t.path)});
 
   const beginEdit=()=>{setDraft(content||'');setEditing(true)};
   const cancelEdit=()=>{setEditing(false);setDraft('')};
@@ -863,6 +1447,9 @@ function WikiWS(){
     <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
       <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="🔍 Search wiki..."
         style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:6,padding:'6px 10px',color:'#ddd',fontSize:12,fontFamily:'Inter',outline:'none'}}/>
+      <button className="btn" title="Explore the wiki as a 3D knowledge galaxy"
+        style={{fontSize:11,padding:'5px 10px',color:'#c996ff',borderColor:'rgba(170,120,255,0.45)',whiteSpace:'nowrap',textShadow:'0 0 8px rgba(170,120,255,0.5)'}}
+        onClick={()=>{if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'knowledge'});else fridayNavigate({workspace:'knowledge'})}}>🌌 Galaxy</button>
       {pending.length>0&&<span style={{fontSize:11,color:'#f59e0b',fontFamily:'Orbitron',letterSpacing:'.05em'}}>{pending.length} pending</span>}
     </div>
     {toast&&<div style={{fontSize:11,color:'#00d4ff',marginBottom:6,fontFamily:'JetBrains Mono'}}>✓ {toast}</div>}
@@ -7319,6 +7906,70 @@ function SettingsTabAbout(){
     </StSection>
   </div>;
 }
+function SettingsTabKnowledge({s,save}){
+  const kg=s.knowledge_graph||{};
+  const src=kg.index_sources||{wiki:true,conversations:true,cognitive:true,soul:true};
+  const patch=(p)=>save({knowledge_graph:{...kg,index_sources:src,...p}});
+  const patchSrc=(k,v)=>save({knowledge_graph:{...kg,index_sources:{...src,[k]:v}}});
+  const[busy,setBusy]=useState(false);
+  const[note,setNote]=useState('');
+  const reindex=async(tier)=>{
+    setBusy(true);setNote('');
+    try{const r=await apiFetch('/api/knowledge-graph/reindex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier})});
+      const d=await r.json();
+      setNote(tier==='A'?`Rebuilt: ${d.entities||0} nodes, ${d.relationships||0} links`:(d.status==='started'?'Semantic index running in the background — watch the Knowledge workspace.':d.message||d.status))}
+    catch(e){setNote('Reindex failed')}
+    setBusy(false);
+  };
+  const row={display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'};
+  const lbl={fontSize:12,color:'#ccc'};
+  const sub={fontSize:11,color:'#778',marginTop:2};
+  const sel={background:'rgba(0,0,0,0.4)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:5,color:'#ddd',fontSize:12,padding:'4px 8px'};
+  return(<div style={{maxWidth:620}}>
+    <div style={{fontFamily:'Orbitron',fontSize:14,color:'#c996ff',marginBottom:4}}>🌌 KNOWLEDGE GRAPH</div>
+    <div style={{fontSize:11,color:'#889',marginBottom:14}}>Friday's second brain: the wiki as a linked galaxy plus an LLM-extracted semantic layer. The wiki markdown is always the source of truth — the graph is derived and can be rebuilt at any time.</div>
+
+    <div style={row}>
+      <div><div style={lbl}>Semantic indexing</div><div style={sub}>Where Tier-B LLM extraction runs. Local only = nothing ever leaves this machine.</div></div>
+      <select style={sel} value={kg.indexing_mode||'local_only'} onChange={e=>patch({indexing_mode:e.target.value})}>
+        <option value="local_only">Local only (private, default)</option>
+        <option value="gated_cloud">Gated cloud (public content only, sealed)</option>
+      </select>
+    </div>
+
+    <div style={row}>
+      <div><div style={lbl}>Nightly reindex</div><div style={sub}>03:30, right after memory dreaming, so new facts join the galaxy.</div></div>
+      <input type="checkbox" checked={kg.nightly_reindex!==false} onChange={e=>patch({nightly_reindex:e.target.checked})}/>
+    </div>
+
+    <div style={row}>
+      <div><div style={lbl}>Constellation grouping</div><div style={sub}>How pages cluster: by wiki section, by link structure, or automatic.</div></div>
+      <select style={sel} value={kg.community_mode||'auto'} onChange={e=>patch({community_mode:e.target.value})}>
+        <option value="auto">Auto</option>
+        <option value="section">Wiki sections</option>
+        <option value="links">Link structure</option>
+      </select>
+    </div>
+
+    <div style={{...row,borderBottom:'none'}}>
+      <div style={lbl}>Index sources</div>
+      <div style={{display:'flex',gap:14}}>
+        {[['wiki','Wiki'],['soul','SOUL.md'],['conversations','Conversations'],['cognitive','Memories']].map(([k,label])=>(
+          <label key={k} style={{fontSize:11,color:'#aab',display:'flex',gap:5,alignItems:'center'}}>
+            <input type="checkbox" checked={src[k]!==false} onChange={e=>patchSrc(k,e.target.checked)}/>{label}
+          </label>
+        ))}
+      </div>
+    </div>
+
+    <div style={{display:'flex',gap:8,marginTop:16,alignItems:'center'}}>
+      <button className="btn" disabled={busy} onClick={()=>reindex('A')}>↻ Rebuild structure</button>
+      <button className="btn" disabled={busy} style={{color:'#c996ff',borderColor:'rgba(170,120,255,0.4)'}} onClick={()=>reindex('B')}>🧠 Run semantic index</button>
+      {note&&<span style={{fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono'}}>{note}</span>}
+    </div>
+  </div>);
+}
+
 function SettingsWS(){
   // Deep-linkable tab: the top-bar model menu's "Browse All Models" opens
   // Settings straight onto Providers. The global covers a window that is
@@ -7336,6 +7987,7 @@ function SettingsWS(){
     {id:'providers',label:'Providers',ico:'🧩'},
     {id:'voice',label:'Voice',ico:'🎤'},
     {id:'privacy',label:'Privacy & Security',ico:'🔒'},
+    {id:'knowledge',label:'Knowledge Graph',ico:'🌌'},
     {id:'federation',label:'Federation',ico:'🌐'},
     {id:'economy',label:'Economy',ico:'💎'},
     {id:'orchestrator',label:'Orchestrator',ico:'⚙️'},
@@ -7360,6 +8012,7 @@ function SettingsWS(){
         {tab==='providers'&&<SettingsTabProviders s={s} save={save}/>}
         {tab==='voice'&&<SettingsTabVoice s={s} save={save}/>}
         {tab==='privacy'&&<SettingsTabPrivacy s={s} save={save}/>}
+        {tab==='knowledge'&&<SettingsTabKnowledge s={s} save={save}/>}
         {tab==='federation'&&<SettingsTabFederation/>}
         {tab==='economy'&&<SettingsTabEconomy/>}
         {tab==='orchestrator'&&<SettingsTabOrchestrator/>}
@@ -9185,7 +9838,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,settings:<SettingsWS/>};
+  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;

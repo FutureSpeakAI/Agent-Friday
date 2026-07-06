@@ -7,6 +7,55 @@ Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
 ---
 
+## [Unreleased]
+
+### Knowledge System Overhaul — the wiki becomes a galaxy
+
+`docs/KNOWLEDGE_SYSTEM_SPEC.md` (Opus 4.8 STORM spec): a two-tier knowledge
+graph over the wiki, SOUL.md, conversation memory, and cognitive memory,
+plus a 3D "explore your second brain" workspace.
+
+- **Tier A — structural graph** (`services/knowledge_graph/`): the wiki *is*
+  the graph. `[[wikilink]]`/markdown-link/title-mention edges (mention pass
+  is one combined-alternation scan, O(corpus bytes)), communities via
+  Leiden→greedy label-propagation fallback (ported from obsidian-wiki, MIT)
+  with section-aware auto mode, deterministic server-side 3D layout
+  (Fibonacci shells + spring relaxation), god-nodes/dead-ends/surprising-
+  connections analysis, and a zero-LLM structural query router with
+  `should_read` shortlists. Path-qualified page keys (colliding stems in
+  different sections both survive). Rebuilds on wiki save (~200 ms today).
+- **Tier B — GraphRAG semantic index** (`indexer.py`, `retrieval.py`,
+  `prompts/` vendored verbatim from graphrag-workbench, MIT): entity +
+  relationship extraction, description merging, community reports, local
+  MiniLM embeddings; local/global/drift search with an auto-router.
+  **Local-only by default** — every LLM call rides `_generate_text` behind
+  the egress gate; classify-before-extract pins TIER_2/3 chunks to local
+  models in every mode; a failed gate self-test disables cloud indexing;
+  TIER_2/3-derived artifacts are vault-encrypted at rest (fail-closed when
+  no key). Adversarial suite: `tests/security/test_kg_egress_adversarial.py`.
+- **Knowledge Galaxy workspace** (`KnowledgeGraphWS`, dock: 🌌 Knowledge,
+  plus a Galaxy button in the Wiki header): vanilla Three.js r128 —
+  InstancedMesh stars, merged LineSegments filaments, soft-particle nebulae
+  with community labels, UnrealBloom; cinematic entrance (camera fly-in,
+  constellations igniting in sequence, edges weaving in), hover-highlight-
+  neighbors, double-click → the page opens in Wiki, search lights up
+  constellations, live SSE ignite events, fps meter with auto-degradation,
+  community-LOD super-nodes above 2.5k nodes. Measured 39–40 fps at 2,000
+  nodes / 6,000 edges under headless ANGLE; the full flow verified with all
+  external requests dead (offline-first: fonts + MediaPipe now load async).
+- **Flask API** (`routes/knowledge_graph.py`): summary / graph / node /
+  neighbors / query / search / reindex (+status) / SSE events.
+- **Agent tools**: `knowledge_query`, `knowledge_related`,
+  `knowledge_communities` (Ring 0, structural, offline).
+- **Integration**: graph-aware AUTO-CONTEXT injection; memory-dreaming and
+  learning-loop post-steps ignite new facts/skills as graph nodes live;
+  nightly 03:30 reindex job (after dreaming); Settings → Knowledge Graph
+  tab (indexing mode, sources, grouping, manual reindex).
+- Tests: 78 new (unit/api/security) + `tests/knowledge_galaxy.spec.ts`
+  (Playwright: mount, data contract, fps floor, click→wiki).
+
+---
+
 ## [5.3.0] - 2026-07-06
 
 ### Content Pipeline — Friday becomes a publishing platform

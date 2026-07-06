@@ -311,7 +311,27 @@ def promote(threshold: float = _PROMOTE_THRESHOLD, min_trials: int = 3,
                     _set_status(sid, "retired")
                     active_count -= 1
                     changes.append({"skill_id": sid, "to": "retired", "score": sc})
-            return changes
+        # Post-step (outside the lock): a newly active skill becomes a
+        # knowledge-graph node and ignites live in the 3D explorer.
+        for ch in changes:
+            if ch.get("to") != "active":
+                continue
+            try:
+                conn = _connect()
+                row = conn.execute(
+                    "SELECT name, pattern, task_type FROM skills WHERE skill_id=?",
+                    (ch["skill_id"],)).fetchone()
+                conn.close()
+                if row:
+                    from agent_friday.services.knowledge_graph.integration import (
+                        ingest_fact)
+                    ingest_fact(f"Learned skill ({row[2]}): {row[0]} — {row[1]}",
+                                source_kind="cognitive",
+                                source_key=f"skill:{ch['skill_id']}",
+                                category="skill")
+            except Exception:
+                pass
+        return changes
     except Exception:
         return []
 

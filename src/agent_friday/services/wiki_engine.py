@@ -115,6 +115,11 @@ def wiki_write_text(path, text: str) -> None:
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_bytes(data)
     tmp.replace(p)
+    try:
+        from agent_friday.services.knowledge_graph import mark_wiki_dirty
+        mark_wiki_dirty(f"write:{p.name}")
+    except Exception:
+        pass
 
 
 def _safe_wiki_path(rel):
@@ -180,6 +185,11 @@ def _delete_wiki_file(rel):
         print(f"  [WIKI] Mirror delete failed for {rel}: {e}")
     if deleted:
         _log_context("wiki_delete", {"file": rel})
+        try:
+            from agent_friday.services.knowledge_graph import mark_wiki_dirty
+            mark_wiki_dirty(f"delete:{rel}")
+        except Exception:
+            pass
     return deleted
 
 

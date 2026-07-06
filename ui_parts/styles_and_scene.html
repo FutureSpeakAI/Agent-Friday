@@ -37,10 +37,13 @@
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
-    <!-- MediaPipe -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" integrity="sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js" integrity="sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" integrity="sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2" crossorigin="anonymous"></script>
+    <!-- MediaPipe — async so a dead/stalling CDN never blocks first paint.
+         The Hands/FaceDetection/Camera globals are only instantiated lazily
+         when the user enables face/hand tracking, so load order is free; if
+         the fetch fails, tracking is unavailable but the app is unaffected. -->
+    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" integrity="sha384-q1KhAZhJcJXr3zfC3Tz07pBqQSabwFIZhXlmlUAB8s0zk4ETWERkIKGBCFQ5Jc3e" crossorigin="anonymous"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4.1646425229/face_detection.js" integrity="sha384-oO3wOXOXIGBvHXjKwoF69nDtnGjqWIBuT+yCjjIAZmDek7qgjztCwK+WjCuL9O0a" crossorigin="anonymous"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" integrity="sha384-oHwoZ9HyKv5ark5VOH+XWdbNfmhYtptAOBuV8plz6mAfXvTA6d8fULuYllWouEK2" crossorigin="anonymous"></script>
 
     <!-- Three.js + Post-Processing — vendored (static/vendor/, SRI-verified
          against the pinned r128 CDN builds) so the holo scene renders offline. -->
