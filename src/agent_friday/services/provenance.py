@@ -348,6 +348,82 @@ def manifest_for_file(artifact_path) -> Optional[Dict[str, Any]]:
     return get_manifest(ch) if ch else None
 
 
+def add_publication(content_hash: str, info: Dict[str, Any]) -> Dict[str, Any]:
+    """Sign a publication event onto an asset's manifest history (spec §7.7.2).
+
+    Publication extends the chain rather than re-signing the artifact: the
+    entry ({platform, post_url, platform_post_id, target_id, published_at})
+    is signed with the same IntegrityEngine payload signing sign_manifest()
+    uses, appended to the sidecar's `publications` history when a manifest
+    exists, and always chained into the ledger — the local ledger, not the
+    platform, is the source of truth. Envelope; never raises."""
+    try:
+        ch = str(content_hash or "")
+        if not ch:
+            return {"ok": False, "error": "content_hash required"}
+        info = dict(info or {})
+        entry = {
+            "type": "publication",
+            "content_hash": ch,
+            "platform": info.get("platform"),
+            "post_url": info.get("post_url"),
+            "platform_post_id": info.get("platform_post_id"),
+            "target_id": info.get("target_id"),
+            "published_at": (info.get("published_at")
+                             or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
+        }
+        payload = _deterministic(entry)
+        eng = _integrity()
+        sig = None
+        if eng is not None:
+            try:
+                sig = eng.sign_payload(payload)
+            except Exception:
+                sig = None
+        entry["signature"] = {
+            "alg": "ed25519",
+            "pubkey": agent_id(),
+            "value": sig or "ed25519_unavailable",
+        }
+        # Sidecar: append to the manifest's publication history when we hold one.
+        in_manifest = False
+        try:
+            manifest = get_manifest(ch)
+            if manifest is not None:
+                pubs = manifest.get("publications")
+                if not isinstance(pubs, list):
+                    pubs = []
+                pubs.append(entry)
+                manifest["publications"] = pubs
+                _sidecar_path(ch).write_text(
+                    json.dumps(manifest, indent=2, ensure_ascii=False, default=str),
+                    encoding="utf-8")
+                in_manifest = True
+        except Exception:
+            in_manifest = False
+        # Ledger: always hash-chain the event (tamper-evident local record).
+        try:
+            PROVENANCE_DIR.mkdir(parents=True, exist_ok=True)
+            with _LOCK:
+                prev = _ledger_tail_hash()
+                line = {
+                    "ts": entry["published_at"],
+                    "event": "publication",
+                    "content_hash": ch,
+                    "platform": entry["platform"],
+                    "post_url": entry["post_url"],
+                    "prev": prev,
+                }
+                with LEDGER_FILE.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(line, default=str) + "\n")
+        except Exception as e:
+            return {"ok": False, "error": f"ledger append failed: {e}",
+                    "entry": entry, "in_manifest": in_manifest}
+        return {"ok": True, "entry": entry, "in_manifest": in_manifest}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  VERIFY + TRACE
 # ═══════════════════════════════════════════════════════════════════════════

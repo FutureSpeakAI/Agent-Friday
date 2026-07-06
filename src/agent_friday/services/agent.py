@@ -2727,6 +2727,466 @@ TOOL_RINGS.update({
     "compare_image_takes":     2,   # calls the Gemini image API (network)
 })
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  CONTENT PIPELINE TOOLS — social publishing from chat/voice (spec §10.2/§11).
+#  Thin wrappers over services.content_pipeline / content_composer plus the
+#  routes-hosted §6.4 optimal-time resolver, so voice and chat drive the same
+#  pipeline with no new privilege surface. All four ride Ring 2 (spec §11 —
+#  same governance as every network tool); the actual publish still runs the
+#  publisher's moderation + egress gates, so nothing ships silently.
+#  Imports stay lazy — the registrations below are data only.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _content_deeplink(tab: str, post_id=None) -> str:
+    """useNavTarget deep link into the Content workspace (Queue/Compose)."""
+    link = f"/?workspace=content&tab={tab}"
+    return f"{link}&post={post_id}" if post_id else link
+
+
+_WHEN_HOUR_WORDS = {"morning": 9, "noon": 12, "midday": 12, "afternoon": 15,
+                    "evening": 18, "tonight": 20, "night": 20}
+_WHEN_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                  "friday": 4, "saturday": 5, "sunday": 6}
+
+
+def _content_parse_when(text, tz_name):
+    """Parse a publish instant: ISO-8601 first, then a small natural-language
+    vocabulary ('tomorrow morning', 'tonight', 'friday 3pm', 'in 2 hours'),
+    interpreted in the post's timezone. Returns a UTC ISO string, or None so
+    the caller falls back to the optimal-time resolver."""
+    from datetime import timezone as _tzu
+    from agent_friday.services import content_pipeline as _cp
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    iso = _cp._to_utc_iso(raw)
+    if iso:
+        return iso
+    s = raw.lower()
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name or _cp._default_timezone())
+    except Exception:
+        tz = _tzu.utc
+    now = datetime.now(tz)
+    m = re.search(r"\bin\s+(\d+)\s*(minute|min|hour|hr|day)s?\b", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        delta = (timedelta(minutes=n) if unit in ("minute", "min")
+                 else timedelta(hours=n) if unit in ("hour", "hr")
+                 else timedelta(days=n))
+        return _cp._to_utc_iso(now + delta)
+    day_offset = None
+    if "day after tomorrow" in s:
+        day_offset = 2
+    elif "tomorrow" in s:
+        day_offset = 1
+    elif "today" in s or "tonight" in s or "this " in s:
+        day_offset = 0
+    weekday = next((v for k, v in _WHEN_WEEKDAYS.items() if k in s), None)
+    hour, minute = None, 0
+    m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", s)
+    if m and (m.group(2) or m.group(3) or re.search(r"\bat\s+\d", s)):
+        hour = int(m.group(1)) % 12 if m.group(3) else int(m.group(1))
+        if m.group(3) == "pm":
+            hour += 12
+        minute = int(m.group(2) or 0)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            hour, minute = None, 0
+    if hour is None:
+        for word, h in _WHEN_HOUR_WORDS.items():
+            if word in s:
+                hour = h
+                break
+    if day_offset is None and weekday is None and hour is None:
+        return None                    # nothing recognized
+    if hour is None:
+        hour = 9                       # bare day word → morning
+    cand = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if weekday is not None:
+        ahead = (weekday - cand.weekday()) % 7
+        if ahead == 0 and cand <= now:
+            ahead = 7
+        cand += timedelta(days=ahead)
+    else:
+        cand += timedelta(days=day_offset or 0)
+        if cand <= now:                # 'this morning' already past → tomorrow
+            cand += timedelta(days=1)
+    return _cp._to_utc_iso(cand)
+
+
+def _content_apply_schedule(post_id, when_text, optimal, tz_name):
+    """Shared create/schedule rail: parse the instant (or resolve the optimal
+    slot), store the ScheduleConfig, and report same-platform conflicts.
+    Returns the schedule_post envelope + {publish_at, timezone, resolved,
+    conflicts, warnings}. Never raises."""
+    try:
+        from agent_friday.services import content_pipeline as _cp
+        # The §6.4 optimal-time resolver + conflict scan live with the routes.
+        from agent_friday.routes import content_pipeline as _croutes
+        got = _cp.get_post(post_id)
+        if not got.get("ok"):
+            return got
+        post = got["post"]
+        platforms = [t.get("platform") for t in (post.get("targets") or [])
+                     if t.get("platform")]
+        tz_name = (tz_name or (post.get("schedule") or {}).get("timezone")
+                   or _cp._default_timezone())
+        warnings = []
+        publish_at = _content_parse_when(when_text, tz_name) if when_text else None
+        resolved = "parsed" if publish_at else "optimal"
+        cs = _croutes._content_settings()
+        if not publish_at:
+            if when_text and not optimal:
+                warnings.append(f"could not parse '{when_text}' — picked the "
+                                "next optimal slot instead")
+            publish_at = _croutes._resolve_optimal(
+                platforms, tz_name, cs["conflict_window_hours"])
+        sched = _cp.new_schedule_config(publish_at=publish_at, tz=tz_name,
+                                        optimal_time=(resolved == "optimal"))
+        res = _cp.schedule_post(post_id, sched)
+        if not res.get("ok"):
+            return res
+        res["publish_at"] = publish_at
+        res["timezone"] = tz_name
+        res["resolved"] = resolved
+        res["conflicts"] = _croutes._find_conflicts(
+            platforms, publish_at, cs["conflict_window_hours"],
+            exclude_post=post_id)
+        res["warnings"] = warnings
+        return res
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _content_coerce_assets(raw):
+    """Creation filenames (or dicts) → AssetRef list."""
+    from agent_friday.services import content_pipeline as _cp
+    out = []
+    for a in (raw or []):
+        if isinstance(a, dict):
+            out.append(_cp.new_asset_ref(a.get("filename") or "",
+                                         a.get("content_hash") or "",
+                                         a.get("kind") or "image",
+                                         a.get("alt_text") or ""))
+        elif a:
+            out.append(_cp.new_asset_ref(str(a)))
+    return out
+
+
+def _tool_content_create_post(inp):
+    """§10.2 voice path: create draft → compose per platform → (optionally)
+    schedule, in one call — answers with the Queue deep link."""
+    from agent_friday.services import content_pipeline as _cp
+    from agent_friday.services import content_composer as _cc
+    inp = inp or {}
+    body = (inp.get("body") or "").strip()
+    if not body:
+        return "content_create_post error: 'body' is required."
+    platforms = [str(p).strip().lower() for p in (inp.get("platforms") or []) if p]
+    if not platforms:
+        return ("content_create_post error: 'platforms' is required, "
+                "e.g. ['linkedin', 'bluesky'].")
+    created = _cp.create_post(
+        title=(inp.get("title") or "").strip(), body=body,
+        assets=_content_coerce_assets(inp.get("assets")),
+        platforms=platforms, tags=list(inp.get("tags") or []),
+        source={"kind": "chat", "ref": ""})
+    if not created.get("ok"):
+        return f"content_create_post error: {created.get('error')}"
+    post = created["post"]
+    warnings = list(created.get("warnings") or [])
+    composed = _cc.adapt(post, platforms=platforms)
+    if composed.get("ok"):
+        warnings += composed.get("warnings") or []
+    else:
+        warnings.append(f"compose failed: {composed.get('error')} — "
+                        "targets keep the canonical body")
+    when = str(inp.get("publish_at") or "").strip()
+    optimal = bool(inp.get("optimal_time"))
+    out = {"status": "ok", "post_id": post["id"], "post_status": "DRAFT",
+           "platforms": platforms,
+           "queue_link": _content_deeplink("queue", post["id"])}
+    if when or optimal:
+        sched = _content_apply_schedule(post["id"], when, optimal,
+                                        inp.get("timezone"))
+        if sched.get("ok"):
+            out["post_status"] = "SCHEDULED"
+            out["publish_at"] = sched.get("publish_at")
+            out["timezone"] = sched.get("timezone")
+            out["time_source"] = sched.get("resolved")
+            warnings += sched.get("warnings") or []
+            if sched.get("conflicts"):
+                warnings.append(f"{len(sched['conflicts'])} same-platform "
+                                "post(s) within the conflict window")
+            out["message"] = (f"Scheduled for {sched.get('publish_at')} "
+                              f"({out['time_source']}) — review or reschedule "
+                              f"in the Queue: {out['queue_link']}")
+        else:
+            warnings.append(f"schedule failed: {sched.get('error')}")
+            out["message"] = ("Draft created and composed, but not scheduled — "
+                              + _content_deeplink("compose", post["id"]))
+    else:
+        out["message"] = ("Draft created and composed per platform. Schedule "
+                          "with content_schedule_post, or review: "
+                          + _content_deeplink("compose", post["id"]))
+    if warnings:
+        out["warnings"] = warnings
+    return json.dumps(out, default=str)
+
+
+def _tool_content_schedule_post(inp):
+    """Schedule/reschedule an existing ContentPost; composes any target that
+    has no adapted body yet, then resolves the instant (parsed or optimal)."""
+    from agent_friday.services import content_pipeline as _cp
+    from agent_friday.services import content_composer as _cc
+    inp = inp or {}
+    post_id = (inp.get("post_id") or "").strip()
+    if not post_id:
+        return "content_schedule_post error: 'post_id' is required."
+    got = _cp.get_post(post_id)
+    if not got.get("ok"):
+        return f"content_schedule_post error: {got.get('error')}"
+    post = got["post"]
+    warnings = []
+    if any(not (t.get("adapted_body") or "")
+           for t in (post.get("targets") or [])
+           if t.get("status") not in _cp.TARGET_TERMINAL):
+        composed = _cc.adapt(post)
+        if composed.get("ok"):
+            warnings += composed.get("warnings") or []
+        else:
+            warnings.append(f"compose failed: {composed.get('error')}")
+    when = str(inp.get("publish_at") or "").strip()
+    res = _content_apply_schedule(
+        post_id, when, bool(inp.get("optimal_time", not when)),
+        inp.get("timezone"))
+    if not res.get("ok"):
+        return f"content_schedule_post error: {res.get('error')}"
+    warnings += res.get("warnings") or []
+    if res.get("conflicts"):
+        warnings.append(f"{len(res['conflicts'])} same-platform post(s) "
+                        "within the conflict window")
+    out = {"status": "ok", "post_id": post_id, "post_status": "SCHEDULED",
+           "publish_at": res.get("publish_at"),
+           "timezone": res.get("timezone"),
+           "time_source": res.get("resolved"),
+           "queue_link": _content_deeplink("queue", post_id),
+           "message": (f"Scheduled for {res.get('publish_at')} "
+                       f"({res.get('resolved')}) — Queue: "
+                       + _content_deeplink("queue", post_id))}
+    if warnings:
+        out["warnings"] = warnings
+    return json.dumps(out, default=str)
+
+
+def _tool_content_post_status(inp):
+    """One post's per-platform delivery status, or (no post_id) the queue
+    overview: upcoming targets, HELD posts awaiting release, recent history."""
+    from agent_friday.services import content_pipeline as _cp
+    inp = inp or {}
+    post_id = (inp.get("post_id") or "").strip()
+    if post_id:
+        got = _cp.get_post(post_id)
+        if not got.get("ok"):
+            return f"content_post_status error: {got.get('error')}"
+        p = got["post"]
+        targets = [{"target_id": t.get("id"), "platform": t.get("platform"),
+                    "format": t.get("format"), "status": t.get("status"),
+                    "publish_at": t.get("publish_at"),
+                    "post_url": t.get("post_url"), "error": t.get("error")}
+                   for t in (p.get("targets") or [])]
+        out = {"status": "ok", "post_id": post_id,
+               "post_status": p.get("status"), "title": p.get("title") or "",
+               "publish_at": (p.get("schedule") or {}).get("publish_at"),
+               "timezone": (p.get("schedule") or {}).get("timezone"),
+               "targets": targets,
+               "queue_link": _content_deeplink("queue", post_id)}
+        held = sum(1 for t in targets if t["status"] == "HELD")
+        if held:
+            out["held_note"] = (f"{held} target(s) HELD — the egress gate "
+                                "flagged possibly-private content; the user "
+                                "must review and release them in the Queue.")
+        return json.dumps(out, default=str)
+    upcoming, held = [], []
+    for st in ("SCHEDULED", "PUBLISHING", "HELD"):
+        for p in (_cp.list_posts(status=st, limit=100).get("posts") or []):
+            for t in (p.get("targets") or []):
+                row = {"post_id": p.get("id"), "title": p.get("title") or "",
+                       "platform": t.get("platform"), "status": t.get("status"),
+                       "publish_at": t.get("publish_at")}
+                if t.get("status") == "HELD":
+                    held.append(row)
+                elif t.get("status") in ("PENDING", "PREPARING", "SENT"):
+                    upcoming.append(row)
+    upcoming.sort(key=lambda r: r.get("publish_at") or "9999")
+    recent = _cp.read_publish_log(limit=10).get("entries") or []
+    return json.dumps({"status": "ok", "upcoming": upcoming[:15], "held": held,
+                       "recent_history": recent,
+                       "queue_link": _content_deeplink("queue")}, default=str)
+
+
+def _tool_content_repurpose(inp):
+    """One piece → a spread of platform-native drafts (§9), each individually
+    editable/schedulable. Source = body text or an existing post."""
+    from agent_friday.services import content_pipeline as _cp
+    from agent_friday.services import content_composer as _cc
+    from agent_friday.routes import content_pipeline as _croutes  # §9.2 spreads
+    inp = inp or {}
+    body = (inp.get("body") or "").strip()
+    title = (inp.get("title") or "").strip()
+    tags = list(inp.get("tags") or [])
+    assets = _content_coerce_assets(inp.get("assets"))
+    src_ref = (inp.get("post_id") or "").strip()
+    if not body and src_ref:
+        got = _cp.get_post(src_ref)
+        if not got.get("ok"):
+            return f"content_repurpose error: {got.get('error')}"
+        src = got["post"]
+        body = (src.get("body") or "").strip()
+        title = title or src.get("title") or ""
+        assets = assets or list(src.get("assets") or [])
+        tags = tags or list(src.get("tags") or [])
+    if not body:
+        return ("content_repurpose error: pass 'body' text or the 'post_id' "
+                "of an existing content post.")
+    spread = [str(p).strip().lower() for p in (inp.get("platforms") or []) if p]
+    if not spread:
+        kinds = [a.get("kind") for a in assets]
+        dominant = ("video" if "video" in kinds else
+                    "image" if "image" in kinds else
+                    "audio" if "audio" in kinds else "text")
+        spread = list(_croutes._DEFAULT_SPREADS[dominant])
+    created = _cp.create_post(
+        title=title, body=body, assets=assets, platforms=spread, tags=tags,
+        source={"kind": "repurpose", "ref": src_ref,
+                "src_kind": "post" if src_ref else "chat"})
+    if not created.get("ok"):
+        return f"content_repurpose error: {created.get('error')}"
+    post = created["post"]
+    warnings = list(created.get("warnings") or [])
+    adapted = _cc.adapt(post, platforms=spread)
+    if adapted.get("ok"):
+        warnings += adapted.get("warnings") or []
+    else:
+        warnings.append(f"compose failed: {adapted.get('error')}")
+    out = {"status": "ok", "post_id": post["id"], "spread": spread,
+           "compose_link": _content_deeplink("compose", post["id"]),
+           "message": (f"Repurposed into {len(spread)} platform-native drafts "
+                       "— each is individually editable before scheduling. "
+                       "Schedule with content_schedule_post when ready.")}
+    if warnings:
+        out["warnings"] = warnings
+    return json.dumps(out, default=str)
+
+
+CLAUDE_TOOLS.extend([
+    {
+        "name": "content_create_post",
+        "description": (
+            "Create a social-media post in the Content pipeline: saves a "
+            "draft, adapts it per platform (voice, char limits, hashtags, "
+            "threads), and optionally schedules it — one call covers 'post "
+            "this to LinkedIn and Bluesky tomorrow morning'. publish_at takes "
+            "ISO-8601 UTC or a natural phrase ('tomorrow morning', 'tonight', "
+            "'friday 3pm'); or set optimal_time to let the best-times engine "
+            "pick the slot. Nothing ships silently — every publish still "
+            "passes moderation and the egress gate (private data → HELD for "
+            "the user's review). Returns the post id and a Queue deep link."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "body": {"type": "string", "description": "The post text (markdown) — the canonical body the composer adapts per platform."},
+                "platforms": {"type": "array", "items": {"type": "string"}, "description": "Target platforms: linkedin, twitter, instagram, youtube, bluesky, mastodon, reddit, substack, medium, tiktok, federation."},
+                "title": {"type": "string", "description": "Optional working title (used by platforms with a title field)."},
+                "publish_at": {"type": "string", "description": "When to publish: ISO-8601 UTC or a natural phrase like 'tomorrow morning'. Omit to leave a draft (or set optimal_time)."},
+                "optimal_time": {"type": "boolean", "description": "Let the best-times engine pick the next optimal slot."},
+                "timezone": {"type": "string", "description": "IANA timezone for interpreting publish_at (default: the user's settings timezone)."},
+                "assets": {"type": "array", "items": {"type": "string"}, "description": "Optional creation filenames from the Studio gallery to attach."},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags (e.g. nsfw) — mapped to platform sensitivity flags."},
+            },
+            "required": ["body", "platforms"],
+        },
+    },
+    {
+        "name": "content_schedule_post",
+        "description": (
+            "Schedule or reschedule an existing content post by id. Composes "
+            "any platform target that hasn't been adapted yet, then sets the "
+            "publish time: publish_at (ISO-8601 UTC or a natural phrase) or "
+            "optimal_time (default when no time is given — the best-times "
+            "engine picks). Returns the resolved instant and a Queue deep "
+            "link; warns about same-platform conflicts."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "post_id": {"type": "string", "description": "The ContentPost id (from content_create_post / content_post_status)."},
+                "publish_at": {"type": "string", "description": "ISO-8601 UTC or a natural phrase ('tomorrow morning', 'in 2 hours')."},
+                "optimal_time": {"type": "boolean", "description": "Pick the next optimal slot from the best-times engine."},
+                "timezone": {"type": "string", "description": "IANA timezone for interpreting publish_at."},
+            },
+            "required": ["post_id"],
+        },
+    },
+    {
+        "name": "content_post_status",
+        "description": (
+            "Check the content pipeline. With post_id: that post's per-"
+            "platform delivery status (PENDING/SENT/CONFIRMED/HELD/FAILED, "
+            "post URLs, errors). Without post_id: the queue overview — "
+            "upcoming scheduled targets, HELD posts awaiting the user's "
+            "release, and recent publish history. HELD means the egress gate "
+            "flagged possibly-private content; only the user can release it."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "post_id": {"type": "string", "description": "Optional ContentPost id for a single-post drilldown."},
+            },
+        },
+    },
+    {
+        "name": "content_repurpose",
+        "description": (
+            "Turn one piece of content into a spread of platform-native "
+            "drafts — e.g. a blog post becomes a LinkedIn post + X thread + "
+            "Bluesky/Mastodon posts + newsletter section, each written for "
+            "its platform (never the same caption pasted N times). Source: "
+            "body text or the post_id of an existing content post. Creates "
+            "DRAFTs only — review/edit, then schedule with "
+            "content_schedule_post."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "body": {"type": "string", "description": "The source text to repurpose (or pass post_id instead)."},
+                "post_id": {"type": "string", "description": "Existing ContentPost id to repurpose (body/title/assets are pulled from it)."},
+                "platforms": {"type": "array", "items": {"type": "string"}, "description": "Custom spread; omit for the default spread by content kind."},
+                "title": {"type": "string", "description": "Optional title override."},
+                "assets": {"type": "array", "items": {"type": "string"}, "description": "Optional creation filenames to fan out with the spread."},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags."},
+            },
+        },
+    },
+])
+
+CLAUDE_TOOL_HANDLERS.update({
+    "content_create_post":   _tool_content_create_post,
+    "content_schedule_post": _tool_content_schedule_post,
+    "content_post_status":   _tool_content_post_status,
+    "content_repurpose":     _tool_content_repurpose,
+})
+
+TOOL_RINGS.update({
+    # Spec §11: all four ride Ring 2 — governance-gated like every network
+    # tool (scheduling arms a real outbound publish; status reads the same
+    # surface, and the spec keeps the whole set behind one gate).
+    "content_create_post":   2,
+    "content_schedule_post": 2,
+    "content_post_status":   2,
+    "content_repurpose":     2,
+})
+
+
 _GOVERNANCE_KEY: bytes | None = None
 
 

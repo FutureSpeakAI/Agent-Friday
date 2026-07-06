@@ -39,8 +39,9 @@ const WORKSPACES = [
   'Wiki', 'Trust', 'Studio', 'System',
 ];
 
-// Recalled models — must never surface in UI or config.
-const RECALLED = /fable|mythos/i;
+// Recalled models — must never surface in UI or config. (Fable 5 shipped in
+// v5.1 and is a live catalog model; only Mythos remains unreleased.)
+const RECALLED = /mythos/i;
 
 // ═══════════════════════════════════════════════════════════════
 //  1. SERVER + LIQUID UI MOUNT
@@ -83,28 +84,65 @@ test.describe('Boot & liquid UI', () => {
 // ═══════════════════════════════════════════════════════════════
 
 test.describe('Model selector reflects available models only', () => {
-  test('no Fable/Mythos anywhere in the rendered DOM', async ({ page }) => {
+  test('no Mythos anywhere in the rendered DOM', async ({ page }) => {
     await waitForLiquidUI(page);
     const html = await page.content();
     expect(RECALLED.test(html)).toBe(false);
   });
 
-  test('header badge shows Opus 4.8', async ({ page }) => {
+  test('header pill shows just the active model name', async ({ page, request }) => {
     await waitForLiquidUI(page);
     const badge = page.locator('[aria-label="Model selection"]');
     await expect(badge).toBeVisible();
-    expect(await badge.innerText()).toMatch(/Opus 4\.8/);
+    const txt = (await badge.innerText()).replace('▾', '').trim();
+    expect(txt.length).toBeGreaterThan(0);
+    expect(txt).not.toMatch(/\+ Local/); // routing suffix removed in the redesign
+    // The pill text is the short label of the selected orchestrator id.
+    const json = await (await request.get('/api/models')).json();
+    const sel = json.selected?.orchestrator_model;
+    const entry = (json.models || []).find((m: any) => m.id === sel);
+    if (entry) expect(txt).toBe(entry.short || entry.label);
   });
 
-  test('orchestrator lists Claude (no recalled models)', async ({ page }) => {
+  test('panel is compact: Quick Switch + collapsed roles + Browse All', async ({ page }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
     await page.waitForTimeout(400);
     const body = await page.locator('body').innerText();
-    expect(body).toMatch(/Claude Opus 4\.8/);
-    expect(body).toMatch(/Claude Sonnet 4\.6/);
-    expect(body).toMatch(/Claude Haiku 4\.5/);
+    expect(body).toMatch(/Quick Switch/i);
+    expect(body).toMatch(/By Role/i);
+    expect(body).toMatch(/Routing Mode/i);
+    expect(body).toMatch(/Browse All Models/i);
     expect(RECALLED.test(body)).toBe(false);
+    // The whole point of the redesign: never more than ~15 model entries.
+    const optionCount = await page.locator('.model-option-cloud').count();
+    expect(optionCount).toBeLessThanOrEqual(15);
+  });
+
+  test('expanding Orchestrator shows available-only options', async ({ page }) => {
+    await waitForLiquidUI(page);
+    await page.locator('[aria-label="Model selection"]').click();
+    await page.waitForTimeout(400);
+    await page.getByRole('button', { name: /Orchestrator/ }).first().click();
+    await page.waitForTimeout(300);
+    const opts = await page.locator('.model-option-cloud').allInnerTexts();
+    expect(opts.length).toBeGreaterThan(0);
+    // Available-only contract: no "needs key" / dimmed rows in the quick panel.
+    expect(opts.join(' | ')).not.toMatch(/needs|Requires/i);
+    expect(RECALLED.test(opts.join(' | '))).toBe(false);
+  });
+
+  test('Browse All Models opens Settings → Providers', async ({ page }) => {
+    await waitForLiquidUI(page);
+    await page.locator('[aria-label="Model selection"]').click();
+    await page.waitForTimeout(400);
+    // Role locator: the Local Models overflow hint can also contain this text
+    // on machines with >4 Ollama models — the footer is the only BUTTON.
+    await page.getByRole('button', { name: 'Browse All Models' }).click();
+    await page.waitForTimeout(800);
+    const body = await page.locator('body').innerText();
+    expect(body).toMatch(/MODEL PROVIDERS/);
+    expect(body).toMatch(/MODEL BROWSER/i);
   });
 });
 
@@ -137,16 +175,23 @@ test.describe('Model catalog (/api/models)', () => {
     expect(flash && /live/i.test(flash.label)).toBeFalsy();
   });
 
-  test('UI renders orchestrator selector from the catalog (local + OpenAI)', async ({ page }) => {
+  test('Quick Switch renders from the catalog, provider-diverse', async ({ page, request }) => {
     await waitForLiquidUI(page);
     await page.locator('[aria-label="Model selection"]').click();
     await page.waitForTimeout(500);
     const opts = await page.locator('.model-option-cloud').allInnerTexts();
     const blob = opts.join(' | ');
-    // Local Ollama models surface with the 🏠 marker; OpenAI is offered too.
-    expect(/🏠/.test(blob)).toBe(true);
-    expect(/GPT-4o/.test(blob)).toBe(true);
-    expect(/Claude Opus 4\.8/.test(blob)).toBe(true);
+    // Quick Switch spans providers: with Ollama running the 🏠 marker shows,
+    // and at least one entry from the available cloud lineup is offered.
+    const json = await (await request.get('/api/models')).json();
+    const availProviders = new Set(
+      json.roles.orchestrator.filter((m: any) => m.available).map((m: any) => m.provider));
+    if (availProviders.has('ollama-local')) expect(/🏠/.test(blob)).toBe(true);
+    const availLabels = json.roles.orchestrator
+      .filter((m: any) => m.available).map((m: any) => m.label);
+    if (availLabels.length > 0) {
+      expect(availLabels.some((l: string) => blob.includes(l))).toBe(true);
+    }
   });
 });
 
@@ -312,5 +357,97 @@ test.describe('Countdown payload', () => {
     const win = page.locator('.fwin').last();
     await expect(win).toBeVisible();
     expect(await win.locator('.fwin-body').innerText()).not.toMatch(/undefined/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  8. CONTENT PIPELINE v2 — ContentWS tabs, compose preview, accounts
+//     /api/content/* is route-stubbed so these specs are deterministic
+//     whether or not the pipeline backend is live on the test server.
+// ═══════════════════════════════════════════════════════════════
+
+test.describe('Content pipeline v2 UI', () => {
+  const stubContentApi = async (page: Page) => {
+    await page.route('**/api/content/platforms', (route) =>
+      route.fulfill({ json: { ok: true, platforms: [
+        { name: 'linkedin', label: 'LinkedIn', auth_mode: 'oauth2',
+          status: { connected: true, account: 'Test Human', tier: 'member',
+                    expires_at: new Date(Date.now() + 6 * 86400000).toISOString() },
+          rate_budget: { used: 7, limit: 25, window: 'day' } },
+        { name: 'bluesky', label: 'Bluesky', auth_mode: 'app_password', status: { connected: false } },
+        { name: 'substack', label: 'Substack', auth_mode: 'manual', status: { connected: false } },
+      ] } }));
+    await page.route('**/api/content/preview', (route) =>
+      route.fulfill({ json: { ok: true, adapted_body: 'STUB_ADAPTED_PREVIEW_BODY',
+        segments: [], hashtags: ['#friday', '#sovereign'],
+        char_used: 42, char_limit: 3000, warnings: [] } }));
+    await page.route('**/api/content/queue', (route) =>
+      route.fulfill({ json: { ok: true, upcoming: [], held: [], history: [] } }));
+    await page.route('**/api/content/calendar**', (route) =>
+      route.fulfill({ json: { ok: true, pills: [], suggestions: [] } }));
+    await page.route('**/api/content/analytics/summary**', (route) =>
+      route.fulfill({ json: { ok: true, summary: {} } }));
+    await page.route('**/api/content/insights', (route) =>
+      route.fulfill({ json: { ok: true, insights: [] } }));
+    await page.route('**/api/content/best-times**', (route) =>
+      route.fulfill({ json: { ok: true, suggestions: [] } }));
+  };
+
+  const openContent = async (page: Page) => {
+    await stubContentApi(page);
+    await waitForLiquidUI(page);
+    await page.locator('.dock-btn', { hasText: 'Content' }).first().click();
+    const win = page.locator('.fwin').last();
+    await expect(win).toBeVisible({ timeout: 8000 });
+    return win;
+  };
+
+  test('all six content tabs render and switch cleanly', async ({ page }) => {
+    const win = await openContent(page);
+    for (const tab of ['Compose', 'Calendar', 'Queue', 'Analytics', 'Accounts', 'Ideas']) {
+      await expect(
+        win.locator('button', { hasText: tab }).first(), `missing tab: ${tab}`,
+      ).toBeVisible();
+    }
+    // Click through every tab — none may hit the error boundary or blank out.
+    for (const tab of ['Calendar', 'Queue', 'Analytics', 'Accounts', 'Ideas', 'Compose']) {
+      await win.locator('button', { hasText: tab }).first().click();
+      await page.waitForTimeout(350);
+      const body = (await win.locator('.fwin-body').innerText()).trim();
+      expect(body, `${tab} tab broke the workspace`).not.toMatch(/encountered an error/i);
+      expect(body.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('compose: typing updates the live platform preview', async ({ page }) => {
+    const win = await openContent(page);
+    const box = win.getByPlaceholder(/canonical post/i);
+    await expect(box).toBeVisible();
+    await box.fill('Hello world from the content pipeline.');
+    // Debounced POST /api/content/preview → stubbed adapted body renders in the rail.
+    await expect(win.locator('text=STUB_ADAPTED_PREVIEW_BODY').first())
+      .toBeVisible({ timeout: 8000 });
+    // Char meter renders the stubbed grapheme counts.
+    await expect(win.locator('text=42 / 3000').first()).toBeVisible();
+  });
+
+  test('accounts: one card per platform with the trust surface', async ({ page }) => {
+    const win = await openContent(page);
+    await win.locator('button', { hasText: 'Accounts' }).first().click();
+    await page.waitForTimeout(500);
+    const body = await win.locator('.fwin-body').innerText();
+    // Connected card: account identity + expiry countdown + live rate budget.
+    expect(body).toContain('LinkedIn');
+    expect(body).toContain('Test Human');
+    expect(body).toMatch(/18 of 25 posts left/);
+    // Disconnected card offers the big Connect; token-paste platform present.
+    expect(body).toContain('Bluesky');
+    expect(body).toMatch(/Connect/);
+    // Plain-language scopes with the "Cannot:" negative space (spec §12.3).
+    expect(body).toMatch(/Cannot:/);
+    // No-API platform is honest about manual mode (spec §4.14 degradation ladder).
+    expect(body).toContain('Substack');
+    expect(body).toMatch(/manual/i);
+    await page.screenshot({ path: path.join(SHOTS, 'full-03-content-accounts.png') });
   });
 });

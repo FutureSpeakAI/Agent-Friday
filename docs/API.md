@@ -262,12 +262,12 @@ Provider templates for the Add Provider form.
 Dry-run descriptor validation for the Add Provider form — no write.
 
 ### `GET /api/models`
-The available-model catalog grouped by UI role (orchestrator / subagent / creative / voice). Single source of truth for every model selector in the UI; each entry carries availability so unconfigured models can be shown but disabled. Also returns `voice_engines` and the currently `selected` models.
+The available-model catalog grouped by UI role (orchestrator / subagent / creative / voice). Single source of truth for every model selector in the UI. Role lists are curated — only descriptor-declared static models plus live Ollama models; the discovery long tail (e.g. OpenRouter's 300+) appears only in the flat `models` list and via search. Each entry carries availability plus a boolean `curated` flag. Also returns `voice_engines` and the currently `selected` models, including `creative_video_model` (from `capability_routing.creative_video` — video has no flat `*_model` key).
 
 ### `GET /api/models/search`
-Search models across all registered providers (static + discovery caches). Powers the Model Browser.
+Search models across all registered providers (static + discovery caches). Powers the Model Browser. Result rows include `modalities` (list) and `local` (bool); static rows resolve label and modalities from provider `model_meta`.
 
-**Query params:** `q` (substring on id/label), `provider`, `free=1`, `tools=1`, `max_price_in` (USD per 1M tokens), `min_context`.
+**Query params:** `q` (substring on id/label), `provider`, `free=1`, `tools=1`, `local=1` (on-device providers only), `max_price_in` (USD per 1M tokens), `min_context`, `modality` (exact member of the modalities list — one of `vision`/`image`/`video`), `sort` (`price` | `price_desc` | `context`; applied before the result limit, with unpriced entries sorted last on price sorts). Ollama-backed providers list their live installed models when the daemon is running.
 
 ---
 
@@ -529,6 +529,130 @@ Clear completed terminals.
 
 ### `GET /api/vibe-code/presets`
 List available vibe code presets.
+
+---
+
+## Content Pipeline (v2)
+
+Social publishing routes (Blueprint `content_pipeline_bp`, `routes/content_pipeline.py`) — see `docs/CONTENT_PIPELINE_SPEC.md` §11 for the full design. All responses are JSON envelopes (`{ "ok": ... }` or `{ "status": ... }`); errors are reported in-body with HTTP 200 (creations-route convention). The legacy ideation-kanban routes (`/api/content/pipeline`, `/api/content/idea`, `/api/content/draft`, `/api/content/templates`, `/api/content/from-template`, `/api/content/item`, `/api/content/drafts` in `routes/workflows.py`) remain untouched and back the Ideas tab.
+
+### Posts
+
+### `GET /api/content/posts`
+List posts. Query filters: `status`, `platform`, `from`, `to`, `source`.
+
+### `POST /api/content/posts`
+Create a draft `ContentPost`.
+
+**Request:**
+```json
+{
+  "title": "Launch day",
+  "body": "canonical markdown body",
+  "assets": [ { "filename": "friday-image-abc.png", "content_hash": "sha256:...", "kind": "image", "alt_text": "..." } ],
+  "platforms": ["linkedin", "bluesky"],
+  "schedule": { "publish_at": null, "timezone": "America/Chicago", "optimal_time": true },
+  "source": { "kind": "creation", "ref": "friday-image-abc.png" }
+}
+```
+
+### `GET /api/content/posts/<id>`
+### `PATCH /api/content/posts/<id>`
+### `DELETE /api/content/posts/<id>`
+Read / edit / delete a post. Delete marks the post `CANCELLED` and optionally issues best-effort platform takedowns for already-published targets.
+
+### `POST /api/content/posts/<id>/compose`
+Run the composition engine, producing one `PlatformTarget` per platform.
+
+**Request:**
+```json
+{ "platforms": ["linkedin"], "regenerate": false }
+```
+
+Skips `CONFIRMED` targets; `regenerate: true` rebuilds `PENDING`/`HELD` ones.
+
+### `POST /api/content/posts/<id>/schedule`
+Set/replace the post's `ScheduleConfig`. Resolves `optimal_time` (seed tables → learned best-times histogram) and returns same-platform conflict warnings.
+
+### `POST /api/content/posts/<id>/publish-now`
+Immediate dispatch. Still fully gated: moderation harm scan (H1–H4) and egress-gate sensitivity classification run before any adapter is called.
+
+### `POST /api/content/posts/<id>/cancel`
+Cancel the whole post, or one target with `{ "target_id": "tgt_..." }`.
+
+### `POST /api/content/posts/<id>/release`
+Release a `HELD` target after human review.
+
+**Request:**
+```json
+{ "target_id": "tgt_...", "ack": true }
+```
+
+### Composition & repurposing
+
+### `POST /api/content/preview`
+Stateless per-platform adaptation for the Compose tab's live preview. Returns `{ ok, adapted_body, segments, hashtags, char_used, char_limit, asset_plan, warnings }` — the preview is the exact payload that would ship.
+
+### `POST /api/content/repurpose`
+One source → a spread of platform-native drafts (blog → thread + LinkedIn + captions + federation listing, video → Short/reel/TikTok cuts, etc.).
+
+**Request:**
+```json
+{ "source": { "kind": "creation", "ref": "friday-video-xyz.mp4" }, "spread": "default" }
+```
+
+### Queue & calendar
+
+### `GET /api/content/queue`
+Upcoming targets (joined to posts, ordered by `publish_at`) + pinned `HELD` section + recent history from `publish_log.jsonl`.
+
+### `GET /api/content/calendar`
+`?from=&to=` → scheduled-post pills plus suggested optimal slots (labeled "learned" vs "general best practice").
+
+### `GET /api/content/best-times`
+Seed + learned best-time tables (`?platform=` to filter).
+
+### Analytics
+
+### `GET /api/content/analytics/summary`
+Dashboard rollup (`?days=30`): impressions, engagement rate, best post, ψ earned from content.
+
+### `GET /api/content/analytics/post/<id>`
+Per-post drilldown: snapshot time-series and per-platform metric table. Metrics a platform cannot report are absent (rendered "—"), never zero.
+
+### `POST /api/content/analytics/refresh/<target_id>`
+Manual metrics poll for one target (respects the adapter's local rate budget).
+
+### `GET /api/content/insights`
+Current insight cards from the weekly `content_insights` job (attribute lift, learned best times, variant verdicts — each with honest sample sizes).
+
+### Platform accounts
+
+### `GET /api/content/platforms`
+Adapter registry + per-platform `status()` envelope (`{ connected, account, scopes, expires_at, tier, last_error }`). Never contains token material.
+
+### `POST /api/content/platforms/<name>/connect`
+Begin auth. Returns a `connect_url` (OAuth platforms), a token-paste descriptor (Bluesky app password, Mastodon token), or a manual-mode descriptor (Substack/Medium handoff).
+
+### `GET /api/content/platforms/<name>/callback`
+OAuth loopback redirect target (`http://localhost:3000/...`, PKCE where supported, `state` bound + single-use). Tokens are encrypted into the credential store; never written to disk in plaintext.
+
+### `DELETE /api/content/platforms/<name>`
+Disconnect: platform-side token revoke where the API supports it + local credential purge. `?purge_analytics=1` also removes that platform's snapshots and targets.
+
+### `POST /api/content/platforms/<name>/test`
+Connection test (private/self post where the platform allows it).
+
+### Voice cards & export
+
+### `GET /api/content/voice-cards/<platform>`
+### `POST /api/content/voice-cards/<platform>`
+Read / edit the per-platform voice card (`~/.friday/content/voice_cards/<platform>.md`) folded into every composition prompt alongside SOUL.md.
+
+### `GET /api/content/export`
+Full local data export: posts, targets, engagement snapshots, best-times tables, and the publish log as one JSON bundle.
+
+> Chat/agent tool equivalents (`content_create_post`, `content_schedule_post`, `content_post_status`, `content_repurpose`) are Ring 2 governance-gated wrappers over the same service calls, so voice and chat drive the pipeline with no additional privilege surface.
 
 ---
 

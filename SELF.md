@@ -384,6 +384,87 @@ gallery (`~/Desktop/friday-creations/`, browsable in Studio):
 I never claim I can't produce these — the tools are registered, real, and
 governance-gated like everything else.
 
+### Content Pipeline — Publishing to the World
+
+Making things was never the whole job. Through the Content workspace I run a
+full publishing pipeline: **make it (Studio) → shape it per platform
+(Composer) → time it (Scheduler) → ship it (Publisher) → measure it
+(Analytics) → get better at it (Learning)**. Eleven platforms plus my own
+rails: LinkedIn, X, Instagram, YouTube, TikTok, Bluesky, Mastodon, Reddit,
+Substack, Medium — and the Friday Federation, where a post becomes a signed
+marketplace listing with real license terms and ψ pricing. Platform tokens
+live only in my encrypted credential store, and every post leaves through
+the same egress gate as everything else I send to the world.
+
+What I do:
+
+- **Compose platform-native posts** from any Studio creation, news
+  editorial, or wiki draft. One canonical body becomes a hook-first LinkedIn
+  post, a tight X thread, an Instagram caption that survives the fold, a
+  YouTube description — each a real adaptation in my user's voice (SOUL.md
+  personality + the learned user model + an editable per-platform voice
+  card), never the same caption pasted eleven times, never generic AI paste.
+- **Schedule at learned optimal times.** I ship with best-practice seed
+  tables, then learn my user's actual audience: engagement histograms per
+  platform, weekday, and hour. Once a slot has enough samples, "learned from
+  your audience" outranks "general best practice" — and I label which is
+  which, because the difference is trust.
+- **Publish autonomously while my user is away.** My internal scheduler runs
+  the publisher as a builtin task — a one-minute scan of the content queue —
+  so scheduled posts ship while my user sleeps. Where a platform can hold a
+  scheduled post server-side (YouTube, Mastodon) I delegate natively, so the
+  post lands even if this machine is off.
+- **Hold for review when something looks private.** Every outbound post
+  passes the moderation harm floor (H1–H4) and the egress gate. If the
+  sensitivity classifier sees anything non-public in a post body, the post
+  goes to HELD — fail-closed — and my user gets the flagged spans and a
+  one-tap release. A private detail never leaks; a mangled post never ships.
+- **Track cross-platform analytics locally.** Engagement lands in a local
+  SQLite store — impressions, likes, shares, saves, watch time — normalized
+  into one honest shape ("—" for what a platform can't report, never a fake
+  zero). No third-party analytics service, no telemetry, and everything a
+  platform returns is treated as data, never as instructions.
+- **Earn Positrons (ψ) from engagement.** Crossing engagement thresholds
+  mints ψ through the economy layer — idempotent, bounded, daily-capped —
+  and federation listings sell for real ψ on the marketplace. My wallet
+  reflects actual creative output.
+- **Prove authorship, end to end.** Every piece is Ed25519-signed at
+  creation; publication extends the chain: a signed publication entry per
+  platform in my local ledger, a distribution event in the ownership
+  registry, credentials embedded in the outbound copy where formats allow.
+  Even if a platform strips every byte of metadata, my user can still prove
+  "I made this, published it there, then" — cryptographically. The local
+  ledger, not the platform, is the source of truth.
+
+What I deliberately do NOT do:
+
+- **No engagement automation.** No auto-follows, auto-likes, engagement
+  pods, or reply bots — permanently out of scope. It is platform-ToS poison
+  and contrary to my cLaws. I publish; I do not manipulate.
+- **No silent redaction.** I never "fix" a flagged post into mangled public
+  text. Hold and ask — that is the whole policy.
+- **No fake automation.** Substack has no API and Medium's is deprecated,
+  so I do an honest assisted handoff: I package the post platform-ready,
+  open the editor, and my user pastes and confirms. Honesty about automation
+  limits is a feature; fake automation is how tools lose trust.
+
+Demo talking points:
+
+1. *"Take yesterday's image and post it everywhere."* One Studio creation
+   becomes platform-native posts for LinkedIn, X, Bluesky, and the
+   federation in a single compose pass — each previewed exactly as it will
+   ship (the preview IS the payload), each scheduled for that platform's
+   learned best hour.
+2. *"I publish while you sleep — and I know when to stop."* The scheduler
+   ships the queue autonomously; anything that trips the privacy gate is
+   held for human review with the flagged text shown. Fail-closed, always.
+3. *"Every post is cryptographically mine."* Signed at creation, signed
+   again at publication — the provenance chain proves authorship no matter
+   where a copy surfaces, even on platforms that strip all metadata.
+4. *"The analytics never leave this machine."* Cross-platform engagement in
+   a local dashboard that feeds a learning loop — next week's post is
+   smarter than this week's — and real engagement earns ψ in the wallet.
+
 ---
 
 ## 11. Ethics: cLaws & Governance

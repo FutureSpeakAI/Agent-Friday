@@ -400,12 +400,37 @@ def _flow_briefing(content, metadata):
         return {'destination': 'briefing', 'ok': False, 'error': str(e)}
 
 
+def _flow_content_pipeline(content, metadata):
+    """Quick-Post (spec §10.2): create a DRAFT ContentPost from flowed content.
+
+    Every surface that renders SendTo gains Share/Post for free — the draft
+    lands in Content → Compose, nothing is published from here."""
+    try:
+        from agent_friday.services import content_pipeline as _cp
+        title = (metadata.get('title') or metadata.get('person_name') or '').strip()
+        res = _cp.create_post(
+            title=title[:200],
+            body=content[:20000],
+            source={"kind": "flow",
+                    "ref": str(metadata.get('ref') or metadata.get('event_id') or ''),
+                    "person_name": metadata.get('person_name') or ''},
+        )
+        if not res.get('ok'):
+            return {'destination': 'content_pipeline', 'ok': False,
+                    'error': res.get('error', 'draft creation failed')}
+        return {'destination': 'content_pipeline', 'ok': True,
+                'post_id': res['post']['id'], 'status': res['post']['status']}
+    except Exception as e:
+        return {'destination': 'content_pipeline', 'ok': False, 'error': str(e)}
+
+
 FLOW_HANDLERS = {
     'trust_graph': _flow_trust_graph,
     'calendar_notes': _flow_calendar_notes,
     'clipboard': _flow_clipboard,
     'gmail_draft': _flow_gmail_draft,
     'briefing': _flow_briefing,
+    'content_pipeline': _flow_content_pipeline,
 }
 
 
