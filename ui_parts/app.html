@@ -6751,10 +6751,10 @@ function SettingsTabVoice({s,save}){
       </StRow>}
     </StSection>
     <StSection title="AUDIO">
-      <StRow label="Interruption Mode" desc="Speaker: echo-safe — talk over Friday (or press Esc) and she stops and listens. Headphones: instant native barge-in.">
+      <StRow label="Interruption Mode" desc="Barge-in (default): talk over Friday and she stops instantly (native Gemini interruption; best with headphones/AirPods). No interruption: for open speakers where echo makes her cut herself off — use Esc or clear talk-over to interrupt instead.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {[{k:'speaker',l:'🔊 Speaker (echo-safe)'},{k:'headphones',l:'🎧 Headphones'}].map(o=>(
-            <button key={o.k} className={`settings-btn ${(s.voice_interruption_mode||'speaker')===o.k?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
+          {[{k:'auto',l:'🎧 Barge-in (default)',match:['auto','speaker','headphones','headphone','barge','barge-in','bargein','']},{k:'no-barge',l:'🔊 No interruption (open speakers)',match:['no-barge','no_barge','nobarge','speaker-safe','speaker_safe','none','off']}].map(o=>(
+            <button key={o.k} className={`settings-btn ${o.match.includes((s.voice_interruption_mode||'auto').toLowerCase())?'active':''}`} onClick={()=>save({voice_interruption_mode:o.k})} style={{fontSize:11}}>{o.l}</button>
           ))}
         </div>
       </StRow>
@@ -6768,7 +6768,7 @@ function SettingsTabVoice({s,save}){
     <StSection title="ADVANCED">
       <StToggle label="Affective Dialog" value={!!s.voice_affective} onChange={()=>save({voice_affective:!s.voice_affective})} desc="Emotional expressiveness (2.5 native-audio models, v1alpha)."/>
       <StToggle label="Proactive Audio" value={!!s.voice_proactive} onChange={()=>save({voice_proactive:!s.voice_proactive})} desc="Friday initiates follow-up questions."/>
-      <StToggle label="Context Compression" value={!!s.voice_context_compression} onChange={()=>save({voice_context_compression:!s.voice_context_compression})}/>
+      <StToggle label="Context Compression" value={s.voice_context_compression!==false} onChange={()=>save({voice_context_compression:s.voice_context_compression===false})} desc="Keeps hours-long sessions alive by sliding the context window (prunes only the oldest turns). On by default — off removes the ~15-min session cap."/>
       <StToggle label="Voice Tools" value={s.voice_tools!==false} onChange={()=>save({voice_tools:s.voice_tools===false})} desc="Allow tool calls during voice sessions."/>
       <StRow label="Voice Temperature">
         <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -8018,24 +8018,57 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
     super();
     this.srcRate = (o.processorOptions && o.processorOptions.srcRate) || 24000;
     this.step = this.srcRate / sampleRate;     // src samples consumed per output sample
-    this.size = Math.ceil(this.srcRate * 60);  // 60s ring at source rate
+    // Ring sized for the WHOLE of even a long read-aloud: Gemini streams a
+    // response faster than realtime, so the buffer legitimately holds the entire
+    // pending utterance (a 90s answer arrives in ~30s → ~60s buffered). Consumed
+    // at exactly realtime, it drains to zero between turns. 180s covers any
+    // realistic single turn without the overflow guard ever truncating it.
+    this.size = Math.ceil(this.srcRate * 180); // 180s ring at source rate
     this.ring = new Float32Array(this.size);
     this.writeIdx = 0;                          // absolute samples written
     this.readIdx = 0;                           // absolute fractional read cursor
     this.lastPlaying = false;
+    // Jitter buffer: Gemini streams 24kHz PCM in faster-than-realtime bursts
+    // over a jittery network. Playing the instant the first sample lands makes
+    // the ring underrun on the next network gap — each underrun is a click, and
+    // over a long call the accumulated clicks read as progressive rasp. So we
+    // PRIME: hold ~120ms before starting, and re-prime after any underrun, so
+    // playback only ever runs off a cushioned buffer.
+    this.prefill = Math.max(1, Math.round(this.srcRate * 0.12));   // 120ms cushion
+    // Anti-wrap guard ONLY (not latency management): if the producer somehow
+    // gets within a hair of lapping the read pointer — a >~3min continuous
+    // monologue delivered faster than realtime — fast-forward the reader to
+    // drop the oldest audio rather than let the write pointer overwrite unread
+    // samples (silent corruption = rasp). Sits just under the ring so it NEVER
+    // fires on a normal multi-second turn (which must buffer fully, not be
+    // truncated). A dropped 3-minutes-ago sample is inaudible; a lapped pointer
+    // is not.
+    this.maxLag = this.size - Math.round(this.srcRate * 2);        // ~178s, anti-wrap only
+    this.priming = true;                        // waiting for the initial cushion
     this.port.onmessage = (e) => {
       const m = e.data;
       if (m.type === 'samples') {
         const f = m.data;
         for (let i = 0; i < f.length; i++) { this.ring[this.writeIdx % this.size] = f[i]; this.writeIdx++; }
+        // Overflow guard: keep the producer at most maxLag ahead of the reader.
+        const lag = this.writeIdx - Math.floor(this.readIdx);
+        if (lag > this.maxLag) this.readIdx = this.writeIdx - this.maxLag;
       } else if (m.type === 'flush') {
         this.readIdx = this.writeIdx;            // drop everything pending
+        this.priming = true;                      // re-cushion before next audio
       }
     };
   }
+  _avail(){ return this.writeIdx - Math.floor(this.readIdx); }     // src samples ahead of read
   process(inputs, outputs) {
     const out = outputs[0][0];
     if (!out) return true;
+    if (this.priming) {
+      // Still building the cushion — emit silence until we have prefill samples,
+      // so we never start into an immediate underrun.
+      if (this._avail() < this.prefill) { for (let i=0;i<out.length;i++) out[i]=0; return true; }
+      this.priming = false;
+    }
     for (let i = 0; i < out.length; i++) {
       const base = Math.floor(this.readIdx);
       if (base + 1 < this.writeIdx) {
@@ -8046,9 +8079,10 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
         this.readIdx += this.step;
       } else {
         out[i] = 0;                              // underrun -> clean silence
+        this.priming = true;                     // re-cushion before resuming
       }
     }
-    const playing = (Math.floor(this.readIdx) + 1) < this.writeIdx;
+    const playing = !this.priming && (Math.floor(this.readIdx) + 1) < this.writeIdx;
     if (playing !== this.lastPlaying) { this.lastPlaying = playing; this.port.postMessage({ type: playing ? 'active' : 'drained' }); }
     return true;
   }

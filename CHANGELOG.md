@@ -74,6 +74,33 @@ Root-caused and fixed the "voice is broken again" report across all three
 tiers. Spec: `docs/VOICE_SYSTEM_SPEC.md` (new, STORM-derived); findings
 verified against the live Gemini API by real `bidiGenerateContent` connects.
 
+**Fixed — Tier 3 (Gemini Live) fluidity: raspy, non-interruptible, hours-long
+(verified against Google's CURRENT Live API docs, 2026-07):**
+- **Barge-in now works by default.** The default "speaker" mode set
+  `activity_handling = NO_INTERRUPTION`, so Gemini's VAD fired but the model
+  never stopped — voice was uninterruptible. Per Google's current docs,
+  barge-in is `START_OF_ACTIVITY_INTERRUPTS`; that is now the default for every
+  mode except an explicit "no interruption (open speakers)" opt-out. On the
+  interrupt the client already flushes the playback ring, so barge-in cuts
+  audio within a frame. Echo mitigations kept (LOW start sensitivity + browser
+  echoCancellation) so Friday doesn't cut herself off on open speakers.
+- **Raspy-over-time fixed in the playback worklet.** Output is confirmed 24kHz
+  PCM16 mono (not the regression). The worklet had no jitter cushion — it
+  played the instant the first sample landed, so every network gap underran the
+  ring, and each underrun click compounded into progressive rasp over a long
+  call. Added a 120ms prefill (re-primed after any underrun so playback only
+  ever runs off a cushion), and enlarged the ring to 180s with an anti-wrap
+  guard that prevents the write pointer from ever lapping the reader (silent
+  corruption) without truncating a legitimately long, faster-than-realtime
+  response.
+- **Hours-long stability.** `context_window_compression` (sliding window) is
+  on by default — without it the session hits a hard ~15-min cap and
+  terminates. Combined with the existing session-resumption handle capture and
+  GoAway→reconnect drain loop (survive the independent ~10-min per-connection
+  cap while carrying full context), multi-hour conversations continue without
+  perceptible context or quality loss. UI Interruption-Mode and
+  Context-Compression controls relabeled to match the new defaults.
+
 **Fixed — Tier 3 (Gemini Live):**
 - `/friday-live`, its manifest, and service worker 404'd after the v5 `src/`
   restructure (`send_from_directory('.')` resolved against the package dir) —
