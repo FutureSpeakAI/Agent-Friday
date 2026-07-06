@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-friday"
-version = "5.2.1"
+version = "5.3.0"
 description = "Agent Friday by FutureSpeak.AI â€” a sovereign, provider-agnostic desktop AI agent."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -69,7 +69,7 @@ pii = ["presidio-analyzer>=2.2", "presidio-anonymizer>=2.2"]
 # keyring stores the HMAC governance key in the OS credential store
 # (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
 keyring = ["keyring>=24.0"]
-windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0"]  # computer control + global kill-switch + tray icon
+windows = ["pyautogui>=0.9", "pynput>=1.7", "pillow>=10.0", "pystray>=0.19"]  # computer control + global kill-switch + tray icon
 pdf = ["pdfplumber>=0.10"]  # PDF text extraction (routes/core_routes.py)
 all = [
     "pyttsx3>=2.90",
@@ -90,6 +90,7 @@ all = [
     # Computer control + kill-switch: Windows-only (needs X11 headers on Linux)
     "pyautogui>=0.9; sys_platform == 'win32'",
     "pynput>=1.7; sys_platform == 'win32'",
+    "pystray>=0.19; sys_platform == 'win32'",
     # Tier-1 local voice is cheap + universal, so it rides [all]. The heavy GPU
     # voice group (voice-local-gpu) is deliberately EXCLUDED â€” opt-in only.
     "faster-whisper>=1.0",

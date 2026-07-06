@@ -3,7 +3,228 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.2.1**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.3.0**
+
+---
+
+## [5.3.0] - 2026-07-06
+
+### Content Pipeline — Friday becomes a publishing platform
+
+The full social-media management system specified in
+`docs/CONTENT_PIPELINE_SPEC.md`: create → compose → schedule → publish →
+monitor → learn, across eleven platforms plus the Friday Federation.
+
+- **Data model & store** (`services/content_pipeline.py`): `ContentPost` /
+  `PlatformTarget` entities, SQLite store (WAL), the full §3.2 status machine
+  (DRAFT→SCHEDULED→PUBLISHING→PUBLISHED/PARTIAL/HELD/FAILED, sticky-safe
+  holds, re-arm that never double-posts), append-only publish log.
+- **Composition engine** (`services/content_composer.py`): one canonical body
+  → platform-native versions (thread splitting, grapheme-aware limits,
+  platform hashtag norms, format conversion matrix), voice injection via
+  SOUL.md + user-editable per-platform voice cards, all LLM calls
+  engine-direct and egress-gated.
+- **Publication engine** (`services/publisher.py`): a 1-minute scheduler
+  builtin claims due targets and runs the gate chain — H1–H4 moderation scan,
+  sensitivity classification with **hold-for-review** semantics (never silent
+  redaction; explicit human release honored, hard harm floor never
+  releasable), adapter prepare/publish, retry ladders with Retry-After,
+  verify-before-retry double-post protection, per-platform rate budgets,
+  native-schedule delegation (YouTube `publishAt`, Mastodon `scheduled_at`),
+  recurrence templates, signed provenance publication entries, ψ earn.
+- **Eleven platform adapters** (`services/platforms/`): LinkedIn, X/Twitter,
+  Instagram, YouTube, TikTok, Bluesky (byte-offset facets), Mastodon
+  (instance-aware), Reddit (per-subreddit rules surfaced at compose),
+  Substack + Medium (honest assisted handoff — no fake automation), and the
+  Friday Federation (marketplace listing + encrypted CONTENT_OFFER + ψ) —
+  each behind one contract with capabilities declaration, encrypted
+  credential storage, local rate budgeting, and a shared contract test
+  battery.
+- **Analytics collector** (`services/analytics_collector.py`): decaying-poll
+  engagement collection normalized into one metrics shape (absent ≠ zero),
+  local-only storage, weekly insights (attribute lift with Wilson bounds,
+  learned best-times that outrank seed tables at n≥5), engagement→ψ minting
+  (idempotent, daily-capped), strict untrusted-input discipline — platform
+  text never reaches an LLM prompt.
+- **ContentWS v2** (Content workspace): Compose (platform chips, live
+  per-platform previews, hashtag rows, variants, alt-text nags) · Calendar
+  (drag-reschedule, optimal-slot suggestions) · Queue (held-with-evidence,
+  release/edit, history, pause-all) · Analytics (unified dashboard, insight
+  cards) · Accounts (one-click OAuth or token paste — verified live at
+  connect, plain-language scopes with the "cannot" list, rate budgets,
+  disconnect = revoke + purge) · Ideas (the v1 kanban, graduated).
+- **API**: 23 new `/api/content/*` routes (documented in `docs/API.md`);
+  OAuth loopback callbacks on localhost only; full local data export.
+- **Chat/voice tools**: `content_create_post`, `content_schedule_post`,
+  `content_post_status`, `content_repurpose` — "Friday, post this to
+  LinkedIn and Bluesky tomorrow morning" works end to end.
+- **Scheduler**: new `once` trigger (one-shot schedules, auto-disable).
+- **Provenance**: `add_publication()` — publication events signed into each
+  asset's manifest history; the local ledger remains the source of truth.
+- **Review hardening**: a 10-finding adversarial review pass (all confirmed
+  real, all fixed with regression tests) — egress gates now cover title
+  fallbacks and hashtag/tag side-channels, HELD release actually publishes,
+  recurrence idempotency is pagination-immune, native-schedule declines
+  defer instead of publishing early, YouTube uploads verify-before-retry,
+  analytics observations are once-ever per post.
+
+### Voice System Overhaul — systemwide bug hunt + out-of-the-box hardening
+
+Root-caused and fixed the "voice is broken again" report across all three
+tiers. Spec: `docs/VOICE_SYSTEM_SPEC.md` (new, STORM-derived); findings
+verified against the live Gemini API by real `bidiGenerateContent` connects.
+
+**Fixed — Tier 3 (Gemini Live):**
+- `/friday-live`, its manifest, and service worker 404'd after the v5 `src/`
+  restructure (`send_from_directory('.')` resolved against the package dir) —
+  the Tier-3 PWA client was completely unreachable. Anchored like `/static`.
+- The model story was BACKWARDS: live connect probes show
+  `gemini-3.1-flash-live-preview` and the 12-2025 preview still work, while
+  the previously "verified" fallback `gemini-2.5-flash-preview-native-audio`
+  does not exist (1008). New verified chain: `native-audio-latest` →
+  `preview-09-2025` → `3.1-flash-live-preview`; explicit
+  `_RETIRED_LIVE_MODELS` denylist checked BEFORE the marker heuristic, so
+  `validate_live_model` reports `retired` and the auto-correct (now firing on
+  `retired` + `unknown`, persisting only the delta — never the offline
+  routing overlay) actually corrects the IDs it was built for.
+- `DEFAULT_SETTINGS.voice_model` (which always wins over `LIVE_MODEL`) updated
+  to the `-latest` alias everywhere (core, setup wizard, registry, UI consts);
+  the new IDs are selectable in Settings and priced in the cost meter.
+- `LiveConnectConfig` construction moved inside the per-attempt try (a
+  pydantic ValidationError on older SDKs was silent); the top-level runner
+  crash now sends an error frame instead of a debug-only log line.
+- `friday_live.html`: capped exponential reconnect backoff, fatal-error stop
+  (no more 1.5 s reconnect storms into a bad key), sticky actionable error
+  banner, WS auth token support, and caught `getUserMedia` rejections.
+
+**Fixed — egress gate (was killing cloud voice + chat):**
+- The keyword layer's bare substring matching classified Friday's own system
+  prompt ("Sovereign Vault") and everyday turns ("doctor appointment",
+  "courtesy" via 'court') as TIER-3, emptying `system` and message content on
+  EVERY sealed cloud call — the Anthropic API then 400s and the voice user
+  hears "Sorry, I hit an error." Now: word-boundary matching, strong/weak
+  keyword split (2+ distinct weak hits escalate), product-architecture terms
+  excluded, span-level paragraph redaction instead of whole-field drops, a
+  trusted-constant registry (the shipped system prompt survives sealing),
+  never-empty message substitution, and a false-positive leg in the startup
+  self-test. Leakage posture unchanged: flagged content still never leaves.
+- Closed the Gemini Live gate BYPASS: tool results (email snippets, wiki
+  excerpts), typed turns, and voice-context openers now pass the egress gate
+  before reaching Google.
+
+**Fixed — Tier 1 (local CPU):**
+- Silero VAD judged each ~85 ms mic chunk by only its first 32 ms, discarding
+  utterance onsets and endpointing mid-sentence — now scores every 512-sample
+  window (max-pool) and keeps a ~250 ms pre-roll, so first syllables reach
+  Whisper.
+- `/api/voice/setup/test` 500'd on every call (`b64encode` on a BytesIO) —
+  the first-run TTS test could never pass on any tier; it now returns real
+  audio (and the wizard actually PLAYS it) or an actionable 503.
+- Piper voice download: streamed with a 30 s timeout (was `urlretrieve` with
+  none, hanging all voice sessions forever on a stalled connection while
+  holding the engine lock); model-load failures now surface the real cause.
+
+**Fixed — Tier 2 (local GPU):**
+- `gpu_status()` now falls through to nvidia-smi when torch is CPU-only, so a
+  physical RTX GPU is detected and the "install a torch-CUDA wheel" hint can
+  actually surface; an explicit `local-gpu` preference that degrades to CPU
+  is announced with the reason instead of silent; `voice-local-gpu` dep-group
+  status requires real CUDA, not mere torch importability.
+
+**New — in-UI install + diagnostics (out-of-the-box requirement):**
+- `services/voice_installer.py` + `POST /api/voice/setup/install[/status|/cancel]`:
+  allowlisted background installs (Tier-1 deps, Tier-1 model download, Tier-2
+  torch-CUDA + NeMo) with streamed logs, disk preflight, and cancellation — no
+  180 s cap, no pip incantations.
+- Voice Setup Wizard: per-step Install/Download buttons, live install log, a
+  GPU-tier step, honest step statuses (derived from real health fields — a
+  fresh machine no longer shows green checks), and stale-model results gate
+  readiness.
+- Mic/speaker Test buttons (live level meter, AirPods zero-PCM detection)
+  wired into the audio-device popup — the implementations existed but nothing
+  rendered them. Voice Tools toggle and device selections now persist
+  (`voice_tools`, `audio_input_device_id`, `audio_output_device_id` were
+  missing from `DEFAULT_SETTINGS`, so every save silently reverted on reload).
+- Per-tier smoke gate `tests/smoke/test_voice_tiers.py`: Tier-1 real TTS→STT
+  loopback, Tier-2 detection contract + runnable-or-actionable-skip, Tier-3
+  chain sanity + opt-in live connect probe (`FRIDAY_SMOKE_CLOUD=1`).
+
+**Fixed — restructure fallout:**
+- Root `server.py` shim works from any cwd; `friday start`/`setup` inject
+  `PYTHONPATH` (they crashed instantly in non-pip-installed checkouts) and
+  report the child's exit code; `friday update` uses repo-root paths again
+  (it always claimed "not a git repository"); `pystray`/`pillow`/`pyttsx3`
+  added to manifests; stale v4.5.0 flat-layout `agent_friday.egg-info`
+  removed; the index.html 404 message names the real build command.
+
+### Content Pipeline — self-knowledge & docs
+
+- **Friday knows her publishing stack.** `SELF.md` gains a Content Pipeline
+  capability section (compose → schedule → publish → measure → learn, the
+  sovereignty invariants — hold-for-review, no engagement automation, honest
+  Substack/Medium handoff — plus demo talking points), and `VOICE_DEMO.md`
+  gains a "How I publish" section so voice demos describe publishing with
+  the same lucidity as creation.
+- **API reference.** `docs/API.md` documents the `/api/content/*` v2 routes
+  (posts, compose, schedule, publish-now, cancel/release, preview,
+  repurpose, queue, calendar, best-times, analytics, insights, platform
+  connect/disconnect, voice cards, export) per
+  `docs/CONTENT_PIPELINE_SPEC.md` §11.
+- **Manual test procedures.** Per-platform first-connect + first-publish
+  checklists (spec §15) appended to `tests/MANUAL_TEST_PROCEDURES.md` —
+  real platform OAuth can't be CI'd.
+
+### Model Selector
+
+- **The top-bar pill is just the model name.** It now shows the active
+  orchestrator's short label plus a caret — no cloud/home emoji, no
+  "+ Local" suffix. Fresh installs still read "Sonnet 5".
+- **Clicking it opens a compact 320px panel instead of a wall of models.**
+  *Quick Switch* pins the current model first and offers up to 4 available,
+  provider-diverse alternatives — one click switches the orchestrator and
+  closes the panel. *By Role* collapsible rows (one open at a time, each a
+  short capped list: 5 options for Orchestrator/Subagent, 4 per Creative
+  sublist, the available Voice engines) cover Orchestrator, Subagent,
+  Creative — split into an Image model (flat `creative_model`) and a Video
+  model (`capability_routing.creative_video` `{model, provider}`) — and
+  Voice, which selects the engine and shows the Gemini Live model sublist
+  only while the gemini engine is active. A *Routing Mode* row toggles
+  Cloud Only / Smart / Local Pref. / Local Only with compact stats, a
+  *Local Models* section appears only when Ollama is actually running
+  (top 4 with size badges, current default pinned into view, "▸ N more
+  installed" expands the full list in-panel), and a *Browse All Models*
+  footer button deep-links Settings straight to the Providers tab (via
+  `window.__fridaySettingsTab` + the `friday:settings-tab` event).
+- **No dead rows.** The panel never shows more than ~15 model entries, and
+  unavailable models simply don't appear — nothing is grayed out.
+- **`GET /api/models` role lists are now curated.** Only descriptor-declared
+  statics plus live Ollama models make the role lists; the discovery long
+  tail (OpenRouter's 300+) stays in the flat `models` list. Every entry
+  carries a new boolean `curated` field, and `selected` gained
+  `creative_video_model` (read from `capability_routing.creative_video` —
+  video has no flat `*_model` key).
+- **`GET /api/models/search` learned modality, local, and sort.** New
+  `modality` param (exact member of the modalities list — one of
+  vision/image/video), `local=1` (on-device providers only), and `sort`
+  (`price` | `price_desc` | `context`), all applied BEFORE the limit
+  truncation; price sorts put unpriced entries last, since unknown ≠ free.
+  Result rows gained `modalities` (list) and `local` (bool), static rows
+  resolve their label + modalities from provider `model_meta`, and
+  Ollama-backed providers list their live installed models. Negative wire
+  prices (OpenRouter's "pricing varies" sentinel) now read as unpriced —
+  never as the cheapest model in a sort or a negative spend figure.
+- **Settings → Providers Model Browser is a real browser.** It
+  auto-populates on open (no empty state) and adds a search box, a provider
+  filter dropdown, capability filters (Tool calling / Vision / Image gen /
+  Video gen / Free / Local), a sort dropdown (available first / cheapest /
+  highest price / largest context), a result count line, per-row modality
+  icons, pricing as "$X in / $Y out per 1M", and assign buttons —
+  Orchestrator, Subagent, plus Image/Video buttons on models with those
+  modalities.
+- **Off-menu assignments keep their names.** A model assigned from the
+  Model Browser that sits outside the curated role list now renders in the
+  AI Models tab selects with its catalog label + "(via Model Browser)"
+  instead of "(no longer offered)".
 
 ---
 
