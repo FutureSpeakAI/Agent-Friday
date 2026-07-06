@@ -148,6 +148,56 @@ Trigger an auto-research task to build/enrich a wiki section.
 
 ---
 
+## Knowledge Graph
+
+The two-tier knowledge graph over the wiki, SOUL.md, and memory
+(`docs/KNOWLEDGE_SYSTEM_SPEC.md`). Tier A (structural) is always available
+and LLM-free; Tier B (semantic) requires a reindex and defaults to
+local-only models.
+
+### `GET /api/knowledge-graph/summary`
+Counts per artifact, community list, last index time, effective settings,
+and whether the graph is dirty (wiki changed since last build).
+
+### `GET /api/knowledge-graph/graph`
+Nodes + edges + communities + layout for the 3D explorer. Positions
+(`x`,`y`,`z`) are precomputed server-side — the client never runs a
+simulation. Query params: `community` (filter to one community), `limit`
+(node cap, default 2000; highest-degree nodes win, `truncated: true` when
+applied).
+
+### `GET /api/knowledge-graph/node/<id>`
+One node with its relationships, neighbor nodes, provenance, and any
+community reports covering it. Ids look like `page:research/graphrag` or
+`ent_<hash>`.
+
+### `GET /api/knowledge-graph/neighbors/<id>?depth=1..3`
+Ego-graph for expand-on-click.
+
+### `POST /api/knowledge-graph/query`
+`{"question": "...", "mode"?: "structural"|"local"|"global"|"drift"}` —
+auto-routed retrieval. Structural answers (candidates, BFS paths,
+`should_read` shortlist) are always included; Tier B modes add an LLM
+answer with provenance when the semantic index exists.
+
+### `POST /api/knowledge-graph/reindex`
+`{"tier": "A"|"B", "mode"?: "delta"|"full", "sync"?: bool}` — Tier A is
+synchronous (milliseconds); Tier B runs in a background thread (returns
+`{"status": "started"}`) unless `sync` is set. `409` if a Tier B pass is
+already running.
+
+### `GET /api/knowledge-graph/reindex/status`
+`{"running": bool, "last": {...}}` for the Tier B background pass.
+
+### `GET /api/knowledge-graph/search?q=`
+Fast title/description substring search for the explorer's search box.
+
+### `GET /api/knowledge-graph/events`
+Server-sent events: `node_ignited` (a newly learned fact lit up),
+`reindexed`, `progress`.
+
+---
+
 ## Context & Compression
 
 ### `POST /api/context/search`

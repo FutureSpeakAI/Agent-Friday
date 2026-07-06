@@ -3,11 +3,11 @@
 All notable changes to this project are documented here.  
 Format: [Semantic Versioning](https://semver.org) · Date: YYYY-MM-DD
 
-> **Note:** Pre-1.0 releases have been archived. Current version: **5.3.0**
+> **Note:** Pre-1.0 releases have been archived. Current version: **5.4.0**
 
 ---
 
-## [Unreleased]
+## [5.4.0] - 2026-07-06 "Second Brain"
 
 ### Knowledge System Overhaul — the wiki becomes a galaxy
 
