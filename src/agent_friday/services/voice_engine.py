@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -409,12 +409,19 @@ def _voice_tool_run(name, args, send_client):
 # ═══════════════════════════════════════════════════════════════
 
 def _local_tts_available():
-    """True if the offline TTS engine (pyttsx3 + a system voice) is importable."""
+    """True if any offline TTS engine is importable (pyttsx3 or Piper)."""
     try:
         import pyttsx3  # noqa: F401
         return True
     except Exception:
-        return False
+        pass
+    try:
+        from agent_friday.services.local_voice import deps_installed
+        if deps_installed():
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _synthesize_tts_wav_local(text):
@@ -426,9 +433,33 @@ def _synthesize_tts_wav_local(text):
     """
     if not text or not str(text).strip():
         return None
+    _has_pyttsx3 = True
     try:
         import pyttsx3
     except Exception:
+        _has_pyttsx3 = False
+    if not _has_pyttsx3:
+        # Piper fallback when pyttsx3 is not installed
+        try:
+            from agent_friday.services.local_voice import get_local_voice_engine
+            engine = get_local_voice_engine()
+            if engine.available():
+                if not engine._ready:
+                    engine.ensure_ready()
+                if engine._ready:
+                    pcm = engine.synthesize(str(text))
+                    if pcm:
+                        import wave
+                        buf = io.BytesIO()
+                        with wave.open(buf, 'wb') as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2)
+                            wf.setframerate(24000)
+                            wf.writeframes(pcm)
+                        buf.seek(0)
+                        return buf
+        except Exception as e:
+            print(f"  [voice] Piper TTS fallback failed: {e}")
         return None
     import tempfile
     tmp_path = None
@@ -598,19 +629,27 @@ except Exception as _e:
 #  FRIDAY LIVE — Gemini Live API bridge over WebSocket
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-3.1-flash-live-preview")
-# Graceful-degradation chain if the primary (3.1 Flash Live) is unavailable.
-# 3.1 Flash Live is now the primary — it's the known-working model on the AI
-# Studio AQ. key tier and handles barge-in via server-side VAD natively. It does
-# NOT support affective dialog / proactive audio (those are 2.5-only); the
-# config builder strips them automatically for non-native-audio models. The 2.5
-# models stay as fallbacks for resilience if 3.1 ever fails to connect mid-call.
-# NOTE (2026-07): gemini-live-2.5-flash-preview was RETIRED upstream — connecting
-# to it now closes 1008 "not found for API version …", which the old error
-# handler misreported as an API-key auth failure. Both fallbacks below are
-# verified-live bidiGenerateContent models on the AI Studio key tier.
-LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-latest"
-LIVE_MODEL_FALLBACK2 = "gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL = os.environ.get("FRIDAY_LIVE_MODEL", "gemini-2.5-flash-native-audio-latest")
+# Graceful-degradation chain. All three IDs below were verified 2026-07-06 by
+# an actual bidiGenerateContent connect (open+close) against the live API —
+# models.list presence alone is NOT sufficient proof, and an unverified ID in
+# this chain recreates the exact 1008-misread-as-auth-failure incident this
+# block exists to prevent. If you change any of these, re-verify with a real
+# connect, not just models.list.
+LIVE_MODEL_FALLBACK = "gemini-2.5-flash-native-audio-preview-09-2025"
+LIVE_MODEL_FALLBACK2 = "gemini-3.1-flash-live-preview"
+
+# Model IDs that fail a live connect with 1008 "not found" (which reads like
+# an auth failure). validate_live_model() reports them as status "retired" so
+# the auto-correction in _resolve_voice_engine can rewrite them — the marker
+# heuristic below would otherwise vouch for them forever.
+# NOTE: gemini-2.5-flash-preview-native-audio was introduced as a "verified"
+# fallback in an earlier overhaul pass but does not exist upstream (verified
+# 1008 on connect, absent from models.list) — never resurrect it.
+_RETIRED_LIVE_MODELS = {
+    "gemini-live-2.5-flash-preview",
+    "gemini-2.5-flash-preview-native-audio",
+}
 LIVE_VOICE = os.environ.get("FRIDAY_LIVE_VOICE", "Aoede")
 
 
@@ -780,17 +819,26 @@ _LIVE_MODEL_MARKERS = ("-live", "live-", "native-audio")
 def validate_live_model(model_id: str | None = None) -> dict:
     """Validate a configured Gemini Live model id.
 
-    Returns {"ok": bool, "model": str, "status": "ok"|"unknown"|"empty",
-    "detail": str}. "unknown" (not a hard error) means the id doesn't match a
-    known-good model or the Live-family naming pattern — likely a typo or a
-    model that has been renamed/retired. The call chain still tries it and falls
-    back (LIVE_MODEL_FALLBACK/2), so this is advisory, surfaced in Settings→Voice.
+    Returns {"ok": bool, "model": str, "status": "ok"|"retired"|"unknown"|"empty",
+    "detail": str}. "retired" means the id is on the known-dead list — it will
+    1008 on connect and should be auto-corrected. "unknown" (not a hard error)
+    means the id doesn't match a known-good model or the Live-family naming
+    pattern — likely a typo or a model that has been renamed/retired. The call
+    chain still tries unknowns and falls back (LIVE_MODEL_FALLBACK/2), so that
+    case is advisory, surfaced in Settings→Voice.
     """
     model = (model_id if model_id is not None else _get_live_model()) or ""
     model = model.strip()
     if not model:
         return {"ok": False, "model": model, "status": "empty",
                 "detail": "No voice model configured; using the built-in default."}
+    # Retired check MUST precede the marker heuristic: retired IDs look exactly
+    # like live-family names, so the markers would happily vouch for them.
+    if model in _RETIRED_LIVE_MODELS:
+        return {"ok": False, "model": model, "status": "retired",
+                "detail": (f"'{model}' has been retired by Google — connecting to it "
+                           "fails with a 1008 close that looks like an auth error but "
+                           f"isn't. Known-good: {', '.join(sorted(_KNOWN_LIVE_MODELS))}.")}
     if model in _KNOWN_LIVE_MODELS or any(m in model for m in _LIVE_MODEL_MARKERS):
         return {"ok": True, "model": model, "status": "ok", "detail": ""}
     return {"ok": False, "model": model, "status": "unknown",

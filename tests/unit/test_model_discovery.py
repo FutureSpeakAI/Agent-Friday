@@ -73,6 +73,55 @@ class TestOpenRouterParser:
         assert md.parse_openrouter({"data": [{}, "junk", None]}) == []
         assert md.parse_openrouter({}) == []
 
+    def test_output_modalities_tag_image_and_video(self):
+        """image INPUT is vision; image/video OUTPUT is generation — the
+        Model Browser's capability filter and its Image/Video assign
+        buttons key off these tags."""
+        payload = {"data": [{
+            "id": "google/gemini-2.5-flash-image",
+            "name": "Gemini 2.5 Flash Image",
+            "architecture": {"input_modalities": ["text", "image"],
+                             "output_modalities": ["image", "text"]},
+        }, {
+            "id": "some/video-gen",
+            "architecture": {"output_modalities": ["video"]},
+        }]}
+        models = md.parse_openrouter(payload)
+        assert "vision" in models[0]["modalities"]
+        assert "image" in models[0]["modalities"]
+        assert "video" not in models[0]["modalities"]
+        assert "video" in models[1]["modalities"]
+
+    def test_cached_models_sanitizes_negative_prices(self, tmp_path, monkeypatch):
+        """Pre-fix caches persist the -1000000.0 sentinel for up to a TTL
+        after upgrade — the read choke point must return None instead."""
+        monkeypatch.setattr(md, "CACHE_DIR", tmp_path)
+        md.write_cache("openrouter", [
+            {"id": "openrouter/auto", "price_in": -1000000.0,
+             "price_out": -1000000.0},
+            {"id": "org/normal", "price_in": 0.2, "price_out": 0.6},
+        ])
+        models, _stale = md.cached_models("openrouter")
+        by_id = {m["id"]: m for m in models}
+        assert by_id["openrouter/auto"]["price_in"] is None
+        assert by_id["openrouter/auto"]["price_out"] is None
+        assert by_id["org/normal"]["price_in"] == 0.2
+
+    def test_negative_price_sentinel_reads_as_unknown(self):
+        """OpenRouter reports pricing -1 on dynamic-routing meta-models
+        (openrouter/fusion et al.) meaning "varies". That must parse as
+        unknown (None) — a literal -1000000/1M would win every
+        cheapest-first sort and poison cost metering — and unknown ≠ free."""
+        payload = {"data": [{
+            "id": "openrouter/fusion",
+            "name": "OpenRouter Fusion",
+            "pricing": {"prompt": "-1", "completion": "-1"},
+        }]}
+        m = md.parse_openrouter(payload)[0]
+        assert m["price_in"] is None
+        assert m["price_out"] is None
+        assert m["free"] is False
+
 
 class TestOpenAIParser:
     def test_ids_only(self):

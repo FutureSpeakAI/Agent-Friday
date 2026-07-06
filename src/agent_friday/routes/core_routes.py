@@ -90,7 +90,7 @@ def serve_ui():
         _html = _html.replace('<head>', f'<head>\n{_token_script}', 1)
         return Response(_html, content_type='text/html')
     except FileNotFoundError:
-        return "index.html not found — run: python build_ui.py", 404
+        return "index.html not found — run: python -m agent_friday.ui.build_ui", 404
 
 
 @core_bp.route('/static/<path:filename>')
@@ -118,17 +118,20 @@ def serve_favicon():
 @core_bp.route('/friday-live')
 @core_bp.route('/friday-live/')
 def serve_friday_live():
-    return send_from_directory('.', 'friday_live.html')
+    # Same root_path-vs-cwd trap as /static above: a relative directory
+    # resolves against src/agent_friday/core/, not the repo root where the
+    # Friday Live PWA files live. Anchor to cwd like the other asset routes.
+    return send_from_directory(os.path.abspath('.'), 'friday_live.html')
 
 
 @core_bp.route('/friday-live/manifest.json')
 def serve_friday_live_manifest():
-    return send_from_directory('.', 'friday_live_manifest.json', mimetype='application/manifest+json')
+    return send_from_directory(os.path.abspath('.'), 'friday_live_manifest.json', mimetype='application/manifest+json')
 
 
 @core_bp.route('/friday-live/sw.js')
 def serve_friday_live_sw():
-    resp = send_from_directory('.', 'friday_live_sw.js', mimetype='application/javascript')
+    resp = send_from_directory(os.path.abspath('.'), 'friday_live_sw.js', mimetype='application/javascript')
     resp.headers['Service-Worker-Allowed'] = '/friday-live/'
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
@@ -215,7 +218,7 @@ def friday_health():
         "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-8"),
         "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
         "creative_model": settings.get("creative_model", "gemini-nano-banana-2"),
-        "voice_model": settings.get("voice_model", "gemini-3.1-flash-live-preview"),
+        "voice_model": settings.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
         "vault": {
             "encryption_enabled": _vault_state.get("enabled", False),
             "warning": _vault_warning,
@@ -266,6 +269,11 @@ def list_models():
                 "orchestrator_model": settings.get("orchestrator_model"),
                 "subagent_model": settings.get("subagent_model"),
                 "creative_model": settings.get("creative_model"),
+                # Video has no flat mirror — creative_model IS creative_image
+                # (_CAP_FLAT_MAP); the video pick lives only in routing.
+                "creative_video_model": ((settings.get("capability_routing")
+                                          or {}).get("creative_video")
+                                         or {}).get("model"),
                 "voice_model": settings.get("voice_model"),
                 "voice_engine": settings.get("voice_engine"),
             },

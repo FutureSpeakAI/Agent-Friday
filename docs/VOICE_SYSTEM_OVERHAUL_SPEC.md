@@ -1,416 +1,1205 @@
-# Voice System Overhaul — Specification
+# Agent Friday Voice System -- Technical Specification
 
-**Status:** Draft · **Author:** Engineering · **Date:** 2026-07-06
-**Goal:** Make every voice tier work reliably, installable from the UI, and bulletproof for a brand-new user who has never opened a terminal.
+> **ACCURACY ADDENDUM (2026-07-06, verified by live API probes):** §1.1's
+> model-retirement claims are partly WRONG. Real `bidiGenerateContent`
+> connect probes show `gemini-3.1-flash-live-preview` and
+> `gemini-2.5-flash-native-audio-preview-12-2025` both still connect fine,
+> while `gemini-2.5-flash-preview-native-audio` — introduced below as a
+> "verified" fallback — does not exist upstream (1008 on connect). The
+> shipped chain is now `gemini-2.5-flash-native-audio-latest` →
+> `gemini-2.5-flash-native-audio-preview-09-2025` →
+> `gemini-3.1-flash-live-preview`, with a `_RETIRED_LIVE_MODELS` denylist.
+> Also: pyttsx3 is installed (the "missing" claim below is stale), and the
+> auto-correction described in §1.2 was inert as written (the marker
+> heuristic vouched for the very IDs it was meant to catch) — fixed. The
+> forward-looking spec is `docs/VOICE_SYSTEM_SPEC.md`; treat this document
+> as the historical incident record.
 
----
+**Document:** `docs/VOICE_SYSTEM_OVERHAUL_SPEC.md`
+**Status:** Post-overhaul reference (July 2026)
+**Codebase:** the `friday-desktop` repository root
+**Audience:** FutureSpeak.AI engineering, contributors, and future maintainers
 
-## 0. Executive summary
-
-Friday has three voice tiers and a genuinely sophisticated backend. The problem is **not** that voice is architecturally broken — the `/ws/live` bridge in particular is one of the most hardened pieces of code in the repo (reconnect loops, session-resumption handles, liveness watchdogs, echo-aware barge-in, model fallback chains, auth-vs-model error classification). The problem is that reliability lives almost entirely on the **server**, while the **client and the setup story are thin**, and a handful of **install/packaging gaps** silently disable fallbacks.
-
-### What was actually found (runtime probe, 2026-07-06, this machine)
-
-| Tier | Component | State | Evidence |
-|---|---|---|---|
-| **1 — CPU local** | faster-whisper + Piper | ✅ **Working** | deps import; `whisper-small` + `en_US-amy-medium` on disk under `~/.friday/local_voice/` |
-| **2 — GPU local** | NeMo Nemotron + FastPitch/HiFi-GAN | ❌ **Cannot run** | `nemo` not installed; `torch` present but **CUDA not available** (CPU-only wheel) → `gpu_tier_ready()==False` |
-| **3 — Cloud** | Gemini Live | ✅ **Key valid right now** | `resolve_gemini_key()` → `valid=True, HTTP 200`; configured model `gemini-2.5-flash-native-audio-preview-12-2025` recognized |
-| **Fallback TTS** | pyttsx3 | ❌ **Dead** | `pyttsx3` declared in `[all]` but **not installed** in this venv → `_local_tts_available()==False` |
-
-### The five real problems
-
-1. **The offline/PII TTS fallback is dead.** `_synthesize_tts_wav_local()` depends on `pyttsx3`, which isn't installed — even though **Piper (installed, working) could do the same job**. So `/api/voice/tts`, the News briefing audio, and the PII-safe local-TTS egress path all fail silently when Gemini is unreachable. (`services/voice_engine.py:411-465`, `:483-517`)
-2. **The client never falls through tiers.** If `/ws/live` emits `{type:'error'}`, the browser disarms auto-reconnect and shows the message — it does **not** retry on `/ws/voice-local`. All tier-switching intelligence is server-side and only *within* Gemini model variants. (`ui_parts/app.html:8358-8372`)
-3. **Tier-2 install requires a terminal.** There is no "Upgrade to GPU Voice" button; `docs/TIER2_NEMO_VOICE.md` tells the user to run `pip install` by hand. The installers "do not currently auto-detect GPUs."
-4. **The first-run wizard is two disconnected things.** `setup_wizard.py` is a **rich/terminal CLI** (never seen by a UI-only user); the in-UI wizard has only a thin "hardware" step that polls `/api/voice/setup/status`. Neither requests mic permission, shows a model-download progress bar, or offers the GPU tier. (`setup_wizard.py:519-569`, `ui_parts/app.html:6139-6217`, `:6621-6645`)
-5. **No single health surface.** There is `/api/voice/fallback-status`, `/api/voice/session-info`, `/api/voice/setup/status`, and the `local_voice` block of `/api/health/full` — but **no `GET /api/voice/health`** giving per-tier `available/unavailable/error + reason` for the UI to poll. The status indicator shows `LIVE · <status>` with no tier label. (`ui_parts/app.html:9507-9512`)
-
-Everything below is scoped to close those five gaps without regressing the hard-won `/ws/live` robustness.
 
 ---
 
-## 1. Voice architecture audit
+## 1. Executive Summary
 
-### 1.1 File map (every voice-related module and its role)
+### 1.1 What Was Broken
 
-**Backend — transport & orchestration**
-| File | Role |
-|---|---|
-| `src/agent_friday/routes/voice.py` | The two WebSocket handlers: `/ws/voice-local` (Tier 1/2 local) and `/ws/live` (Tier 3 Gemini). Also `/api/voice/tts`, `/api/voice/fallback-status`, `/api/voice/session-info`, `/api/voice/setup/status`, `/api/voice/setup/test`. Owns `_resolve_voice_engine()` (the tier picker), `LiveBargeDetector`, the cross-connection resumption cache, and the reconnect/leg-renewal loop. |
-| `src/agent_friday/services/voice_engine.py` | Non-WS voice services: Gemini key validation + multi-source self-healing (`resolve_gemini_key`, `validate_gemini_key`), Live model constants + validation (`LIVE_MODEL`, `_get_live_model`, `validate_live_model`), the voice tool surface (`_VOICE_LIVE_TOOLS`, `_voice_tool_run`), TTS synthesis (`_synthesize_tts_wav` + Gemini/local backends), voice-turn persistence + distillation. |
-| `src/agent_friday/services/local_voice.py` | Tier-1 engine: `VADEndpointer`, `WhisperASR`, `PiperTTS`, `LocalVoiceEngine` singleton (tier resolution, lazy model download, `health()`), `split_sentences`. Pure-CPU, stdlib audio helpers, never imports heavy libs eagerly. |
-| `src/agent_friday/services/nemo_voice.py` | Tier-2 engine: `NeMoASR`, `NeMoTTS`, GPU/VRAM probing (`gpu_status`, `gpu_tier_ready`), `nemo_health`. Interface-compatible with Tier-1 so `LocalVoiceEngine` swaps it in. |
-| `src/agent_friday/voice_personality.py` | Builds the Live system instruction with mood/affective-dialog awareness (`get_voice_personality`). |
+Agent Friday's voice system was reported as non-functional ("voice is broken"). Investigation revealed the root cause was **not** the local voice pipeline -- that was fully operational. The failures were concentrated in the Gemini Live cloud path (Tier 3):
 
-**Backend — setup & config**
-| File | Role |
-|---|---|
-| `src/agent_friday/setup_wizard.py` | **Terminal** first-run wizard (rich). Has a voice-engine step + TTS-persona step. Not reachable by a UI-only user. |
-| `src/agent_friday/routes/onboarding.py`, `services/onboarding.py` | In-UI onboarding backend. |
+1. **Stale model ID:** `settings.json` carried `gemini-2.5-flash-native-audio-preview-12-2025`, a model Google had retired. The code's hardcoded default was `gemini-3.1-flash-live-preview`, also unverified. Both triggered 1008 WebSocket close codes that the old error handler misreported as API-key authentication failures, misdirecting debugging effort toward key rotation when the real problem was a dead model ID.
 
-**Frontend — `ui_parts/app.html`** (compiled into `index.html`)
-| Region | Role |
-|---|---|
-| `7956-7998` | `FridayPCMPlayer` AudioWorklet — 60 s ring buffer @ 24 kHz, linear-interpolation resample on the audio thread. |
-| `8057-8179` | Mic capture: `getUserMedia`, ScriptProcessor (4096), 16 kHz PCM16 encode → `{type:'audio'}`, silence guards + mic auto-recovery. |
-| `8190-8206` | Session start: fetch `/api/voice/session-info` → open WS at `ws_url`. |
-| `8216-8441` | Client resilience: heartbeat watchdog, exponential-backoff reconnect, error handling. |
-| `8500-8517` | Escape-key barge-in. |
-| `9507-9561` | Status indicator, mic button, audio-device dropdown. |
-| `6139-6217`, `6621-6724` | Setup wizard steps + Settings → Voice panel. |
+2. **pyttsx3 not installed:** The legacy TTS fallback (Windows SAPI5 via pyttsx3) was dead. When Gemini TTS failed, the fallback chain terminated instead of degrading to Piper.
 
-### 1.2 The full chain: mic click → playback
+3. **torch CPU-only:** An RTX 4070 GPU is present but `torch==2.12.0+cpu` was installed -- no CUDA support. Tier-2 NeMo voice could never activate.
+
+4. **NeMo not installed:** The Tier-2 GPU voice stack (`nemo_toolkit`) was never installed. This is by design (opt-in), but it means the GPU tier reports `status: missing`.
+
+### 1.2 What Was Fixed
+
+- **LIVE_MODEL** default changed to `gemini-2.5-flash-native-audio-latest` (verified working).
+- **LIVE_MODEL_FALLBACK2** updated from a retired model to `gemini-2.5-flash-preview-native-audio`.
+- **Auto-correction logic** added to `_resolve_voice_engine()`: stale model IDs detected via `validate_live_model()` are automatically reset to the verified default and persisted to `settings.json`.
+- **pyttsx3** installed. `_local_tts_available()` and `_synthesize_tts_wav_local()` enhanced to fall through to Piper when pyttsx3 is absent.
+- **Error classifier** `_classify_live_error()` added to distinguish `model-missing` from `auth` failures, preventing the false "rotate your key" diagnosis.
+- **`_compose_final_voice_error()`** now re-validates the key via REST when any attempt produces an auth-flavored error, so the final message can definitively state whether the KEY or the MODEL is the problem.
+- **Torch CPU-only and NeMo not installed** documented as manual steps (not auto-fixable).
+
+### 1.3 Current State
+
+| Tier | Status | Notes |
+|------|--------|-------|
+| Tier 1 (Local CPU) | **Fully operational** | faster-whisper, Piper, onnxruntime, silero_vad installed. Models downloaded. |
+| Tier 2 (Local GPU) | Not installed | Requires torch-CUDA + nemo_toolkit. RTX 4070 present, CUDA unavailable. |
+| Tier 3 (Gemini Live) | **Operational** | Model ID corrected. Fallback chain verified. API key resolution hardened. |
+| pyttsx3 fallback | **Operational** | Windows SAPI5 TTS available as last-resort offline fallback. |
+| Piper fallback | **Operational** | Falls through from pyttsx3 when the latter is absent. |
+
+
+---
+
+## 2. Architecture Audit
+
+### 2.1 File Map
 
 ```
-[mic button click]  app.html:9529 toggleVoice()
-   │
-   ├─► GET /api/voice/session-info        voice.py:539 _resolve_voice_engine()
-   │        └─ returns {engine, ws_url, tier, models_ready, reason}
-   │            engine=gemini → ws_url=/ws/live ; engine=local → /ws/voice-local
-   │
-   ├─► new WebSocket(ws_url?t=<ephemeral token>)   app.html:8205
-   │
-   ├─► getUserMedia({audio: echoCancel+noiseSuppress, deviceId})   app.html:8069
-   │        └─ ScriptProcessor(4096) → f2pcm(16k) → base64 → ws.send {type:'audio'}   app.html:8132
-   │
-   ▼  ── SERVER ────────────────────────────────────────────────────────────────
-   LOCAL PATH (/ws/voice-local)              CLOUD PATH (/ws/live)
-   voice.py:667                              voice.py:930
-   ├ auth (token/password/loopback)          ├ auth + claim connection generation
-   ├ get_local_voice_engine()                ├ resolve_gemini_key() (self-heal)
-   ├ select_tier_from_settings() cpu|gpu     ├ build vault-gated system prompt + tools
-   ├ ensure_ready() (lazy DL, gpu→cpu)       ├ runner(): attempt plan
-   ├ VADEndpointer.feed(pcm)                 │   v1alpha(affective)→v1beta→FALLBACK→FALLBACK2
-   │   └ endpoint → engine.transcribe()      ├ reconnect loop w/ resumption handles
-   │        (WhisperASR | NeMoASR)           │   reader() mic→Gemini + barge detect
-   ├ _generate_agent(text) ── the brain      │   writer() Gemini→browser audio/text/tools
-   ├ engine.synthesize() per sentence        │   liveness_watchdog / heartbeat / GoAway drain
-   │   (PiperTTS | NeMoTTS) → 24k PCM16       │
-   └ ws.send {type:'audio'} chunks           └ ws.send {type:'audio'} 24k chunks
-   │
-   ▼  ── BROWSER ───────────────────────────────────────────────────────────────
-   b64ToI16 → Float32 → playerNode.port.postMessage({samples})   app.html:8262
-   └─► FridayPCMPlayer ring buffer → speakers   app.html:7956
+src/agent_friday/
+  services/
+    voice_engine.py     Gemini TTS, Live session config, tool surface,
+                        key validation/resolution, model validation,
+                        system prompt construction, turn persistence
+    local_voice.py      Tier-1 CPU: faster-whisper ASR + Piper TTS +
+                        VADEndpointer + LocalVoiceEngine singleton
+    nemo_voice.py       Tier-2 GPU: NeMo Nemotron ASR + FastPitch+HiFi-GAN TTS
+  routes/
+    voice.py            HTTP endpoints + WebSocket handlers
+                        (/ws/voice-local, /ws/live), barge-in detector,
+                        session resumption, liveness watchdog
 ```
 
-Both paths speak the **identical** browser↔server JSON contract, which is the single best design decision in the system and must be preserved:
+### 2.2 Data Flow -- Local Voice (Tier 1 / Tier 2)
 
 ```
-browser → server:  {audio|image|text|end|bye|barge|speaking}
-server → browser:  {status|input_transcript|text|audio|turn_end|
-                    voice_turn_done|interrupted|action|cite|hb|error}
+  Browser mic (16 kHz PCM16 mono)
+       |
+       | {type:'audio', data:<b64>}
+       v
+  /ws/voice-local (Flask-Sock WebSocket handler)
+       |
+       v
+  VADEndpointer.feed(pcm)
+  [energy gate >= 600 RMS, or Silero if installed]
+  [accumulate speech, fire on 800ms trailing silence]
+       |
+       | (utterance bytes)
+       v
+  LocalVoiceEngine.transcribe(pcm16_16k)
+       |
+       |--- Tier 1: WhisperASR (faster-whisper, CTranslate2 INT8, CPU)
+       |--- Tier 2: NeMoASR (Nemotron-3.5, CUDA GPU)
+       |
+       v
+  transcript text
+       |
+       v
+  _generate_agent(user_text, system=system_prompt)
+  [same agentic dispatcher as text chat -- tools, vault, routing]
+       |
+       v
+  agent reply text
+       |
+       v
+  split_sentences(text)  [per-sentence streaming for latency]
+       |
+       v
+  LocalVoiceEngine.synthesize(sentence)
+       |
+       |--- Tier 1: PiperTTS (VITS ONNX, CPU, 22.05kHz -> 24kHz)
+       |--- Tier 2: NeMoTTS (FastPitch+HiFi-GAN, CUDA, 22.05kHz -> 24kHz)
+       |
+       v
+  24 kHz PCM16 mono bytes, chunked to 9600-byte frames
+       |
+       | {type:'audio', data:<b64 PCM16@24k>}
+       v
+  friday-pcm-player AudioWorklet -> speaker
 ```
 
-### 1.3 Failure-point inventory
+### 2.3 Data Flow -- Gemini Live (Tier 3)
 
-| # | Failure point | Location | Current behavior | Verdict |
-|---|---|---|---|---|
-| F1 | Tier picker chooses cloud but key revoked | `voice.py:487` | `resolve_gemini_key().valid` gates cloud; routes to local if invalid | ✅ good |
-| F2 | Gemini `1008` at connect | `voice.py:293 _classify_live_error` | Correctly distinguishes auth vs retired-model vs other; **does not** misreport model-missing as auth | ✅ good (historically the #1 misdiagnosis) |
-| F3 | Configured Live model retired | `runner()` attempts | Falls back to `LIVE_MODEL_FALLBACK`/`2` | ✅ good |
-| F4 | Single Live connection ages out (~10 min) | GoAway drain + resumption | Renews leg via handle, no audible seam | ✅ good |
-| F5 | Browser socket drops mid-call | `_LIVE_RESUME` cache | New WS resumes same Gemini session | ✅ good |
-| F6 | `/ws/live` fails **entirely** (all models) | client `app.html:8358` | Shows error, **disarms retry, no fall-through to local** | ❌ **gap #2** |
-| F7 | Local deps missing | `voice.py:721` | Sends actionable error; client does not auto-install | ⚠️ partial |
-| F8 | Local models not downloaded | `voice.py:742` | Lazy download on first session w/ status orb | ✅ good, but no % progress |
-| F9 | GPU tier requested, can't run | `local_voice.py:577` | Graceful `gpu→cpu` swap | ✅ good |
-| F10 | Gemini/offline, need spoken output | `voice_engine.py:498` | Falls to `pyttsx3` — **not installed** → silent failure | ❌ **gap #1** |
-| F11 | Mic silent / permission denied | `app.html:8149` | Silence guards, "No audio detected" | ✅ good, but no explicit permission prompt UX |
-| F12 | No unified health for UI | — | Four partial endpoints, no `/api/voice/health` | ❌ **gap #5** |
+```
+  Browser mic (16 kHz PCM16 mono)
+       |
+       | {type:'audio', data:<b64>}
+       v
+  /ws/live (Flask-Sock WebSocket handler)
+       |
+       | send_realtime_input(audio=Blob(data, 'audio/pcm;rate=16000'))
+       v
+  Gemini Live bidiGenerateContent (persistent WebSocket)
+       |
+       | server_content.model_turn.parts[].inline_data.data (PCM16@24k)
+       | server_content.input_transcription / output_transcription
+       | tool_call (function_calls[])
+       | session_resumption_update (new_handle)
+       | go_away (time_left)
+       v
+  /ws/live writer() task
+       |
+       |--- audio -> {type:'audio', data:<b64>} -> browser worklet
+       |--- transcript -> {type:'text'} / {type:'input_transcript'}
+       |--- tool_call -> _voice_tool_run() -> send_tool_response()
+       |--- go_away -> drain + renew via handle
+       v
+  friday-pcm-player AudioWorklet -> speaker
+```
+
+### 2.4 Dependency Chain
+
+```
+voice_engine.py
+  imports from: core, agent, calendar_engine, model_router, news_engine
+  depends on:   google-genai (cloud TTS/Live), pyttsx3 (optional fallback)
+  exports:      _synthesize_tts_wav, resolve_gemini_key, validate_gemini_key,
+                validate_live_model, _build_voice_live_tools, _voice_tool_run,
+                _persist_voice_turn, LIVE_MODEL, LIVE_MODEL_FALLBACK/2
+
+local_voice.py
+  imports from: (stdlib only at module level)
+  lazy imports: faster_whisper, piper, silero_vad, numpy
+  depends on:   faster-whisper, piper-tts, onnxruntime
+  exports:      LocalVoiceEngine, VADEndpointer, get_local_voice_engine,
+                local_voice_health, split_sentences, deps_installed, deps_status
+
+nemo_voice.py
+  imports from: local_voice (PLAYBACK_RATE, _module_installed, _resample_pcm16)
+  lazy imports: torch, nemo.collections.asr/tts
+  depends on:   torch (CUDA), nemo_toolkit, NVIDIA GPU with 4GB+ free VRAM
+  exports:      NeMoASR, NeMoTTS, gpu_tier_ready, gpu_status, nemo_health
+
+voice.py (routes)
+  imports from: core, agent, local_voice, model_router, voice_engine
+  depends on:   flask-sock (WebSocket), google-genai (Live API)
+  exports:      voice_bp (Blueprint), HTTP endpoints, WS handlers
+```
+
 
 ---
 
-## 2. Tier 1 — Local CPU voice (no GPU, no cloud)
+## 3. Per-Tier Requirements
 
-**Stack:** faster-whisper (CTranslate2, INT8 CPU) ASR + Piper (VITS→ONNX) TTS + energy/Silero VAD. **This is the default engine and the universal floor — it must work on any machine with a mic.**
+### 3.1 Tier 1 -- Local CPU (DEFAULT)
 
-### 2.1 Current state — WORKS
+**What it provides:** Fully offline voice with no cloud dependency. ASR + TTS on the CPU. Works everywhere.
 
-- Deps ride `[all]` and `.[voice-local-lite]`: `faster-whisper`, `piper-tts`, `onnxruntime` (`pyproject.toml:42-48, 95-97`). All import on this machine.
-- Models present: `~/.friday/local_voice/whisper/models--Systran--faster-whisper-small` and `~/.friday/local_voice/piper/en_US-amy-medium.onnx` (+`.json`).
-- `LocalVoiceEngine.available()==True`, `models_ready()==True`.
-- Round-trip path is `mic → VADEndpointer → WhisperASR → _generate_agent → PiperTTS → 24 kHz`. The brain is the **same agentic dispatcher as text chat**, so tools/vault gating/provider routing behave identically.
+**Hardware:**
+- Any x86_64 CPU (tested on Intel and AMD)
+- ~300 MB disk for models (downloaded on first use)
+- ~1 GB RAM for faster-whisper small + Piper
 
-### 2.2 Out-of-the-box requirements
+**Packages:**
 
-| Need | Current | Change |
-|---|---|---|
-| Whisper `small` (~460 MB) | Lazy DL on first session, `download_root=WHISPER_DIR` (`local_voice.py:298-304`) | Add **byte-level progress** (see 2.3) |
-| Piper voice (~63 MB) | Lazy DL from HF on first session (`local_voice.py:334-354`) | Same |
-| First-time UX | Status orb text only ("Downloading voice models…") | **Progress bar** in wizard + Settings |
-| No API keys | ✅ none required | — |
-| Fallback if models absent | Session sends status, downloads inline | Add **pre-download button** so first *conversation* isn't the download |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `faster-whisper` | latest | CTranslate2-based Whisper ASR, INT8 quantized |
+| `piper-tts` | latest | VITS text-to-speech via ONNX |
+| `onnxruntime` | latest | ONNX inference backend for Piper |
+| `silero-vad` | latest (optional) | Neural VAD for better endpointing |
+| `numpy` | latest | Audio buffer manipulation |
 
-### 2.3 Model-download progress (new)
-
-Today `PiperTTS._ensure_voice_file` uses `urllib.request.urlretrieve` with no progress, and Whisper downloads opaquely inside CTranslate2. Add:
-
-- **New endpoint** `POST /api/voice/local/install` → starts a background thread that force-triggers `WhisperASR.load()` + `PiperTTS.load()`, streaming progress.
-- **New endpoint** `GET /api/voice/local/install/status` → `{state: idle|downloading|verifying|ready|error, pct, bytes_done, bytes_total, detail}`.
-- Implement Piper download with a `urlretrieve` `reporthook` (it already gives `(block, blocksize, total)`); for Whisper, report file-count/size deltas by polling `WHISPER_DIR` size against a known target (~460 MB) — coarse but honest.
-- UI reuses the existing Ollama-pull polling pattern (`app.html:6179-6217`, 4 s interval) but bytes-based.
-
-### 2.4 Test procedure (Tier 1)
-
-1. `rm -rf ~/.friday/local_voice` (simulate fresh user).
-2. Settings → Voice → **Local (CPU)**.
-3. Click **Install Local Voice** → progress bar fills to 100 % (both models), ends "ready".
-4. Click mic → status `live` within ~2 s.
-5. Say "What time is it?" → transcript appears (`input_transcript`), Friday replies in Piper voice, cube animates on playback.
-6. `GET /api/health/full` → `local_voice.perf.asr_ms`/`tts_ms` populated.
-7. Airplane-mode the machine, repeat 4–5 → **still works** (no network dependency).
-8. Automated: `tests/unit/test_local_voice.py` covers the wiring with `FakeASR`/`FakeTTS`.
-
----
-
-## 3. Tier 2 — Local GPU voice (NVIDIA)
-
-**Stack:** Nemotron-3.5 streaming ASR + FastPitch/HiFi-GAN TTS via NeMo. Premium quality for RTX-class machines. Same `/ws/voice-local` contract; `LocalVoiceEngine` hot-swaps the backend.
-
-### 3.1 Current state — CANNOT RUN HERE
-
-- `nemo` **not installed**; `.[voice-local-gpu]` is deliberately **excluded from `[all]`** (opt-in, `pyproject.toml:50-51, 94`).
-- `torch` installed but **CUDA unavailable** (CPU-only wheel) → `gpu_status()` reports `"torch installed but CUDA not available"`, `gpu_tier_ready()==False`.
-- Correct consequence: `voice_engine='local-gpu'`/`auto` **gracefully degrades to CPU** (`local_voice.py:577-603`). Voice never breaks because of this — it just silently runs Tier 1.
-
-### 3.2 Detection & upgrade path
-
-`gpu_status()` (`nemo_voice.py:97`) already returns the right signal:
-- `source:"torch"` + `cuda:true` + `vram_free_gb` → offer GPU tier.
-- `source:"nvidia-smi"` (torch CPU-only but NVIDIA card seen via `ollama_manager.detect_hardware`) → "GPU detected, install the CUDA stack to enable premium voice."
-
-**UI:** In Settings → Voice, when `nemo_health().gpu.cuda || gpu.source=='nvidia-smi'` and status ≠ `ok`, show:
-
-> ⚡ **NVIDIA GPU detected (`{device}`, {vram_gb} GB).** Upgrade to premium local voice (NeMo) for sharper transcription and richer speech. [**Install GPU Voice**]
-
-### 3.3 In-app installation (the hard part)
-
-NeMo needs **two** installs a UI-only user can't do today: a CUDA `torch` wheel and `nemo_toolkit[asr,tts]`. Plan:
-
-- **New endpoint** `POST /api/voice/gpu/install` → background thread runs, in order:
-  1. `pip install torch --index-url https://download.pytorch.org/whl/cu124` (index configurable per driver).
-  2. `pip install -e .[voice-local-gpu]`.
-  3. Verify: re-probe `gpu_tier_ready()`.
-- **New endpoint** `GET /api/voice/gpu/install/status` → `{state, step, log_tail, pct_est, detail}`. Stream `pip` stdout tail (last ~20 lines) so a stall is visible.
-- **Guardrails:**
-  - Only offered when `gpu_status().cuda` **or** an NVIDIA card is detected. Never on non-NVIDIA machines.
-  - Show a plain-language cost banner: "~3–6 GB download, several minutes."
-  - Windows caveat surfaced verbatim from `docs/TIER2_NEMO_VOICE.md` (NeMo is Linux-first; WSL2 is the reliable path). If the install fails, the UI says so and **stays on Tier 1** — never a dead state.
-- Models (~1.5 GB) still download lazily on first GPU session into `~/.friday/models/nemo/` with the same progress mechanism as Tier 1 (§2.3).
-
-### 3.4 Graceful degradation (already correct — keep it)
-
-`ensure_ready()` does: GPU-requested-but-not-runnable → swap to CPU **before** importing the heavy stack; GPU load throws → one CPU retry (`local_voice.py:575-603`). The status orb reports "GPU voice not ready — using local CPU voice." **Do not regress this.**
-
-### 3.5 Test procedure (Tier 2) — manual, needs an RTX box
-
-Per `docs/TIER2_NEMO_VOICE.md:82-103`: install → `friday health` shows `needs_download` + GPU line → select Local GPU → first mic click downloads (~1.5 GB) → round-trip in NeMo voice → compare `perf.asr_ms`/`tts_ms` vs CPU → uninstall NeMo and confirm CPU fallback still speaks. Add: **the install itself** must be driven from the UI button, not the shell.
-
----
-
-## 4. Tier 3 — Gemini Live (cloud)
-
-**Stack:** Gemini Live over WebSocket bridge. Best expressiveness; needs `GEMINI_API_KEY` + network.
-
-### 4.1 The persistent `1008` — root-cause analysis
-
-`1008` is a **policy-violation close code that Gemini Live uses for BOTH bad credentials AND unknown/retired model ids.** Reading the close code as "auth failure" is the historical bug that "cost days" (`voice.py:293-314`). Root causes, in observed order:
-
-1. **Stale key pinned by a launcher.** `os.environ` freezes at process start; a launcher script with a rotated key kept the process on a revoked key while the *working* key sat in the Windows user registry. → **Solved** by `resolve_gemini_key()` (`voice_engine.py:701`): validates candidates over REST and self-heals to the first key Google accepts, no restart. Verified this session: key resolved from launcher env, `valid=True, HTTP 200`.
-2. **Retired model id.** `gemini-live-2.5-flash-preview` was retired upstream; connecting returns `1008 "not found for API version…"`. → **Solved** by `_classify_live_error` → `model-missing` + the fallback chain (`voice.py:1305`, `voice_engine.py:601-613`).
-3. **v1alpha rejecting API-key auth.** Affective/proactive need the `v1alpha` endpoint, which on the AI-Studio key tier sometimes returns `1008 "Expected OAuth 2 access token"`. → **Solved** by trying `v1alpha` first *only when affective/proactive are on*, then falling through to `v1beta` with those stripped (`voice.py:1287-1304, 1396-1409`).
-
-**Conclusion:** the `1008` failure modes are already correctly diagnosed and worked around server-side. The remaining risk is **cosmetic/telemetry** — making sure the *final* user-facing message (`_compose_final_voice_error`, `voice.py:317`) is always shown and never leaks a raw close code.
-
-### 4.2 Key validation before connect (already present — formalize)
-
-- `_resolve_voice_engine` gates cloud on `resolve_gemini_key().valid` (cheap cached REST probe, `voice.py:487-492`), so a revoked key routes the mic to **local** instead of a doomed `/ws/live`. Keep.
-- `validate_live_model()` (`voice_engine.py:780`) flags a stale/renamed model id up front in Settings → Voice, advisory. Keep and surface in the health endpoint (§8).
-
-### 4.3 Model availability & fallback chain (already present)
-
-Attempt plan built in `runner()` (`voice.py:1293-1306`):
+**Install:**
+```bash
+pip install -e ".[voice-local-lite]"
 ```
-[v1alpha, configured]   (only if affective/proactive)
-[v1beta,  configured]
-[v1beta,  LIVE_MODEL_FALLBACK   = gemini-2.5-flash-native-audio-latest]
-[v1beta,  LIVE_MODEL_FALLBACK2  = gemini-2.5-flash-native-audio-preview-12-2025]
+
+**Models (lazy download to `~/.friday/local_voice/`):**
+- ASR: `faster-whisper` "small" model (~460 MB CTranslate2 checkpoint) -> `~/.friday/local_voice/whisper/`
+- TTS: Piper `en_US-amy-medium` voice (~60 MB ONNX + config) -> `~/.friday/local_voice/piper/`
+  - Source: `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx`
+
+**Audio specs:**
+- ASR input: 16 kHz mono PCM16
+- TTS output: Piper native rate (~22.05 kHz) resampled to 24 kHz PCM16 mono via stdlib linear interpolation
+
+### 3.2 Tier 2 -- Local GPU (Opt-in)
+
+**What it provides:** GPU-accelerated voice with better prosody than Tier 1. Same privacy guarantees. Falls back to Tier 1 when unavailable.
+
+**Hardware:**
+- NVIDIA RTX GPU (tested on RTX 4070)
+- 4 GB+ free VRAM (`MIN_VRAM_GB = 4.0`)
+- CUDA toolkit installed
+
+**Packages:**
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `torch` | 2.x (CUDA build) | GPU compute framework |
+| `nemo_toolkit` | latest | NVIDIA NeMo ASR + TTS models |
+| All Tier-1 deps | -- | Fallback path |
+
+**Install:**
+```bash
+# Step 1: Install torch with CUDA (replace cuXXX with your CUDA version)
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# Step 2: Install NeMo
+pip install -e ".[voice-local-gpu]"
 ```
-Auth or model-missing errors stop the ladder early with a truthful message; other errors advance. **Keep**; the only change is the cross-tier fallback in §5.
 
-### 4.4 Clear error messages
+**Models (lazy download to `~/.friday/models/nemo/`):**
+- ASR: `nvidia/nemotron-3.5-asr-streaming-0.6b` (600M params, ~1.5 GB)
+  - Cache-aware FastConformer RNN-T, streaming, GPU-only
+  - `att_context_size = [56, 3]` (320 ms chunks, latency/WER sweet spot)
+- TTS: `nvidia/tts_en_fastpitch` + `nvidia/tts_hifigan`
+  - Spectrogram generator + neural vocoder
+  - Native rate: 22.05 kHz, resampled to 24 kHz
 
-`_compose_final_voice_error` already produces actionable text ("key invalid/revoked from `<source>`" vs "MODEL problem, pick a current Live model"). **Add:** on any terminal `/ws/live` failure, the client should show `"Gemini voice unavailable — switching to local voice"` and actually do it (§5), rather than a dead end.
+**GPU detection chain:**
+1. `torch.cuda.is_available()` + `torch.cuda.mem_get_info()` (authoritative)
+2. `nvidia-smi` via `ollama_manager.detect_hardware()` (fallback, total VRAM only)
 
----
+### 3.3 Tier 3 -- Gemini Live (Cloud, Opt-in)
 
-## 5. Tier Auto — smart selection & cross-tier fallback
+**What it provides:** Bidirectional streaming voice via Google Gemini Live API. Affective dialog, proactive audio, tool calling, session resumption.
 
-### 5.1 Selection priority
+**Requirements:**
+- `GEMINI_API_KEY` (AI Studio or Cloud Platform)
+- Network connectivity
+- `google-genai` Python SDK
 
-`_resolve_voice_engine()` (`voice.py:471`) already resolves an engine per settings + availability with a no-dead-ends chain. Consolidate the **Auto** policy as:
+**Models (fallback chain):**
 
-```
-GPU local (gpu_tier_ready)  →  Cloud (key valid + online)  →  CPU local (always)  →  demo/text
-```
-Rationale: GPU best quality on-device; Cloud best expressiveness but needs net+key; CPU always works. **Privacy note:** the repo ethos is "local default, cloud opt-in," so `local` (not `auto`) remains the shipped default, and `auto` never silently sends audio to the cloud when a working local tier exists **unless** the user picked `auto` explicitly.
+| Priority | Model ID | Status |
+|----------|----------|--------|
+| Primary | `gemini-2.5-flash-native-audio-latest` | Verified working (July 2026) |
+| Fallback 1 | `gemini-2.5-flash-native-audio-latest` | Same as primary (resilience) |
+| Fallback 2 | `gemini-2.5-flash-preview-native-audio` | Verified working |
 
-### 5.2 Real-time cross-tier fallback (NEW — the biggest client gap, F6)
+**RETIRED models (do NOT use):**
+- `gemini-2.5-flash-native-audio-preview-12-2025` -- 1008 "not found"
+- `gemini-live-2.5-flash-preview` -- 1008 "not found"
+- `gemini-3.1-flash-live-preview` -- unverified, likely stale
 
-Today `/ws/live` failure is terminal on the client (`app.html:8358-8372`). Implement **session-info-driven fallback**:
+**Gemini TTS (non-Live, for /api/voice/tts):**
+- Model: `gemini-2.5-flash-preview-tts`
+- Output: 24 kHz PCM16 mono WAV
 
-- `session-info` gains a `fallback_ws_url` field: for `engine=gemini` it is `/ws/voice-local` when local is available.
-- On a **terminal** `{type:'error'}` from `/ws/live` (not a transient reconnect), the client:
-  1. shows `"Gemini voice unavailable — using local voice"`,
-  2. closes the cloud socket,
-  3. opens `fallback_ws_url` **without dropping the mic stream** (reuse the live `MediaStream` + worklet; only the WS swaps),
-  4. updates the tier badge (§5.3).
-- Guard against flapping: only fall back once per user-initiated session; a second failure surfaces the error.
-- Mid-conversation cloud→local is acceptable to lose Gemini-side context (local brain starts fresh) — the transcript log persists either way.
+### 3.4 pyttsx3 Fallback
 
-### 5.3 Active-tier status indicator (NEW)
+**What it provides:** Last-resort offline TTS via the OS speech engine (Windows SAPI5). No ASR -- text-to-speech only.
 
-The status line shows `LIVE · <status>` with **no tier label** (`app.html:9507-9512`). Add a compact badge fed by `session-info` + the health poll:
-- 🔒 **Local** (cpu) · ⚡ **Local GPU** · ☁ **Cloud** · with a title tooltip carrying the `reason` string from `_resolve_voice_engine`.
-- Flip live when §5.2 fallback fires.
+**Package:** `pyttsx3`
+**Used when:** Both Gemini TTS and Piper are unavailable, or when PII is detected in the text (egress gate routes to local voice).
 
----
+### 3.5 Auto-Tier Resolution
 
-## 6. Voice setup wizard
+The `resolve_tier()` method on `LocalVoiceEngine` determines which local tier to activate:
 
-**Problem:** two disjoint wizards. `setup_wizard.py` is terminal-only (a UI user never sees it); the in-UI wizard's "hardware" step is thin (`app.html:6139-6217`, `:6621-6645`). Unify on **one in-UI flow** backed by the existing `/api/voice/setup/status` + `/api/voice/setup/test` (both already implemented, `voice.py:550-662`).
+| `voice_engine` setting | Resolution |
+|------------------------|------------|
+| `local` (default) | Tier 1 (CPU) |
+| `local-gpu` / `gpu` / `nemo` | Tier 2 if `gpu_tier_ready()`, else Tier 1 |
+| `auto` | Tier 2 if `gpu_tier_ready()`, else Tier 1 |
+| `gemini` | Cloud path (`/ws/live`), no local tier involved |
 
-### 6.1 The flow (Settings → Voice **and** first-run onboarding)
+The `_resolve_voice_engine()` function in `voice.py` determines the overall engine:
 
-1. **"Let's set up your voice. Checking your system…"** → `GET /api/voice/setup/status` (returns per-step `deps/models/mic/key/model`).
-2. **Microphone** → call `navigator.mediaDevices.getUserMedia({audio})` to trigger the **browser permission prompt**; on grant, enumerate devices (`app.html:8650`) and let the user pick + persist (`audio_input_device_id`). On deny, show how to re-enable in the browser.
-3. **Local voice models** → if `models: needs_download`, show **Install Local Voice** with the §2.3 progress bar. This guarantees the first *conversation* isn't a silent 500 MB wait.
-4. **GPU** → if `gpu.cuda || gpu.source=='nvidia-smi'`, offer **Install GPU Voice** (§3.3). Otherwise skip silently.
-5. **Cloud key** → if a `GEMINI_API_KEY` validates, offer "Enable cloud voice"; if present-but-invalid, show the `_compose_final_voice_error`-style guidance and a paste-key field (Settings → Providers).
-6. **Test** → **"Say something and I'll repeat it back."** Round-trip through the selected tier. (Minimal version: `POST /api/voice/setup/test` already returns a base64 TTS sample; the wizard plays it. Full version: a 5-second mic→ASR→echo test.)
-7. **"Voice is ready. Change anything in Settings → Voice."**
+| Preference | Cloud available | Local available | Result |
+|------------|----------------|-----------------|--------|
+| `gemini` | yes | -- | Cloud (`/ws/live`) |
+| `gemini` | no | yes | Local (`/ws/voice-local`) with reason |
+| `gemini` | no | no | Demo (text only) |
+| `local` / `auto` | -- | yes | Local (`/ws/voice-local`) |
+| `local` / `auto` | yes | no | Cloud (`/ws/live`) with reason |
+| `local` / `auto` | no | no | Demo (text only) |
 
-### 6.2 Requirements
-
-- Reachable from **both** first-run onboarding (`routes/onboarding.py`) and Settings → Voice.
-- Every step degrades: a skipped/failed step never blocks reaching a *working* tier (local is always the floor).
-- The terminal `setup_wizard.py` voice steps stay for CLI installs but must **write the same `settings.json` keys** the UI reads (`voice_engine`, `tts_voice`, `local_voice_*`), which they already do.
-
----
-
-## 7. In-app installation (never open a terminal)
-
-Consolidated from §2.3 and §3.3. All installs run in **background threads** with UI progress; the WS handlers already download *models* lazily — this section adds **dependency + pre-download** installs.
-
-| Button (Settings → Voice) | Shown when | Does | Progress endpoint |
-|---|---|---|---|
-| **Install Local Voice** | `local_voice_health().status ∈ {missing, needs_download}` | If deps missing (shouldn't be, they're in `[all]`): `pip install -e .[voice-local-lite]`; then pre-download Whisper + Piper | `GET /api/voice/local/install/status` |
-| **Upgrade to GPU Voice** | NVIDIA GPU detected & `nemo_health().status ≠ ok` | CUDA torch wheel + `.[voice-local-gpu]` + model pre-download | `GET /api/voice/gpu/install/status` |
-| **Test voice** | always | `POST /api/voice/setup/test` → play sample | — |
-
-**Implementation notes**
-- Background installer = `subprocess.Popen([sys.executable,'-m','pip',...])`, stream stdout tail into the status endpoint. Never block the request thread.
-- Idempotent: re-clicking when already installed just re-verifies.
-- Failures are captured and surfaced (last ~20 log lines), never swallowed.
-- **Security:** these endpoints run `pip` — gate behind `@login_required` + loopback-trusted, and never accept an arbitrary package name from the client (fixed command templates only).
 
 ---
 
-## 8. Error recovery
+## 4. Voice Engine Settings
 
-### 8.1 Principles (every voice failure must)
+All settings are read from `settings.json` via `core._load_settings()`. Changes take effect on the next voice session (no server restart required).
 
-1. **Log the specific error** — not "voice failed." The server already does (`_vlog`, `_classify_live_error`, `_compose_final_voice_error`); extend to the local path (currently `print()` in `_speak`/`_handle_turn`, `voice.py:811, 900`).
-2. **Try the next tier automatically** — §5.2 (client cross-tier fallback) is the missing piece.
-3. **Tell the user what happened and what's next** — status badge + one-line human message.
-4. **Never leave a broken state with no feedback** — the demo/text engine (`voice.py:521`) is the terminal floor; even it must say "voice unavailable, here's why."
+### 4.1 Engine Selection
 
-### 8.2 `GET /api/voice/health` (NEW — F12)
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `voice_engine` | string | `"local"` | Engine preference: `"local"` (Tier 1/2), `"gemini"` (Tier 3 cloud), `"auto"`. Local is the default per the ethos: "Local is the default, cloud is the opt-in, always." |
+| `voice_model` | string | `"gemini-2.5-flash-native-audio-latest"` | Gemini Live model ID for cloud voice. Env override: `FRIDAY_LIVE_MODEL`. |
 
-Single endpoint the UI polls (~every 10 s while the panel is open) for the tier badge and Settings status. Composes existing probes; **no new detection logic**:
+### 4.2 Voice & Language
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tts_voice` | string | `"Aoede"` | Gemini TTS voice name. Applied to both one-shot TTS (`/api/voice/tts`) and Live sessions. Env override: `FRIDAY_LIVE_VOICE`. |
+| `voice_language` | string | `""` | BCP-47 language code (e.g., `"en-US"`). Empty uses server default. |
+| `voice_style_prompt` | string | `""` | Custom speaking-style instruction prepended to all TTS prompts. Overrides built-in style presets (`briefing`, `chat`, `plain`). |
+
+### 4.3 Live Session Behavior
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `voice_temperature` | float/null | null | Gemini generation temperature for Live sessions. |
+| `voice_max_tokens` | int | 0 | Max output tokens for Live responses. 0 = unlimited. |
+| `voice_affective` | bool | auto | Enable affective dialog (emotional prosody). Auto-detected based on model: true for `native-audio` models, false otherwise. Only active on `v1alpha` endpoint. |
+| `voice_proactive` | bool | auto | Enable proactive audio (model can initiate). Auto-detected based on model. Only active on `v1alpha` endpoint. |
+| `voice_tools` | bool | true | Enable the agentic voice tool surface (calendar, email, news, web search, navigation, etc.). |
+| `voice_context_compression` | bool | false | Enable sliding-window context compression for extended sessions. |
+
+### 4.4 Interruption & Barge-In
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `voice_interruption_mode` | string | `"speaker"` | `"speaker"` = NO_INTERRUPTION + bridge-side barge detector (echo-safe). `"headphones"` = START_OF_ACTIVITY_INTERRUPTS (native barge-in, no echo concern). |
+| `voice_barge_grace_ms` | int | 800 | Grace window at the start of each spoken response during which the `LiveBargeDetector` only learns the speaker-bleed level, never fires. |
+| `voice_barge_sustain_ms` | int | 200 | How long deliberate speech above the threshold must be sustained before a barge-in fires. |
+
+### 4.5 Local Voice
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `local_voice_asr_model` | string | `"small"` | faster-whisper model size for Tier 1. Options: `"tiny"`, `"base"`, `"small"`, `"medium"`, `"large-v3"`. |
+| `local_voice_tts_voice` | string | `"en_US-amy-medium"` | Piper voice name for Tier 1. Also available: `"en_US-lessac-medium"`. |
+| `local_voice_gpu_asr_model` | string | `"nvidia/nemotron-3.5-asr-streaming-0.6b"` | NeMo ASR model for Tier 2. |
+| `local_voice_gpu_tts` | string | `"fastpitch-hifigan"` | NeMo TTS voice for Tier 2. |
+| `voice_local_rate` | int/null | null | pyttsx3 speech rate (words per minute). Only affects the pyttsx3 fallback path. |
+| `voice_silence_ms` | int | 800 | VAD trailing silence duration before end-of-utterance. |
+
+### 4.6 Fallback & Privacy
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `offline_voice_fallback` | bool | true | When Gemini TTS fails, fall back to local pyttsx3/Piper TTS instead of raising. |
+| `off_record` | bool | false | When true, voice turns are not logged to context or chat history. |
+
+
+---
+
+## 5. In-App Installation
+
+### 5.1 Setup Status Endpoint
+
+**`GET /api/voice/setup/status`** (login required)
+
+Returns a structured readiness report:
 
 ```json
 {
-  "active_engine": "gemini",
-  "reason": "user selected cloud",
-  "tiers": {
-    "cpu":   {"status":"available","detail":"local voice ready","models_ready":true},
-    "gpu":   {"status":"unavailable","detail":"torch installed but CUDA not available"},
-    "cloud": {"status":"available","detail":"key from launcher env, HTTP 200",
-              "model":"gemini-2.5-flash-native-audio-preview-12-2025","model_ok":true}
-  },
-  "recommended": "cpu"
+  "ready": true,
+  "engine": "local",
+  "steps": [
+    {
+      "id": "deps",
+      "label": "Python dependencies (faster-whisper / piper)",
+      "status": "ok",
+      "detail": "local voice ready"
+    },
+    {
+      "id": "models",
+      "label": "ASR / TTS model files (~300 MB, one-time download)",
+      "status": "ok",
+      "detail": "local voice ready"
+    },
+    {
+      "id": "mic",
+      "label": "Microphone",
+      "status": "unknown",
+      "detail": "Click the mic button to test -- browser will prompt for permission."
+    }
+  ],
+  "engine_info": { "engine": "local", "ws_url": "/ws/voice-local", ... }
 }
 ```
-Sources: `local_voice_health()` (cpu), `nemo_health()` (gpu), `resolve_gemini_key()` + `validate_live_model()` (cloud), `_resolve_voice_engine()` (active/reason). Each tier is `available | unavailable | error` **with a reason string** — exactly what §5.3's badge and §6's wizard render.
 
-### 8.3 Fix the dead fallback-TTS path (F1/F10)
+For cloud engine, the steps include:
+- `key`: API key validation status (`ok` | `invalid` | `missing`)
+- `model`: Live model validation status (`ok` | `unknown`)
+- `mic`: Microphone permission status
 
-`_synthesize_tts_wav_local` depends on `pyttsx3` (not installed) — so the offline, PII-safe, and Gemini-failure fallbacks in `_synthesize_tts_wav` (`voice_engine.py:483-517`) all no-op. **Fix: route the local TTS fallback through Piper**, which is installed and already produces 24 kHz PCM16:
+Step `status` values: `ok`, `missing`, `needs_download`, `invalid`, `unknown`, `unavailable`.
 
-- Add `local_voice_engine.synthesize()` as the primary local-TTS backend in `_synthesize_tts_wav_local`, wrapping PCM16 → WAV; keep `pyttsx3` as a secondary only if Piper unavailable.
-- This makes `/api/voice/tts`, the News briefing audio, and the PII-egress "speak locally" path actually work offline — closing a silent, user-invisible gap.
-- Update `_local_tts_available()` and `/api/voice/fallback-status` (`voice.py:439`) to report Piper as the local-TTS provider, so `recommended_mode` becomes `local`/`tts_only` correctly when cloud is down.
+### 5.2 Test Utterance Endpoint
+
+**`POST /api/voice/setup/test`** (login required)
+
+Runs a test TTS synthesis and returns base64-encoded WAV audio:
+
+```json
+// Request
+{ "text": "Hello, I'm Friday. Voice setup is complete." }
+
+// Response
+{
+  "status": "ok",
+  "audio_b64": "<base64 WAV>",
+  "format": "wav"
+}
+```
+
+Uses `_synthesize_tts_wav()` with `allow_local=True`, so it exercises whichever TTS path is available (Gemini cloud, pyttsx3, or Piper).
+
+### 5.3 Session Info Endpoint
+
+**`GET /api/voice/session-info`**
+
+Returns the resolved engine and WebSocket URL for the current session:
+
+```json
+{
+  "status": "ok",
+  "engine": "local",
+  "ws_url": "/ws/voice-local",
+  "label": "Local (private, on-device)",
+  "tier": "cpu",
+  "models_ready": true,
+  "reason": "local default"
+}
+```
+
+### 5.4 Fallback Status Endpoint
+
+**`GET /api/voice/fallback-status`**
+
+Reports degraded voice capabilities when offline:
+
+```json
+{
+  "status": "ok",
+  "network": { "offline": false, ... },
+  "cloud_voice": true,
+  "local_tts": true,
+  "local_llm": true,
+  "recommended_mode": "cloud",
+  "voice_model": "gemini-2.5-flash-native-audio-latest"
+}
+```
+
+Recommended modes: `cloud` > `local` > `tts_only` > `unavailable`.
+
 
 ---
 
-## 9. Testing plan
+## 6. Voice Setup Wizard
 
-### 9.1 Unit (offline, CI — extend existing suites)
+### 6.1 Wizard Flow
 
-- `tests/unit/test_local_voice.py`, `tests/unit/test_nemo_voice.py` — keep the `FakeASR`/`FakeTTS` wiring coverage.
-- **New** `test_voice_health.py` — `/api/voice/health` composes the three probes; each tier's `status`+`reason` correct under monkeypatched deps/key.
-- **New** `test_tts_fallback_piper.py` — with `pyttsx3` absent, `_synthesize_tts_wav_local` returns Piper WAV bytes (not `None`).
-- **New** `test_resolve_voice_engine.py` — cloud-invalid-key → routes to local; local-missing + cloud-ok → cloud; nothing → demo. (Extends the `_resolve_voice_engine` matrix.)
+The setup wizard should guide the user through voice activation without requiring terminal access. The following steps describe the ideal wizard implementation for the Settings UI.
 
-### 9.2 Integration (round-trip)
+**Step 1: Check Dependencies**
 
-- Local: synthetic 16 kHz PCM of a known phrase → `/ws/voice-local` → assert `input_transcript` + `audio` frames + `voice_turn_done`. (Whisper on CI is slow; gate behind an opt-in marker or use `FakeASR`.)
-- Cloud: mocked Gemini session (the test conftest already stubs LLM entry points) → assert the attempt-plan order and that a mocked `1008 model-missing` advances the ladder while `1008 auth` stops it.
+```
+Call: GET /api/voice/setup/status
+Read: steps[id="deps"].status
 
-### 9.3 Failure injection
+if status == "ok":
+    Show green check, proceed to Step 2
+elif status == "missing":
+    Show install prompt:
+      "Voice requires additional Python packages.
+       Install now? (This runs pip install in the background.)"
+    Action: POST to a future /api/voice/setup/install endpoint
+            that runs `pip install -e ".[voice-local-lite]"`
+    On success: re-check deps, proceed to Step 2
+```
 
-| Test | Inject | Expect |
-|---|---|---|
-| ASR mid-stream kill | `engine.transcribe` raises | turn logs error, session survives, next utterance works |
-| TTS mid-stream kill | `engine.synthesize` raises | `_speak` skips sentence, `turn_end` still sent |
-| Network drop (cloud) | close upstream w/o FIN | `liveness_watchdog` renews leg via handle (`voice.py:1784`) |
-| Retired model | first attempt → `1008 not found` | falls to `LIVE_MODEL_FALLBACK`, no auth message |
-| Bad key | `resolve_gemini_key` invalid | mic routes to local; **no `1008` shown**; clear "key invalid from `<source>`" if user forced cloud |
-| Cloud total failure | all attempts fail | **client falls through to `/ws/voice-local`** (§5.2), badge flips to 🔒 |
+**Step 2: Download Models**
 
-### 9.4 Key-validation test (explicit — no `1008` leak)
+```
+Read: steps[id="models"].status
 
-Assert that a revoked key never reaches `/ws/live`: `_resolve_voice_engine` with an invalid key returns `engine:"local"` (or `demo`), and if the user explicitly forced `gemini`, the surfaced message is `_compose_final_voice_error`'s key-invalid text, **not** a raw close code.
+if status == "ok":
+    Show green check, proceed to Step 3
+elif status == "needs_download":
+    Show download prompt:
+      "Voice models need to download (~300 MB, one-time).
+       This happens automatically on first voice session,
+       or you can trigger it now."
+    Action: Connect briefly to /ws/voice-local and disconnect.
+            The handler calls engine.ensure_ready(progress=...)
+            which downloads models. The progress callback emits
+            {type:'status', text:'Downloading voice models...'} frames.
+    On success: re-check, proceed to Step 3
+```
+
+**Step 3: Test Microphone**
+
+```
+Action: Request navigator.mediaDevices.getUserMedia({audio: true})
+        in the browser.
+
+if permission granted:
+    Capture 2 seconds of audio
+    Compute RMS of the captured PCM16
+    if RMS > 200 (speech detected):
+        Show green check, proceed to Step 4
+    else:
+        Show warning: "Microphone is accessible but no audio detected.
+                       Check your input device selection."
+elif permission denied:
+    Show warning: "Microphone permission denied.
+                   Voice requires mic access -- click the lock icon
+                   in your browser's address bar to allow it."
+```
+
+**Step 4: Test TTS**
+
+```
+Call: POST /api/voice/setup/test
+      { "text": "Hello, I'm Friday. Voice setup is complete." }
+
+if status == "ok" and audio_b64 is not null:
+    Decode base64 WAV, play through AudioContext
+    Show green check: "You should hear Friday speaking."
+    Ask: "Did you hear the test audio?"
+    if yes: proceed to Step 5
+    if no: offer troubleshooting (check output device, volume)
+elif status == "error":
+    Show error message from response
+    Offer: "Try switching to local voice engine in Settings."
+```
+
+**Step 5: Configure Tier**
+
+```
+Show the resolved engine info from /api/voice/session-info.
+
+Display options:
+  [ ] Local (private, on-device) -- DEFAULT
+      Uses: faster-whisper + Piper
+      Privacy: nothing leaves this machine
+
+  [ ] Cloud (Gemini Live) -- opt-in
+      Uses: Google Gemini Live API
+      Requires: API key + internet
+      Features: affective dialog, proactive audio, tools
+
+  [ ] Local GPU (NeMo) -- premium (if GPU detected)
+      Uses: NVIDIA Nemotron + FastPitch
+      Requires: RTX GPU + torch-CUDA + NeMo
+
+On selection: update settings.json voice_engine value
+              re-check via /api/voice/session-info
+```
+
+### 6.2 Health Integration
+
+The `LocalVoiceEngine.health()` method returns a structured status block for `/api/health/full`:
+
+```json
+{
+  "engine": "local-voice-lite",
+  "status": "ok",
+  "detail": "local voice ready",
+  "available": true,
+  "models_ready": true,
+  "deps": {
+    "faster_whisper": true,
+    "piper": true,
+    "onnxruntime": true,
+    "silero_vad": true
+  },
+  "asr_model": "small",
+  "tts_voice": "en_US-amy-medium",
+  "active_tier": "cpu",
+  "perf": {
+    "asr_ms": 342.1,
+    "asr_count": 15,
+    "tts_ms": 187.3,
+    "tts_count": 15,
+    "tier": "cpu"
+  },
+  "gpu": {
+    "engine": "nvidia-nemo",
+    "status": "missing",
+    "detail": "NeMo GPU voice not installed...",
+    "available": false,
+    "models_ready": false
+  }
+}
+```
+
 
 ---
 
-## 10. What else should we do
+## 7. Error Recovery
 
-- **VAD tuning.** Local `VADEndpointer` defaults: `start_rms=600`, `silence_ms=800`, `min_speech_ms=200` (`local_voice.py:182`); Silero preferred when installed (it *is*, `silero_vad` imports). Cloud uses `START_SENSITIVITY_LOW` + `silence_duration_ms=800` (`voice.py:373-382`). **Action:** expose `voice_silence_ms` (already a setting) prominently in the wizard's test step, and consider auto-calibrating `start_rms` from the first 1 s of room noise (mirrors the barge detector's bleed-learning).
-- **Barge-in.** Cloud speaker-mode barge-in is a genuine achievement: `LiveBargeDetector` learns speaker bleed and fires on real talk-over under `NO_INTERRUPTION` (`voice.py:179-260, 1524-1536`); Escape-key is an explicit client barge (`app.html:8500`). **Local path has no barge-in** — `_handle_turn` holds a lock for the whole turn (`voice.py:827`). **Action:** add cooperative interruption to `/ws/voice-local` (check a `done`/`interrupt` flag between sentences in `_speak`, honor a client `{type:'barge'}`).
-- **Audio device selection.** Dropdown works and persists (`audio_input_device_id`/`audio_output_device_id`), hot-swap detected (`app.html:8650-8678, 9535-9561`). **Gap:** output-device routing relies on `setSinkId`, not verified on all browsers — add a test tone through the selected output in the wizard.
-- **Voice personality / SOUL.** `voice_personality.get_voice_personality()` builds the Live system instruction with mood + affective dialog; `voice_style_prompt` (currently "warm, a bit spoony, and genuinely caring") prefixes both cloud and Piper paths. **Confirm** SELF.md/SOUL.md tone actually reaches the local path's `system_prompt` (it goes through `_get_friday_system_prompt`, so yes) — but Piper's *acoustic* delivery is fixed by the voice model; only word choice/pacing is controllable. Document that expectation so "make her sound warmer" maps to prompt, not engine, on Tier 1.
-- **Accessibility.** Transcripts (`input_transcript`/`text`) already render, which helps screen-reader users follow the conversation. **Action:** ensure the mic button + status have ARIA live-region semantics; verify Bluetooth hearing-aid output works via the output-device picker + `setSinkId`.
-- **Mobile companion.** The PWA path is why `_est_play_end_ts` estimates the playback window when the client can't send `{type:'speaking'}` (`voice.py:1350-1364`). When the mobile app lands: keep the identical WS contract, prefer Tier-3 cloud (mobile CPUs can't run Whisper-small comfortably), and have the client report playback transitions so barge-in stays precise.
+### 7.1 Stale Model IDs
+
+**Symptom:** Voice connect fails with 1008 close code. Old error handler reports "API key invalid" but the key is fine.
+
+**Root cause:** Google retires Gemini Live model IDs without notice. A stale ID in `settings.json` or the code default triggers a 1008 "not found for API version" error that looks like an auth failure.
+
+**Detection:** `_classify_live_error()` parses the error message for "not found for api version" or "not supported for bidigeneratecontent" and returns `model-missing` instead of `auth`.
+
+**Auto-recovery:** `_resolve_voice_engine()` calls `validate_live_model()` before connecting. If the configured model has status `unknown`, it resets `voice_model` to `LIVE_MODEL` in settings.json.
+
+**Manual fix:** Settings -> Voice -> change voice model to a known-good ID listed in `_KNOWN_LIVE_MODELS`.
+
+### 7.2 Rotated API Keys
+
+**Symptom:** Voice was working, now gets auth errors.
+
+**Root cause:** The user updated their key via `setx` or System Properties, but the running process inherited the old key at startup and `os.environ` is frozen.
+
+**Auto-recovery:** `resolve_gemini_key()` probes multiple sources in order:
+1. Process env `GEMINI_API_KEY`
+2. Process env `GOOGLE_API_KEY`
+3. `settings.json` `gemini_api_key`
+4. Windows registry `HKCU\Environment` (live-read via `winreg`)
+5. Server startup value (`core.GEMINI_API_KEY`)
+
+The first key that passes `validate_gemini_key()` (cached REST probe to `v1beta/models?pageSize=1`) wins and is installed into `core.GEMINI_API_KEY`.
+
+**Manual fix:** Paste a fresh key from aistudio.google.com into Settings -> Providers -> Google Gemini. Takes effect on next voice session.
+
+### 7.3 Retired Models
+
+**Symptom:** Same as 7.1 but across the entire fallback chain.
+
+**Detection:** `_compose_final_voice_error()` aggregates per-attempt errors. When all attempts report `model-missing`, the message explicitly says "this is a MODEL problem, not an API-key problem" and lists what was tried.
+
+**Fix:** Update `LIVE_MODEL`, `LIVE_MODEL_FALLBACK`, and `LIVE_MODEL_FALLBACK2` in `voice_engine.py` to current model IDs. Verify with: `curl -H "x-goog-api-key: $KEY" "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"`.
+
+### 7.4 pyttsx3 Missing
+
+**Symptom:** `_synthesize_tts_wav_local()` returns `None`. Offline TTS unavailable.
+
+**Detection:** `_local_tts_available()` catches the import failure and tries Piper as an alternative.
+
+**Recovery chain:** pyttsx3 -> Piper (via `get_local_voice_engine()`) -> `None` (caller uses Gemini TTS or raises).
+
+**Fix:** `pip install pyttsx3`.
+
+### 7.5 torch CPU-Only
+
+**Symptom:** Tier 2 never activates despite an NVIDIA GPU being present.
+
+**Detection:** `gpu_status()` reports `cuda: false, detail: "torch installed but CUDA not available"`.
+
+**Fix:**
+```bash
+pip uninstall torch
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+```
+
+### 7.6 CUDA Unavailable
+
+**Symptom:** `gpu_tier_ready()` returns false. Tier 2 cannot activate.
+
+**Possible causes:**
+- No NVIDIA GPU
+- GPU present but VRAM < 4 GB (`MIN_VRAM_GB`)
+- CUDA driver not installed or version mismatch
+- torch CPU-only (see 7.5)
+
+**Recovery:** `LocalVoiceEngine.ensure_ready()` automatically falls back to Tier 1 CPU. The user always gets local voice.
+
+### 7.7 Microphone Permission Denied
+
+**Symptom:** `getUserMedia()` fails in the browser. No audio frames reach the WebSocket.
+
+**Detection:** `no_audio_watchdog()` fires after 5 seconds with zero audio chunks: `"WARNING: no audio chunks received from browser after 5s -- mic likely silent or WS not flowing"`. Sends `{type:'status', text:'no mic audio reaching server'}` to the client.
+
+**Fix:** User must grant microphone permission in the browser. The lock icon in the address bar allows re-prompting.
+
+### 7.8 VAD Not Detecting Speech
+
+**Symptom:** Audio arrives at the server but no transcription occurs.
+
+**Possible causes:**
+- Microphone gain too low -- RMS below the `start_rms=600.0` threshold
+- Silero VAD rejecting atypical audio (synthetic tones, heavily compressed)
+- `voice_silence_ms` set too low -- utterances truncated before completion
+
+**Debug:** Enable `FRIDAY_VOICE_DEBUG=1` for per-chunk RMS logging. The reader task logs `rms=` and `peak=` for every chunk at indices 1, 5, 25, and every 50th chunk.
+
+**Fix:** Increase microphone gain, or set `voice_silence_ms` to 1000+.
+
+### 7.9 Echo / Barge-In Problems
+
+**Symptom (echo):** Friday cuts herself off mid-sentence on speakers. Her own voice, re-captured by the mic, triggers interruption.
+
+**Fix applied:** `voice_interruption_mode = "speaker"` (default) sets `ActivityHandling.NO_INTERRUPTION` in the Live API config, plus `TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY`. The model never self-interrupts from echo.
+
+**Symptom (no barge-in):** With `NO_INTERRUPTION`, the user cannot interrupt at all via Gemini's native mechanism.
+
+**Fix applied:** `LiveBargeDetector` implements bridge-side barge-in. It:
+1. Learns the speaker-bleed baseline during a grace window (default 800ms) at the start of each spoken response.
+2. Seeds from the 25th percentile of grace-window samples (robust against early interjections).
+3. Fires only when mic RMS is both above an absolute floor (550) AND >= 3x the learned bleed level, sustained for 200ms.
+4. On fire: sends `{type:'interrupted'}` to the browser (flushes its playback buffer), sends a `client_content` cancel to Gemini, and swallows remaining audio from the model.
+5. 1.5-second refractory period between barge firings.
+
+The `BLEED_EMA_CAP = 1500` prevents runaway baseline learning when the user talks during the grace window.
+
+**Headphones mode:** Set `voice_interruption_mode = "headphones"` to restore native Gemini barge-in (`START_OF_ACTIVITY_INTERRUPTS`). No speaker bleed concern with headphones.
+
+### 7.10 GoAway Renewals
+
+**Symptom:** Voice session ends abruptly after 10-15 minutes.
+
+**Cause:** Gemini sends a `go_away` event when the connection lifetime or context cap is reached.
+
+**Handling:** The writer task receives `go_away`, computes a grace period (capped at 0.5--8.0 seconds from `time_left`), and drains the current response before ending the leg. The reconnect loop then renews via the latest session resumption handle. The user hears no break.
+
+**With context compression:** `voice_context_compression = true` enables sliding-window compression, which removes the session-duration cap. Hours-long calls become possible with periodic GoAway-driven renewals.
+
+### 7.11 WebSocket Drops
+
+**Browser socket drops (wifi blip, sleep/wake, tab reload):**
+- The client auto-reconnects to `/ws/live`.
+- The module-level `_LIVE_RESUME` cache stores the latest resumption handle (TTL: 600 seconds).
+- `_live_resume_load()` retrieves it for the matching model+voice, and the new handler resumes the same Gemini conversation.
+- Stale audio drain: on reconnect, all buffered mic frames from the old socket are drained and discarded (`_stale_audio` counter) to prevent Gemini from transcribing old speech.
+
+**Gemini socket drops (NAT timeout, proxy, half-open):**
+- The `liveness_watchdog()` detects sustained silence from Gemini while the user was recently speaking.
+- Fires after `LIVE_STALL_SECONDS = 40` seconds of upstream silence, provided the user finished speaking 8-90 seconds ago and speech occurred after the last Gemini traffic.
+- Sets `sdone` to end the leg, triggering renewal via the handle.
+
+### 7.12 Zombie Handlers
+
+**Symptom:** Two `/ws/live` handlers fight for the same Gemini session. Duplicate audio, corrupted resume cache.
+
+**Cause:** Browser reconnects while the old handler's TCP socket hasn't FIN'd yet (half-open).
+
+**Fix:** Connection-generation fencing via `_LIVE_CONN_GEN`. Each handler claims a generation number via `_live_conn_next()`. Only the current generation may:
+- Write to the resume cache (`_live_resume_store`)
+- Clear the resume cache (`_live_resume_clear`)
+- Renew session legs (checked at the top of the reconnect loop via `_live_conn_current`)
+
+A zombie handler that fails the generation check logs "superseded by a newer voice connection -- zombie handler exiting" and sets `done`.
+
 
 ---
 
-## Appendix A — Concrete work items (prioritized)
+## 8. Gemini Live Session Management
 
-| P | Item | Files | Closes |
-|---|---|---|---|
-| **P0** | Route local TTS fallback through Piper (kill the dead `pyttsx3` dependency for fallback) | `services/voice_engine.py:411-517` | F10, gap #1 |
-| **P0** | `GET /api/voice/health` composing existing probes | `routes/voice.py` | F12, gap #5 |
-| **P0** | Client cross-tier fallback cloud→local on terminal error | `ui_parts/app.html:8358-8441`, `session-info` | F6, gap #2 |
-| **P1** | Local model **pre-download** endpoints + progress bar | `routes/voice.py`, `services/local_voice.py`, `app.html` | F8, gap #4 |
-| **P1** | Active-tier badge in status indicator | `app.html:9507-9512` | §5.3 |
-| **P1** | Unify the in-UI voice wizard (mic-permission + model + GPU + test) | `app.html:6139-6217, 6621-6724`, `routes/onboarding.py` | gap #4 |
-| **P2** | In-app GPU install button + `/api/voice/gpu/install[/status]` | `routes/voice.py`, `app.html` | gap #3 |
-| **P2** | Local-path barge-in | `routes/voice.py:800-860` | §10 |
-| **P2** | New unit tests (health, TTS fallback, engine resolution) | `tests/unit/` | §9 |
+### 8.1 Connection Lifecycle
 
-## Appendix B — What NOT to touch (hard-won robustness)
+```
+Browser /ws/live connect
+  |
+  v
+_live_conn_next() -- claim generation
+resolve_gemini_key() -- find working key
+  |
+  v
+Build attempt plan: [(api_version, model_name), ...]
+  - v1alpha + configured model (if affective/proactive)
+  - v1beta + configured model
+  - v1beta + LIVE_MODEL_FALLBACK
+  - v1beta + LIVE_MODEL_FALLBACK2
+  |
+  v
+For each attempt:
+  Build per-model LiveConnectConfig (strip affective/proactive for non-v1alpha)
+  Connect via client.aio.live.connect(model, config)
+    |
+    v
+  Reconnect loop (legs):
+    Check _live_conn_current(gen) -- zombie fence
+    Try connect with handle (3 retries: handle, handle, fresh)
+    Drain stale audio from browser buffer
+    Send greeting (first leg of new conversation only)
+    Launch asyncio tasks: reader, writer, liveness_watchdog, heartbeat, no_audio_watchdog
+    Wait for first core task to finish
+    Cancel pending tasks (6s grace)
+    If done: break
+    Else: renew (leg++)
+    Quick-death breaker: 3 consecutive legs dying <10s = give up on this model
+```
 
-The `/ws/live` reconnect loop, session-resumption cache + connection-generation fence, GoAway drain, `LiveBargeDetector`, liveness watchdog, and `_classify_live_error`/`_compose_final_voice_error` are correct and battle-tested. This overhaul **wraps** them with a better client and setup story — it does not rewrite them.
+### 8.2 Resumption Handles
+
+**Purpose:** Enable transparent session renewal after GoAway, stale audio drain on reconnect, and browser reconnect.
+
+**Storage:**
+- Per-handler: `resume_handle[0]` (closured list for mutability in nested functions)
+- Per-module: `_LIVE_RESUME` dict with `handle`, `ts`, `model`, `voice` fields
+- TTL: 600 seconds (`_LIVE_RESUME_TTL_S`)
+- Access: guarded by `_LIVE_RESUME_LOCK` + generation fence
+
+**Flow:**
+1. Writer receives `session_resumption_update` with `new_handle` from Gemini.
+2. Stores in `resume_handle[0]` and mirrors to `_LIVE_RESUME` via `_live_resume_store(gen=conn_gen)`.
+3. On leg end (GoAway, stall, stream exhaustion): reconnect loop uses `resume_handle[0]` to build `SessionResumptionConfig(handle=...)`.
+4. On browser reconnect: new handler loads from `_live_resume_load(model, voice)` if TTL is valid.
+5. On deliberate stop (`{type:'end'}` or `{type:'bye'}`): `_live_resume_clear(gen=conn_gen)` wipes the cache so the next session starts fresh.
+
+### 8.3 GoAway Draining
+
+When Gemini sends `go_away`:
+1. Compute grace period: `max(0.5, min(time_left or 3.0, 8.0))` seconds.
+2. If model is NOT currently speaking: end leg immediately (`sdone.set()`).
+3. If model IS speaking: continue receiving until `turn_complete` or grace deadline, then end leg.
+4. Reconnect loop takes over and renews via handle.
+
+### 8.4 Stale Audio Drain
+
+On reconnect (leg > 0 or resuming from handle):
+1. Non-blocking drain: `ws.receive(timeout=0)` in a loop.
+2. Audio frames are counted and discarded.
+3. Control frames (`bye`, `end`) are honored (clear resume, set done).
+4. `speaking` frames update the client playback state.
+5. Log: `"seam drain: dropped N stale mic chunks buffered during reconnect"`.
+
+### 8.5 Liveness Watchdog
+
+Runs as an asyncio task alongside reader/writer. Checks every 5 seconds:
+- If a voice tool is in-flight (`_tool_inflight[0] > 0`): skip (the writer is busy, not stalled).
+- If Gemini has been quiet > `LIVE_STALL_SECONDS` (40s) AND the user spoke after the last Gemini traffic AND the user finished speaking 8--90 seconds ago: end the leg for renewal.
+
+The guard against firing during long monologues (models that do not stream input transcription mid-turn) prevents false positives that previously caused unnecessary renewals and conversation desyncs.
+
+### 8.6 LiveBargeDetector
+
+Class in `voice.py`. Single-threaded use within the asyncio reader task.
+
+**State:**
+- `ema`: exponential moving average of speaker-bleed RMS (alpha=0.1 during post-grace tracking)
+- `sustained`: accumulated milliseconds of above-threshold speech
+- `_grace_samples`: RMS values collected during the grace window
+
+**Algorithm:**
+1. `reset_turn()` called when model response starts speaking (or client reports `speaking:on`).
+2. During grace window: collect `_grace_samples`, never fire.
+3. At grace-window end: seed `ema` from 25th percentile of samples (capped at `BLEED_EMA_CAP = 1500`).
+4. Post-grace: `threshold = max(floor=550, mult=3.0 * ema)`. RMS above threshold accumulates `sustained`; below threshold decays ema and resets sustained.
+5. Fires when `sustained >= sustain_ms` (200ms default).
+
+**Barge execution (`_fire_barge`):**
+1. Set `_barged_turn[0] = True` (swallow remaining model audio).
+2. Reset playback-window estimates.
+3. Send `{type:'interrupted'}` to browser (flushes playback buffer).
+4. Send `{type:'status', text:'listening'}`.
+5. Send `client_content` to Gemini with a "user interrupted" marker, `turn_complete=False`.
+
+### 8.7 Connection Generation Fencing
+
+Purpose: prevent zombie handlers from corrupting the resume cache or fighting for the Gemini session.
+
+- `_LIVE_CONN_GEN[0]`: monotonically increasing counter, incremented by each new `/ws/live` handler.
+- `_live_conn_next()`: atomically increment and return the new generation.
+- `_live_conn_current(gen)`: True only if `gen` matches the current value.
+- Checked at: resume cache writes, resume cache clears, top of reconnect loop.
+- A failed check triggers `done.set()` and the handler exits with a log message.
+
+
+---
+
+## 9. API Key Resolution
+
+### 9.1 resolve_gemini_key()
+
+**Purpose:** Pick the freshest WORKING Gemini key across every known source, self-healing across key rotations without a server restart.
+
+**Candidate order:**
+1. `os.environ["GEMINI_API_KEY"]` -- from the launcher script
+2. `os.environ["GOOGLE_API_KEY"]` -- from the launcher script
+3. `settings.json` `gemini_api_key` -- from Settings -> Providers
+4. Windows registry `HKCU\Environment` `GEMINI_API_KEY` or `GOOGLE_API_KEY` -- live-read via `winreg.OpenKey`
+5. `core.GEMINI_API_KEY` -- the value the server booted with
+
+**Validation:** Each candidate is probed with `validate_gemini_key()`:
+- `GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1` with `x-goog-api-key` header.
+- HTTP 2xx = valid. HTTP 4xx = invalid. Network error = `(True, "unverifiable -- assuming ok")` so being offline never brands a key bad.
+- Results cached per-key for 600 seconds (`_KEY_CHECK_TTL`). Cache key is `sha256(key)[:16]`.
+
+**On success:** The winning key is installed into `core.GEMINI_API_KEY` and `core._genai_client` is reset to `None` (rebuilt lazily with the fresh key). All endpoints (voice, TTS, creative) self-heal.
+
+**Return value:**
+```python
+{
+    "key": "AIzaSy...",
+    "source": "Windows user environment (registry)",
+    "valid": True,
+    "detail": "HTTP 200"
+}
+```
+
+**Test seam:** Under `FRIDAY_TESTING=1`, returns `core.GEMINI_API_KEY` without network probes.
+
+### 9.2 Windows Registry Key Read
+
+`_read_windows_user_env_key()` live-reads `HKCU\Environment` for `GEMINI_API_KEY` or `GOOGLE_API_KEY`. This catches the classic rotation trap where the user updates the key via `setx` but the running process still holds the old value.
+
+Returns empty string on non-Windows or when unset.
+
+
+---
+
+## 10. Voice Tool Surface
+
+### 10.1 Tool Declarations
+
+The `_VOICE_LIVE_TOOLS` list defines the function declarations exposed to the Gemini Live session. Each entry is `(name, description, {param: (type, desc)}, [required])`.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `query_calendar` | Today's + tomorrow's calendar events | (none) |
+| `check_email` | Recent email with urgent/unread flags | `urgent_only` (bool), `limit` (int) |
+| `search_news` | Live news feed search | `query` (string), `limit` (int) |
+| `search_web` | Real-time web search | `query` (string, required) |
+| `open_url` | Open URL in browser (ask permission first) | `url` (string, required), `title` (string), `confirmed` (bool) |
+| `get_source_trust` | Trust profile for a news source | `domain` (string, required) |
+| `get_article_deep_dive` | Deep-read + summarize an article | `url` (string, required), `title` (string) |
+| `search_wiki` | Search Friday's personal wiki | `query` (string, required), `limit` (int) |
+| `navigate_workspace` | Switch the desktop UI to a workspace | `workspace` (string, required), `confirmed` (bool) |
+
+### 10.2 Tool Declaration Rendering
+
+`_build_voice_live_tools(types)` renders `_VOICE_LIVE_TOOLS` into `google.genai.types.Tool` objects:
+- Maps type strings (`"string"`, `"integer"`, `"boolean"`, `"number"`) to `types.Type` enums.
+- Calls `_navigate_tool_description()` to fill the `{workspace_ids}` placeholder from `_WORKSPACE_ALIASES`.
+- Returns a single-element list `[types.Tool(function_declarations=[...])]`.
+
+### 10.3 Tool Execution Flow
+
+1. Gemini returns a `tool_call` chunk with `function_calls[]`.
+2. `_run_tool_calls(sess, tc)` in the writer task iterates over each function call.
+3. For each call: extract `name`, `args`, `id`.
+4. Send `{type:'status', text:'tool_name'}` to browser.
+5. Execute `_voice_tool_run(name, args, send_client)` in a worker thread (`asyncio.to_thread`).
+6. `_tool_inflight[0]` is incremented before execution and decremented after (prevents liveness watchdog from false-firing during long tool runs).
+7. Build `types.FunctionResponse(name, response, id)`.
+8. Send all responses back via `sess.send_tool_response(function_responses=[...])`.
+
+### 10.4 Tool-Specific Behaviors
+
+**Confirmation pattern (`open_url`, `navigate_workspace`):**
+If `confirmed` is not true, the tool returns a prompt asking the model to get spoken permission first. Only when the user agrees and the model re-calls with `confirmed=true` does the action execute.
+
+**Side effects via `send_client`:**
+- `navigate_workspace`: Sends `{type:'action', actions:[{type:'navigate', workspace:id}]}` to the browser.
+- `open_url`: Sends `{type:'cite', label:'Opened', sources:[...]}` citation chip.
+- `search_news`: Sends `{type:'cite', label:'Related stories', sources:[...]}` for up to 6 hits.
+- `get_article_deep_dive`: Sends a `{type:'cite', label:'Deep dive', ...}` chip.
+
+**TTS pause/resume:** `navigate_workspace` and `open_url` send `{type:'tts_pause'}` before the action and `{type:'tts_resume'}` after, so Friday's speech does not overlap with navigation sounds or browser activity.
+
+### 10.5 Backend Handlers
+
+| Tool | Handler | Data Source |
+|------|---------|-------------|
+| `query_calendar` | `_tool_query_calendar` | `_fetch_calendar_today()` from calendar_engine |
+| `check_email` | `_tool_check_email` | `_collect_messages()` from calendar_engine |
+| `search_news` | `_tool_search_news` | RSS feed via agent module |
+| `search_web` | `_tool_search_web` | Web search via agent module |
+| `open_url` | `_tool_open_url` | OS browser launch via agent module |
+| `get_source_trust` | `_tool_get_source_trust` | Trust graph from `core.get_source_trust_graph()` |
+| `get_article_deep_dive` | `_tool_get_article_deep_dive` | `_deep_dive_article()` from news_engine |
+| `search_wiki` | `_tool_search_wiki` | Wiki search via agent module |
+| `navigate_workspace` | `_tool_navigate` | Workspace resolver via agent module |
+
+
+---
+
+## 11. Testing Plan
+
+### 11.1 Unit Tests -- Tier 1
+
+| Test | What it validates | Approach |
+|------|-------------------|----------|
+| `test_vad_endpointer_fires_on_silence` | VAD accumulates speech and fires after `silence_ms` of trailing silence | Synthetic PCM16 square wave (speech) followed by silence. Use `use_silero=False` to force the RMS gate. |
+| `test_vad_endpointer_respects_min_speech` | VAD does not fire on a sub-`min_speech_ms` burst | Short burst + long silence. Assert `feed()` returns `None`. |
+| `test_vad_flush` | `flush()` returns accumulated audio and resets | Feed speech, call `flush()`, verify bytes returned and state reset. |
+| `test_whisper_asr_transcribe` | `WhisperASR.transcribe()` returns text from PCM16 | Inject a `FakeASR` that returns a canned string. Verify the engine calls `transcribe()` with the right bytes. |
+| `test_piper_tts_synthesize` | `PiperTTS.synthesize()` returns 24kHz PCM16 | Inject a `FakeTTS`. Verify `synthesize()` is called and output is resampled. |
+| `test_resample_pcm16` | `_resample_pcm16()` correctly changes sample rate | 16kHz -> 24kHz on known data. Verify length ratio and no crashes on edge cases (empty, same rate). |
+| `test_pcm16_rms` | `_pcm16_rms()` computes correct RMS | Known signal. Verify against hand-calculated value. |
+| `test_engine_ensure_ready_loads_models` | `ensure_ready()` calls `asr.load()` and `tts.load()` | Inject fakes, verify `load()` called with progress callback. |
+| `test_engine_gpu_fallback_to_cpu` | GPU tier that fails to load degrades to CPU | Set tier to "gpu", make `_gpu_tier_ready()` return False. Verify tier swaps to "cpu". |
+| `test_split_sentences` | `split_sentences()` correctly splits on sentence boundaries | "Hello. World! How are you?" -> ["Hello.", "World!", "How are you?"] |
+
+### 11.2 Unit Tests -- Tier 2
+
+| Test | What it validates | Approach |
+|------|-------------------|----------|
+| `test_nemo_deps_status` | `nemo_deps_status()` correctly probes importability | Mock `importlib.util.find_spec`. |
+| `test_gpu_status_torch` | `gpu_status()` reads CUDA info from torch | Mock `torch.cuda.is_available()`, `torch.cuda.get_device_name()`, `torch.cuda.mem_get_info()`. |
+| `test_gpu_status_smi_fallback` | Falls back to nvidia-smi when torch unavailable | Mock `_module_installed("torch")` as False, mock `ollama_manager`. |
+| `test_float_to_pcm16` | `_float_to_pcm16()` clips and converts correctly | Known float32 array. Verify PCM16 output. |
+| `test_nemo_health_ladder` | `nemo_health()` returns correct status for each condition | Mock deps/gpu at each ladder rung (ok, needs_download, down, missing). |
+
+### 11.3 Unit Tests -- Tier 3 / Voice Engine
+
+| Test | What it validates | Approach |
+|------|-------------------|----------|
+| `test_validate_gemini_key_valid` | Returns `(True, ...)` for a valid key | Mock `urllib.request.urlopen` to return HTTP 200. |
+| `test_validate_gemini_key_invalid` | Returns `(False, ...)` for a revoked key | Mock HTTP 401 or 403 response. |
+| `test_validate_gemini_key_offline` | Returns `(True, "unverifiable...")` when network is down | Mock socket error. |
+| `test_resolve_gemini_key_priority` | Picks the first valid key in candidate order | Set env vars and settings with different keys, make first invalid, verify second wins. |
+| `test_resolve_gemini_key_installs` | Winning key is written to `core.GEMINI_API_KEY` | Verify `core.GEMINI_API_KEY` updated and `core._genai_client` reset. |
+| `test_validate_live_model_known` | Returns `ok` for `_KNOWN_LIVE_MODELS` members | Direct call with known model IDs. |
+| `test_validate_live_model_unknown` | Returns `unknown` for unrecognized IDs | Call with `"gemini-nonexistent-model"`. |
+| `test_classify_live_error` | Correctly classifies error messages | Test strings for model-missing, auth, and other patterns. |
+| `test_compose_final_voice_error_auth` | Produces correct message when key is bad | Mock `validate_gemini_key(force=True)` to return `(False, ...)`. |
+| `test_compose_final_voice_error_model` | Produces correct message when all models missing | All attempts with kind=`model-missing`. |
+| `test_voice_tool_run_confirm_gate` | Tools with `confirmed` gate return prompt when not confirmed | Call `_voice_tool_run("open_url", {"url": "..."})` without `confirmed=true`. |
+| `test_persist_voice_turn` | Voice turns saved to CHAT_HISTORY and context log | Call `_persist_voice_turn()` and verify CHAT_HISTORY entries with `via: 'voice'`. |
+
+### 11.4 Integration Tests
+
+| Test | What it validates | Approach |
+|------|-------------------|----------|
+| `test_local_voice_e2e` | Full local pipeline: audio -> VAD -> ASR -> brain -> TTS -> audio | Inject FakeASR + FakeTTS into the engine. Connect a test WebSocket client to `/ws/voice-local`. Send a b64-encoded audio frame with speech-like RMS. Verify the handler produces `input_transcript`, `text`, `audio`, and `turn_end` frames. |
+| `test_voice_session_info` | `/api/voice/session-info` returns correct engine/URL | Call the endpoint with different `voice_engine` settings. Verify `ws_url` and `engine` fields. |
+| `test_voice_setup_status` | `/api/voice/setup/status` reports correct readiness steps | Call with deps installed vs. missing. Verify step statuses. |
+| `test_voice_setup_test` | `/api/voice/setup/test` returns base64 WAV audio | Call the endpoint. Verify `audio_b64` decodes to a valid WAV. |
+| `test_barge_detector_echo_safe` | Barge detector does not fire on speaker bleed | Simulate grace-window bleed samples + post-grace bleed below threshold. Verify no fire. |
+| `test_barge_detector_fires_on_speech` | Barge detector fires on deliberate speech over speaker | Simulate low bleed in grace, then high RMS sustained past threshold. Verify fire. |
+
+### 11.5 Manual Test Procedures
+
+**Local Voice (Tier 1):**
+1. Set `voice_engine: "local"` in settings.json.
+2. Open the Friday desktop. Click the mic button.
+3. Verify the status shows "starting local voice" then "live".
+4. Speak a question. Verify transcript appears (`input_transcript`) and Friday responds with audio.
+5. Verify the holographic cube animates during speech.
+6. End the session. Verify `voice_turn_done` frame contains `user_text` and `agent_text`.
+
+**Gemini Live (Tier 3):**
+1. Set `voice_engine: "gemini"` in settings.json.
+2. Verify a valid API key is configured (`/api/voice/setup/status` step `key: ok`).
+3. Click the mic button. Verify "loading context" then "live" status.
+4. Ask "what's on my calendar?" -- verify the `query_calendar` tool fires and Friday speaks the results.
+5. Ask "open that article in my browser" about a news story -- verify the confirmation flow (Friday asks, you confirm, then it opens).
+6. Test barge-in (speaker mode): while Friday is speaking, say "stop" clearly. Verify she stops and listens.
+7. Wait >10 minutes for a GoAway. Verify the session renews transparently (no audible break, "reconnecting" status briefly appears).
+8. Close and reopen the browser tab. Verify the session resumes from the cached handle.
+
+**Fallback Verification:**
+1. Remove `GEMINI_API_KEY` from all sources. Set `voice_engine: "gemini"`.
+2. Click mic. Verify it falls back to local voice with reason "cloud unavailable, using local".
+3. Remove `faster-whisper` and `piper-tts`. Set `voice_engine: "local"`.
+4. Click mic. Verify it degrades to "demo" (text only) with reason "install .[voice-local-lite]".
+
+
+---
+
+## 12. Known Limitations & Future Work
+
+### 12.1 NeMo on Windows
+
+NeMo is Linux-first. On Windows with an RTX card, it usually works under a recent torch-CUDA wheel, but installation can be painful (C++ build tools, protobuf version conflicts, numba/llvmlite ABI mismatches). If the clean install proves too difficult, the Tier-1 fallback (onnxruntime, rock-solid on Windows) keeps voice working. This is an acceptable trade-off: Tier 2 is a premium upgrade, not a requirement.
+
+### 12.2 Piper Voice Selection
+
+Currently two voices are bundled in `_PIPER_VOICE_PATHS`: `en_US-amy-medium` and `en_US-lessac-medium`. The Piper ecosystem has dozens of voices across multiple languages (hosted at `huggingface.co/rhasspy/piper-voices`). A future Settings -> Voice panel could let the user browse and download additional voices, with a preview playback. The `PiperTTS` class already supports arbitrary voice names -- only the download URL resolution needs extending.
+
+### 12.3 Streaming ASR (Tier 2)
+
+The Nemotron-3.5 model supports cache-aware streaming with configurable `att_context_size` (the latency/WER dial). Currently, the ASR backend transcribes complete VAD-endpointed utterances (batch mode). A future enhancement could stream partial transcripts during speech, enabling a "thinking" indicator and reducing perceived latency. The model's `set_default_att_context_size([56, 3])` call is already in place for this.
+
+### 12.4 True Barge-In vs. Speaker Mode
+
+The current `LiveBargeDetector` is a good-enough bridge-side solution, but it has inherent limitations:
+- The grace window (800ms) means the first 800ms of a response cannot be interrupted.
+- The bleed baseline can be thrown off by sudden environmental noise changes mid-response.
+- The barge cancel (`client_content` with `turn_complete=False`) is a heuristic -- Gemini may still generate a few more audio chunks before stopping.
+
+True barge-in (headphones mode) works perfectly because Gemini handles it natively (`START_OF_ACTIVITY_INTERRUPTS`). For speaker users who want instant barge-in without echo, the ideal solution is acoustic echo cancellation in the browser or a server-side AEC filter on the mic stream before it reaches Gemini.
+
+### 12.5 Voice-to-Voice Latency
+
+The Tier-1 local pipeline has perceptible latency: VAD endpoint (~800ms silence) + ASR (~300-500ms for "small" model on CPU) + LLM brain (~1-3s depending on provider) + per-sentence TTS streaming. Total first-word latency is typically 2-5 seconds. Tier 2 (GPU) reduces ASR to ~100-200ms but the LLM brain remains the bottleneck.
+
+Gemini Live (Tier 3) is significantly faster because the model generates audio natively (no separate ASR->text->TTS pipeline). First-audio latency is typically under 1 second.
+
+### 12.6 Multi-Language Support
+
+Piper has voices for 30+ languages. faster-whisper supports 99 languages via the Whisper model family. The infrastructure supports multi-language via `voice_language` (BCP-47) for Gemini and `language=None` (auto-detect) for faster-whisper. However, Piper voice selection is currently English-only in the bundled paths. Extending `_PIPER_VOICE_PATHS` with additional language voices is straightforward.
+
+### 12.7 PII / Egress Gate
+
+The `_synthesize_tts_wav()` function includes a PII gate: text containing vault values (detected by `core._scrub_pii()`) is synthesized locally (pyttsx3 or Piper) at full fidelity. If local TTS is unavailable, only the scrubbed text (with `[redacted]` markers) is sent to Gemini TTS. This is the egress boundary for spoken content. The Gemini Live system instruction is separately gated by `_vault_control` (TIER_1 passes, TIER_2 redacted, TIER_3 dropped).
+
+### 12.8 Voice Turn Persistence
+
+Voice turns are persisted to:
+1. `CHAT_HISTORY` (in-memory + JSON file) with `via: 'voice'` marker.
+2. Context log (`_log_context` with `voice_user` / `voice_agent` event types).
+3. ChromaDB via `_index_chat_turn()` in a daemon thread (cross-session recall).
+4. Wiki distillation: `_spawn_voice_distill()` runs a Claude task that reviews the transcript and proposes `propose_wiki_update` calls for new durable facts.
+
+The `off_record` setting suppresses all persistence.
+
+### 12.9 Quick-Death Breaker
+
+If three consecutive session legs die within 10 seconds of connecting, the reconnect loop raises `RuntimeError` and gives up on that model. This prevents a reconnect storm when something systemic is wrong (model retired, API key permanently invalid, network proxy blocking WebSocket upgrades).
+
+### 12.10 v1alpha vs. v1beta Endpoint
+
+The Gemini Live API has two endpoints:
+- `v1alpha`: Supports `enable_affective_dialog` and `proactive_audio`. Requires OAuth 2.0 on some tiers (AI Studio API keys may be rejected with 1008 "Expected OAuth 2 access token").
+- `v1beta` (default): Reliably accepts API-key auth. Does not support affective/proactive features.
+
+The attempt plan tries `v1alpha` first only when affective or proactive features are enabled AND the model supports them. If `v1alpha` fails with an auth error, it falls through to `v1beta` with those features stripped. This is transparent to the user.
+
+
+---
+
+## Appendix A: Quick Reference -- File Locations
+
+| Item | Path |
+|------|------|
+| Voice engine (cloud TTS, Live config, tools) | `src/agent_friday/services/voice_engine.py` |
+| Local voice engine (Tier 1, CPU) | `src/agent_friday/services/local_voice.py` |
+| NeMo voice engine (Tier 2, GPU) | `src/agent_friday/services/nemo_voice.py` |
+| Voice routes + WebSocket handlers | `src/agent_friday/routes/voice.py` |
+| Settings file | `~/.friday/settings.json` |
+| Tier-1 ASR models | `~/.friday/local_voice/whisper/` |
+| Tier-1 TTS voices | `~/.friday/local_voice/piper/` |
+| Tier-2 NeMo models | `~/.friday/models/nemo/` |
+| Voice debug log | `~/.friday/voice_debug.log` (when `FRIDAY_VOICE_DEBUG=1`) |
+
+## Appendix B: Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `GEMINI_API_KEY` | Primary Gemini API key (process env) |
+| `GOOGLE_API_KEY` | Alternative Gemini API key (process env) |
+| `FRIDAY_LIVE_MODEL` | Override default Live model ID |
+| `FRIDAY_LIVE_VOICE` | Override default Live voice name |
+| `FRIDAY_VOICE_DEBUG` | Set to `1` for per-chunk voice logging |
+| `FRIDAY_HOME` | Override `~` for model/config storage |
+| `FRIDAY_TESTING` | Set to `1` for test mode (skip network probes, Silero) |
+| `FRIDAY_WS_TOKEN` | WebSocket authentication token |
+
+## Appendix C: WebSocket Message Contract
+
+Both `/ws/voice-local` and `/ws/live` use the same message contract:
+
+**Browser -> Server:**
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `audio` | `data` (b64 PCM16@16k) | Mic audio chunk |
+| `image` | `data` (b64 JPEG) | Camera frame (Live only) |
+| `text` | `text` (string) | Typed/queued text turn |
+| `speaking` | `on` (bool) | Client playback state transition |
+| `barge` | -- | Explicit interrupt request (Escape key) |
+| `end` | -- | Deliberate stop with final flush |
+| `bye` | -- | Deliberate stop without flush |
+
+**Server -> Browser:**
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `audio` | `data` (b64 PCM16@24k) | TTS audio chunk |
+| `text` | `text` (string) | Model text or output transcript |
+| `input_transcript` | `text` (string) | User speech transcript |
+| `status` | `text` (string) | Status message (e.g., "live", "thinking") |
+| `turn_end` | -- | Model finished responding |
+| `interrupted` | -- | Model response was interrupted |
+| `voice_turn_done` | `user_text`, `agent_text` | Complete turn for persistence |
+| `error` | `error` (string) | Error message |
+| `hb` | `ts` (int) | Heartbeat (every 15s) |
+| `action` | `actions` (array) | UI actions (navigate, open) |
+| `cite` | `label`, `sources` | Citation chip for tool results |
+| `tts_pause` / `tts_resume` | -- | Pause/resume client TTS during actions |

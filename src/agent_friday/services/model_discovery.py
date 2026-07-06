@@ -53,6 +53,16 @@ def _f(val):
         return None
 
 
+def _price(val):
+    """A wire price, or None. Negative values are sentinels ("pricing
+    varies" — OpenRouter reports -1 on its dynamic-routing meta-models like
+    openrouter/fusion) and must read as unknown, never as a real price:
+    they would otherwise win every cheapest-first sort and poison cost
+    metering. Unknown ≠ free."""
+    p = _f(val)
+    return None if p is None or p < 0 else p
+
+
 def parse_openrouter(payload: dict) -> list:
     """OpenRouter GET /api/v1/models — the richest discovery source: pricing
     (USD per TOKEN, converted to per-1M here), context, modalities, and
@@ -63,8 +73,8 @@ def parse_openrouter(payload: dict) -> list:
             continue
         mid = str(item["id"])
         pricing = item.get("pricing") or {}
-        price_in = _f(pricing.get("prompt"))
-        price_out = _f(pricing.get("completion"))
+        price_in = _price(pricing.get("prompt"))
+        price_out = _price(pricing.get("completion"))
         if price_in is not None:
             price_in = round(price_in * 1_000_000, 6)
         if price_out is not None:
@@ -73,6 +83,12 @@ def parse_openrouter(payload: dict) -> list:
         modalities = ["text"]
         if "image" in (arch.get("input_modalities") or []):
             modalities.append("vision")
+        # Output modalities drive the creative pickers and the Model Browser's
+        # image/video capability filter — image INPUT is vision, image OUTPUT
+        # is generation.
+        for mod in ("image", "video"):
+            if mod in (arch.get("output_modalities") or []):
+                modalities.append(mod)
         supported = item.get("supported_parameters") or []
         supports_tools = "tools" in supported
         if supports_tools:
@@ -118,8 +134,8 @@ def parse_openai(payload: dict) -> list:
             "max_output": None,
             "modalities": ["text"],
             "supports_tools": None,  # unknown — generic /models has no signal
-            "price_in": _f(pricing.get("input")),
-            "price_out": _f(pricing.get("output")),
+            "price_in": _price(pricing.get("input")),
+            "price_out": _price(pricing.get("output")),
             "free": False,
             "source": "discovery",
         })
@@ -199,11 +215,26 @@ def cache_is_stale(blob: dict | None) -> bool:
 
 
 def cached_models(provider_name: str) -> tuple:
-    """(models list, stale bool) for a provider — disk only, never network."""
+    """(models list, stale bool) for a provider — disk only, never network.
+
+    Sanitizes negative wire prices (the "pricing varies" sentinel) to None at
+    this single read choke point: caches written by pre-fix versions carry
+    -1000000.0 for up to a TTL after upgrade, and every consumer (catalog,
+    search sort/filter, pricing) must read those as unknown, never as the
+    cheapest model on the list.
+    """
     blob = read_cache(provider_name)
     if not blob:
         return [], True
-    return list(blob.get("models") or []), cache_is_stale(blob)
+    models = []
+    for m in blob.get("models") or []:
+        if isinstance(m, dict):
+            for k in ("price_in", "price_out"):
+                v = m.get(k)
+                if isinstance(v, (int, float)) and v < 0:
+                    m = {**m, k: None}
+            models.append(m)
+    return models, cache_is_stale(blob)
 
 
 def cached_model_ids(provider_name: str) -> list:

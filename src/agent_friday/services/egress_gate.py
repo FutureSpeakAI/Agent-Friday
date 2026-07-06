@@ -159,7 +159,36 @@ def _classify_cloud(text: str) -> int:
     OOM-crashing the classifier (which would trip fail-closed and block traffic).
     """
     _rate_limit()
-    return _classify_impl(text, default=Tier.PUBLIC)
+    # egress=True: precision keyword mode — this call classifies an actual
+    # cloud payload, not a routing decision (see sensitivity_classifier).
+    return _classify_impl(text, default=Tier.PUBLIC, egress=True)
+
+
+# ── Trusted self-authored constants ───────────────────────────────────────────
+# Friday-authored compile-time strings (the shipped system prompt, tool
+# blurbs) that must never be redacted: they contain no user data by
+# construction, and redacting them strips the model of its identity and tool
+# instructions. Exact-match only — whole string or verbatim paragraph — so any
+# interpolation of user content produces a different string and gates normally.
+_TRUSTED_TEXTS: set = set()
+_TRUSTED_PARAS: set = set()
+_TRUSTED_LOCK = threading.Lock()
+
+
+def register_trusted_text(text: str) -> None:
+    """Register a Friday-authored constant as gate-exempt.
+
+    ONLY call this with compile-time constants that contain no user data —
+    the docstring above is the contract.
+    """
+    if not text or not isinstance(text, str):
+        return
+    with _TRUSTED_LOCK:
+        _TRUSTED_TEXTS.add(text.strip())
+        for sep in ("\n\n", "\n"):
+            for p in text.split(sep):
+                if p.strip():
+                    _TRUSTED_PARAS.add(p.strip())
 
 
 def _redact_placeholder(tier: int) -> str:
@@ -202,13 +231,60 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
 
 def _gate_text(text: str, provider: str, field: str,
                log_path: Path | None = None) -> str:
-    """Gate a single text string for a cloud provider."""
+    """Gate a single text string for a cloud provider.
+
+    Multi-paragraph fields are gated SPAN-WISE: only the offending paragraphs
+    are withheld, the rest survives. Whole-field drops destroyed every cloud
+    call that merely mentioned a trigger word — the assembled system prompt
+    (which the router already tier-gates section-by-section) came back as ""
+    and the Anthropic API rejected the empty message. Fail-closed is preserved:
+    if no paragraph individually explains the whole-field signal (or every
+    paragraph trips), we fall back to withholding the entire field.
+    """
     if not text or not isinstance(text, str):
         return text
+    with _TRUSTED_LOCK:
+        if text.strip() in _TRUSTED_TEXTS:
+            _log(provider, field, Tier.PUBLIC, "allow", "trusted-self-authored", log_path)
+            return text
     tier = _classify_cloud(text)
     if tier == Tier.PUBLIC:
         _log(provider, field, tier, "allow", "public-content", log_path)
         return text
+    # Span-level pass for multi-paragraph text.
+    sep = "\n\n" if "\n\n" in text else ("\n" if "\n" in text else None)
+    if sep is not None:
+        paras = text.split(sep)
+        gated, withheld, trusted = [], 0, 0
+        for p in paras:
+            if not p.strip():
+                gated.append(p)
+                continue
+            with _TRUSTED_LOCK:
+                _p_trusted = p.strip() in _TRUSTED_PARAS
+            if _p_trusted:
+                gated.append(p)
+                trusted += 1
+                continue
+            pt = _classify_cloud(p)
+            if pt == Tier.PUBLIC:
+                gated.append(p)
+            else:
+                gated.append(_redact_placeholder(pt))
+                withheld += 1
+        nonempty = sum(1 for p in paras if p.strip())
+        if (0 < withheld < nonempty) or (withheld == 0 and trusted > 0):
+            # Either the split localized the signal (partial withholding), or
+            # the whole-field signal came entirely from trusted self-authored
+            # paragraphs. withheld == 0 with NO trusted paragraphs means the
+            # signal spans paragraphs — distrust the split and fall through.
+            _log(provider, field, tier, "redact" if withheld else "allow",
+                 f"tier={Tier.NAMES[tier]} span-level: withheld {withheld}/{nonempty} "
+                 f"paragraphs ({trusted} trusted)",
+                 log_path)
+            return sep.join(gated)
+        # Fall through to the whole-field action (all paragraphs tripped, or
+        # the signal could not be localized).
     if tier == Tier.SENSITIVE:
         _log(provider, field, tier, "drop", f"tier={Tier.NAMES[tier]}", log_path)
         return ""  # cloud gets nothing for SENSITIVE
@@ -230,12 +306,14 @@ def _gate_messages(messages: list, provider: str,
             continue
         content = msg["content"]
         if isinstance(content, str):
-            gated.append({
-                **msg,
-                "content": _gate_text(
-                    content, provider, f"message[{i}].content", log_path
-                ),
-            })
+            _g = _gate_text(content, provider, f"message[{i}].content", log_path)
+            if content and not _g:
+                # The Anthropic API rejects empty message content ("all messages
+                # must have non-empty content"), turning a withheld turn into a
+                # hard 400 for the whole call. Substitute a marker the model can
+                # act on — it still sees NONE of the withheld content.
+                _g = _MESSAGE_WITHHELD
+            gated.append({**msg, "content": _g})
         elif isinstance(content, list):
             new_parts = []
             for j, part in enumerate(content):
@@ -257,6 +335,14 @@ def _gate_messages(messages: list, provider: str,
             gated.append(msg)
     return gated
 
+
+# What the model sees in place of a fully withheld user/assistant message.
+# Phrased so the model's natural response tells the user what happened and
+# how to proceed — important for VOICE turns, where this reply gets spoken.
+_MESSAGE_WITHHELD = ("[EGRESS-GATE: message withheld — it stayed on this "
+                     "device. Tell the user their last message contained "
+                     "sensitive content that is only processed locally, and "
+                     "that they can switch to the local model to discuss it.]")
 
 # What the model sees in place of a SENSITIVE tool result. An empty string
 # (what _gate_text returns for SENSITIVE) would read as "the tool returned
@@ -401,6 +487,33 @@ def startup_self_test() -> dict:
         _SELF_TEST_RESULT = {"ok": ok}
         if not ok:
             _SELF_TEST_RESULT["error"] = "sensitive probe survived the gate"
+        # False-positive leg: benign, self-authored-style content must SURVIVE
+        # sealing. An over-aggressive classifier once emptied every system
+        # prompt (it mentions the Sovereign Vault) and everyday user turns,
+        # 400-ing all cloud calls — invisible to the leak-only probe above.
+        # A false-positive failure is logged loudly but does NOT flip ok:
+        # refusing all cloud routing over over-redaction would be a worse
+        # failure mode than the over-redaction itself.
+        benign_msg = "Good morning! What is on my schedule for today?"
+        benign_sys = ("You are Agent Friday, a helpful assistant. You know your "
+                      "user's life context through the Sovereign Vault, wiki, and "
+                      "trust graph.\n\nRespond conversationally.")
+        fp = seal_outbound(
+            {"system": benign_sys,
+             "messages": [{"role": "user", "content": benign_msg}]},
+            "selftest-cloud", log_path=Path(os.devnull),
+        )
+        fp_msg = str((fp.get("messages") or [{}])[0].get("content", ""))
+        fp_sys = str(fp.get("system", ""))
+        fp_ok = (benign_msg == fp_msg) and ("Agent Friday" in fp_sys)
+        _SELF_TEST_RESULT["false_positive_ok"] = fp_ok
+        if not fp_ok:
+            _dlog.warning(
+                "egress gate FALSE-POSITIVE self-test failed: benign content "
+                "was redacted (system survived=%s, message survived=%s) — "
+                "cloud calls will degrade or 400",
+                "Agent Friday" in fp_sys, benign_msg == fp_msg,
+            )
     except Exception as e:
         _SELF_TEST_RESULT = {"ok": False, "error": str(e)}
     return _SELF_TEST_RESULT

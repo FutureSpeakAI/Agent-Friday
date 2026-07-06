@@ -22,3 +22,6 @@ chromadb>=0.5                 # Persistent cross-session conversation memory (co
 faster-whisper>=1.0           # Tier-1 LOCAL voice ASR (services/local_voice.py) — CTranslate2 backend, CPU INT8, NO torch. The default voice engine's "ears". Model checkpoint auto-downloads on first voice activation. Degrades to text/cloud if absent.
 piper-tts>=1.2                # Tier-1 LOCAL voice TTS (services/local_voice.py) — ONNX, ~30MB/voice, CPU. The default voice engine's "mouth"; output resampled to 24kHz to reuse the friday-pcm-player worklet. Voice file auto-downloads on first use.
 onnxruntime>=1.17             # CPU inference backend for Piper TTS (+ optional Silero VAD endpointing). Pulled in by piper-tts; listed explicitly for the lite voice stack.
+pyttsx3>=2.90                 # last-resort offline TTS (Windows SAPI5) when both Gemini and Piper are unavailable — the bottom of the voice fallback chain
+pystray>=0.19                 # system tray icon (friday_tray.py) — the normal Windows launch path; without it the tray entry point dies on import
+pillow>=10.0                  # tray icon rendering (pystray dependency) + image handling

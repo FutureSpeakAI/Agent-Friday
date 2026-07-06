@@ -144,6 +144,8 @@ DEFAULT_PROVIDERS = [
             "gemini-nano-banana-2", "gemini-nano-banana-pro", "veo-3",
             "gemini-omni-flash",
             "lyria-clip", "lyria-pro",
+            "gemini-2.5-flash-native-audio-latest",
+            "gemini-2.5-flash-native-audio-preview-09-2025",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-2.5-flash",
@@ -212,6 +214,15 @@ DEFAULT_PROVIDERS = [
             "lyria-pro": {"label": "Lyria 3 Pro (music · full)", "short": "Lyria Pro",
                            "roles": [], "modalities": ["audio", "music"]},
             # Voice-only live models — only ever offered for the Voice role.
+            # All four verified via a real bidiGenerateContent connect 2026-07-06.
+            # The -latest alias is the default: it tracks Google's current
+            # native-audio model and survives preview retirements.
+            "gemini-2.5-flash-native-audio-latest": {
+                "label": "Gemini 2.5 Flash Native Audio (latest)", "short": "2.5 Audio ✦",
+                "roles": [ROLE_VOICE], "modalities": ["audio", "live"]},
+            "gemini-2.5-flash-native-audio-preview-09-2025": {
+                "label": "Gemini 2.5 Flash Audio Preview (09-2025)", "short": "2.5 Audio 09",
+                "roles": [ROLE_VOICE], "modalities": ["audio", "live"]},
             "gemini-3.1-flash-live-preview": {
                 "label": "Gemini 3.1 Flash Live Preview", "short": "3.1 Live",
                 "roles": [ROLE_VOICE], "modalities": ["audio", "live"]},

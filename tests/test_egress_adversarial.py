@@ -153,11 +153,19 @@ class TestMultiTurnLeak:
         assert "123-45-6789" not in ssn_content  # pragma: allowlist secret
 
     def test_ssn_message_dropped_entirely(self, tmp_path):
-        """SENSITIVE content → empty string (cloud gets nothing)."""
+        """SENSITIVE content → withheld marker (cloud gets NONE of the text).
+
+        The marker replaced the old empty string because the Anthropic API
+        rejects empty message content — an emptied turn 400'd the whole call.
+        The security property is unchanged: nothing of the original survives.
+        """
         payload = self._build_payload(tmp_path)
         result = seal_outbound(payload, "anthropic", log_path=tmp_path / "egress.jsonl")
         ssn_content = result["messages"][0]["content"]
-        assert ssn_content == ""
+        assert "123-45-6789" not in ssn_content  # pragma: allowlist secret
+        assert "SSN" not in ssn_content
+        assert "EGRESS-GATE" in ssn_content
+        assert ssn_content != ""  # empty content would 400 the API call
 
     def test_benign_current_message_passes(self, tmp_path):
         payload = self._build_payload(tmp_path)
@@ -489,12 +497,19 @@ class TestDoubleSignalEscalation:
 
 class TestSealOutboundOutputFormat:
     def test_sensitive_content_becomes_empty_string(self, tmp_path):
-        """TIER_3 content → cloud sees empty string, not a placeholder."""
+        """TIER_3 message content → withheld marker with zero original text.
+
+        (Name kept for history: this asserted `== ""` until 2026-07-06, when
+        empty message content was found to 400 every sealed Anthropic call.
+        The cloud still receives none of the user's words.)
+        """
         payload = {"messages": [
             {"role": "user", "content": "my SSN is 123-45-6789"}  # pragma: allowlist secret
         ]}
         result = seal_outbound(payload, "anthropic", log_path=tmp_path / "eg.jsonl")
-        assert result["messages"][0]["content"] == ""
+        out = result["messages"][0]["content"]
+        assert "123-45-6789" not in out  # pragma: allowlist secret
+        assert "EGRESS-GATE" in out and out != ""
 
     def test_private_content_becomes_egress_gate_placeholder(self, tmp_path):
         """TIER_2 content → placeholder containing 'EGRESS-GATE'.

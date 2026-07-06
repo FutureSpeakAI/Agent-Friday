@@ -157,11 +157,84 @@ def _regex_tier(text: str) -> int:
     return 0
 
 
-def _keyword_tier(low: str) -> int:
-    """Layer 1b: fast substring keyword scan."""
-    if any(kw in low for kw in TIER_3_KEYWORDS):
+# ── Keyword matching for THIS module's egress classification ──────────────────
+# TIER_3_KEYWORDS above stays intact (vault_access shares it, and for vault
+# content over-inclusive is correct). For egress classification of ordinary
+# chat/voice/TTS text, bare substring matching was catastrophically imprecise:
+# 'courtesy' hit 'court', 'incoming' hit 'income', and every mention of the
+# product term 'Sovereign Vault' (it is in Friday's own system prompt) nuked
+# the whole field to TIER_3. Two changes, neither of which weakens what leaves
+# the device (both tiers are still withheld from cloud — see egress_gate):
+#   1. Word-boundary regex matching instead of substring.
+#   2. Strong/weak split: unambiguous phrases stay immediate TIER_3; common
+#      single words alone rate PRIVATE, and escalate to SENSITIVE only when a
+#      second independent layer (Presidio/embeddings) agrees — the existing
+#      two-signal escalation rule in classify().
+_TIER3_STRONG = (
+    "bank account", "routing number", "account number", "tax return",
+    "net worth", "credit card", "brokerage",
+    "health record", "blood glucose", "a1c",
+    "ssn", "social security", "passport", "driver's license", "date of birth",
+)
+_TIER3_WEAK = (
+    "financial", "finance", "investment", "portfolio", "salary", "income",
+    "medical", "medication", "prescription", "diagnosis", "doctor",
+    "insurance", "appointment",
+    "legal", "custody", "court", "divorce", "settlement",
+)
+# Friday's own product-architecture vocabulary. These words appear in her
+# system prompt and ordinary spoken replies whenever she describes HERSELF
+# ("loaded from the Sovereign Vault", "I'll add that to memory") — matching
+# them redacted her own identity prompt on every cloud call. Vault/memory/
+# trust-graph CONTENTS are tier-tagged where they are loaded (vault_access,
+# _build_context_prompt sections); the words themselves are not a signal FOR
+# EGRESS. They remain a signal for ROUTING (egress=False, the default):
+# "what's in my vault?" must still force-route to a local model.
+_EGRESS_EXCLUDED = {"sovereign vault", "vault", "encrypted", "trust graph", "memory"}
+
+
+def _kw_re(keywords, exclude=frozenset()) -> "re.Pattern":
+    kws = [k for k in keywords if k not in exclude]
+    return re.compile(r"\b(?:" + "|".join(re.escape(k) for k in kws) + r")\b")
+
+
+# Egress mode: precision matching (product terms excluded, strong/weak split).
+_TIER3_STRONG_RE = _kw_re(_TIER3_STRONG, _EGRESS_EXCLUDED)
+_TIER3_WEAK_RE   = _kw_re(_TIER3_WEAK, _EGRESS_EXCLUDED)
+_TIER2_RE        = _kw_re(TIER_2_KEYWORDS, _EGRESS_EXCLUDED)
+# Routing/vault mode (default): the FULL authoritative keyword tiers — any
+# TIER-3 keyword (including product terms) rates SENSITIVE, as vault_access
+# and the model router's needs_vault_access have always relied on.
+_TIER3_FULL_RE = _kw_re(TIER_3_KEYWORDS)
+_TIER2_FULL_RE = _kw_re(TIER_2_KEYWORDS)
+
+
+def _keyword_tier(low: str, egress: bool = False) -> int:
+    """Layer 1b: fast word-boundary keyword scan.
+
+    egress=False (routing/vault mode — the default): the full keyword tiers,
+    original strengths. Over-triggering here just routes a request to a local
+    model, which is the safe direction.
+
+    egress=True (cloud-payload gating): precision mode. Strong phrase →
+    SENSITIVE. One weak TIER-3 word → PRIVATE (still withheld from cloud, via
+    placeholder). Two or more DISTINCT weak TIER-3 words → SENSITIVE
+    ("medical diagnosis" is a far stronger signal than a lone "appointment").
+    Product-architecture terms are excluded — over-triggering here emptied
+    Friday's own system prompt and everyday turns on every cloud call.
+    """
+    if not egress:
+        if _TIER3_FULL_RE.search(low):
+            return Tier.SENSITIVE
+        if _TIER2_FULL_RE.search(low):
+            return Tier.PRIVATE
+        return 0
+    if _TIER3_STRONG_RE.search(low):
         return Tier.SENSITIVE
-    if any(kw in low for kw in TIER_2_KEYWORDS):
+    weak_hits = set(_TIER3_WEAK_RE.findall(low))
+    if len(weak_hits) >= 2:
+        return Tier.SENSITIVE
+    if weak_hits or _TIER2_RE.search(low):
         return Tier.PRIVATE
     return 0
 
@@ -254,6 +327,7 @@ def classify(
     use_llm: bool = False,
     llm_ambiguity_low: float = 0.50,
     llm_ambiguity_high: float = 0.65,
+    egress: bool = False,
 ) -> int:
     """Classify content sensitivity using all available layers.
 
@@ -277,7 +351,7 @@ def classify(
         return Tier.SENSITIVE
 
     # Layer 1b: keyword scan (fast path)
-    kw = _keyword_tier(low)
+    kw = _keyword_tier(low, egress=egress)
     if kw == Tier.SENSITIVE:
         return Tier.SENSITIVE
 

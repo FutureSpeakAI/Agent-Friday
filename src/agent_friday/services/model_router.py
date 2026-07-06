@@ -1397,6 +1397,18 @@ FRIDAY_SYSTEM_PROMPT = (
     "beautifulsoup4, requests, pandas, pillow, numpy, playwright.\n"
 )
 
+# Friday's own identity/tool prompt is a compile-time constant with no user
+# data — register it gate-exempt so the egress gate never strips the model of
+# its identity and tool instructions (it mentions vault/memory/family in the
+# abstract, which once classified the whole prompt as sensitive and emptied
+# it on every cloud call). Dynamic context sections appended by
+# _build_context_prompt are NOT registered and gate normally.
+try:
+    from agent_friday.services.egress_gate import register_trusted_text as _rtt
+    _rtt(FRIDAY_SYSTEM_PROMPT)
+except Exception:
+    pass
+
 
 # ═══════════════════════════════════════════════════════════════
 #  CONTEXT AWARENESS ENGINE

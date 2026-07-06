@@ -47,6 +47,10 @@ def discovery_price(provider_name: str, model: str):
     for m in models:
         if m.get("id") == model:
             pin, pout = _f(m.get("price_in")), _f(m.get("price_out"))
+            # Negative = "pricing varies" sentinel (pre-fix caches may still
+            # carry it) — unknown, never a real (or negative!) spend figure.
+            pin = None if pin is not None and pin < 0 else pin
+            pout = None if pout is not None and pout < 0 else pout
             if pin is None and pout is None:
                 return None
             return {"in_per_1m": pin if pin is not None else 0.0,

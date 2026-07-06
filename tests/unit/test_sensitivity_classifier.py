@@ -62,13 +62,20 @@ class TestRegexLayer:
 
 class TestKeywordLayer:
     def test_financial_keyword(self):
+        # Default (routing/vault) mode keeps the full keyword strength.
         assert _keyword_tier("financial records on file") == Tier.SENSITIVE
+        # Egress mode: a lone weak word rates PRIVATE (still withheld from
+        # cloud); immediate SENSITIVE needs a strong phrase or 2+ weak words.
+        assert _keyword_tier("financial records on file", egress=True) == Tier.PRIVATE
+        assert _keyword_tier("financial records and tax return on file", egress=True) == Tier.SENSITIVE
 
     def test_ssn_keyword(self):
         assert _keyword_tier("ssn for this person") == Tier.SENSITIVE
 
     def test_custody_keyword(self):
         assert _keyword_tier("custody hearing scheduled") == Tier.SENSITIVE
+        assert _keyword_tier("custody hearing scheduled", egress=True) == Tier.PRIVATE
+        assert _keyword_tier("custody hearing at the divorce court", egress=True) == Tier.SENSITIVE
 
     def test_family_keyword_private(self):
         assert _keyword_tier("my family contact") == Tier.PRIVATE
