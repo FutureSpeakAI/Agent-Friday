@@ -108,6 +108,31 @@ Each persona journey is expressed as pass/fail acceptance criteria. IDs map to t
 - **D-AC4 (R4-egress-proof):** `/api/voice/setup/status` (or `/api/health/full`) includes an `egress_gate` block `{self_test_passed, cloud_routing_enabled}`; breaking the classifier import shows `cloud_routing_enabled=false` in the UI and blocks a cloud voice attempt.
 - **D-AC5 (R6-VAD):** `local_voice_health()` returns `vad_backend ∈ {silero, rms}`; forcing Silero unavailable yields `vad_backend=rms` and a surfaced one-time status frame.
 
+### 3.5 Persona E — Tier-3 power user, wants a fluid conversation for HOURS
+
+The conversation must be fluid and continue for literally hours with no
+perceptible loss in quality or context. (First-class requirements added
+2026-07-06; see §13 for the grounded config.)
+
+- **E-AC1 (interruptible):** In the default interruption mode, the user talking
+  over Friday stops her audio within **~200 ms**. `_build_realtime_input_config`
+  yields `activity_handling = START_OF_ACTIVITY_INTERRUPTS`, the server
+  forwards `server_content.interrupted`, and the client flushes the playback
+  ring on `{type:'interrupted'}`. A regression test asserts the default (and
+  the legacy `speaker`/`headphones` values) map to `START_OF_ACTIVITY_INTERRUPTS`,
+  and only the explicit `no-barge` opt-out maps to `NO_INTERRUPTION`.
+- **E-AC2 (no audible degradation over time):** Playback runs off a jitter
+  buffer with a ~120 ms prefill (re-primed after any underrun) so network gaps
+  never underrun into clicks; output stays 24 kHz PCM16 mono end-to-end; the
+  ring is large enough to hold a full faster-than-realtime response and an
+  anti-wrap guard prevents pointer-lap corruption without truncating a long
+  turn. No progressive rasp across a long session.
+- **E-AC3 (context survives connection cycling):** `context_window_compression`
+  (sliding window) is on by default so the session never hits the ~15-min
+  audio duration cap; the GoAway→reconnect-with-`session_resumption`-handle loop
+  survives the independent ~10-min per-connection cap, carrying full context.
+  A multi-hour session continues without a perceptible break or context reset.
+
 ---
 
 ## 4. Dependency Detection and Graceful Degradation
@@ -456,3 +481,77 @@ Sequence by effort/impact: PTT (S) → device picker incl. PWA (M) → live capt
 - `validate_live_model` substring heuristic: `_LIVE_MODEL_MARKERS` `voice_engine.py:805`, function `:808`.
 - Stale default still in registry/UI: `gemini-3.1-flash-live-preview` present across `provider_registry.py`, `core_routes.py`, `index.html`, `app.html`, `core/__init__.py`.
 - pip 180 s cap: `agent.py:538,552`.
+
+---
+
+## 13. Tier-3 Live Fluidity — interruption, audio sync, hours-long continuity
+
+First-class requirements (2026-07-06). Every fact below was verified against
+Google's CURRENT Live API docs (ai.google.dev/gemini-api/docs/live-*, /api/live)
+on 2026-07-06 — not training-data recall. Serves Persona E (§3.5).
+
+### 13.1 Audio format (confirmed, not the regression)
+- Output: raw **16-bit PCM, 24 kHz, mono, little-endian** (both native-audio and
+  half-cascade). Input the API expects: **16-bit PCM, 16 kHz, mono**.
+- The client pins the playback `AudioContext` to 24 kHz and feeds a
+  `friday-pcm-player` AudioWorklet ring buffer. Raspiness is NOT a format bug —
+  it is a jitter/underrun/overlap problem (§13.3).
+
+### 13.2 Interruption / barge-in
+- Config: `realtime_input_config = RealtimeInputConfig(automatic_activity_detection=…,
+  activity_handling=…, turn_coverage=…)`.
+- **`activity_handling` is the load-bearing field.** `NO_INTERRUPTION` = VAD fires
+  but the model never stops (reads as "won't interrupt"). `START_OF_ACTIVITY_INTERRUPTS`
+  = barge-in. Friday's default is now the latter for every mode except the
+  explicit `no-barge` opt-out (`_build_realtime_input_config`, `routes/voice.py`).
+- On a user interrupt the server sends `server_content.interrupted=True`; the
+  bridge forwards `{type:'interrupted'}` and the client MUST flush queued
+  playback (it posts `{type:'flush'}` to the worklet, which drops all pending
+  samples and re-primes). Draining instead of flushing is itself a rasp source.
+- Echo mitigations for open speakers (so barge-in doesn't self-trigger): mic
+  `echoCancellation:true` + `start_of_speech_sensitivity=START_SENSITIVITY_LOW`.
+  Users who still self-interrupt pick `no-barge` (then the bridge RMS talk-over
+  detector + Esc are the interrupt paths).
+- Acceptance: barge-in cuts playback within ~200 ms (E-AC1).
+
+### 13.3 Audio sync / anti-rasp (client worklet)
+- **Prefill jitter cushion:** ~120 ms buffered before playback starts, re-primed
+  after any underrun, so a network gap never underruns into a click. Accumulated
+  clicks are the classic "raspy as she talks, worse over time".
+- **Ring sizing + anti-wrap:** the ring holds a full faster-than-realtime
+  response (180 s); an anti-wrap guard fast-forwards the reader only if the
+  writer approaches lapping it (a >~3 min continuous monologue) — it NEVER
+  truncates a normal multi-second turn.
+- No per-chunk `BufferSource` scheduling on the worklet path (that legacy
+  fallback accumulates resampler/`startAt` rounding = progressive rasp).
+- Acceptance: no audible degradation over a long session (E-AC2).
+
+### 13.4 Hours-long session continuity
+Three independent limits, all must be handled (docs → live-session):
+- **~15 min** audio-only session duration cap → removed by
+  `context_window_compression=ContextWindowCompressionConfig(sliding_window=SlidingWindow())`,
+  **on by default** (`voice_context_compression`). Prunes only the oldest turns;
+  durable facts persist in Friday's memory subsystem.
+- **~10 min** single-connection cap (independent of the above) → handled by the
+  GoAway loop: `go_away.time_left` triggers a drain-then-reconnect using the
+  latest `session_resumption_update.new_handle`, so the socket cycles without a
+  user-perceptible break and full context is restored.
+- Resumption handles valid ~2 h after last termination.
+- Acceptance: context + quality survive multi-hour cycling (E-AC3).
+
+### 13.5 Model feature notes (current)
+- `enable_affective_dialog` and `proactivity.proactive_audio` require **v1alpha**
+  and are supported on **2.5 native-audio**, NOT on `gemini-3.1-flash-live-preview`
+  — the code strips them per-attempt for models/endpoints that don't support them.
+- Verified-live chain (real connect probe 2026-07-06):
+  `gemini-2.5-flash-native-audio-latest` → `…-preview-09-2025` →
+  `gemini-3.1-flash-live-preview`. `gemini-2.5-flash-preview-native-audio` does
+  NOT exist upstream (1008) — kept in `_RETIRED_LIVE_MODELS`.
+
+### 13.6 Tests
+- `tests/unit/test_voice_live_tuning.py`: interruption default = barge-in, opt-out
+  = NO_INTERRUPTION, VAD stays enabled, compression on by default, LOW start
+  sensitivity, chain distinct/non-retired.
+- Manual/opt-in: `FRIDAY_SMOKE_CLOUD=1` live connect probe of the whole chain;
+  long-session soak (barge-in latency, no rasp, GoAway reconnect) is a manual
+  procedure in `tests/MANUAL_TEST_PROCEDURES.md` (real audio hardware + hours).

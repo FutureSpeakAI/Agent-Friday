@@ -354,25 +354,32 @@ def _compose_final_voice_error(attempt_errors, key_source):
     return f"Voice connect failed on {first[0]}: {str(first[3])[:300]}"
 
 
-def _build_realtime_input_config(types, interruption_mode="speaker"):
-    """Build the Live API RealtimeInputConfig with echo-safe interruption handling.
+def _build_realtime_input_config(types, interruption_mode="auto"):
+    """Build the Live API RealtimeInputConfig.
 
-    Google's recommended cure for the "Friday cuts herself off on speakers" bug
-    is two-fold:
-      • activity_handling = NO_INTERRUPTION — the model's response is NEVER
-        interrupted by detected mic activity, so her own speaker bleed (echo)
-        re-captured by the mic can't fire a spurious interruption. This is the
-        default ("speaker" mode). Headphone users who want true barge-in pick
-        "headphones", which restores START_OF_ACTIVITY_INTERRUPTS.
-      • turn_coverage = TURN_INCLUDES_ONLY_ACTIVITY — the user turn counts only
-        detected speech, excluding silence/background noise.
+    Barge-in is ON by default. Per Google's current Live API docs
+    (ai.google.dev/gemini-api/docs/live-api/capabilities), the barge-in
+    behavior is activity_handling = START_OF_ACTIVITY_INTERRUPTS: the start of
+    user speech interrupts the model's response. NO_INTERRUPTION means VAD
+    still fires but the model never stops — which reads to the user as "voice
+    won't interrupt". We only use NO_INTERRUPTION for an EXPLICIT opt-out
+    ("speaker-safe" / "no-barge") chosen by users on open speakers who get
+    spurious self-interruption from echo the browser AEC can't fully cancel.
 
-    Plus the on-disk VAD tuning: silence_duration_ms=800 (snappy turn-end),
-    LOW start sensitivity (ignore quiet echo), HIGH end-of-speech sensitivity.
+    Interruptible modes still lean on echo mitigations to avoid Friday cutting
+    herself off: LOW start sensitivity (her own speaker bleed is quieter than a
+    real user, so require clearer speech to trip VAD) and the client's
+    echoCancellation:true mic constraint. turn_coverage =
+    TURN_INCLUDES_ONLY_ACTIVITY counts only detected speech.
 
     `activity_handling` / `turn_coverage` are only set when the installed
     google-genai SDK exposes the enums, so older SDKs degrade to VAD-only.
     """
+    mode = str(interruption_mode or "").strip().lower()
+    # Explicit no-barge opt-out. Everything else (auto/speaker/headphones/…)
+    # is interruptible — barge-in is the default the requirement asks for.
+    no_barge = mode in ("no-barge", "no_barge", "nobarge", "speaker-safe",
+                        "speaker_safe", "none", "off")
     aad = types.AutomaticActivityDetection(
         disabled=False,
         silence_duration_ms=800,
@@ -385,13 +392,10 @@ def _build_realtime_input_config(types, interruption_mode="speaker"):
     )
     kwargs = {"automatic_activity_detection": aad}
 
-    headphones = str(interruption_mode or "").strip().lower() in (
-        "headphones", "headphone", "barge", "barge-in", "bargein")
-
-    # activity_handling — the actual echo fix. NO_INTERRUPTION on speakers.
+    # activity_handling — barge-in unless the user explicitly opted out.
     _ah = getattr(types, "ActivityHandling", None)
     if _ah is not None:
-        member = "START_OF_ACTIVITY_INTERRUPTS" if headphones else "NO_INTERRUPTION"
+        member = "NO_INTERRUPTION" if no_barge else "START_OF_ACTIVITY_INTERRUPTS"
         val = getattr(_ah, member, None)
         if val is not None:
             kwargs["activity_handling"] = val
@@ -1265,17 +1269,27 @@ if sock is not None:
         if live_proactive is None:
             live_proactive = _model_is_25
         live_proactive = bool(live_proactive)
-        live_context_compression = bool(live_settings.get("voice_context_compression"))
-        # Interruption mode: "speaker" (echo-safe, no interruption) is the default;
-        # "headphones" restores true barge-in. See _build_realtime_input_config.
+        # Context window compression is ON by default. Without it the Live
+        # session hits a hard duration cap (~15 min audio-only) and terminates,
+        # losing the conversation — the opposite of the "fluid for hours"
+        # requirement. The sliding window prunes only the OLDEST turns once the
+        # context approaches the model limit; recent context is preserved, and
+        # durable facts live in Friday's own memory subsystem. Explicit False
+        # opts out. (Google Live API docs → live-session.)
+        live_context_compression = live_settings.get("voice_context_compression")
+        live_context_compression = (True if live_context_compression is None
+                                    else bool(live_context_compression))
+        # Interruption mode: barge-in is ON by default ("auto"). Only an
+        # explicit no-barge opt-out disables it. See _build_realtime_input_config.
         live_interruption_mode = str(
-            live_settings.get("voice_interruption_mode") or "speaker").strip().lower()
-        # Bridge-side barge-in is what makes the user able to interrupt in
-        # speaker mode at all (NO_INTERRUPTION disables Gemini's own barge-in).
-        # Headphones mode doesn't need it — START_OF_ACTIVITY_INTERRUPTS gives
-        # native, instant barge-in and there is no speaker bleed to worry about.
-        live_barge_enabled = live_interruption_mode not in (
-            "headphones", "headphone", "barge", "barge-in", "bargein")
+            live_settings.get("voice_interruption_mode") or "auto").strip().lower()
+        # Bridge-side barge-in is a secondary path for the explicit no-barge
+        # mode (where NO_INTERRUPTION disables Gemini's own barge-in). In the
+        # default interruptible modes, START_OF_ACTIVITY_INTERRUPTS gives
+        # native, instant barge-in, so the bridge detector is not needed.
+        live_barge_enabled = live_interruption_mode in (
+            "no-barge", "no_barge", "nobarge", "speaker-safe", "speaker_safe",
+            "none", "off")
         try:
             _barge_grace_ms = int(live_settings.get("voice_barge_grace_ms") or 800)
         except (TypeError, ValueError):
@@ -1316,8 +1330,11 @@ if sock is not None:
             # older google-genai SDKs that don't define those enums yet.
             realtime_input_config=_build_realtime_input_config(types, live_interruption_mode),
         )
+        _no_barge = live_interruption_mode in (
+            "no-barge", "no_barge", "nobarge", "speaker-safe", "speaker_safe",
+            "none", "off")
         _vlog(f'voice interruption mode: {live_interruption_mode} '
-              f'({"no-interruption / echo-safe" if live_interruption_mode != "headphones" else "barge-in"})')
+              f'({"no-interruption / echo-safe (bridge talk-over + Esc only)" if _no_barge else "barge-in (native START_OF_ACTIVITY_INTERRUPTS)"})')
         if live_temperature is not None:
             live_cfg_kwargs["temperature"] = live_temperature
         if live_max_tokens > 0:
