@@ -33,7 +33,15 @@ CANNED = ('("entity"<|>PROBE<|>concept<|>benign)\n<|COMPLETE|>')
 
 @pytest.fixture
 def seeded_home(monkeypatch):
-    wiki = Path.home() / ".friday" / "wiki"
+    # Import-time WIKI_DIR + wipe: the suite plants exact canary strings and
+    # asserts on which calls carry them, so the corpus must be exclusive
+    # (and Path.home() is unreliable — tests/test_egress_adversarial.py
+    # leaks a USERPROFILE redirect session-wide).
+    import shutil
+    from agent_friday.core import WIKI_DIR
+    wiki = WIKI_DIR
+    if wiki.exists():
+        shutil.rmtree(wiki)
     (wiki / "health").mkdir(parents=True, exist_ok=True)
     (wiki / "research").mkdir(parents=True, exist_ok=True)
     (wiki / "health" / "records.md").write_text(
