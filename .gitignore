@@ -163,3 +163,7 @@ pyinstaller_build.log
 
 # Internal working docs - local only, not for the public tree
 AGENT_BEST_PRACTICES.md
+
+# Playwright output — local test artifacts, never for the public tree
+test-results/
+playwright-report/
