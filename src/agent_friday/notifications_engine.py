@@ -147,6 +147,67 @@ def push(
         return entry
 
 
+def upsert_status(
+    *,
+    key: str,
+    title: str,
+    body: str = "",
+    source: str = "system",
+    kind: str = "status",
+    priority: str = "low",
+    target: Optional[Dict[str, Any]] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create or refresh a single, always-read 'status' entry keyed by
+    ``dedupe_key``. Unlike push(), a matching existing entry is UPDATED in place
+    (new title/body/timestamp) instead of being left stale or duplicated.
+
+    The entry is marked read (``read=True``) so it shows in the panel as the
+    latest status but never increments the unread badge — the pattern the hourly
+    heartbeat uses to appear exactly once with its most recent run time.
+    """
+    if priority not in PRIORITY_ORDER:
+        priority = "low"
+    with _LOCK:
+        items = _load()
+        for n in items:
+            if n.get("dedupe_key") == key and not n.get("dismissed"):
+                n["title"] = title
+                n["body"] = body
+                n["priority"] = priority
+                n["source"] = source
+                n["kind"] = kind
+                n["read"] = True
+                n["created_at"] = _now_iso()
+                if target is not None:
+                    n["target"] = target
+                if meta is not None:
+                    n["meta"] = meta
+                _save(items)
+                return n
+        entry = {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "body": body,
+            "priority": priority,
+            "source": source,
+            "kind": kind,
+            "actions": [],
+            "target": target or {},
+            "read": True,          # status entries never bump the unread badge
+            "dismissed": False,
+            "created_at": _now_iso(),
+            "proactive_chat": False,
+            "chat_message": None,
+            "chat_injected": False,
+            "dedupe_key": key,
+            "meta": meta or {},
+        }
+        items.append(entry)
+        _save(items)
+        return entry
+
+
 def list_notifications(
     include_dismissed: bool = False,
     limit: int = 50,
@@ -277,6 +338,7 @@ def set_trigger_state(key: str, value: Any) -> None:
 
 __all__ = [
     "push",
+    "upsert_status",
     "list_notifications",
     "mark_read",
     "mark_all_read",

@@ -1449,7 +1449,7 @@ def _summarize_task_outcome(name, reply, tool_trace, status='complete'):
             f"there was nothing actionable to do.")
 
 
-def _task_worker(task_id, name, prompt, description=''):
+def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
     """Run a Claude agent prompt to completion and store results.
 
     Heuristic log lines come from inspecting the tool_trace returned by
@@ -1488,7 +1488,7 @@ def _task_worker(task_id, name, prompt, description=''):
             messages, system=system, max_tokens=16384, model=subagent_model,
             session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id},
-            orb_label=_bg_label, orb_category='monitoring', orb_icon='🛰',
+            orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
             workspace='task',
         )
         for step in tool_trace or []:
@@ -1590,7 +1590,7 @@ def _task_worker(task_id, name, prompt, description=''):
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
-                chain=None, chain_step=0):
+                chain=None, chain_step=0, orb_icon='🛰'):
     """Spawn a background task.
 
     on_complete: optional dict {"spawn": "<next step name>", "prompt": "<optional
@@ -1625,7 +1625,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         "chain": chain,
         "chain_step": chain_step,
     })
-    th = threading.Thread(target=_task_worker, args=(task_id, name, prompt, description), daemon=True)
+    th = threading.Thread(target=_task_worker,
+                          args=(task_id, name, prompt, description),
+                          kwargs={'orb_icon': orb_icon}, daemon=True)
     th.start()
     return task_id
 

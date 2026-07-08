@@ -32,6 +32,7 @@ from agent_friday.notifications_engine import (
     push,
     set_trigger_state,
     unread_count,
+    upsert_status,
     _iso_ts,
 )
 
@@ -72,6 +73,33 @@ class TestIsoTs:
     def test_invalid_returns_zero(self):
         assert _iso_ts("not-a-date") == 0.0
         assert _iso_ts("") == 0.0
+
+
+# ── upsert_status (self-updating, no-badge heartbeat entry) ───────────────────
+
+class TestUpsertStatus:
+    def test_creates_read_entry_that_does_not_bump_badge(self):
+        entry = upsert_status(key="sched-status:sch_heartbeat",
+                              title="💓 Heartbeat — last ran now", body="No new activity.")
+        assert entry["read"] is True
+        assert entry["dedupe_key"] == "sched-status:sch_heartbeat"
+        # A read status entry must NOT count toward the unread badge.
+        assert unread_count() == 0
+
+    def test_updates_in_place_instead_of_duplicating(self):
+        upsert_status(key="k1", title="Heartbeat — 10:00", body="a")
+        upsert_status(key="k1", title="Heartbeat — 11:00", body="b")
+        items = [n for n in list_notifications(include_dismissed=True)
+                 if n.get("dedupe_key") == "k1"]
+        assert len(items) == 1                 # one entry, not two
+        assert items[0]["title"] == "Heartbeat — 11:00"   # refreshed in place
+        assert items[0]["body"] == "b"
+
+    def test_coexists_with_unread_push(self):
+        push(title="Real alert", priority="high")
+        upsert_status(key="hb", title="Heartbeat — now", body="idle")
+        # The unread badge reflects only the genuine push, not the status entry.
+        assert unread_count() == 1
 
 
 # ── push ──────────────────────────────────────────────────────────────────────

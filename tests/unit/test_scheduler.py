@@ -143,3 +143,82 @@ def test_dispatch_builtin_failure_records_failed():
     hist = s.run_history("sch_t_boom", limit=1)
     assert hist and hist[0]["status"] == "failed"
     assert "kaboom" in (hist[0]["error"] or "")
+
+
+# ── Anti-spam: notify modes + orb policy (demo bug fixes) ────────────────────
+def test_changed_treats_no_change_sentinel_as_unchanged():
+    # The heartbeat replies EXACTLY "NO CHANGE" when nothing is new. A truthy
+    # non-empty string used to count as "changed" and spammed a notification.
+    assert s._changed("NO CHANGE") is False
+    assert s._changed("no change.") is False
+    assert s._changed("") is False
+    assert s._changed("Found 2 new emails") is True
+    assert s._changed({"changed": False}) is False
+    assert s._changed({"count": 3}) is True
+
+
+def test_orb_policy_skips_silent_and_agent_prompt():
+    # silent maintenance (content publisher) → no orb; agent_prompt → the spawned
+    # agent owns the orb; ordinary builtins → one orb.
+    assert s._make_scheduler_orb(
+        {"notify": "silent", "task": {"kind": "builtin"}}) is False
+    assert s._make_scheduler_orb(
+        {"notify": "status", "task": {"kind": "agent_prompt"}}) is False
+    assert s._make_scheduler_orb(
+        {"notify": "on_complete", "task": {"kind": "builtin"}}) is True
+
+
+def _run_and_wait(rec, sid):
+    s.dispatch(rec, manual=True)
+    for _ in range(60):
+        if s.run_history(sid, limit=1):
+            return
+        time.sleep(0.05)
+
+
+def test_silent_schedule_never_notifies(monkeypatch):
+    calls = {"run": 0, "status": 0}
+    monkeypatch.setattr(s, "_notify_run", lambda *a, **k: calls.__setitem__("run", calls["run"] + 1))
+    monkeypatch.setattr(s, "_notify_status", lambda *a, **k: calls.__setitem__("status", calls["status"] + 1))
+
+    s.register_builtin_task("t_silent", lambda: {"changed": True, "summary": "did work"},
+                            label="Silent", default_trigger="interval",
+                            default_spec={"every_minutes": 1}, notify="silent")
+    rec = s.register_schedule({
+        "id": "sch_t_silent", "name": "Silent", "trigger": "interval",
+        "spec": {"every_minutes": 1}, "notify": "silent",
+        "task": {"kind": "builtin", "ref": "t_silent"}})
+    _run_and_wait(rec, "sch_t_silent")
+    # A silent (content-publisher-style) tick must push NOTHING on success.
+    assert calls["run"] == 0 and calls["status"] == 0
+
+
+def test_status_schedule_updates_panel_entry_not_badge(monkeypatch):
+    seen = {"run": 0, "status": 0}
+    monkeypatch.setattr(s, "_notify_run", lambda *a, **k: seen.__setitem__("run", seen["run"] + 1))
+    monkeypatch.setattr(s, "_notify_status", lambda *a, **k: seen.__setitem__("status", seen["status"] + 1))
+
+    s.register_builtin_task("t_status", lambda: "NO CHANGE", label="Beat",
+                            default_trigger="interval", default_spec={"every_minutes": 60},
+                            notify="status")
+    rec = s.register_schedule({
+        "id": "sch_t_status", "name": "Beat", "trigger": "interval",
+        "spec": {"every_minutes": 60}, "notify": "status",
+        "task": {"kind": "builtin", "ref": "t_status"}})
+    _run_and_wait(rec, "sch_t_status")
+    # status mode maintains the self-updating entry, never a badge notification.
+    assert seen["status"] == 1 and seen["run"] == 0
+
+
+def test_on_change_no_delta_is_silent(monkeypatch):
+    seen = {"run": 0}
+    monkeypatch.setattr(s, "_notify_run", lambda *a, **k: seen.__setitem__("run", seen["run"] + 1))
+    s.register_builtin_task("t_nochange", lambda: {"changed": False}, label="NC",
+                            default_trigger="daily", default_spec={"hour": 0},
+                            notify="on_change")
+    rec = s.register_schedule({
+        "id": "sch_t_nochange", "name": "NC", "trigger": "daily",
+        "spec": {"hour": 0}, "notify": "on_change",
+        "task": {"kind": "builtin", "ref": "t_nochange"}})
+    _run_and_wait(rec, "sch_t_nochange")
+    assert seen["run"] == 0
