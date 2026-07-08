@@ -4282,6 +4282,14 @@ function NewsWS(){
   const flashNews=t=>{setNewsToast(t);setTimeout(()=>setNewsToast(''),2400)};
   const stopFpAudio=()=>{const a=fpAudioEl.current;if(a){try{a.pause()}catch(_){}if(a.src&&a.src.startsWith('blob:'))URL.revokeObjectURL(a.src);fpAudioEl.current=null}try{if(fpAudioCtx.current)fpAudioCtx.current.close()}catch(_){}fpAudioCtx.current=null;setFpPlaying(false);setFpProgress(0);window._fridayHoloAmplitude=0;if(window._fridayMoodSignals)window._fridayMoodSignals.ttsActive=false};
   const closeFpAudio=()=>{stopFpAudio();setFpAudio(false)};
+  // Register a global yield hook: the voice session calls this the moment a
+  // live reply or real user speech is happening, so the Front Page WAV player
+  // (a separate audio element with NO interrupt contract) never talks over the
+  // conversation. Fast no-op when nothing is playing.
+  useEffect(()=>{
+    window._fridayStopFpAudio=()=>{if(fpAudioEl.current)stopFpAudio()};
+    return()=>{if(window._fridayStopFpAudio)delete window._fridayStopFpAudio};
+  },[]);
   const listenFrontPage=async()=>{
     if(fpAudioLoading)return;stopReading();stopFpAudio();setFpAudioLoading(true);setFpAudio(true);
     if(!window._fridayMoodSignals)window._fridayMoodSignals={};window._fridayMoodSignals.ttsActive=true;
@@ -6453,7 +6461,7 @@ function QuickPostModal({payload,onClose}){
   const[preview,setPreview]=useState(null);const[busy,setBusy]=useState(false);const[toast,setToast]=useState('');
   const assets=(payload.asset&&payload.asset.filename)?[(()=>{const ext=(payload.asset.filename||'').split('.').pop().toLowerCase();const kind=['png','jpg','jpeg','webp','svg','gif'].includes(ext)?'image':['mp4','webm','mov'].includes(ext)?'video':['mp3','wav','ogg','m4a'].includes(ext)?'audio':'document';return{filename:payload.asset.filename,content_hash:payload.asset.content_hash||'',kind,alt_text:payload.asset.alt_text||''}})()]:[];
   const flash=t=>{setToast(t);setTimeout(()=>setToast(''),2500)};
-  useEffect(()=>{fetch('/api/content/platforms').then(r=>r.json()).then(d=>{const ps=d.platforms||[];setPlats(ps);const conn=ps.filter(x=>x.status&&x.status.connected).map(x=>x.name);setSel(conn.slice(0,2))}).catch(()=>{})},[]);
+  useEffect(()=>{fetch('/api/content/platforms').then(r=>r.json()).then(d=>{const ps=Array.isArray(d.platforms)?d.platforms:[];setPlats(ps);const conn=ps.filter(x=>x.status&&x.status.connected).map(x=>x.name);setSel(conn.slice(0,2))}).catch(()=>{})},[]);
   useEffect(()=>{
     if(!body.trim()||!sel[0]){setPreview(null);return}
     const t=setTimeout(()=>{fetch('/api/content/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body,title,assets,platform:sel[0],format:'post'})}).then(r=>r.json()).then(setPreview).catch(()=>{})},600);
@@ -6521,7 +6529,7 @@ function ContentWS(){
   const[tab,setTab]=useState('compose');
   const[plats,setPlats]=useState([]);const[qsum,setQsum]=useState(null);
   const[prefillPost,setPrefillPost]=useState(null);const[slot,setSlot]=useState(null);
-  const loadPlats=()=>fetch('/api/content/platforms').then(r=>r.json()).then(d=>setPlats(d.platforms||[])).catch(()=>{});
+  const loadPlats=()=>fetch('/api/content/platforms').then(r=>r.json()).then(d=>setPlats(Array.isArray(d.platforms)?d.platforms:[])).catch(()=>{});
   useEffect(()=>{loadPlats();fetch('/api/content/queue').then(r=>r.json()).then(setQsum).catch(()=>{})},[]);
   useNavTarget('content',t=>{if(!t)return;if(t.tab)setTab(t.tab);if(t.post)setPrefillPost(t.post)});
   // §3.4 graduation: idea → ContentPost draft, item advances to 'published'.
@@ -9016,15 +9024,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       let m;try{m=JSON.parse(ev.data)}catch(_){return}
       const K=voiceKeepRef.current;K.lastMsgTs=Date.now();
       if(m.type==='hb'){K.sawHb=true;return;}
-      if(m.type==='audio'){
-        const _approxBytes=m.data?Math.floor(m.data.length*3/4):0;
-        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
-        // Drop chunks that arrive after a barge-in / disconnect flushed the
-        // queue — these are trailing audio from the turn the user interrupted.
-        if(v.playbackCancelled){window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
-        if(v.ttsPaused){window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk BLOCKED by ttsPaused (action running)');return;}
+      // Feed one base64 PCM chunk to the active playback path (worklet ring or
+      // legacy BufferSource). Shared by the live 'audio' branch and the
+      // tts_resume replay of chunks HELD during an action pause.
+      const _playAudioChunk=(dataB64)=>{
         if(!v.audioCtx||v.audioCtx.state==='closed')return;
-        const int16=b64ToI16(m.data);
+        const int16=b64ToI16(dataB64);
         if(v.usePlayerWorklet&&v.playerNode){
           // Worklet path: hand raw float PCM to the ring buffer and let the audio
           // thread resample + play it gaplessly. No per-chunk nodes, no playCursor.
@@ -9048,7 +9053,29 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: playing audio chunk, activeSources='+v.activeSources.length);
         v.playCursor=startAt+buf.duration;
         setVoiceStatus('speaking');
+      };
+      if(m.type==='audio'){
+        const _approxBytes=m.data?Math.floor(m.data.length*3/4):0;
+        window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: audio chunk received, size='+_approxBytes);
+        // A live voice reply is playing — the Front Page WAV player (a separate
+        // audio element with no interrupt contract) must never talk over it.
+        try{window._fridayStopFpAudio&&window._fridayStopFpAudio()}catch(_){}
+        // Drop chunks that arrive after a barge-in / disconnect flushed the
+        // queue — these are trailing audio from the turn the user interrupted.
+        if(v.playbackCancelled){window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk BLOCKED by playbackCancelled');return;}
+        if(v.ttsPaused){
+          // HOLD, never drop: these are the words of the sentence Friday was
+          // mid-way through when the action fired. Dropping them made her
+          // resume mid-sentence with words missing — the freeze-then-stutter.
+          (v.pausedChunks=v.pausedChunks||[]).push(m.data);
+          window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: chunk HELD by ttsPaused (action running), queued='+v.pausedChunks.length);
+          return;
+        }
+        _playAudioChunk(m.data);
       }else if(m.type==='input_transcript'){
+        // The user is actually speaking to the live session — anything else
+        // making noise (the Front Page WAV player) yields immediately.
+        try{window._fridayStopFpAudio&&window._fridayStopFpAudio()}catch(_){}
         setVoiceStatus('you: '+(m.text||'').slice(-60));
       }else if(m.type==='text'){
         setVoiceStatus('Friday: '+(m.text||'').slice(-60));
@@ -9076,15 +9103,26 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // so she never talks over the action she's taking.
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: tts_pause (action running)');
         v.ttsPaused=true;
-        try{flushPlaybackRef.current?.('tts_pause for action')}catch(_){}
+        v.pausedChunks=v.pausedChunks||[];
+        // NO flush here: what's already in the ring is the tail of the sentence
+        // she's announcing the action with — let it finish naturally. The old
+        // flush amputated her mid-word on every tool call. New chunks arriving
+        // during the action are HELD (see the audio branch) and replayed on
+        // resume, so no words are ever lost.
         setVoiceStatus('working…');
       }else if(m.type==='tts_resume'){
-        // Action finished — re-open the playback gate so Friday can report back.
+        // Action finished — re-open the gate and replay every chunk held while
+        // paused, in order, so her sentence continues exactly where it left off.
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: tts_resume (action done)');
         v.ttsPaused=false;
         v.playbackCancelled=false;
         if(v.audioCtx&&v.audioCtx.state!=='closed')v.playCursor=v.audioCtx.currentTime;
-        setVoiceStatus('listening');
+        const _held=v.pausedChunks||[];v.pausedChunks=[];
+        if(_held.length){
+          window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: replaying '+_held.length+' held chunk(s) after action');
+          for(const _d of _held)_playAudioChunk(_d);
+        }
+        setVoiceStatus(_held.length?'speaking':'listening');
       }else if(m.type==='voice_turn_done'){
         const stamp=new Date().toLocaleTimeString();
         setChatMsgs(p=>{
@@ -9100,11 +9138,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // Old turn is over — re-open the playback gate for the next response.
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
+        // Safety: if a resume never arrived (action at the very end of the
+        // turn), the held chunks are the turn's final words — play, don't drop.
+        if(v.pausedChunks&&v.pausedChunks.length){
+          const _held=v.pausedChunks;v.pausedChunks=[];v.ttsPaused=false;
+          for(const _d of _held)_playAudioChunk(_d);
+        }
         setVoiceStatus('listening');
       }else if(m.type==='interrupted'){
         window.FRIDAY_VOICE_DEBUG&&console.log('VOICE_DEBUG: SERVER INTERRUPTED received');
         // Gemini acknowledged the interruption: stop any in-flight old audio,
-        // then re-open the gate so the fresh turn's audio plays.
+        // then re-open the gate so the fresh turn's audio plays. Held chunks
+        // belong to the turn the user just killed — discard them.
+        v.pausedChunks=[];
         flushPlaybackRef.current?.('WS interrupted message');
         try{v.cancelResetTimer&&clearTimeout(v.cancelResetTimer)}catch(_){}
         v.playbackCancelled=false;
@@ -9615,7 +9661,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           // Detect newly completed tasks and notify in chat
           // Process-derived entries (briefings, compression, vault orbs) show in
           // the tray but must NOT post a "task complete" chat message on every tick.
-          const newlyDone=list.filter(t=>!t.process&&(t.status==='complete'||t.status==='completed_unverified'||t.status==='failed')&&!lastNotifiedComplete.has(t.task_id)
+          // Scheduled runs (heartbeat, job intelligence — description "scheduled:*")
+          // must NOT post a "task complete" chat message every time; they surface
+          // through the notifications panel's self-updating status entry instead.
+          const newlyDone=list.filter(t=>!t.process&&!(t.description||'').startsWith('scheduled:')&&(t.status==='complete'||t.status==='completed_unverified'||t.status==='failed')&&!lastNotifiedComplete.has(t.task_id)
             &&prev.some(p=>p.task_id===t.task_id&&p.status==='running'));
           if(newlyDone.length>0){
             const seen=new Set(lastNotifiedComplete);
@@ -10407,7 +10456,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       </div>
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
-        :notifs.slice(0,10).map((n,i)=>{
+        :notifs.slice(0,50).map((n,i)=>{
           const key=n.id||`n_${i}`;
           const isExpanded=!!notifCardExpanded[`notif_${key}`];
           const hasDetail=!!(n.detail||n.body||(n.message&&n.title&&n.message!==n.title));

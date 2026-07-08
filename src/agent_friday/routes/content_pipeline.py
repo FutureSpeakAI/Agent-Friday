@@ -758,8 +758,41 @@ def content_insights():
 
 @content_pipeline_bp.route("/api/content/platforms", methods=["GET"])
 def content_platforms():
+    # platform_registry.status() returns a DICT keyed by module name with the
+    # connection facts flat on each entry. The Accounts/Compose/Quick-Post UI
+    # (and the Playwright contract) expect an ARRAY of
+    #   {name:<platform id>, label, auth_mode, status:{connected, expires_at,…}}
+    # Reshape here so a shape mismatch can never blank the Content tab again
+    # (the old `d.platforms` object made `plats.filter` throw and crash the tab).
     st = platform_registry.status()
-    return jsonify({"ok": True, **st})
+    plats = []
+    for mod, entry in (st.get("platforms") or {}).items():
+        entry = dict(entry or {})
+        # `name` MUST be the canonical platform id (e.g. "twitter", not
+        # "x_twitter") — that's what CONTENT_PLATFORMS/cpMeta key on and what the
+        # connect/test/delete routes accept (registry aliases map it back).
+        item = {
+            "name": entry.get("platform") or mod,
+            "platform": entry.get("platform") or mod,
+            "label": entry.get("label") or mod,
+            "auth_mode": entry.get("auth_mode"),
+            "available": bool(entry.get("available")),
+            "status": {
+                "connected": bool(entry.get("connected")),
+                "account": entry.get("account"),
+                "scopes": entry.get("scopes") or [],
+                "expires_at": entry.get("expires_at"),
+                "tier": entry.get("tier"),
+                "last_error": entry.get("last_error"),
+            },
+        }
+        if entry.get("rate_budget") is not None:
+            item["rate_budget"] = entry["rate_budget"]
+        if entry.get("error") is not None:
+            item["error"] = entry["error"]
+        plats.append(item)
+    return jsonify({"ok": True, "pause_all": st.get("pause_all", False),
+                    "platforms": plats})
 
 
 @content_pipeline_bp.route("/api/content/platforms/<name>/connect", methods=["POST"])

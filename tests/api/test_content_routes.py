@@ -427,11 +427,18 @@ def test_platforms_status_lists_declared_adapters(client):
     res = client.get("/api/content/platforms")
     body = res.get_json()
     assert body["ok"]
-    assert "mock" in body["platforms"]
-    entry = body["platforms"]["mock"]
+    # The route returns an ARRAY of {name, status:{...}} — the shape the UI
+    # consumes (an object here made plats.filter() crash the Content tab).
+    plats = body["platforms"]
+    assert isinstance(plats, list)
+    by_id = {p["name"]: p for p in plats}
+    assert "mock" in by_id
+    entry = by_id["mock"]
     assert entry["available"] is True and entry["platform"] == "mock"
-    # every declared module reports, available or not
-    assert set(pr.ADAPTER_MODULES) <= set(body["platforms"])
+    assert "connected" in entry["status"]
+    # every declared adapter reports, available or not (keyed by platform id)
+    declared = set(pr.ADAPTER_MODULES.values())
+    assert declared <= set(by_id)
     assert "pause_all" in body
 
 

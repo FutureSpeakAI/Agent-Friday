@@ -360,6 +360,13 @@ def _changed(result) -> bool:
             return bool(result.get("changed"))
         if "count" in result:
             return int(result.get("count") or 0) > 0
+    # agent_prompt schedules (heartbeat, job intelligence) are told to reply
+    # EXACTLY "NO CHANGE" when there's nothing new. A non-empty string is truthy,
+    # so without this the heartbeat "changed" every hour and spammed a
+    # notification each run. Treat the sentinel (and empty) as no-change.
+    if isinstance(result, str):
+        norm = result.strip().rstrip(".").upper()
+        return bool(norm) and norm != "NO CHANGE"
     return bool(result)
 
 
@@ -392,6 +399,59 @@ def _notify_run(rec, status, summary):
         print(f"  [scheduler] notify failed: {e}")
 
 
+def _notify_status(rec, summary):
+    """`notify='status'` mode: maintain ONE self-updating, already-read panel
+    entry showing the latest run time (used by the hourly heartbeat). It never
+    increments the unread badge and never appends a second row — so a task that
+    runs every hour can't spam the notifications panel."""
+    try:
+        from agent_friday.services.voice_engine import _notif_engine as _ne
+    except Exception:
+        _ne = None
+    if not _ne or not hasattr(_ne, "upsert_status"):
+        return
+    try:
+        when = _now_central().strftime("%b %d at %H:%M")
+        body = (summary or "").strip()
+        if not body or body.rstrip(".").upper() == "NO CHANGE":
+            body = "No new activity."
+        _ne.upsert_status(
+            key=f"sched-status:{rec.get('id')}",
+            title=f"💓 {rec.get('name')} — last ran {when}",
+            body=body[:300], source="scheduler", kind="scheduled_status",
+            priority="low",
+            target={"workspace": "system", "tab": "schedules"})
+    except Exception as e:
+        print(f"  [scheduler] status update failed: {e}")
+
+
+def _make_scheduler_orb(rec) -> bool:
+    """Whether a scheduled run gets its own holographic scheduler orb.
+
+    No orb for:
+      • silent schedules  — invisible maintenance (e.g. the 1-min content
+        publisher); an orb every tick is the "unnecessary background task" spam.
+      • agent_prompt schedules — the spawned agent already renders its own orb
+        (⏰ + model badge), so a wrapper orb would just duplicate it.
+    """
+    kind = (rec.get("task") or {}).get("kind", "builtin")
+    return rec.get("notify") != "silent" and kind != "agent_prompt"
+
+
+def _orb_model_for(rec) -> str:
+    """The model a scheduled run executes under, so its holographic orb always
+    carries a model badge (never a blank orb)."""
+    try:
+        s = _load_settings() or {}
+    except Exception:
+        s = {}
+    task = rec.get("task") or {}
+    if task.get("kind") == "agent_prompt":
+        return s.get("subagent_model") or core.ANTHROPIC_MODEL_DEFAULT
+    return (s.get("orchestrator_model") or s.get("subagent_model")
+            or core.ANTHROPIC_MODEL_DEFAULT)
+
+
 def _run_task(rec):
     """Execute a schedule's task and return its result (may raise)."""
     task = rec.get("task") or {}
@@ -409,8 +469,12 @@ def _run_task(rec):
         raise RuntimeError("agent_prompt schedule has no prompt")
     from agent_friday.services.agent import _spawn_task, _task_snapshot
     run_id = rec.get("_active_run_id")
+    # A scheduled agent_prompt is represented by the spawned agent's OWN orb
+    # (which already carries its model badge). Give that orb the ⏰ icon so a
+    # scheduled run reads as a single timer orb — no separate scheduler wrapper
+    # orb, so no duplicate/double-icon orb.
     tid = _spawn_task(rec.get("name") or "Scheduled task", prompt,
-                      description=f"scheduled:{rec.get('id')}")
+                      description=f"scheduled:{rec.get('id')}", orb_icon="⏰")
     # Link the scheduler's process orb to the spawned task so the notification
     # detail panel can stream the task's live log.
     orb_id = rec.get("_orb_id")
@@ -463,13 +527,23 @@ def dispatch(rec, *, manual=False):
         _mark["enabled"] = False
     _patch_record(sid, **_mark)
 
-    orb_id = f"sched-{sid}-{run_id[-6:]}"
-    try:
-        process_register(orb_id, name="Scheduler",
-                         label=f"⏰ {rec.get('name')}", category="monitoring",
-                         icon="⏰", model=None)
-    except Exception:
-        orb_id = None
+    # Holographic orb policy:
+    #   • silent schedules (e.g. the 1-min content publisher) are invisible
+    #     maintenance — no orb, so they stop spawning an "unnecessary task" orb
+    #     every tick.
+    #   • agent_prompt schedules get their orb from the spawned agent itself
+    #     (⏰ icon + model badge via _run_task), so a scheduler wrapper orb would
+    #     just duplicate it — skip it.
+    # The remaining (non-silent builtin) orbs carry a model badge and a single
+    # ⏰ icon (the label no longer repeats the emoji).
+    orb_id = f"sched-{sid}-{run_id[-6:]}" if _make_scheduler_orb(rec) else None
+    if orb_id:
+        try:
+            process_register(orb_id, name="Scheduler",
+                             label=rec.get('name'), category="monitoring",
+                             icon="⏰", model=_orb_model_for(rec))
+        except Exception:
+            orb_id = None
 
     def _body():
         status, summary, err = "complete", "", None
@@ -487,13 +561,22 @@ def dispatch(rec, *, manual=False):
                     process_log(orb_id, f"Completed: {summary[:200]}" if summary else "Completed.")
                 except Exception:
                     pass
-            # on_change: suppress the notification when nothing changed.
-            do_notify = True
-            if rec.get("notify") == "on_change" and not _changed(result):
-                do_notify = False
+            # Notification policy by mode:
+            #   silent    → never (invisible maintenance, e.g. content publisher)
+            #   status    → one self-updating, already-read panel entry (heartbeat);
+            #               never a badge notification
+            #   on_change → only on a real delta
+            #   else      → always
+            _mode = rec.get("notify", "on_complete")
             _patch_record(sid, last_status="complete", last_summary=summary,
                           retry_pending=False, retry_count=0, not_before=0)
-            if do_notify:
+            if _mode == "silent":
+                pass
+            elif _mode == "status":
+                _notify_status(rec, summary)
+            elif _mode == "on_change" and not _changed(result):
+                pass
+            else:
                 _notify_run(rec, "complete", summary)
         except Exception as e:  # noqa: BLE001
             err = f"{type(e).__name__}: {e}"
@@ -528,7 +611,7 @@ def dispatch(rec, *, manual=False):
                     process_update(orb_id,
                                    status="completed" if status != "failed" else "error",
                                    progress=1.0,
-                                   label=f"⏰ {rec.get('name')} — {status}")
+                                   label=f"{rec.get('name')} — {status}")
                 except Exception:
                     pass
             with _RUNNING_LOCK:
@@ -741,7 +824,9 @@ _DEFAULT_AGENT_SCHEDULES = [
             ),
         },
         "enabled": True,
-        "notify": "on_change",
+        # 'status': keep ONE self-updating "last ran …" entry in the panel; never
+        # emit a per-run notification or bump the unread badge (anti-spam).
+        "notify": "status",
     },
     {
         "id": "sch_job_intelligence",
@@ -774,9 +859,20 @@ def _seed_default_agent_schedules():
                 continue
             recs.append(_normalize_record(d, source="builtin"))
             added += 1
-        if added:
+        # One-time migration: the heartbeat shipped with notify='on_change',
+        # which (with the _changed sentinel bug) spammed the panel hourly. Move
+        # any still-default heartbeat to the quiet self-updating 'status' entry.
+        migrated = 0
+        for r in recs:
+            if r.get("id") == "sch_heartbeat" and r.get("notify") == "on_change":
+                r["notify"] = "status"
+                migrated += 1
+        if added or migrated:
             _write_store(recs)
-            print(f"  [scheduler] seeded {added} default agent schedule(s).")
+            if added:
+                print(f"  [scheduler] seeded {added} default agent schedule(s).")
+            if migrated:
+                print("  [scheduler] migrated heartbeat notify → 'status'.")
 
 
 # ── The tick loop ────────────────────────────────────────────────────────────
