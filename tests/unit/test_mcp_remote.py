@@ -151,6 +151,12 @@ class RemoteStub:
 
             # ── MCP surface ──────────────────────────────────────────────
             def _mcp(self):
+                # Drain the request body BEFORE any early response. Answering
+                # 401 with unread bytes in the socket buffer makes close()
+                # emit a TCP RST on Windows, which can destroy the response in
+                # the client's receive buffer — the client then sees a
+                # connection reset instead of the 401 (a load-sensitive flake).
+                body_raw = self._body()
                 if stub.require_auth:
                     auth = self.headers.get("Authorization") or ""
                     bearer = auth[7:] if auth.startswith("Bearer ") else ""
@@ -163,7 +169,7 @@ class RemoteStub:
                         self.end_headers()
                         return
                     stub.seen_bearer.append(bearer)
-                msg = json.loads(self._body() or b"{}")
+                msg = json.loads(body_raw or b"{}")
                 if "id" not in msg:                     # notification
                     self.send_response(202)
                     self.end_headers()
@@ -346,7 +352,8 @@ def test_remote_401_parks_in_needs_auth(request, oauth_dir):
     stub = _make_stub(request, require_auth=True)
     mgr = _manager_for(stub)
     mgr.start_all()
-    assert _wait(lambda: mgr.status()["remote"]["status"] == "needs_auth")
+    assert _wait(lambda: mgr.status()["remote"]["status"] == "needs_auth"), \
+        mgr.status()["remote"]
     sp = mgr.servers["remote"]
     assert "resource_metadata" in (sp.auth_challenge or "")
     out = mgr.call("remote", "echo", {"text": "x"})
@@ -361,7 +368,8 @@ def test_oauth_end_to_end(request, oauth_dir):
     stub = _make_stub(request, require_auth=True)
     mgr = _manager_for(stub)
     mgr.start_all()
-    assert _wait(lambda: mgr.status()["remote"]["status"] == "needs_auth")
+    assert _wait(lambda: mgr.status()["remote"]["status"] == "needs_auth"), \
+        mgr.status()["remote"]
 
     registered = {}
     result = mgr.authorize(
