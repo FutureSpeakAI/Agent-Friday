@@ -140,23 +140,19 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "icon": "📐",
         "category": "Development",
         "kind": "mcp",
-        "blurb": "Issues, projects, and cycles from Linear. Pulls your assigned "
-                 "issues into the morning briefing.",
+        "blurb": "Issues, projects, and cycles from Linear via its official "
+                 "hosted MCP server. Pulls your assigned issues into the "
+                 "morning briefing.",
         "capabilities": ["issues", "projects", "cycles"],
         "workspaces": ["code", "career", "home"],
         "mcp_server": "linear",
-        "mcp_template": {
-            "command": "npx",
-            "args": ["-y", "@tacticlaunch/mcp-linear"],
-            "env": {},
-        },
-        "fields": [
-            {"key": "LINEAR_API_KEY", "label": "API Key", "secret": True,
-             "placeholder": "lin_api_…", "required": True},
-        ],
-        "docs_url": "https://linear.app/settings/api",
-        "setup_hint": "Generate a personal API key in Linear settings and paste "
-                      "it here.",
+        # Official remote (Streamable HTTP) server — OAuth in the browser,
+        # no API key to paste.
+        "mcp_template": {"url": "https://mcp.linear.app/mcp"},
+        "fields": [],
+        "docs_url": "https://linear.app/docs/mcp",
+        "setup_hint": "One-click — opens your browser to approve access to "
+                      "your Linear workspace.",
     },
     "notion": {
         "name": "Notion",
@@ -164,22 +160,17 @@ CONNECTOR_DEFS: dict[str, dict] = {
         "category": "Productivity",
         "kind": "mcp",
         "blurb": "Search and read your Notion workspace — notes, docs, and "
-                 "databases — through the official Notion MCP server.",
+                 "databases — via Notion's official hosted MCP server.",
         "capabilities": ["pages", "databases", "search"],
         "workspaces": ["wiki", "content", "home"],
         "mcp_server": "notion",
-        "mcp_template": {
-            "command": "npx",
-            "args": ["-y", "@notionhq/notion-mcp-server"],
-            "env": {},
-        },
-        "fields": [
-            {"key": "NOTION_TOKEN", "label": "Integration Token", "secret": True,
-             "placeholder": "ntn_… / secret_…", "required": True},
-        ],
-        "docs_url": "https://www.notion.so/my-integrations",
-        "setup_hint": "Create an internal integration, share the pages you want "
-                      "Friday to see with it, and paste its token.",
+        # Official remote (Streamable HTTP) server — OAuth in the browser,
+        # no integration token to paste.
+        "mcp_template": {"url": "https://mcp.notion.com/mcp"},
+        "fields": [],
+        "docs_url": "https://developers.notion.com/docs/mcp",
+        "setup_hint": "One-click — opens your browser to approve access to "
+                      "the pages you choose.",
     },
     "discord": {
         "name": "Discord",
@@ -332,10 +323,13 @@ def _status_for_mcp(defn: dict) -> dict:
     cfg = _mcp_server_config(server_name)
     live = _mcp_live_status(server_name)
     has_token = _has_required_tokens(defn, cfg)  # pragma: allowlist secret
+    remote = bool(((defn.get("mcp_template") or {}).get("url"))
+                  or ((cfg or {}).get("url")))
 
     if cfg is None or not has_token:
         return {"status": "needs_setup",
-                "detail": "Paste your credentials to connect",
+                "detail": ("One click — authorize in your browser" if remote
+                           else "Paste your credentials to connect"),
                 "token_present": False, "tool_count": 0}
 
     enabled = bool(cfg.get("enabled"))
@@ -353,6 +347,12 @@ def _status_for_mcp(defn: dict) -> dict:
                 "detail": f"Live — {tool_count} tool(s) registered",
                 "token_present": True, "tool_count": tool_count,
                 "tools": live.get("tools", [])}
+    if raw == "needs_auth":
+        # Remote server waiting on its OAuth grant — Connect kicks it off.
+        return {"status": "needs_setup",
+                "detail": "Authorization required — click Connect to approve "
+                          "in your browser",
+                "token_present": False, "tool_count": tool_count}
     if raw in ("starting", "", "stopped"):
         return {"status": "connecting",
                 "detail": "Starting MCP server…",
@@ -516,15 +516,86 @@ def _disconnect_google() -> dict:
                 "message": f"could not remove token: {e}"}
 
 
+def _connect_mcp_remote(defn: dict, server_name: str, tmpl: dict, agent_svc) -> dict:
+    """Connect a remote (Streamable HTTP) MCP server: write its url entry,
+    hot-reload, and — if the server answers 401 — launch the OAuth 2.1 browser
+    flow. Tokens land encrypted via mcp_oauth; tools register on completion."""
+    try:
+        full = agent_svc._load_mcp_servers()
+        servers = full.setdefault("servers", {})
+        existing = servers.get(server_name) or {}
+        entry = {
+            "url": existing.get("url") or tmpl["url"],
+            "enabled": True,
+            "note": existing.get("note")
+            or f"{defn['name']} connector (remote MCP · OAuth — managed by "
+               f"Friday's connector registry).",
+        }
+        if existing.get("headers"):
+            entry["headers"] = existing["headers"]
+        servers[server_name] = entry
+        agent_svc._save_mcp_servers(full)
+        agent_svc._mcp_reload()
+    except Exception as e:
+        return {"ok": False, "status": "error", "message": f"connect failed: {e}"}
+
+    mgr = getattr(agent_svc, "_MCP_MANAGER", None)
+    if mgr is None:
+        return {"ok": False, "status": "error", "message": "MCP manager unavailable"}
+
+    # The handshake runs async; give it a moment to settle. A public server
+    # goes straight to ready, a protected one lands in needs_auth.
+    live = {}
+    status = ""
+    for _ in range(16):                                   # ≤ 4s
+        try:
+            live = mgr.status().get(server_name) or {}
+        except Exception:
+            live = {}
+        status = (live.get("status") or "").lower()
+        if status in ("ready", "needs_auth", "error"):
+            break
+        _time.sleep(0.25)
+
+    if status == "ready":
+        return {"ok": True, "status": "connected",
+                "message": f"{defn['name']} connected."}
+    if status == "needs_auth":
+        try:
+            auth = mgr.authorize(server_name,
+                                 on_ready=agent_svc._mcp_register_server_tools)
+        except Exception as e:
+            return {"ok": False, "status": "error",
+                    "message": f"authorization failed to start: {e}"}
+        if auth.get("ok"):
+            return {"ok": True, "status": "connecting",
+                    "auth_url": auth.get("auth_url"),
+                    "message": f"Approve {defn['name']} in the browser window "
+                               f"that just opened."}
+        return {"ok": False, "status": "error",
+                "message": auth.get("error") or "authorization failed to start"}
+    if status == "error":
+        return {"ok": False, "status": "error",
+                "message": f"{defn['name']} failed to start: "
+                           + (live.get("error") or "unknown")}
+    return {"ok": True, "status": "connecting",
+            "message": f"{defn['name']} is still starting — check its status "
+                       f"in a moment."}
+
+
 def _connect_mcp(key: str, defn: dict, data: dict) -> dict:
     """Write the supplied tokens into mcp_servers.json, enable the server, and
     hot-reload. `data` carries {FIELD_KEY: value} for the connector's fields.
+    Remote (url) templates skip token entry and go through the OAuth flow.
     """
     agent_svc = _mcp_bridge()
     if not agent_svc:
         return {"ok": False, "status": "error", "message": "MCP subsystem unavailable"}
 
     server_name = defn.get("mcp_server") or key
+    tmpl = defn.get("mcp_template") or {}
+    if tmpl.get("url"):
+        return _connect_mcp_remote(defn, server_name, tmpl, agent_svc)
     # Validate required fields are present.
     env_update = {}
     missing = []
