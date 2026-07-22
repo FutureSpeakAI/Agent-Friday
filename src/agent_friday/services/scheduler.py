@@ -770,6 +770,40 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] learning_epoch unavailable: {e}")
 
+    # goal-milestones tick (A3) — advance any due, still-pending milestone on
+    # every active goal. Silent: each advanced milestone already produces its
+    # own receipt/work_log entry and (when gated) an approval notification;
+    # a wrapper "ran the tick" notification would just be noise.
+    try:
+        from agent_friday.services.goals import run_due_milestones
+        register_builtin_task("goal_milestones_tick", run_due_milestones,
+                              label="Goal milestones", default_trigger="interval",
+                              default_spec={"every_minutes": 30}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] goal_milestones_tick unavailable: {e}")
+
+    # weekly goal review (A3) — aggregate work_log by goal_id into a review
+    # doc; rolls over any still-incomplete goal's deadlines.
+    try:
+        from agent_friday.services.goals import run_weekly_review
+        register_builtin_task("goals_weekly_review", run_weekly_review,
+                              label="Weekly goal review", default_trigger="weekly",
+                              default_spec={"weekday": 6, "hour": 18, "minute": 0},
+                              notify="on_change")
+    except Exception as e:
+        print(f"  [scheduler] goals_weekly_review unavailable: {e}")
+
+    # approvals expiry sweep (A3) — expire stale pending approvals per the Q3
+    # policy table. Blocked steps stay blocked either way; this only moves a
+    # timed-out "pending" card to "expired" so it stops silently sitting open.
+    try:
+        from agent_friday.services.approvals import expire_stale
+        register_builtin_task("approvals_expiry_sweep", expire_stale,
+                              label="Approval expiry sweep", default_trigger="interval",
+                              default_spec={"every_minutes": 60}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] approvals_expiry_sweep unavailable: {e}")
+
 
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the

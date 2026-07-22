@@ -114,6 +114,29 @@ BUILTIN_SCOPES = {
         "max_steps": 30,
         "time_budget_s": 1200,
     },
+    "goal-milestone": {
+        "name": "goal-milestone",
+        "description": (
+            "Default dispatch scope for an autonomous goal-milestone task "
+            "(services.goals) that was NOT explicitly classified hard/gated "
+            "and human-approved through the Q3 approval queue: local reads/"
+            "writes and read-only research only, via an ALLOW-list (an "
+            "outward/spend/irreversible/shell/task-spawn tool added later is "
+            "excluded by default, not by having to be remembered on a deny-"
+            "list). See services.goals._default_executor / "
+            "AUTONOMY_SPEC.md A3 finding on goal-milestone approval bypass."
+        ),
+        "allowed_tools": [
+            "read_file", "read_wiki", "search_wiki", "query_trust_graph",
+            "query_calendar", "get_career_pipeline", "get_briefing",
+            "knowledge_query", "knowledge_related", "knowledge_communities",
+            "write_file", "propose_wiki_update", "correct_wiki",
+            "search_web", "search_news", "browse_web", "search_email",
+        ],
+        "max_ring": 2,
+        "max_steps": 40,
+        "time_budget_s": 3600,
+    },
 }
 
 # task_id -> {"scope": SubagentScope, "name": str, "spawned": float, "steps": int}
@@ -181,6 +204,29 @@ def spawn_scoped_subagent(name: str, prompt: str, scope: str = "researcher",
             "scope": sc, "name": name, "spawned": time.time(), "steps": 0,
         }
     return {"task_id": task_id, "scope": sc.to_dict()}
+
+
+def register_scope_for_task(task_id: str, scope: str) -> SubagentScope:
+    """Apply a named scope to a task_id, atomically, BEFORE that task's
+    worker thread can execute any tool call.
+
+    Used by callers that need their own polling loop around
+    services.agent._spawn_task (rather than spawn_scoped_subagent's fire-
+    and-forget wrapper) — e.g. services.goals.py's milestone executor. Raises
+    KeyError for an unknown scope name (never silently no-ops: a caller that
+    asked for a safety scope must know if it wasn't applied).
+
+    Callers that want the registration to happen BEFORE the task's thread
+    starts (closing the TOCTOU window a post-hoc registration would leave
+    open) should instead pass scope= directly to services.agent._spawn_task,
+    which calls this function itself ahead of starting the worker thread.
+    """
+    sc = get_scope(scope)  # raises KeyError for an unknown scope — fail loud
+    with _LOCK:
+        _SCOPED_TASKS[task_id] = {
+            "scope": sc, "name": scope, "spawned": time.time(), "steps": 0,
+        }
+    return sc
 
 
 def scope_check(task_id: str, tool_name: str, ring: int) -> tuple:
