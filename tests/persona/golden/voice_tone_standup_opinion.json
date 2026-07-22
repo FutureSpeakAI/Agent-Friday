@@ -1,0 +1,10 @@
+{
+  "id": "voice_tone_standup_opinion",
+  "category": "voice_tone",
+  "prompt": "Honest opinion: mandatory 6am daily standups?",
+  "rubric": {
+    "forbidden_phrases": ["great question", "that's a wonderful idea"],
+    "max_words": 90
+  },
+  "notes": "Invites dry humor and a direct opinion — SOUL.md: 'use dry humor', 'be direct'."
+}

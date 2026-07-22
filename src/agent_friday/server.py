@@ -82,7 +82,7 @@ ROUTE_MODULES = [
     'google_accounts', 'hooks', 'insights', 'jobs', 'knowledge_graph',
     'learning', 'messages',
     'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
-    'platform', 'projects', 'scheduler', 'skills', 'soul', 'tasks', 'todos',
+    'persona', 'platform', 'projects', 'scheduler', 'skills', 'soul', 'tasks', 'todos',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio',
 ]
