@@ -647,6 +647,53 @@ def api_mcp_restart():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@core_bp.route('/api/mcp/authorize', methods=['POST'])
+def api_mcp_authorize():
+    """Start the OAuth 2.1 browser flow for a remote (url-based) MCP server.
+
+    Body: {"name": "<server>", "open_browser": true?}. Returns the auth_url
+    (also opened in the desktop browser by default); once the user approves,
+    the server restarts and its tools register automatically.
+    """
+    import agent_friday.services.agent as _agent_svc  # live module state
+    mgr = _agent_svc._MCP_MANAGER
+    if mgr is None:
+        return jsonify({"status": "error", "message": "MCP unavailable"}), 503
+    try:
+        data = request.get_json(silent=True) or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"status": "error", "message": "name required"}), 400
+        result = mgr.authorize(
+            name,
+            open_browser=bool(data.get("open_browser", True)),
+            on_ready=_mcp_register_server_tools,
+        )
+        code = 200 if result.get("ok") else 400
+        return jsonify({"status": "ok" if result.get("ok") else "error",
+                        **result}), code
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@core_bp.route('/api/mcp/authorize/status', methods=['GET'])
+def api_mcp_authorize_status():
+    """Poll an in-flight authorization: none|pending|done|error (+ auth_url)."""
+    import agent_friday.services.agent as _agent_svc
+    mgr = _agent_svc._MCP_MANAGER
+    if mgr is None:
+        return jsonify({"status": "error", "message": "MCP unavailable"}), 503
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return jsonify({"status": "error", "message": "name required"}), 400
+    try:
+        return jsonify({"status": "ok", **mgr.auth_status(name)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @core_bp.route('/api/mcp/reload', methods=['POST'])
 def api_mcp_reload():
     """Reload the whole MCP config from disk and restart all servers."""

@@ -193,6 +193,15 @@ def assess_server(name: str, spec: dict) -> dict:
         if pattern.search(cmdline):
             findings.append({"finding": label, "severity": "block"})
 
+    # Remote (Streamable HTTP) servers: bearer tokens must never transit
+    # plaintext HTTP. Loopback is exempt (local dev/test servers).
+    url = str(spec.get("url") or "")
+    if url.lower().startswith("http://"):
+        host = re.split(r"[/:]", url[7:], 1)[0].lower()
+        if host not in ("127.0.0.1", "localhost", "[::1]"):
+            findings.append({"finding": "insecure remote URL (plaintext http)",
+                             "severity": "block"})
+
     if launcher and launcher not in TRUSTED_LAUNCHERS:
         findings.append({"finding": "untrusted launcher", "severity": "warn"})
 
