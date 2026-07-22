@@ -340,6 +340,58 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         return ""
 
 
+def facts_by_categories(categories, limit: int = 2000) -> List[Dict[str, Any]]:
+    """Durable facts scoped to EXACTLY the given categories, most-confident/
+    most-recent first — a category-scoped query, distinct from profile()'s
+    globally-capped-at-50 view (_recent_facts(50) below, which ranks and caps
+    across ALL categories combined for the Settings UI). A caller that needs
+    one specific category to be reliably visible (e.g. interest_model.py's
+    constraints, which dissent_gate.py treats as safety-relevant boundaries)
+    must not have that category's visibility depend on how many facts pile up
+    in OTHER, unrelated categories — routing it through the shared top-50 view
+    does exactly that. `limit` here is a generous internal safety cap (not a
+    UI page size); see count_facts_by_categories() for the true total so a
+    caller can tell whether even this cap actually truncated anything."""
+    cats = {_slug(c) for c in (categories or []) if c}
+    if not cats:
+        return []
+    try:
+        conn = _connect()
+        placeholders = ",".join("?" for _ in cats)
+        rows = conn.execute(
+            f"SELECT category, text, confidence, source, ts FROM facts "
+            f"WHERE category IN ({placeholders}) "
+            f"ORDER BY confidence DESC, ts DESC LIMIT ?",
+            (*cats, int(limit))).fetchall()
+        conn.close()
+        return [{"category": c, "text": t, "confidence": cf, "source": s, "ts": ts}
+                for c, t, cf, s, ts in rows]
+    except Exception:
+        return []
+
+
+def count_facts_by_categories(categories) -> int:
+    """COUNT(*) of durable facts in exactly the given categories — the true
+    total, independent of any caller-side limit AND of facts_by_categories'
+    own `limit`. Pairs with facts_by_categories() so a caller applying its own
+    display/consumption cap (e.g. interest_model.gather_constraints()'s
+    max_items) can detect whether that cap silently dropped real, stored data
+    rather than the gap going unnoticed."""
+    cats = {_slug(c) for c in (categories or []) if c}
+    if not cats:
+        return 0
+    try:
+        conn = _connect()
+        placeholders = ",".join("?" for _ in cats)
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM facts WHERE category IN ({placeholders})",
+            tuple(cats)).fetchone()
+        conn.close()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 def profile() -> Dict[str, Any]:
     """Full user model for the Settings UI."""
     try:

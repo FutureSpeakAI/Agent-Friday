@@ -248,6 +248,69 @@ class TestRunFixtureEval:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Dissent regression (AUTONOMY_SPEC.md §8 A2 / V6_WHOLENESS_SPEC.md §4 Phase
+#  4 acceptance: "P1 persona eval run on dissent transcripts shows dissent
+#  scores as in-character (adherence above threshold), not as drift.")
+#
+#  There is no live turn-pipeline hook producing a real dissent transcript yet
+#  (deliberately deferred — see dissent_gate.py's module docstring), so this
+#  mirrors the existing pushback_*.json / refusal_law1_*.json pattern: a
+#  hand-authored golden prompt that implies an interest-conflict (a stated
+#  constraint the instruction then contradicts), scored the same way every
+#  other golden category already is.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestDissentRegression:
+    DISSENT_ID = "dissent_email_boss_after_told_not_to"
+
+    def test_dissent_golden_item_exists_with_dissent_category(self):
+        by_id = {g["id"]: g for g in pe.load_golden_corpus()}
+        assert self.DISSENT_ID in by_id
+        assert by_id[self.DISSENT_ID]["category"] == "dissent"
+
+    def test_dissent_item_is_not_a_law1_refusal(self):
+        """Dissent (Q6: name the conflict, then proceed or require
+        reaffirmation) is a distinct behavior from a Law-1 refusal — the
+        rubric must not require a refusal marker for this item."""
+        by_id = {g["id"]: g for g in pe.load_golden_corpus()}
+        assert not by_id[self.DISSENT_ID]["rubric"].get("requires_refusal")
+
+    def test_dissent_transcripts_pass_for_every_committed_provider(self):
+        """The core V6 P4 acceptance criterion: a dissent response reads as
+        IN-CHARACTER (adherence above threshold, no hard_fail) — not as
+        drift — for every committed provider fixture."""
+        result = pe.run_fixture_eval()
+        for provider in ("anthropic", "ollama-local", "openai"):
+            item = result["providers"][provider]["by_item"][self.DISSENT_ID]
+            assert item["hard_fail"] is False
+            assert item["passed"] is True, (
+                f"{provider}'s dissent transcript scored below threshold "
+                f"(composite={item['composite']}) — dissent must read as "
+                f"in-character, not as persona drift"
+            )
+
+    def test_dissent_item_is_not_flagged_as_drift(self):
+        """Cross-provider agreement on the dissent item keeps its variance
+        low — a provider whose dissent voice had come unglued would spike
+        this item's variance immediately (see compute_drift's docstring)."""
+        result = pe.run_fixture_eval()
+        assert self.DISSENT_ID not in result["drift"]["flagged_items"]
+        assert self.DISSENT_ID not in {f["id"] for f in result["flagged"]}
+
+    def test_committed_responses_actually_exercise_the_pushback_rubric(self):
+        """Sanity: the committed fixtures pass BECAUSE they surface the
+        conflict (the rubric's requires_pushback check), not merely by
+        coincidentally scoring well on the unrelated epistemic/sycophancy
+        axes."""
+        golden = {g["id"]: g for g in pe.load_golden_corpus()}[self.DISSENT_ID]
+        for provider, responses in pe.load_fixtures().items():
+            text = responses[self.DISSENT_ID]
+            scored = pe.score_soul_alignment(text, golden["rubric"])
+            assert scored["pushback_present"] is True, provider
+            assert scored["required_any_present"] is True, provider
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  Settings / gating (Q4: fixture/CI by default, live is opt-in)
 # ═══════════════════════════════════════════════════════════════════════════
 
