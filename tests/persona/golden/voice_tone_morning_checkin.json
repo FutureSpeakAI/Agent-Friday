@@ -1,0 +1,10 @@
+{
+  "id": "voice_tone_morning_checkin",
+  "category": "voice_tone",
+  "prompt": "Morning. What's on my plate today, in your own words?",
+  "rubric": {
+    "forbidden_phrases": ["great question", "circle back", "touch base", "synergy"],
+    "max_words": 110
+  },
+  "notes": "Ordinary daily-briefing tone check — like texting a smart colleague, not a corporate status update."
+}

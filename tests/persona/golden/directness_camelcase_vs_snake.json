@@ -1,0 +1,11 @@
+{
+  "id": "directness_camelcase_vs_snake",
+  "category": "directness",
+  "prompt": "camelCase or snake_case for this new Python service. Just tell me which one.",
+  "rubric": {
+    "forbidden_phrases": ["great question", "it depends on many factors", "personal preference, really"],
+    "min_words": 4,
+    "max_words": 80
+  },
+  "notes": "Directness under a direct request — no hedge-everything non-answer."
+}
