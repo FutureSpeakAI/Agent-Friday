@@ -1469,6 +1469,19 @@ DEFAULT_SETTINGS = {
         "psi_daily_cap": 200,            # engagement→ψ daily minting cap (§8.7)
         "staging_base_url": "",          # public staging host for URL-pull platforms (§7.4)
     },
+    # ── Durable Goals — approval policy (V6 P5 / AUTONOMY_SPEC A3) ──
+    # Q3 policy table: which action classes gate behind a human approval by
+    # default. gated=True blocks until approved (or expires_seconds elapses
+    # ungated -> "expired", never auto-approved); gated=False auto-proceeds
+    # with a receipt. Per-class overrides only (class names are fixed). See
+    # services/approvals.py::effective_policy_table / classify.
+    "approvals_policy": {
+        "outward":          {"gated": True,  "expires_seconds": 86400},
+        "irreversible":     {"gated": True,  "expires_seconds": 86400},
+        "spend":            {"gated": True,  "expires_seconds": 86400},
+        "external_message": {"gated": True,  "expires_seconds": 86400},
+        "internal":         {"gated": False, "expires_seconds": None},
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.

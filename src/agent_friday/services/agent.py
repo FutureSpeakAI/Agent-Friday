@@ -1590,7 +1590,7 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,
-                chain=None, chain_step=0, orb_icon='🛰'):
+                chain=None, chain_step=0, orb_icon='🛰', scope=None):
     """Spawn a background task.
 
     on_complete: optional dict {"spawn": "<next step name>", "prompt": "<optional
@@ -1599,8 +1599,27 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         this task's result is fed in as context for the next.
     chain / chain_step: set when this task is one link of a named workflow chain
         stored in ~/.friday/workflows/. Completion advances to the next step.
+    scope: optional services.subagents scope NAME applied to this task_id
+        BEFORE its worker thread starts (registered synchronously, here, not
+        after th.start()) — starting the thread first and scoping it second
+        would leave a real race where the worker's first tool call could run
+        before the scope was in place. None (the default) leaves the task
+        unscoped, exactly as before this parameter existed. If the named
+        scope can't be applied, the task is NOT spawned at all (fails closed
+        — a caller that asked for a safety scope must never silently get an
+        unscoped dispatch instead); raises RuntimeError in that case.
     """
     task_id = str(uuid.uuid4())
+    if scope:
+        try:
+            from agent_friday.services.subagents import register_scope_for_task
+            register_scope_for_task(task_id, scope)
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "subagent scope %r could not be applied to task %s — "
+                "refusing to spawn UNSCOPED: %s", scope, task_id, e)
+            raise RuntimeError(f"could not apply required scope {scope!r}: {e}") from e
     with TASKS_LOCK:
         TASKS[task_id] = {
             'task_id': task_id,
