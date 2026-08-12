@@ -1,0 +1,130 @@
+{
+  "model": "gemma4:latest",
+  "provider": "local",
+  "timestamp": 1786540872.4938145,
+  "score": "10/10",
+  "passed": true,
+  "prose_leaks": [],
+  "results": [
+    {
+      "real_call": true,
+      "called": [
+        "query_calendar"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "calendar",
+      "prompt": "What's on my calendar today?",
+      "expect_tool": "query_calendar"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "search_email"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "email",
+      "prompt": "Do I have any unread priority emails?",
+      "expect_tool": "search_email"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "search_news"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "web_search",
+      "prompt": "Search the web for today's top AI news.",
+      "expect_tool": "search_web"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "open_url"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "open_url",
+      "prompt": "Open reddit.com in my browser.",
+      "expect_tool": "open_url"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "draft_email"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": ",subject:Heater out of service - [Your Address]<|\"|>,to:landlord@rosewoodapts.com}<tool_call|>",
+      "passed": true,
+      "id": "draft_email",
+      "prompt": "Draft an email to my landlord at landlord@rosewoodapts.com \u2014 the heater's been out since last night, ask them to send someone today.",
+      "expect_tool": "draft_email"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "search_news"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "news",
+      "prompt": "What's in the news about the stock market right now?",
+      "expect_tool": "search_news"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "navigate"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "navigate",
+      "prompt": "Switch the interface to the finance workspace.",
+      "expect_tool": "navigate"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "read_wiki"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "read_wiki",
+      "prompt": "Read my wiki page at professional/job-search.md.",
+      "expect_tool": "read_wiki"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "search_wiki"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "search_wiki",
+      "prompt": "Search my wiki for anything about 'roadmap'.",
+      "expect_tool": "search_wiki"
+    },
+    {
+      "real_call": true,
+      "called": [
+        "open_path"
+      ],
+      "prose_leaks": [],
+      "content_excerpt": "",
+      "passed": true,
+      "id": "open_path",
+      "prompt": "Open my Downloads folder.",
+      "expect_tool": "open_path"
+    }
+  ]
+}

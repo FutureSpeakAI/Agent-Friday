@@ -550,6 +550,49 @@ def api_setup_complete():
 
 
 # ── Agent Settings endpoints ──────────────────────────────────
+def _check_local_model_seat_gate(new_settings):
+    """FR-1 seat-change gate. Returns an error-body dict (to be jsonify'd
+    with a 400) if `new_settings` tries to assign a local model that fails
+    the tool-calling conformance gate; returns None to let the save proceed
+    (no local_model change requested, no-op reassignment to the same model,
+    or the model is already gated green)."""
+    routing = new_settings.get('model_routing')
+    if not isinstance(routing, dict) or 'local_model' not in routing:
+        return None
+    new_model = routing.get('local_model')
+    if not new_model:
+        return None
+    current = _load_settings().get('model_routing', {}).get('local_model')
+    if new_model == current:
+        return None
+    from agent_friday.services import model_seat_gate as _gate
+    status = _gate.get_cached_status(new_model, provider='local')
+    if status is None:
+        try:
+            status = _gate.run_conformance_gate(new_model, provider='local')
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": (f"Couldn't run the tool-calling conformance gate against "
+                            f"'{new_model}' ({e}). The seat change was not applied — "
+                            f"check that Ollama is running and reachable, then try again."),
+            }
+    if not status.get('passed'):
+        return {
+            "status": "error",
+            "message": (
+                f"'{new_model}' failed the tool-calling conformance gate "
+                f"({status.get('score')}) — a model that can't reliably make "
+                f"real structured tool calls cannot hold Friday's tool-using "
+                f"seat, it will confabulate results instead. Recommended: "
+                f"{_gate.RECOMMENDED_LOCAL_MODEL} (documented green in "
+                f"tests/conformance/results/)."
+            ),
+            "conformance": status,
+        }
+    return None
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.
@@ -565,6 +608,18 @@ def api_settings():
     try:
         data = request.get_json(silent=True) or {}
         new_settings = data.get('settings') or {}
+
+        # FR-1 (toolcall-integrity-v5): a local model may only take Friday's
+        # tool-using seat if it passes the structural conformance gate — see
+        # services/model_seat_gate.py. Runs once per model (cached after);
+        # a model that has never been gated is gated now, synchronously,
+        # before the seat change is persisted. A red model is rejected, not
+        # silently substituted — the recommendation is surfaced, the choice
+        # stays the user's.
+        seat_error = _check_local_model_seat_gate(new_settings)
+        if seat_error is not None:
+            return jsonify(seat_error), 400
+
         # Persist only the caller's delta — _save_settings re-merges with the
         # on-disk file. Spreading _load_settings() in here would risk persisting
         # the non-persistent offline routing overlay (mode=local_only).
