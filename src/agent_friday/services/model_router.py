@@ -351,6 +351,9 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
     )
 
 
+_seat_logger = logging.getLogger("friday.model_seat_gate")
+
+
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='🏠',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
@@ -383,6 +386,53 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     if not model:
         model = routing_cfg.get('local_model') or model
 
+    # FR-1 hardening: un-bypassable seat enforcement. settings.json is
+    # re-read fresh every ~2s regardless of what wrote it (the UI's POST
+    # /api/settings gate only catches THAT one path) — re-check on every
+    # tool-using dispatch so an ungated/red model never gets a live seat,
+    # no matter how it landed in model_routing.local_model.
+    _seat_notice = None
+    if tools and model:
+        try:
+            from agent_friday.services import model_seat_gate as _seatmod
+            _seat = _seatmod.resolve_local_seat(model, provider='local')
+            if not _seat['seat_ok']:
+                _seat_logger.warning(
+                    "seat refused for tool-using turn: %s -> %s (%s)",
+                    _seat['requested'], _seat['model'], _seat['reason'])
+                try:
+                    from agent_friday import notifications_engine as _ne
+                    _ne.push(
+                        title="Local model seat refused",
+                        body=_seat['reason'] + (
+                            f" — fell back to '{_seat['model']}'." if _seat['model']
+                            else " — this turn ran without tools."),
+                        priority="high", source="model_seat_gate",
+                        kind="seat_refused",
+                        dedupe_key=f"seat_refused:{_seat['requested']}",
+                        actions=[{"label": "Review", "workspace": "system",
+                                 "tab": "connectors"}],
+                    )
+                except Exception:
+                    pass
+                if _seat['model']:
+                    _seat_notice = (
+                        f"[Note to self: '{_seat['requested']}' hasn't passed the "
+                        f"tool-calling conformance gate, so this turn is running on "
+                        f"'{_seat['model']}' instead — the last known-green local seat. "
+                        f"Mention this to the user briefly if relevant.]")
+                    model = _seat['model']
+                else:
+                    _seat_notice = (
+                        f"[Note to self: '{_seat['requested']}' hasn't passed the "
+                        f"tool-calling conformance gate and no known-green local "
+                        f"model is available, so tools are unavailable this turn. "
+                        f"Tell the user plainly you can't use tools right now rather "
+                        f"than guessing or narrating a result.]")
+                    tools = None
+        except Exception as e:
+            _seat_logger.warning("seat gate check failed, proceeding unenforced: %s", e)
+
     orb_id = f"local-{uuid.uuid4().hex[:8]}"
     try:
         process_register(
@@ -414,6 +464,8 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
         convo = []
         if system:
             convo.append({"role": "system", "content": system})
+        if _seat_notice:
+            convo.append({"role": "system", "content": _seat_notice})
         for m in messages:
             content = m.get("content", "")
             if isinstance(content, str):

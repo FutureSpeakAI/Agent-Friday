@@ -8,16 +8,24 @@ fabricated bracket-syntax pseudo-calls in prose (see tool_integrity.py)?
 Ten canned prompts, each shaped to require exactly one registry tool. Pass =
 10/10 real structured tool_calls, zero prose leaks anywhere in the run.
 
-This module measures and records; it does not itself block a live chat
-turn — see routes/core_routes.py::api_settings for the seat-change gate, and
-model_router.py's response-validator hook for the runtime backstop that
-protects a seat that was assigned before this gate existed.
+This module measures and records. Two independent enforcement points consume
+it — routes/core_routes.py::api_settings (blocks a NEW ungated seat at
+settings-save time, UI path only) and resolve_local_seat() below (re-checked
+on every tool-using dispatch in model_router.py::_call_ollama, regardless of
+how settings.json changed — UI, a direct file edit, or any other writer).
+The second one is the un-bypassable layer: settings.json is re-read fresh
+every ~2s (core._SETTINGS_CACHE_TTL) with no requirement that a change went
+through the API, so the settings-save gate alone can be walked around by
+anything with filesystem access. resolve_local_seat() closes that gap.
 """
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
+
+_seat_logger = logging.getLogger("friday.model_seat_gate")
 
 from agent_friday.core import FRIDAY_DIR
 from agent_friday.services.tool_integrity import find_pseudo_toolcalls
@@ -155,6 +163,76 @@ def is_seat_green(model: str, provider: str = "local") -> bool:
     """Fail-closed: a model with no recorded conformance run is NOT green."""
     status = get_cached_status(model, provider)
     return bool(status and status.get("passed"))
+
+
+def get_last_known_green(provider: str = "local") -> str | None:
+    """The most recently passed model for `provider` — the fallback seat when
+    the currently-configured local_model isn't (or is no longer) green.
+
+    Checks GATE_DIR (~/.friday/model_seat_conformance — this machine's own
+    live runs, most authoritative) first, then falls back to EVIDENCE_DIR
+    (the repo-committed reference results) so a fresh machine with no local
+    gate history yet still has a documented-green fallback (gemma4:latest)
+    rather than none at all.
+    """
+    best_model, best_ts = None, -1.0
+    for directory in (GATE_DIR, EVIDENCE_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.glob(f"{provider}__*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if data.get("provider") != provider or not data.get("passed"):
+                continue
+            ts = data.get("timestamp") or 0
+            if ts > best_ts:
+                best_model, best_ts = data.get("model"), ts
+        if best_model:
+            return best_model  # GATE_DIR (live) wins outright over EVIDENCE_DIR
+    return best_model
+
+
+def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict:
+    """Un-bypassable, per-dispatch seat enforcement (FR-1 hardening).
+
+    Called on EVERY tool-using local dispatch, not just at settings-save
+    time — so a red/ungated model reaching model_routing.local_model by any
+    means (UI, direct settings.json edit, a future writer nobody's thought of
+    yet) is still refused a tool-using seat on its very next turn, no
+    restart required (settings.json is re-read every request; this function
+    is re-evaluated every request too).
+
+    Returns {
+      "model": the model actually cleared to hold the seat, or None,
+      "seat_ok": bool — True iff requested_model itself was used unmodified,
+      "requested": requested_model,
+      "reason": human-readable explanation,
+      "fallback": None | "last_known_green:<model>" | "tool_free",
+    }
+    """
+    if not requested_model:
+        return {"model": requested_model, "seat_ok": True, "requested": requested_model,
+                "reason": "no model requested", "fallback": None}
+    if is_seat_green(requested_model, provider):
+        return {"model": requested_model, "seat_ok": True, "requested": requested_model,
+                "reason": "gated green", "fallback": None}
+
+    fallback_model = get_last_known_green(provider)
+    if fallback_model and fallback_model != requested_model:
+        return {
+            "model": fallback_model, "seat_ok": False, "requested": requested_model,
+            "reason": (f"'{requested_model}' is not a gated-green tool-calling seat "
+                       f"(conformance gate: {get_cached_status(requested_model, provider) or 'never run'})"),
+            "fallback": f"last_known_green:{fallback_model}",
+        }
+    return {
+        "model": None, "seat_ok": False, "requested": requested_model,
+        "reason": (f"'{requested_model}' is not gated green and no known-green "
+                   f"local fallback seat exists"),
+        "fallback": "tool_free",
+    }
 
 
 def save_evidence(model: str, provider: str, result: dict) -> Path:
