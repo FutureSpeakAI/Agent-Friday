@@ -108,5 +108,18 @@ class TestResumeHookOnApproval:
         })
         assert opened == []
 
-    def test_hook_is_registered_for_connector_auth_kind(self):
-        assert agent_mod._resume_google_oauth_open in approvals._HOOKS.get("connector_auth", [])
+    def test_registration_call_wires_the_right_function_to_the_right_kind(self):
+        # NOTE: don't assert against the ambient approvals._HOOKS state — at
+        # least one other test file (test_goal_restart_persistence.py)
+        # legitimately does importlib.reload(approvals), which re-executes
+        # `_HOOKS: Dict[...] = {}` and wipes every hook registered by modules
+        # (like agent.py) that were only ever imported once, not reloaded.
+        # That's correct behavior for a real process (agent.py registers once
+        # at startup and is never reloaded) — it's only an artifact of
+        # sharing one Python process across the test suite. Exercise the
+        # exact registration call agent.py's module-level code makes instead
+        # of depending on ambient global state.
+        before = list(approvals._HOOKS.get("connector_auth", []))
+        approvals.register_decision_hook("connector_auth", agent_mod._resume_google_oauth_open)
+        after = approvals._HOOKS.get("connector_auth", [])
+        assert after == before + [agent_mod._resume_google_oauth_open]
