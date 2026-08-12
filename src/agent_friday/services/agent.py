@@ -913,18 +913,11 @@ def _validate_url(url, *, check_reachable=True):
     return True, "ok"
 
 
-def _tool_open_url(inp):
-    url = ((inp or {}).get('url') or '').strip()
-    if not (url.startswith('http://') or url.startswith('https://')):
-        return f"Refusing to open non-http(s) URL: {url!r}"
-    ok, why = _validate_url(url)
-    if not ok:
-        return (f"I did NOT open that link — it appears invalid because {why}. "
-                f"This often means the URL was guessed rather than taken from real "
-                f"data. Tell the user the link looks broken and offer to search for "
-                f"the correct source instead. URL: {url!r}")
+def _open_url_in_browser(url):
+    """Actually open `url` in the user's browser (Chrome preferred, falls
+    back to the OS default). Shared by _tool_open_url's direct path and the
+    google-oauth-connect approval hook below — one place that touches the OS."""
     try:
-        # Try Chrome first, fall back to default browser
         chrome_paths = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -937,6 +930,75 @@ def _tool_open_url(inp):
         return f"Opened in default browser: {url}"
     except Exception as e:
         return f"Open URL error: {e}"
+
+
+# FR-6 (toolcall-integrity-v5): connecting Google is a one-time OAuth
+# authorization, not a routine "open a link" — route it through Phase A3's
+# human-gate primitive (services/approvals.py) instead of opening the
+# consent screen unattended. force_gate=True means it is ALWAYS gated
+# (never auto-approved), regardless of the default approvals_policy table.
+_GOOGLE_OAUTH_URL_MARKERS = ('/api/google/auth', '/api/google/accounts/connect')
+
+
+def _is_google_oauth_url(url):
+    return any(m in url for m in _GOOGLE_OAUTH_URL_MARKERS)
+
+
+def _resume_google_oauth_open(record):
+    """Decision-hook callback: fires when the "connect google" approval card
+    is decided. Only acts on approval — a denial or expiry does nothing."""
+    if record.get("status") != "approved":
+        return
+    url = (record.get("payload") or {}).get("url")
+    if url:
+        _open_url_in_browser(url)
+
+
+try:
+    from agent_friday.services import approvals as _approvals_for_oauth
+    _approvals_for_oauth.register_decision_hook(
+        "connector_auth", _resume_google_oauth_open)
+except Exception:
+    pass
+
+
+def _tool_open_url(inp):
+    url = ((inp or {}).get('url') or '').strip()
+    if not (url.startswith('http://') or url.startswith('https://')):
+        return f"Refusing to open non-http(s) URL: {url!r}"
+    ok, why = _validate_url(url)
+    if not ok:
+        return (f"I did NOT open that link — it appears invalid because {why}. "
+                f"This often means the URL was guessed rather than taken from real "
+                f"data. Tell the user the link looks broken and offer to search for "
+                f"the correct source instead. URL: {url!r}")
+    if _is_google_oauth_url(url):
+        try:
+            from agent_friday.services import approvals as _appr
+            result = _appr.gate_action(
+                kind="connector_auth", subject_type="connector", subject_id="google",
+                title="Connect Google (Calendar + Gmail, read-only)",
+                action_description=(
+                    "Open Google's OAuth consent screen to link Calendar "
+                    "(read-only) and Gmail (read-only) to Friday. One-time "
+                    "authorization. Friday never requests the gmail.send "
+                    "scope — it cannot send email on your behalf."
+                ),
+                force_gate=True, payload={"url": url},
+            )
+        except Exception as e:
+            return f"Couldn't start the Google connection approval flow: {e}"
+        status = result.get("status")
+        if status in ("auto_approved", "approved"):
+            return _open_url_in_browser(url)
+        if status == "denied":
+            return "Connecting Google was declined — not opening the authorization page."
+        return (
+            "I've sent an approval request to connect Google (Calendar + Gmail, "
+            "read-only) — approve it from Settings > Approvals (or the push "
+            "notification) and I'll open the authorization page right after."
+        )
+    return _open_url_in_browser(url)
 
 
 # ── Open local file / folder / app (computer control, low-risk) ──
