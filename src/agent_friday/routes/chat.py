@@ -75,6 +75,10 @@ from agent_friday.services.model_router import (
     _vault_cloud_fallback,
     _vault_local_only,
 )  # noqa: E501
+from agent_friday.services.response_provenance import (
+    mark_unverified_citations as _mark_unverified_citations,
+    warn_if_ungrounded_claim as _warn_if_ungrounded_claim,
+)  # noqa: E501
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -616,6 +620,17 @@ def chat():
             print(f"  [INTEGRITY] fabricated tool-call syntax caught "
                   f"(retries={_integrity_meta['retries']}, "
                   f"resolved={'yes' if not _integrity_meta['final_leaks'] else 'no'})")
+
+        # ── FR-3: provenance — only executed-tool-result URLs render clickable.
+        # A [web:URL] citation not backed by anything this turn's tools
+        # actually touched becomes [unverified-web:URL], which the client
+        # renders inert instead of a real link. Also warn-logs a turn that
+        # cites a source with zero tools executed at all. ──
+        reply, _unverified_urls = _mark_unverified_citations(reply, tool_trace)
+        if _unverified_urls:
+            print(f"  [PROVENANCE] {len(_unverified_urls)} uncorroborated "
+                  f"URL citation(s) rendered inert: {_unverified_urls}")
+        _warn_if_ungrounded_claim(reply, tool_trace)
 
         # ── Rehydrate: restore real PII before returning to the user. ──
         if pii_lookup:

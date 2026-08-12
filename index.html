@@ -4204,6 +4204,16 @@ function fridayCitationize(src) {
   const base = 'display:inline-block;font-size:0.82em;line-height:1.45;padding:0 5px;margin:0 1px;border-radius:4px;font-family:JetBrains Mono,monospace;vertical-align:baseline;white-space:nowrap;';
   const chip = (bg, bd, fg, label, title) => '<span class="friday-cite" title="' + esc(title) + '" style="' + base + 'background:' + bg + ';border:1px solid ' + bd + ';color:' + fg + ';cursor:help;">' + esc(label) + '</span>';
   let out = src;
+  // FR-3 provenance: the server rewrites any [web:URL] citation NOT backed by
+  // an executed tool result this turn into [unverified-web:URL]. Render it
+  // inert — no href, struck through, visually flagged — never a clickable link.
+  out = out.replace(/\[unverified-web:(https?:\/\/[^\]\s]+)\]/g, (_, url) => {
+    let host = 'link';
+    try {
+      host = url.replace(/^https?:\/\//, '').split('/')[0];
+    } catch (e) {}
+    return '<span class="friday-cite friday-cite-unverified" title="' + esc('Not from a tool result this turn — unverified: ' + url) + '" style="' + base + 'background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);color:#f87171;cursor:help;text-decoration:line-through;">⚠ ' + esc(host) + '</span>';
+  });
   out = out.replace(/\[web:(https?:\/\/[^\]\s]+)\]/g, (_, url) => {
     let host = 'link';
     try {
