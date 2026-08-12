@@ -7,6 +7,24 @@ import { buildGeminiLiveSystemInstruction } from '../personality';
 import { mcpClient } from '../mcp-client';
 import { memoryManager } from '../memory';
 import { assertToolCallArgs, assertString, assertSafePath, assertBoolean } from './validate';
+import { DESKTOP_TOOL_DECLARATIONS } from '../desktop-tools';
+import { googleAuth } from '../google-oauth';
+// FR-1: shared with the standalone `npm run conformance:check` CLI (scripts/toolcall-conformance.ts).
+// toolcall-conformance-core.ts is deliberately Electron-free (fetch + pure logic only), so it's
+// safe to import from either a plain Node script or, here, the Electron main process.
+import { runConformance, type ConformanceReport } from '../toolcall-conformance-core';
+
+const OLLAMA_ENDPOINT = 'http://localhost:11434';
+
+/** FR-1: run the conformance gate for a candidate orchestrator model and report the result. */
+async function checkOrchestratorConformance(model: string): Promise<ConformanceReport> {
+  const tools = DESKTOP_TOOL_DECLARATIONS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  }));
+  return runConformance({ endpoint: OLLAMA_ENDPOINT, model, tools });
+}
 
 /**
  * Denylist of MCP tool names that are blocked by security policy.
@@ -50,7 +68,42 @@ export function registerCoreHandlers(deps: CoreHandlerDeps): void {
       throw new Error('settings:set value too large (max 100KB serialized)');
     }
     await settingsManager.setSetting(key as string, value);
+
+    // FR-1: re-run the orchestrator seat conformance gate whenever the local
+    // (Ollama) orchestration model changes. Fire-and-forget — never block the
+    // settings write on a live model round-trip; the renderer gets the result
+    // asynchronously and can warn the user if the new model is red.
+    if (key === 'localModelId' && typeof value === 'string' && value.trim()) {
+      const model = value.trim();
+      checkOrchestratorConformance(model)
+        .then((report) => {
+          const win = deps.getMainWindow();
+          if (win && !win.isDestroyed()) {
+            win.webContents.send('toolcall-conformance:result', report);
+          }
+          if (!report.pass) {
+            console.warn(
+              `[Conformance] Orchestrator model "${model}" failed the tool-call conformance gate ` +
+              `(${report.passCount}/${report.totalCount}) — see toolcall-conformance:result for detail.`
+            );
+          }
+        })
+        .catch((err) => {
+          console.warn(`[Conformance] Gate run for "${model}" failed to complete:`, err instanceof Error ? err.message : err);
+        });
+    }
   });
+
+  // Manual trigger — used by Settings UI to run the gate on demand.
+  ipcMain.handle('toolcall-conformance:check', async (_event, model: unknown) => {
+    assertString(model, 'toolcall-conformance:check model', 256);
+    return checkOrchestratorConformance(model);
+  });
+
+  // FR-6: lets Settings UI show whether a credentials file exists, and where
+  // to place one, before Stephen clicks "Connect Google".
+  ipcMain.handle('google:has-credentials', () => googleAuth.hasCredentialsFile());
+  ipcMain.handle('google:credentials-path', () => googleAuth.getCredentialsPath());
 
   ipcMain.handle('settings:set-auto-launch', async (_event, enabled: unknown) => {
     assertBoolean(enabled, 'settings:set-auto-launch enabled');

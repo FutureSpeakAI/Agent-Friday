@@ -1,0 +1,61 @@
+Conformance gate — 24 tools from the production registry, 1 candidate model(s).
+
+── Running gemma4:latest ──────────────────────────────
+# Orchestrator seat conformance — gemma4:latest
+
+Endpoint: http://localhost:11434
+Ollama-reported capabilities: [completion, vision, audio, tools, thinking]
+Native `tools` capability: yes
+
+## Result: PASS (10/10)
+
+### [PASS] p1 — expected tool: list_windows
+Prompt: "What windows are currently open on my screen?"
+Structured tool calls: [{"name":"list_windows","arguments":{}}]
+Prose narration leaks: (none)
+
+### [PASS] p2 — expected tool: get_active_window
+Prompt: "What's the title of the window that's currently focused?"
+Structured tool calls: [{"name":"get_active_window","arguments":{}}]
+Prose narration leaks: (none)
+
+### [PASS] p3 — expected tool: get_screen_size
+Prompt: "What's my primary screen resolution, in pixels?"
+Structured tool calls: [{"name":"get_screen_size","arguments":{}}]
+Prose narration leaks: (none)
+
+### [PASS] p4 — expected tool: get_cursor_position
+Prompt: "Where is my mouse cursor right now, in screen coordinates?"
+Structured tool calls: [{"name":"get_cursor_position","arguments":{}}]
+Prose narration leaks: (none)
+
+### [PASS] p5 — expected tool: read_clipboard
+Prompt: "What's currently on my clipboard?"
+Structured tool calls: [{"name":"read_clipboard","arguments":{}}]
+Prose narration leaks: (none)
+
+### [PASS] p6 — expected tool: write_clipboard
+Prompt: "Copy the text 'hello world' to my clipboard."
+Structured tool calls: [{"name":"write_clipboard","arguments":{"text":"hello world"}}]
+Prose narration leaks: (none)
+
+### [PASS] p7 — expected tool: launch_app
+Prompt: "Launch Notepad for me."
+Structured tool calls: [{"name":"launch_app","arguments":{"app_name":"Notepad"}}]
+Prose narration leaks: (none)
+
+### [PASS] p8 — expected tool: list_directory
+Prompt: "List the files in the C:\temp directory."
+Structured tool calls: [{"name":"list_directory","arguments":{"dir_path":"C:\\temp"}}]
+Prose narration leaks: (none)
+
+### [PASS] p9 — expected tool: read_file
+Prompt: "Read the contents of the file at C:\temp\notes.txt."
+Structured tool calls: [{"name":"read_file","arguments":{"file_path":"C:\\temp\\notes.txt"}}]
+Prose narration leaks: (none)
+
+### [PASS] p10 — expected tool: set_volume
+Prompt: "Set my system volume to 40 percent."
+Structured tool calls: [{"name":"set_volume","arguments":{"level":40}}]
+Prose narration leaks: (none)
+

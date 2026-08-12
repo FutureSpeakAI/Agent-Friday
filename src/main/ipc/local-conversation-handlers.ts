@@ -60,6 +60,11 @@ export function registerLocalConversationHandlers(
     sendToRenderer('local-conversation:event:response-chunk', text);
   });
 
+  // FR-3: per-turn URL provenance — sent just before the response it applies to.
+  conversation.on('response-provenance', (info: { urls: string[] }) => {
+    sendToRenderer('local-conversation:event:response-provenance', info);
+  });
+
   conversation.on('tool-start', (info: { id: string; name: string }) => {
     sendToRenderer('local-conversation:event:tool-start', info);
   });

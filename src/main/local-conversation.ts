@@ -38,6 +38,9 @@ import { ensureProfileOnDisk } from './friday-profile';
 import { callDesktopTool } from './desktop-tools';
 import { mcpClient } from './mcp-client';
 import { calendarIntegration } from './calendar';
+import { gmailIntegration } from './gmail';
+import { findPseudoToolCalls, buildCorrectiveMessage, HONEST_FAILURE_MESSAGE } from './tool-call-validator';
+import { extractUrls, warnIfUngroundedDataClaim } from './tool-provenance';
 
 // ── Security: Sanitize tool results before injecting into LLM context ──
 
@@ -86,6 +89,7 @@ export type LocalConversationEvent =
   | 'user-transcript'
   | 'ai-response'
   | 'ai-response-chunk'
+  | 'response-provenance'
   | 'tool-start'
   | 'tool-end'
   | 'agent-finalized'
@@ -328,11 +332,15 @@ export class LocalConversation extends EventEmitter {
       this.messages.push({ role: 'user', content: text });
 
       // 3. Stream from Ollama — tokens arrive incrementally for responsive UI
-      let response = await this.streamCompletion();
+      let response = await this.streamCompletionSafe();
 
       // 4. Handle tool calls in a loop (tool use → result → re-complete)
       let iterations = 0;
       const MAX_TOOL_ITERATIONS = 5;
+      // FR-3: per-turn provenance — URLs seen in executed tool results, and
+      // whether any tool actually ran this turn.
+      const turnUrls = new Set<string>();
+      let toolsExecutedThisTurn = 0;
 
       while (
         response.toolCalls &&
@@ -368,6 +376,10 @@ export class LocalConversation extends EventEmitter {
             toolSuccess = false;
           }
           this.emit('tool-end', { id: tc.id, name: tc.name, success: toolSuccess });
+          toolsExecutedThisTurn++;
+          if (toolSuccess) {
+            for (const url of extractUrls(result)) turnUrls.add(url);
+          }
 
           // Append tool result to messages (sanitized to mitigate prompt injection)
           this.messages.push({
@@ -379,14 +391,17 @@ export class LocalConversation extends EventEmitter {
         }
 
         // Re-complete with tool results (streamed)
-        response = await this.streamCompletion();
+        response = await this.streamCompletionSafe();
       }
 
       // 5. Append final assistant response
       const responseText = response.content || '';
       this.messages.push({ role: 'assistant', content: responseText });
+      warnIfUngroundedDataClaim(responseText, toolsExecutedThisTurn);
 
-      // 6. Emit AI response for UI display
+      // 6. Emit AI response for UI display, with per-turn URL provenance (FR-3a)
+      // so the renderer only linkifies URLs that actually came from a tool result.
+      this.emit('response-provenance', { urls: Array.from(turnUrls) });
       if (responseText) {
         this.emit('ai-response', responseText);
       } else {
@@ -422,11 +437,13 @@ export class LocalConversation extends EventEmitter {
         this.messages.push({ role: 'user', content: next });
 
         // 3. Stream from Ollama
-        let response = await this.streamCompletion();
+        let response = await this.streamCompletionSafe();
 
         // 4. Handle tool calls
         let iterations = 0;
         const MAX_TOOL_ITERATIONS = 5;
+        const turnUrls = new Set<string>();
+        let toolsExecutedThisTurn = 0;
         while (
           response.toolCalls &&
           response.toolCalls.length > 0 &&
@@ -457,6 +474,10 @@ export class LocalConversation extends EventEmitter {
               toolSuccess = false;
             }
             this.emit('tool-end', { id: tc.id, name: tc.name, success: toolSuccess });
+            toolsExecutedThisTurn++;
+            if (toolSuccess) {
+              for (const url of extractUrls(result)) turnUrls.add(url);
+            }
             this.messages.push({
               role: 'tool',
               content: sanitizeToolResult(tc.name, result),
@@ -464,12 +485,14 @@ export class LocalConversation extends EventEmitter {
               name: tc.name,
             });
           }
-          response = await this.streamCompletion();
+          response = await this.streamCompletionSafe();
         }
 
         // 5. Append + emit final response
         const responseText = response.content || '';
         this.messages.push({ role: 'assistant', content: responseText });
+        warnIfUngroundedDataClaim(responseText, toolsExecutedThisTurn);
+        this.emit('response-provenance', { urls: Array.from(turnUrls) });
         if (responseText) {
           this.emit('ai-response', responseText);
         } else {
@@ -523,6 +546,44 @@ export class LocalConversation extends EventEmitter {
     }
 
     return { content: fullText, toolCalls };
+  }
+
+  /**
+   * FR-2/FR-4: Wraps streamCompletion() with narration detection.
+   *
+   * A tool-incapable or under-capable model can narrate bracket syntax that
+   * imitates a tool call instead of using the real function-calling channel
+   * (see tool-call-validator.ts). When that happens with no real tool calls
+   * attached, push a corrective message and retry — at most twice — before
+   * replacing the response with an honest failure. This gates BOTH the chat
+   * render path and TTS, since both read from this method's return value.
+   */
+  private async streamCompletionSafe(): Promise<{ content: string; toolCalls?: ToolCall[] }> {
+    const MAX_RETRIES = 2;
+    let response = await this.streamCompletion();
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (response.toolCalls && response.toolCalls.length > 0) return response;
+
+      const matches = findPseudoToolCalls(response.content || '', this.tools.map((t) => t.name));
+      if (matches.length === 0) return response;
+
+      console.warn(
+        `[LocalConversation] Narrated pseudo tool-call detected (attempt ${attempt + 1}/${MAX_RETRIES}): ` +
+        matches.slice(0, 3).map((m) => m.raw).join(' | ')
+      );
+      this.messages.push({ role: 'user', content: buildCorrectiveMessage(matches[0].raw) });
+      response = await this.streamCompletion();
+    }
+
+    if (!response.toolCalls || response.toolCalls.length === 0) {
+      const stillNarrating = findPseudoToolCalls(response.content || '', this.tools.map((t) => t.name));
+      if (stillNarrating.length > 0) {
+        console.warn('[LocalConversation] Honest failure — pseudo tool-call narration persisted after retries; suppressing fabricated content.');
+        return { content: HONEST_FAILURE_MESSAGE, toolCalls: undefined };
+      }
+    }
+    return response;
   }
 
   // ── Private: Tool execution ───────────────────────────────────────────
@@ -651,6 +712,54 @@ export class LocalConversation extends EventEmitter {
           return 'Calendar authentication was cancelled or failed. The user can try again later.';
         } catch (err) {
           return `Calendar auth error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      // ── Google tools (FR-6) — always callable; honest "not connected" ──
+      // reply when Stephen hasn't authorized Google yet, never a fabricated one.
+
+      case 'query_calendar': {
+        if (!calendarIntegration.isAuthenticated()) {
+          return "Google Calendar isn't connected — I can't check the calendar right now. Connect it in Settings → Integrations to enable this.";
+        }
+        const count = typeof args.count === 'number' ? args.count : 5;
+        const events = calendarIntegration.getUpcoming(count);
+        return events.length > 0
+          ? JSON.stringify(events)
+          : 'No upcoming events found on the calendar.';
+      }
+
+      case 'search_email': {
+        if (!gmailIntegration.isAuthenticated()) {
+          return "Gmail isn't connected — I can't search email right now. Connect it in Settings → Integrations to enable this.";
+        }
+        const query = String(args.query || '');
+        if (!query) return 'A search query is required.';
+        const maxResults = typeof args.maxResults === 'number' ? args.maxResults : undefined;
+        try {
+          const results = await gmailIntegration.search(query, maxResults);
+          return results.length > 0
+            ? JSON.stringify(results)
+            : `No emails matched "${query}".`;
+        } catch (err) {
+          return `Email search failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      case 'draft_email': {
+        if (!gmailIntegration.isAuthenticated()) {
+          return "Gmail isn't connected — I can't create a draft right now. Connect it in Settings → Integrations to enable this.";
+        }
+        const to = String(args.to || '');
+        const subject = String(args.subject || '');
+        const body = String(args.body || '');
+        if (!to || !subject || !body) return 'A recipient, subject, and body are all required to draft an email.';
+        try {
+          const draft = await gmailIntegration.createDraft({ to, subject, body });
+          if (!draft) return 'Failed to create the draft.';
+          return `Draft created — NOT sent. The user must review and send it themselves: ${draft.webUrl}`;
+        } catch (err) {
+          return `Draft creation failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
 

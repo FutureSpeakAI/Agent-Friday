@@ -1,0 +1,51 @@
+Conformance gate — 24 tools from the production registry, 1 candidate model(s).
+
+── Running gemma3:4b ──────────────────────────────
+# Orchestrator seat conformance — gemma3:4b
+
+Endpoint: http://localhost:11434
+Ollama-reported capabilities: [completion, vision]
+Native `tools` capability: NO
+
+## Result: FAIL (0/10)
+
+### [FAIL] p1 — expected tool: list_windows
+Prompt: "What windows are currently open on my screen?"
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p2 — expected tool: get_active_window
+Prompt: "What's the title of the window that's currently focused?"
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p3 — expected tool: get_screen_size
+Prompt: "What's my primary screen resolution, in pixels?"
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p4 — expected tool: get_cursor_position
+Prompt: "Where is my mouse cursor right now, in screen coordinates?"
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p5 — expected tool: read_clipboard
+Prompt: "What's currently on my clipboard?"
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p6 — expected tool: write_clipboard
+Prompt: "Copy the text 'hello world' to my clipboard."
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p7 — expected tool: launch_app
+Prompt: "Launch Notepad for me."
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p8 — expected tool: list_directory
+Prompt: "List the files in the C:\temp directory."
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p9 — expected tool: read_file
+Prompt: "Read the contents of the file at C:\temp\notes.txt."
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+
+### [FAIL] p10 — expected tool: set_volume
+Prompt: "Set my system volume to 40 percent."
+Error: HTTP 400: {"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}
+

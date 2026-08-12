@@ -130,6 +130,8 @@ import { clipboardIntelligence } from './clipboard-intelligence';
 import { projectAwareness } from './project-awareness';
 import { documentIngestion } from './document-ingestion';
 import { calendarIntegration, registerCalendarHandlers } from './calendar';
+import { googleAuth } from './google-oauth';
+import { gmailIntegration, registerGmailHandlers } from './gmail';
 import { meetingPrep } from './meeting-prep';
 import { communications, registerCommunicationsHandlers } from './communications';
 import { connectorRegistry } from './connectors/registry';
@@ -651,11 +653,13 @@ app.whenReady().then(async () => {
           console.log(`[Friday] Indexed ${items.length} existing memories for semantic search`);
         }
       }),
-      // Calendar → meeting prep chain
+      // Google (Calendar + Gmail, shared OAuth) → meeting prep chain
       safe('Calendar + meeting prep', async () => {
+        await googleAuth.init();
         await calendarIntegration.init();
+        gmailIntegration.init();
         meetingPrep.init(mainWindow!);
-        console.log('[Friday] Calendar + meeting prep initialized');
+        console.log('[Friday] Google (Calendar + Gmail) + meeting prep initialized');
       }),
       // Intelligence router → local model discovery chain
       safe('Intelligence router', async () => {
@@ -741,6 +745,7 @@ app.whenReady().then(async () => {
   registerOnboardingHandlers();
   registerIntegrationHandlers();
   registerCalendarHandlers();
+  registerGmailHandlers();
   registerCommunicationsHandlers();
   registerIntegrityHandlers();
   registerSuperpowersHandlers();
@@ -912,12 +917,14 @@ app.whenReady().then(async () => {
       console.warn('[Friday] Trust graph reload failed:', err instanceof Error ? err.message : 'Unknown error');
     }
 
-    // Calendar tokens may also be encrypted — reinitialize to pick them up
+    // Google tokens may also be encrypted — reinitialize to pick them up
     try {
+      await googleAuth.init();
       await calendarIntegration.init();
-      console.log(`[Friday] Calendar reloaded from vault (${Date.now() - t0}ms)`);
+      gmailIntegration.init();
+      console.log(`[Friday] Google (Calendar + Gmail) reloaded from vault (${Date.now() - t0}ms)`);
     } catch (err) {
-      console.warn('[Friday] Calendar reload failed:', err instanceof Error ? err.message : 'Unknown error');
+      console.warn('[Friday] Google reload failed:', err instanceof Error ? err.message : 'Unknown error');
     }
 
     // 2. Inject HMAC signing key

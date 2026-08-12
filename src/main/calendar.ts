@@ -2,18 +2,17 @@
  * 7A — Google Calendar Integration
  * OAuth2 → Calendar API for event awareness, scheduling, and proactive briefings.
  * Friday reads your calendar so she can prepare you for meetings and manage your time.
+ *
+ * FR-6: OAuth is now handled by the shared google-oauth.ts manager (one consent
+ * flow covering Calendar + Gmail) rather than a private client here. Public API
+ * of this module is unchanged so existing callers (personality.ts, meeting-prep.ts,
+ * IPC handlers) don't need to change.
  */
 
-import { BrowserWindow, ipcMain } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
+import { ipcMain } from 'electron';
 import { google, calendar_v3 } from 'googleapis';
 import { requireConsent } from './consent-gate';
-import { vaultRead, vaultWrite, isVaultUnlocked } from './vault';
-
-const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events'];
-const TOKEN_FILE = 'google-calendar-token.json';
-const CREDENTIALS_FILE = 'google-calendar-credentials.json';
+import { googleAuth } from './google-oauth';
 
 interface CalendarEvent {
   id: string;
@@ -30,143 +29,52 @@ interface CalendarEvent {
 }
 
 class CalendarIntegration {
-  private oauth2Client: InstanceType<typeof google.auth.OAuth2> | null = null;
   private calendarApi: calendar_v3.Calendar | null = null;
-  private dataDir: string;
   private cachedEvents: CalendarEvent[] = [];
   private lastFetch = 0;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor() {
-    this.dataDir = path.join(
-      process.env.APPDATA || path.join(process.env.HOME || '', '.config'),
-      'agent-friday'
-    );
-  }
-
+  /**
+   * Build the Calendar API client from the shared google-oauth.ts manager.
+   * Callers (index.ts) call googleAuth.init() before this — see startup
+   * sequencing note on the exported registerCalendarHandlers().
+   */
   async init(): Promise<void> {
     // Clean up any existing state to support vault-reload calls (Phase B)
     this.stop();
 
-    const credPath = path.join(this.dataDir, CREDENTIALS_FILE);
-    if (!fs.existsSync(credPath)) {
-      console.log('[Calendar] No credentials file found — calendar disabled');
-      console.log(`[Calendar] Place OAuth2 credentials at: ${credPath}`);
+    if (!googleAuth.isAuthenticated()) {
+      this.calendarApi = null;
       return;
     }
 
-    try {
-      const creds = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
-      const { client_id, client_secret, redirect_uris } = creds.installed || creds.web || {};
-
-      if (!client_id || !client_secret) {
-        console.warn('[Calendar] Invalid credentials format');
-        return;
-      }
-
-      this.oauth2Client = new google.auth.OAuth2(
-        client_id,
-        client_secret,
-        redirect_uris?.[0] || 'http://localhost:3000/oauth2callback'
-      );
-
-      // Try to load saved token (vault-encrypted if vault is unlocked)
-      const tokenPath = path.join(this.dataDir, TOKEN_FILE);
-      if (fs.existsSync(tokenPath)) {
-        const tokenRaw = await vaultRead(tokenPath);
-        const token = JSON.parse(tokenRaw);
-        this.oauth2Client.setCredentials(token);
-
-        // Set up automatic token refresh — writes through vault
-        // Remove any previous listener to prevent accumulation on re-init
-        this.oauth2Client.removeAllListeners('tokens');
-        this.oauth2Client.on('tokens', async (tokens: any) => {
-          if (tokens.refresh_token) {
-            try {
-              const existingRaw = await vaultRead(tokenPath);
-              const existing = JSON.parse(existingRaw);
-              await vaultWrite(tokenPath, JSON.stringify({ ...existing, ...tokens }));
-            } catch (err) {
-              // Crypto Sprint 13: Sanitize — OAuth tokens in scope.
-              console.warn('[Calendar] Token refresh persistence failed:', err instanceof Error ? err.message : 'Unknown error');
-            }
-          }
-        });
-
-        this.calendarApi = google.calendar({ version: 'v3', auth: this.oauth2Client });
-        console.log('[Calendar] Authenticated — starting event polling');
-
-        // Initial fetch
-        await this.fetchUpcomingEvents();
-
-        // Poll every 5 minutes
-        this.pollInterval = setInterval(() => {
-          this.fetchUpcomingEvents().catch((err) =>
-            console.warn('[Calendar] Poll error:', err.message)
-          );
-        }, 5 * 60 * 1000);
-      } else {
-        console.log('[Calendar] No token found — user needs to authenticate via settings');
-      }
-    } catch (err) {
-      // Crypto Sprint 13: Sanitize — OAuth credentials loading in this path.
-      console.warn('[Calendar] Init error:', err instanceof Error ? err.message : 'Unknown error');
+    const client = googleAuth.getClient();
+    if (!client) {
+      this.calendarApi = null;
+      return;
     }
+
+    this.calendarApi = google.calendar({ version: 'v3', auth: client });
+    console.log('[Calendar] Authenticated — starting event polling');
+
+    await this.fetchUpcomingEvents();
+
+    this.pollInterval = setInterval(() => {
+      this.fetchUpcomingEvents().catch((err) =>
+        console.warn('[Calendar] Poll error:', err.message)
+      );
+    }, 5 * 60 * 1000);
   }
 
   /**
-   * Start OAuth flow — opens browser window for user to sign in
+   * One-time authorization step (FR-6): delegates to the shared google-oauth
+   * manager (Calendar + Gmail in one consent flow), then rebuilds this
+   * module's own API client from the freshly authorized token.
    */
   async authenticate(): Promise<boolean> {
-    if (!this.oauth2Client) return false;
-
-    const authUrl = this.oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: SCOPES,
-      prompt: 'consent',
-    });
-
-    // Open in a BrowserWindow
-    const authWindow = new BrowserWindow({
-      width: 500,
-      height: 700,
-      title: 'Sign in to Google Calendar',
-      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
-    });
-
-    authWindow.loadURL(authUrl);
-
-    return new Promise((resolve) => {
-      // Use once() to prevent listener accumulation on repeated auth attempts
-      authWindow.webContents.once('will-redirect', async (_event, url) => {
-        try {
-          const urlObj = new URL(url);
-          const code = urlObj.searchParams.get('code');
-          if (code) {
-            const { tokens } = await this.oauth2Client!.getToken(code);
-            this.oauth2Client!.setCredentials(tokens);
-
-            // Save token through vault (encrypted at rest)
-            const tokenPath = path.join(this.dataDir, TOKEN_FILE);
-            await vaultWrite(tokenPath, JSON.stringify(tokens));
-
-            this.calendarApi = google.calendar({ version: 'v3', auth: this.oauth2Client! });
-            console.log('[Calendar] OAuth complete — authenticated');
-
-            authWindow.close();
-            await this.fetchUpcomingEvents();
-            resolve(true);
-          }
-        } catch (err) {
-          // Crypto Sprint 13: Sanitize — OAuth exchange errors can contain client secrets.
-          console.error('[Calendar] Auth error:', err instanceof Error ? err.message : 'Unknown error');
-          authWindow.close();
-          resolve(false);
-        }
-      });
-
-      authWindow.once('closed', () => resolve(false));
-    });
+    const ok = await googleAuth.authenticate();
+    if (ok) await this.init();
+    return ok;
   }
 
   /**
@@ -329,10 +237,7 @@ class CalendarIntegration {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
-    // Clean up OAuth token listener to prevent memory leak accumulation
-    if (this.oauth2Client) {
-      this.oauth2Client.removeAllListeners('tokens');
-    }
+    // OAuth token listener lifecycle is owned by the shared google-oauth.ts manager.
   }
 }
 

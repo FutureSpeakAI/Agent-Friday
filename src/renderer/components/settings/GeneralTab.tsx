@@ -26,6 +26,16 @@ export default function GeneralTab({ settings, loadSettings, flash }: GeneralTab
   const [discordOwnerId, setDiscordOwnerId] = useState('');
   const [vaultPath, setVaultPath] = useState('');
   const [validatingKey, setValidatingKey] = useState<string | null>(null);
+  // FR-6: Gmail shares Calendar's OAuth connection (one consent flow, two scopes).
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [hasGoogleCredentials, setHasGoogleCredentials] = useState<boolean | null>(null);
+  const [googleCredentialsPath, setGoogleCredentialsPath] = useState('');
+
+  React.useEffect(() => {
+    window.eve.gmail.isAuthenticated().then(setGmailConnected).catch(() => setGmailConnected(false));
+    window.eve.google.hasCredentials().then(setHasGoogleCredentials).catch(() => setHasGoogleCredentials(false));
+    window.eve.google.credentialsPath().then(setGoogleCredentialsPath).catch(() => {});
+  }, []);
 
   const saveApiKey = async (
     key: 'gemini' | 'anthropic' | 'elevenlabs' | 'openai' | 'perplexity' | 'firecrawl' | 'openrouter',
@@ -368,32 +378,48 @@ export default function GeneralTab({ settings, loadSettings, flash }: GeneralTab
 
       <Toggle
         value={settings.googleCalendarEnabled}
-        label="Google Calendar"
-        hint="Reads your schedule, prepares meeting briefings, and can create events"
+        label="Google Account (Calendar + Gmail)"
+        hint="One sign-in covers both: reads your schedule and meeting briefings, searches Gmail read-only, and can draft (never send) emails"
         onToggle={() => toggleSetting('googleCalendarEnabled')}
       />
       {settings.googleCalendarEnabled && (
         <div style={{ marginTop: 4, paddingLeft: 48 }}>
+          {hasGoogleCredentials === false && (
+            <div style={{ ...styles.toggleHint, paddingLeft: 0, marginBottom: 8, color: '#f87171' }}>
+              No OAuth credentials found yet. Create a Google Cloud project with Calendar + Gmail API access,
+              download the OAuth client credentials JSON, and place it at:{' '}
+              <code style={styles.codeBadge}>{googleCredentialsPath || '%APPDATA%\\agent-friday\\google-credentials.json'}</code>
+            </div>
+          )}
           <button
             onClick={async () => {
               const success = await window.eve.calendar.authenticate();
               if (success) {
-                flash('Google Calendar connected successfully!');
+                flash('Google connected — Calendar and Gmail are both active.');
+                window.eve.gmail.isAuthenticated().then(setGmailConnected).catch(() => {});
               }
             }}
+            disabled={hasGoogleCredentials === false}
             style={{
               ...styles.saveBtn,
               width: '100%',
               padding: '10px 16px',
               fontSize: 13,
-              cursor: 'pointer',
+              cursor: hasGoogleCredentials === false ? 'not-allowed' : 'pointer',
+              opacity: hasGoogleCredentials === false ? 0.5 : 1,
             }}
           >
-            Connect Google Calendar
+            Connect Google Account
           </button>
           <div style={{ ...styles.toggleHint, paddingLeft: 0, marginTop: 6 }}>
-            Opens Google sign-in — grants read/write access to your primary calendar
+            Opens Google sign-in — grants read access to your calendar and Gmail, plus draft-only Gmail
+            access. Friday can never send email on your behalf; drafts are created for you to review and send yourself.
           </div>
+          {gmailConnected !== null && (
+            <div style={{ ...styles.toggleHint, paddingLeft: 0, marginTop: 6, color: gmailConnected ? '#4ade80' : '#666680' }}>
+              Gmail: {gmailConnected ? 'connected' : 'not connected'}
+            </div>
+          )}
         </div>
       )}
 

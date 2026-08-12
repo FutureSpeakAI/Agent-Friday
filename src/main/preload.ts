@@ -344,6 +344,21 @@ contextBridge.exposeInMainWorld('eve', {
     }) => ipcRenderer.invoke('calendar:create-event', opts),
   },
 
+  // FR-6: Gmail shares the calendar.authenticate() OAuth flow (one consent
+  // screen covers both scopes) — this namespace is for Gmail-specific status/actions.
+  gmail: {
+    isAuthenticated: () => ipcRenderer.invoke('gmail:is-authenticated'),
+    search: (query: string, maxResults?: number) => ipcRenderer.invoke('gmail:search', query, maxResults),
+    createDraft: (opts: { to: string; subject: string; body: string }) => ipcRenderer.invoke('gmail:create-draft', opts),
+    openDraft: (webUrl: string) => ipcRenderer.invoke('gmail:open-draft', webUrl),
+  },
+
+  google: {
+    listTools: () => ipcRenderer.invoke('google:list-tools'),
+    hasCredentials: () => ipcRenderer.invoke('google:has-credentials'),
+    credentialsPath: () => ipcRenderer.invoke('google:credentials-path'),
+  },
+
   meetingPrep: {
     onBriefing: (callback: (briefing: {
       eventId: string;
@@ -1855,6 +1870,21 @@ contextBridge.exposeInMainWorld('eve', {
       const handler = (_e: Electron.IpcRendererEvent, info: { id: string; name: string; success: boolean }) => cb(info);
       ipcRenderer.on('local-conversation:event:tool-end', handler);
       return () => { ipcRenderer.removeListener('local-conversation:event:tool-end', handler); };
+    },
+    onResponseProvenance: (cb: (info: { urls: string[] }) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, info: { urls: string[] }) => cb(info);
+      ipcRenderer.on('local-conversation:event:response-provenance', handler);
+      return () => { ipcRenderer.removeListener('local-conversation:event:response-provenance', handler); };
+    },
+  },
+
+  // ── FR-1: Orchestrator seat conformance gate ─────────────────────
+  conformance: {
+    check: (model: string) => ipcRenderer.invoke('toolcall-conformance:check', model),
+    onResult: (cb: (report: Record<string, unknown>) => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, report: Record<string, unknown>) => cb(report);
+      ipcRenderer.on('toolcall-conformance:result', handler);
+      return () => { ipcRenderer.removeListener('toolcall-conformance:result', handler); };
     },
   },
 

@@ -40,63 +40,74 @@ function CodeBlock({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-/** Markdown components override map */
-const markdownComponents = {
-  code({ className, children, ...props }: any) {
-    const isBlock = className || String(children).includes('\n');
-    if (isBlock) {
-      return <CodeBlock className={className}>{children}</CodeBlock>;
-    }
-    return <code style={mdStyles.inlineCode} {...props}>{children}</code>;
-  },
-  p({ children }: any) {
-    return <p style={mdStyles.paragraph}>{children}</p>;
-  },
-  ul({ children }: any) {
-    return <ul style={mdStyles.ul}>{children}</ul>;
-  },
-  ol({ children }: any) {
-    return <ol style={mdStyles.ol}>{children}</ol>;
-  },
-  li({ children }: any) {
-    return <li style={mdStyles.li}>{children}</li>;
-  },
-  h1({ children }: any) {
-    return <h1 style={{ ...mdStyles.heading, fontSize: 18 }}>{children}</h1>;
-  },
-  h2({ children }: any) {
-    return <h2 style={{ ...mdStyles.heading, fontSize: 16 }}>{children}</h2>;
-  },
-  h3({ children }: any) {
-    return <h3 style={{ ...mdStyles.heading, fontSize: 14 }}>{children}</h3>;
-  },
-  blockquote({ children }: any) {
-    return <blockquote style={mdStyles.blockquote}>{children}</blockquote>;
-  },
-  a({ href, children }: any) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" style={mdStyles.link}>
-        {children}
-      </a>
-    );
-  },
-  table({ children }: any) {
-    return (
-      <div style={mdStyles.tableWrapper}>
-        <table style={mdStyles.table}>{children}</table>
-      </div>
-    );
-  },
-  th({ children }: any) {
-    return <th style={mdStyles.th}>{children}</th>;
-  },
-  td({ children }: any) {
-    return <td style={mdStyles.td}>{children}</td>;
-  },
-  strong({ children }: any) {
-    return <strong style={mdStyles.strong}>{children}</strong>;
-  },
-};
+/**
+ * Markdown components override map. `allowedUrls` is the per-message FR-3
+ * provenance set — URLs that actually came from an executed tool result this
+ * turn. A link whose href isn't in that set is model-minted and renders as
+ * inert plain text instead of a clickable/auto-opening link.
+ */
+function createMarkdownComponents(allowedUrls: Set<string>) {
+  return {
+    code({ className, children, ...props }: any) {
+      const isBlock = className || String(children).includes('\n');
+      if (isBlock) {
+        return <CodeBlock className={className}>{children}</CodeBlock>;
+      }
+      return <code style={mdStyles.inlineCode} {...props}>{children}</code>;
+    },
+    p({ children }: any) {
+      return <p style={mdStyles.paragraph}>{children}</p>;
+    },
+    ul({ children }: any) {
+      return <ul style={mdStyles.ul}>{children}</ul>;
+    },
+    ol({ children }: any) {
+      return <ol style={mdStyles.ol}>{children}</ol>;
+    },
+    li({ children }: any) {
+      return <li style={mdStyles.li}>{children}</li>;
+    },
+    h1({ children }: any) {
+      return <h1 style={{ ...mdStyles.heading, fontSize: 18 }}>{children}</h1>;
+    },
+    h2({ children }: any) {
+      return <h2 style={{ ...mdStyles.heading, fontSize: 16 }}>{children}</h2>;
+    },
+    h3({ children }: any) {
+      return <h3 style={{ ...mdStyles.heading, fontSize: 14 }}>{children}</h3>;
+    },
+    blockquote({ children }: any) {
+      return <blockquote style={mdStyles.blockquote}>{children}</blockquote>;
+    },
+    a({ href, children }: any) {
+      if (!href || !allowedUrls.has(href)) {
+        // FR-3a: model-minted URL — render as inert plain text, not a link.
+        return <span style={mdStyles.inertLink} title="Link not confirmed by an executed tool result">{children}</span>;
+      }
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" style={mdStyles.link}>
+          {children}
+        </a>
+      );
+    },
+    table({ children }: any) {
+      return (
+        <div style={mdStyles.tableWrapper}>
+          <table style={mdStyles.table}>{children}</table>
+        </div>
+      );
+    },
+    th({ children }: any) {
+      return <th style={mdStyles.th}>{children}</th>;
+    },
+    td({ children }: any) {
+      return <td style={mdStyles.td}>{children}</td>;
+    },
+    strong({ children }: any) {
+      return <strong style={mdStyles.strong}>{children}</strong>;
+    },
+  };
+}
 
 /** Maximum number of messages to render without explicit user request. */
 const VISIBLE_LIMIT = 100;
@@ -187,7 +198,7 @@ export default function ChatHistory({ messages }: ChatHistoryProps) {
                 ) : (
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
-                    components={markdownComponents}
+                    components={createMarkdownComponents(new Set(msg.provenanceUrls || []))}
                   >
                     {msg.content}
                   </ReactMarkdown>
@@ -243,6 +254,7 @@ const styles: Record<string, React.CSSProperties> = {
   messages: {
     flex: 1,
     overflowY: 'auto',
+    overflowX: 'hidden',
     padding: '12px 16px',
     display: 'flex',
     flexDirection: 'column',
@@ -292,6 +304,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     borderLeft: '2px solid transparent',
     transition: 'border-color 0.2s, background 0.2s',
+    minWidth: 0,
   },
   roleTag: {
     fontSize: 10,
@@ -308,6 +321,8 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.6,
     color: '#d0d0d8',
     wordBreak: 'break-word' as const,
+    overflowWrap: 'anywhere' as const,
+    minWidth: 0,
   },
   timestamp: {
     fontSize: 10,
@@ -350,6 +365,8 @@ const mdStyles: Record<string, React.CSSProperties> = {
   paragraph: {
     margin: '4px 0',
     lineHeight: 1.6,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
   },
   strong: {
     color: '#e8e8ec',
@@ -420,12 +437,16 @@ const mdStyles: Record<string, React.CSSProperties> = {
     padding: '12px 14px',
     overflow: 'auto',
     maxHeight: 400,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
   },
   code: {
     fontFamily: "'JetBrains Mono', monospace",
     fontSize: 12,
     lineHeight: 1.5,
     color: '#d0d0d8',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
   },
   blockquote: {
     borderLeft: '3px solid rgba(168, 85, 247, 0.4)',
@@ -440,6 +461,12 @@ const mdStyles: Record<string, React.CSSProperties> = {
     textDecoration: 'none',
     borderBottom: '1px solid rgba(0, 240, 255, 0.3)',
     transition: 'border-color 0.15s',
+    overflowWrap: 'anywhere',
+  },
+  /** FR-3a: model-minted URLs render as inert plain text — no color, no underline, not clickable. */
+  inertLink: {
+    color: 'inherit',
+    overflowWrap: 'anywhere',
   },
   tableWrapper: {
     overflowX: 'auto',

@@ -17,6 +17,9 @@ export default function LocalAITab({ settings, loadSettings, flash }: LocalAITab
   const [discovering, setDiscovering] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // FR-1: orchestrator seat conformance gate — result of the automatic re-check
+  // triggered whenever localModelId changes (see settings:set in core-handlers.ts).
+  const [conformance, setConformance] = useState<{ model: string; pass: boolean; passCount: number; totalCount: number } | null>(null);
 
   // Discover local models on mount
   useEffect(() => {
@@ -24,6 +27,19 @@ export default function LocalAITab({ settings, loadSettings, flash }: LocalAITab
       handleDiscover();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- discover once on mount
+  }, []);
+
+  // Listen for the automatic conformance gate result whenever the model changes.
+  useEffect(() => {
+    return window.eve.conformance.onResult((report: any) => {
+      setConformance({ model: report.model, pass: report.pass, passCount: report.passCount, totalCount: report.totalCount });
+      flash(
+        report.pass
+          ? `✓ ${report.model} passed the tool-call conformance gate (${report.passCount}/${report.totalCount})`
+          : `⚠ ${report.model} failed the tool-call conformance gate (${report.passCount}/${report.totalCount}) — it can't reliably call tools. It may still work for non-tool chat.`
+      );
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once
   }, []);
 
   const handleDiscover = async () => {
@@ -261,6 +277,21 @@ export default function LocalAITab({ settings, loadSettings, flash }: LocalAITab
             <div style={styles.toggleHint}>
               Override the selected model. Use the Ollama model name (e.g. llama3.3, qwen2.5-coder:32b, deepseek-r1)
             </div>
+            {conformance && conformance.model === (settings.localModelId || modelId) && (
+              <div style={{
+                marginTop: 6,
+                fontSize: 11,
+                padding: '6px 10px',
+                borderRadius: 6,
+                background: conformance.pass ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                border: `1px solid ${conformance.pass ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                color: conformance.pass ? '#4ade80' : '#f87171',
+              }}>
+                {conformance.pass
+                  ? `Tool-call conformance: PASS (${conformance.passCount}/${conformance.totalCount}) — safe to hold the orchestrator seat.`
+                  : `Tool-call conformance: FAIL (${conformance.passCount}/${conformance.totalCount}) — this model can't reliably call tools and may narrate fake ones instead. Fine for non-tool chat, not recommended as orchestrator.`}
+              </div>
+            )}
           </div>
 
           <Divider />

@@ -80,6 +80,13 @@ const mocks = vi.hoisted(() => ({
     callTool: vi.fn(),
   },
   calendarAuthenticate: vi.fn().mockResolvedValue(false),
+
+  // FR-6: Google Calendar/Gmail tools
+  calendarIsAuthenticated: vi.fn().mockReturnValue(false),
+  calendarGetUpcoming: vi.fn().mockReturnValue([]),
+  gmailIsAuthenticated: vi.fn().mockReturnValue(false),
+  gmailSearch: vi.fn().mockResolvedValue([]),
+  gmailCreateDraft: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('../../../src/main/llm-client', () => ({
@@ -147,6 +154,16 @@ vi.mock('../../../src/main/mcp-client', () => ({
 vi.mock('../../../src/main/calendar', () => ({
   calendarIntegration: {
     authenticate: mocks.calendarAuthenticate,
+    isAuthenticated: mocks.calendarIsAuthenticated,
+    getUpcoming: mocks.calendarGetUpcoming,
+  },
+}));
+
+vi.mock('../../../src/main/gmail', () => ({
+  gmailIntegration: {
+    isAuthenticated: mocks.gmailIsAuthenticated,
+    search: mocks.gmailSearch,
+    createDraft: mocks.gmailCreateDraft,
   },
 }));
 
@@ -189,6 +206,12 @@ describe('LocalConversation', () => {
     mocks.ttsIsReady.mockReturnValue(false);
     mocks.ttsLoadEngine.mockRejectedValue(new Error('No TTS model'));
     mocks.llmStream.mockImplementation(mockStreamFromResponse({ content: 'Hello from AI', toolCalls: [] }));
+    // FR-6: default to "not connected" — most tests don't care about Google state
+    mocks.calendarIsAuthenticated.mockReturnValue(false);
+    mocks.calendarGetUpcoming.mockReturnValue([]);
+    mocks.gmailIsAuthenticated.mockReturnValue(false);
+    mocks.gmailSearch.mockResolvedValue([]);
+    mocks.gmailCreateDraft.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -442,6 +465,251 @@ describe('LocalConversation', () => {
 
       // Should cap at MAX_TOOL_ITERATIONS (5) + 1 initial = 6 total calls
       expect(mocks.llmStream).toHaveBeenCalledTimes(6);
+    });
+  });
+
+  describe('FR-6: Google Calendar/Gmail tools', () => {
+    it('query_calendar returns real event data when connected', async () => {
+      mocks.calendarIsAuthenticated.mockReturnValue(true);
+      mocks.calendarGetUpcoming.mockReturnValue([
+        { id: 'e1', summary: 'Team Stand-up', start: '2026-08-12T09:00:00Z', end: '2026-08-12T09:30:00Z' },
+      ]);
+
+      await conv.start('System prompt', [{ name: 'query_calendar', description: 'x', parameters: {} }]);
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: '', toolCalls: [{ id: 'tc-1', name: 'query_calendar', input: {} }],
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'You have Team Stand-up at 9am.', toolCalls: [] }));
+
+      const responseHandler = vi.fn();
+      conv.on('ai-response', responseHandler);
+      await conv.sendText('start my day');
+
+      const toolResultMessage = mocks.llmStream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+      expect(toolResultMessage.content).toContain('Team Stand-up');
+      expect(responseHandler).toHaveBeenCalledWith('You have Team Stand-up at 9am.');
+    });
+
+    it('query_calendar returns an honest "not connected" message instead of fabricating events — the actual 2026-08-12 failure mode', async () => {
+      mocks.calendarIsAuthenticated.mockReturnValue(false);
+
+      await conv.start('System prompt', [{ name: 'query_calendar', description: 'x', parameters: {} }]);
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: '', toolCalls: [{ id: 'tc-1', name: 'query_calendar', input: {} }],
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: "I can't check your calendar — it's not connected yet.", toolCalls: [] }));
+
+      await conv.sendText('start my day');
+
+      const toolResultMessage = mocks.llmStream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+      expect(toolResultMessage.content).toContain("isn't connected");
+      expect(toolResultMessage.content).not.toContain('DeFilippis');
+    });
+
+    it('search_email returns real results when connected', async () => {
+      mocks.gmailIsAuthenticated.mockReturnValue(true);
+      mocks.gmailSearch.mockResolvedValue([
+        { id: 'm1', threadId: 't1', subject: 'Invoice due', from: 'billing@example.com', snippet: '...', date: 'Mon', unread: true },
+      ]);
+
+      await conv.start('System prompt', [{ name: 'search_email', description: 'x', parameters: {} }]);
+      mocks.llmStream.mockImplementationOnce(mockStreamFromResponse({
+        content: '', toolCalls: [{ id: 'tc-1', name: 'search_email', input: { query: 'is:unread' } }],
+      })).mockImplementationOnce(mockStreamFromResponse({ content: 'You have an unread invoice email.', toolCalls: [] }));
+
+      await conv.sendText('any unread emails?');
+
+      expect(mocks.gmailSearch).toHaveBeenCalledWith('is:unread', undefined);
+      const toolResultMessage = mocks.llmStream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+      expect(toolResultMessage.content).toContain('Invoice due');
+    });
+
+    it('search_email returns an honest "not connected" message when Gmail is not authenticated', async () => {
+      mocks.gmailIsAuthenticated.mockReturnValue(false);
+
+      await conv.start('System prompt', [{ name: 'search_email', description: 'x', parameters: {} }]);
+      mocks.llmStream.mockImplementationOnce(mockStreamFromResponse({
+        content: '', toolCalls: [{ id: 'tc-1', name: 'search_email', input: { query: 'priority' } }],
+      })).mockImplementationOnce(mockStreamFromResponse({ content: 'Email search is not connected yet.', toolCalls: [] }));
+
+      await conv.sendText('any priority emails?');
+
+      const toolResultMessage = mocks.llmStream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+      expect(toolResultMessage.content).toContain("isn't connected");
+      expect(mocks.gmailSearch).not.toHaveBeenCalled();
+    });
+
+    it('draft_email creates a real draft and its tool result explicitly says it was NOT sent', async () => {
+      mocks.gmailIsAuthenticated.mockReturnValue(true);
+      mocks.gmailCreateDraft.mockResolvedValue({ id: 'd1', webUrl: 'https://mail.google.com/mail/u/0/#drafts?compose=d1' });
+
+      await conv.start('System prompt', [{ name: 'draft_email', description: 'x', parameters: {} }]);
+      mocks.llmStream.mockImplementationOnce(mockStreamFromResponse({
+        content: '',
+        toolCalls: [{ id: 'tc-1', name: 'draft_email', input: { to: 'robb@example.com', subject: 'Reschedule', body: 'Can we move our meeting?' } }],
+      })).mockImplementationOnce(mockStreamFromResponse({ content: 'I drafted that email — take a look before sending.', toolCalls: [] }));
+
+      await conv.sendText('draft an email to robb about rescheduling');
+
+      expect(mocks.gmailCreateDraft).toHaveBeenCalledWith({ to: 'robb@example.com', subject: 'Reschedule', body: 'Can we move our meeting?' });
+      const toolResultMessage = mocks.llmStream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+      expect(toolResultMessage.content).toContain('NOT sent');
+      expect(toolResultMessage.content).toContain('https://mail.google.com/mail/u/0/#drafts?compose=d1');
+    });
+
+    it('draft_email never calls a send API — only createDraft exists on the mocked integration', async () => {
+      mocks.gmailIsAuthenticated.mockReturnValue(true);
+      mocks.gmailCreateDraft.mockResolvedValue({ id: 'd1', webUrl: 'https://mail.google.com/x' });
+
+      await conv.start('System prompt', [{ name: 'draft_email', description: 'x', parameters: {} }]);
+      mocks.llmStream.mockImplementationOnce(mockStreamFromResponse({
+        content: '',
+        toolCalls: [{ id: 'tc-1', name: 'draft_email', input: { to: 'a@b.com', subject: 's', body: 'b' } }],
+      })).mockImplementationOnce(mockStreamFromResponse({ content: 'Drafted.', toolCalls: [] }));
+
+      await conv.sendText('draft it');
+
+      // The gmail mock only exposes isAuthenticated/search/createDraft (see vi.mock above) —
+      // there is no send method for this code to have called even if it wanted to.
+      expect(mocks.gmailCreateDraft).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('FR-3: URL provenance', () => {
+    it('includes URLs from executed tool results, and only those, in response-provenance', async () => {
+      await conv.start('System prompt', [
+        { name: 'web_search', description: 'Search the web', parameters: {} },
+      ]);
+
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: '',
+          toolCalls: [{ id: 'tc-1', name: 'web_search', input: { query: 'google calendar outage' } }],
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({
+          // The model also mentions an unrelated, unexecuted URL in its own prose —
+          // that one must NOT show up in the provenance set.
+          content: 'Found it: https://real-search-result.example.com/status — also see https://model-made-this-up.example.com',
+          toolCalls: [],
+        }));
+      mocks.callDesktopTool.mockResolvedValueOnce({
+        result: 'Outage status page: https://real-search-result.example.com/status',
+      });
+
+      const provenanceHandler = vi.fn();
+      conv.on('response-provenance', provenanceHandler);
+
+      await conv.sendText('is calendar down?');
+
+      expect(provenanceHandler).toHaveBeenCalledTimes(1);
+      const [{ urls }] = provenanceHandler.mock.calls[0];
+      expect(urls).toEqual(['https://real-search-result.example.com/status']);
+      expect(urls).not.toContain('https://model-made-this-up.example.com');
+    });
+
+    it('emits an empty provenance set when no tools ran this turn', async () => {
+      await conv.start('System prompt', []);
+      const provenanceHandler = vi.fn();
+      conv.on('response-provenance', provenanceHandler);
+
+      await conv.sendText('hello');
+
+      expect(provenanceHandler).toHaveBeenCalledWith({ urls: [] });
+    });
+  });
+
+  describe('FR-2/FR-4: narrated pseudo-tool-call detection', () => {
+    it('retries with a corrective message when the model narrates a bracket call instead of using a real tool call, then accepts the corrected reply', async () => {
+      await conv.start('System prompt', [
+        { name: 'query_calendar', description: 'Fetch calendar', parameters: {} },
+      ]);
+
+      mocks.llmStream
+        // 2026-08-12 incident shape: bracket syntax narrated as prose, no real tool call attached
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: '[query_calendar] You have a 10am with Robb DeFilippis.',
+          toolCalls: [],
+        }))
+        // Model corrects itself after the nudge
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: "I can't check your calendar right now — that tool isn't available.",
+          toolCalls: [],
+        }));
+
+      const responseHandler = vi.fn();
+      conv.on('ai-response', responseHandler);
+
+      await conv.sendText('start my day');
+
+      expect(mocks.llmStream).toHaveBeenCalledTimes(2);
+      // The corrective nudge must have been injected into the conversation
+      // sent on retry, and must never repeat the fabricated content as fact.
+      const retryCall = mocks.llmStream.mock.calls[1][0];
+      expect(retryCall.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('[query_calendar]'),
+          }),
+        ]),
+      );
+      // The fabricated meeting claim must never reach the UI.
+      expect(responseHandler).toHaveBeenCalledWith(
+        "I can't check your calendar right now — that tool isn't available.",
+      );
+      expect(responseHandler).not.toHaveBeenCalledWith(expect.stringContaining('Robb DeFilippis'));
+    });
+
+    it('degrades honestly (never renders or speaks the fabricated content) when narration persists after retries', async () => {
+      mocks.ttsIsReady.mockReturnValue(true);
+      mocks.ttsLoadEngine.mockResolvedValue(undefined);
+      await conv.start('System prompt', [
+        { name: 'search_email', description: 'Search email', parameters: {} },
+      ]);
+
+      // Every attempt keeps narrating a fabricated tool call — model never corrects.
+      mocks.llmStream.mockImplementation(mockStreamFromResponse({
+        content: '[search_email(priority:high)] Found 3 urgent emails needing your reply.',
+        toolCalls: [],
+      }));
+
+      const responseHandler = vi.fn();
+      conv.on('ai-response', responseHandler);
+
+      await conv.sendText('start my day');
+
+      // Initial attempt + 2 retries = 3 total calls (FR-2: "retry at most 2 times")
+      expect(mocks.llmStream).toHaveBeenCalledTimes(3);
+      expect(responseHandler).toHaveBeenCalledTimes(1);
+      const [renderedText] = responseHandler.mock.calls[0];
+      expect(renderedText).not.toContain('search_email');
+      expect(renderedText).not.toContain('urgent emails');
+      // FR-2: "the validator must also gate the TTS/voice output path"
+      expect(mocks.speechSpeak).toHaveBeenCalledWith(renderedText);
+      expect(mocks.speechSpeak).not.toHaveBeenCalledWith(expect.stringContaining('search_email'));
+    });
+
+    it('does not interfere with a real structured tool call even if its arguments look bracket-like in prose', async () => {
+      await conv.start('System prompt', [
+        { name: 'acknowledge_introduction', description: 'Ack', parameters: {} },
+      ]);
+
+      mocks.llmStream
+        .mockImplementationOnce(mockStreamFromResponse({
+          content: '',
+          toolCalls: [{ id: 'tc-1', name: 'acknowledge_introduction', input: { user_response: 'OK' } }],
+        }))
+        .mockImplementationOnce(mockStreamFromResponse({ content: 'Great, let us continue!', toolCalls: [] }));
+
+      const responseHandler = vi.fn();
+      conv.on('ai-response', responseHandler);
+      await conv.sendText('I understand');
+
+      // A real tool call short-circuits the narration check entirely — no extra retries.
+      expect(mocks.llmStream).toHaveBeenCalledTimes(2);
+      expect(responseHandler).toHaveBeenCalledWith('Great, let us continue!');
     });
   });
 

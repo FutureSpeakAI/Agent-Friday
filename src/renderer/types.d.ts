@@ -876,6 +876,12 @@ declare global {
         onResponseChunk: (cb: (text: string) => void) => () => void;
         onToolStart: (cb: (info: { id: string; name: string }) => void) => () => void;
         onToolEnd: (cb: (info: { id: string; name: string; success: boolean }) => void) => () => void;
+        onResponseProvenance: (cb: (info: { urls: string[] }) => void) => () => void;
+      };
+
+      conformance: {
+        check: (model: string) => Promise<Record<string, unknown>>;
+        onResult: (cb: (report: Record<string, unknown>) => void) => () => void;
       };
 
       clipboard: {
@@ -1060,6 +1066,29 @@ declare global {
           status: string;
           isAllDay: boolean;
         } | null>;
+      };
+
+      gmail: {
+        isAuthenticated: () => Promise<boolean>;
+        search: (query: string, maxResults?: number) => Promise<
+          Array<{
+            id: string;
+            threadId: string;
+            subject: string;
+            from: string;
+            snippet: string;
+            date: string;
+            unread: boolean;
+          }>
+        >;
+        createDraft: (opts: { to: string; subject: string; body: string }) => Promise<{ id: string; webUrl: string } | null>;
+        openDraft: (webUrl: string) => Promise<void>;
+      };
+
+      google: {
+        listTools: () => Promise<Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>>;
+        hasCredentials: () => Promise<boolean>;
+        credentialsPath: () => Promise<string>;
       };
 
       gateway: {
