@@ -1264,6 +1264,12 @@ window.addEventListener('DOMContentLoaded',function(){
             line-height: 1.75;
             color: #d6d6de;
             letter-spacing: 0.005em;
+            /* A 300-char unbroken token (a long URL, hash, or run-on word)
+               must never force the chat panel to scroll horizontally —
+               overflow-wrap:anywhere breaks it at any character as a last
+               resort, word-break:break-word is the older-browser fallback. */
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         .friday-doc > *:first-child { margin-top: 0; }
         .friday-doc > *:last-child { margin-bottom: 0; }
@@ -1345,6 +1351,12 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 8px;
             padding: 14px 16px;
             margin: 12px 0 16px;
+            /* Wrap long lines instead of relying solely on horizontal scroll
+               — a code block with one very long unbroken line must not push
+               the chat panel itself wider than its container. overflow-x
+               stays as a defensive fallback; it should rarely trigger now. */
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             overflow-x: auto;
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
@@ -1366,7 +1378,8 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 0;
             font-size: 12px;
             color: #a5f3fc;
-            white-space: pre;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             line-height: 1.6;
         }
 
@@ -4206,7 +4219,9 @@ function fridayCitationize(src) {
   let out = src;
   // FR-3 provenance: the server rewrites any [web:URL] citation NOT backed by
   // an executed tool result this turn into [unverified-web:URL]. Render it
-  // inert — no href, struck through, visually flagged — never a clickable link.
+  // inert — no href, struck through, visually flagged — never a clickable
+  // link. This must run before the [web:...] replace below (disjoint prefix,
+  // order doesn't matter for correctness, but keep them adjacent for clarity).
   out = out.replace(/\[unverified-web:(https?:\/\/[^\]\s]+)\]/g, (_, url) => {
     let host = 'link';
     try {
@@ -37695,6 +37710,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     style: {
       flex: 1,
       overflowY: 'auto',
+      overflowX: 'hidden',
       padding: 12
     }
   }, chatMsgs.length === 0 && /*#__PURE__*/React.createElement("div", {
@@ -37716,6 +37732,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       alignItems: 'flex-start',
       gap: 4,
       maxWidth: '80%',
+      minWidth: 0,
       justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start'
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -37724,7 +37741,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       borderRadius: 8,
       fontSize: 12,
       background: m.role === 'user' ? 'rgba(124,58,237,0.12)' : 'rgba(255,255,255,0.03)',
-      color: m.role === 'user' ? '#b794f6' : '#bbb'
+      color: m.role === 'user' ? '#b794f6' : '#bbb',
+      minWidth: 0,
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word'
     }
   }, m.role === 'friday' && m.via !== 'voice' ? /*#__PURE__*/React.createElement("div", {
     dangerouslySetInnerHTML: {
