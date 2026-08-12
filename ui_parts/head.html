@@ -1264,6 +1264,12 @@ window.addEventListener('DOMContentLoaded',function(){
             line-height: 1.75;
             color: #d6d6de;
             letter-spacing: 0.005em;
+            /* A 300-char unbroken token (a long URL, hash, or run-on word)
+               must never force the chat panel to scroll horizontally —
+               overflow-wrap:anywhere breaks it at any character as a last
+               resort, word-break:break-word is the older-browser fallback. */
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         .friday-doc > *:first-child { margin-top: 0; }
         .friday-doc > *:last-child { margin-bottom: 0; }
@@ -1345,6 +1351,12 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 8px;
             padding: 14px 16px;
             margin: 12px 0 16px;
+            /* Wrap long lines instead of relying solely on horizontal scroll
+               — a code block with one very long unbroken line must not push
+               the chat panel itself wider than its container. overflow-x
+               stays as a defensive fallback; it should rarely trigger now. */
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             overflow-x: auto;
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
@@ -1366,7 +1378,8 @@ window.addEventListener('DOMContentLoaded',function(){
             padding: 0;
             font-size: 12px;
             color: #a5f3fc;
-            white-space: pre;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
             line-height: 1.6;
         }
 

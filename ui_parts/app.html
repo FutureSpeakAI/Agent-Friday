@@ -10305,11 +10305,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           <button onClick={()=>setChatOpen(false)} title="Close chat" aria-label="Close chat" style={{background:'none',border:'none',color:'#999',cursor:'pointer'}}>&#x2715;</button>
         </div>
       </div>
-      <div style={{flex:1,overflowY:'auto',padding:12}}>
+      <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
         {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
-          <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb'}}>
+          <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+            <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
               {m.role==='friday'&&m.via!=='voice'
                 ?<div dangerouslySetInnerHTML={{__html:renderFridayMarkdown(m.text||'',{compact:true})}}/>
                 :m.text}
