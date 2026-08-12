@@ -7,6 +7,9 @@ export interface ChatMessage {
   model?: string;
   timestamp: number;
   pending?: boolean;
+  /** FR-3: URLs that actually came from an executed tool result this turn — used
+   * to render only provenanced URLs as clickable links (model-minted URLs render inert). */
+  provenanceUrls?: string[];
 }
 
 export interface ConfirmationRequest {

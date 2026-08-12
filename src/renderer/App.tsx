@@ -107,6 +107,9 @@ export default function App() {
   const connectingRef = useRef(false);
   const queuedTextRef = useRef<string | null>(null);
   const personaplexActiveRef = useRef(false);
+  // FR-3: URL provenance for the in-flight response — set by onResponseProvenance
+  // just before onResponse/onResponseChunk fire for the same turn.
+  const pendingProvenanceRef = useRef<string[]>([]);
 
   const geminiLive = useGeminiLive({
     onTextResponse: (text) => {
@@ -268,11 +271,17 @@ export default function App() {
         console.warn('[Agent] Failed to get onboarding tool declarations:', err);
       }
     } else {
-      // Post-onboarding: full desktop toolkit
+      // Post-onboarding: full desktop toolkit + Google tools (FR-6)
       try {
         tools = await window.eve.desktop.listTools();
       } catch {
         // Desktop tools unavailable — that's fine
+      }
+      try {
+        const googleTools = await window.eve.google.listTools();
+        tools = [...tools, ...googleTools];
+      } catch {
+        // Google tools unavailable — that's fine, honest-degradation happens per-call anyway
       }
     }
 
@@ -559,15 +568,23 @@ export default function App() {
         }),
       );
 
+      // FR-3: per-turn URL provenance arrives just before the response it applies to.
+      cleanups.push(
+        window.eve.localConversation.onResponseProvenance(({ urls }) => {
+          pendingProvenanceRef.current = urls;
+        }),
+      );
+
       // Final response — ensure content is complete, handle onboarding events
       cleanups.push(
         window.eve.localConversation.onResponse((text: string) => {
+          const provenanceUrls = pendingProvenanceRef.current;
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             // If chunks already built this message or a pending placeholder exists, update it
             if (last && last.role === 'assistant' && (last.model === 'ollama-local' || last.pending)) {
               if (last.content !== text || last.pending) {
-                return [...prev.slice(0, -1), { ...last, content: text, pending: false }];
+                return [...prev.slice(0, -1), { ...last, content: text, pending: false, provenanceUrls }];
               }
               return prev; // Already up to date
             }
@@ -580,6 +597,7 @@ export default function App() {
                 content: text,
                 model: 'ollama-local',
                 timestamp: Date.now(),
+                provenanceUrls,
               },
             ];
           });

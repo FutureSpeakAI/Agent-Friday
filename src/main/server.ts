@@ -10,6 +10,7 @@ import { browserToolDefs, executeBrowserTool } from './browser';
 import { connectorRegistry } from './connectors/registry';
 import { settingsManager } from './settings';
 import { llmClient, type ChatMessage, type ToolDefinition, type LLMResponse } from './llm-client';
+import { findPseudoToolCalls, buildCorrectiveMessage, HONEST_FAILURE_MESSAGE } from './tool-call-validator';
 import { privacyShield } from './privacy-shield';
 import { integrityManager } from './integrity';
 import { assertMessageArray } from './ipc/validate';
@@ -545,19 +546,50 @@ export async function runClaudeToolLoop(
     return { content: truncated, details: content !== truncated ? { fullResult: content } : undefined };
   }
 
-  // Initial LLM call
-  emit({ type: 'turn_start', iteration: 0 });
-
-  let response: LLMResponse = await llmClient.complete(
-    {
+  // FR-2/FR-4: Wraps llmClient.complete() with narration detection. A
+  // tool-incapable or under-capable model can narrate bracket syntax that
+  // imitates a tool call instead of using the real function-calling channel
+  // (see tool-call-validator.ts). When that happens with no real tool calls
+  // attached, push a corrective message and retry — at most twice — before
+  // replacing the response with an honest failure.
+  async function completeSafe(): Promise<LLMResponse> {
+    const MAX_RETRIES = 2;
+    const req = {
       messages,
       systemPrompt,
       model: options.model,
       tools: tools.length > 0 ? tools : undefined,
       maxTokens: 4096,
-    },
-    resolvedProvider
-  );
+    };
+    let resp = await llmClient.complete(req, resolvedProvider);
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (resp.toolCalls && resp.toolCalls.length > 0) return resp;
+      const matches = findPseudoToolCalls(resp.content || '', tools.map((t) => t.name));
+      if (matches.length === 0) return resp;
+
+      console.warn(
+        `[Server] Narrated pseudo tool-call detected (attempt ${attempt + 1}/${MAX_RETRIES}): ` +
+        matches.slice(0, 3).map((m) => m.raw).join(' | ')
+      );
+      messages.push({ role: 'user', content: buildCorrectiveMessage(matches[0].raw) });
+      resp = await llmClient.complete(req, resolvedProvider);
+    }
+
+    if (!resp.toolCalls || resp.toolCalls.length === 0) {
+      const stillNarrating = findPseudoToolCalls(resp.content || '', tools.map((t) => t.name));
+      if (stillNarrating.length > 0) {
+        console.warn('[Server] Honest failure — pseudo tool-call narration persisted after retries; suppressing fabricated content.');
+        return { ...resp, content: HONEST_FAILURE_MESSAGE, toolCalls: [], stopReason: 'end_turn' };
+      }
+    }
+    return resp;
+  }
+
+  // Initial LLM call
+  emit({ type: 'turn_start', iteration: 0 });
+
+  let response: LLMResponse = await completeSafe();
 
   totalInputTokens += response.usage.inputTokens;
   totalOutputTokens += response.usage.outputTokens;
@@ -616,16 +648,7 @@ export async function runClaudeToolLoop(
       }
     }
 
-    response = await llmClient.complete(
-      {
-        messages,
-        systemPrompt,
-        model: options.model,
-        tools: tools.length > 0 ? tools : undefined,
-        maxTokens: 4096,
-      },
-      resolvedProvider
-    );
+    response = await completeSafe();
 
     totalInputTokens += response.usage.inputTokens;
     totalOutputTokens += response.usage.outputTokens;

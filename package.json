@@ -27,6 +27,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:claw-gate": "vitest run tests/integrity tests/gateway tests/errors tests/services tests/performance tests/security --reporter=verbose",
+    "conformance:check": "tsx scripts/toolcall-conformance.ts",
     "postinstall": "node scripts/fix-libsodium-esm.js"
   },
   "build": {
@@ -143,6 +144,7 @@
     "remark-gfm": "^4.0.1",
     "sharp": "^0.34.5",
     "three": "^0.183.1",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^6.0.0",

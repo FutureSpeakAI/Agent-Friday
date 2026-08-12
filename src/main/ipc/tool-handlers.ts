@@ -3,6 +3,7 @@
  */
 import { ipcMain, BrowserWindow } from 'electron';
 import { DESKTOP_TOOL_DECLARATIONS, callDesktopTool } from '../desktop-tools';
+import { GOOGLE_TOOL_DECLARATIONS } from '../google-tools';
 import { BROWSER_TOOL_DECLARATIONS, executeBrowserTool } from '../browser';
 import { screenCapture } from '../screen-capture';
 import { taskScheduler, SCHEDULER_TOOL_DECLARATIONS } from '../scheduler';
@@ -37,6 +38,10 @@ export interface ToolHandlerDeps {
 export function registerToolHandlers(deps: ToolHandlerDeps): void {
   // ── Desktop tools ───────────────────────────────────────────────────
   ipcMain.handle('desktop:list-tools', () => DESKTOP_TOOL_DECLARATIONS);
+
+  // ── Google tools (FR-6) — always advertised; honest "not connected" ──
+  // message if unauthorized, handled inside LocalConversation.executeToolCall.
+  ipcMain.handle('google:list-tools', () => GOOGLE_TOOL_DECLARATIONS);
 
   // Crypto Sprint 8 (CRITICAL): Validate tool name and args before dispatching.
   ipcMain.handle(
