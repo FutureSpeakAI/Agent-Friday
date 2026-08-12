@@ -1226,6 +1226,73 @@ def _factcheck_news_citations(reply):
         return reply
 
 
+# ── FR-2: tool-call integrity response validator (toolcall-integrity-v5) ──
+# 2026-08-12: gemma3:4b (no real Ollama tool-calling support) confabulated an
+# entire "start my day" briefing — narrating bracket-syntax pseudo-tool-calls
+# like [query_calendar] and [search_email(priority:high)] as prose, and
+# inventing results for them. This scans every generated reply, on every
+# provider, for that fabrication pattern BEFORE it's stored, rendered, or
+# spoken — see routes/chat.py's two call sites. Never executes the parsed
+# leak text; it is detected and stripped, not interpreted.
+TOOLCALL_FABRICATION_FAILURE_MESSAGE = (
+    "I couldn't run my tools this turn — my draft reply referenced tool "
+    "results I never actually retrieved, so I'm not going to show it to "
+    "you. Try asking again, or let me know if you'd like me to try a "
+    "different approach."
+)
+
+_integrity_logger = logging.getLogger("friday.integrity")
+
+
+def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
+                                max_retries=2):
+    """Scan `reply` for fabricated tool-call syntax (outside code fences) built
+    from `tool_names`. Clean replies pass through unchanged.
+
+    On a leak: if `redispatch(corrective_note) -> (reply, tool_trace)` is
+    given, retry up to `max_retries` times with a corrective instruction
+    appended to the conversation. If the leak survives every retry (or no
+    redispatch callback was given), the reply is replaced with an honest
+    failure message and the tool_trace is cleared — never rendered, never
+    spoken, never treated as real tool output.
+
+    Returns (reply, tool_trace, meta) — meta records what happened for
+    logging/telemetry (routes/chat.py may want to surface `meta['blocked']`).
+    """
+    from agent_friday.services.tool_integrity import find_pseudo_toolcalls
+
+    leaks = find_pseudo_toolcalls(reply, tool_names)
+    blocked = bool(leaks)
+    tries = 0
+    while leaks and redispatch is not None and tries < max_retries:
+        tries += 1
+        note = (
+            "Your previous reply contained fabricated tool-call syntax "
+            f"({', '.join(sorted(set(leaks))[:5])}) instead of either a real "
+            "tool call or honest plain-text prose. Never write a tool name "
+            "as text. If the request needs a tool, call it for real via the "
+            "tools API. If no tool call succeeds, say plainly that you "
+            "couldn't get the information — do not describe a result you "
+            "never received."
+        )
+        try:
+            reply, tool_trace = redispatch(note)
+        except Exception as e:
+            _integrity_logger.warning("corrective redispatch failed: %s", e)
+            break
+        leaks = find_pseudo_toolcalls(reply, tool_names)
+
+    if leaks:
+        _integrity_logger.warning(
+            "tool-call fabrication survived %d retries — substituting honest "
+            "failure message. leaked_names=%s", tries, sorted(set(leaks)))
+        reply = TOOLCALL_FABRICATION_FAILURE_MESSAGE
+        tool_trace = []
+
+    return reply, tool_trace, {"blocked": blocked, "retries": tries,
+                               "final_leaks": leaks}
+
+
 def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
                               vault_control=None, vault_fallback='redact'):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
@@ -1338,6 +1405,15 @@ FRIDAY_SYSTEM_PROMPT = (
     "Calendar. Instead, say the integration is set up and just needs a one-time connection, and OFFER to "
     "walk them through it (they authorize at /api/google/auth, or via Settings -> Connectors; you can "
     "open_url that page for them). Only report an actual failure if a tool fails for some other reason.\n\n"
+    "== HONEST DEGRADATION (applies to every model, every provider) ==\n"
+    "If a tool fails, times out, returns an error, or isn't available, SAY SO AND STOP — do not guess, "
+    "estimate, or describe what the result probably would have been. A real tool call is invisible to the "
+    "user; only its actual result is real. NEVER write a tool's name as plain text pretending to invoke it "
+    "(e.g. writing 'query_calendar' or '[search_email(...)]' in your reply is not calling the tool — it is "
+    "fabrication, and it is never acceptable). If you need information a tool would provide and you did not "
+    "actually receive a result from that tool this turn, tell the user plainly that you don't have it — "
+    "never invent calendar events, emails, search results, URLs, or any other tool output. It is always "
+    "better to say 'I couldn't get that' than to make something up.\n\n"
     "== AVAILABLE TOOLS ==\n"
     "Use these tools proactively and in combination:\n"
     "  FILE SYSTEM (Ring 0-1, always allowed):\n"

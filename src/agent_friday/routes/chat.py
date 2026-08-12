@@ -64,6 +64,7 @@ from agent_friday.services.model_router import (
     _compress_trajectory,
     _current_session_id,
     _factcheck_news_citations,
+    validate_toolcall_integrity,
     _generate_text,
     _get_context_compressor,
     _get_context_pruner,
@@ -575,6 +576,47 @@ def chat():
                     except Exception:
                         pass
 
+        # ── FR-2: tool-call integrity — scan for fabricated bracket-syntax
+        # pseudo-tool-calls (e.g. [query_calendar], [search_email(...)])
+        # BEFORE the reply is stored, rendered, or spoken. Corrective-retries
+        # through the SAME dispatch path that produced the leak, then falls
+        # back to an honest failure — never renders/speaks a fabrication, and
+        # never executes the leaked bracket text as a real tool call. ──
+        def _redispatch_for_integrity(corrective_note):
+            _retry_messages = messages + [{"role": "user", "content": corrective_note}]
+            if _routed_local:
+                return _call_ollama(
+                    _retry_messages, system=system_prompt, model=_route_info['model'],
+                    temperature=settings.get('temperature'),
+                    orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                )
+            if _provider == 'openai':
+                return _call_openai(
+                    _retry_messages, system=system_prompt, model=_route_info.get('model'),
+                    temperature=settings.get('temperature'),
+                    orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
+                    tools=CLAUDE_TOOLS, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    provider=_route_info.get('provider_name'),
+                )
+            _cloud_model = _route_info.get('model')
+            _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
+            return _call_claude_agent(
+                _retry_messages, system=system_prompt, model=_claude_model,
+                temperature=settings.get('temperature'),
+                pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                orb_label=_orb_label, orb_category='default', orb_icon='💬',
+            )
+
+        reply, tool_trace, _integrity_meta = validate_toolcall_integrity(
+            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            redispatch=_redispatch_for_integrity,
+        )
+        if _integrity_meta.get('blocked'):
+            print(f"  [INTEGRITY] fabricated tool-call syntax caught "
+                  f"(retries={_integrity_meta['retries']}, "
+                  f"resolved={'yes' if not _integrity_meta['final_leaks'] else 'no'})")
+
         # ── Rehydrate: restore real PII before returning to the user. ──
         if pii_lookup:
             reply = _rehydrate_pii(reply, pii_lookup)
@@ -1011,6 +1053,22 @@ def sources_dossier(session_id):
         )
         # Fact-check pass so low-trust news sources in the sheet get flagged too.
         markdown = _factcheck_news_citations(markdown)
+        # FR-2: this route offers no tools (pure summarization over past
+        # turns), so a leaked CLAUDE_TOOLS name here can only be fabrication,
+        # not a real call gone unrendered — no redispatch path exists (there's
+        # no tool_trace to retry against), so a leak fails the whole dossier
+        # rather than rendering a document that narrates invented tool calls.
+        from agent_friday.services.tool_integrity import find_pseudo_toolcalls
+        _dossier_leaks = find_pseudo_toolcalls(markdown, [t['name'] for t in CLAUDE_TOOLS])
+        if _dossier_leaks:
+            print(f"  [INTEGRITY] source dossier draft contained fabricated "
+                  f"tool-call syntax {_dossier_leaks} — discarding draft")
+            markdown = (
+                f"# 📋 Source Dossier — {session_id}\n\n"
+                "_Couldn't generate a reliable dossier this time — the draft "
+                "referenced tool calls that were never actually executed. "
+                "Try again._\n"
+            )
 
         return jsonify({
             "status": "ok",
