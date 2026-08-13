@@ -293,19 +293,43 @@ _STATUS_COLORS = {
 
 
 def _status_for_google(defn: dict) -> dict:
-    creds_fn, client_cfg_fn, token_path = _google_helpers()
-    connected = False
+    """2026-08-13: per-account status from the multi-account store
+    (services.google_accounts) — the old single boolean here only ever
+    reflected ONE (the primary) account, and via the legacy
+    _google_credentials() bridge; a second connected account, or an account
+    that needs re-auth while another is fine, was invisible. Names which
+    store was checked so this never reads as ambiguous again."""
+    accounts_status = []
+    any_connected = False
+    try:
+        from agent_friday.services import google_accounts as ga
+        for rec in ga.list_accounts():
+            aid = rec.get("id")
+            try:
+                ok = ga.credentials_for(aid) is not None
+            except Exception:
+                ok = False
+            any_connected = any_connected or ok
+            accounts_status.append({
+                "id": aid, "label": rec.get("label"), "email": rec.get("email"),
+                "status": "connected" if ok else "needs_reauth",
+            })
+    except Exception:
+        pass
+
     client_ok = False
     try:
-        if creds_fn:
-            connected = creds_fn() is not None
+        _creds_fn, client_cfg_fn, _token_path = _google_helpers()
         if client_cfg_fn:
             cfg, _src = client_cfg_fn()
             client_ok = cfg is not None
     except Exception:
         pass
-    if connected:
-        status, detail = "connected", "Live — Gmail + Calendar read-only"
+
+    if accounts_status:
+        connected_n = sum(1 for a in accounts_status if a["status"] == "connected")
+        status = "connected" if any_connected else "error"
+        detail = f"{connected_n}/{len(accounts_status)} account(s) connected — Gmail + Calendar read-only"
     elif client_ok:
         status, detail = "needs_setup", "OAuth client ready — click Connect to approve access"
     else:
@@ -313,8 +337,10 @@ def _status_for_google(defn: dict) -> dict:
     return {
         "status": status,
         "detail": detail,
-        "token_present": connected,
+        "token_present": any_connected,
         "client_configured": client_ok,
+        "store": "google_accounts (multi-account)",
+        "accounts": accounts_status,
     }
 
 
