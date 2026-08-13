@@ -151,6 +151,8 @@ def friday_health():
             except Exception:
                 pass
     settings = _load_settings()
+    # `active` is CONFIGURATION (a key is present), never health — decision D1.
+    # The health verdict comes from _inference below, which proves inference.
     models = [
         {"name": "Claude Opus 4.8", "active": bool(core.ANTHROPIC_API_KEY)},
         {"name": "Gemini",     "active": bool(core.GEMINI_API_KEY)},
@@ -204,8 +206,33 @@ def friday_health():
                                if _p.is_file() and not _p.name.startswith("."))
     except Exception:
         pass
+    # ── Health verdict (decision D1) ──────────────────────────────────────
+    # This field used to be the literal "ok", so /api/health could not report
+    # failure: a revoked key, a stopped Ollama daemon or an out-of-credit
+    # account all read as healthy. It is now derived from a real one-token
+    # generation (cached ~60s inside provider_health, because the tray
+    # watchdog polls this endpoint).
+    #
+    # The HTTP status stays 200 even when status == "down": the tray treats a
+    # non-2xx as "server is dead" and would restart a server that is in fact
+    # running fine with an unreachable model backend. Liveness (HTTP 200) and
+    # inference health (this field) are deliberately different signals.
+    _inference = {"status": "unknown", "providers": []}
+    try:
+        from agent_friday.services.provider_health import inference_health
+        _inference = inference_health()
+    except Exception as _e:
+        _inference = {"status": "unknown", "providers": [],
+                      "detail": str(_e)[:120]}
+    _status = _inference.get("status") or "unknown"
+
     return jsonify({
-        "status": "ok",
+        "status": _status,
+        "inference": _inference,
+        "configuration": {
+            "anthropic_key": bool(core.ANTHROPIC_API_KEY),
+            "gemini_key": bool(core.GEMINI_API_KEY),
+        },
         "version": _app_version,
         "mood": _mood,
         "memory_entries": _memory_entries,
