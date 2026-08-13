@@ -110,13 +110,20 @@ def _live_ollama_running(base_url: str):
 
 def _custom_models() -> list:
     """User-declared custom model ids — settings key `custom_models`:
-    [{"provider": ..., "id": ...}]. Read straight from settings.json:
-    this module is imported by dependency-light unit tests, so it must not
-    pull in core/Flask just to read one list."""
+    [{"provider": ..., "id": ...}]. Prefer core.SETTINGS_FILE — the ONE
+    canonical settings path, snapshotted at core import — over a fresh
+    Path.home() lookup: Path.home() reads USERPROFILE at call time, and the
+    test suite's hermetic-home redirection makes the two diverge mid-run
+    (root cause of an order-dependent full-suite failure). Falls back to
+    Path.home() only when core is unimportable, keeping this module usable
+    from dependency-light contexts."""
     try:
         import json
-        from pathlib import Path
-        path = Path.home() / ".friday" / "settings.json"
+        try:
+            from agent_friday.core import SETTINGS_FILE as path
+        except Exception:
+            from pathlib import Path
+            path = Path.home() / ".friday" / "settings.json"
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         items = data.get("custom_models") or []
