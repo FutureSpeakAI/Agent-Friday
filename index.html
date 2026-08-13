@@ -4245,6 +4245,14 @@ function fridayCitationize(src) {
     const when = p.split('/')[0].trim();
     return chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + when, 'From a past conversation · ' + p.trim());
   });
+  // B6: raw memory-system artifacts must never render as-is in prose. The
+  // recall block feeds the model lines like "- [2026-08-01] You: …", and
+  // models sometimes copy the bare bracketed date (or even a literal
+  // "💬 2026-08-01" from earlier rendered history) into replies. Normalize
+  // both to the same unobtrusive conversation chip. The (?!\() guard keeps
+  // markdown links like [2026-08-01](url) intact.
+  out = out.replace(/\[(\d{4}-\d{2}-\d{2})\](?!\()/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d));
+  out = out.replace(/💬\s*(\d{4}-\d{2}-\d{2})/g, (_, d) => chip('rgba(52,211,153,0.14)', 'rgba(52,211,153,0.45)', '#34d399', '💬 ' + d, 'From a past conversation · ' + d));
   return out;
 }
 if (typeof window !== 'undefined') {
@@ -4303,6 +4311,12 @@ function sanitizeVoiceTranscript(raw) {
   t = t.replace(/\([^()\n]{0,40}\)/g, m => PCUE.test(m) ? ' ' : m);
   // 6. Leading "label:" cue lines (Mood:/Tone:/Affect:/Internal:/Reasoning:…).
   t = t.replace(/^[ \t]*(?:mood|tone|affect|emotion|emotional|feeling|internal|reasoning|thinking|persona|personality|voice|system|note|stage direction)[ \t]*[:\-–][ \t]*.*$/gim, ' ');
+  // 6b. B6: citation tokens are a text-chat rendering feature — in a voice
+  // transcript (rendered as plain text, no fridayCitationize pass) they'd
+  // show as raw [memory:…]/[conversation:…] brackets or stray 💬 markers.
+  // Strip the token, keep the words.
+  t = t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web):[^\]\n]{0,160}\]/gi, ' ');
+  t = t.replace(/💬\s*(?=\d{4}-\d{2}-\d{2})/g, '');
   // 7. Collapse whitespace the removals left behind.
   t = t.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
   return t;
@@ -33658,6 +33672,7 @@ function App() {
     }).then(() => refreshHooks()).catch(() => {});
   };
   const saveAgentSettings = async (patch, opts = {}) => {
+    const prev = agentSettings;
     const next = {
       ...agentSettings,
       ...patch
@@ -33676,6 +33691,16 @@ function App() {
         body: JSON.stringify(body)
       });
       const d = await r.json();
+      // A5: a rejected save (e.g. the FR-1 seat gate 400ing a red model) must
+      // NOT display "Saved" while the pill shows the rejected model — that was
+      // the UI half of the silent-seat hole. Revert the optimistic update and
+      // surface the server's reason.
+      if (!r.ok || d?.status === 'error') {
+        setAgentSettings(prev);
+        setSettingsSaveMsg(String(d?.message || d?.error || 'Save rejected').slice(0, 200));
+        setTimeout(() => setSettingsSaveMsg(''), 6000);
+        return false;
+      }
       if (d?.settings) setAgentSettings({
         ...DEFAULT_AGENT_SETTINGS,
         ...d.settings
@@ -33689,6 +33714,7 @@ function App() {
       setSettingsSaveMsg('Save failed');
     }
     setTimeout(() => setSettingsSaveMsg(''), 1800);
+    return true;
   };
   const savePersonality = () => saveAgentSettings({}, {
     personality: personalityDraft,
@@ -34034,6 +34060,108 @@ function App() {
         local_model: name
       }
     });
+  };
+  // ── A5: per-axis seat-gate status (structural + honesty) + on-demand runs.
+  // Fail-closed everywhere: no recorded run = ungated = not seatable.
+  const [seatGate, setSeatGate] = useState({});
+  const refreshSeatGate = () => fetch('/api/seat-gate/statuses').then(r => r.json()).then(d => setSeatGate(d.statuses || {})).catch(() => {});
+  useEffect(() => {
+    refreshSeatGate();
+    const iv = setInterval(refreshSeatGate, 15000);
+    return () => clearInterval(iv);
+  }, []);
+  const runSeatGate = name => {
+    setSeatGate(s => ({
+      ...s,
+      [name]: {
+        ...(s[name] || {}),
+        running: true
+      }
+    }));
+    fetch('/api/seat-gate/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: name
+      })
+    }).then(() => setTimeout(refreshSeatGate, 3000)).catch(() => {});
+  };
+  const gateChip = name => {
+    const g = seatGate[name] || {};
+    if (g.running) return /*#__PURE__*/React.createElement("span", {
+      title: "Gate axes running \u2014 progress shows as an orb",
+      style: {
+        fontSize: 8,
+        fontFamily: 'JetBrains Mono',
+        color: '#00d4ff',
+        border: '1px solid rgba(0,212,255,0.35)',
+        borderRadius: 3,
+        padding: '0 4px',
+        marginRight: 4
+      }
+    }, "\u23F3 gating");
+    const st = g.dual_green ? 'dual' : g.structural === 'green' ? 'structural' : g.structural === 'red' || g.honesty === 'red' ? 'red' : 'ungated';
+    const cfg = {
+      dual: {
+        c: '#00ff80',
+        b: 'rgba(0,255,128,0.35)',
+        t: '✓✓',
+        ti: 'Dual-gate GREEN (structural + honesty) — eligible for the orchestrator seat.'
+      },
+      structural: {
+        c: '#f59e0b',
+        b: 'rgba(245,158,11,0.35)',
+        t: '✓·',
+        ti: 'Structural green, honesty ' + (g.honesty || 'ungated') + ' — run the honesty battery to qualify for the orchestrator seat.'
+      },
+      red: {
+        c: '#f87171',
+        b: 'rgba(239,68,68,0.4)',
+        t: '✗',
+        ti: 'Gate RED — structural: ' + (g.structural || '?') + ', honesty: ' + (g.honesty || '?') + '. Fails closed: cannot hold a tool-using seat.'
+      },
+      ungated: {
+        c: '#8b93a7',
+        b: 'rgba(255,255,255,0.2)',
+        t: '—',
+        ti: 'Ungated — fails closed until both axes have run. Click ▶ gate.'
+      }
+    }[st];
+    return /*#__PURE__*/React.createElement("span", {
+      title: cfg.ti,
+      style: {
+        fontSize: 8,
+        fontFamily: 'JetBrains Mono',
+        color: cfg.c,
+        border: '1px solid ' + cfg.b,
+        borderRadius: 3,
+        padding: '0 4px',
+        marginRight: 4
+      }
+    }, cfg.t);
+  };
+  // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
+  const [pullName, setPullName] = useState('');
+  const [pullMsg, setPullMsg] = useState('');
+  const pullArmed = useRef(false);
+  const pullWithPreflight = async () => {
+    const name = pullName.trim();
+    if (!name) return;
+    try {
+      const pf = await fetch('/api/ollama/pull/preflight?name=' + encodeURIComponent(name)).then(r => r.json());
+      if (pf.warning && !pullArmed.current) {
+        pullArmed.current = true;
+        setPullMsg(pf.warning + ' — click Pull again to force');
+        return;
+      }
+    } catch (_) {}
+    pullArmed.current = false;
+    setPullMsg('Pulling ' + name + ' — progress shows as a process orb; it appears in this list when done.');
+    pullModel(name);
+    setPullName('');
+    setTimeout(() => setPullMsg(''), 10000);
   };
   const chatEnd = useRef(null);
 
@@ -35533,6 +35661,26 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // the live log + result, and falls back to the orb's reasoning steps for
   // process-only orbs that aren't backed by a task.
   const [threadOrb, setThreadOrb] = useState(null);
+  // ── B4: global activity ledger — "Every model action, every subagent
+  // process, every reasoning thread needs to be visible if the user wishes
+  // to see it." Badges default-on; this panel is the depth-on-demand. ──
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityEvents, setActivityEvents] = useState([]);
+  const [activityKind, setActivityKind] = useState('');
+  const [activityFilter, setActivityFilter] = useState('');
+  useEffect(() => {
+    if (!activityOpen) return;
+    let active = true;
+    const tick = () => fetch('/api/activity?limit=200' + (activityKind ? '&kind=' + encodeURIComponent(activityKind) : '')).then(r => r.json()).then(d => {
+      if (active) setActivityEvents(d.events || []);
+    }).catch(() => {});
+    tick();
+    const iv = setInterval(tick, 4000);
+    return () => {
+      active = false;
+      clearInterval(iv);
+    };
+  }, [activityOpen, activityKind]);
   const [threadSteps, setThreadSteps] = useState([]);
   const [taskLog, setTaskLog] = useState(null); // null = no task-backed log (use steps); [] = task with empty log
   const [taskMeta, setTaskMeta] = useState(null); // {status,result,evaluation,verified}
@@ -35600,7 +35748,9 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           result: t.result,
           evaluation: t.evaluation,
           verified: t.verified,
-          elapsed: t.elapsed
+          elapsed: t.elapsed,
+          model: t.model,
+          linked_task_id: t.linked_task_id
         });
         if (t.status && t.status !== threadOrb.status) setThreadOrb(p => p && p.id === threadOrb.id ? {
           ...p,
@@ -35718,9 +35868,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       clearInterval(timer);
     };
   }, []);
+
+  // B1/B2: rehydrated history keeps model/seat badges and system lines; the
+  // server persists `timestamp` while live messages carry `time` — map it so
+  // reloaded messages don't render a blank clock.
   useEffect(() => {
     fetch('/api/chat/history').then(r => r.json()).then(d => {
-      if (d.messages) setChatMsgs(d.messages);
+      if (d.messages) setChatMsgs(d.messages.map(m => ({
+        ...m,
+        time: m.time || (m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : '')
+      })));
     }).catch(() => {});
   }, []);
   const dismissedNotifIds = useRef(new Set());
@@ -36233,9 +36390,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         body: JSON.stringify(body)
       });
       const d = await r.json();
+      // B2: seat changes detected this turn render as system lines BEFORE the
+      // reply — a routing flip is never silent again.
+      if (d.seat_events && d.seat_events.length) setChatMsgs(p => [...p, ...d.seat_events.map(ev => ({
+        role: 'system',
+        kind: 'seat_change',
+        text: '⚙ ' + ev.text,
+        time: new Date().toLocaleTimeString()
+      }))]);
+      // B1: every reply carries its model + seat class.
       setChatMsgs(p => [...p, {
         role: 'friday',
         text: d.response,
+        model: d.model,
+        seat: d.seat,
         time: new Date().toLocaleTimeString()
       }]);
       // Execute any structured actions Friday returned (navigate, open_path…).
@@ -37095,14 +37263,47 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       flex: 1,
       whiteSpace: 'nowrap'
     }
-  }, rm.label))), routingMode !== 'cloud_only' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '0 12px 6px',
-      fontSize: 9,
-      color: 'rgba(255,255,255,0.45)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", routingStats.local_tokens > 0 ? ` · ${routingStats.local_tokens.toLocaleString()} local tokens` : '', !ollamaStatus.available ? ' · Ollama offline' : ''), ollamaStatus.available && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, rm.label))), (() => {
+    const MODE_MEANING = {
+      cloud_only: 'All conversation goes to the cloud orchestrator seat.',
+      smart: 'The router picks the seat per turn — vault-touching turns always go local.',
+      local_preferred: 'Local seat answers first; cloud orchestrator only as fallback.',
+      local_only: 'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'
+    };
+    const localM = (agentSettings.model_routing || {}).local_model || 'gemma4:latest';
+    const effLocal = routingMode === 'local_only';
+    const effModel = effLocal ? localM : agentSettings.orchestrator_model || '';
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '0 12px 6px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: routingMode === 'local_only' ? '#f59e0b' : 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono',
+        lineHeight: 1.5
+      }
+    }, MODE_MEANING[routingMode] || ''), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        fontFamily: 'JetBrains Mono',
+        marginTop: 2,
+        color: 'rgba(255,255,255,0.6)'
+      }
+    }, "Conversational seat now: ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: effLocal ? '#f59e0b' : '#00d4ff'
+      }
+    }, effModel, " \xB7 ", effLocal ? 'local' : 'cloud')), routingMode !== 'cloud_only' && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        color: 'rgba(255,255,255,0.45)',
+        fontFamily: 'JetBrains Mono',
+        marginTop: 2
+      }
+    }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", routingStats.local_tokens > 0 ? ` · ${routingStats.local_tokens.toLocaleString()} local tokens` : '', !ollamaStatus.available ? ' · Ollama offline' : ''));
+  })(), ollamaStatus.available && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "model-selector-tier",
     style: {
       display: 'flex',
@@ -37148,7 +37349,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           whiteSpace: 'nowrap',
           color: active ? '#00ff80' : undefined
         }
-      }, m.name), active && /*#__PURE__*/React.createElement("span", {
+      }, m.name, m.running ? /*#__PURE__*/React.createElement("span", {
+        title: "Loaded in Ollama memory right now",
+        style: {
+          marginLeft: 4,
+          fontSize: 8,
+          color: '#00d4ff'
+        }
+      }, "\u25CF") : null), gateChip(m.name), !(seatGate[m.name] || {}).dual_green && !(seatGate[m.name] || {}).running && /*#__PURE__*/React.createElement("button", {
+        onClick: e => {
+          e.stopPropagation();
+          runSeatGate(m.name);
+        },
+        title: "Run both gate axes now (structural conformance + honesty battery). Progress shows as a process orb.",
+        style: {
+          background: 'rgba(0,212,255,0.06)',
+          border: '1px solid rgba(0,212,255,0.25)',
+          color: '#00d4ff',
+          cursor: 'pointer',
+          fontSize: 8,
+          fontFamily: 'JetBrains Mono',
+          borderRadius: 3,
+          padding: '0 4px',
+          marginRight: 4
+        }
+      }, "\u25B6 gate"), active && /*#__PURE__*/React.createElement("span", {
         style: {
           fontSize: 9,
           color: '#00ff80',
@@ -37174,7 +37399,54 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       color: 'rgba(0,212,255,0.6)',
       fontFamily: 'JetBrains Mono'
     }
-  }, localAllOpen ? '▴ show fewer' : `▸ ${(ollamaStatus.models || []).length - 4} more installed`)), /*#__PURE__*/React.createElement("button", {
+  }, localAllOpen ? '▴ show fewer' : `▸ ${(ollamaStatus.models || []).length - 4} more installed`), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 4,
+      alignItems: 'center',
+      padding: '2px 12px 4px'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: pullName,
+    onChange: e => setPullName(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') pullWithPreflight();
+    },
+    placeholder: "pull model\u2026 e.g. qwen3:14b",
+    style: {
+      flex: 1,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: 4,
+      color: '#ccc',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      padding: '3px 6px',
+      outline: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: pullWithPreflight,
+    disabled: !pullName.trim(),
+    title: "Download this model from the Ollama registry (disk-space preflight first)",
+    style: {
+      background: 'rgba(0,212,255,0.08)',
+      border: '1px solid rgba(0,212,255,0.3)',
+      color: pullName.trim() ? '#00d4ff' : '#556',
+      cursor: pullName.trim() ? 'pointer' : 'default',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      borderRadius: 4,
+      padding: '3px 8px'
+    }
+  }, "\u2B07 Pull")), pullMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '0 12px 6px',
+      fontSize: 9,
+      color: '#f59e0b',
+      fontFamily: 'JetBrains Mono',
+      lineHeight: 1.4
+    }
+  }, pullMsg)), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setModelMenuOpen(false);
       setModelMenuRole(null);
@@ -37783,7 +38055,31 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 12,
       marginTop: 30
     }
-  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => /*#__PURE__*/React.createElement("div", {
+  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => m.role === 'system'
+  /* B2: system lines — seat changes and other transparency notices.
+     Amber, centered, unmistakably NOT Friday speaking. Never sent to
+     the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      textAlign: 'center',
+      margin: '10px 0'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    title: m.kind === 'seat_change' ? 'Model seat configuration changed — this notice is generated by the server, not the model.' : 'System notice',
+    style: {
+      display: 'inline-block',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#f59e0b',
+      background: 'rgba(245,158,11,0.07)',
+      border: '1px solid rgba(245,158,11,0.25)',
+      borderRadius: 5,
+      padding: '3px 10px',
+      maxWidth: '92%',
+      textAlign: 'left',
+      lineHeight: 1.5
+    }
+  }, m.text)) : /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       textAlign: m.role === 'user' ? 'right' : 'left',
@@ -37840,7 +38136,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 9,
       letterSpacing: '0.05em'
     }
-  }, "\uD83C\uDFA4 VOICE")))), chatLoad && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83C\uDFA4 VOICE"), m.role === 'friday' && m.model && /*#__PURE__*/React.createElement("span", {
+    title: 'Generated by ' + m.model + ' (' + (m.seat || 'unknown') + ' seat)',
+    style: {
+      marginLeft: 6,
+      padding: '1px 5px',
+      borderRadius: 3,
+      background: m.seat === 'local' ? 'rgba(245,158,11,0.10)' : 'rgba(0,212,255,0.08)',
+      border: '1px solid ' + (m.seat === 'local' ? 'rgba(245,158,11,0.35)' : 'rgba(0,212,255,0.25)'),
+      color: m.seat === 'local' ? '#f59e0b' : '#00d4ff',
+      fontSize: 9,
+      letterSpacing: '0.05em',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, m.model, m.seat ? ' · ' + m.seat : '')))), chatLoad && /*#__PURE__*/React.createElement("div", {
     className: "typing-indicator"
   }, /*#__PURE__*/React.createElement("span", {
     className: "label"
@@ -38177,7 +38486,22 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     className: "thread-icon"
   }, threadOrb.icon || '⚡'), /*#__PURE__*/React.createElement("span", {
     className: "thread-name"
-  }, threadOrb.label || 'Process')), /*#__PURE__*/React.createElement("span", {
+  }, threadOrb.label || 'Process')), (taskMeta && taskMeta.model || threadOrb.model) && /*#__PURE__*/React.createElement("span", {
+    title: 'Model running this process' + (taskMeta && taskMeta.linked_task_id ? ' · task ' + taskMeta.linked_task_id : ''),
+    style: {
+      fontSize: 8,
+      fontFamily: 'JetBrains Mono',
+      color: '#00d4ff',
+      border: '1px solid rgba(0,212,255,0.3)',
+      borderRadius: 3,
+      padding: '0 4px',
+      marginRight: 6,
+      whiteSpace: 'nowrap',
+      maxWidth: 110,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, taskMeta && taskMeta.model || threadOrb.model), /*#__PURE__*/React.createElement("span", {
     className: `thread-status-badge ${threadOrb.status || 'running'}`
   }, threadOrb.status || 'RUNNING'), /*#__PURE__*/React.createElement("span", {
     className: "thread-elapsed"
@@ -38228,7 +38552,161 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       padding: 20,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Listening for activity\u2026")))), notifOpen && /*#__PURE__*/React.createElement("div", {
+  }, "Listening for activity\u2026")))), activityOpen && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      top: 60,
+      right: 14,
+      width: 400,
+      maxWidth: '92vw',
+      maxHeight: 'calc(100vh - 120px)',
+      display: 'flex',
+      flexDirection: 'column',
+      background: 'rgba(8,12,20,0.97)',
+      border: '1px solid rgba(0,212,255,0.25)',
+      borderRadius: 10,
+      zIndex: 9500,
+      boxShadow: '0 8px 40px rgba(0,0,0,0.6)'
+    },
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '10px 12px',
+      borderBottom: '1px solid rgba(255,255,255,0.06)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 10,
+      color: '#00d4ff',
+      letterSpacing: '0.08em'
+    }
+  }, "ACTIVITY LEDGER"), /*#__PURE__*/React.createElement("select", {
+    value: activityKind,
+    onChange: e => setActivityKind(e.target.value),
+    style: {
+      background: 'rgba(255,255,255,0.05)',
+      border: '1px solid rgba(255,255,255,0.15)',
+      borderRadius: 4,
+      color: '#ccc',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      padding: '2px 4px'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "all kinds"), /*#__PURE__*/React.createElement("option", {
+    value: "model_invocation"
+  }, "model invocations"), /*#__PURE__*/React.createElement("option", {
+    value: "tool_call"
+  }, "tool calls"), /*#__PURE__*/React.createElement("option", {
+    value: "subagent_spawn"
+  }, "subagent spawns")), /*#__PURE__*/React.createElement("input", {
+    value: activityFilter,
+    onChange: e => setActivityFilter(e.target.value),
+    placeholder: "filter\u2026",
+    style: {
+      flex: 1,
+      minWidth: 0,
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: 4,
+      color: '#ccc',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      padding: '2px 6px',
+      outline: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setActivityOpen(false),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: '#999',
+      cursor: 'pointer',
+      fontSize: 12
+    }
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      overflowY: 'auto',
+      padding: '6px 10px'
+    }
+  }, (() => {
+    const f = activityFilter.trim().toLowerCase();
+    const shown = activityEvents.filter(ev => !f || JSON.stringify(ev).toLowerCase().includes(f));
+    if (shown.length === 0) return /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'center',
+        color: '#666',
+        fontSize: 10,
+        padding: 24,
+        fontFamily: 'JetBrains Mono'
+      }
+    }, "No activity recorded", f ? ' matching filter' : '', " yet.");
+    const ICO = {
+      model_invocation: '🧠',
+      tool_call: '🔧',
+      subagent_spawn: '🤖'
+    };
+    return shown.map((ev, i) => {
+      const when = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
+      const seatColor = ev.seat === 'local' ? '#f59e0b' : '#00d4ff';
+      return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: {
+          display: 'flex',
+          gap: 6,
+          alignItems: 'baseline',
+          padding: '3px 0',
+          borderBottom: '1px solid rgba(255,255,255,0.03)',
+          fontSize: 9,
+          fontFamily: 'JetBrains Mono',
+          color: '#aab'
+        }
+      }, /*#__PURE__*/React.createElement("span", null, ICO[ev.kind] || '·'), /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: '#778',
+          flexShrink: 0
+        }
+      }, when), /*#__PURE__*/React.createElement("span", {
+        style: {
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }
+      }, ev.kind === 'tool_call' ? /*#__PURE__*/React.createElement("span", null, ev.tool, " ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: ev.ok ? '#3effa1' : '#f87171'
+        }
+      }, ev.ok ? 'ok' : 'deny/err')) : ev.kind === 'subagent_spawn' ? /*#__PURE__*/React.createElement("span", null, "spawn ", ev.description || ev.task_id || '') : /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: seatColor
+        }
+      }, ev.model || '?', ev.seat ? ' · ' + ev.seat : '')), ev.duration_ms != null && /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: '#667',
+          flexShrink: 0
+        }
+      }, Math.round(ev.duration_ms), "ms"), ev.tokens_in || ev.tokens_out ? /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: '#667',
+          flexShrink: 0
+        }
+      }, (ev.tokens_in || 0) + '/' + (ev.tokens_out || 0), "tk") : null, ev.task_id && /*#__PURE__*/React.createElement("span", {
+        title: 'task ' + ev.task_id,
+        style: {
+          color: '#556',
+          flexShrink: 0
+        }
+      }, "#", String(ev.task_id).slice(0, 6)));
+    });
+  })())), notifOpen && /*#__PURE__*/React.createElement("div", {
     ref: notifPanelRef,
     className: "notif-dropdown",
     style: {
@@ -38237,7 +38715,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "notif-section-header"
-  }, /*#__PURE__*/React.createElement("span", null, "TASKS", runningTaskCount > 0 ? ` · ${runningTaskCount} LIVE` : ''), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, "TASKS", runningTaskCount > 0 ? ` · ${runningTaskCount} LIVE` : ''), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setActivityOpen(true);
+      setNotifOpen(false);
+    },
+    title: "Open the global activity ledger \u2014 every model action, subagent spawn, and tool call",
+    style: {
+      background: 'rgba(0,212,255,0.06)',
+      border: '1px solid rgba(0,212,255,0.25)',
+      color: '#00d4ff',
+      cursor: 'pointer',
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      borderRadius: 4,
+      padding: '1px 6px',
+      marginLeft: 8
+    }
+  }, "\uD83D\uDCD2 Ledger"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontFamily: 'JetBrains Mono',
       fontSize: 10,

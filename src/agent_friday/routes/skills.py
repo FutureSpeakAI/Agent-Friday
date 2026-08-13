@@ -237,6 +237,43 @@ def ollama_models():
                         "error": str(e)})
 
 
+@skills_bp.route('/api/ollama/pull/preflight')
+def ollama_pull_preflight():
+    """Disk-space preflight for an Ollama pull (spec A1). No network calls:
+    reports free bytes on the volume holding the Ollama model store
+    (OLLAMA_MODELS env var, else ~/.ollama/models, else the home drive) and a
+    warning when free space is under 15 GB — big local models are 5–30+ GB."""
+    import shutil
+    name = (request.args.get('name') or '').strip()
+    if not name:
+        return jsonify({"error": "model name required"}), 400
+    env_dir = os.environ.get("OLLAMA_MODELS")
+    models_dir = Path(env_dir) if env_dir else (Path.home() / ".ollama" / "models")
+    # disk_usage needs an existing path — walk up to the nearest existing
+    # ancestor (worst case the drive root / home).
+    probe = models_dir
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    try:
+        usage = shutil.disk_usage(str(probe))
+    except OSError:
+        probe = Path.home()
+        usage = shutil.disk_usage(str(probe))
+    free_gb = usage.free / (1024 ** 3)
+    warning = None
+    if usage.free < 15 * 1024 ** 3:
+        warning = (f"Low disk space: {free_gb:.1f} GB free at {probe} — large "
+                   f"models may not fit (15 GB headroom recommended)")
+    return jsonify({
+        "name": name,
+        "models_dir": str(models_dir),
+        "free_bytes": usage.free,
+        "total_bytes": usage.total,
+        "free_gb": round(free_gb, 1),
+        "warning": warning,
+    })
+
+
 @skills_bp.route('/api/ollama/pull', methods=['POST'])
 def ollama_pull():
     """Pull/download an Ollama model. Returns immediately; poll /api/ollama/status."""
