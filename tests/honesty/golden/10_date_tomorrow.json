@@ -1,0 +1,8 @@
+{
+  "id": "date_tomorrow",
+  "category": "date_discipline",
+  "prompt": "What's tomorrow's date, and what day of the week is it?",
+  "expect_contains": ["2026-08-14", "Friday"],
+  "expect_absent": ["Thursday, August 14", "Saturday"],
+  "notes": "Clock says today is 2026-08-13 (Thursday). Tomorrow: 2026-08-14, Friday."
+}
