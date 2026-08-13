@@ -6742,7 +6742,9 @@ function KnowledgeGraphWS() {
     const buildComposer = (w, h) => {
       composer = new THREE.EffectComposer(renderer);
       composer.addPass(new THREE.RenderPass(scene, camera));
-      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 1.15, 0.65, 0.12);
+      // Strength 1.15→0.75 (−35%): the galaxy read as one undifferentiated
+      // glow — nodes lost their silhouettes inside their own bloom halos.
+      bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.75, 0.65, 0.12);
       composer.addPass(bloomPass);
     };
     const grp = new THREE.Group();
@@ -6831,6 +6833,8 @@ function KnowledgeGraphWS() {
       grp.remove(content);
       content = new THREE.Group();
       grp.add(content);
+      S.outline = null;
+      S.emphIdx = undefined; // disposed with content — drop stale refs
     };
 
     // Soft radial disc texture so nebula points glow instead of rendering
@@ -6931,6 +6935,36 @@ function KnowledgeGraphWS() {
       S.mesh = mesh;
       S.baseScale = baseScale;
       S.baseColor = baseColor;
+
+      // — node outlines (inverted-hull InstancedMesh, one extra draw call) —
+      // BackSide shells slightly larger than each node give every star a crisp
+      // silhouette against the starfield (the bloom alone left node boundaries
+      // mushy), and the hovered node's shell brightens + swells so it is
+      // unambiguous which node the tooltip describes. Colors are managed by
+      // applyColors; hidden until the entrance ignition completes.
+      {
+        const og = new THREE.SphereGeometry(1, 14, 10);
+        const om = new THREE.MeshBasicMaterial({
+          side: THREE.BackSide,
+          transparent: true,
+          opacity: 0.85
+        });
+        const omesh = new THREE.InstancedMesh(og, om, n);
+        omesh.frustumCulled = false;
+        const od = new THREE.Object3D();
+        for (let i = 0; i < n; i++) {
+          const e = entities[i];
+          od.position.set(e.x || 0, e.y || 0, e.z || 0);
+          od.scale.setScalar(baseScale[i] * 1.16);
+          od.updateMatrix();
+          omesh.setMatrixAt(i, od.matrix);
+          omesh.setColorAt(i, dark);
+        }
+        if (omesh.instanceColor) omesh.instanceColor.needsUpdate = true;
+        omesh.visible = !!(opts && opts.instant);
+        content.add(omesh);
+        S.outline = omesh;
+      }
 
       // — edges (merged LineSegments) —
       if (rels.length) {
@@ -7062,7 +7096,9 @@ function KnowledgeGraphWS() {
       if (!mesh) return;
       const hl = S.highlight,
         hov = S.hoverSet;
-      const c = new THREE.Color();
+      const c = new THREE.Color(),
+        oc = new THREE.Color(),
+        bright = new THREE.Color('#dff6ff');
       for (let i = 0; i < S.entities.length; i++) {
         c.setRGB(S.baseColor[i * 3], S.baseColor[i * 3 + 1], S.baseColor[i * 3 + 2]);
         if (hl && hl.size) {
@@ -7070,8 +7106,34 @@ function KnowledgeGraphWS() {
         }
         if (hov && hov.has(i)) c.multiplyScalar(1.6);
         mesh.setColorAt(i, c);
+        if (S.outline) {
+          // Silhouette rim: dimmed node color normally; the HOVERED node's rim
+          // goes bright so its boundary — and which node the tooltip means —
+          // is unmistakable. Hover-neighbors get a mid rim.
+          if (S.lastHoverIdx === i) oc.copy(bright);else if (hov && hov.has(i)) oc.copy(c).multiplyScalar(0.55);else oc.copy(c).multiplyScalar(0.32);
+          S.outline.setColorAt(i, oc);
+        }
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (S.outline && S.outline.instanceColor) S.outline.instanceColor.needsUpdate = true;
+    };
+    // Swell the hovered node's outline shell (and restore the previous one) so
+    // the hover target reads instantly even in a dense cluster.
+    const setOutlineEmphasis = idx => {
+      if (!S.outline) return;
+      const od = new THREE.Object3D();
+      const apply = (i, mult) => {
+        const e = S.entities[i];
+        if (!e) return;
+        od.position.set(e.x || 0, e.y || 0, e.z || 0);
+        od.scale.setScalar(S.baseScale[i] * mult);
+        od.updateMatrix();
+        S.outline.setMatrixAt(i, od.matrix);
+      };
+      if (S.emphIdx !== undefined && S.emphIdx !== idx) apply(S.emphIdx, 1.16);
+      if (idx !== undefined && idx !== null) apply(idx, 1.42);
+      S.emphIdx = idx;
+      S.outline.instanceMatrix.needsUpdate = true;
     };
     S.setHighlight = set => {
       S.highlight = set;
@@ -7337,6 +7399,7 @@ function KnowledgeGraphWS() {
         }
         if (et > 2.0 + igniteOrder.length * 0.22 + 1.8) {
           entranceT0 = -2;
+          if (S.outline) S.outline.visible = true;
           applyColors();
         }
       }
@@ -7379,11 +7442,13 @@ function KnowledgeGraphWS() {
               if (r.target === ent.id && S.entById[r.source]) nb.add(S.entById[r.source].__idx);
             });
             S.hoverSet = nb;
+            setOutlineEmphasis(idx);
             applyColors();
             setHover({
               title: ent.title,
               section: ent.section || '',
-              degree: ent.degree
+              degree: ent.degree,
+              type: ent.type || ''
             });
           }
           renderer.domElement.style.cursor = 'pointer';
@@ -7391,6 +7456,7 @@ function KnowledgeGraphWS() {
           S.lastHoverIdx = undefined;
           S.lastHoverEnt = null;
           S.hoverSet = null;
+          setOutlineEmphasis(undefined);
           applyColors();
           setHover(null);
           renderer.domElement.style.cursor = dragging ? 'grabbing' : 'grab';
@@ -7631,7 +7697,20 @@ function KnowledgeGraphWS() {
       color: '#00d4ff',
       fontFamily: 'Orbitron'
     }
-  }, hover.title), /*#__PURE__*/React.createElement("div", {
+  }, hover.title, hover.type && /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      fontSize: 9,
+      color: '#dff6ff',
+      background: 'rgba(0,212,255,0.14)',
+      border: '1px solid rgba(0,212,255,0.35)',
+      borderRadius: 4,
+      padding: '1px 6px',
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      verticalAlign: 'middle'
+    }
+  }, hover.type)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#8fa8c8'
@@ -20286,14 +20365,7 @@ function NewsWS() {
       loadArchStats();
       loadClusters();
     }
-  }, "\u21BB Refresh"), tab === 'frontpage' && fp && /*#__PURE__*/React.createElement("button", {
-    className: "btn",
-    style: {
-      fontSize: 11
-    },
-    onClick: listenFrontPage,
-    disabled: fpAudioLoading
-  }, fpAudioLoading ? 'Generating…' : '🔊 Listen'), tab === 'frontpage' && fp && !anchorReading && /*#__PURE__*/React.createElement("button", {
+  }, "\u21BB Refresh"), tab === 'frontpage' && fp && !anchorReading && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 11
@@ -34281,25 +34353,20 @@ class FridayPCMPlayer extends AudioWorkletProcessor {
 registerProcessor('friday-pcm-player', FridayPCMPlayer);
 `;
     try {
-      // Pin the context to Gemini's 24kHz output rate. If left at the hardware
-      // default (usually 48kHz), every received chunk gets resampled 24k->48k and
-      // each src.start(startAt) is quantized to a 48k output frame — the per-chunk
-      // rounding errors accumulate into clicks/rasp over a long conversation. At a
-      // native 24k context there is no resampling and startAt aligns exactly to
-      // source frames, so chunks butt together gaplessly. Some browsers ignore the
-      // hint, so we still guard scheduling against the actual ctx.sampleRate below.
+      // Pin the context to Gemini's 24kHz output rate. (A device-native-rate
+      // experiment on 2026-07-08 — worklet resampling 24k→48k — was reverted
+      // hours before the demo: it coincided with heavy response latency, and
+      // the pinned path is the long-proven snappy configuration. Latency wins.
+      // If long-session timbre drift returns, re-run that experiment POST-demo
+      // with ear-verified A/B — see the session notes.)
       try {
         v.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: PCM_OUT_RATE
         });
       } catch (e) {
-        console.warn('[voice] AudioContext({sampleRate:' + PCM_OUT_RATE + '}) was rejected — hardware/browser may not support a native 24kHz context. Falling back to default-rate context; Gemini PCM will be resampled and may sound raspy over long sessions:', e);
+        console.warn('[voice] AudioContext({sampleRate:' + PCM_OUT_RATE + '}) was rejected — falling back to default-rate context; the worklet resamples:', e);
         v.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
-      if (v.audioCtx.sampleRate !== PCM_OUT_RATE) console.warn('[voice] ctx sampleRate=' + v.audioCtx.sampleRate + ' (wanted ' + PCM_OUT_RATE + ') — playback will be resampled');
-      // Diagnostic: confirm the 24kHz pin actually took. If pinned=false the
-      // browser ignored the hint and every chunk is being resampled 24k->ctxRate,
-      // which is the usual source of progressive rasp over a long conversation.
       window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: AudioContext created sampleRate=' + v.audioCtx.sampleRate + ' (requested ' + PCM_OUT_RATE + ', pinned=' + (v.audioCtx.sampleRate === PCM_OUT_RATE) + ', state=' + v.audioCtx.state + ')');
       if (v.audioCtx.state === 'suspended') await v.audioCtx.resume();
       v.holoAnalyser = v.audioCtx.createAnalyser();
@@ -34787,6 +34854,17 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         try {
           window._fridayStopFpAudio && window._fridayStopFpAudio();
         } catch (_) {}
+        // Failsafe: if a tts_pause was never matched by a resume (dropped frame,
+        // tool-path bug), audio would be HELD indefinitely and every reply would
+        // arrive massively late. The user speaking means any action window is
+        // over — release the gate and replay whatever was held.
+        if (v.ttsPaused) {
+          window.FRIDAY_VOICE_DEBUG && console.log('VOICE_DEBUG: stuck tts_pause released by user speech');
+          v.ttsPaused = false;
+          const _held = v.pausedChunks || [];
+          v.pausedChunks = [];
+          for (const _d of _held) _playAudioChunk(_d);
+        }
         setVoiceStatus('you: ' + (m.text || '').slice(-60));
       } else if (m.type === 'text') {
         setVoiceStatus('Friday: ' + (m.text || '').slice(-60));
@@ -38228,7 +38306,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       padding: 20,
       fontFamily: 'JetBrains Mono'
     }
-  }, "Listening for activity\u2026")))), notifOpen && /*#__PURE__*/React.createElement("div", {
+  }, threadOrb.model ? '⚙ ' + threadOrb.model + ' — ' : '', "waiting for activity\u2026")))), notifOpen && /*#__PURE__*/React.createElement("div", {
     ref: notifPanelRef,
     className: "notif-dropdown",
     style: {

@@ -1,0 +1,61 @@
+# Agent Friday — local presentation proxy
+# ----------------------------------------
+# Purpose: serve the Friday UI at https://agent.friday (clean padlock, no port)
+# in front of the app's own server on 127.0.0.1:3000. This is presentation
+# infrastructure only — it sits BESIDE the app and changes nothing about it.
+#
+# Sovereignty: listeners are bound to loopback ONLY. agent.friday is NOT
+# reachable from the LAN. See the `bind` directive below.
+{
+	# Admin API on loopback only (this is also Caddy's default address).
+	admin 127.0.0.1:2019
+
+	# Machine-wide storage (NOT a per-user profile dir). This is essential for
+	# the boot service: it runs as SYSTEM, and if Caddy used the default per-user
+	# storage the SYSTEM account would generate its OWN CA -> untrusted padlock.
+	# A fixed ProgramData path is shared by the elevated-user and SYSTEM contexts,
+	# so the ONE trusted CA is always the one presented.
+	storage file_system {
+		root "C:/ProgramData/AgentFriday/caddy"
+	}
+}
+
+agent.friday {
+	# Listen on loopback interfaces ONLY (IPv4 + IPv6).
+	# Without this, Caddy would bind 0.0.0.0/:: and be reachable on the LAN.
+	bind 127.0.0.1 ::1
+
+	# Caddy's internal CA. After `caddy trust` installs the CA into the
+	# Windows trust store, the browser shows a real padlock — no self-signed
+	# warning. The CA is local; no public ACME/Let's Encrypt is contacted.
+	tls internal
+
+	# Friday's own server is unchanged on :3000. This proxy just fronts it.
+	# Upstream pinned to 127.0.0.1 (IPv4) -- Flask binds 127.0.0.1:3000 only, and
+	# using "localhost" here could dial ::1 first where nothing listens.
+	reverse_proxy 127.0.0.1:3000 {
+		# WebSocket Upgrade (e.g. the Gemini Live /ws/live voice socket) is
+		# proxied automatically by Caddy — no extra config needed.
+		# flush_interval -1 disables response buffering so Server-Sent Events
+		# and streaming voice audio are forwarded immediately, not buffered.
+		flush_interval -1
+
+		# Survive a :3000 restart on our own. Flask is briefly DOWN while it
+		# reboots; without a retry window Caddy returns 502 the instant the dial
+		# is refused, so the first hit to agent.friday after a restart errors and
+		# the user has to prime :3000 by hand. With this, Caddy HOLDS the request
+		# and retries until :3000 is listening again, then serves it.
+		# Verified: recovers on its own in ~seconds, no manual priming.
+		# (Stale-keepalive reuse was also tested -- Caddy/Go auto-retries a dead
+		#  reused connection, so it is NOT a failure mode; no keepalive tweak needed.)
+		lb_try_duration 15s
+		lb_try_interval 250ms
+	}
+
+	# Access log to the out-of-repo runtime dir (handy during the demo).
+	log {
+		# Machine-wide log path (user-agnostic) so the SYSTEM service can write it.
+		output file "C:/ProgramData/AgentFriday/logs/access.log"
+		format console
+	}
+}

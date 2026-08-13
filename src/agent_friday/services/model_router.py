@@ -495,11 +495,34 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 pass
             return resp
 
-        return _oai_agentic_loop(
+        # Transparency: the orb must show a REAL process when clicked — the
+        # model is set at register; record the intent up front and attach the
+        # final output as the result. All of this stays on-device (local
+        # inference, served only to the local UI).
+        try:
+            from agent_friday.core import process_log as _plog
+            _last_user = next((m.get("content", "") for m in reversed(messages)
+                               if m.get("role") == "user"
+                               and isinstance(m.get("content"), str)), "")
+            _plog(orb_id, f"model: {model} (local inference — on-device)")
+            if _last_user:
+                _plog(orb_id, "intent: " + _last_user.strip()[:240])
+        except Exception:
+            pass
+        _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
         )
+        try:
+            # _oai_agentic_loop returns (text, tool_trace).
+            _text = _resp[0] if isinstance(_resp, tuple) and _resp else (
+                _resp if isinstance(_resp, str) else None)
+            if _text:
+                _orb(result=_text)
+        except Exception:
+            pass
+        return _resp
     except Exception:
         _orb(status='error', label='Error', progress=1.0)
         raise
@@ -729,12 +752,32 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
         # Same shared agentic loop the local Ollama path uses — unified tool
         # registry, vault gate, and _execute_tool governance. Metering rows are
         # attributed to the REGISTRY provider name so per-provider spend works.
-        return _oai_agentic_loop(
+        # Same transparency contract as the local orb: intent up front, result
+        # attached, so clicking the orb never shows an empty process.
+        try:
+            from agent_friday.core import process_log as _plog
+            _last_user = next((m.get("content", "") for m in reversed(messages)
+                               if m.get("role") == "user"
+                               and isinstance(m.get("content"), str)), "")
+            _plog(orb_id, f"model: {model} via {pname}")
+            if _last_user:
+                _plog(orb_id, "intent: " + _last_user.strip()[:240])
+        except Exception:
+            pass
+        _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='openai', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
             meter_provider=pname,
         )
+        try:
+            _text = _resp[0] if isinstance(_resp, tuple) and _resp else (
+                _resp if isinstance(_resp, str) else None)
+            if _text:
+                _orb(result=_text)
+        except Exception:
+            pass
+        return _resp
     except Exception:
         _orb(status='error', label='Error', progress=1.0)
         raise
