@@ -21,6 +21,7 @@ function apiFetch(url, opts){
 // resolves regardless of which subset the dock renders.
 const DOCK_GROUPS=[
   {name:'Life',items:[
+    {id:'edition',ico:'🗞️',label:'Edition',core:true},
     {id:'home',ico:'🏠',label:'Home',core:true},
     {id:'news',ico:'📰',label:'News',core:true},
     {id:'messages',ico:'💬',label:'Messages',core:true},
@@ -4147,6 +4148,131 @@ function archiveToCard(a,boostedSet){
 }
 // mm:ss for the audio-player timecode (NaN/∞-safe).
 function _fmtDur(sec){if(!sec||!isFinite(sec)||sec<0)return'0:00';const s=Math.floor(sec);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
+
+// ═══ THE FRIDAY EDITION (E0) ═══
+// A finite morning edition composed over Friday's EXISTING engines only (news
+// archive, front_pages, editorials, creations, dreams). No infinite scroll —
+// every edition ends in a hard "you're caught up" state. Every non-gap card
+// carries a receipt (services/edition_engine.py's no-receipt-no-render gate);
+// gap cards are the honest-degradation path when an E0-unwired engine (career
+// signals, your-people — both land in E1) has nothing real to show.
+function EditionCard({card}){
+  const isGap=card.kind==='gap';
+  const[showWhy,setShowWhy]=useState(false);
+  const[reason,setReason]=useState('');
+  const[busy,setBusy]=useState(false);
+  const verb=(v,withReason)=>{
+    if(busy)return;setBusy(true);
+    fetch('/api/edition/verb',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({card_id:card.id,verb:v,reason:withReason||'',
+        card_title:card.title,card_section:card.section,card_source:card.source})})
+      .catch(()=>{}).finally(()=>setBusy(false));
+  };
+  const toggleWhy=()=>{const next=!showWhy;setShowWhy(next);if(next)verb('why');};
+  if(isGap){
+    return(<div className="card" style={{marginBottom:8,opacity:0.65,fontStyle:'italic'}}>
+      <div style={{fontSize:11,color:'#7fb6c9',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.snippet}</div>
+    </div>);
+  }
+  return(<div className="card" style={{marginBottom:8,border:card.dissent?'1px solid rgba(255,0,128,0.4)':undefined}}>
+    {card.dissent&&<div style={{fontSize:9,color:'#ff0080',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:4}}>⚡ Dissent — outside your boosted sources</div>}
+    <div style={{minWidth:0}}>
+      <div className="card-title" style={{overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.title}</div>
+      <div style={{fontSize:12,color:'#aab',lineHeight:1.45,margin:'4px 0',overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.snippet}</div>
+      <div style={{display:'flex',gap:8,fontSize:10,color:'#5a7a86',flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{overflowWrap:'anywhere'}}>{card.source}</span>
+        {card.fetched_at&&<span>· {card.fetched_at}</span>}
+        {card.receipt&&<span title={'Receipt: '+card.receipt.engine}>🧾</span>}
+        {card.boosted&&<span>· boosted</span>}
+      </div>
+    </div>
+    <div style={{display:'flex',gap:6,marginTop:8,flexWrap:'wrap'}}>
+      {card.url&&<a href={card.url} target="_blank" rel="noreferrer" className="btn" style={{fontSize:10,padding:'2px 8px'}}>Open ↗</a>}
+      <button className="btn" style={{fontSize:10,padding:'2px 8px'}} disabled={busy} onClick={()=>verb('keep')}>Keep</button>
+      <button className="btn" style={{fontSize:10,padding:'2px 8px'}} disabled={busy} onClick={()=>verb('kill')}>Kill</button>
+      <button className="btn" style={{fontSize:10,padding:'2px 8px'}} disabled={busy} onClick={()=>verb('more_like_this')}>More like this</button>
+      <button className="btn btn-magenta" style={{fontSize:10,padding:'2px 8px'}} onClick={toggleWhy}>Why</button>
+    </div>
+    {showWhy&&<div style={{marginTop:8,padding:8,borderRadius:6,background:'rgba(255,255,255,0.03)',minWidth:0}}>
+      <div style={{fontSize:11,color:'#7fb6c9',marginBottom:6,overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.why_chosen}</div>
+      <textarea className="input" style={{width:'100%',minHeight:50,fontSize:11}}
+        placeholder="Think this is wrong? Type a correction — it'll show up under Corrections in the next edition."
+        value={reason} onChange={e=>setReason(e.target.value)}/>
+      <button className="btn" style={{fontSize:10,marginTop:6}} disabled={!reason.trim()||busy}
+        onClick={()=>{verb('why',reason);setReason('');setShowWhy(false);}}>Submit correction</button>
+    </div>}
+  </div>);
+}
+function EditionSection({section}){
+  const real=section.cards.filter(c=>c.kind!=='gap').length;
+  return(<div style={{marginBottom:20}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
+      <div style={{fontSize:13,fontWeight:700,color:'#e8f4f8',fontFamily:'Orbitron',letterSpacing:'0.03em'}}>{section.label}</div>
+      <div style={{fontSize:10,color:'#5a7a86'}}>{real}/{section.budget}</div>
+    </div>
+    {section.cards.map(c=><EditionCard key={c.id} card={c}/>)}
+  </div>);
+}
+function EditionWS(){
+  const[edition,setEdition]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[composing,setComposing]=useState(false);
+  const[charterOpen,setCharterOpen]=useState(false);
+  const[charter,setCharter]=useState(null);
+  const[charterText,setCharterText]=useState('');
+  const[charterSaving,setCharterSaving]=useState(false);
+  const load=()=>{setLoading(true);fetch('/api/edition/latest').then(r=>r.json()).then(d=>{setEdition(d.edition||null);setLoading(false)}).catch(()=>setLoading(false));};
+  useEffect(()=>{load();},[]);
+  const composeNow=async()=>{
+    if(composing)return;setComposing(true);
+    try{const r=await fetch('/api/edition/compose',{method:'POST'});const d=await r.json();if(d.edition)setEdition(d.edition);}
+    catch(e){}finally{setComposing(false);}
+  };
+  const loadCharter=()=>fetch('/api/edition/charter').then(r=>r.json()).then(d=>{setCharter(d.charter);setCharterText(d.charter.text)}).catch(()=>{});
+  const openCharter=()=>{setCharterOpen(o=>!o);if(!charter)loadCharter();};
+  const saveCharter=async()=>{
+    if(charterSaving)return;setCharterSaving(true);
+    try{const r=await fetch('/api/edition/charter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:charterText})});const d=await r.json();if(d.charter)setCharter(d.charter);}
+    catch(e){}finally{setCharterSaving(false);}
+  };
+  if(loading)return <div style={{padding:20,textAlign:'center',color:'#5a7a86'}}>Loading your edition…</div>;
+  return(<div>
+    <FridaySays text={edition?`Composed ${edition.composed_at}. You're caught up when you reach the bottom — no infinite scroll here.`:'No edition composed yet — hit Compose Now to build your first one.'}/>
+    <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+      <button className="btn btn-magenta" style={{fontSize:11,fontWeight:700}} disabled={composing} onClick={composeNow}>{composing?'Composing…':'Compose now'}</button>
+      <button className="btn" style={{fontSize:11}} onClick={openCharter}>📜 Charter</button>
+    </div>
+    {charterOpen&&<div className="card" style={{marginBottom:16,padding:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <div className="card-title">Editorial Charter</div>
+        <button className="btn" style={{fontSize:10}} onClick={()=>setCharterOpen(false)}>Close</button>
+      </div>
+      <div style={{fontSize:10,color:'#5a7a86',marginBottom:6}}>Governs taste &amp; selection only — never accuracy. Last updated: {(charter&&charter.updated_at)||'—'}. Changes take effect on the next compose.</div>
+      <textarea className="input" style={{width:'100%',minHeight:220,fontFamily:'JetBrains Mono',fontSize:11,whiteSpace:'pre-wrap'}} value={charterText} onChange={e=>setCharterText(e.target.value)}/>
+      <button className="btn" style={{fontSize:11,marginTop:8}} disabled={charterSaving||!charterText.trim()} onClick={saveCharter}>{charterSaving?'Saving…':'Save charter'}</button>
+    </div>}
+    {edition?<>
+      {edition.sections.map(s=><EditionSection key={s.id} section={s}/>)}
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#ff0080',fontFamily:'Orbitron',letterSpacing:'0.03em',marginBottom:8}}>⚡ Dissent</div>
+        {(edition.dissent||[]).map(c=><EditionCard key={c.id} card={c}/>)}
+      </div>
+      {edition.corrections&&edition.corrections.length>0&&<div style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#f59e0b',fontFamily:'Orbitron',letterSpacing:'0.03em',marginBottom:8}}>Corrections</div>
+        {edition.corrections.map(c=><EditionCard key={c.id} card={c}/>)}
+      </div>}
+      <div style={{marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:'#e8f4f8',marginBottom:6}}>Friday's rationale</div>
+        <div className="card" style={{fontSize:11,color:'#aab',lineHeight:1.6}}>
+          {edition.rationale.map((line,i)=><div key={i} style={{marginBottom:4,minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>{line}</div>)}
+        </div>
+      </div>
+      <div style={{textAlign:'center',padding:'20px 0',color:'#5a7a86',fontSize:12,fontFamily:'JetBrains Mono',borderTop:'1px dashed rgba(255,255,255,0.08)'}}>
+        ✓ You're caught up. Nothing else today.
+      </div>
+    </>:<div style={{textAlign:'center',padding:30,color:'#5a7a86'}}>No edition yet — hit Compose Now above.</div>}
+  </div>);
+}
 function NewsWS(){
   const[tab,setTab]=useState('frontpage');
   const[feed,setFeed]=useState([]);const[feedLoading,setFeedLoading]=useState(true);const[feedAt,setFeedAt]=useState('');
@@ -9822,6 +9948,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const close=id=>setOpenWins(p=>{const n=new Set(p);n.delete(id);return n});
   const bringFront=id=>{setFocusWin(id);setZC(c=>{setZMap(m=>({...m,[id]:c}));return c+1})};
 
+  // The Friday Edition is the front page: once setup is confirmed done, open
+  // it automatically so it's what greets you, same as a real morning paper.
+  useEffect(()=>{if(setupDone)openWs('edition')},[setupDone]);
+
   // ─── Camera Mode ────────────────────────────────────────────
   const[cameraOn,setCameraOn]=useState(false);
   const[cameraSource,setCameraSource]=useState('screen');     // 'screen' | 'webcam' | 'both'
@@ -9910,7 +10040,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // fresh installs (show_all_workspaces=false) get the trimmed general-purpose
   // SitesWS portfolio manager instead.
   const showAllWorkspaces=agentSettings.show_all_workspaces!==false;
-  const wsMap={home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,settings:<SettingsWS/>};
+  const wsMap={edition:<EditionWS/>,home:<HomeWS/>,career:<CareerWS/>,wiki:<WikiWS/>,knowledge:<KnowledgeGraphWS/>,futurespeak:showAllWorkspaces?<FuturespeakWS/>:<SitesWS/>,family:<FamilyWS/>,studio:<StudioWS/>,trust:<TrustWS/>,system:<SystemWS/>,code:<CodeWS/>,news:<NewsWS/>,draft:<DraftWS/>,finance:<FinanceWS/>,health:<HealthWS/>,contacts:<ContactsWS/>,content:<ContentWS/>,messages:<MessagesWS/>,calendar:<CalendarWS/>,marketplace:<MarketplaceWS/>,settings:<SettingsWS/>};
   const wsInfo=WS.reduce((a,w)=>{a[w.id]=w;return a},{});
   const unread=notifs.filter(n=>!n.read).length;
   const runningTaskCount=bgTasks.filter(t=>(t.status||'running')==='running').length;
