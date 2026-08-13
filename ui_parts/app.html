@@ -9627,6 +9627,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // the live log + result, and falls back to the orb's reasoning steps for
   // process-only orbs that aren't backed by a task.
   const[threadOrb,setThreadOrb]=useState(null);
+  // ── B4: global activity ledger — "Every model action, every subagent
+  // process, every reasoning thread needs to be visible if the user wishes
+  // to see it." Badges default-on; this panel is the depth-on-demand. ──
+  const[activityOpen,setActivityOpen]=useState(false);
+  const[activityEvents,setActivityEvents]=useState([]);
+  const[activityKind,setActivityKind]=useState('');
+  const[activityFilter,setActivityFilter]=useState('');
+  useEffect(()=>{
+    if(!activityOpen)return;let active=true;
+    const tick=()=>fetch('/api/activity?limit=200'+(activityKind?'&kind='+encodeURIComponent(activityKind):'')).then(r=>r.json()).then(d=>{if(active)setActivityEvents(d.events||[])}).catch(()=>{});
+    tick();const iv=setInterval(tick,4000);
+    return()=>{active=false;clearInterval(iv)};
+  },[activityOpen,activityKind]);
   const[threadSteps,setThreadSteps]=useState([]);
   const[taskLog,setTaskLog]=useState(null);   // null = no task-backed log (use steps); [] = task with empty log
   const[taskMeta,setTaskMeta]=useState(null); // {status,result,evaluation,verified}
@@ -9662,7 +9675,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         if(!r.ok)return;
         const t=await r.json();if(!active)return;
         setTaskLog(Array.isArray(t.log)?t.log:[]);
-        setTaskMeta({status:t.status,result:t.result,evaluation:t.evaluation,verified:t.verified,elapsed:t.elapsed});
+        setTaskMeta({status:t.status,result:t.result,evaluation:t.evaluation,verified:t.verified,elapsed:t.elapsed,model:t.model,linked_task_id:t.linked_task_id});
         if(t.status&&t.status!==threadOrb.status)setThreadOrb(p=>p&&p.id===threadOrb.id?{...p,status:t.status}:p);
       }catch(_){ }
     };
@@ -10529,6 +10542,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
             <span className="thread-icon">{threadOrb.icon||'⚡'}</span>
             <span className="thread-name">{threadOrb.label||'Process'}</span>
           </div>
+          {/* B3: the exact model driving this process + its correlation id. */}
+          {(taskMeta&&taskMeta.model||threadOrb.model)&&<span title={'Model running this process'+(taskMeta&&taskMeta.linked_task_id?' · task '+taskMeta.linked_task_id:'')} style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.3)',borderRadius:3,padding:'0 4px',marginRight:6,whiteSpace:'nowrap',maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{(taskMeta&&taskMeta.model)||threadOrb.model}</span>}
           <span className={`thread-status-badge ${threadOrb.status||'running'}`}>{threadOrb.status||'RUNNING'}</span>
           <span className="thread-elapsed">{taskMeta&&taskMeta.elapsed!=null?taskMeta.elapsed+'s':''}</span>
           <button className="thread-close" onClick={()=>setThreadOrb(null)}>✕</button>
@@ -10563,10 +10578,52 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       </React.Fragment>
     </div>}
 
+    {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
+        subagent spawns, and tool calls (seat, model, duration, tokens). ── */}
+    {activityOpen&&<div style={{position:'fixed',top:60,right:14,width:400,maxWidth:'92vw',maxHeight:'calc(100vh - 120px)',display:'flex',flexDirection:'column',background:'rgba(8,12,20,0.97)',border:'1px solid rgba(0,212,255,0.25)',borderRadius:10,zIndex:9500,boxShadow:'0 8px 40px rgba(0,0,0,0.6)'}} onClick={e=>e.stopPropagation()}>
+      <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+        <span style={{fontFamily:'Orbitron',fontSize:10,color:'#00d4ff',letterSpacing:'0.08em'}}>ACTIVITY LEDGER</span>
+        <select value={activityKind} onChange={e=>setActivityKind(e.target.value)} style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.15)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 4px'}}>
+          <option value="">all kinds</option>
+          <option value="model_invocation">model invocations</option>
+          <option value="tool_call">tool calls</option>
+          <option value="subagent_spawn">subagent spawns</option>
+        </select>
+        <input value={activityFilter} onChange={e=>setActivityFilter(e.target.value)} placeholder="filter…" style={{flex:1,minWidth:0,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:9,fontFamily:'JetBrains Mono',padding:'2px 6px',outline:'none'}}/>
+        <button onClick={()=>setActivityOpen(false)} style={{background:'none',border:'none',color:'#999',cursor:'pointer',fontSize:12}}>✕</button>
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'6px 10px'}}>
+        {(()=>{
+          const f=activityFilter.trim().toLowerCase();
+          const shown=activityEvents.filter(ev=>!f||JSON.stringify(ev).toLowerCase().includes(f));
+          if(shown.length===0)return <div style={{textAlign:'center',color:'#666',fontSize:10,padding:24,fontFamily:'JetBrains Mono'}}>No activity recorded{f?' matching filter':''} yet.</div>;
+          const ICO={model_invocation:'🧠',tool_call:'🔧',subagent_spawn:'🤖'};
+          return shown.map((ev,i)=>{
+            const when=ev.ts?new Date(ev.ts*1000).toLocaleTimeString():'';
+            const seatColor=ev.seat==='local'?'#f59e0b':'#00d4ff';
+            return <div key={i} style={{display:'flex',gap:6,alignItems:'baseline',padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)',fontSize:9,fontFamily:'JetBrains Mono',color:'#aab'}}>
+              <span>{ICO[ev.kind]||'·'}</span>
+              <span style={{color:'#778',flexShrink:0}}>{when}</span>
+              <span style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                {ev.kind==='tool_call'?<span>{ev.tool} <span style={{color:ev.ok?'#3effa1':'#f87171'}}>{ev.ok?'ok':'deny/err'}</span></span>
+                 :ev.kind==='subagent_spawn'?<span>spawn {ev.description||ev.task_id||''}</span>
+                 :<span style={{color:seatColor}}>{ev.model||'?'}{ev.seat?' · '+ev.seat:''}</span>}
+              </span>
+              {ev.duration_ms!=null&&<span style={{color:'#667',flexShrink:0}}>{Math.round(ev.duration_ms)}ms</span>}
+              {(ev.tokens_in||ev.tokens_out)?<span style={{color:'#667',flexShrink:0}}>{(ev.tokens_in||0)+'/'+(ev.tokens_out||0)}tk</span>:null}
+              {ev.task_id&&<span title={'task '+ev.task_id} style={{color:'#556',flexShrink:0}}>#{String(ev.task_id).slice(0,6)}</span>}
+            </div>;
+          });
+        })()}
+      </div>
+    </div>}
+
     {/* Notifications + Tasks dropdown (anchored under bell icon) */}
     {notifOpen&&<div ref={notifPanelRef} className="notif-dropdown" style={{top:notifAnchor.top,right:notifAnchor.right}}>
       <div className="notif-section-header">
         <span>TASKS{runningTaskCount>0?` · ${runningTaskCount} LIVE`:''}</span>
+        <button onClick={()=>{setActivityOpen(true);setNotifOpen(false)}} title="Open the global activity ledger — every model action, subagent spawn, and tool call"
+          style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.25)',color:'#00d4ff',cursor:'pointer',fontSize:9,fontFamily:'JetBrains Mono',borderRadius:4,padding:'1px 6px',marginLeft:8}}>📒 Ledger</button>
         <span style={{fontFamily:'JetBrains Mono',fontSize:10,color:'rgba(255,255,255,0.7)',letterSpacing:'0.04em'}}>{sortedBgTasks.length||0}</span>
       </div>
       {sortedBgTasks.length===0
