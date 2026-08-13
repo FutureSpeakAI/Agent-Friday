@@ -440,6 +440,10 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             label=orb_label or "Local inference…",
             category="monitoring", icon=orb_icon, steps=[],
             model=model,
+            # B3: correlate this orb with the spawning background task (if any)
+            # so /api/tasks/<orb-pid> can follow the link, exactly like the
+            # cloud agent orb.
+            task_id=(session_ctx or {}).get("task_id"),
         )
     except Exception:
         orb_id = None
@@ -499,6 +503,12 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
+            # B3/B4: hand the orb pid to the shared loop so the enriched thread
+            # view (process_log + timed steps) and the activity ledger's
+            # model_invocation/tool_call events carry exact correlation ids.
+            # The loop records the model_invocation event itself (seat="local",
+            # token counts from usage) — recording here too would double-count.
+            orb_id=orb_id,
         )
     except Exception:
         _orb(status='error', label='Error', progress=1.0)
