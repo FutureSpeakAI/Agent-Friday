@@ -609,49 +609,151 @@ _GOOGLE_NOT_CONNECTED_NOTE = (
 )
 
 
-def _tool_query_calendar(_inp):
-    """Today's + tomorrow's events via the native Google Calendar integration.
+def _summarize_multi_account_errors(result):
+    """Turn a google_accounts.merged_*() result ({accounts, <items>, errors})
+    into a flat per-account status list — "connected" only means an account
+    exists and returned no error; a real API failure (e.g. an API not
+    enabled in the GCP project) shows up as its own status/error per
+    account, distinct from an account that was never connected at all."""
+    by_id = {}
+    for acc in (result.get("accounts") or []):
+        by_id[acc.get("id")] = {"label": acc.get("label"), "email": acc.get("email"),
+                                "status": "connected", "error": None}
+    for e in (result.get("errors") or []):
+        aid = e.get("account_id")
+        entry = by_id.setdefault(aid, {"label": e.get("label"), "email": None,
+                                       "status": "connected", "error": None})
+        entry["status"] = "error"
+        entry["error"] = e.get("error")
+    return list(by_id.values())
 
-    Uses the same real fetch path as the voice tools. When Google isn't linked,
-    returns the 'needs connecting' note (never 'not installed') so Friday offers
-    to set it up instead of claiming she lacks calendar access."""
+
+def _tool_query_calendar(_inp):
+    """Today's + tomorrow's events across every connected Google account.
+
+    2026-08-13: rewired from the single-account bridge (which only ever
+    surfaced the FIRST/primary connected account, and collapsed a real API
+    error — e.g. the Calendar API not enabled in the GCP project — into the
+    same generic 'needs connecting' message a genuinely-unlinked account
+    would produce) to the multi-account store (services.google_accounts),
+    which lists every account, loads/refreshes credentials per account, and
+    reports per-account errors distinctly from 'not connected'."""
     try:
-        from agent_friday.services.calendar_engine import _fetch_calendar_today, _google_section_error
+        from agent_friday.services import google_accounts as ga
     except Exception:
-        try:
-            from calendar_engine import _fetch_calendar_today, _google_section_error  # type: ignore
-        except Exception:
-            return json.dumps({"connected": False, "events": [],
-                               "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
-                                   what="Google Calendar", reads="your calendar")})
-    try:
-        events = _fetch_calendar_today()
-    except Exception as e:
         return json.dumps({"connected": False, "events": [],
-                           "note": f"Calendar fetch error: {e}"})
-    if _google_section_error(events):
-        return json.dumps({"connected": False, "events": [], "integration": "google_calendar",
                            "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
                                what="Google Calendar", reads="your calendar")})
+    try:
+        has_accounts = ga.has_accounts()
+    except Exception:
+        has_accounts = False
+    if not has_accounts:
+        return json.dumps({"connected": False, "events": [],
+                           "store": "google_accounts (multi-account)",
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what="Google Calendar", reads="your calendar")})
+    try:
+        result = ga.merged_calendar(days=2)
+    except Exception as e:
+        return json.dumps({"connected": True, "events": [],
+                           "store": "google_accounts (multi-account)",
+                           "note": f"Calendar fetch error: {e}"})
+    accounts_status = _summarize_multi_account_errors(result)
+    events = result.get("events") or []
     out = []
-    for ev in (events or [])[:20]:
+    for ev in events[:20]:
         out.append({
             "title": ev.get("title"),
             "start": ev.get("start_time"),
             "end": ev.get("end_time"),
             "location": ev.get("location") or "",
             "attendees": (ev.get("attendees") or [])[:6],
+            "account": ev.get("account_label") or ev.get("account_email"),
         })
-    return json.dumps({"connected": True, "count": len(out), "events": out}, default=str)
+    payload = {
+        "connected": True,  # accounts exist and are linked; see "accounts" for per-account detail
+        "store": "google_accounts (multi-account)",
+        "accounts": accounts_status,
+        "count": len(out),
+        "events": out,
+    }
+    errored = [a for a in accounts_status if a["status"] == "error"]
+    if errored and not out:
+        payload["note"] = (
+            "Every connected account's live calendar fetch just failed — tell "
+            "the user the SPECIFIC error(s) below, do not say Calendar 'needs "
+            "connecting' (it's already connected): " +
+            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
+        )
+    return json.dumps(payload, default=str)
 
 
 def _tool_search_email(inp):
-    """Search the user's recent Gmail (native read-only Google integration).
+    """Search recent Gmail across every connected Google account.
 
-    Pulls recent mail via the same _collect_messages path the voice tools use and
-    filters by the query string. When Google isn't linked, returns the 'needs
-    connecting' note (never 'not installed') so Friday offers setup."""
+    2026-08-13: rewired to the multi-account store (services.google_accounts)
+    when any account is connected — same reasoning as _tool_query_calendar:
+    the old single-account path only ever saw the primary account and
+    collapsed a real API error into a generic 'needs connecting'. When NO
+    account is connected at all, this still falls back to the legacy
+    _collect_messages() offline-cache path so a never-connected install
+    keeps its existing (cache-based) behavior unchanged."""
     q = ((inp or {}).get('query') or '').strip()
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception:
+        ga = None
+    has_accounts = False
+    if ga is not None:
+        try:
+            has_accounts = ga.has_accounts()
+        except Exception:
+            has_accounts = False
+
+    if has_accounts:
+        try:
+            result = ga.merged_gmail(limit_per_account=15)
+        except Exception as e:
+            return json.dumps({"connected": True, "messages": [],
+                               "store": "google_accounts (multi-account)",
+                               "note": f"Email fetch error: {e}"})
+        accounts_status = _summarize_multi_account_errors(result)
+        cards = result.get("messages") or []
+        ql = q.lower()
+        hits = []
+        for c in cards:
+            blob = " ".join(str(c.get(k) or "") for k in
+                            ("sender", "subject", "snippet")).lower()
+            if not ql or ql in blob:
+                hits.append({
+                    "from": c.get("sender") or "",
+                    "subject": c.get("subject") or "",
+                    "snippet": (c.get("snippet") or "")[:160],
+                    "unread": bool(c.get("unread")),
+                    "when": c.get("timestamp") or "",
+                    "account": c.get("account_label") or c.get("account_email"),
+                })
+        payload = {
+            "connected": True,
+            "store": "google_accounts (multi-account)",
+            "accounts": accounts_status,
+            "source": "gmail",
+            "query": q,
+            "count": len(hits),
+            "messages": hits[:25],
+        }
+        errored = [a for a in accounts_status if a["status"] == "error"]
+        if errored and not cards:
+            payload["note"] = (
+                "Every connected account's live Gmail fetch just failed — tell "
+                "the user the SPECIFIC error(s) below, do not say Gmail 'needs "
+                "connecting' (it's already connected): " +
+                "; ".join(f"{a['label']}: {a['error']}" for a in errored)
+            )
+        return json.dumps(payload, default=str)
+
+    # No account connected at all — preserve the legacy cache-fallback path.
     try:
         from agent_friday.services.calendar_engine import _collect_messages
     except Exception:
