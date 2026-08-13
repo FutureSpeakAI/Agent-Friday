@@ -57,6 +57,18 @@ class FridayTray:
         self.running = False
         self.icon: pystray.Icon | None = None
         self._lock = threading.Lock()
+        # Debounce guard (toolcall-integrity-v5, 2026-08-13 double-launch
+        # incident audit): read through start_server()'s existing self._lock
+        # and could not find an in-process race it fails to serialize — two
+        # concurrent restart_server() calls should already collapse to one
+        # spawn. The most likely explanation for two server processes born
+        # the same second is a SEPARATE, externally-launched process (a
+        # second start.bat / manual `python server.py`), which no in-tray
+        # lock can see — that's what server.py's own single-instance lock
+        # (_acquire_single_instance_lock) now guards against directly. This
+        # debounce is defense-in-depth for a double-click regardless: cheap,
+        # removes any doubt, costs nothing when idle.
+        self._restart_in_flight = threading.Lock()
 
     # ── Server lifecycle ──────────────────────────────────────────────
     def start_server(self) -> None:
@@ -94,10 +106,18 @@ class FridayTray:
         self.running = False
 
     def restart_server(self) -> None:
-        self.stop_server()
-        # Give the OS a moment to release the port.
-        time.sleep(0.5)
-        self.start_server()
+        if not self._restart_in_flight.acquire(blocking=False):
+            # A restart is already running (e.g. a double-click) — the
+            # in-flight one will finish the job; don't run a second
+            # stop→sleep→start sequence concurrently with it.
+            return
+        try:
+            self.stop_server()
+            # Give the OS a moment to release the port.
+            time.sleep(0.5)
+            self.start_server()
+        finally:
+            self._restart_in_flight.release()
 
     # ── Menu actions ──────────────────────────────────────────────────
     def _open_ui(self, _icon, _item) -> None:

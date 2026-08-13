@@ -30,6 +30,7 @@ from agent_friday.core import (
     FRIDAY_PASSWORD,
     WIKI_DIR,
     _HAS_BEHAVIORAL_MONITOR,
+    _load_settings,
     get_behavioral_monitor,
 )  # noqa: E501
 from agent_friday.services.agent import (
@@ -252,6 +253,75 @@ def _resolve_bind_port():
     return requested, requested, True
 
 
+def _fail_loud_and_exit(msg):
+    """Log to friday.log, print, and (on Windows) raise a visible message
+    box, then exit(1). Shared by the single-instance-lock failure and the
+    bind-failure paths below — a losing process must never die quietly."""
+    print(f"\n  {msg}")
+    try:
+        import logging as _lg
+        _lg.getLogger("friday.server").error(msg)
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, msg, "Agent Friday failed to start", 0x10)
+        except Exception:
+            pass
+    sys.exit(1)
+
+
+def _acquire_single_instance_lock():
+    """OS-level exclusive lock, held for this process's entire lifetime —
+    the authoritative guard against a second production server ever running
+    (docs: toolcall-integrity-v5, 2026-08-13 double-launch incident: two
+    server processes born the same second; the loser sat alive at ~4MB/0%
+    CPU with NOTHING logged, because it never got far enough to log
+    anything). Checked here, before any heavy startup work (wiki indexing,
+    vault setup, model loading) — so a losing process fails in milliseconds,
+    not after minutes of silent, invisible partial init.
+
+    Released automatically by the OS the instant this process exits, for
+    ANY reason — clean shutdown, crash, or a hard kill — so there is no
+    stale-lock cleanup to get wrong.
+
+    Returns the open file handle (caller MUST keep a reference alive for
+    the process's lifetime — closing it releases the lock) or None if
+    another live process already holds it.
+    """
+    lock_path = FRIDAY_DIR / "friday_server.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    # a+b starts at EOF, not byte 0 — an explicit seek(0) before locking is
+    # required, or two handles opened against a non-empty file lock
+    # DIFFERENT byte positions (both "succeed", no conflict detected at all).
+    fh = open(lock_path, "a+b")
+    try:
+        fh.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    # Diagnostic metadata (PID, start time) goes in a SEPARATE, unlocked
+    # file — Windows file locking is mandatory, not advisory, so writing
+    # this into the locked region itself would make it unreadable by
+    # anything but the holder, defeating its purpose (an external "who's
+    # holding the lock?" check, including this same function's own
+    # failure-diagnostic path in __main__ below).
+    try:
+        from datetime import datetime as _dt
+        pid_path = FRIDAY_DIR / "friday_server.pid"
+        pid_path.write_text(f"{os.getpid()}\n{_dt.now().isoformat()}\n", encoding="utf-8")
+    except Exception:
+        pass
+    return fh
+
+
 # ═══════════════════════════════════════════════════════════════
 #  MAIN
 # ═══════════════════════════════════════════════════════════════
@@ -262,6 +332,34 @@ if __name__ == '__main__':
             _stream.reconfigure(encoding='utf-8', errors='replace')
         except Exception:
             pass
+
+    # Single-instance guard — FIRST, before anything else can hang or race.
+    _instance_lock_fh = _acquire_single_instance_lock()
+    if _instance_lock_fh is None:
+        _lock_path = FRIDAY_DIR / "friday_server.lock"
+        _pid_path = FRIDAY_DIR / "friday_server.pid"
+        _holder_pid = "unknown"
+        try:
+            _holder_pid = _pid_path.read_text(encoding="utf-8").splitlines()[0]
+        except Exception:
+            pass
+        _guard_msg = (
+            f"Agent Friday could not start: another server process "
+            f"(PID {_holder_pid}) already holds the single-instance lock "
+            f"at {_lock_path}. Quit it from the tray icon, or end its "
+            f"process, then relaunch."
+        )
+        try:
+            import urllib.request as _ur
+            _probe_port = os.environ.get('FRIDAY_PORT', '3000')
+            with _ur.urlopen(f"http://127.0.0.1:{_probe_port}/api/health", timeout=3):
+                _guard_msg += (" That server IS responding to health checks right "
+                              "now — it looks healthy, not hung.")
+        except Exception:
+            _guard_msg += (" That server is NOT responding to health checks right "
+                           "now — it may be hung; ending its process is likely safe.")
+        _fail_loud_and_exit(_guard_msg)
+
     _port, _requested, _fell_back = _resolve_bind_port()
     _url = f"http://localhost:{_port}"
     print()
@@ -416,15 +514,42 @@ if __name__ == '__main__':
     except Exception:
         pass
 
+    # Hang watchdog (toolcall-integrity-v5, 2026-08-13): arm before app.run()
+    # so a hang during request serving — the scenario both silent-hang
+    # incidents matched — gets caught. auto_restart_after_dump self-exits
+    # after a dump so the tray relaunches; default off, so a dump alone
+    # never changes behavior unless the user opts in.
+    try:
+        _hw_cfg = (_load_settings().get('hang_watchdog') or {})
+        if _hw_cfg.get('enabled', True):
+            from agent_friday.services import hang_watchdog as _hw
+
+            def _on_hang_dump(_dump_path):
+                print(f"\n  HANG WATCHDOG: thread stacks dumped to {_dump_path}")
+                if (_load_settings().get('hang_watchdog') or {}).get(
+                        'auto_restart_after_dump', False):
+                    print("  hang_watchdog.auto_restart_after_dump is on — exiting "
+                          "so the tray relaunches.")
+                    os._exit(1)
+
+            _hw.start(
+                heartbeat_interval_s=_hw_cfg.get('heartbeat_interval_s', 15),
+                stall_threshold_s=_hw_cfg.get('stall_threshold_s', 90),
+                on_dump=_on_hang_dump,
+            )
+            print(f"  Hang watchdog: armed (stall threshold "
+                  f"{_hw_cfg.get('stall_threshold_s', 90)}s)")
+    except Exception as _hw_err:
+        print(f"  Hang watchdog: skipped ({_hw_err})")
+
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,
                 ssl_context=_ssl_context)
     except OSError as _bind_err:
-        # This branch historically vanished: the tray spawns the server under
-        # pythonw, so print() goes nowhere and a "restart" that lost the port
-        # race to a stale server died in total silence — the user kept using
-        # the OLD server without knowing. Diagnose the occupant, log loudly,
-        # and on Windows raise a visible message box.
+        # The single-instance lock above catches almost all of this now, but
+        # stays as a backstop for a race the lock can't see — e.g. something
+        # else entirely holding the TCP port. Diagnose the occupant, log
+        # loudly, and on Windows raise a visible message box; never die quietly.
         _msg = (f"Agent Friday could not start on port {_port}: {_bind_err}.")
         try:
             import urllib.request as _ur, json as _j
@@ -438,17 +563,4 @@ if __name__ == '__main__':
         except Exception:
             _msg += (" Another program may be using the port. Free it or set "
                      "FRIDAY_PORT to a different one.")
-        print(f"\n  {_msg}")
-        try:
-            import logging as _lg
-            _lg.getLogger("friday.server").error(_msg)
-        except Exception:
-            pass
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                ctypes.windll.user32.MessageBoxW(None, _msg,
-                                                 "Agent Friday failed to start", 0x10)
-            except Exception:
-                pass
-        sys.exit(1)
+        _fail_loud_and_exit(_msg)
