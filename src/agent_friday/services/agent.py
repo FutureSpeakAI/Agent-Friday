@@ -52,6 +52,7 @@ from agent_friday.core import (
     _scrub_pii,
     get_anthropic_client,
     get_behavioral_monitor,
+    process_log,
     process_register,
     process_update,
 )  # noqa: E501
@@ -1932,6 +1933,18 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         "chain": chain,
         "chain_step": chain_step,
     })
+    # B4: subagent spawns land in the global activity ledger (metadata only —
+    # the ledger schema drops anything beyond task_id/description/model).
+    try:
+        from agent_friday.services import activity_ledger as _al
+        _al.record(
+            "subagent_spawn",
+            task_id=task_id,
+            description=(description or name or "")[:200],
+            model=_load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT,
+        )
+    except Exception:
+        pass
     th = threading.Thread(target=_task_worker,
                           args=(task_id, name, prompt, description),
                           kwargs={'orb_icon': orb_icon}, daemon=True)
@@ -4510,6 +4523,141 @@ def _tool_orb_meta(name):
     return ('default', '⚡', name)
 
 
+# ══════════════════════════════════════════════════════════════
+#  B3 — Orb↔task↔ledger correlation + tier-redacted thread view
+# ══════════════════════════════════════════════════════════════
+
+# Sentinel prefixes that mean a tool call was DENIED by a governance gate
+# (vs. an execution error, vs. success). Kept in sync with the gate messages
+# emitted by _execute_tool's hook chain and the zero-trust vault gate.
+_TOOL_DENY_SENTINELS = (
+    "[VAULT-ZT DENY]", "[VAULT ACCESS DENIED]", "[CONFIRMATION REQUIRED]",
+    "[GOVERNANCE DENY]", "[SANDBOX DENY]",
+)
+_TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:")
+
+
+def _tool_call_status(result):
+    """Classify a tool result string: 'ok' | 'deny' | 'error'."""
+    r = result if isinstance(result, str) else ""
+    if r.startswith(_TOOL_DENY_SENTINELS):
+        return "deny"
+    if r.startswith(_TOOL_ERROR_SENTINELS):
+        return "error"
+    return "ok"
+
+
+def _tier_safe_summary(payload, limit=120, kind="args"):
+    """Egress-tier-safe one-line summary of tool args/results for the orb
+    thread view. Runs the text through the vault sensitivity classifier —
+    TIER_2/TIER_3 content is withheld entirely (the process record is
+    world-readable via /api/processes), TIER_1 is truncated to `limit` chars.
+    """
+    if payload is None:
+        return ""
+    try:
+        text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
+    except Exception:
+        text = str(payload)
+    if not text:
+        return ""
+    tier = 1
+    try:
+        if VaultAccessControl is not None:
+            tier = int(_get_vault_control().classify(text))
+    except Exception:
+        tier = 1
+    if tier > 1:
+        return f"[tier-{tier} {kind} withheld]"
+    return " ".join(text.split())[:limit]
+
+
+def _register_agent_orb(orb_label, orb_category, orb_icon, model, session_ctx=None):
+    """Register the per-agent-loop process orb WITH correlation ids.
+
+    The orb carries the model actually serving the loop plus the spawning
+    task's id (when this loop runs inside a background task, _task_worker puts
+    it in session_ctx), so the frontend thread panel and /api/tasks/<id> can
+    correlate orb → task → ledger events exactly. Returns the orb pid, or
+    None when registration failed (every caller treats None as "no orb").
+    """
+    orb_id = f"agent-{uuid.uuid4().hex[:8]}"
+    try:
+        process_register(
+            orb_id,
+            name="Friday",
+            label=orb_label or "Thinking…",
+            category=orb_category,
+            icon=orb_icon,
+            steps=[],
+            model=model or ANTHROPIC_MODEL_DEFAULT,
+            task_id=(session_ctx or {}).get("task_id"),
+        )
+    except Exception:
+        return None
+    return orb_id
+
+
+def _orb_tool_trace(orb_id, name, args, result, duration_ms):
+    """Append one completed tool call to the orb's thread view: a compact
+    log line plus a timed step entry. Args/results are tier-redacted via
+    _tier_safe_summary before touching the process record. Best-effort."""
+    if not orb_id:
+        return
+    try:
+        status = _tool_call_status(result)
+        stamp = _time.strftime("%H:%M:%S")
+        process_log(orb_id, f"[{stamp}] tool {name} → {status} ({int(duration_ms)}ms)")
+        process_update(orb_id, step={
+            "type": "tool",
+            "name": name,
+            "status": status,
+            "args": _tier_safe_summary(args, kind="args"),
+            "result": _tier_safe_summary(result, kind="result"),
+            "duration_ms": int(duration_ms),
+            "ts": _time.time(),
+        })
+    except Exception:
+        pass
+
+
+def _ledger_tool_call(name, result, duration_ms, orb_id, session_ctx):
+    """B4: append a metadata-only tool_call event to the activity ledger."""
+    try:
+        from agent_friday.services import activity_ledger as _al
+        _al.record(
+            "tool_call",
+            tool=name,
+            ok=(_tool_call_status(result) == "ok"),
+            duration_ms=int(duration_ms),
+            orb_id=orb_id,
+            task_id=(session_ctx or {}).get("task_id"),
+        )
+    except Exception:
+        pass
+
+
+def _ledger_model_invocation(model, provider, seat, duration_ms, tokens_in,
+                             tokens_out, orb_id, session_ctx):
+    """B4: append a metadata-only model_invocation event to the ledger."""
+    try:
+        from agent_friday.services import activity_ledger as _al
+        _al.record(
+            "model_invocation",
+            model=model,
+            provider=provider,
+            seat=seat,
+            duration_ms=int(duration_ms),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            orb_id=orb_id,
+            task_id=(session_ctx or {}).get("task_id"),
+            workspace=(session_ctx or {}).get("workspace"),
+        )
+    except Exception:
+        pass
+
+
 def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temperature=None, max_iters=999, pii_lookup=None, session_ctx=None, orb_label=None, orb_category='default', orb_icon='🧠'):
     """Tool-using Claude loop. Returns (final_text, tool_trace).
 
@@ -4550,6 +4698,17 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
     except Exception:
         pass
 
+    # ── Process orb registration — frontend renders an orb per active agent.
+    # Registered FIRST so the behavioral monitor session below can carry the
+    # orb id for exact orb↔trace correlation (B3). ──
+    orb_id = _register_agent_orb(orb_label, orb_category, orb_icon,
+                                 model or ANTHROPIC_MODEL_DEFAULT, session_ctx)
+
+    # ── B4: model-invocation accounting for the activity ledger. ──
+    _led_t0 = _time.time()
+    _led_tok_in = 0
+    _led_tok_out = 0
+
     # ── Behavioral monitor — open a governance session keyed to the user's
     # latest message, log every tool call, and score the loop on completion. ──
     _bmon = None
@@ -4575,6 +4734,10 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             _bmon_sid = _bmon.begin_session(_bmon_user_msg, meta={
                 "is_background_task": bool((session_ctx or {}).get("is_background_task")),
                 "provider": (session_ctx or {}).get("provider", "cloud"),
+                # B3: exact correlation ids — the governance session, the
+                # process orb and the spawning task now share a spine.
+                "task_id": (session_ctx or {}).get("task_id"),
+                "orb_id": orb_id,
             })
         except Exception:
             _bmon = None
@@ -4591,21 +4754,6 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             )
         except Exception:
             pass
-
-    # ── Process orb registration — frontend renders an orb per active agent. ──
-    orb_id = f"agent-{uuid.uuid4().hex[:8]}"
-    try:
-        process_register(
-            orb_id,
-            name="Friday",
-            label=orb_label or "Thinking…",
-            category=orb_category,
-            icon=orb_icon,
-            steps=[],
-            model=model or ANTHROPIC_MODEL_DEFAULT,
-        )
-    except Exception:
-        orb_id = None
 
     def _orb_safe(fn, *a, **kw):
         if not orb_id:
@@ -4672,6 +4820,13 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             kwargs = _seal_or_block(kwargs, "anthropic")
             _t0 = _time.time()
             resp = client.messages.create(**kwargs)
+            # B4: accumulate token counts for the activity-ledger record.
+            try:
+                _u = getattr(resp, "usage", None)
+                _led_tok_in += int(getattr(_u, "input_tokens", 0) or 0)
+                _led_tok_out += int(getattr(_u, "output_tokens", 0) or 0)
+            except Exception:
+                pass
             # Cost metering (Part D): the Anthropic tool loop used to discard
             # resp.usage — capture input+output tokens with run/workspace
             # attribution from session_ctx.
@@ -4724,8 +4879,11 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
             # Execute tools and feed results back
             tool_results = []
             for tu in tool_uses:
-                _orb_safe(process_update, orb_id, label=f"{tu.name}…",
-                          step={"type": "tool", "name": tu.name, "input": tu.input, "ts": _time.time()})
+                # B3: the step entry is appended AFTER execution (with status +
+                # timing, tier-redacted args) by _orb_tool_trace — the raw tool
+                # input no longer enters the world-readable process record.
+                _orb_safe(process_update, orb_id, label=f"{tu.name}…")
+                _t_tool = _time.time()
 
                 # ── Zero-trust continuous vault authorization ──────────
                 # Gate every tool call through vault check_action before
@@ -4739,8 +4897,12 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                     )
                     if not _zt_allowed:
-                        tool_trace.append({"name": tu.name, "input": tu.input, "result": f"[VAULT-ZT DENY] {_zt_detail}"})
-                        _bmon_log(tu.name, tu.input, f"[VAULT-ZT DENY] {_zt_detail}")
+                        _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"
+                        tool_trace.append({"name": tu.name, "input": tu.input, "result": _zt_result})
+                        _bmon_log(tu.name, tu.input, _zt_result)
+                        _tool_ms = int((_time.time() - _t_tool) * 1000)
+                        _orb_tool_trace(orb_id, tu.name, tu.input, _zt_result, _tool_ms)
+                        _ledger_tool_call(tu.name, _zt_result, _tool_ms, orb_id, session_ctx)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu.id,
@@ -4750,6 +4912,9 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         continue
 
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
+                _tool_ms = int((_time.time() - _t_tool) * 1000)
+                _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
+                _ledger_tool_call(tu.name, result, _tool_ms, orb_id, session_ctx)
 
                 # Screenshot results carry a base64 image — hand it to the model as
                 # an actual vision block so it can SEE the screen and pick coords.
@@ -4776,6 +4941,12 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
         _orb_safe(process_update, orb_id, status='error', label='Error', progress=1.0)
         raise
     finally:
+        # ── B4: one model_invocation ledger event per agent-loop completion. ──
+        _ledger_model_invocation(
+            model or ANTHROPIC_MODEL_DEFAULT, "anthropic", "cloud",
+            (_time.time() - _led_t0) * 1000, _led_tok_in, _led_tok_out,
+            orb_id, session_ctx,
+        )
         # ── Behavioral monitor — score this loop and fire response actions. ──
         if _bmon is not None and _bmon_sid is not None:
             try:
@@ -4801,7 +4972,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
 def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                       pii_lookup=None, session_ctx=None, max_iters=50, orb=None,
-                      meter_provider=None):
+                      meter_provider=None, orb_id=None):
     """Shared OpenAI-format agentic tool loop for every OpenAI-compatible
     provider — local Ollama (gemma4 et al.) AND cloud OpenAI/OpenRouter.
 
@@ -4820,12 +4991,26 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                        cost-ledger attribution; defaults to `provider` so
                        existing call sites are unchanged
       orb(**kw)      — optional process-orb updater (no-op if omitted)
+      orb_id         — the caller's process-orb pid (B3): enables the enriched
+                       thread view (process_log lines + timed steps) and exact
+                       correlation ids on the activity-ledger events
 
     Returns (final_text, tool_trace). Tool-less calls do exactly one round.
     """
     _orb = orb or (lambda **kw: None)
     _meter_as = meter_provider or provider
     tool_trace = []
+    # B4: model-invocation accounting — token totals accumulate across rounds
+    # and a single ledger event is recorded at each completion path.
+    _led_t0 = _time.time()
+    _led_tok = {"in": 0, "out": 0}
+    _led_seat = "local" if provider == "local" else "openai"
+
+    def _led_done():
+        _ledger_model_invocation(
+            model, _meter_as, _led_seat, (_time.time() - _led_t0) * 1000,
+            _led_tok["in"], _led_tok["out"], orb_id, session_ctx,
+        )
     # Auto-compaction (Part C): condense a long transcript before the loop.
     try:
         from agent_friday.services import compaction as _compaction
@@ -4841,6 +5026,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # differs (OpenRouter's server-side fallback reports it in `model`,
         # surfaced by the transport as `_served_model`).
         _meter_model = resp.get("_served_model") or model
+        # B4: accumulate token totals for the activity-ledger record.
+        try:
+            _led_tok["in"] += int(usage.get("prompt_tokens", 0) or 0)
+            _led_tok["out"] += int(usage.get("completion_tokens", 0) or 0)
+        except Exception:
+            pass
         try:
             from agent_friday.routing.model_router import get_router
             get_router().cost_tracker.record(
@@ -4865,6 +5056,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         if not oai_tools or not tool_calls:
             text = (msg.get("content") or "").strip()
             _orb(status='completed', progress=1.0, label=f'Done ({model})')
+            _led_done()
             return text, tool_trace
 
         # Echo the assistant turn (must carry tool_calls verbatim).
@@ -4888,6 +5080,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                 targs = json.loads(fn.get("arguments") or "{}")
             except Exception:
                 targs = {}
+            _t_tool = _time.time()
 
             # ── Zero-trust continuous vault authorization. ──
             # ONLY vault-tier (TIER_2/TIER_3) data is gated here; the provider
@@ -4903,8 +5096,12 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                     access_log_path=str(FRIDAY_DIR / "vault" / "access-log.jsonl"),
                 )
                 if not _zt_allowed:
+                    _zt_result = f"[VAULT-ZT DENY] {_zt_detail}"
                     tool_trace.append({"name": tname, "input": targs,
-                                       "result": f"[VAULT-ZT DENY] {_zt_detail}"})
+                                       "result": _zt_result})
+                    _tool_ms = int((_time.time() - _t_tool) * 1000)
+                    _orb_tool_trace(orb_id, tname, targs, _zt_result, _tool_ms)
+                    _ledger_tool_call(tname, _zt_result, _tool_ms, orb_id, session_ctx)
                     convo.append({"role": "tool", "tool_call_id": tcid,
                                   "content": f"[VAULT ACCESS DENIED] references {_zt_detail} "
                                              f"data — switch to a local model to access it."})
@@ -4912,6 +5109,9 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
 
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                    session_ctx=session_ctx)
+            _tool_ms = int((_time.time() - _t_tool) * 1000)
+            _orb_tool_trace(orb_id, tname, targs, result, _tool_ms)
+            _ledger_tool_call(tname, result, _tool_ms, orb_id, session_ctx)
             # Screenshots return a base64 blob — useless as text here, and CC
             # already forces the Anthropic path, so degrade gracefully.
             if tname == 'screenshot':
@@ -4920,6 +5120,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
 
     _orb(status='error', label='Max iters', progress=1.0)
+    _led_done()
     return "[Agent hit max tool iterations without completing.]", tool_trace
 
 
