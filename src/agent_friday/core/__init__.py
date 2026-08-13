@@ -1482,6 +1482,20 @@ DEFAULT_SETTINGS = {
         "external_message": {"gated": True,  "expires_seconds": 86400},
         "internal":         {"gated": False, "expires_seconds": None},
     },
+    # ── Hang watchdog (toolcall-integrity-v5, 2026-08-13) ──
+    # services/hang_watchdog.py dumps every thread's stack to
+    # ~/.friday/logs/hang-dump-*.log when the process goes unresponsive
+    # while still alive (friday.log went dark for hours on 08-12 and again
+    # 08-13 with zero trace of why). auto_restart_after_dump: when true, the
+    # server self-exits shortly after writing a dump so the tray's watchdog
+    # relaunches it — OFF by default; a dump alone is diagnostic, opting
+    # into an unattended restart is the user's call.
+    "hang_watchdog": {
+        "enabled": True,
+        "heartbeat_interval_s": 15,
+        "stall_threshold_s": 90,
+        "auto_restart_after_dump": False,
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.
