@@ -59,6 +59,7 @@ from agent_friday.services.model_router import (
     _build_emotional_tone_block,
     _build_memory_context_block,
     _build_session_continuity_block,
+    _call_claude,
     _call_ollama,
     _call_openai,
     _compress_trajectory,
@@ -612,14 +613,46 @@ def chat():
                 orb_label=_orb_label, orb_category='default', orb_icon='💬',
             )
 
+        # ── B7: honest-failure ladder — after ONE corrective retry, one
+        # last attempt with tools stripped so the model can answer plainly
+        # (a single-shot generation, no agentic tool loop — fast), before
+        # the honest-failure message. ──
+        def _redispatch_no_tools(corrective_note):
+            _retry_messages = messages + [{"role": "user", "content": corrective_note}]
+            if _routed_local:
+                return _call_ollama(
+                    _retry_messages, system=system_prompt, model=_route_info['model'],
+                    temperature=settings.get('temperature'),
+                    orb_label=f"🏠 {_orb_label}", orb_icon='🏠',
+                    tools=None, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                )
+            if _provider == 'openai':
+                return _call_openai(
+                    _retry_messages, system=system_prompt, model=_route_info.get('model'),
+                    temperature=settings.get('temperature'),
+                    orb_label=f"☁️ {_orb_label}", orb_icon='☁️',
+                    tools=None, pii_lookup=pii_lookup, session_ctx=_sess_ctx,
+                    provider=_route_info.get('provider_name'),
+                )
+            _cloud_model = _route_info.get('model')
+            _claude_model = _cloud_model if str(_cloud_model or '').startswith('claude') else None
+            return _call_claude(
+                _retry_messages, system=system_prompt, model=_claude_model,
+                temperature=settings.get('temperature'),
+            ), []
+
         reply, tool_trace, _integrity_meta = validate_toolcall_integrity(
             reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
             redispatch=_redispatch_for_integrity,
+            redispatch_no_tools=_redispatch_no_tools,
         )
         if _integrity_meta.get('blocked'):
-            print(f"  [INTEGRITY] fabricated tool-call syntax caught "
+            _resolved = not (_integrity_meta['final_leaks']
+                             or _integrity_meta.get('final_claims'))
+            print(f"  [INTEGRITY] fabrication caught "
                   f"(retries={_integrity_meta['retries']}, "
-                  f"resolved={'yes' if not _integrity_meta['final_leaks'] else 'no'})")
+                  f"tools_stripped={_integrity_meta.get('tools_stripped_retry')}, "
+                  f"resolved={'yes' if _resolved else 'no'})")
 
         # ── FR-3: provenance — only executed-tool-result URLs render clickable.
         # A [web:URL] citation not backed by anything this turn's tools
