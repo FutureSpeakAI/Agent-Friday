@@ -29,6 +29,7 @@ import agent_friday.core as core
 from agent_friday.core import (
     FRIDAY_DIR,
     HOME,
+    _load_settings,
 )  # noqa: E501
 
 
@@ -958,28 +959,33 @@ def _enrich_events(events):
     return events
 
 
-# Fixed loopback redirect for Desktop ("installed") OAuth clients. Google accepts
-# any localhost/loopback redirect for installed apps *without* registering it in
-# the GCP console, so we pin a deterministic URI matching the port the server
-# binds to (3000). Critically, the app binds 0.0.0.0 when a tunnel password is
-# set, so request.host_url can be a tunnel/LAN host that Google would REJECT for
-# an installed client — pinning localhost:3000 keeps the loopback flow valid.
+# Fixed loopback redirect, used for EVERY client type (Desktop AND Web) —
+# see _google_redirect_uri's docstring. Google accepts any localhost/loopback
+# redirect for installed apps *without* registering it in the GCP console;
+# for a Web client it must be pre-registered — see the redirect_uri surfaced
+# in Settings -> Connectors for the exact string to add there.
 GOOGLE_DESKTOP_REDIRECT_URI = "http://localhost:3000/api/google/auth/callback"
 
 
 def _google_redirect_uri(cfg, client_type=None):
     """Canonical OAuth redirect URI for this client config.
 
-    Desktop ("installed") clients accept any loopback redirect without
-    registering it in GCP, so we pin the deterministic localhost:3000 URI and
-    never hit redirect_uri_mismatch — even when the user reaches the app through
-    a tunnel or LAN IP. Web ("web") clients must match a URI pre-registered in
-    the console, so we derive it from the actual request host (legacy behavior).
+    2026-08-13: previously derived from request.host_url for a "web" client
+    config — Stephen's consent attempt died with Error 400 invalid_request
+    because he reaches Friday via a hosts-file alias (http://agent.friday/),
+    and Google's secure-response-handling policy rejects ANY plain-HTTP
+    non-loopback redirect_uri outright (checked against the literal URI, not
+    something DNS/propagation ever fixes). The app also binds 0.0.0.0 when a
+    tunnel password is set, so request.host_url could just as easily be a
+    tunnel/LAN host — same rejection. Pinned to loopback for every client
+    type now, matching mcp_oauth.py's http://127.0.0.1:{port}/callback
+    pattern; an advanced settings override exists for a genuine
+    HTTPS-terminated reverse-proxy setup (see DEFAULT_SETTINGS.google_oauth).
     """
-    kind = client_type or _google_client_type(cfg) or "installed"
-    if kind == "installed":
-        return GOOGLE_DESKTOP_REDIRECT_URI
-    return request.host_url.rstrip('/') + '/api/google/auth/callback'
+    override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
+    if override:
+        return override.rstrip('/') + '/api/google/auth/callback'
+    return GOOGLE_DESKTOP_REDIRECT_URI
 
 
 def _write_google_token(creds):

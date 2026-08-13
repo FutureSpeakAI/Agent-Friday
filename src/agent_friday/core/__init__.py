@@ -1496,6 +1496,20 @@ DEFAULT_SETTINGS = {
         "stall_threshold_s": 90,
         "auto_restart_after_dump": False,
     },
+    # ── Google OAuth redirect (toolcall-integrity-v5, 2026-08-13) ──
+    # Both Google connectors (services/calendar_engine.py legacy single-
+    # account, services/google_accounts.py multi-account) pin their OAuth
+    # redirect_uri to loopback (http://localhost:3000/...) regardless of the
+    # request's Host header. Google's secure-response-handling policy
+    # rejects any plain-HTTP non-loopback redirect_uri outright — a
+    # hosts-file alias like http://agent.friday/... fails every time,
+    # independent of DNS/propagation. redirect_base_override exists only for
+    # a genuine HTTPS-terminated reverse-proxy setup, where that exact base
+    # URL must ALSO be registered as an Authorized redirect URI in the GCP
+    # console for both callback paths.
+    "google_oauth": {
+        "redirect_base_override": "",
+    },
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.

@@ -7487,12 +7487,18 @@ function GoogleAccountsPanel(){
   const[msg,setMsg]=useState('');
   const[label,setLabel]=useState('');
   const[loading,setLoading]=useState(false);
-  const refresh=()=>apiFetch('/api/google/accounts').then(r=>r.json()).then(d=>{if(d.status==='ok')setAccounts(d.accounts||[])}).catch(()=>{});
+  const[oauth,setOauth]=useState(null);
+  const[copied,setCopied]=useState(false);
+  const refresh=()=>apiFetch('/api/google/accounts').then(r=>r.json()).then(d=>{if(d.status==='ok'){setAccounts(d.accounts||[]);setOauth(d.oauth&&d.oauth.redirect_uri?d.oauth:null)}}).catch(()=>{});
   // NOTE: refresh is a concise arrow returning the fetch Promise; passing it
   // straight to useEffect makes React call that Promise as the cleanup fn on
   // unmount (TypeError, crashed the Settings window). Wrap it so the effect
   // returns undefined.
   useEffect(()=>{refresh()},[]);
+  const copyRedirectUri=()=>{
+    if(!oauth)return;
+    navigator.clipboard?.writeText(oauth.redirect_uri).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1800)}).catch(()=>{});
+  };
   const addAccount=async()=>{
     setLoading(true);
     try{
@@ -7515,6 +7521,14 @@ function GoogleAccountsPanel(){
     catch(e){}
   };
   return <div>
+    {oauth&&<div style={{background:'rgba(0,212,255,0.05)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'10px 12px',marginBottom:12}}>
+      <div style={{fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',letterSpacing:'0.04em',marginBottom:5,textTransform:'uppercase'}}>OAuth Redirect URI</div>
+      <div style={{display:'flex',gap:6,alignItems:'center'}}>
+        <code style={{flex:1,fontSize:11,color:'#00d4ff',fontFamily:'JetBrains Mono',background:'rgba(0,0,0,0.25)',borderRadius:4,padding:'4px 8px',overflowWrap:'anywhere',wordBreak:'break-all'}}>{oauth.redirect_uri}</code>
+        <button className="settings-btn" style={{fontSize:11,padding:'4px 10px',whiteSpace:'nowrap'}} onClick={copyRedirectUri} title="Copy to clipboard">{copied?'✓ Copied':'📋 Copy'}</button>
+      </div>
+      {oauth.client_type==='web'&&<div style={{fontSize:11,color:'rgba(255,255,255,0.5)',marginTop:6,lineHeight:1.4}}>This exact URI must be registered under "Authorized redirect URIs" for this OAuth client in the Google Cloud Console, or consent will fail with Error 400 (invalid_request).</div>}
+    </div>}
     {accounts.length===0&&<div style={{color:'rgba(255,255,255,0.38)',fontSize:12,marginBottom:12}}>No Google accounts connected yet.</div>}
     {accounts.map(acc=>(
       <div key={acc.id} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:8,padding:14,marginBottom:10}}>
