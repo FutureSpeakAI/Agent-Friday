@@ -559,6 +559,37 @@ HOME = Path(os.path.expanduser("~"))
 FRIDAY_DIR = HOME / ".friday"
 WIKI_DIR = FRIDAY_DIR / "wiki"
 
+# ── Local runtime stack (decision D7) ────────────────────────
+# Home for the heavyweight LOCAL inference artifacts Friday orchestrates but
+# does not ship: GGUF weights, the llama.cpp binaries, ComfyUI and its image
+# models, the voice venvs. These are large (tens of GB), machine-specific, and
+# regenerable — so they live beside the app's other data under ~/.friday rather
+# than in a directory invented per-machine, which is what D7 settles.
+#
+# Overridable, in precedence order, because the default lands on the system
+# drive and these artifacts are exactly what a user wants on a bigger disk:
+#   1. FRIDAY_RUNTIME_DIR env var
+#   2. settings.json  "runtime_dir"
+#   3. ~/.friday/runtime
+#
+# Resolved lazily by runtime_dir() rather than frozen at import: settings are
+# not loadable this early in module init.
+DEFAULT_RUNTIME_DIR = FRIDAY_DIR / "runtime"
+
+
+def runtime_dir() -> Path:
+    """Resolve the local runtime-stack root. Never raises."""
+    env = os.environ.get("FRIDAY_RUNTIME_DIR")
+    if env:
+        return Path(os.path.expanduser(env))
+    try:
+        configured = (_load_settings() or {}).get("runtime_dir")
+    except Exception:
+        configured = None
+    if configured:
+        return Path(os.path.expanduser(str(configured)))
+    return DEFAULT_RUNTIME_DIR
+
 # Migrate wiki from ~/wiki (legacy location) to ~/.friday/wiki.
 #
 # The original guard here was `not WIKI_DIR.exists()` — all-or-nothing. On
@@ -1413,6 +1444,11 @@ DEFAULT_SETTINGS = {
         "mode": "improve",         # "improve" (regenerate) | "flag" (surface gap)
         "vision_for_images": True, # score images with a Gemini vision model
     },
+    # Local runtime-stack root (decision D7). Empty = ~/.friday/runtime.
+    # Point this at another drive when the system disk is tight — the GGUF
+    # weights, ComfyUI models and voice venvs here run to tens of GB.
+    # FRIDAY_RUNTIME_DIR overrides this. See core.runtime_dir().
+    "runtime_dir": "",
     "context_pruning": {
         "enabled": True,
         "max_turns": 50,        # threshold (in turn pairs) before pruning kicks in
