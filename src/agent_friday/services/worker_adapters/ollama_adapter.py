@@ -103,12 +103,32 @@ class OllamaAdapter(BaseAdapter):
         if installed and model not in installed:
             model = installed[0]
 
-        payload = json.dumps({
+        body = {
             "model": model,
             "prompt": task.prompt,
             "stream": False,
             "options": {"num_predict": min(task.budget_tokens, 4096)},
-        }).encode()
+        }
+
+        # Egress gate (decision D2). This adapter previously POSTed straight to
+        # Ollama with no gate, no PII scrub and no health recording — the one
+        # provider call site in the tree that skipped the fail-closed contract
+        # every other site enforces. The gate itself now decides whether gating
+        # applies, from the destination, so the decision can no longer be made
+        # by a call site simply omitting the call.
+        try:
+            from agent_friday.services.egress_gate import gate_worker_payload
+            body = gate_worker_payload(body, base_url=_OLLAMA_BASE,
+                                       provider="ollama")
+        except Exception as exc:
+            with _JOBS_LOCK:
+                _JOBS[aid].update({
+                    "status": WorkerStatus.FAILED,
+                    "error": f"egress gate blocked this task: {exc}",
+                })
+            return
+
+        payload = json.dumps(body).encode()
 
         try:
             req = urllib.request.Request(

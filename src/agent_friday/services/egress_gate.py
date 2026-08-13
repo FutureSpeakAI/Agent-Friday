@@ -418,6 +418,62 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     return _gate_text(text, provider, field, log_path)
 
 
+def gate_worker_payload(
+    payload: dict[str, Any],
+    *,
+    base_url: str,
+    provider: str = "ollama",
+    log_path: Path | None = None,
+) -> dict[str, Any]:
+    """The orchestrator worker adapters' single egress entry point (decision D2).
+
+    Every other provider call site funnels through ``model_router._seal_or_block``.
+    ``worker_adapters/ollama_adapter.py`` funnelled through nothing at all: it
+    POSTed a hand-built payload straight to a hardcoded ``localhost:11434``,
+    skipping the gate, the PII scrub, health recording and cost metering. The
+    bypass was undocumented — unlike the Gemini dispatch gap, which carries an
+    explaining comment.
+
+    The fix is not "call seal_outbound from the adapter" but "stop letting the
+    CALL SITE decide whether gating applies". This function makes that decision
+    itself, from the destination:
+
+      * destination verified on-device  → returned unchanged. Cheap by
+        construction: no classifier runs, no payload copy. This is D2's "make
+        the gate cheap for local traffic rather than optional" — the traffic is
+        still gated, the gate just has nothing to do.
+      * anything else                   → fully sealed, fail-closed. A gate that
+        cannot verify itself raises rather than letting the payload out.
+
+    Handles the Ollama-native ``/api/generate`` shape (a bare ``prompt`` string),
+    which ``seal_outbound`` does not cover — it only knows the Anthropic
+    ``system``/``messages``/``tools`` keys, so an ungated ``prompt`` would have
+    sailed straight through even if the adapter had called it.
+    """
+    try:
+        from agent_friday.routing.provider_descriptors import is_private_host
+        on_device = bool(is_private_host(base_url))
+    except Exception:
+        on_device = False  # cannot verify the host → treat as cloud
+
+    if on_device and is_local_provider(provider):
+        return payload
+
+    # Cloud-bound (or unverifiable): fail-closed, same contract as every other
+    # provider call site.
+    if not gate_operational():
+        raise RuntimeError(
+            "Egress gate is non-functional (startup self-test failed); worker "
+            f"send to {base_url!r} blocked. Fix the gate or use a local model."
+        )
+
+    sealed = seal_outbound(dict(payload), provider, log_path)
+    if isinstance(sealed.get("prompt"), str):
+        sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
+                                     log_path)
+    return sealed
+
+
 def seal_outbound(
     payload: dict[str, Any],
     provider: str,
