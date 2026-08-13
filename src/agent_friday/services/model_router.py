@@ -803,12 +803,41 @@ def _estimate_chars(messages):
     return sum(len(m.get('content') or '') for m in messages)
 
 
-def _compress_trajectory(messages):
+def _traj_char_limit_for(model=None):
+    """Compression threshold in CHARACTERS, model-aware (decision D3).
+
+    `_TRAJ_CHAR_LIMIT` is 2M chars because Opus 4.8 has a 1M-token window — the
+    comment on the constant says exactly that, and it was applied to every
+    model regardless. On a 4K-window local model the old half had to exceed
+    ~500K tokens before compression fired, i.e. never: the request overflowed
+    first.
+
+    When the catalog knows the model's real window, budget the OLD half at half
+    of it (the recent half and the reply need the other half), converted to
+    characters at the same 4-chars-per-token estimate compaction.py uses.
+    Unknown model → the documented constant, unchanged.
+    """
+    if model:
+        try:
+            from agent_friday.services.model_catalog import context_window_for
+            win = context_window_for(model)
+            if win and win > 0:
+                return max(4_000, int(win * 0.5 * 4))
+        except Exception:
+            pass
+    return _TRAJ_CHAR_LIMIT
+
+
+def _compress_trajectory(messages, model=None):
     """Return a shorter version of the message list.
 
     Splits into 'old' and 'recent' halves.  If the old half is large enough to
     warrant compression, summarises it via a quick Claude call and replaces it
     with a synthetic memory block.  Otherwise returns messages unchanged.
+
+    `model` is optional and additive: callers that know which model the
+    trajectory is bound for get a window-appropriate threshold; callers that
+    do not keep the previous behaviour exactly.
     """
     if len(messages) <= _TRAJ_KEEP_VERBATIM * 2:
         return messages
@@ -817,7 +846,7 @@ def _compress_trajectory(messages):
     old_turns = messages[:split]
     recent_turns = messages[split:]
 
-    if _estimate_chars(old_turns) < _TRAJ_CHAR_LIMIT:
+    if _estimate_chars(old_turns) < _traj_char_limit_for(model):
         return messages  # old section is small enough to send verbatim
 
     # Build a plain-text transcript of the old turns for the summariser

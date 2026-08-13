@@ -113,6 +113,25 @@ class OllamaManager:
         except Exception:
             return []
 
+    def context_length(self, model):
+        """Context window (tokens) the daemon reports for a model, or None.
+
+        The GGUF metadata key is architecture-prefixed — `gemma4.context_length`,
+        `qwen3.context_length` — so match on the suffix rather than guessing the
+        architecture. Used by model_catalog.context_window_for (decision D3):
+        without this, local models are the one class with NO context-window
+        source at all, and they are exactly the class with small windows.
+        """
+        try:
+            info = (self._post("/api/show", {"model": model}, timeout=10)
+                    or {}).get("model_info") or {}
+        except Exception:
+            return None
+        for k, v in info.items():
+            if str(k).endswith(".context_length") and isinstance(v, int) and v > 0:
+                return v
+        return None
+
     def pull_model(self, name, progress_callback=None):
         try:
             for chunk in self._post_stream("/api/pull", {"name": name, "stream": True}):

@@ -65,6 +65,32 @@ def _cfg():
         return {}
 
 
+def resolve_context_window(model=None, cfg=None):
+    """The context window to budget against, in tokens (decision D3).
+
+    Precedence:
+      1. the model's REAL window from the catalog (model_discovery already
+         fetches and caches these; nothing read them before D3),
+      2. the configured `compaction.context_window`,
+      3. the 200_000 default.
+
+    `model` was already threaded into should_compact/maybe_compact but was only
+    ever passed to the summarizer — the window itself was a flat constant, so a
+    4K local model and Claude Opus were budgeted identically. That is the bug
+    this function exists to close.
+    """
+    cfg = cfg if cfg is not None else _cfg()
+    if model:
+        try:
+            from agent_friday.services.model_catalog import context_window_for
+            real = context_window_for(model)
+            if real and real > 0:
+                return int(real)
+        except Exception:
+            pass
+    return int(cfg.get("context_window", 200000))
+
+
 def should_compact(messages, model=None, cfg=None):
     cfg = cfg if cfg is not None else _cfg()
     if not cfg or cfg.get("enabled") is False:
@@ -74,7 +100,7 @@ def should_compact(messages, model=None, cfg=None):
     # Need at least one message in the middle to be worth compacting.
     if len(messages or []) <= keep_head + keep_tail + 1:
         return False
-    window = int(cfg.get("context_window", 200000))
+    window = resolve_context_window(model, cfg)
     ratio = float(cfg.get("trigger_ratio", 0.70))
     return estimate_tokens(messages) > window * ratio
 
