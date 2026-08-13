@@ -4070,6 +4070,15 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
         result = result[:_TOOL_RESULT_MAX] + f"\n[truncated — {len(result)} chars total]"
 
+    # ── A6: every date in a tool result carries a code-computed weekday, so
+    # the model never derives one itself (Incident 2, F3). ──
+    if isinstance(result, str):
+        try:
+            from agent_friday.services.clock import annotate_weekdays
+            result = annotate_weekdays(result)
+        except Exception:
+            pass
+
     # ── PostToolUse chain — audit log, PII scrub, cost attribution. ──
     return _hooks.run_post_hooks(ctx, result)
 
