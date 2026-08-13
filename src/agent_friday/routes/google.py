@@ -85,6 +85,14 @@ def google_auth_start():
         )
         session['google_oauth_state'] = state
         session['google_oauth_redirect_uri'] = redirect_uri
+        # 2026-08-13 PKCE fix: authorization_url() just auto-generated a
+        # code_verifier on THIS flow instance and sent its challenge to
+        # Google. The callback below rebuilds a completely fresh Flow that
+        # never called authorization_url(), so it never had a verifier of
+        # its own — persist this one in the session or the token exchange
+        # has nothing to replay and Google refuses with invalid_grant
+        # ("Missing code verifier").
+        session['google_oauth_verifier'] = flow.code_verifier
         resp = {
             "status": "ok",
             "auth_url": auth_url,
@@ -122,14 +130,28 @@ def google_auth_callback():
         from google_auth_oauthlib.flow import Flow
     except Exception as e:
         return f"<h2>google-auth-oauthlib not installed</h2><p>{e}</p>", 500
+    state = session.get('google_oauth_state')
+    verifier = session.get('google_oauth_verifier')
+    if not state or not verifier:
+        # Never attempt the exchange without a verifier to replay — that's
+        # exactly the bug being fixed, not something to fall through on.
+        return (
+            "<h2>Google authorization failed</h2>"
+            "<p>This session has no pending Google authorization (missing "
+            "state or PKCE verifier) — the link may be stale, already used, "
+            "or your session cookie was dropped. Start over from "
+            "/api/google/auth.</p>"
+        ), 400
     try:
-        state = session.get('google_oauth_state')
         # Fall back to the same redirect the start endpoint would have chosen so
         # the token exchange matches even if the session cookie was dropped.
         redirect_uri = session.get('google_oauth_redirect_uri') or _google_redirect_uri(cfg)
         flow = Flow.from_client_config(
             cfg, scopes=GOOGLE_SCOPES, state=state, redirect_uri=redirect_uri
         )
+        # Replay the verifier the START leg generated — the freshly rebuilt
+        # flow above has none of its own (it never called authorization_url()).
+        flow.code_verifier = verifier
         flow.fetch_token(authorization_response=request.url)
         creds = flow.credentials
         _write_google_token(creds)
