@@ -285,19 +285,56 @@ def cmd_setup(quick: bool = False):
 #  CMD: model
 # ═══════════════════════════════════════════════════════════════════
 
-ORCHESTRATOR_MODELS = [
-    ("claude-sonnet-5",   "Claude Sonnet 5",    "Frontier model — best cost/quality ratio"),
-    ("claude-opus-4-8",   "Claude Opus 4.8",    "Most capable — deep reasoning, complex tasks"),
-    ("claude-opus-4-7",   "Claude Opus 4.7",    "Prior Opus — strong deep reasoning"),
-    ("claude-opus-4-6",   "Claude Opus 4.6",    "Prior Opus — dependable heavy lifter"),
-    ("claude-sonnet-4-6", "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
-    ("claude-fable-5",    "Claude Fable 5",     "Creative/narrative specialist — story and prose"),
+# NO hardcoded model lists (spec A2): the pickers below render from the SAME
+# catalog the UI uses — provider registry + hosted discovery cache + live
+# Ollama — via _picker_models(). The two-entry literals here are an EMERGENCY
+# OFFLINE FALLBACK ONLY (two ids max, by design), used solely when
+# agent_friday.services can't import on a broken install.
+_FALLBACK_ORCHESTRATOR_MODELS = [
+    ("claude-sonnet-5", "Claude Sonnet 5", "Frontier default (offline fallback)"),
+    ("claude-opus-4-8", "Claude Opus 4.8", "Deep reasoning (offline fallback)"),
 ]
-CREATIVE_MODELS = [
-    ("gemini-nano-banana-2",   "Gemini Nano Banana 2",   "Image generation — fast"),
-    ("gemini-nano-banana-pro", "Gemini Nano Banana Pro", "Image generation — highest quality"),
-    ("veo-3",                  "Google Veo",             "Video generation"),
+_FALLBACK_CREATIVE_MODELS = [
+    ("gemini-nano-banana-2", "Gemini Nano Banana 2", "Image generation (offline fallback)"),
+    ("veo-3",                "Google Veo",           "Video generation (offline fallback)"),
 ]
+
+
+def _picker_models(role: str, fallback: list) -> list:
+    """(id, label, desc) tuples for one picker role, read live from the model
+    catalog (provider registry + discovery caches + Ollama daemon). Never
+    raises — a broken install degrades to the two-entry offline fallback."""
+    try:
+        _src = str(PROJ_ROOT / "src")
+        if _src not in sys.path:
+            sys.path.insert(0, _src)
+        from agent_friday.services.model_catalog import build_catalog
+        entries = build_catalog().get("roles", {}).get(role) or []
+        out = []
+        for e in entries:
+            desc = e.get("provider_label") or e.get("provider") or ""
+            if e.get("local"):
+                desc += " · local"
+            if not e.get("available"):
+                desc += f" — {e.get('hint') or 'not configured'}"
+            out.append((e["id"], e.get("label") or e["id"], desc))
+        if out:
+            return out
+    except Exception:
+        pass
+    return list(fallback)
+
+
+def orchestrator_models() -> list:
+    return _picker_models("orchestrator", _FALLBACK_ORCHESTRATOR_MODELS)
+
+
+def subagent_models() -> list:
+    return _picker_models("subagent", _FALLBACK_ORCHESTRATOR_MODELS)
+
+
+def creative_models() -> list:
+    return _picker_models("creative", _FALLBACK_CREATIVE_MODELS)
 
 
 def _pick_model(models: list, current: str, label: str) -> str:
@@ -326,13 +363,13 @@ def cmd_model():
     console.rule("[bold cyan]MODEL SELECTION[/bold cyan]")
 
     console.print("\n  [bold]Orchestrator[/bold] (primary reasoning + tool use)")
-    new_orch = _pick_model(ORCHESTRATOR_MODELS, cfg.get("orchestrator_model", "claude-sonnet-5"), "")
+    new_orch = _pick_model(orchestrator_models(), cfg.get("orchestrator_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Subagent[/bold] (background tasks)")
-    new_sub = _pick_model(ORCHESTRATOR_MODELS, cfg.get("subagent_model", "claude-sonnet-4-6"), "")
+    new_sub = _pick_model(subagent_models(), cfg.get("subagent_model", "claude-sonnet-4-6"), "")
 
     console.print("\n  [bold]Creative engine[/bold] (images, music, voice)")
-    new_creative = _pick_model(CREATIVE_MODELS, cfg.get("creative_model", "gemini-nano-banana-2"), "")
+    new_creative = _pick_model(creative_models(), cfg.get("creative_model", "gemini-nano-banana-2"), "")
 
     console.print()
     t = Table(box=box.ROUNDED, border_style="cyan", padding=(0, 2), show_header=False)

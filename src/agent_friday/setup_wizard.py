@@ -51,6 +51,56 @@ SETUP_MARKER = FRIDAY_DIR / ".setup_complete"
 
 # ── Data ─────────────────────────────────────────────────────────
 
+# NO hardcoded model lists (spec A2): provider model lineups resolve lazily
+# via _anthropic_models() / _creative_engines() from the hosted discovery
+# cache and the provider registry. The two-entry literals inside those
+# functions are an EMERGENCY OFFLINE FALLBACK ONLY (two ids max, by design).
+
+def _anthropic_models() -> list:
+    """(id, label, desc) rows for the Claude lineup — hosted discovery cache
+    (live /v1/models fetch) first, then the provider registry statics."""
+    try:
+        from agent_friday.services.model_discovery import cached_models
+        rows = [(m["id"], m.get("label") or m["id"],
+                 "Live from Anthropic /v1/models")
+                for m in cached_models("anthropic")[0] if m.get("id")]
+        if rows:
+            return rows
+    except Exception:
+        pass
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        prov = get_provider_registry().get_provider("anthropic") or {}
+        meta = prov.get("model_meta") or {}
+        rows = [(mid, (meta.get(mid) or {}).get("label") or mid,
+                 "From the provider registry")
+                for mid in prov.get("models") or []]
+        if rows:
+            return rows
+    except Exception:
+        pass
+    # offline-fallback-only (two ids max by design — spec A2)
+    return [("claude-sonnet-5", "Claude Sonnet 5", "Frontier default (offline fallback)"),
+            ("claude-opus-4-8", "Claude Opus 4.8", "Deep reasoning (offline fallback)")]
+
+
+def _creative_engines() -> list:
+    """(id, label, desc) rows for the creative-engine picker, from the same
+    catalog the UI renders (registry `creative` role)."""
+    try:
+        from agent_friday.services.model_catalog import build_catalog
+        rows = [(e["id"], e.get("label") or e["id"],
+                 e.get("provider_label") or "")
+                for e in build_catalog().get("roles", {}).get("creative") or []]
+        if rows:
+            return rows
+    except Exception:
+        pass
+    # offline-fallback-only (two ids max by design — spec A2)
+    return [("gemini-nano-banana-2", "Gemini Nano Banana 2", "Image generation (offline fallback)"),
+            ("veo-3", "Google Veo", "Video generation (offline fallback)")]
+
+
 PROVIDERS = [
     {
         "id": "anthropic",
@@ -59,14 +109,8 @@ PROVIDERS = [
         "tag": "RECOMMENDED",
         "key_hint": "sk-ant-...",
         "key_url": "console.anthropic.com",
-        "models": [
-            ("claude-sonnet-5",   "Claude Sonnet 5",    "Frontier model — best cost/quality ratio"),
-            ("claude-opus-4-8",   "Claude Opus 4.8",    "Most capable — deep reasoning, complex multi-step"),
-            ("claude-opus-4-7",   "Claude Opus 4.7",    "Prior Opus — strong deep reasoning"),
-            ("claude-opus-4-6",   "Claude Opus 4.6",    "Prior Opus — dependable heavy lifter"),
-            ("claude-sonnet-4-6", "Claude Sonnet 4.6",  "Fast and capable — great everyday driver"),
-            ("claude-fable-5",    "Claude Fable 5",     "Creative/narrative specialist — story and prose"),
-        ],
+        # Resolved lazily at pick time (dynamic catalog, spec A2).
+        "models": _anthropic_models,
     },
     {
         "id": "openai",
@@ -88,11 +132,6 @@ PROVIDERS = [
     },
 ]
 
-CREATIVE_ENGINES = [
-    ("gemini-nano-banana-2",   "Gemini Nano Banana 2",   "Image generation — fast"),
-    ("gemini-nano-banana-pro", "Gemini Nano Banana Pro", "Image generation — highest quality"),
-    ("veo-3",                  "Google Veo",             "Video generation"),
-]
 
 VOICE_PERSONAS = [
     ("Aoede",  "Warm, confident female  — calm and professional"),
@@ -391,6 +430,8 @@ def step_model(total: int, provider_id: str, existing_model: str) -> str:
     _header(3, total, "ORCHESTRATOR MODEL")
     provider = next((p for p in PROVIDERS if p["id"] == provider_id), PROVIDERS[0])
     models = provider["models"]
+    if callable(models):   # dynamic lineup (registry / discovery cache)
+        models = models()
     if not models:
         console.print("  [yellow]No models available for this provider yet.[/yellow]")
         return existing_model or "claude-opus-4-8"
@@ -422,22 +463,23 @@ def step_creative_engine(total: int, existing: str) -> str:
         "  code art, video, and TTS voice output.\n"
         "  [dim]Requires a Google Gemini API key (next step).[/dim]\n"
     )
-    for i, (mid, mname, mdesc) in enumerate(CREATIVE_ENGINES):
+    engines = _creative_engines()
+    for i, (mid, mname, mdesc) in enumerate(engines):
         star = " [bold magenta]← RECOMMENDED[/bold magenta]" if i == 0 else ""
         console.print(f"  [bold cyan]{i + 1}[/bold cyan].  [bold white]{mname}[/bold white]{star}")
         console.print(f"       [dim]{mdesc}[/dim]")
         console.print()
 
-    default_idx = next((str(i+1) for i,(mid,*_) in enumerate(CREATIVE_ENGINES) if mid == existing), "1")
+    default_idx = next((str(i+1) for i,(mid,*_) in enumerate(engines) if mid == existing), "1")
     while True:
-        choice = Prompt.ask(f"  [cyan]Engine (1–{len(CREATIVE_ENGINES)})[/cyan]", default=default_idx)
+        choice = Prompt.ask(f"  [cyan]Engine (1–{len(engines)})[/cyan]", default=default_idx)
         try:
             idx = int(choice) - 1
-            if 0 <= idx < len(CREATIVE_ENGINES):
-                return CREATIVE_ENGINES[idx][0]
+            if 0 <= idx < len(engines):
+                return engines[idx][0]
         except ValueError:
             pass
-        console.print(f"  [red]Enter 1–{len(CREATIVE_ENGINES)}.[/red]")
+        console.print(f"  [red]Enter 1–{len(engines)}.[/red]")
 
 
 def step_api_keys(total: int, existing_anthro: str, existing_gemini: str) -> tuple[str, str]:
