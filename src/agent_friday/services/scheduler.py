@@ -804,6 +804,16 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] approvals_expiry_sweep unavailable: {e}")
 
+    # The Friday Edition (E0) — morning compose. Distinct time from news_morning
+    # (07:00) so the two never collide; composes over existing engines only.
+    try:
+        from agent_friday.services.edition_engine import run_edition_job
+        register_builtin_task("edition_daily", run_edition_job,
+                              label="The Friday Edition", default_trigger="daily",
+                              default_spec={"hour": 6, "minute": 30})
+    except Exception as e:
+        print(f"  [scheduler] edition_daily unavailable: {e}")
+
 
 def _afternoon_briefing_job():
     """Synthesize the afternoon briefing markdown and persist it (so the

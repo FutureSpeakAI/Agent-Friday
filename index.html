@@ -3856,6 +3856,11 @@ function apiFetch(url, opts) {
 const DOCK_GROUPS = [{
   name: 'Life',
   items: [{
+    id: 'edition',
+    ico: '🗞️',
+    label: 'Edition',
+    core: true
+  }, {
     id: 'home',
     ico: '🏠',
     label: 'Home',
@@ -18996,6 +19001,443 @@ function _fmtDur(sec) {
   if (!sec || !isFinite(sec) || sec < 0) return '0:00';
   const s = Math.floor(sec);
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+// ═══ THE FRIDAY EDITION (E0) ═══
+// A finite morning edition composed over Friday's EXISTING engines only (news
+// archive, front_pages, editorials, creations, dreams). No infinite scroll —
+// every edition ends in a hard "you're caught up" state. Every non-gap card
+// carries a receipt (services/edition_engine.py's no-receipt-no-render gate);
+// gap cards are the honest-degradation path when an E0-unwired engine (career
+// signals, your-people — both land in E1) has nothing real to show.
+function EditionCard({
+  card
+}) {
+  const isGap = card.kind === 'gap';
+  const [showWhy, setShowWhy] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const verb = (v, withReason) => {
+    if (busy) return;
+    setBusy(true);
+    fetch('/api/edition/verb', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        card_id: card.id,
+        verb: v,
+        reason: withReason || '',
+        card_title: card.title,
+        card_section: card.section,
+        card_source: card.source
+      })
+    }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const toggleWhy = () => {
+    const next = !showWhy;
+    setShowWhy(next);
+    if (next) verb('why');
+  };
+  if (isGap) {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "card",
+      style: {
+        marginBottom: 8,
+        opacity: 0.65,
+        fontStyle: 'italic'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: '#7fb6c9',
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word'
+      }
+    }, card.snippet));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 8,
+      border: card.dissent ? '1px solid rgba(255,0,128,0.4)' : undefined
+    }
+  }, card.dissent && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9,
+      color: '#ff0080',
+      fontFamily: 'JetBrains Mono',
+      textTransform: 'uppercase',
+      letterSpacing: '0.05em',
+      marginBottom: 4
+    }
+  }, "\u26A1 Dissent \u2014 outside your boosted sources"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title",
+    style: {
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word'
+    }
+  }, card.title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#aab',
+      lineHeight: 1.45,
+      margin: '4px 0',
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word'
+    }
+  }, card.snippet), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      fontSize: 10,
+      color: '#5a7a86',
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      overflowWrap: 'anywhere'
+    }
+  }, card.source), card.fetched_at && /*#__PURE__*/React.createElement("span", null, "\xB7 ", card.fetched_at), card.receipt && /*#__PURE__*/React.createElement("span", {
+    title: 'Receipt: ' + card.receipt.engine
+  }, "\uD83E\uDDFE"), card.boosted && /*#__PURE__*/React.createElement("span", null, "\xB7 boosted"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 8,
+      flexWrap: 'wrap'
+    }
+  }, card.url && /*#__PURE__*/React.createElement("a", {
+    href: card.url,
+    target: "_blank",
+    rel: "noreferrer",
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    }
+  }, "Open \u2197"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    },
+    disabled: busy,
+    onClick: () => verb('keep')
+  }, "Keep"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    },
+    disabled: busy,
+    onClick: () => verb('kill')
+  }, "Kill"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    },
+    disabled: busy,
+    onClick: () => verb('more_like_this')
+  }, "More like this"), /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 10,
+      padding: '2px 8px'
+    },
+    onClick: toggleWhy
+  }, "Why")), showWhy && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: 8,
+      borderRadius: 6,
+      background: 'rgba(255,255,255,0.03)',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#7fb6c9',
+      marginBottom: 6,
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word'
+    }
+  }, card.why_chosen), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    style: {
+      width: '100%',
+      minHeight: 50,
+      fontSize: 11
+    },
+    placeholder: "Think this is wrong? Type a correction \u2014 it'll show up under Corrections in the next edition.",
+    value: reason,
+    onChange: e => setReason(e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      marginTop: 6
+    },
+    disabled: !reason.trim() || busy,
+    onClick: () => {
+      verb('why', reason);
+      setReason('');
+      setShowWhy(false);
+    }
+  }, "Submit correction")));
+}
+function EditionSection({
+  section
+}) {
+  const real = section.cards.filter(c => c.kind !== 'gap').length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: '#e8f4f8',
+      fontFamily: 'Orbitron',
+      letterSpacing: '0.03em'
+    }
+  }, section.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#5a7a86'
+    }
+  }, real, "/", section.budget)), section.cards.map(c => /*#__PURE__*/React.createElement(EditionCard, {
+    key: c.id,
+    card: c
+  })));
+}
+function EditionWS() {
+  const [edition, setEdition] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [composing, setComposing] = useState(false);
+  const [charterOpen, setCharterOpen] = useState(false);
+  const [charter, setCharter] = useState(null);
+  const [charterText, setCharterText] = useState('');
+  const [charterSaving, setCharterSaving] = useState(false);
+  const load = () => {
+    setLoading(true);
+    fetch('/api/edition/latest').then(r => r.json()).then(d => {
+      setEdition(d.edition || null);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const composeNow = async () => {
+    if (composing) return;
+    setComposing(true);
+    try {
+      const r = await fetch('/api/edition/compose', {
+        method: 'POST'
+      });
+      const d = await r.json();
+      if (d.edition) setEdition(d.edition);
+    } catch (e) {} finally {
+      setComposing(false);
+    }
+  };
+  const loadCharter = () => fetch('/api/edition/charter').then(r => r.json()).then(d => {
+    setCharter(d.charter);
+    setCharterText(d.charter.text);
+  }).catch(() => {});
+  const openCharter = () => {
+    setCharterOpen(o => !o);
+    if (!charter) loadCharter();
+  };
+  const saveCharter = async () => {
+    if (charterSaving) return;
+    setCharterSaving(true);
+    try {
+      const r = await fetch('/api/edition/charter', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          text: charterText
+        })
+      });
+      const d = await r.json();
+      if (d.charter) setCharter(d.charter);
+    } catch (e) {} finally {
+      setCharterSaving(false);
+    }
+  };
+  if (loading) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 20,
+      textAlign: 'center',
+      color: '#5a7a86'
+    }
+  }, "Loading your edition\u2026");
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
+    text: edition ? `Composed ${edition.composed_at}. You're caught up when you reach the bottom — no infinite scroll here.` : 'No edition composed yet — hit Compose Now to build your first one.'
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 14,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "btn btn-magenta",
+    style: {
+      fontSize: 11,
+      fontWeight: 700
+    },
+    disabled: composing,
+    onClick: composeNow
+  }, composing ? 'Composing…' : 'Compose now'), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11
+    },
+    onClick: openCharter
+  }, "\uD83D\uDCDC Charter")), charterOpen && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      marginBottom: 16,
+      padding: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-title"
+  }, "Editorial Charter"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10
+    },
+    onClick: () => setCharterOpen(false)
+  }, "Close")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#5a7a86',
+      marginBottom: 6
+    }
+  }, "Governs taste & selection only \u2014 never accuracy. Last updated: ", charter && charter.updated_at || '—', ". Changes take effect on the next compose."), /*#__PURE__*/React.createElement("textarea", {
+    className: "input",
+    style: {
+      width: '100%',
+      minHeight: 220,
+      fontFamily: 'JetBrains Mono',
+      fontSize: 11,
+      whiteSpace: 'pre-wrap'
+    },
+    value: charterText,
+    onChange: e => setCharterText(e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 11,
+      marginTop: 8
+    },
+    disabled: charterSaving || !charterText.trim(),
+    onClick: saveCharter
+  }, charterSaving ? 'Saving…' : 'Save charter')), edition ? /*#__PURE__*/React.createElement(React.Fragment, null, edition.sections.map(s => /*#__PURE__*/React.createElement(EditionSection, {
+    key: s.id,
+    section: s
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: '#ff0080',
+      fontFamily: 'Orbitron',
+      letterSpacing: '0.03em',
+      marginBottom: 8
+    }
+  }, "\u26A1 Dissent"), (edition.dissent || []).map(c => /*#__PURE__*/React.createElement(EditionCard, {
+    key: c.id,
+    card: c
+  }))), edition.corrections && edition.corrections.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: '#f59e0b',
+      fontFamily: 'Orbitron',
+      letterSpacing: '0.03em',
+      marginBottom: 8
+    }
+  }, "Corrections"), edition.corrections.map(c => /*#__PURE__*/React.createElement(EditionCard, {
+    key: c.id,
+    card: c
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontWeight: 700,
+      color: '#e8f4f8',
+      marginBottom: 6
+    }
+  }, "Friday's rationale"), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      fontSize: 11,
+      color: '#aab',
+      lineHeight: 1.6
+    }
+  }, edition.rationale.map((line, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      marginBottom: 4,
+      minWidth: 0,
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-word'
+    }
+  }, line)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      padding: '20px 0',
+      color: '#5a7a86',
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono',
+      borderTop: '1px dashed rgba(255,255,255,0.08)'
+    }
+  }, "\u2713 You're caught up. Nothing else today.")) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'center',
+      padding: 30,
+      color: '#5a7a86'
+    }
+  }, "No edition yet \u2014 hit Compose Now above."));
 }
 function NewsWS() {
   const [tab, setTab] = useState('frontpage');
@@ -36148,6 +36590,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     });
   };
 
+  // The Friday Edition is the front page: once setup is confirmed done, open
+  // it automatically so it's what greets you, same as a real morning paper.
+  useEffect(() => {
+    if (setupDone) openWs('edition');
+  }, [setupDone]);
+
   // ─── Camera Mode ────────────────────────────────────────────
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraSource, setCameraSource] = useState('screen'); // 'screen' | 'webcam' | 'both'
@@ -36366,6 +36814,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // SitesWS portfolio manager instead.
   const showAllWorkspaces = agentSettings.show_all_workspaces !== false;
   const wsMap = {
+    edition: /*#__PURE__*/React.createElement(EditionWS, null),
     home: /*#__PURE__*/React.createElement(HomeWS, null),
     career: /*#__PURE__*/React.createElement(CareerWS, null),
     wiki: /*#__PURE__*/React.createElement(WikiWS, null),
