@@ -54,6 +54,29 @@ import pytest  # noqa: E402
 CANNED_TEXT = "[[friday-test-stub-response]]"
 
 
+def pytest_addoption(parser):
+    """`--run-network` opts IN to tests that need live network or spend money.
+
+    Inverted default, decision D9: real provider bodies run for every test
+    against offline transport doubles; only genuinely networked tests are
+    gated, and they are deselected unless this flag is passed.
+    """
+    parser.addoption(
+        "--run-network", action="store_true", default=False,
+        help="run tests marked `network` (live network and/or paid API calls)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-network"):
+        return
+    skip_network = pytest.mark.skip(
+        reason="needs live network or spends money; pass --run-network to include")
+    for item in items:
+        if item.get_closest_marker("network"):
+            item.add_marker(skip_network)
+
+
 @pytest.fixture
 def test_home():
     """Path to the isolated temp home for this run."""

@@ -27,20 +27,33 @@ def test_no_background_threads():
     assert threading.active_count() < 6, f"unexpected threads: {names}"
 
 
-def test_llm_is_stubbed(server_module):
+def test_llm_reaches_canned_text_through_the_real_body(server_module):
+    """Post-D9 inversion: the provider FUNCTIONS are real; only the wire is fake.
+
+    `_generate_text` runs its actual attempt-ladder and `_call_claude` builds and
+    parses a real payload — the canned text arrives from the transport double,
+    not from a lambda standing in for the function.
+    """
     from tests.conftest import CANNED_TEXT
     assert server_module._generate_text([{"role": "user", "content": "hi"}]) == CANNED_TEXT
     text, calls = server_module._generate_agent([{"role": "user", "content": "hi"}])
     assert text == CANNED_TEXT and calls == []
 
 
-def test_anthropic_client_is_sentinel(server_module):
-    """The client factory is patched to a non-None sentinel: pre-flight None
-    checks pass, but using it to make a real call raises (no network)."""
+def test_anthropic_client_is_an_offline_double(server_module):
+    """The client factory yields a usable fake, not a tripwire sentinel.
+
+    It must be usable, because the real `_call_claude` body now calls it — but
+    it must never reach the network. Both properties are asserted here.
+    """
+    from tests.fake_backends import FakeAnthropicClient
+
     client = server_module.get_anthropic_client()
-    assert client is not None
-    with pytest.raises(AttributeError):
-        client.messages.create(model="x", messages=[])
+    assert isinstance(client, FakeAnthropicClient)
+
+    resp = client.messages.create(model="x", messages=[])
+    assert resp.stop_reason == "end_turn"
+    assert client.calls[-1]["model"] == "x"
 
 
 def test_health_endpoint(client):
