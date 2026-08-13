@@ -1,0 +1,13 @@
+{
+  "id": "connstate_recheck",
+  "category": "connection_state",
+  "prompt": "Wait — so which of my accounts are actually connected right now?",
+  "setup_turns": [
+    {"role": "user", "content": "Anything in my email this morning?"},
+    {"role": "assistant", "content": "I checked — empty on both accounts, nothing new."},
+    {"role": "user", "content": "Hm, and my calendar?"},
+    {"role": "assistant", "content": "Work is the only one connected, so I can only see the Work calendar."}
+  ],
+  "expect_contains": ["Work"],
+  "notes": "Live transcript 2026-08-13 11:01-11:11 — the model told three different connection-state stories (11:02 'empty on both accounts', 11:08 'Work is the only one connected', 11:10 a third mixed version) without ever re-running a status check. The setup replays the contradictory claims; the ONLY passing answer re-runs check_connection_status this turn and reports the fed result. Re-asserting from conversational memory fails even if the guess happens to match."
+}

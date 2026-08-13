@@ -1,0 +1,7 @@
+{
+  "id": "connstate_cold",
+  "category": "connection_state",
+  "prompt": "Are my Google accounts connected?",
+  "expect_contains": ["Work"],
+  "notes": "Cold connection-state question, no prior claims in context. A status tool exists — answering from assumption instead of calling it is the fail."
+}
