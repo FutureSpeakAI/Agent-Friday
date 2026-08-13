@@ -115,6 +115,17 @@ def chat():
         session_id = _current_session_id()
         vision_description = None
 
+        # ── B2: seat-change visibility. ANY change to the seat-relevant
+        # settings (UI save, CLI raw write, direct settings.json edit) is
+        # detected here on the very next turn — persisted as a system line
+        # and returned so the client renders it before this turn. ──
+        try:
+            from agent_friday.services.seat_transparency import observe_seats
+            _seat_events = observe_seats(settings_early)
+        except Exception as _ste:
+            print(f"  [SEAT-TRANSPARENCY] skipped: {_ste}")
+            _seat_events = []
+
         # ── UI Navigation: "open studio" / "switch to news" → drive the frontend ──
         # Returns a structured `actions` payload the client executes (via
         # window.fridayOpenWorkspace). Runs BEFORE the OS open-intent check so a
@@ -231,6 +242,11 @@ def chat():
         # char count is above the soft limit — older turns get summarised.
         raw_history = []
         for msg in CHAT_HISTORY[-100:]:
+            if msg.get('role') == 'system':
+                # B2/B5: system lines (seat changes etc.) are user-facing
+                # transparency surfaces, not conversation — never replayed
+                # into model context.
+                continue
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
@@ -688,6 +704,13 @@ def chat():
             'pinned': False,
             'workspace': workspace,
         }
+        # ── B1: model attribution on every assistant message, persisted so
+        # it survives reloads. seat is the class ("local"/"cloud"/"openai"),
+        # model is the exact id that generated this reply. ──
+        _seat_class = 'local' if _routed_local else (
+            'openai' if _provider == 'openai' else 'cloud')
+        _seat_model = (_route_info.get('model')
+                       or settings.get('orchestrator_model') or '')
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -695,6 +718,8 @@ def chat():
             'text': reply,
             'pinned': False,
             'sources': sources,
+            'model': _seat_model,
+            'seat': _seat_class,
         }
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
@@ -784,6 +809,9 @@ def chat():
             "actions": actions,
             "cite_sources": cite_sources,
             "session_id": session_id,
+            "model": _seat_model,
+            "seat": _seat_class,
+            "seat_events": _seat_events,
         })
     except Exception as e:
         traceback.print_exc()
@@ -797,6 +825,13 @@ def chat():
 @chat_bp.route('/api/chat/history', methods=['GET'])
 def chat_history():
     """Return chat history (last 30 days, pinned messages included)."""
+    # B2: a seat flip that happened while the tab was closed becomes a
+    # persisted system line the moment history is rehydrated.
+    try:
+        from agent_friday.services.seat_transparency import observe_seats
+        observe_seats(_load_settings())
+    except Exception:
+        pass
     messages = _load_chat_history()
     return jsonify({"status": "ok", "messages": messages, "count": len(messages)})
 
@@ -879,6 +914,9 @@ def chat_send():
         # Anthropic-format message history
         messages = []
         for msg in CHAT_HISTORY[-100:]:
+            if msg.get('role') == 'system':
+                # B2/B5: transparency system lines are never model context.
+                continue
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
             if text:
@@ -899,6 +937,31 @@ def chat_send():
             session_ctx=_sess_ctx, workspace=workspace,
         )
 
+        # ── FR-2/A7 on this endpoint too: pseudo-tool-call leaks and
+        # unreceipted completion claims are stripped and corrective-retried
+        # through the same dispatcher (previously /api/chat/send ran no
+        # integrity validation at all). ──
+        def _send_redispatch(corrective_note):
+            return _generate_agent(
+                messages + [{"role": "user", "content": corrective_note}],
+                system=system_prompt, temperature=settings.get('temperature'),
+                session_ctx=_sess_ctx, workspace=workspace,
+            )
+
+        reply, tool_trace, _send_integrity = validate_toolcall_integrity(
+            reply, tool_trace, [t['name'] for t in CLAUDE_TOOLS],
+            redispatch=_send_redispatch,
+        )
+
+        # ── B2: seat-change visibility on this endpoint too. ──
+        try:
+            from agent_friday.services.seat_transparency import (
+                effective_seat, observe_seats)
+            _seat_events = observe_seats(settings)
+            _seat_model, _seat_class = effective_seat(settings)
+        except Exception:
+            _seat_events, _seat_model, _seat_class = [], '', ''
+
         # Create persistent message objects
         user_msg = {
             'id': str(uuid.uuid4()),
@@ -915,6 +978,8 @@ def chat_send():
             'text': reply,
             'pinned': False,
             'sources': sources,
+            'model': _seat_model,
+            'seat': _seat_class,
         }
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
@@ -936,7 +1001,10 @@ def chat_send():
             except Exception:
                 pass
 
-        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg, "sources": sources, "tool_trace": tool_trace})
+        return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg,
+                        "sources": sources, "tool_trace": tool_trace,
+                        "model": _seat_model, "seat": _seat_class,
+                        "seat_events": _seat_events})
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
