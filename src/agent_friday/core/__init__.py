@@ -200,6 +200,38 @@ sock = Sock(app) if _HAS_SOCK else None
 # Server start time for uptime reporting
 SERVER_START_TS = _time.time()
 
+# ── Bound port ───────────────────────────────────────────────
+# The port the server ACTUALLY bound, which is not always the one requested:
+# _resolve_bind_port() scans forward when 3000 is busy (a second launch, a
+# leftover process), so the app can be serving on 3001+.
+#
+# Before this was published, the Google OAuth redirect URIs were hardcoded to
+# ":3000" while the server might be on another port, so consent would fail with
+# redirect_uri_mismatch in exactly the situation the port scan exists to
+# survive. server.py sets this the moment the port is resolved; the default
+# keeps every import-time caller correct when the server is not running.
+SERVER_PORT: int = int(os.environ.get("FRIDAY_PORT", "3000") or 3000)
+
+
+def set_server_port(port) -> None:
+    """Record the port the server actually bound (called once at startup)."""
+    global SERVER_PORT
+    try:
+        SERVER_PORT = int(port)
+    except (TypeError, ValueError):
+        pass
+
+
+def server_base_url() -> str:
+    """Loopback base URL for the running server, e.g. http://localhost:3001.
+
+    Loopback specifically, never the request host: Google rejects any
+    plain-HTTP non-loopback redirect_uri outright, and the app may be reached
+    through a hosts-file alias, a LAN address or a tunnel. Only the PORT is
+    dynamic — see services/calendar_engine._google_redirect_uri.
+    """
+    return f"http://localhost:{SERVER_PORT}"
+
 # ── Authentication ───────────────────────────────────────────
 FRIDAY_USERNAME = os.environ.get("FRIDAY_USERNAME", "admin")
 # FRIDAY_PASSWORD is kept for backward compatibility only. Its two former duties

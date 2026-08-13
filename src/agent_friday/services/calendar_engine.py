@@ -959,12 +959,18 @@ def _enrich_events(events):
     return events
 
 
-# Fixed loopback redirect, used for EVERY client type (Desktop AND Web) —
-# see _google_redirect_uri's docstring. Google accepts any localhost/loopback
-# redirect for installed apps *without* registering it in the GCP console;
-# for a Web client it must be pre-registered — see the redirect_uri surfaced
-# in Settings -> Connectors for the exact string to add there.
-GOOGLE_DESKTOP_REDIRECT_URI = "http://localhost:3000/api/google/auth/callback"
+GOOGLE_CALLBACK_PATH = "/api/google/auth/callback"
+
+# Loopback redirect, used for EVERY client type (Desktop AND Web) — see
+# _google_redirect_uri's docstring. Google accepts any localhost/loopback
+# redirect for installed apps *without* registering it in the GCP console,
+# INCLUDING any port; for a Web client it must be pre-registered — see the
+# redirect_uri surfaced in Settings -> Connectors for the exact string to add.
+#
+# Kept as a module constant for the default/not-running case only. Live callers
+# must go through _google_redirect_uri(), which follows the actually-bound port
+# (decision D10 / item A6).
+GOOGLE_DESKTOP_REDIRECT_URI = f"http://localhost:3000{GOOGLE_CALLBACK_PATH}"
 
 
 def _google_redirect_uri(cfg, client_type=None):
@@ -981,11 +987,22 @@ def _google_redirect_uri(cfg, client_type=None):
     type now, matching mcp_oauth.py's http://127.0.0.1:{port}/callback
     pattern; an advanced settings override exists for a genuine
     HTTPS-terminated reverse-proxy setup (see DEFAULT_SETTINGS.google_oauth).
+
+    2026-08-13 (A6 / decision D10): the HOST stays pinned to loopback for the
+    reasons above, but the PORT is no longer hardcoded to 3000. The server
+    scans forward when 3000 is busy (_resolve_bind_port), so a literal ":3000"
+    meant consent died with redirect_uri_mismatch in precisely the situation
+    the port scan exists to survive. Google accepts any port on a loopback
+    redirect for installed apps, so following the bound port is safe.
     """
     override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
     if override:
-        return override.rstrip('/') + '/api/google/auth/callback'
-    return GOOGLE_DESKTOP_REDIRECT_URI
+        return override.rstrip('/') + GOOGLE_CALLBACK_PATH
+    try:
+        import agent_friday.core as _core
+        return _core.server_base_url().rstrip('/') + GOOGLE_CALLBACK_PATH
+    except Exception:
+        return GOOGLE_DESKTOP_REDIRECT_URI
 
 
 def _write_google_token(creds):

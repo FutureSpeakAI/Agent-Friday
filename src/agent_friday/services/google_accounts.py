@@ -805,7 +805,10 @@ def _contacts_for_creds(creds, query: str, max_results: int) -> list:
 # Pinned for EVERY client type (Desktop and Web) — see multi_redirect_uri's
 # docstring. Mirrors services/calendar_engine.py's GOOGLE_DESKTOP_REDIRECT_URI
 # and mcp_oauth.py's http://127.0.0.1:{port}/callback pattern.
-MULTI_DESKTOP_REDIRECT_URI = "http://localhost:3000/api/google/accounts/callback"
+MULTI_CALLBACK_PATH = "/api/google/accounts/callback"
+# Module constant for the default/not-running case only. Live callers must go
+# through multi_redirect_uri(), which follows the actually-bound port (A6).
+MULTI_DESKTOP_REDIRECT_URI = f"http://localhost:3000{MULTI_CALLBACK_PATH}"
 
 
 def multi_redirect_uri(cfg, client_type=None):
@@ -819,11 +822,19 @@ def multi_redirect_uri(cfg, client_type=None):
     something DNS/propagation ever fixes. Pinned to loopback regardless of
     the request Host now; an advanced settings override exists for a genuine
     HTTPS-terminated reverse-proxy setup (DEFAULT_SETTINGS.google_oauth).
+
+    2026-08-13 (A6 / decision D10): the HOST stays loopback for the reasons
+    above; only the PORT now follows the server's actual bind. A literal
+    ":3000" broke consent whenever _resolve_bind_port fell back to 3001+.
     """
     override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
     if override:
-        return override.rstrip("/") + "/api/google/accounts/callback"
-    return MULTI_DESKTOP_REDIRECT_URI
+        return override.rstrip("/") + MULTI_CALLBACK_PATH
+    try:
+        import agent_friday.core as _core
+        return _core.server_base_url().rstrip("/") + MULTI_CALLBACK_PATH
+    except Exception:
+        return MULTI_DESKTOP_REDIRECT_URI
 
 
 def build_auth_flow(state: str | None = None):

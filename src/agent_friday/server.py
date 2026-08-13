@@ -361,6 +361,10 @@ if __name__ == '__main__':
         _fail_loud_and_exit(_guard_msg)
 
     _port, _requested, _fell_back = _resolve_bind_port()
+    # Publish the port we ACTUALLY bound so loopback URLs built elsewhere —
+    # notably the Google OAuth redirect_uri — follow the fallback instead of
+    # staying pinned to 3000 and failing with redirect_uri_mismatch.
+    core.set_server_port(_port)
     _url = f"http://localhost:{_port}"
     print()
     print("  ╔══════════════════════════════════════════════╗")
