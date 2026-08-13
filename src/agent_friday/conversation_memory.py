@@ -44,6 +44,42 @@ DEFAULT_PERSIST_DIR = FRIDAY_DIR / "memory" / "conversations"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "conversations"
 
+# ── Embedding-space integrity (decision D5) ──────────────────────────────────
+# The collection's vectors only mean anything relative to the model that
+# produced them. all-MiniLM-L6-v2 emits 384 dimensions; qwen3-embedding:0.6b —
+# measured at 1024 during provisioning — does not. Swapping models is therefore
+# not a config change but a store migration, and until the re-index path exists
+# (D5) the only safe behaviour is to refuse the write loudly.
+#
+# Loudly matters. Every method here is written to degrade silently so a chat can
+# never fail because memory is unavailable — which meant a dimension mismatch
+# would have surfaced as permanent, invisible memory loss: every write and every
+# query failing, forever, with nothing but a console line. A mismatch is a
+# configuration error, not a transient outage, so it is the one failure this
+# module refuses to swallow.
+_DIM_META_KEY = "embedding_dim"
+_MODEL_META_KEY = "embedding_model"
+
+
+class EmbeddingDimensionMismatch(RuntimeError):
+    """A write's vector width disagrees with the collection's recorded width."""
+
+    def __init__(self, collection, recorded_model, recorded_dim,
+                 current_model, current_dim):
+        self.collection = collection
+        self.recorded_model = recorded_model
+        self.recorded_dim = recorded_dim
+        self.current_model = current_model
+        self.current_dim = current_dim
+        super().__init__(
+            f"Embedding dimension mismatch for collection {collection!r}: "
+            f"it was built with model {recorded_model!r} at {recorded_dim} "
+            f"dimensions, but the configured model is {current_model!r} at "
+            f"{current_dim} dimensions. Embedding spaces must never mix. "
+            f"Re-index the collection against {current_model!r}, or restore "
+            f"{recorded_model!r}."
+        )
+
 # Lightweight English stopword set for topic-keyword extraction. Not exhaustive
 # — just enough to keep the keyword tags meaningful.
 _STOPWORDS = frozenset("""
@@ -100,6 +136,8 @@ class ConversationMemory:
         self._init_attempted = False
         self._init_error = None
         self._lock = threading.Lock()
+        self._embed_fn = None
+        self._dim_cache = None
 
     # ── lazy initialisation ──────────────────────────────────────────
     def _ensure(self):
@@ -128,11 +166,17 @@ class ConversationMemory:
                     settings=Settings(anonymized_telemetry=False, allow_reset=False),
                 )
                 embed_fn = self._build_embedding_function()
+                self._embed_fn = embed_fn
                 # get_or_create so a restart reuses the on-disk collection.
+                # The embedding model + width are stamped into the collection
+                # metadata at creation so a later model swap is detectable
+                # (decision D5) rather than silently corrupting the space.
                 self._collection = self._client.get_or_create_collection(
                     name=COLLECTION_NAME,
                     embedding_function=embed_fn,
-                    metadata={"hnsw:space": "cosine"},
+                    metadata={"hnsw:space": "cosine",
+                              _MODEL_META_KEY: self.model_name,
+                              _DIM_META_KEY: self._current_dimension()},
                 )
                 return True
             except Exception as e:  # pragma: no cover - platform/env dependent
@@ -159,6 +203,73 @@ class ConversationMemory:
                   f"using ChromaDB default: {e}")
             return embedding_functions.DefaultEmbeddingFunction()
 
+    # ── embedding-space integrity (decision D5) ──────────────────────
+    def _current_dimension(self):
+        """Width of the configured embedder, measured once against a probe.
+
+        Returns None if it cannot be determined — an unknown width must not be
+        mistaken for a mismatch, so callers treat None as "cannot verify".
+        """
+        if getattr(self, "_dim_cache", None) is not None:
+            return self._dim_cache
+        try:
+            fn = getattr(self, "_embed_fn", None) or self._build_embedding_function()
+            vec = fn(["dimension probe"])
+            # Chroma embedders return a sequence of vectors.
+            first = vec[0] if vec is not None and len(vec) else None
+            self._dim_cache = int(len(first)) if first is not None else None
+        except Exception:
+            self._dim_cache = None
+        return self._dim_cache
+
+    def _recorded_dimension(self):
+        """(model, dim) the collection was built with, or (None, None).
+
+        Collections created before D5 carry no stamp. Rather than guess, the
+        width is recovered from a stored vector when one exists, and the stamp
+        is backfilled so the check is exact from then on.
+        """
+        meta = dict(getattr(self._collection, "metadata", None) or {})
+        dim = meta.get(_DIM_META_KEY)
+        model = meta.get(_MODEL_META_KEY)
+        if dim:
+            return model, int(dim)
+
+        # Pre-D5 collection: recover the width from what is actually stored.
+        try:
+            peek = self._collection.peek(limit=1) or {}
+            embeddings = peek.get("embeddings")
+            if embeddings is not None and len(embeddings):
+                recovered = int(len(embeddings[0]))
+                try:
+                    self._collection.modify(
+                        metadata={**meta, _DIM_META_KEY: recovered,
+                                  _MODEL_META_KEY: model or "unknown"})
+                except Exception:
+                    pass  # stamping is an optimisation; the check still works
+                return model, recovered
+        except Exception:
+            pass
+        return model, None
+
+    def _assert_embedding_space(self):
+        """Raise if the configured embedder disagrees with the stored space.
+
+        No-op when either width is unknown: an unverifiable width is not
+        evidence of a mismatch, and refusing writes on missing information
+        would break the graceful-degradation contract for no safety gain.
+        """
+        current = self._current_dimension()
+        if current is None:
+            return
+        recorded_model, recorded = self._recorded_dimension()
+        if recorded is None:
+            return
+        if int(recorded) != int(current):
+            raise EmbeddingDimensionMismatch(
+                COLLECTION_NAME, recorded_model or "unknown", int(recorded),
+                self.model_name, int(current))
+
     def available(self):
         """True when the store is ready (or can be made ready) for use."""
         return self._ensure()
@@ -180,6 +291,11 @@ class ConversationMemory:
             return None
         if not self._ensure():
             return None
+        # D5: verify the embedding space BEFORE the broad handler below, which
+        # exists to keep transient memory failures out of the chat path. A
+        # dimension mismatch is not transient — swallowing it is what turns a
+        # model swap into silent, permanent memory loss.
+        self._assert_embedding_space()
         try:
             ts = timestamp or datetime.now().isoformat()
             if topic_keywords is None:
