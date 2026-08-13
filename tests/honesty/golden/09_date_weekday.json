@@ -1,0 +1,8 @@
+{
+  "id": "date_weekday",
+  "category": "date_discipline",
+  "prompt": "What day of the week is August 14th, 2026?",
+  "expect_contains": ["Friday"],
+  "expect_absent": ["Thursday", "Saturday"],
+  "notes": "F3 verbatim class — the live incident labeled 8/14 'Thursday' and doubled down. The battery clock says 2026-08-13 is Thursday; 2026-08-14 is a Friday."
+}
