@@ -190,3 +190,163 @@ class TestConnectorStatusMultiAccount:
         assert by_label["Work"] == "needs_reauth"
         # Overall status still reflects SOME account working.
         assert status["status"] == "connected"
+
+
+class TestSearchDriveMultiAccount:
+    def test_reports_every_account_and_badges_files(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "merged_drive_search", lambda query, max_results: {
+            "accounts": [
+                {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
+                {"id": "acc2", "label": "Work", "email": "work@example.com"},
+            ],
+            "files": [
+                {"id": "f1", "name": "Q3 plan.doc", "account_id": "acc2", "account_label": "Work"},
+            ],
+            "errors": [],
+        })
+        blob = agent_mod._tool_search_drive({"query": "Q3"})
+        result = json.loads(blob)
+        assert result["connected"] is True
+        account_labels = {a["label"] for a in result.get("accounts", [])}
+        assert account_labels == {"Personal", "Work"}
+        assert result["files"][0]["name"] == "Q3 plan.doc"
+
+    def test_a_real_api_error_is_never_mislabeled_as_not_connected(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "merged_drive_search", lambda query, max_results: {
+            "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
+            "files": [],
+            "errors": [{"account_id": "acc1", "label": "Personal",
+                        "error": "Drive search failed: <HttpError 403 ... "
+                                 "accessNotConfigured ...>"}],
+        })
+        blob = agent_mod._tool_search_drive({"query": ""})
+        assert "NOT CONNECTED on this machine" not in blob
+        assert "accessNotConfigured" in blob or "403" in blob
+        result = json.loads(blob)
+        assert result.get("connected") is True
+
+    def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        result = json.loads(agent_mod._tool_search_drive({"query": ""}))
+        assert result.get("connected") is False
+        assert "connecting" in result.get("note", "").lower()
+
+
+class TestReadDocMultiAccount:
+    def test_requires_file_id(self):
+        result = json.loads(agent_mod._tool_read_doc({}))
+        assert "file_id" in result.get("error", "").lower()
+
+    def test_reads_via_the_named_account(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "list_accounts", lambda: [
+            {"id": "acc1", "label": "Personal", "services": {"docs": True}},
+        ])
+        seen = {}
+
+        def fake_read(account_id, file_id, mime_type=None):
+            seen["account_id"] = account_id
+            seen["file_id"] = file_id
+            return {"name": "Plan", "type": "doc", "content": "hello world"}
+
+        monkeypatch.setattr(ga, "read_doc_or_sheet", fake_read)
+        blob = agent_mod._tool_read_doc({"file_id": "f1", "account_id": "acc1"})
+        result = json.loads(blob)
+        assert result["content"] == "hello world"
+        assert seen["account_id"] == "acc1"
+        assert seen["file_id"] == "f1"
+
+    def test_tries_every_docs_enabled_account_until_one_succeeds(self, monkeypatch):
+        # No account_id given -> must try candidates in order rather than
+        # assuming the file belongs to the first account.
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "list_accounts", lambda: [
+            {"id": "acc1", "label": "Personal", "services": {"docs": True}},
+            {"id": "acc2", "label": "Work", "services": {"docs": True}},
+        ])
+
+        def fake_read(account_id, file_id, mime_type=None):
+            if account_id == "acc1":
+                return {"error": "needs_reauth", "account_id": "acc1"}
+            return {"name": "Budget", "type": "sheet", "rows": [["a", "b"]]}
+
+        monkeypatch.setattr(ga, "read_doc_or_sheet", fake_read)
+        blob = agent_mod._tool_read_doc({"file_id": "f2"})
+        result = json.loads(blob)
+        assert result["name"] == "Budget"
+        assert result["account_id"] == "acc2"
+
+    def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        result = json.loads(agent_mod._tool_read_doc({"file_id": "f1"}))
+        assert result.get("connected") is False
+        assert "connecting" in result.get("note", "").lower()
+
+
+class TestListTasksMultiAccount:
+    def test_reports_every_account_and_badges_tasks(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "merged_tasks", lambda max_results: {
+            "accounts": [
+                {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
+                {"id": "acc2", "label": "Work", "email": "work@example.com"},
+            ],
+            "tasks": [
+                {"id": "t1", "title": "Buy milk", "account_id": "acc1", "account_label": "Personal"},
+            ],
+            "errors": [],
+        })
+        result = json.loads(agent_mod._tool_list_tasks({}))
+        account_labels = {a["label"] for a in result.get("accounts", [])}
+        assert account_labels == {"Personal", "Work"}
+        assert result["tasks"][0]["title"] == "Buy milk"
+
+    def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        result = json.loads(agent_mod._tool_list_tasks({}))
+        assert result.get("connected") is False
+        assert "connecting" in result.get("note", "").lower()
+
+
+class TestSearchContactsMultiAccount:
+    def test_reports_every_account_and_badges_contacts(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "search_contacts", lambda query, max_results: {
+            "accounts": [
+                {"id": "acc1", "label": "Personal", "email": "personal@example.com"},
+                {"id": "acc2", "label": "Work", "email": "work@example.com"},
+            ],
+            "contacts": [
+                {"name": "Jane Doe", "emails": ["jane@example.com"],
+                 "account_id": "acc2", "account_label": "Work"},
+            ],
+            "errors": [],
+        })
+        blob = agent_mod._tool_search_contacts({"query": "jane"})
+        result = json.loads(blob)
+        account_labels = {a["label"] for a in result.get("accounts", [])}
+        assert account_labels == {"Personal", "Work"}
+        assert result["contacts"][0]["name"] == "Jane Doe"
+
+    def test_a_real_api_error_is_never_mislabeled_as_not_connected(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: True)
+        monkeypatch.setattr(ga, "search_contacts", lambda query, max_results: {
+            "accounts": [{"id": "acc1", "label": "Personal", "email": "personal@example.com"}],
+            "contacts": [],
+            "errors": [{"account_id": "acc1", "label": "Personal",
+                        "error": "Contacts fetch failed: <HttpError 403 ... "
+                                 "accessNotConfigured ...>"}],
+        })
+        blob = agent_mod._tool_search_contacts({"query": ""})
+        assert "NOT CONNECTED on this machine" not in blob
+        assert "accessNotConfigured" in blob or "403" in blob
+        result = json.loads(blob)
+        assert result.get("connected") is True
+
+    def test_zero_accounts_gives_the_honest_not_connected_note(self, monkeypatch):
+        monkeypatch.setattr(ga, "has_accounts", lambda: False)
+        result = json.loads(agent_mod._tool_search_contacts({"query": ""}))
+        assert result.get("connected") is False
+        assert "connecting" in result.get("note", "").lower()

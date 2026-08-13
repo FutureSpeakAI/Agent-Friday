@@ -42,14 +42,29 @@ from agent_friday.services.calendar_engine import (
 
 # ── scopes ───────────────────────────────────────────────────────────────────
 # New connections request the fuller set the multi-account feature needs:
-# Gmail (read), Calendar (read/WRITE), Drive (read). Each account records the
-# scopes it was actually granted, so a calendar write is only attempted on
-# accounts that consented to it.
+# Gmail (read), Calendar (read/WRITE), Drive (read), Docs (read), Sheets
+# (read), Tasks (read), Contacts (read). Each account records the scopes it
+# was actually granted, so a write (or a not-yet-consented read) is only
+# attempted on accounts that granted it.
+#
+# 2026-08-13: Docs/Sheets/Tasks/Contacts added on top of the already-shipped
+# Gmail/Calendar/Drive set. EXISTING connected accounts were consented
+# BEFORE these scopes existed, so they do not have them yet — their tokens
+# still work for everything already granted, but a Docs/Tasks/Contacts call
+# against an old token fails with a normal Google 403 (insufficient scope),
+# surfaced per-account like any other live API error, never silently. Each
+# account must be reconnected (Settings -> Connectors -> Google -> the same
+# Add Account flow) to pick up the new scopes.
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
 CALENDAR_RW = "https://www.googleapis.com/auth/calendar"
 DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
+DOCS_READ = "https://www.googleapis.com/auth/documents.readonly"
+SHEETS_READ = "https://www.googleapis.com/auth/spreadsheets.readonly"
+TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"
+CONTACTS_READ = "https://www.googleapis.com/auth/contacts.readonly"
 USERINFO_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
-GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, USERINFO_EMAIL]
+GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_READ,
+                       TASKS_READ, CONTACTS_READ, USERINFO_EMAIL]
 
 # Legacy single-account scopes (what google_token.json was consented for).
 _LEGACY_SCOPES = [GMAIL_READ, "https://www.googleapis.com/auth/calendar.readonly"]
@@ -209,7 +224,8 @@ def upsert_account(creds, label: str = "", services: dict | None = None,
 
 
 def _normalize_services(services: dict | None) -> dict:
-    base = {"gmail": True, "calendar": True, "drive": True}
+    base = {"gmail": True, "calendar": True, "drive": True,
+            "docs": True, "tasks": True, "contacts": True}
     if isinstance(services, dict):
         for k in base:
             if k in services:
@@ -566,6 +582,223 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
         return {"account": _public_record(rec), "folder_id": folder_id, "files": files}
     except Exception as e:
         return {"error": f"Drive fetch failed: {e}", "account_id": account_id}
+
+
+def merged_drive_search(query: str = "", max_results: int = 20) -> dict:
+    """Search file/folder NAMES across every drive-enabled account, merged and
+    badged with source account — the natural shape for a chat search. Kept
+    separate from drive_list() (single-account folder browse, used by the
+    Drive UI panel) — merging a file TREE is confusing, merging search hits
+    isn't."""
+    _migrate_legacy_if_needed()
+    files, errors, used = [], [], []
+    for rec in _accounts_with("drive"):
+        aid = rec["id"]
+        creds = credentials_for(aid)
+        if not creds:
+            errors.append({"account_id": aid, "label": rec.get("label"), "error": "needs_reauth"})
+            continue
+        used.append(_public_record(rec))
+        for f in _drive_search_for_creds(creds, query, max_results):
+            if "error" in f:
+                errors.append({"account_id": aid, "label": rec.get("label"), "error": f["error"]})
+                continue
+            f["account_id"] = aid
+            f["account_label"] = rec.get("label")
+            f["account_email"] = rec.get("email")
+            files.append(f)
+    return {"accounts": used, "files": files, "errors": errors}
+
+
+def _drive_search_for_creds(creds, query: str, max_results: int) -> list:
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return [{"error": f"google-api-python-client not installed: {e}"}]
+    try:
+        svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+        safe_q = (query or "").strip().replace("\\", "\\\\").replace("'", "\\'")
+        q = f"name contains '{safe_q}' and trashed = false" if safe_q else "trashed = false"
+        resp = svc.files().list(
+            q=q, pageSize=min(max_results, 50), orderBy="modifiedTime desc",
+            fields="files(id,name,mimeType,modifiedTime,size,webViewLink)",
+        ).execute()
+        out = []
+        for f in resp.get("files", []):
+            out.append({
+                "id": f.get("id"), "name": f.get("name"),
+                "mime_type": f.get("mimeType"),
+                "modified": f.get("modifiedTime"),
+                "link": f.get("webViewLink"),
+            })
+        return out
+    except Exception as e:
+        return [{"error": f"Drive search failed: {e}"}]
+
+
+_DOC_MIME = "application/vnd.google-apps.document"
+_SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+
+
+def read_doc_or_sheet(account_id: str, file_id: str, mime_type: str | None = None) -> dict:
+    """Read a Google Doc's text, or a Sheet's first-tab values, by file id (get
+    the id from merged_drive_search() first). `mime_type`, if already known
+    from that search, skips an extra Drive metadata lookup."""
+    creds = credentials_for(account_id)
+    if not creds:
+        return {"error": "needs_reauth", "account_id": account_id}
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return {"error": f"google-api-python-client not installed: {e}"}
+    name = ""
+    try:
+        if not mime_type:
+            drive_svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+            meta = drive_svc.files().get(fileId=file_id, fields="name,mimeType").execute()
+            mime_type = meta.get("mimeType")
+            name = meta.get("name", "")
+        if mime_type == _DOC_MIME:
+            docs_svc = build("docs", "v1", credentials=creds, cache_discovery=False)
+            doc = docs_svc.documents().get(documentId=file_id).execute()
+            return {"name": name or doc.get("title", ""), "type": "doc",
+                   "content": _extract_doc_text(doc)[:20000]}
+        if mime_type == _SHEET_MIME:
+            sheets_svc = build("sheets", "v4", credentials=creds, cache_discovery=False)
+            meta = sheets_svc.spreadsheets().get(spreadsheetId=file_id).execute()
+            first_sheet = None
+            if meta.get("sheets"):
+                first_sheet = meta["sheets"][0]["properties"]["title"]
+            values = []
+            if first_sheet:
+                resp = sheets_svc.spreadsheets().values().get(
+                    spreadsheetId=file_id, range=f"{first_sheet}!A1:Z200",
+                ).execute()
+                values = resp.get("values", [])
+            return {"name": name or meta.get("properties", {}).get("title", ""),
+                   "type": "sheet", "sheet_name": first_sheet, "rows": values[:200]}
+        return {"error": f"Unsupported file type for reading: {mime_type}"}
+    except Exception as e:
+        return {"error": f"Doc/Sheet read failed: {e}"}
+
+
+def _extract_doc_text(doc: dict) -> str:
+    """Flatten a Google Docs API document body into plain text."""
+    out = []
+    for el in doc.get("body", {}).get("content", []):
+        para = el.get("paragraph")
+        if not para:
+            continue
+        for run in para.get("elements", []):
+            text_run = run.get("textRun")
+            if text_run:
+                out.append(text_run.get("content", ""))
+    return "".join(out)
+
+
+def merged_tasks(max_results: int = 50) -> dict:
+    """Open tasks across every tasks-enabled account, each badged with its
+    source account and task list."""
+    _migrate_legacy_if_needed()
+    tasks, errors, used = [], [], []
+    for rec in _accounts_with("tasks"):
+        aid = rec["id"]
+        creds = credentials_for(aid)
+        if not creds:
+            errors.append({"account_id": aid, "label": rec.get("label"), "error": "needs_reauth"})
+            continue
+        used.append(_public_record(rec))
+        for t in _tasks_for_creds(creds, max_results):
+            if "error" in t:
+                errors.append({"account_id": aid, "label": rec.get("label"), "error": t["error"]})
+                continue
+            t["account_id"] = aid
+            t["account_label"] = rec.get("label")
+            t["account_email"] = rec.get("email")
+            tasks.append(t)
+    return {"accounts": used, "tasks": tasks, "errors": errors}
+
+
+def _tasks_for_creds(creds, max_results: int) -> list:
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return [{"error": f"google-api-python-client not installed: {e}"}]
+    try:
+        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        lists_resp = svc.tasklists().list(maxResults=10).execute()
+        out = []
+        for tl in lists_resp.get("items", []):
+            resp = svc.tasks().list(tasklist=tl["id"], showCompleted=False,
+                                    maxResults=max_results).execute()
+            for t in resp.get("items", []):
+                out.append({
+                    "id": t.get("id"),
+                    "title": t.get("title", "(untitled)"),
+                    "notes": (t.get("notes") or "")[:300],
+                    "due": t.get("due", ""),
+                    "status": t.get("status", "needsAction"),
+                    "list": tl.get("title", ""),
+                })
+                if len(out) >= max_results:
+                    return out
+        return out
+    except Exception as e:
+        return [{"error": f"Tasks fetch failed: {e}"}]
+
+
+def search_contacts(query: str = "", max_results: int = 15) -> dict:
+    """Contacts across every contacts-enabled account matching `query`
+    (name/email/phone substring, client-side filtered — avoids the People
+    API's search-index warm-up quirk)."""
+    _migrate_legacy_if_needed()
+    contacts, errors, used = [], [], []
+    for rec in _accounts_with("contacts"):
+        aid = rec["id"]
+        creds = credentials_for(aid)
+        if not creds:
+            errors.append({"account_id": aid, "label": rec.get("label"), "error": "needs_reauth"})
+            continue
+        used.append(_public_record(rec))
+        for c in _contacts_for_creds(creds, query, max_results):
+            if "error" in c:
+                errors.append({"account_id": aid, "label": rec.get("label"), "error": c["error"]})
+                continue
+            c["account_id"] = aid
+            c["account_label"] = rec.get("label")
+            contacts.append(c)
+    return {"accounts": used, "contacts": contacts, "errors": errors}
+
+
+def _contacts_for_creds(creds, query: str, max_results: int) -> list:
+    try:
+        from googleapiclient.discovery import build
+    except Exception as e:
+        return [{"error": f"google-api-python-client not installed: {e}"}]
+    try:
+        svc = build("people", "v1", credentials=creds, cache_discovery=False)
+        ql = (query or "").strip().lower()
+        out, page_token = [], None  # pragma: allowlist secret
+        while len(out) < max_results:
+            resp = svc.people().connections().list(
+                resourceName="people/me", pageSize=200, pageToken=page_token,  # pragma: allowlist secret
+                personFields="names,emailAddresses,phoneNumbers",
+            ).execute()
+            for p in resp.get("connections", []):
+                names = p.get("names") or [{}]
+                name = names[0].get("displayName", "(no name)")
+                emails = [e.get("value", "") for e in (p.get("emailAddresses") or [])]
+                phones = [ph.get("value", "") for ph in (p.get("phoneNumbers") or [])]
+                if not ql or ql in " ".join([name] + emails + phones).lower():
+                    out.append({"name": name, "emails": emails, "phones": phones})
+                    if len(out) >= max_results:
+                        break
+            page_token = resp.get("nextPageToken")  # pragma: allowlist secret
+            if not page_token:
+                break
+        return out
+    except Exception as e:
+        return [{"error": f"Contacts fetch failed: {e}"}]
 
 
 # ── OAuth flow helpers (per-account) ─────────────────────────────────────────
