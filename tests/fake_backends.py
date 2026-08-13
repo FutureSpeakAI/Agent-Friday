@@ -194,7 +194,10 @@ def ollama_payload_for(path: str):
     if path.startswith("/api/pull"):
         return {"status": "success"}
     if path.startswith("/api/show"):
-        return {"details": {"family": "gemma", "parameter_size": "4B"}}
+        return {"details": {"family": "gemma", "parameter_size": "4B"},
+                # Architecture-prefixed GGUF key, as the real daemon reports it.
+                "model_info": {"gemma4.context_length": 131072,
+                               "gemma4.embedding_length": 2560}}
     return None
 
 

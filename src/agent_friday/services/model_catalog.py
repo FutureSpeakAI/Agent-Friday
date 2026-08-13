@@ -44,6 +44,82 @@ except Exception:  # pragma: no cover - router always importable in practice
 VOICE_ENGINE_PROVIDER_TYPES = ("local-voice", "nemo-local")
 
 
+# ── Context-window lookup (decision D3) ──────────────────────────────────────
+# Real per-model context windows have been fetched and cached by
+# model_discovery since it shipped, and surfaced in the Model Browser — but no
+# context-management layer ever read them. compaction.py assumed a flat 200_000
+# tokens for every model and model_router assumed 2_000_000 characters, so a
+# 4K-window local model got Claude-Opus-sized thresholds and would overflow
+# before compaction ever fired.
+#
+# This is the single lookup those layers now consult. It is deliberately
+# lightweight: the discovery disk cache only, never a catalog rebuild and never
+# the network, because it sits on the hot path of every assembled model call.
+_CTX_CACHE: dict = {}
+_CTX_CACHE_TTL_S = 300.0
+
+
+def context_window_for(model_id: str):
+    """Real context window (tokens) for `model_id`, or None if unknown.
+
+    None is meaningful and must be preserved: it means "the catalog has no
+    value for this model", which is the signal for callers to fall back to
+    their documented constant rather than inventing a number.
+    """
+    import time as _t
+
+    mid = (model_id or "").strip()
+    if not mid:
+        return None
+    hit = _CTX_CACHE.get(mid)
+    if hit and (_t.time() - hit[0]) < _CTX_CACHE_TTL_S:
+        return hit[1]
+
+    win = None
+    try:
+        from agent_friday.services.model_discovery import cached_models
+        registry = get_provider_registry()
+        for prov in registry.list_providers():
+            pname = prov.get("name", "")
+            # Descriptor-declared metadata wins — it is hand-maintained.
+            meta = (prov.get("model_meta") or {}).get(mid) or {}
+            if meta.get("context_window"):
+                win = int(meta["context_window"])
+                break
+            for m in (cached_models(pname)[0] or []):
+                if m.get("id") == mid and m.get("context_window"):
+                    win = int(m["context_window"])
+                    break
+            if win:
+                break
+    except Exception:
+        win = None
+
+    # Local models are the one class with no other source: descriptors don't
+    # declare windows and API discovery doesn't cover Ollama — and they are
+    # exactly the class with SMALL windows, i.e. the case D3 exists for. The
+    # daemon knows (GGUF `<arch>.context_length`), so ask it.
+    if win is None:
+        try:
+            from agent_friday.routing.ollama_manager import get_manager
+            mgr = get_manager()
+            if any((m.get("name") == mid or m.get("model") == mid)
+                   for m in (mgr.list_models() or [])):
+                got = mgr.context_length(mid)
+                if got:
+                    win = int(got)
+        except Exception:
+            pass
+
+    _CTX_CACHE[mid] = (_t.time(), win)
+    return win
+
+
+def reset_context_window_cache():
+    """Clear the memoised windows (tests, and after a discovery refresh)."""
+    _CTX_CACHE.clear()
+
+
 def _humanize(model_id: str) -> dict:
     """Inferred presentation for a model that has no explicit model_meta.
 
