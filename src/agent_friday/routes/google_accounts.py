@@ -119,7 +119,15 @@ def connect_google_account():
             prompt="consent",  # force a refresh_token
         )
         with _PENDING_LOCK:
-            _PENDING[state] = {"label": label, "ts": _time.time()}
+            # 2026-08-13 PKCE fix: authorization_url() just auto-generated a
+            # code_verifier on THIS flow instance and sent its challenge to
+            # Google. The callback leg rebuilds a completely fresh Flow
+            # (ga.build_auth_flow(state=state)) that never called
+            # authorization_url(), so it never had a verifier of its own —
+            # persist this one now or the token exchange has nothing to
+            # replay and Google refuses with invalid_grant.
+            _PENDING[state] = {"label": label, "ts": _time.time(),
+                               "verifier": flow.code_verifier}
             # prune stale (>15 min) pending entries
             for s in [k for k, v in _PENDING.items() if _time.time() - v["ts"] > 900]:
                 _PENDING.pop(s, None)
@@ -150,10 +158,27 @@ def google_account_callback():
         return f"<h2>Google authorization failed</h2><p>{err}</p>", 400
     state = request.args.get("state") or session.get("ga_oauth_state")
     with _PENDING_LOCK:
+        # Pop (not peek) before doing anything else — single-use, so a
+        # retried/replayed callback can never reuse a verifier that already
+        # went out, matching mastodon.py's proven pending-auth pattern.
         pending = _PENDING.pop(state, None) if state else None
-    label = (pending or {}).get("label") or session.get("ga_oauth_label") or ""
+    if not pending or not pending.get("verifier"):
+        # Never attempt the exchange without a verifier to replay — that's
+        # exactly the bug being fixed, not something to fall through on.
+        return (
+            "<h2>Google authorization failed</h2>"
+            "<p>This authorization attempt has expired, was already used, "
+            "or its PKCE verifier is missing (no matching pending state on "
+            "this server). Start over from Settings &rarr; Connectors "
+            "&rarr; Google Accounts &rarr; Add Account — don't reuse an old "
+            "authorization link.</p>"
+        ), 400
+    label = pending.get("label") or session.get("ga_oauth_label") or ""
     try:
         flow, _, _ = ga.build_auth_flow(state=state)
+        # Replay the verifier the START leg generated — the freshly rebuilt
+        # flow above has none of its own (it never called authorization_url()).
+        flow.code_verifier = pending["verifier"]
         flow.fetch_token(authorization_response=request.url)
         creds = flow.credentials
         rec = ga.upsert_account(creds, label=label)
