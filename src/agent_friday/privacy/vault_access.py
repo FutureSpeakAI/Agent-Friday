@@ -39,6 +39,26 @@ class Tier:
 LOCAL_PROVIDERS = {"ollama", "local"}
 
 
+# ── Local-sink tools: exempt from the per-action input-tier deny ────────────
+# 2026-08-13 (Incident 2, F6): learn_skill writes were denied as
+# "cloud_denied_tier_TIER_2" because check_action classifies the tool's
+# ARGUMENTS — for learn_skill, the entire skill YAML — and ordinary skill
+# vocabulary ("memory", "todo", "contact") tiers as TIER_2.
+#
+# The boundary this gate actually protects: a cloud provider must not
+# RECEIVE vault data. Tool arguments are authored BY the provider — it has
+# already seen them — and a local-sink tool writes them to local disk and
+# returns only a status string. Nothing leaves the device, so an input-tier
+# deny is a category error there. Input-tier denial still applies to every
+# tool that can return vault data to the provider (search_*, read_*,
+# query_*) or transmit its input off-device (send_*, navigate, open_url).
+#
+# Growing this set is a security decision: a member must neither return
+# vault data to the provider nor transmit its input off-device. Decisions
+# for these tools are still classified and audit-logged.
+LOCAL_SINK_TOOLS = frozenset({"learn_skill", "write_file"})
+
+
 # ── Keyword lists exposed for legacy callers ────────────────────────────────
 # The authoritative definitions live in services/sensitivity_classifier.py.
 # These are imported from there so both modules agree by construction.
@@ -266,8 +286,13 @@ class VaultAccessControl:
         detail = "action_allowed"
 
         if tier > Tier.PUBLIC and not self.can_access(provider):
-            allowed = False
-            detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
+            if str(action or "") in LOCAL_SINK_TOOLS:
+                # Provider-authored content flowing device-ward only — see
+                # the LOCAL_SINK_TOOLS note. Allowed, but logged as such.
+                detail = f"local_sink_exempt_{Tier.NAMES.get(tier, tier)}"
+            else:
+                allowed = False
+                detail = f"cloud_denied_tier_{Tier.NAMES.get(tier, tier)}"
 
         entry = {
             "ts": time.time(),
