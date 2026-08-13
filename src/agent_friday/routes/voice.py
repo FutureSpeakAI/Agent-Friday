@@ -354,6 +354,23 @@ def _compose_final_voice_error(attempt_errors, key_source):
     return f"Voice connect failed on {first[0]}: {str(first[3])[:300]}"
 
 
+# Spoken tool choreography — injected into BOTH voice session prompts (Gemini
+# Live and local). Without it the model calls tools mid-sentence: the action's
+# tts_pause lands while she's speaking, the fetch blocks with dead air, and the
+# turn resumes incoherently — the on-stage "freeze then stutter". The contract
+# is announce → act → confirm, one action at a time.
+VOICE_TOOL_CHOREOGRAPHY = (
+    "TOOL CHOREOGRAPHY (voice): Before EVERY tool call, first finish speaking "
+    "one short sentence announcing what you're about to do — for example "
+    "'Pulling that story up now.' — and END the sentence before invoking the "
+    "tool. Never call a tool mid-sentence. While the tool runs, stay silent; "
+    "do not narrate progress. When the result comes back, confirm completion "
+    "in one short sentence ('Okay, it's up on screen.') before discussing the "
+    "result. One action at a time — finish announcing and confirming each "
+    "before starting the next.\n\n"
+)
+
+
 def _build_realtime_input_config(types, interruption_mode="auto"):
     """Build the Live API RealtimeInputConfig.
 
@@ -880,6 +897,7 @@ if sock is not None:
             + ("Your reasoning also runs locally, so you CAN discuss private "
                "vault content — it never leaves the machine.\n\n"
                if _is_local_brain else "\n")
+            + VOICE_TOOL_CHOREOGRAPHY
         )
         try:
             full_ctx = _get_friday_system_prompt(
@@ -1190,6 +1208,7 @@ if sock is not None:
             "local TTS engine — that way we can have voice conversations about anything, "
             "including your private data, without any of it leaving this machine. Want me "
             "to check if your hardware can handle it?'\n\n"
+            + VOICE_TOOL_CHOREOGRAPHY
         )
         if personality:
             voice_prefix += f"=== YOUR PERSONALITY ===\n{personality}\n\n"

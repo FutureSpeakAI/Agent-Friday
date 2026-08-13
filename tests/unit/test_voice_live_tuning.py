@@ -64,3 +64,39 @@ class TestModelChainStillValid:
         assert len(set(chain)) == 3
         for m in chain:
             assert m not in ve._RETIRED_LIVE_MODELS
+
+
+class TestToolChoreography:
+    """announce → act → confirm — pins the fix for the on-stage freeze/stutter
+    during voice tool execution (news-reading demo, 2026-07-08)."""
+
+    def test_choreography_block_exists_and_orders_the_contract(self):
+        from agent_friday.routes.voice import VOICE_TOOL_CHOREOGRAPHY as c
+        assert "Before EVERY tool call" in c
+        assert "Never call a tool mid-sentence" in c
+        # The three beats must appear in order: announce, silent-run, confirm.
+        i_announce = c.index("announcing what you're about to do")
+        i_silent = c.index("stay silent")
+        i_confirm = c.index("confirm completion")
+        assert i_announce < i_silent < i_confirm
+
+    def test_choreography_wired_into_both_session_prompts(self):
+        # Both ws_live and ws_voice_local must inject the block — a grep-level
+        # pin so a prompt refactor can't silently drop the choreography.
+        import inspect
+        import agent_friday.routes.voice as vr
+        src = inspect.getsource(vr)
+        assert src.count("+ VOICE_TOOL_CHOREOGRAPHY") >= 2, (
+            "VOICE_TOOL_CHOREOGRAPHY must be concatenated into BOTH voice "
+            "session prompts (Gemini Live and local)")
+
+
+class TestPaywallHint:
+    def test_thin_extraction_mentions_paywall(self, monkeypatch):
+        import agent_friday.services.news_engine as ne
+        monkeypatch.setattr(ne, "_extract_article_text",
+                            lambda url: ("Some Title", "too short"))
+        result, status = ne._deep_dive_article("https://example.com/story",
+                                               refresh=True)
+        assert status == 422
+        assert "paywall" in result["message"].lower()

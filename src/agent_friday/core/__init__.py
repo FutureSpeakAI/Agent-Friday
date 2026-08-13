@@ -1107,8 +1107,13 @@ def process_register(pid, *, name="Task", label=None, category="default",
 
 
 def process_update(pid, *, status=None, progress=None, label=None,
-                   step=None, steps=None, task_id=None):
-    """Update an existing process entry."""
+                   step=None, steps=None, task_id=None, result=None):
+    """Update an existing process entry.
+
+    `result` attaches the process's final output (e.g. a local model's reply)
+    so the notification detail panel has a real process to show — a subagent
+    task whose orb carries no log/result renders as an empty "nothing".
+    """
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
         if not p:
@@ -1125,6 +1130,8 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"] = steps
         if task_id is not None:
             p["task_id"] = task_id
+        if result is not None:
+            p["result"] = str(result)[:4000]
         if status in ("completed", "error"):
             p["ended"] = _time.time()
 

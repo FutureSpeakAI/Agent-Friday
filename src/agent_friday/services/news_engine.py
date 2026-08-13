@@ -2537,8 +2537,12 @@ def _deep_dive_article(url, title=None, refresh=False):
     except Exception as e:
         return {"status": "error", "message": f"Couldn't fetch the article: {e}"}, 502
     if len(body) < 200:
+        # Thin extraction is very often a paywall or bot-wall — say so, so the
+        # voice/anchor path warns the user instead of failing opaquely.
         return {"status": "error",
-                "message": "Couldn't extract enough article text to summarize."}, 422
+                "message": "Couldn't extract the article text — it may be behind "
+                           "a paywall. I can summarize from the headline, or look "
+                           "for another source covering the same story."}, 422
     headline = title or page_title or url
     body = body[:14000]  # keep the prompt bounded
     prompt = (

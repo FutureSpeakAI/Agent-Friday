@@ -118,13 +118,20 @@ def get_task(task_id):
     steps = proc.get("steps") or []
     proc_log = proc.get("log") or []
     combined_log = proc_log + [f"[step] {s}" for s in steps if s not in proc_log]
+    # Map raw process statuses to the task vocabulary the detail panel keys
+    # its RESULT rendering on ('completed' never matched 'complete', so a
+    # finished process's result silently never displayed).
+    _status_map = {"completed": "complete", "error": "failed"}
+    _raw_status = proc.get("status", "running")
     return jsonify({
         "task_id": task_id,
         "name": proc.get("label") or proc.get("name") or "Process",
-        "status": proc.get("status", "running"),
+        "status": _status_map.get(_raw_status, _raw_status),
         "progress": proc.get("progress", 0),
         "log": combined_log,
         "result": proc.get("result"),
+        "model": proc.get("model"),
+        "category": proc.get("category"),
         "elapsed": int((ended or now) - started),
         "process": True,
     })
@@ -172,8 +179,12 @@ def list_processes():
             if row.get("ended"):
                 row["elapsed"] = int(row["ended"] - row["started"])
             out.append(row)
-            # Auto-purge completed processes older than 30s
+            # Auto-purge completed processes. Ephemeral orbs go quickly, but
+            # inference/monitoring processes (the "what did that subagent DO?"
+            # ones) stay explorable for 15 minutes — transparency requires the
+            # detail (model, intent, result) to outlive the orb's fade-out.
             if row.get("status") in ("completed", "error") and row.get("ended"):
-                if now - row["ended"] > 30:
+                _keep = 900 if row.get("category") == "monitoring" else 30
+                if now - row["ended"] > _keep:
                     del PROCESSES[pid]
     return jsonify({"processes": out})
