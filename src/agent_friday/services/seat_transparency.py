@@ -42,8 +42,9 @@ _MODE_MEANING = {
     "cloud_only": "all turns go to the cloud orchestrator",
     "local_only": "ALL turns go to the local seat — the cloud orchestrator "
                   "is not consulted",
-    "auto": "the router picks local or cloud per turn",
-    "local_first": "local seat preferred; cloud on fallback",
+    "smart": "the router picks local or cloud per turn (vault-touching "
+             "turns go local)",
+    "local_preferred": "local seat first; cloud only as fallback",
 }
 
 

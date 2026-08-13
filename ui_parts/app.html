@@ -208,6 +208,14 @@ function fridayCitationize(src){
   out=out.replace(/\[wiki:([^\]]+)\]/g,(_,p)=>chip('rgba(124,58,237,0.14)','rgba(124,58,237,0.45)','#b794f6','📄 '+p.trim(),'Wiki · '+p.trim()));
   out=out.replace(/\[news:([^\]]+)\]/g,(_,p)=>{const outlet=p.split('/')[0].trim();return chip('rgba(245,158,11,0.14)','rgba(245,158,11,0.45)','#fbbf24','📰 '+outlet,'News · '+p.trim())});
   out=out.replace(/\[(?:memory|conversation):([^\]]+)\]/g,(_,p)=>{const when=p.split('/')[0].trim();return chip('rgba(52,211,153,0.14)','rgba(52,211,153,0.45)','#34d399','💬 '+when,'From a past conversation · '+p.trim())});
+  // B6: raw memory-system artifacts must never render as-is in prose. The
+  // recall block feeds the model lines like "- [2026-08-01] You: …", and
+  // models sometimes copy the bare bracketed date (or even a literal
+  // "💬 2026-08-01" from earlier rendered history) into replies. Normalize
+  // both to the same unobtrusive conversation chip. The (?!\() guard keeps
+  // markdown links like [2026-08-01](url) intact.
+  out=out.replace(/\[(\d{4}-\d{2}-\d{2})\](?!\()/g,(_,d)=>chip('rgba(52,211,153,0.14)','rgba(52,211,153,0.45)','#34d399','💬 '+d,'From a past conversation · '+d));
+  out=out.replace(/💬\s*(\d{4}-\d{2}-\d{2})/g,(_,d)=>chip('rgba(52,211,153,0.14)','rgba(52,211,153,0.45)','#34d399','💬 '+d,'From a past conversation · '+d));
   return out;
 }
 if(typeof window!=='undefined'){window.fridayCitationize=fridayCitationize;}
@@ -257,6 +265,12 @@ function sanitizeVoiceTranscript(raw){
   t=t.replace(/\([^()\n]{0,40}\)/g,(m)=>PCUE.test(m)?' ':m);
   // 6. Leading "label:" cue lines (Mood:/Tone:/Affect:/Internal:/Reasoning:…).
   t=t.replace(/^[ \t]*(?:mood|tone|affect|emotion|emotional|feeling|internal|reasoning|thinking|persona|personality|voice|system|note|stage direction)[ \t]*[:\-–][ \t]*.*$/gim,' ');
+  // 6b. B6: citation tokens are a text-chat rendering feature — in a voice
+  // transcript (rendered as plain text, no fridayCitationize pass) they'd
+  // show as raw [memory:…]/[conversation:…] brackets or stray 💬 markers.
+  // Strip the token, keep the words.
+  t=t.replace(/\[(?:memory|conversation|wiki|news|web|unverified-web):[^\]\n]{0,160}\]/gi,' ');
+  t=t.replace(/💬\s*(?=\d{4}-\d{2}-\d{2})/g,'');
   // 7. Collapse whitespace the removals left behind.
   t=t.replace(/[ \t]{2,}/g,' ').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/^\s+|\s+$/g,'');
   return t;
@@ -8440,6 +8454,7 @@ function App(){
   const toggleHook=(h)=>{if(h.critical)return;fetch('/api/hooks/'+h.name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!h.enabled})}).then(()=>refreshHooks()).catch(()=>{});};
 
   const saveAgentSettings=async(patch,opts={})=>{
+    const prev=agentSettings;
     const next={...agentSettings,...patch};
     setAgentSettings(next);
     try{
@@ -8447,11 +8462,22 @@ function App(){
       if(opts.personality!==undefined)body.personality=opts.personality;
       const r=await apiFetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
+      // A5: a rejected save (e.g. the FR-1 seat gate 400ing a red model) must
+      // NOT display "Saved" while the pill shows the rejected model — that was
+      // the UI half of the silent-seat hole. Revert the optimistic update and
+      // surface the server's reason.
+      if(!r.ok||d?.status==='error'){
+        setAgentSettings(prev);
+        setSettingsSaveMsg(String(d?.message||d?.error||'Save rejected').slice(0,200));
+        setTimeout(()=>setSettingsSaveMsg(''),6000);
+        return false;
+      }
       if(d?.settings)setAgentSettings({...DEFAULT_AGENT_SETTINGS,...d.settings});
       if(opts.personality!==undefined&&typeof d?.personality==='string'){setAgentPersonality(d.personality);setPersonalityDraft(d.personality)}
       setSettingsSaveMsg(opts.msg||'Saved');
     }catch(e){setSettingsSaveMsg('Save failed')}
     setTimeout(()=>setSettingsSaveMsg(''),1800);
+    return true;
   };
   const savePersonality=()=>saveAgentSettings({},{personality:personalityDraft,msg:'Personality saved'});
   const toggleNewsTopic=(t)=>{const cur=new Set(agentSettings.news_priorities||[]);cur.has(t)?cur.delete(t):cur.add(t);saveAgentSettings({news_priorities:[...cur]})};
@@ -8603,6 +8629,35 @@ function App(){
   const setLocalModel=(name)=>{
     const cur=agentSettings.model_routing||{};
     saveAgentSettings({model_routing:{...cur,local_model:name}});
+  };
+  // ── A5: per-axis seat-gate status (structural + honesty) + on-demand runs.
+  // Fail-closed everywhere: no recorded run = ungated = not seatable.
+  const[seatGate,setSeatGate]=useState({});
+  const refreshSeatGate=()=>fetch('/api/seat-gate/statuses').then(r=>r.json()).then(d=>setSeatGate(d.statuses||{})).catch(()=>{});
+  useEffect(()=>{refreshSeatGate();const iv=setInterval(refreshSeatGate,15000);return()=>clearInterval(iv)},[]);
+  const runSeatGate=(name)=>{setSeatGate(s=>({...s,[name]:{...(s[name]||{}),running:true}}));
+    fetch('/api/seat-gate/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:name})}).then(()=>setTimeout(refreshSeatGate,3000)).catch(()=>{})};
+  const gateChip=(name)=>{const g=seatGate[name]||{};
+    if(g.running)return <span title="Gate axes running — progress shows as an orb" style={{fontSize:8,fontFamily:'JetBrains Mono',color:'#00d4ff',border:'1px solid rgba(0,212,255,0.35)',borderRadius:3,padding:'0 4px',marginRight:4}}>⏳ gating</span>;
+    const st=g.dual_green?'dual':(g.structural==='green'?'structural':((g.structural==='red'||g.honesty==='red')?'red':'ungated'));
+    const cfg={dual:{c:'#00ff80',b:'rgba(0,255,128,0.35)',t:'✓✓',ti:'Dual-gate GREEN (structural + honesty) — eligible for the orchestrator seat.'},
+      structural:{c:'#f59e0b',b:'rgba(245,158,11,0.35)',t:'✓·',ti:'Structural green, honesty '+(g.honesty||'ungated')+' — run the honesty battery to qualify for the orchestrator seat.'},
+      red:{c:'#f87171',b:'rgba(239,68,68,0.4)',t:'✗',ti:'Gate RED — structural: '+(g.structural||'?')+', honesty: '+(g.honesty||'?')+'. Fails closed: cannot hold a tool-using seat.'},
+      ungated:{c:'#8b93a7',b:'rgba(255,255,255,0.2)',t:'—',ti:'Ungated — fails closed until both axes have run. Click ▶ gate.'}}[st];
+    return <span title={cfg.ti} style={{fontSize:8,fontFamily:'JetBrains Mono',color:cfg.c,border:'1px solid '+cfg.b,borderRadius:3,padding:'0 4px',marginRight:4}}>{cfg.t}</span>};
+  // ── A1: in-UI model pull with disk-space preflight; progress = pull orb.
+  const[pullName,setPullName]=useState('');
+  const[pullMsg,setPullMsg]=useState('');
+  const pullArmed=useRef(false);
+  const pullWithPreflight=async()=>{const name=pullName.trim();if(!name)return;
+    try{
+      const pf=await fetch('/api/ollama/pull/preflight?name='+encodeURIComponent(name)).then(r=>r.json());
+      if(pf.warning&&!pullArmed.current){pullArmed.current=true;setPullMsg(pf.warning+' — click Pull again to force');return}
+    }catch(_){}
+    pullArmed.current=false;
+    setPullMsg('Pulling '+name+' — progress shows as a process orb; it appears in this list when done.');
+    pullModel(name);setPullName('');
+    setTimeout(()=>setPullMsg(''),10000);
   };
   const chatEnd=useRef(null);
 
@@ -9643,7 +9698,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // flips to error drops out of pIds below → auto-dismisses within ~2s.
         const _BAD_ORB=new Set(['error','failed','cancelled','canceled']);const procs=(d.processes||[]).filter(p=>!_BAD_ORB.has(p.status));const existing=window.fridayGetOrbs?.()??[];const eIds=new Set(existing.map(o=>o.id));const pIds=new Set(procs.map(p=>p.id));for(const p of procs){if(!eIds.has(p.id))window.fridayAddOrb?.({id:p.id,label:p.label||p.name||'Task',category:p.category||'default',icon:p.icon||'⚡',model:p.model||null,color:(p.color!=null?p.color:null)});window.fridayUpdateOrb?.(p.id,{progress:p.progress||0,status:p.status||'running',label:p.label||p.name});if(p.steps)window.fridayUpdateThread?.(p.id,p.steps)}for(const o of existing){if(!pIds.has(o.id)){window.fridayUpdateOrb?.(o.id,{status:'completed',progress:1});setTimeout(()=>window.fridayRemoveOrb?.(o.id),2000)}}}catch(_){}};const timer=setInterval(poll,2000);poll();return()=>{active=false;clearInterval(timer)}},[]);
 
-  useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages)}).catch(()=>{})},[]);
+  // B1/B2: rehydrated history keeps model/seat badges and system lines; the
+  // server persists `timestamp` while live messages carry `time` — map it so
+  // reloaded messages don't render a blank clock.
+  useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages.map(m=>({...m,time:m.time||(m.timestamp?new Date(m.timestamp).toLocaleTimeString():'')})))}).catch(()=>{})},[]);
   const dismissedNotifIds=useRef(new Set());
   const _notifPost=(url,id)=>{if(!id)return;try{fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{})}catch(_){}};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
@@ -9883,7 +9941,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       if(frame)body.image=frame;
       const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
-      setChatMsgs(p=>[...p,{role:'friday',text:d.response,time:new Date().toLocaleTimeString()}]);
+      // B2: seat changes detected this turn render as system lines BEFORE the
+      // reply — a routing flip is never silent again.
+      if(d.seat_events&&d.seat_events.length)setChatMsgs(p=>[...p,...d.seat_events.map(ev=>({role:'system',kind:'seat_change',text:'⚙ '+ev.text,time:new Date().toLocaleTimeString()}))]);
+      // B1: every reply carries its model + seat class.
+      setChatMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
@@ -10120,9 +10182,29 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 </button>
               ))}
             </div>
-            {routingMode!=='cloud_only'&&<div style={{padding:'0 12px 6px',fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>
-              Today: {routingStats.local_requests} local · {routingStats.cloud_requests} cloud{routingStats.local_tokens>0?` · ${routingStats.local_tokens.toLocaleString()} local tokens`:''}{!ollamaStatus.available?' · Ollama offline':''}
-            </div>}
+            {/* A3: what the selected mode actually MEANS, plus the effective
+                conversational seat — the truth the 10:16:59 silent flip hid
+                (mode local_only seats the local model while the orchestrator
+                pill keeps showing the cloud model). */}
+            {(()=>{
+              const MODE_MEANING={
+                cloud_only:'All conversation goes to the cloud orchestrator seat.',
+                smart:'The router picks the seat per turn — vault-touching turns always go local.',
+                local_preferred:'Local seat answers first; cloud orchestrator only as fallback.',
+                local_only:'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'};
+              const localM=(agentSettings.model_routing||{}).local_model||'gemma4:latest';
+              const effLocal=routingMode==='local_only';
+              const effModel=effLocal?localM:(agentSettings.orchestrator_model||'');
+              return <div style={{padding:'0 12px 6px'}}>
+                <div style={{fontSize:9,color:routingMode==='local_only'?'#f59e0b':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',lineHeight:1.5}}>{MODE_MEANING[routingMode]||''}</div>
+                <div style={{fontSize:9,fontFamily:'JetBrains Mono',marginTop:2,color:'rgba(255,255,255,0.6)'}}>
+                  Conversational seat now: <span style={{color:effLocal?'#f59e0b':'#00d4ff'}}>{effModel} · {effLocal?'local':'cloud'}</span>
+                </div>
+                {routingMode!=='cloud_only'&&<div style={{fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginTop:2}}>
+                  Today: {routingStats.local_requests} local · {routingStats.cloud_requests} cloud{routingStats.local_tokens>0?` · ${routingStats.local_tokens.toLocaleString()} local tokens`:''}{!ollamaStatus.available?' · Ollama offline':''}
+                </div>}
+              </div>;
+            })()}
             {/* Local default — ONLY when Ollama is actually running (daemon down =
                  no section at all; the routing line above says "Ollama offline").
                  Click sets model_routing.local_model, the routing fallback. */}
@@ -10147,7 +10229,11 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                   <div key={m.name} onClick={()=>setLocalModel(m.name)} title={active?'Default local model':'Click to set as default local model'}
                     className="model-option-local" style={{background:active?'rgba(0,255,128,0.08)':'transparent'}}>
                     <span className="ollama-status-dot online"/>
-                    <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:active?'#00ff80':undefined}}>{m.name}</span>
+                    <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:active?'#00ff80':undefined}}>{m.name}{m.running?<span title="Loaded in Ollama memory right now" style={{marginLeft:4,fontSize:8,color:'#00d4ff'}}>●</span>:null}</span>
+                    {/* A5: per-axis gate chip (structural + honesty) + run-gate. */}
+                    {gateChip(m.name)}
+                    {!((seatGate[m.name]||{}).dual_green)&&!((seatGate[m.name]||{}).running)&&<button onClick={e=>{e.stopPropagation();runSeatGate(m.name)}} title="Run both gate axes now (structural conformance + honesty battery). Progress shows as a process orb."
+                      style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.25)',color:'#00d4ff',cursor:'pointer',fontSize:8,fontFamily:'JetBrains Mono',borderRadius:3,padding:'0 4px',marginRight:4}}>▶ gate</button>}
                     {active&&<span style={{fontSize:9,color:'#00ff80',fontFamily:'JetBrains Mono',marginRight:6}}>DEFAULT</span>}
                     <span className="model-badge-local">{m.size_gb}GB{m.parameter_size?' · '+m.parameter_size:''}</span>
                   </div>
@@ -10157,6 +10243,16 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 style={{display:'block',width:'100%',textAlign:'left',background:'transparent',border:'none',padding:'2px 12px 6px',cursor:'pointer',fontSize:9,color:'rgba(0,212,255,0.6)',fontFamily:'JetBrains Mono'}}>
                 {localAllOpen?'▴ show fewer':`▸ ${(ollamaStatus.models||[]).length-4} more installed`}
               </button>}
+              {/* A1: pull a new model by name — preflight checks disk space,
+                  progress renders as a process orb, and the live catalog poll
+                  surfaces it here without a restart. */}
+              <div style={{display:'flex',gap:4,alignItems:'center',padding:'2px 12px 4px'}}>
+                <input value={pullName} onChange={e=>setPullName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')pullWithPreflight()}} placeholder="pull model… e.g. qwen3:14b"
+                  style={{flex:1,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:4,color:'#ccc',fontSize:10,fontFamily:'JetBrains Mono',padding:'3px 6px',outline:'none'}}/>
+                <button onClick={pullWithPreflight} disabled={!pullName.trim()} title="Download this model from the Ollama registry (disk-space preflight first)"
+                  style={{background:'rgba(0,212,255,0.08)',border:'1px solid rgba(0,212,255,0.3)',color:pullName.trim()?'#00d4ff':'#556',cursor:pullName.trim()?'pointer':'default',fontSize:10,fontFamily:'JetBrains Mono',borderRadius:4,padding:'3px 8px'}}>⬇ Pull</button>
+              </div>
+              {pullMsg&&<div style={{padding:'0 12px 6px',fontSize:9,color:'#f59e0b',fontFamily:'JetBrains Mono',lineHeight:1.4}}>{pullMsg}</div>}
             </div>}
             {/* ── 4 · Footer — the FULL catalog (every provider, every model, all
                  metadata, key management) lives in Settings → Providers. */}
@@ -10321,7 +10417,14 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       </div>
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
         {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
-        {chatMsgs.map((m,i)=><div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
+        {chatMsgs.map((m,i)=>m.role==='system'
+          /* B2: system lines — seat changes and other transparency notices.
+             Amber, centered, unmistakably NOT Friday speaking. Never sent to
+             the model (server excludes role:system from context replay). */
+          ?<div key={i} style={{textAlign:'center',margin:'10px 0'}}>
+            <span title={m.kind==='seat_change'?'Model seat configuration changed — this notice is generated by the server, not the model.':'System notice'} style={{display:'inline-block',fontSize:10,fontFamily:'JetBrains Mono',color:'#f59e0b',background:'rgba(245,158,11,0.07)',border:'1px solid rgba(245,158,11,0.25)',borderRadius:5,padding:'3px 10px',maxWidth:'92%',textAlign:'left',lineHeight:1.5}}>{m.text}</span>
+          </div>
+          :<div key={i} style={{textAlign:m.role==='user'?'right':'left',marginBottom:8}}>
           <div style={{display:'inline-flex',alignItems:'flex-start',gap:4,maxWidth:'80%',minWidth:0,justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
             <div style={{padding:'7px 11px',borderRadius:8,fontSize:12,background:m.role==='user'?'rgba(124,58,237,0.12)':'rgba(255,255,255,0.03)',color:m.role==='user'?'#b794f6':'#bbb',minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>
               {m.role==='friday'&&m.via!=='voice'
@@ -10333,6 +10436,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           <div style={{fontSize:11,color:'#888',marginTop:1}}>
             {m.role==='user'?'You':'Friday'} · {m.time||''}
             {m.via==='voice'&&<span style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:'rgba(0,212,255,0.12)',border:'1px solid rgba(0,212,255,0.3)',color:'#00d4ff',fontSize:9,letterSpacing:'0.05em'}}>🎤 VOICE</span>}
+            {/* B1: model badge — exact id + seat class on every assistant
+               message, amber for local seats, cyan for cloud. Persisted
+               server-side, so it survives reloads (VOICE badge pattern). */}
+            {m.role==='friday'&&m.model&&<span title={'Generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}</span>}
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">Friday is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
