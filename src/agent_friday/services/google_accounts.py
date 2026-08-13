@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import agent_friday.core as core
-from agent_friday.core import FRIDAY_DIR
+from agent_friday.core import FRIDAY_DIR, _load_settings
 from agent_friday.services import credential_store as cs
 from agent_friday.services.calendar_engine import (
     GOOGLE_TOKEN_PATH,
@@ -569,17 +569,28 @@ def drive_list(account_id: str, folder_id: str = "root", page_size: int = 50) ->
 
 
 # ── OAuth flow helpers (per-account) ─────────────────────────────────────────
+# Pinned for EVERY client type (Desktop and Web) — see multi_redirect_uri's
+# docstring. Mirrors services/calendar_engine.py's GOOGLE_DESKTOP_REDIRECT_URI
+# and mcp_oauth.py's http://127.0.0.1:{port}/callback pattern.
 MULTI_DESKTOP_REDIRECT_URI = "http://localhost:3000/api/google/accounts/callback"
 
 
 def multi_redirect_uri(cfg, client_type=None):
-    """Redirect URI for the multi-account callback. Desktop clients get the pinned
-    loopback (no GCP registration needed); Web clients derive from the request."""
-    from flask import request
-    kind = client_type or _google_client_type(cfg) or "installed"
-    if kind == "installed":
-        return MULTI_DESKTOP_REDIRECT_URI
-    return request.host_url.rstrip("/") + "/api/google/accounts/callback"
+    """Redirect URI for the multi-account callback.
+
+    2026-08-13: previously derived from request.host_url for a "web" client
+    config, which broke consent for anyone reaching Friday via a non-loopback
+    Host header (a hosts-file alias like http://agent.friday/, a tunnel, a
+    LAN IP) — Google's secure-response-handling policy rejects any plain-HTTP
+    non-loopback redirect_uri outright, checked against the literal URI, not
+    something DNS/propagation ever fixes. Pinned to loopback regardless of
+    the request Host now; an advanced settings override exists for a genuine
+    HTTPS-terminated reverse-proxy setup (DEFAULT_SETTINGS.google_oauth).
+    """
+    override = (_load_settings().get('google_oauth') or {}).get('redirect_base_override')
+    if override:
+        return override.rstrip("/") + "/api/google/accounts/callback"
+    return MULTI_DESKTOP_REDIRECT_URI
 
 
 def build_auth_flow(state: str | None = None):

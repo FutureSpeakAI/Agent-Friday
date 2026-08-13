@@ -30755,8 +30755,13 @@ function GoogleAccountsPanel() {
   const [msg, setMsg] = useState('');
   const [label, setLabel] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauth, setOauth] = useState(null);
+  const [copied, setCopied] = useState(false);
   const refresh = () => apiFetch('/api/google/accounts').then(r => r.json()).then(d => {
-    if (d.status === 'ok') setAccounts(d.accounts || []);
+    if (d.status === 'ok') {
+      setAccounts(d.accounts || []);
+      setOauth(d.oauth && d.oauth.redirect_uri ? d.oauth : null);
+    }
   }).catch(() => {});
   // NOTE: refresh is a concise arrow returning the fetch Promise; passing it
   // straight to useEffect makes React call that Promise as the cleanup fn on
@@ -30765,6 +30770,13 @@ function GoogleAccountsPanel() {
   useEffect(() => {
     refresh();
   }, []);
+  const copyRedirectUri = () => {
+    if (!oauth) return;
+    navigator.clipboard?.writeText(oauth.redirect_uri).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => {});
+  };
   const addAccount = async () => {
     setLoading(true);
     try {
@@ -30823,7 +30835,58 @@ function GoogleAccountsPanel() {
       } : x));
     } catch (e) {}
   };
-  return /*#__PURE__*/React.createElement("div", null, accounts.length === 0 && /*#__PURE__*/React.createElement("div", {
+  return /*#__PURE__*/React.createElement("div", null, oauth && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(0,212,255,0.05)',
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 8,
+      padding: '10px 12px',
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.45)',
+      fontFamily: 'JetBrains Mono',
+      letterSpacing: '0.04em',
+      marginBottom: 5,
+      textTransform: 'uppercase'
+    }
+  }, "OAuth Redirect URI"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("code", {
+    style: {
+      flex: 1,
+      fontSize: 11,
+      color: '#00d4ff',
+      fontFamily: 'JetBrains Mono',
+      background: 'rgba(0,0,0,0.25)',
+      borderRadius: 4,
+      padding: '4px 8px',
+      overflowWrap: 'anywhere',
+      wordBreak: 'break-all'
+    }
+  }, oauth.redirect_uri), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: {
+      fontSize: 11,
+      padding: '4px 10px',
+      whiteSpace: 'nowrap'
+    },
+    onClick: copyRedirectUri,
+    title: "Copy to clipboard"
+  }, copied ? '✓ Copied' : '📋 Copy')), oauth.client_type === 'web' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.5)',
+      marginTop: 6,
+      lineHeight: 1.4
+    }
+  }, "This exact URI must be registered under \"Authorized redirect URIs\" for this OAuth client in the Google Cloud Console, or consent will fail with Error 400 (invalid_request).")), accounts.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'rgba(255,255,255,0.38)',
       fontSize: 12,

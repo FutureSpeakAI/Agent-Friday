@@ -68,14 +68,34 @@ _PENDING_LOCK = threading.Lock()
 
 @google_accounts_bp.route("/api/google/accounts")
 def list_google_accounts():
-    """List connected Google accounts. Returns metadata only — never tokens."""
+    """List connected Google accounts. Returns metadata only — never tokens.
+
+    Also surfaces the OAuth redirect_uri (toolcall-integrity-v5, 2026-08-13)
+    — side-effect-free, unlike POST /connect (rate limited, starts a real
+    flow), so the Settings -> Connectors panel can show it up front, before
+    the user ever clicks Add Account. Pinned to loopback regardless of the
+    request Host; the Web-client GCP-registration note only applies when
+    client_type == "web".
+    """
     try:
         accounts = ga.list_accounts()
+        oauth_info = {}
+        try:
+            cfg, _src = ga._google_client_config()
+            if cfg:
+                client_type = ga._google_client_type(cfg) or "installed"
+                oauth_info = {
+                    "client_type": client_type,
+                    "redirect_uri": ga.multi_redirect_uri(cfg, client_type),
+                }
+        except Exception:
+            pass
         return jsonify({
             "status": "ok",
             "accounts": accounts,
             "protection": cs.protection_method(),
             "count": len(accounts),
+            "oauth": oauth_info,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
