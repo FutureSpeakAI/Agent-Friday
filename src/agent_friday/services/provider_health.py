@@ -220,7 +220,14 @@ def _check(name, deep=False) -> dict:
             return {"provider": name, "status": "missing", "detail": str(e)[:120]}
 
     if not _has_key(prov):
-        return {"provider": name, "status": "missing", "detail": "no API key"}
+        return {"provider": name, "status": "missing", "detail": "no API key",
+                "config": "missing", "proved_inference": False}
+
+    if deep:
+        # Decision D1: a key is CONFIGURATION, not health. Prove inference.
+        probed = inference_probe(name, prov=prov)
+        if probed is not None:
+            return probed
 
     if deep and ptype == "openai-compatible":
         base = (prov.get("base_url") or "").rstrip("/")
@@ -240,7 +247,189 @@ def _check(name, deep=False) -> dict:
         except Exception as e:
             return {"provider": name, "status": "error", "detail": str(e)[:120]}
 
-    return {"provider": name, "status": "ok", "detail": "key present"}
+    # Shallow path. A present key proves CONFIGURATION only — never that
+    # inference works (decision D1). `proved_inference: False` says so
+    # explicitly so no caller can mistake this for a working backend.
+    return {"provider": name, "status": "ok", "detail": "key present",
+            "config": "ok", "proved_inference": False}
+
+
+# ── Inference probe (decision D1) ────────────────────────────────────────────
+# Before this, a revoked, rate-limited or zero-credit key reported "ok" on
+# every health surface Friday exposed, because the check was `bool(key)`. The
+# probe below sends a genuine one-token generation and reports what actually
+# came back.
+_PROBE_TTL_S = 60.0        # probes cost tokens; /api/health is polled often
+_PROBE_CACHE: dict = {}    # provider -> (ts, result)
+_PROBE_PROMPT = "hi"
+_PROBE_MAX_TOKENS = 1
+
+
+def resident_model_for(prov) -> str | None:
+    """The model a probe should exercise: what this provider would actually use.
+
+    Ollama prefers the configured local model, else the smallest installed one
+    (cheapest to load if nothing is resident). Cloud providers use the first
+    declared model in their descriptor.
+    """
+    ptype = (prov or {}).get("type", "")
+    try:
+        from agent_friday.core import _load_settings
+        cfg = (_load_settings() or {})
+    except Exception:
+        cfg = {}
+    if ptype == "ollama":
+        chosen = ((cfg.get("model_routing") or {}).get("local_model")
+                  or cfg.get("local_model"))
+        if chosen:
+            return chosen
+        try:
+            from agent_friday.routing.ollama_manager import get_manager
+            installed = get_manager(prov.get("base_url")
+                                    or "http://localhost:11434").list_models()
+            if installed:
+                return sorted(installed,
+                              key=lambda m: m.get("size_gb") or 0)[0].get("name")
+        except Exception:
+            return None
+        return None
+    if ptype == "anthropic":
+        return (cfg.get("orchestrator_model")
+                or (prov.get("models") or [None])[0])
+    return (prov.get("models") or [None])[0]
+
+
+def inference_probe(name, prov=None, use_cache=True) -> dict | None:
+    """Send a one-token generation and report whether inference actually works.
+
+    Returns a check dict, or None when this provider type has no probe (the
+    caller then falls back to its previous behaviour). Results are cached for
+    `_PROBE_TTL_S` because every probe spends real tokens and `/api/health` is
+    polled by the tray watchdog.
+
+    Never raises: a probe that blows up is a `down`, not a 500.
+    """
+    if use_cache:
+        hit = _PROBE_CACHE.get(name)
+        if hit and (time.time() - hit[0]) < _PROBE_TTL_S:
+            return hit[1]
+
+    prov = prov if prov is not None else _provider(name)
+    if not prov:
+        return None
+    ptype = prov.get("type", "")
+    model = resident_model_for(prov)
+
+    def _result(status, detail, proved):
+        res = {"provider": name, "status": status, "detail": detail,
+               "config": "ok", "proved_inference": proved, "model": model}
+        _PROBE_CACHE[name] = (time.time(), res)
+        return res
+
+    t0 = time.time()
+    try:
+        if ptype == "ollama":
+            if not model:
+                return _result("down", "no local model installed", False)
+            from agent_friday.routing.ollama_manager import get_manager
+            mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
+            # This is the call site decision D1 requires: `health_check` did a
+            # real generation but had ZERO callers anywhere in the tree.
+            ok = mgr.health_check(model)
+            ms = int((time.time() - t0) * 1000)
+            return _result("ok" if ok else "down",
+                           f"generated in {ms}ms" if ok
+                           else "no output from a real generation", bool(ok))
+
+        if ptype == "anthropic":
+            from agent_friday.core import get_anthropic_client
+            client = get_anthropic_client()
+            if client is None:
+                return _result("missing", "no client", False)
+            resp = client.messages.create(
+                model=model, max_tokens=_PROBE_MAX_TOKENS,
+                messages=[{"role": "user", "content": _PROBE_PROMPT}])
+            ms = int((time.time() - t0) * 1000)
+            got = any(getattr(b, "type", None) == "text"
+                      for b in (getattr(resp, "content", None) or []))
+            return _result("ok" if got else "down",
+                           f"generated in {ms}ms" if got
+                           else "empty completion", bool(got))
+
+        if ptype == "openai-compatible":
+            import requests
+            from agent_friday.routing.provider_descriptors import (
+                auth_headers, provider_api_key)
+            base = (prov.get("base_url") or "").rstrip("/")
+            if not base or not model:
+                return _result("down", "no base_url or model", False)
+            r = requests.post(
+                f"{base}/chat/completions",
+                headers={"Content-Type": "application/json",
+                         **auth_headers(prov, provider_api_key(prov))},
+                json={"model": model, "max_tokens": _PROBE_MAX_TOKENS,
+                      "messages": [{"role": "user", "content": _PROBE_PROMPT}]},
+                timeout=10)
+            ms = int((time.time() - t0) * 1000)
+            if r.status_code >= 400:
+                return _result("down", f"HTTP {r.status_code}", False)
+            choices = (r.json() or {}).get("choices") or []
+            got = bool(choices)
+            return _result("ok" if got else "down",
+                           f"generated in {ms}ms" if got
+                           else "empty completion", got)
+    except Exception as e:
+        return _result("down", f"{type(e).__name__}: {str(e)[:100]}", False)
+
+    return None
+
+
+def reset_probe_cache(provider=None):
+    """Clear probe results (tests, and after a key/provider change)."""
+    if provider is None:
+        _PROBE_CACHE.clear()
+    else:
+        _PROBE_CACHE.pop(provider, None)
+
+
+def inference_health(providers=None) -> dict:
+    """Aggregate probe verdict across the providers that matter for chat.
+
+    Returns {"status": ok|degraded|down, "providers": [...]}.
+    `down` means every probed provider failed — Friday cannot currently think.
+    `degraded` means at least one, but not all, failed.
+    """
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        allp = get_provider_registry().list_providers()
+    except Exception:
+        return {"status": "unknown", "providers": []}
+
+    probe_types = {"ollama", "anthropic", "openai-compatible"}
+    results = []
+    for p in allp:
+        pname = p.get("name", "")
+        if providers is not None and pname not in providers:
+            continue
+        if p.get("type", "") not in probe_types:
+            continue
+        if not _has_key(p):
+            continue          # unconfigured is not unhealthy
+        res = inference_probe(pname, prov=p)
+        if res is not None:
+            results.append(res)
+
+    if not results:
+        return {"status": "unknown", "providers": [],
+                "detail": "no configured inference provider to probe"}
+    oks = [r for r in results if r.get("status") == "ok"]
+    if not oks:
+        status = "down"
+    elif len(oks) < len(results):
+        status = "degraded"
+    else:
+        status = "ok"
+    return {"status": status, "providers": results}
 
 
 def check_provider(name, deep=False, use_cache=True) -> dict:
