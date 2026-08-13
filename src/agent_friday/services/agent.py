@@ -281,6 +281,18 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_email", "description": "Search and read the user's recent Gmail (built-in read-only Google integration). If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "search_drive", "description": "Search Google Drive file/folder names across every connected Google account (built-in read-only integration). Returns each hit's id, name, mime_type, and which account it's in — pass the id + mime_type to read_doc for Docs/Sheets content. If a hit's account never granted Drive access, its error is reported per-account, not as 'not connected'.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Name substring to search for; omit for the most recently modified files."}}}},
+    {"name": "read_doc", "description": "Read a Google Doc's text or a Sheet's first-tab values, by file id (get the id from search_drive first). account_id is optional — omit it to try every connected account until one has access.",
+     "input_schema": {"type": "object", "properties": {
+         "file_id": {"type": "string"},
+         "account_id": {"type": "string", "description": "From a prior search_drive hit's account_id; omit to auto-try all connected accounts."},
+         "mime_type": {"type": "string", "description": "From a prior search_drive hit's mime_type; skips an extra lookup if provided."},
+     }, "required": ["file_id"]}},
+    {"name": "list_tasks", "description": "List open Google Tasks across every connected Google account (built-in read-only integration). If the result says 'not connected', offer the one-time OAuth connection; a per-account error (e.g. this account never granted Tasks access) is reported specifically, not as 'not connected'.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "search_contacts", "description": "Search the user's Google Contacts across every connected account by name, email, or phone substring (built-in read-only integration). Omit query to list recent contacts.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
     {"name": "read_wiki", "description": "Read a markdown file from the personal wiki at ~/wiki/. Use a relative path like 'professional/job-search.md'.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
     {"name": "search_wiki", "description": "Keyword-search the personal wiki (and ~/.friday/wiki/) for files whose name or contents match a query. Returns up to 5 hits with a relative path and a short excerpt. Use this when the smart-loaded context didn't include the file you need; then call read_wiki on the most promising hit for the full file.",
@@ -783,6 +795,118 @@ def _tool_search_email(inp):
             })
     return json.dumps({"connected": True, "source": source, "query": q,
                        "count": len(hits), "messages": hits[:25]}, default=str)
+
+
+def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, fetch_fn, item_key):
+    """Shared shape for the multi-account Google tools added 2026-08-13
+    (search_drive/list_tasks/search_contacts): zero accounts -> the standard
+    honest not-connected note; accounts exist -> per-account status, and if
+    every account's live fetch failed, an explicit instruction to report the
+    SPECIFIC error(s) rather than claim 'needs connecting'."""
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception:
+        return json.dumps({"connected": False, item_key: [],
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what=has_accounts_note_what, reads=has_accounts_note_reads)})
+    try:
+        has_accounts = ga.has_accounts()
+    except Exception:
+        has_accounts = False
+    if not has_accounts:
+        return json.dumps({"connected": False, item_key: [],
+                           "store": "google_accounts (multi-account)",
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what=has_accounts_note_what, reads=has_accounts_note_reads)})
+    try:
+        result = fetch_fn(ga)
+    except Exception as e:
+        return json.dumps({"connected": True, item_key: [],
+                           "store": "google_accounts (multi-account)",
+                           "note": f"{has_accounts_note_what} fetch error: {e}"})
+    accounts_status = _summarize_multi_account_errors(result)
+    items = result.get(item_key) or []
+    payload = {
+        "connected": True,
+        "store": "google_accounts (multi-account)",
+        "accounts": accounts_status,
+        "count": len(items),
+        item_key: items,
+    }
+    errored = [a for a in accounts_status if a["status"] == "error"]
+    if errored and not items:
+        payload["note"] = (
+            f"Every connected account's live {has_accounts_note_what} fetch just "
+            f"failed — tell the user the SPECIFIC error(s) below, do not say "
+            f"{has_accounts_note_what} 'needs connecting' (it's already connected): " +
+            "; ".join(f"{a['label']}: {a['error']}" for a in errored)
+        )
+    return json.dumps(payload, default=str)
+
+
+def _tool_search_drive(inp):
+    """Search Drive file/folder names across every connected Google account.
+    2026-08-13, same multi-account/per-account-error pattern as query_calendar
+    and search_email (see their docstrings for why)."""
+    query = ((inp or {}).get('query') or '').strip()
+    blob = _google_multi_account_tool(
+        "Google Drive", "your files",
+        lambda ga: ga.merged_drive_search(query=query, max_results=20),
+        "files",
+    )
+    return blob
+
+
+def _tool_read_doc(inp):
+    """Read a Google Doc/Sheet by file id (from a prior search_drive hit)."""
+    inp = inp or {}
+    file_id = (inp.get('file_id') or '').strip()
+    if not file_id:
+        return json.dumps({"error": "file_id is required — get one from search_drive first."})
+    mime_type = (inp.get('mime_type') or '').strip() or None
+    account_id = (inp.get('account_id') or '').strip() or None
+    try:
+        from agent_friday.services import google_accounts as ga
+    except Exception:
+        return json.dumps({"connected": False,
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what="Google Docs/Sheets", reads="your documents")})
+    if not ga.has_accounts():
+        return json.dumps({"connected": False,
+                           "note": _GOOGLE_NOT_CONNECTED_NOTE.format(
+                               what="Google Docs/Sheets", reads="your documents")})
+    candidate_ids = [account_id] if account_id else [
+        a["id"] for a in ga.list_accounts() if a.get("services", {}).get("docs", True)]
+    if not candidate_ids:
+        return json.dumps({"error": "No account has Docs/Sheets access enabled."})
+    last_error = None
+    for aid in candidate_ids:
+        result = ga.read_doc_or_sheet(aid, file_id, mime_type=mime_type)
+        if "error" not in result:
+            result["account_id"] = aid
+            return json.dumps(result, default=str)
+        last_error = result["error"]
+    return json.dumps({"error": last_error or "Doc/Sheet not readable by any connected account.",
+                       "store": "google_accounts (multi-account)"})
+
+
+def _tool_list_tasks(_inp):
+    """List open Google Tasks across every connected Google account."""
+    return _google_multi_account_tool(
+        "Google Tasks", "your tasks",
+        lambda ga: ga.merged_tasks(max_results=50),
+        "tasks",
+    )
+
+
+def _tool_search_contacts(inp):
+    """Search Google Contacts across every connected Google account."""
+    query = ((inp or {}).get('query') or '').strip()
+    return _google_multi_account_tool(
+        "Google Contacts", "your contacts",
+        lambda ga: ga.search_contacts(query=query, max_results=15),
+        "contacts",
+    )
 
 
 def _tool_read_wiki(inp):
@@ -2396,6 +2520,10 @@ CLAUDE_TOOL_HANDLERS = {
     "query_trust_graph": _tool_query_trust_graph,
     "query_calendar": _tool_query_calendar,
     "search_email": _tool_search_email,
+    "search_drive": _tool_search_drive,
+    "read_doc": _tool_read_doc,
+    "list_tasks": _tool_list_tasks,
+    "search_contacts": _tool_search_contacts,
     "read_wiki": _tool_read_wiki,
     "search_wiki": _tool_search_wiki,
     "search_news": _tool_search_news,
@@ -2716,6 +2844,10 @@ TOOL_RINGS: dict[str, int] = {
     "search_news":          2,   # fetches the live RSS/Brave feed (network)
     "browse_web":           2,
     "search_email":         2,
+    "search_drive":         2,
+    "read_doc":             2,
+    "list_tasks":           2,
+    "search_contacts":      2,
     "draft_email":          2,
     "open_url":             2,
     "open_path":            2,

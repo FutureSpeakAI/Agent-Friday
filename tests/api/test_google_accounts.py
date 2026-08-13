@@ -178,6 +178,122 @@ class TestMergedViews:
         out = ga.merged_calendar()
         assert out["events"][0]["account_color"] == rec["color"]
 
+    def test_merged_drive_search_badges_accounts(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Work", email="w@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        monkeypatch.setattr(ga, "_drive_search_for_creds",
+                            lambda creds, query, max_results: [
+                                {"id": "f1", "name": "Q3 plan", "mime_type": ga._DOC_MIME}])
+        out = ga.merged_drive_search(query="Q3")
+        assert out["files"][0]["account_label"] == "Work"
+        assert out["files"][0]["account_id"] == rec["id"]
+
+    def test_merged_tasks_badges_accounts_and_lists(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Personal", email="p@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        monkeypatch.setattr(ga, "_tasks_for_creds",
+                            lambda creds, max_results: [
+                                {"id": "t1", "title": "Buy milk", "list": "Errands"}])
+        out = ga.merged_tasks()
+        assert out["tasks"][0]["account_label"] == "Personal"
+        assert out["tasks"][0]["account_id"] == rec["id"]
+
+    def test_search_contacts_badges_accounts(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Work", email="w@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+        monkeypatch.setattr(ga, "_contacts_for_creds",
+                            lambda creds, query, max_results: [
+                                {"name": "Jane Doe", "emails": ["jane@example.com"], "phones": []}])
+        out = ga.search_contacts(query="jane")
+        assert out["contacts"][0]["account_label"] == "Work"
+        assert out["contacts"][0]["account_id"] == rec["id"]
+
+    def test_drive_search_and_tasks_and_contacts_isolate_a_failed_account(self, monkeypatch):
+        good = ga.upsert_account(FakeCreds(), label="Good", email="good2@example.com")
+        bad = ga.upsert_account(FakeCreds(), label="Bad", email="bad2@example.com")
+
+        def fake_creds_for(aid):
+            return object() if aid == good["id"] else None
+
+        monkeypatch.setattr(ga, "credentials_for", fake_creds_for)
+        monkeypatch.setattr(ga, "_drive_search_for_creds",
+                            lambda creds, query, max_results: [{"id": "f1", "name": "ok"}])
+        out = ga.merged_drive_search()
+        assert any(f["account_id"] == good["id"] for f in out["files"])
+        assert any(e["account_id"] == bad["id"] for e in out["errors"])
+
+
+class TestReadDocOrSheet:
+    def test_reads_a_doc_by_walking_paragraph_runs(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Work", email="doc@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+
+        class FakeExec:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def execute(self):
+                return self._payload
+
+        class FakeDocsSvc:
+            def documents(self):
+                return self
+
+            def get(self, documentId):
+                return FakeExec({
+                    "title": "Plan",
+                    "body": {"content": [
+                        {"paragraph": {"elements": [{"textRun": {"content": "Hello "}}]}},
+                        {"paragraph": {"elements": [{"textRun": {"content": "world.\n"}}]}},
+                    ]},
+                })
+
+        import googleapiclient.discovery as discovery
+        monkeypatch.setattr(discovery, "build",
+                            lambda name, version, credentials, cache_discovery: FakeDocsSvc())
+        out = ga.read_doc_or_sheet(rec["id"], "file123", mime_type=ga._DOC_MIME)
+        assert out["type"] == "doc"
+        assert out["content"] == "Hello world.\n"
+
+    def test_reads_a_sheet_first_tab_values(self, monkeypatch):
+        rec = ga.upsert_account(FakeCreds(), label="Work", email="sheet@example.com")
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
+
+        class FakeExec:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def execute(self):
+                return self._payload
+
+        class FakeValues:
+            def get(self, spreadsheetId, range):
+                return FakeExec({"values": [["A1", "B1"], ["A2", "B2"]]})
+
+        class FakeSheetsSvc:
+            def spreadsheets(self):
+                return self
+
+            def get(self, spreadsheetId):
+                return FakeExec({"sheets": [{"properties": {"title": "Sheet1"}}],
+                                 "properties": {"title": "Budget"}})
+
+            def values(self):
+                return FakeValues()
+
+        import googleapiclient.discovery as discovery
+        monkeypatch.setattr(discovery, "build",
+                            lambda name, version, credentials, cache_discovery: FakeSheetsSvc())
+        out = ga.read_doc_or_sheet(rec["id"], "file456", mime_type=ga._SHEET_MIME)
+        assert out["type"] == "sheet"
+        assert out["sheet_name"] == "Sheet1"
+        assert out["rows"] == [["A1", "B1"], ["A2", "B2"]]
+
+    def test_needs_reauth_when_account_has_no_valid_credentials(self, monkeypatch):
+        monkeypatch.setattr(ga, "credentials_for", lambda aid: None)
+        out = ga.read_doc_or_sheet("nonexistent-account", "file1")
+        assert out.get("error") == "needs_reauth"
+
 
 # ── legacy migration ─────────────────────────────────────────────────────────
 class TestLegacyMigration:
