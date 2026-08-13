@@ -1879,6 +1879,16 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
 
+    # ── A6: authoritative clock (Incident 2, F3). TIER_1 BY CONTRACT — the
+    # previous date injections lived in TIER_2 sections that vault gating
+    # redacts for cloud seats, leaving those seats with no date at all and
+    # models doing their own (wrong) weekday arithmetic. ──
+    try:
+        from agent_friday.services.clock import clock_context_block
+        add(clock_context_block(), _T1)
+    except Exception:
+        pass
+
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never
     # answer cold — Friday is a personal agent, not a generic chatbot.
