@@ -232,6 +232,28 @@ def _health_order(attempts, routed_provider_name=None):
         return attempts
 
 
+def _claude_safe_model(candidate, settings):
+    """A model id it is SAFE to send to the Anthropic API — never a local or
+    OpenAI-compatible id.
+
+    2026-08-14 live incident: the escalation ladder's cloud fallback leg
+    resurrected the caller's LOCAL model id, so Anthropic received
+    model="gemma4:e4b" and 404'd (req_011Ce2kC6YqtmcQRKb4e4wmu) — the hourly
+    heartbeat died all night on it. A foreign id translates to the configured
+    cloud model (model_routing.default_cloud_model, then orchestrator_model
+    when claude-ish, then the shipped default); a claude-ish candidate passes
+    through unchanged; None means "let the primitive use its own default".
+    """
+    if candidate and str(candidate).startswith('claude'):
+        return candidate
+    routing_cfg = (settings or {}).get('model_routing') or {}
+    for fallback in (routing_cfg.get('default_cloud_model'),
+                     (settings or {}).get('orchestrator_model')):
+        if fallback and str(fallback).startswith('claude'):
+            return fallback
+    return None  # primitive's own configured default (ANTHROPIC_MODEL_DEFAULT)
+
+
 def _generate_text(messages, system=None, model=None, max_tokens=16384,
                    temperature=None, orb_label=None, workspace=None):
     """Single-shot text generation via the user's CONFIGURED provider.
@@ -293,7 +315,8 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
         # Mirror the chat path exactly: same shared client, same primitive.
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
-        return _call_claude(messages, system=system, model=use_model or model,
+        return _call_claude(messages, system=system,
+                            model=_claude_safe_model(use_model or model, settings),
                             max_tokens=max_tokens, temperature=temperature)
 
     def _via_openai(use_model):

@@ -222,6 +222,26 @@ def get_last_known_green(provider: str = "local") -> str | None:
     return best_model
 
 
+def _installed_local_models():
+    """Names currently installed in the Ollama daemon (5s-TTL cached via the
+    manager), or None when the daemon can't be reached — callers must treat
+    None as 'unverifiable', not 'empty'."""
+    try:
+        from agent_friday.core import _load_settings
+        from agent_friday.routing.ollama_manager import get_manager
+        url = (_load_settings().get("model_routing") or {}).get(
+            "ollama_url", "http://localhost:11434")
+        mgr = get_manager(url)
+        if not mgr.is_available():
+            return None
+        models = mgr.list_models()
+        if not models:
+            return None
+        return {m.get("name") for m in models if isinstance(m, dict) and m.get("name")}
+    except Exception:
+        return None
+
+
 def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict:
     """Un-bypassable, per-dispatch seat enforcement (FR-1 hardening).
 
@@ -247,18 +267,42 @@ def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict
         return {"model": requested_model, "seat_ok": True, "requested": requested_model,
                 "reason": "gated green", "fallback": None}
 
+    # Human-readable gate summary — the reason string travels into
+    # notifications verbatim, and the previous f-string dumped the ENTIRE
+    # status dict (results array included) into it. Score, not blob.
+    status = get_cached_status(requested_model, provider)
+    gate_summary = (f"failed at {status.get('score')}" if status
+                    else "never run")
+    base_reason = (f"'{requested_model}' is not a gated-green tool-calling "
+                   f"seat (conformance gate: {gate_summary})")
+
     fallback_model = get_last_known_green(provider)
     if fallback_model and fallback_model != requested_model:
+        # 2026-08-14 incident: the last-known-green seat (gemma4:latest) had
+        # been DELETED from the daemon — substituting it produced a local
+        # 404 every hour all night. The dynamic catalog knows what's
+        # installed; consult it before offering a fallback. Daemon
+        # unreachable (None) → can't verify → keep legacy behavior.
+        installed = _installed_local_models()
+        if installed is not None and fallback_model not in installed:
+            return {
+                "model": None, "seat_ok": False, "requested": requested_model,
+                "reason": (base_reason +
+                           f", and the last known-green local seat "
+                           f"'{fallback_model}' is no longer installed "
+                           f"(removed from the Ollama daemon) — no green "
+                           f"fallback available"),
+                "fallback": "tool_free",
+            }
         return {
             "model": fallback_model, "seat_ok": False, "requested": requested_model,
-            "reason": (f"'{requested_model}' is not a gated-green tool-calling seat "
-                       f"(conformance gate: {get_cached_status(requested_model, provider) or 'never run'})"),
+            "reason": base_reason,
             "fallback": f"last_known_green:{fallback_model}",
         }
     return {
         "model": None, "seat_ok": False, "requested": requested_model,
-        "reason": (f"'{requested_model}' is not gated green and no known-green "
-                   f"local fallback seat exists"),
+        "reason": (base_reason + " and no known-green local fallback seat "
+                   "exists"),
         "fallback": "tool_free",
     }
 

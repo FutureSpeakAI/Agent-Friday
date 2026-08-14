@@ -151,8 +151,14 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
     def _via_claude(use_model):
         if get_anthropic_client() is None:
             raise RuntimeError("Anthropic client unavailable (no key in env or settings)")
+        # 2026-08-14 incident: `use_model or model` resurrected the caller's
+        # LOCAL subagent seat (gemma4:e4b) on the fallback leg → Anthropic
+        # 404 'model: gemma4:e4b' → heartbeat dead all night. A cloud leg
+        # runs a configured CLOUD model, never a foreign id.
+        from agent_friday.services.model_router import _claude_safe_model
         return _call_claude_agent(
-            messages, system=system, model=use_model or model,
+            messages, system=system,
+            model=_claude_safe_model(use_model or model, settings),
             max_tokens=max_tokens, temperature=temperature,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             orb_label=orb_label, orb_category=orb_category, orb_icon=orb_icon,
@@ -211,13 +217,16 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
 
     errors = []
     for name, fn, use_model in attempts:
+        # Name the model each leg actually tried — "local: HTTP 404" without
+        # the model id sent Stephen log-diving during the 2026-08-14 outage.
+        _leg = f"{name} ({use_model})" if use_model else name
         try:
             text, trace = fn(use_model)
             if text and text.strip():
                 return text, (trace or [])
-            errors.append(f"{name}: empty response")
+            errors.append(f"{_leg}: empty response")
         except Exception as e:
-            errors.append(f"{name}: {e}")
+            errors.append(f"{_leg}: {e}")
     if vault_access:
         # Refuse rather than raise: the caller surfaces this as the reply, and
         # the request was deliberately kept off every cloud provider.
