@@ -31,8 +31,11 @@ _STATE_FILE = core.FRIDAY_DIR / "seat_state.json"
 _LOCK = threading.Lock()
 
 # Human-readable labels for what each watched key means (A3 taxonomy).
+# 2026-08-14 defect #7: no hardcoded "(cloud)" — the orchestrator seat can
+# be an on-device provider (the llama.cpp brain); seat class is derived per
+# provider classification in effective_seat(), not baked into labels.
 _WATCHED = {
-    "orchestrator_model": "orchestrator seat (cloud)",
+    "orchestrator_model": "orchestrator seat",
     "subagent_model": "subagent seat",
     "model_routing.mode": "routing mode",
     "model_routing.local_model": "local seat",
@@ -48,6 +51,23 @@ _MODE_MEANING = {
 }
 
 
+def _provider_seat_class(model, provider_name) -> str:
+    """'local' when the seat's provider (or any enabled provider declaring
+    `model`) classifies as local — the llama.cpp brain at 127.0.0.1 is a
+    LOCAL seat even though it rides the OpenAI transport (defect #7)."""
+    try:
+        from agent_friday.services.provider_registry import (
+            get_provider_registry)
+        for prov in get_provider_registry().get_enabled_providers():
+            if (prov.get("name") == provider_name
+                    or (model and model in (prov.get("models") or []))):
+                return ("local" if prov.get("classification") == "local"
+                        else "cloud")
+    except Exception:
+        pass
+    return "cloud"
+
+
 def effective_seat(settings) -> tuple:
     """The (model, seat_class) actually answering conversational turns under
     the current routing settings — the truth the 10:16:59 flip hid: mode
@@ -56,8 +76,11 @@ def effective_seat(settings) -> tuple:
     mode = routing.get("mode") or "cloud_only"
     if mode == "local_only":
         return (routing.get("local_model") or "(no local model)", "local")
-    return (settings.get("orchestrator_model")
-            or routing.get("default_cloud_model") or "", "cloud")
+    model = (settings.get("orchestrator_model")
+             or routing.get("default_cloud_model") or "")
+    reasoning = ((settings.get("capability_routing") or {})
+                 .get("reasoning") or {})
+    return (model, _provider_seat_class(model, reasoning.get("provider")))
 
 
 def _snapshot(settings) -> dict:

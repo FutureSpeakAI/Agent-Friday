@@ -10423,12 +10423,17 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 local_preferred:'Local seat answers first; cloud orchestrator only as fallback.',
                 local_only:'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'};
               const localM=(agentSettings.model_routing||{}).local_model||'gemma4:latest';
-              const effLocal=routingMode==='local_only';
-              const effModel=effLocal?localM:(agentSettings.orchestrator_model||'');
+              // #7: a local-classification provider (llama.cpp brain at
+              // 127.0.0.1) is a LOCAL seat in any mode — classification
+              // rides the health payload.
+              const capProv=(((agentSettings.capability_routing||{}).reasoning)||{}).provider;
+              const provLocal=((seatHealth[capProv]||{}).classification)==='local';
+              const effLocal=routingMode==='local_only'||provLocal;
+              const effModel=routingMode==='local_only'?localM:(agentSettings.orchestrator_model||'');
               return <div style={{padding:'0 12px 6px'}}>
                 <div style={{fontSize:9,color:routingMode==='local_only'?'#f59e0b':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',lineHeight:1.5}}>{MODE_MEANING[routingMode]||''}</div>
                 <div style={{fontSize:9,fontFamily:'JetBrains Mono',marginTop:2,color:'rgba(255,255,255,0.6)'}}>
-                  Conversational seat now: <span style={{color:effLocal?'#f59e0b':'#00d4ff'}}>{effModel} · {effLocal?'local':'cloud'}</span>
+                  Conversational seat now: <span title={provLocal?'Served on-device ('+capProv+') — local seat over the OpenAI-compatible transport':undefined} style={{color:effLocal?'#f59e0b':'#00d4ff'}}>{effModel} · {effLocal?'local':'cloud'}</span>
                 </div>
                 {routingMode!=='cloud_only'&&<div style={{fontSize:9,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono',marginTop:2}}>
                   Today: {routingStats.local_requests} local · {routingStats.cloud_requests} cloud{routingStats.local_tokens>0?` · ${routingStats.local_tokens.toLocaleString()} local tokens`:''}{!ollamaStatus.available?' · Ollama offline':''}
