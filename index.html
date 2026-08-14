@@ -33273,6 +33273,10 @@ function App() {
   const [stSycoMsg, setStSycoMsg] = useState('');
   // Real connection-health for the top-bar dot. Polled every 15s.
   const [connHealth, setConnHealth] = useState('unknown'); // 'ok' | 'degraded' | 'down' | 'unknown'
+  // 2026-08-14: per-provider inference liveness from Phase A's real probe —
+  // the seat pill was showing the CONFIGURED model all morning while its
+  // provider (llama-server) was down and tool turns silently fell back.
+  const [seatHealth, setSeatHealth] = useState({}); // provider -> {status,proved_inference,detail,model}
   useEffect(() => {
     let cancelled = false;
     const ping = async () => {
@@ -33282,6 +33286,14 @@ function App() {
         });
         if (cancelled) return;
         setConnHealth(r.ok ? 'ok' : 'degraded');
+        try {
+          const d = await r.json();
+          const m = {};
+          (d.inference && d.inference.providers || []).forEach(p => {
+            if (p && p.provider) m[p.provider] = p;
+          });
+          if (!cancelled) setSeatHealth(m);
+        } catch (_) {}
       } catch {
         if (!cancelled) setConnHealth('down');
       }
@@ -37280,7 +37292,27 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     },
     title: "Model selection & routing",
     "aria-label": "Model selection"
-  }, orchModel.short, /*#__PURE__*/React.createElement("span", {
+  }, (() => {
+    const capr = (agentSettings.capability_routing || {}).reasoning || {};
+    const seatProv = routingMode === 'local_only' ? 'ollama-local' : capr.provider || 'anthropic';
+    const h = seatHealth[seatProv];
+    const st = h ? h.proved_inference ? 'live' : 'down' : 'unknown';
+    const col = st === 'live' ? '#00ff80' : st === 'down' ? '#ff4d6d' : '#f59e0b';
+    const lbl = st === 'live' ? 'live — proved a real generation' : st === 'down' ? 'DOWN or still loading — replies are falling back to another seat' : 'not probed yet';
+    return /*#__PURE__*/React.createElement("span", {
+      "aria-label": 'Seat health: ' + st,
+      title: 'Seat provider ' + seatProv + ': ' + lbl + (h && h.detail ? ' · ' + String(h.detail).slice(0, 120) : ''),
+      style: {
+        display: 'inline-block',
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        background: col,
+        boxShadow: st === 'live' ? '0 0 6px ' + col : 'none',
+        flexShrink: 0
+      }
+    });
+  })(), orchModel.short, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 10,
       opacity: 0.85

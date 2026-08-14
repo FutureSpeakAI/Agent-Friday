@@ -57,6 +57,12 @@ def fake_manager(monkeypatch):
 def isolated_gate_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "GATE_DIR", tmp_path / "live")
     monkeypatch.setattr(gate, "EVIDENCE_DIR", tmp_path / "evidence")
+    # 2026-08-14: the gate now invalidates a green fallback that isn't in
+    # the live daemon inventory. These tests' green records must count as
+    # installed — and must never consult the REAL daemon from a unit run.
+    monkeypatch.setattr(gate, "_installed_local_models",
+                        lambda: {"gemma4:latest", "gemma3:4b",
+                                 "red-model:latest"})
     return tmp_path
 
 

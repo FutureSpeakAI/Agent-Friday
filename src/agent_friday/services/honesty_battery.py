@@ -296,6 +296,22 @@ _SCORERS = {
 # ── Dispatchers. A dispatch callable takes (messages, tools) and returns
 # the OpenAI-format assistant message dict. Injectable for tests. ──
 
+def make_local_dispatch(model, ollama_url="http://localhost:11434",
+                        temperature=0.0):
+    """Local dispatch that speaks whichever endpoint actually serves the
+    model: an OpenAI-compatible local descriptor (the llama.cpp brain) when
+    one declares it, else the Ollama daemon — the same alias wrinkle as the
+    structural gate (2026-08-14)."""
+    from agent_friday.services.model_seat_gate import _gate_chat_fn
+    chat_fn, _via = _gate_chat_fn(model, ollama_url)
+
+    def dispatch(messages, tools):
+        resp = chat_fn(messages, model=model, tools=tools,
+                       temperature=temperature, max_tokens=600)
+        return (resp.get("choices") or [{}])[0].get("message", {}) or {}
+    return dispatch
+
+
 def make_ollama_dispatch(model, ollama_url="http://localhost:11434",
                          temperature=0.0):
     # temperature 0.0: verified live that gemma4:latest at 0.2 swings between
@@ -450,7 +466,7 @@ def run_battery(model: str, *, provider: str = "local", dispatch=None,
     commit the baseline whatever it shows. Persists to the gate store."""
     if dispatch is None:
         if provider == "local":
-            dispatch = make_ollama_dispatch(model, ollama_url)
+            dispatch = make_local_dispatch(model, ollama_url)
         elif provider == "anthropic":
             dispatch = make_anthropic_dispatch(model, api_key)
         else:
