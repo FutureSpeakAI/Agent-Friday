@@ -384,8 +384,14 @@ def _notify_run(rec, status, summary):
         return
     try:
         if status == "failed":
+            # Failure bodies carry the WHOLE reason. The old [:300] cut the
+            # 2026-08-14 heartbeat error mid-word, right before the leg that
+            # named the actionable cause ("openai: No OpenAI-compatible API
+            # key set") — Stephen saw a truncated blob and read it as "no
+            # detail". 900 chars covers a three-leg escalation error;
+            # anything longer is a traceback that belongs in the log.
             _ne.push(title=f"⚠️ Scheduled task failed: {rec.get('name')}",
-                     body=(summary or "")[:300], priority="high", source="scheduler",
+                     body=(summary or "")[:900], priority="high", source="scheduler",
                      kind="scheduled_task",
                      actions=[{"label": "View history", "workspace": "system",
                                "tab": "schedules"}],

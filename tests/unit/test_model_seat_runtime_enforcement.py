@@ -73,7 +73,13 @@ class TestResolveLocalSeat:
             "reason": "gated green", "fallback": None,
         }
 
-    def test_red_model_falls_back_to_last_known_green(self, isolated_gate_dirs):
+    def test_red_model_falls_back_to_last_known_green(self, isolated_gate_dirs, monkeypatch):
+        # 2026-08-14: the fallback is only offered when it's actually
+        # INSTALLED (the live incident substituted a green-but-deleted model
+        # and 404'd hourly all night). Pin the inventory so this unit test
+        # never touches a real daemon.
+        monkeypatch.setattr(gate, "_installed_local_models",
+                            lambda: {"gemma3:4b", "gemma4:latest"})
         _write_result(gate.GATE_DIR, "gemma3:4b", "local", False, 100)
         _write_result(gate.GATE_DIR, "gemma4:latest", "local", True, 200)
         result = gate.resolve_local_seat("gemma3:4b", provider="local")
@@ -82,9 +88,11 @@ class TestResolveLocalSeat:
         assert result["fallback"] == "last_known_green:gemma4:latest"
         assert "gemma3:4b" in result["reason"]
 
-    def test_ungated_model_with_no_history_falls_back_to_last_known_green(self, isolated_gate_dirs):
+    def test_ungated_model_with_no_history_falls_back_to_last_known_green(self, isolated_gate_dirs, monkeypatch):
         # Never gated at all (no cached status) is treated the same as red —
         # fail closed, not fail open.
+        monkeypatch.setattr(gate, "_installed_local_models",
+                            lambda: {"gemma4:latest"})
         _write_result(gate.GATE_DIR, "gemma4:latest", "local", True, 200)
         result = gate.resolve_local_seat("some-brand-new-model:latest", provider="local")
         assert result["seat_ok"] is False
