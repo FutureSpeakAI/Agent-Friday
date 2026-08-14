@@ -56,6 +56,27 @@ def test_probe_baseline_is_preferred_over_the_sustained_one(monkeypatch):
     assert v2 is not None and "probe" in v2
 
 
+def test_a_fabricated_timing_from_a_stub_is_not_judged(monkeypatch):
+    """The offline suite's transport doubles return canned payloads.
+
+    Their eval_count/eval_duration are invented — the stub implies 142.86
+    ms/token — and comparing that against a baseline measured on the real host
+    reported a healthy stub as paging (14.3x), which turned /api/health
+    `degraded` across the whole offline suite. A stubbed number is not a
+    measurement, so the rule is not applied to one.
+    """
+    monkeypatch.setenv("FRIDAY_TESTING", "1")
+    assert ph._timings_are_real() is False
+    monkeypatch.setenv("FRIDAY_TESTING", "0")
+    assert ph._timings_are_real() is True
+
+
+def test_the_verdict_itself_stays_pure_and_testable(monkeypatch):
+    """Gating happens at the probe, not in the verdict, so this keeps working."""
+    monkeypatch.setenv("FRIDAY_TESTING", "1")
+    assert ph._latency_verdict("gemma4:12b", BASELINE * 8) is not None
+
+
 def test_falls_back_to_the_sustained_baseline_and_says_so(monkeypatch):
     import agent_friday.services.residency_catalog as rc
     monkeypatch.setattr(rc, "baseline_probe_ms_per_token", lambda m, fp: None)

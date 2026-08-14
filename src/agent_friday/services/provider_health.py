@@ -336,6 +336,23 @@ def resident_model_for(prov) -> str | None:
 LATENCY_UNHEALTHY_MULTIPLE = 5.0
 
 
+def _timings_are_real() -> bool:
+    """Is a measured latency trustworthy enough to judge?
+
+    Under FRIDAY_TESTING the provider transports are wire-shaped doubles
+    (tests/fake_backends.py, the D9 inversion). They return canned payloads
+    whose `eval_count`/`eval_duration` are fabricated — the offline suite's
+    stub implies 142.86 ms/token — and comparing that against a baseline
+    measured on the real host reports a healthy stub as paging.
+
+    The rule is gated here rather than inside `_latency_verdict` so the verdict
+    itself stays pure and fully unit-tested; only its application to a
+    fabricated measurement is suppressed. It also keeps the offline suite from
+    shelling out to nvidia-smi, which it has no business doing.
+    """
+    return os.environ.get("FRIDAY_TESTING") != "1"
+
+
 def _thinking(model_id: str) -> bool:
     """Thinking models spend a small token budget entirely on reasoning."""
     try:
@@ -436,7 +453,8 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
                 return _result("down",
                                out.get("error")
                                or "no output from a real generation", False)
-            slow = _latency_verdict(model, out.get("ms_per_token"))
+            slow = (_latency_verdict(model, out.get("ms_per_token"))
+                    if _timings_are_real() else None)
             if slow:
                 return _result("unhealthy", slow, True)
             return _result("ok", f"generated in {ms}ms"
@@ -490,7 +508,8 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             # wall clock, which would include queueing and the HTTP round trip.
             per_tok = ((body.get("timings") or {})
                        .get("predicted_per_token_ms"))
-            slow = _latency_verdict(model, per_tok)
+            slow = (_latency_verdict(model, per_tok)
+                    if _timings_are_real() else None)
             if slow:
                 return _result("unhealthy", slow, True)
             return _result("ok", f"generated in {ms}ms", True)
