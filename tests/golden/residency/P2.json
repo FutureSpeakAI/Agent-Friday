@@ -1,0 +1,118 @@
+{
+  "budgets": {
+    "gpus": [
+      {
+        "available_mib": 6264,
+        "baseline_mib": 900,
+        "compute_class": "consumer-fp8",
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+        "total_mib": 8188
+      }
+    ],
+    "ram": {
+      "available_hard_mib": 6144,
+      "available_target_mib": 4505,
+      "hard_ceiling_mib": 12288,
+      "os_reserve_mib": 6144,
+      "target_ceiling_mib": 10649,
+      "total_mib": 16384
+    }
+  },
+  "pinned_vram_mib": {
+    "gpu:0": 4844
+  },
+  "policy_version": 1,
+  "profile_id": "p2-laptop-8gb",
+  "refusals": [
+    {
+      "ceiling_mib": 12288,
+      "explanation": "host RAM 11127 MiB + OS reserve 6144 MiB = 17271 MiB exceeds the 12288 MiB hard ceiling (75% of 16384 MiB)",
+      "host_mib": 11127,
+      "model": "gemma4:26b",
+      "role": "heavy_hitter",
+      "rule": "ram-ceiling",
+      "rule_id": "R2"
+    }
+  ],
+  "seats": {
+    "embedder": {
+      "backend": "ollama",
+      "demoted_from": "gpu",
+      "demotion_reason": "needs 2029 MiB, 1420 MiB left after the pinned seats",
+      "demotion_rule": "R3",
+      "device": "cpu",
+      "est_load_s": 4.5,
+      "is_moe": false,
+      "model_id": "qwen3-embedding:0.6b",
+      "needs_think_disabled": true,
+      "num_ctx": 2048,
+      "offload": {},
+      "role": "embedder",
+      "status": "resident",
+      "vram_mib": 0
+    },
+    "heavy_hitter": null,
+    "image": {
+      "backend": "comfyui",
+      "device": "gpu:0",
+      "displaces": "all seats",
+      "est_load_s": null,
+      "exclusive": true,
+      "model_id": "z-image-turbo-fp8",
+      "num_ctx": null,
+      "offload": {},
+      "role": "image",
+      "status": "leased",
+      "vram_mib": null
+    },
+    "interactive_brain": {
+      "backend": "ollama",
+      "device": "gpu:0",
+      "est_load_s": 26.0,
+      "is_moe": false,
+      "model_id": "gemma4:e4b",
+      "needs_think_disabled": true,
+      "num_ctx": 16384,
+      "offload": {},
+      "role": "interactive_brain",
+      "status": "pinned",
+      "vram_mib": 3081
+    },
+    "sidekick": {
+      "backend": "ollama",
+      "device": "gpu:0",
+      "est_load_s": 20.3,
+      "is_moe": false,
+      "model_id": "gemma4:e2b",
+      "needs_think_disabled": true,
+      "num_ctx": 8192,
+      "offload": {},
+      "role": "sidekick",
+      "status": "pinned",
+      "vram_mib": 1763
+    },
+    "stt": {
+      "backend": "cpu-service",
+      "device": "cpu",
+      "est_load_s": null,
+      "model_id": "faster-whisper",
+      "num_ctx": null,
+      "offload": {},
+      "role": "stt",
+      "status": "on-demand",
+      "vram_mib": 0
+    },
+    "tts": {
+      "backend": "cpu-service",
+      "device": "cpu",
+      "est_load_s": null,
+      "model_id": "kokoro",
+      "num_ctx": null,
+      "offload": {},
+      "role": "tts",
+      "status": "on-demand",
+      "vram_mib": 0
+    }
+  }
+}

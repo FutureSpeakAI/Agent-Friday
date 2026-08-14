@@ -1,0 +1,107 @@
+{
+  "budgets": {
+    "gpus": [],
+    "ram": {
+      "available_hard_mib": 20480,
+      "available_target_mib": 17203,
+      "hard_ceiling_mib": 24576,
+      "os_reserve_mib": 4096,
+      "target_ceiling_mib": 21299,
+      "total_mib": 32768
+    }
+  },
+  "pinned_vram_mib": {},
+  "policy_version": 1,
+  "profile_id": "p5-cpu-only",
+  "refusals": [
+    {
+      "explanation": "no GPU to lease; local image generation is unavailable on this profile and escalates to cloud",
+      "model": "z-image-turbo-fp8",
+      "role": "image",
+      "rule": "image-exclusive",
+      "rule_id": "R5"
+    }
+  ],
+  "seats": {
+    "embedder": {
+      "backend": "ollama",
+      "device": "cpu",
+      "est_load_s": 3.4,
+      "is_moe": false,
+      "model_id": "qwen3-embedding:0.6b",
+      "needs_think_disabled": true,
+      "num_ctx": 2048,
+      "offload": {},
+      "role": "embedder",
+      "status": "resident",
+      "vram_mib": 0
+    },
+    "heavy_hitter": {
+      "backend": "ollama",
+      "device": "cpu",
+      "est_load_s": 17.1,
+      "is_moe": true,
+      "model_id": "gemma4:26b",
+      "needs_think_disabled": true,
+      "num_ctx": 16384,
+      "offload": {
+        "expert_offload": true,
+        "host_mib": 17391
+      },
+      "over_target": true,
+      "role": "heavy_hitter",
+      "status": "leased",
+      "vram_mib": 0
+    },
+    "image": null,
+    "interactive_brain": {
+      "backend": "ollama",
+      "device": "cpu",
+      "est_load_s": 7.1,
+      "is_moe": false,
+      "model_id": "gemma4:e2b",
+      "needs_think_disabled": true,
+      "num_ctx": 16384,
+      "offload": {},
+      "role": "interactive_brain",
+      "status": "resident",
+      "vram_mib": 0
+    },
+    "sidekick": {
+      "backend": "ollama",
+      "collapsed_into": "interactive_brain",
+      "device": "cpu",
+      "est_load_s": 7.1,
+      "is_moe": false,
+      "model_id": "gemma4:e2b",
+      "needs_think_disabled": true,
+      "num_ctx": 16384,
+      "offload": {},
+      "role": "sidekick",
+      "status": "resident",
+      "vram_mib": 0
+    },
+    "stt": {
+      "backend": "cpu-service",
+      "device": "cpu",
+      "est_load_s": null,
+      "model_id": "faster-whisper",
+      "num_ctx": null,
+      "offload": {},
+      "role": "stt",
+      "status": "on-demand",
+      "vram_mib": 0
+    },
+    "tts": {
+      "backend": "cpu-service",
+      "device": "cpu",
+      "est_load_s": null,
+      "model_id": "kokoro",
+      "num_ctx": null,
+      "offload": {},
+      "role": "tts",
+      "status": "on-demand",
+      "vram_mib": 0
+    }
+  }
+}
