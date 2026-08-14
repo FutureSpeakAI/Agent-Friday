@@ -1,0 +1,83 @@
+{
+  "budgets": {
+    "gpus": [],
+    "ram": {
+      "available_hard_mib": 45056,
+      "available_target_mib": 38502,
+      "hard_ceiling_mib": 49152,
+      "os_reserve_mib": 4096,
+      "target_ceiling_mib": 42598,
+      "total_mib": 65536
+    }
+  },
+  "pinned_vram_mib": {},
+  "policy_version": 1,
+  "profile_id": "p6-unified-64gb",
+  "refusals": [
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "interactive_brain",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "heavy_hitter",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "sidekick",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "embedder",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "stt",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "tts",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "image",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    }
+  ],
+  "seats": {
+    "embedder": null,
+    "heavy_hitter": null,
+    "image": null,
+    "interactive_brain": null,
+    "sidekick": null,
+    "stt": null,
+    "tts": null
+  }
+}
