@@ -35,6 +35,11 @@ RAM_CEILING_HARD = 0.75          # R2
 RAM_CEILING_TARGET = 0.65        # R2
 DISK_FLOOR_MIB = 10 * 1024       # R8
 
+# Expert layers held on CPU for an offloaded MoE. Measured, not guessed:
+# the reference sweep peaked inside the VRAM budget at 20 (27.80 tok/s,
+# 9802 MiB) and collapsed at 12 (14.94 tok/s, host RAM 31.5 of 31.9 GB).
+MOE_CPU_LAYERS_DEFAULT = 20
+
 RULES = [
     {"id": "R1", "name": "os-reserve",
      "text": "OS memory reserve subtracted before any RAM budget.",
@@ -400,8 +405,17 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile):
     seat = _placement(heavy, "heavy_hitter",
                       ("gpu:%d+cpu" % sorted(free)[0]) if budgets else "cpu",
                       ctx, "leased", gpu_portion)
-    seat["offload"] = {"expert_offload": bool(heavy.get("is_moe")),
-                       "host_mib": host_mib}
+    seat["offload"] = {
+        "expert_offload": bool(heavy.get("is_moe")),
+        "host_mib": host_mib,
+        # The measured operating point, carried in the PLAN rather than left
+        # implicit in the Arbiter. Swept on the reference instance: 27.80 tok/s
+        # at 9802 MiB, against a collapse to 14.94 at --n-cpu-moe 12 where host
+        # RAM hit 31.5 of 31.9 GB. 16 is faster (31.34) and exceeds the R3
+        # ceiling by 173 MiB, so it is not offered.
+        "n_cpu_moe": MOE_CPU_LAYERS_DEFAULT if (budgets and heavy.get("is_moe"))
+        else None,
+    }
     seat["over_target"] = need > ram["target_ceiling_mib"]
     return seat, None
 
