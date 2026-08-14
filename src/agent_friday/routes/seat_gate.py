@@ -43,6 +43,17 @@ def _statuses_payload():
             models.add(lm)
     except Exception:
         pass
+    # 2026-08-14: models served by OpenAI-compatible LOCAL descriptors (the
+    # llama.cpp brain) are local seats too — they must show gate chips and
+    # be gateable under their own id, or the alias never earns green.
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry as get_registry
+        for prov in get_registry().get_enabled_providers():
+            if (prov.get("classification") == "local"
+                    and prov.get("type") == "openai-compatible"):
+                models.update(str(m) for m in (prov.get("models") or []) if m)
+    except Exception:
+        pass
 
     with _RUNNING_LOCK:
         running = set(_RUNNING)

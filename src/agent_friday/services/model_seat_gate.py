@@ -103,10 +103,8 @@ def run_conformance_gate(model: str, *, provider: str = "local",
     consumed by is_seat_green(). Does not raise on a failing model — a red
     result is a valid, expected outcome.
     """
-    from agent_friday.routing.ollama_manager import get_manager
-
     tool_names, oai_tools = _tool_names_and_schema()
-    mgr = get_manager(ollama_url)
+    chat_fn, via = _gate_chat_fn(model, ollama_url)
 
     results = []
     for case in CONFORMANCE_PROMPTS:
@@ -115,8 +113,8 @@ def run_conformance_gate(model: str, *, provider: str = "local",
             {"role": "user", "content": case["prompt"]},
         ]
         try:
-            resp = mgr.chat_completion(messages, model=model, tools=oai_tools,
-                                        temperature=0.2, max_tokens=300)
+            resp = chat_fn(messages, model=model, tools=oai_tools,
+                           temperature=0.2, max_tokens=300)
             choice = (resp.get("choices") or [{}])[0]
             scored = _score_response(choice.get("message", {}) or {}, tool_names)
         except Exception as e:
@@ -132,6 +130,7 @@ def run_conformance_gate(model: str, *, provider: str = "local",
     result = {
         "model": model,
         "provider": provider,
+        "via": via,
         "timestamp": time.time(),
         "score": f"{passed_count}/{len(results)}",
         "passed": passed_count == len(results),
@@ -140,6 +139,41 @@ def run_conformance_gate(model: str, *, provider: str = "local",
     }
     save_status(model, provider, result)
     return result
+
+
+def _gate_chat_fn(model: str, ollama_url: str):
+    """The chat-completion callable the gate should use for `model`, plus a
+    'via' label for the stored record.
+
+    2026-08-14 alias wrinkle: the gate historically spoke ONLY Ollama, so a
+    model served by an OpenAI-compatible local provider (the llama.cpp
+    brain) could never earn green under its own id — enforcement then
+    refused every tool-using turn with 'never run'. If an enabled
+    local-classification openai-compatible descriptor declares the model,
+    the gate talks to THAT endpoint; otherwise the Ollama daemon."""
+    prov = _local_openai_descriptor(model)
+    if prov is not None:
+        import urllib.request as _rq
+
+        base = (prov.get("base_url") or "").rstrip("/")
+
+        def chat_fn(messages, model, tools=None, temperature=0.2,
+                    max_tokens=300):
+            body = {"model": model, "messages": messages,
+                    "temperature": temperature, "max_tokens": max_tokens}
+            if tools:
+                body["tools"] = tools
+            req = _rq.Request(
+                f"{base}/chat/completions",
+                data=json.dumps(body).encode("utf-8"), method="POST",
+                headers={"Content-Type": "application/json"})
+            with _rq.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        return chat_fn, prov.get("name") or "openai-compatible-local"
+
+    from agent_friday.routing.ollama_manager import get_manager
+    return get_manager(ollama_url).chat_completion, "ollama"
 
 
 def save_status(model: str, provider: str, result: dict) -> Path:
@@ -223,23 +257,87 @@ def get_last_known_green(provider: str = "local") -> str | None:
 
 
 def _installed_local_models():
-    """Names currently installed in the Ollama daemon (5s-TTL cached via the
-    manager), or None when the daemon can't be reached — callers must treat
-    None as 'unverifiable', not 'empty'."""
+    """Names currently servable by an on-device provider: the Ollama daemon's
+    installed tags (5s-TTL cached) PLUS models declared by enabled
+    local-classification descriptors (the llama.cpp brain lists its model in
+    ~/.friday/providers/*.json — it is 'installed' even though it isn't an
+    Ollama tag). Returns None when nothing is verifiable — callers must
+    treat None as 'unverifiable', not 'empty'."""
+    names = set()
+    daemon_ok = False
     try:
         from agent_friday.core import _load_settings
         from agent_friday.routing.ollama_manager import get_manager
         url = (_load_settings().get("model_routing") or {}).get(
             "ollama_url", "http://localhost:11434")
         mgr = get_manager(url)
-        if not mgr.is_available():
-            return None
-        models = mgr.list_models()
-        if not models:
-            return None
-        return {m.get("name") for m in models if isinstance(m, dict) and m.get("name")}
+        if mgr.is_available():
+            models = mgr.list_models() or []
+            names |= {m.get("name") for m in models
+                      if isinstance(m, dict) and m.get("name")}
+            daemon_ok = True
     except Exception:
-        return None
+        pass
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry as get_registry
+        for prov in get_registry().get_enabled_providers():
+            if (prov.get("classification") == "local"
+                    and prov.get("type") != "ollama"):
+                names |= {str(m) for m in (prov.get("models") or []) if m}
+                daemon_ok = True  # descriptor inventory is verifiable
+    except Exception:
+        pass
+    return names if daemon_ok else None
+
+
+def _local_openai_descriptor(model: str):
+    """The enabled local-classification, OpenAI-compatible descriptor that
+    declares `model` (the llama.cpp brain wrinkle: the gate historically
+    spoke only Ollama while the brain speaks llama-server). None when the
+    model belongs to the Ollama daemon or nothing declares it."""
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry as get_registry
+        for prov in get_registry().get_enabled_providers():
+            if (prov.get("classification") == "local"
+                    and prov.get("type") == "openai-compatible"
+                    and model in (prov.get("models") or [])):
+                return prov
+    except Exception:
+        pass
+    return None
+
+
+def _similar_gate_records(model: str, provider: str = "local"):
+    """Gate records whose model id looks like the same model under another
+    id (normalized: lowercase, alphanumerics only, prefix relationship —
+    'qwen3.6-35b-a3b-iq4nl' ~ 'qwen3.6:35b'). Used ONLY to write a helpful
+    refusal message: a green earned on one provider/quantization NEVER
+    transfers to another id — tool-calling reliability can change with the
+    quant, so the equivalence is surfaced to the human, not acted on."""
+    def norm(s):
+        return "".join(c for c in str(s).lower() if c.isalnum())
+
+    target = norm(model)
+    hits = []
+    for directory in (GATE_DIR, EVIDENCE_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            other = data.get("model")
+            if not other or other == model:
+                continue
+            n = norm(other)
+            shorter, longer = sorted((target, n), key=len)
+            if len(shorter) >= 6 and longer.startswith(shorter):
+                hits.append({"model": other,
+                             "provider": data.get("provider", "local"),
+                             "passed": bool(data.get("passed")),
+                             "via": data.get("via")})
+    return hits
 
 
 def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict:
@@ -271,8 +369,25 @@ def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict
     # notifications verbatim, and the previous f-string dumped the ENTIRE
     # status dict (results array included) into it. Score, not blob.
     status = get_cached_status(requested_model, provider)
-    gate_summary = (f"failed at {status.get('score')}" if status
-                    else "never run")
+    if status:
+        gate_summary = f"failed at {status.get('score')}"
+    else:
+        gate_summary = "never run under this id"
+        # 2026-08-14 alias wrinkle: the brain is seated as
+        # 'qwen3.6-35b-a3b-iq4nl' (llama-cpp-brain) while its old green
+        # lives under 'qwen3.6:35b' (Ollama). Name the likely-same-model
+        # record so the bare "never run" stops reading as nonsense — but
+        # never act on it: a green earned under another provider or
+        # quantization does not transfer.
+        similar = _similar_gate_records(requested_model, provider)
+        if similar:
+            s = similar[0]
+            gate_summary += (
+                f"; a {'green' if s['passed'] else 'red'} record exists for "
+                f"'{s['model']}' on {s.get('via') or s['provider']} — likely "
+                f"the same model under another provider id. Gates don't "
+                f"transfer across providers/quantizations: run the gate for "
+                f"this seat")
     base_reason = (f"'{requested_model}' is not a gated-green tool-calling "
                    f"seat (conformance gate: {gate_summary})")
 

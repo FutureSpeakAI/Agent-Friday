@@ -402,10 +402,10 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     routing_cfg = settings.get('model_routing') or {}
     ollama = get_manager(routing_cfg.get('ollama_url', 'http://localhost:11434'))
 
-    if not ollama.is_available():
-        raise RuntimeError("Ollama is not running at " + ollama.base_url)
-
     # Resolve the model: explicit arg → configured default → leave to Ollama.
+    # (The daemon-availability check moved BELOW the seat gate + descriptor
+    # dispatch: a brain served by llama-server must not require the Ollama
+    # daemon to be up, and the seat gate must run for it either way.)
     if not model:
         model = routing_cfg.get('local_model') or model
 
@@ -455,6 +455,34 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                     tools = None
         except Exception as e:
             _seat_logger.warning("seat gate check failed, proceeding unenforced: %s", e)
+
+    # ── 2026-08-14: descriptor-aware local dispatch, AFTER the seat gate. A
+    # model declared by an enabled OpenAI-compatible LOCAL descriptor (the
+    # llama.cpp brain — classification "local", base_url :8081/v1) routes
+    # provider='local' but is not an Ollama tag; the daemon can never serve
+    # it. Delegate to _call_openai against the descriptor's own endpoint:
+    # same tool loop, same governance, still on-device — and the gate above
+    # has already ruled on this exact id. ──
+    if model:
+        try:
+            from agent_friday.services.model_seat_gate import _local_openai_descriptor
+            _oai_local = _local_openai_descriptor(model)
+        except Exception:
+            _oai_local = None
+        if _oai_local is not None:
+            _sys = system
+            if _seat_notice:
+                _sys = (system or '') + '\n\n' + _seat_notice
+            return _call_openai(
+                messages, system=_sys, model=model, max_tokens=max_tokens,
+                temperature=temperature,
+                orb_label=orb_label or "Local brain…", orb_icon='🧠',
+                tools=tools, pii_lookup=pii_lookup, session_ctx=session_ctx,
+                provider=_oai_local, max_iters=max_iters,
+            )
+
+    if not ollama.is_available():
+        raise RuntimeError("Ollama is not running at " + ollama.base_url)
 
     orb_id = f"local-{uuid.uuid4().hex[:8]}"
     try:

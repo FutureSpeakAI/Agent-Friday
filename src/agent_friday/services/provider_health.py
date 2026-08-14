@@ -281,21 +281,32 @@ def resident_model_for(prov) -> str | None:
     if ptype == "ollama":
         chosen = ((cfg.get("model_routing") or {}).get("local_model")
                   or cfg.get("local_model"))
-        if chosen:
-            return chosen
         try:
             from agent_friday.routing.ollama_manager import get_manager
             installed = get_manager(prov.get("base_url")
                                     or "http://localhost:11434").list_models()
-            if installed:
-                return sorted(installed,
-                              key=lambda m: m.get("size_gb") or 0)[0].get("name")
         except Exception:
-            return None
-        return None
+            installed = None
+        if installed:
+            names = {m.get("name") for m in installed}
+            # 2026-08-14: local_model pointed at DELETED gemma4:latest, so
+            # the probe reported the healthy daemon as down ("no output").
+            # Probe a model that actually exists — the configured one when
+            # installed, else the smallest installed.
+            if chosen and chosen in names:
+                return chosen
+            return sorted(installed,
+                          key=lambda m: m.get("size_gb") or 0)[0].get("name")
+        return chosen or None
     if ptype == "anthropic":
-        return (cfg.get("orchestrator_model")
-                or (prov.get("models") or [None])[0])
+        # 2026-08-14: orchestrator_model held the llama.cpp brain's alias,
+        # and the probe sent it to Anthropic → 404 'model: qwen3.6-…' → the
+        # anthropic provider shown DOWN while perfectly healthy. Same law as
+        # the dispatch ladder: never send a foreign id to Anthropic.
+        orch = cfg.get("orchestrator_model")
+        if orch and str(orch).startswith("claude"):
+            return orch
+        return (prov.get("models") or [None])[0]
     return (prov.get("models") or [None])[0]
 
 
