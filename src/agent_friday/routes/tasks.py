@@ -105,11 +105,16 @@ def get_task(task_id):
         return jsonify({"error": "Task not found"}), 404
 
     # If the process is backed by a real task (e.g. agent_prompt scheduled
-    # jobs), follow the link and return that task's live log instead.
+    # jobs, background-task agent orbs), follow the link and return that
+    # task's live log — enriched (B3) with the orb's model + correlation ids
+    # so the thread panel shows which model served the loop.
     linked_tid = proc.get("task_id")
     if linked_tid:
         linked = _task_snapshot(linked_tid)
         if linked:
+            linked = dict(linked)
+            linked.setdefault("model", proc.get("model"))
+            linked.setdefault("orb_id", proc.get("id") or task_id)
             return jsonify(linked)
 
     now = _t.time()
@@ -129,6 +134,12 @@ def get_task(task_id):
         "status": _status_map.get(_raw_status, _raw_status),
         "progress": proc.get("progress", 0),
         "log": combined_log,
+        # B3: expose the full enriched process record — the timed step entries
+        # (tier-redacted args/results) and the serving model — so the existing
+        # thread panel that polls this route renders the enriched trace.
+        "steps": steps,
+        "model": proc.get("model"),
+        "linked_task_id": linked_tid,
         "result": proc.get("result"),
         "model": proc.get("model"),
         "category": proc.get("category"),

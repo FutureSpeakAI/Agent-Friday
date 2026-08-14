@@ -286,12 +286,21 @@ def list_models():
         from agent_friday.services.model_catalog import build_catalog
         cat = build_catalog()
         settings = _load_settings()
+        # Catalog freshness per hosted/discovery provider — lets the UI say
+        # "catalog stale, showing cached" honestly (spec A2). stale=True when
+        # older than 24h or never fetched.
+        try:
+            from agent_friday.services.hosted_catalog import catalog_meta
+            cat_meta = catalog_meta()
+        except Exception:
+            cat_meta = {}
         return jsonify({
             "status": "ok",
             "roles": cat["roles"],
             "models": cat["models"],
             "providers": cat["providers"],
             "voice_engines": cat.get("voice_engines", []),
+            "catalog_meta": cat_meta,
             "selected": {
                 "orchestrator_model": settings.get("orchestrator_model"),
                 "subagent_model": settings.get("subagent_model"),
@@ -308,7 +317,36 @@ def list_models():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e),
                         "roles": {}, "models": [], "providers": [],
-                        "voice_engines": []}), 200
+                        "voice_engines": [], "catalog_meta": {}}), 200
+
+
+@core_bp.route('/api/models/refresh', methods=['POST'])
+def refresh_models_catalog():
+    """Force a live hosted-catalog fetch into the discovery cache (spec A2).
+
+    Anthropic /v1/models and/or OpenRouter /models — body
+    {"provider": "anthropic"|"openrouter"} for one, empty/omitted for all.
+    Per-provider result: {status: refreshed|no_key|error, count, fetched_at}.
+    A no_key/error result never clobbers an existing cache
+    (stale-while-revalidate), so the picker keeps its last good list.
+    """
+    try:
+        from agent_friday.services.hosted_catalog import (
+            HOSTED_PROVIDERS, refresh, refresh_all)
+        body = request.get_json(silent=True) or {}
+        provider = str(body.get("provider") or "").strip().lower()
+        if provider:
+            if provider not in HOSTED_PROVIDERS:
+                return jsonify({
+                    "status": "error",
+                    "message": f"unknown provider '{provider}' — one of: "
+                               f"{', '.join(HOSTED_PROVIDERS)}"}), 400
+            results = {provider: refresh(provider)}
+        else:
+            results = refresh_all()
+        return jsonify({"status": "ok", "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -616,6 +654,56 @@ def _check_local_model_seat_gate(new_settings):
                 f"tests/conformance/results/)."
             ),
             "conformance": status,
+        }
+
+    # ── A5: second axis — the honesty battery (Incident 2). Structural
+    # green alone is no longer enough for a conversational seat: the
+    # battery takes minutes on a local model, so an un-battery-tested
+    # nomination kicks off BOTH axes in the background (visible as a
+    # process orb via /api/seat-gate/run) and the save is rejected with
+    # the reason — fail-closed until dual green. ──
+    from agent_friday.services.honesty_battery import get_honesty_status
+    honesty = get_honesty_status(new_model, provider='local')
+    if honesty is None:
+        try:
+            from agent_friday.core import _TESTING as _testing
+            import agent_friday.routes.seat_gate as _sg
+            if not _testing:
+                with _sg._RUNNING_LOCK:
+                    already = new_model in _sg._RUNNING
+                    if not already:
+                        _sg._RUNNING.add(new_model)
+                if not already:
+                    import threading as _th
+                    _ollama_url = (_load_settings().get('model_routing') or {}).get(
+                        'ollama_url', 'http://localhost:11434')
+                    _th.Thread(target=_sg._run_both_axes,
+                               args=(new_model, _ollama_url), daemon=True).start()
+        except Exception:
+            pass
+        return {
+            "status": "error",
+            "message": (
+                f"'{new_model}' is structurally green but has no honesty-"
+                f"battery record yet. Both gate axes are now running in the "
+                f"background (watch the 🛡️ orb) — re-select the model once "
+                f"its picker chip shows dual green. Fail-closed until then."
+            ),
+            "conformance": status,
+        }
+    if not honesty.get('passed'):
+        return {
+            "status": "error",
+            "message": (
+                f"'{new_model}' failed the honesty battery "
+                f"({honesty.get('score')}) — it fabricates completions, "
+                f"affirms false premises, or mishandles dates/connection "
+                f"state under test (see tests/honesty/golden/). A model "
+                f"that lies about what it did cannot hold a conversational "
+                f"seat. Full detail: ~/.friday/model_seat_conformance/."
+            ),
+            "conformance": status,
+            "honesty": honesty,
         }
     return None
 

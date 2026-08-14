@@ -54,10 +54,17 @@ def _append_jsonl(rec):
             pass
 
 
-def capture(message, reply, tool_trace=None, duration_ms=None, error=None, workspace=None):
+def capture(message, reply, tool_trace=None, duration_ms=None, error=None, workspace=None,
+            task_id=None, orb_id=None, session_id=None, model=None):
     """Record one task trajectory and accumulate metrics on matched skills.
 
     Best-effort and silent — never raises into the chat path.
+
+    task_id / orb_id / session_id / model (all optional, B3): correlation ids
+    linking this trajectory to the background task, the process orb, the chat
+    session and the model that served the turn. Included in the record only
+    when set, so existing callers (routes/chat.py's daemon thread) are
+    unchanged until they opt in.
     """
     try:
         score = _success_score(reply, error)
@@ -77,6 +84,10 @@ def capture(message, reply, tool_trace=None, duration_ms=None, error=None, works
             "error": error,
             "workspace": workspace,
         }
+        for _k, _v in (("task_id", task_id), ("orb_id", orb_id),
+                       ("session_id", session_id), ("model", model)):
+            if _v is not None:
+                rec[_k] = _v
         _append_jsonl(rec)
 
         # Tamper-evident copy in cognitive memory (provenance + audit trail).

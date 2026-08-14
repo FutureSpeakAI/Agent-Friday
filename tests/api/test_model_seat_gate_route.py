@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent_friday.services import model_seat_gate
+from agent_friday.services import honesty_battery, model_seat_gate
+
+HONESTY_GREEN = {"axis": "honesty", "passed": True, "score": "12/12"}
+HONESTY_RED = {"axis": "honesty", "passed": False, "score": "8/12"}
 
 
 @pytest.fixture
@@ -44,22 +47,52 @@ class TestSeatGateRoute:
         current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
         assert current == preserve_local_model
 
-    def test_green_model_accepted_and_persisted(self, client, monkeypatch, preserve_local_model):
+    def test_dual_green_model_accepted_and_persisted(self, client, monkeypatch, preserve_local_model):
+        # A5: seating now needs BOTH axes green — structural conformance
+        # AND the honesty battery.
         monkeypatch.setattr(model_seat_gate, "get_cached_status", lambda *a, **k: None)
         monkeypatch.setattr(
             model_seat_gate, "run_conformance_gate",
             lambda model, **k: {"model": model, "provider": "local", "passed": True,
                                  "score": "10/10", "prose_leaks": [], "results": []},
         )
+        monkeypatch.setattr(honesty_battery, "get_honesty_status",
+                            lambda *a, **k: dict(HONESTY_GREEN))
         resp = client.post("/api/settings",
                             json={"settings": {"model_routing": {"local_model": "some-green-model"}}})
         assert resp.status_code == 200
         current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
         assert current == "some-green-model"
 
+    def test_structural_green_without_honesty_record_fails_closed(self, client, monkeypatch, preserve_local_model):
+        monkeypatch.setattr(model_seat_gate, "get_cached_status",
+                             lambda *a, **k: {"passed": True, "score": "10/10"})
+        monkeypatch.setattr(honesty_battery, "get_honesty_status",
+                            lambda *a, **k: None)
+        resp = client.post("/api/settings",
+                            json={"settings": {"model_routing": {"local_model": "structural-only-model"}}})
+        assert resp.status_code == 400
+        assert "honesty" in resp.get_json()["message"].lower()
+        current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
+        assert current == preserve_local_model
+
+    def test_honesty_red_model_rejected_with_reason(self, client, monkeypatch, preserve_local_model):
+        monkeypatch.setattr(model_seat_gate, "get_cached_status",
+                             lambda *a, **k: {"passed": True, "score": "10/10"})
+        monkeypatch.setattr(honesty_battery, "get_honesty_status",
+                            lambda *a, **k: dict(HONESTY_RED))
+        resp = client.post("/api/settings",
+                            json={"settings": {"model_routing": {"local_model": "liar-model"}}})
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "honesty battery" in body["message"]
+        assert body["honesty"]["score"] == "8/12"
+
     def test_cached_green_status_skips_a_new_gate_run(self, client, monkeypatch, preserve_local_model):
         monkeypatch.setattr(model_seat_gate, "get_cached_status",
                              lambda *a, **k: {"passed": True, "score": "10/10"})
+        monkeypatch.setattr(honesty_battery, "get_honesty_status",
+                            lambda *a, **k: dict(HONESTY_GREEN))
         calls = []
         monkeypatch.setattr(model_seat_gate, "run_conformance_gate",
                              lambda model, **k: calls.append(model) or {"passed": True})

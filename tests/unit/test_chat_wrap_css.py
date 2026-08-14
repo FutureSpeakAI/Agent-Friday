@@ -53,7 +53,9 @@ class TestChatBubbleInlineStyles:
         # — rindex targets the latter, which is this fix's actual scope.
         assert "overflowX:'hidden'" in app
         anchor = app.rindex("chatMsgs.map((m,i)=>")
-        window = app[anchor:anchor + 1200]
+        # Window widened from 1200: the B2 system-line branch (seat-change
+        # notices) renders before the message bubble inside the same map.
+        window = app[anchor:anchor + 3000]
         assert "minWidth:0" in window
         assert "overflowWrap:'anywhere'" in window
         assert "wordBreak:'break-word'" in window

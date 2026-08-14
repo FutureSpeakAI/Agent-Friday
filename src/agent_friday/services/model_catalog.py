@@ -168,6 +168,46 @@ def _live_ollama_models(base_url: str):
         return None
 
 
+def _live_ollama_running(base_url: str):
+    """Names of models currently loaded in Ollama memory (GET /api/ps via the
+    manager's short-TTL cache). Empty set when unreachable / none running."""
+    try:
+        from agent_friday.routing.ollama_manager import get_manager
+        mgr = get_manager(base_url or "http://localhost:11434")
+        names = set()
+        for m in mgr.list_running() or []:
+            name = m.get("name") if isinstance(m, dict) else str(m)
+            if name:
+                names.add(str(name))
+        return names
+    except Exception:
+        return set()
+
+
+def _custom_models() -> list:
+    """User-declared custom model ids — settings key `custom_models`:
+    [{"provider": ..., "id": ...}]. Prefer core.SETTINGS_FILE — the ONE
+    canonical settings path, snapshotted at core import — over a fresh
+    Path.home() lookup: Path.home() reads USERPROFILE at call time, and the
+    test suite's hermetic-home redirection makes the two diverge mid-run
+    (root cause of an order-dependent full-suite failure). Falls back to
+    Path.home() only when core is unimportable, keeping this module usable
+    from dependency-light contexts."""
+    try:
+        import json
+        try:
+            from agent_friday.core import SETTINGS_FILE as path
+        except Exception:
+            from pathlib import Path
+            path = Path.home() / ".friday" / "settings.json"
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        items = data.get("custom_models") or []
+        return [i for i in items if isinstance(i, dict)]
+    except Exception:
+        return []
+
+
 def _needs_key(provider: dict):
     """Env-var name a provider needs, or None (local / keyless providers)."""
     auth = provider.get("auth") or {}
@@ -178,8 +218,14 @@ def _discovered_models(provider: dict):
     """Discovery-cache models for an api-discovery provider (disk only, never
     the network — discovery fetches happen on the background sweep / explicit
     refresh). Returns (models list, stale bool); ([], False) when the provider
-    has no API discovery."""
-    if (provider.get("discovery") or {}).get("mode") != "api":
+    has no API discovery.
+
+    Hosted providers with a native (non-OpenAI-compatible) API — Anthropic —
+    share the same disk cache; theirs is written by
+    services/hosted_catalog.refresh() (POST /api/models/refresh) instead of
+    the generic discovery sweep."""
+    hosted_native = provider.get("type") == "anthropic"
+    if (provider.get("discovery") or {}).get("mode") != "api" and not hosted_native:
         return [], False
     try:
         from agent_friday.services.model_discovery import cached_models
@@ -203,6 +249,7 @@ def _model_entries_for(provider: dict, registry) -> list:
 
     ids = list(provider.get("models") or [])
     hint = None
+    running_names = None
     if ptype == "ollama":
         # Live truth from the daemon — ONLY for real Ollama providers. The old
         # code merged these into every local-typed provider, which is exactly
@@ -210,6 +257,8 @@ def _model_entries_for(provider: dict, registry) -> list:
         live = _live_ollama_models(provider.get("base_url"))
         if live:              # daemon up, models installed → reality only
             ids = list(live)
+            # /api/ps: which of these are loaded in memory right now (spec A1).
+            running_names = _live_ollama_running(provider.get("base_url"))
         elif live is None:    # daemon down → static hints, dimmed
             available = False
             hint = "Ollama not running — start Ollama to use local models"
@@ -230,6 +279,19 @@ def _model_entries_for(provider: dict, registry) -> list:
     # overrides), discovery adds the long tail with wire-reported metadata.
     discovered, disc_stale = _discovered_models(provider)
     disc_by_id = {m.get("id"): m for m in discovered if m.get("id")}
+
+    # Hosted-native catalog preference (spec A2): when hosted_catalog has
+    # cached the provider's own live /v1/models list, that list REPLACES the
+    # shipped statics — new ids (claude-opus-5, claude-haiku-4-5, …) surface
+    # as curated picker entries with zero code changes. No cache → statics,
+    # each flagged catalog_stale so the UI can say "showing built-in list".
+    hosted_native = ptype == "anthropic"
+    hosted_fallback = False
+    if hosted_native:
+        if disc_by_id:
+            ids = [m.get("id") for m in discovered if m.get("id")]
+        else:
+            hosted_fallback = True
 
     # `ids` is final here: descriptor statics, or the live Ollama install list.
     # These are the curated, human-sized set that may enter role pickers; the
@@ -292,6 +354,18 @@ def _model_entries_for(provider: dict, registry) -> list:
                         / 2.0 / 1000.0, 6)
                 except Exception:
                     pass
+        if hosted_native:
+            if disc:
+                # The provider's OWN authoritative list, not an aggregator's
+                # long tail — distinct source so the role-picker curation rule
+                # ("no `discovery` entries in role lists") keeps meaning what
+                # it means while these stay curated and pickable.
+                entry["source"] = "hosted"
+            elif hosted_fallback:
+                # Statics-only fallback: no live fetch has ever landed.
+                entry["catalog_stale"] = True
+        if running_names is not None:
+            entry["running"] = mid in running_names
         entries.append(entry)
     return entries
 
@@ -352,6 +426,39 @@ def build_catalog() -> dict:
             seen.add(key)
             e["_ord"] = len(flat)  # declaration order — models render as declared
             flat.append(e)
+
+    # Custom-model escape hatch (spec A2): settings `custom_models` —
+    # [{"provider", "id"}] pairs the catalogs don't (yet) know about. Emitted
+    # `unverified` and NON-curated: they appear in the flat list (Model
+    # Browser / search / direct selection) but never flood the role pickers.
+    providers_by_name = {p.get("name"): p for p in registry.get_enabled_providers()}
+    for cm in _custom_models():
+        pname = str(cm.get("provider") or "").strip()
+        mid = str(cm.get("id") or "").strip()
+        if not pname or not mid or (mid, pname) in seen:
+            continue
+        seen.add((mid, pname))
+        prov = providers_by_name.get(pname)
+        m = _humanize(mid)
+        flat.append({
+            "id": mid,
+            "label": m["label"],
+            "short": m["short"],
+            "provider": pname,
+            "provider_label": (prov or {}).get("label") or pname,
+            "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
+            "modalities": ["text"],
+            "local": bool(prov and prov.get("type") == "ollama"),
+            "available": bool(prov and registry.is_provider_available(pname)),
+            "needs_key": _needs_key(prov or {}),
+            "hint": None if prov else
+                    f"Unknown provider '{pname}' — enable it in Settings → Providers",
+            "cost_per_1k": None,
+            "curated": False,
+            "unverified": True,   # user-asserted id; nothing has confirmed it exists
+            "source": "custom",
+            "_ord": len(flat),
+        })
 
     # Stable, useful ordering: available first, then provider, then the order
     # the provider declared its models in (Sonnet 5 leads the Claude lineup —

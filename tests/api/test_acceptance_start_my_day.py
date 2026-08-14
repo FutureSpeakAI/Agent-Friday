@@ -51,7 +51,13 @@ class TestT1HonestInabilityWithNoToolsConnected:
         def always_confabulates(messages, **kwargs):
             return confabulation, []
 
+        def confabulates_plain(messages, **kwargs):
+            # B7 gives one last tools-stripped chance via _call_claude —
+            # keep that fabricating too, to pin the terminal honest failure.
+            return confabulation
+
         monkeypatch.setattr(chat_mod, "_call_claude_agent", always_confabulates)
+        monkeypatch.setattr(chat_mod, "_call_claude", confabulates_plain)
         resp = client.post("/api/chat", json={"message": "start my day"})
         assert resp.status_code == 200
         data = resp.get_json()
