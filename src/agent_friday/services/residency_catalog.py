@@ -81,13 +81,15 @@ SEED_MEASUREMENTS: dict = {
         "gemma4:e2b": [
             {"num_ctx": 8192, "vram_mib": 1763, "total_mib": 1763,
              "pct_gpu": 100, "tok_s_median": 166.13, "tok_s_stdev": 9.76,
-             "ms_per_token": 6.02, "cold_load_s": 20.97,
+             "ms_per_token": 6.02, "probe_ms_per_token": 8.68,
+             "cold_load_s": 20.97,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
         "gemma4:e4b": [
             {"num_ctx": 8192, "vram_mib": 3081, "total_mib": 3081,
              "pct_gpu": 100, "tok_s_median": 99.93, "tok_s_stdev": 0.23,
-             "ms_per_token": 10.01, "cold_load_s": 27.52,
+             "ms_per_token": 10.01, "probe_ms_per_token": 9.99,
+             "cold_load_s": 27.52,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
         "gemma4:12b": [
@@ -99,7 +101,8 @@ SEED_MEASUREMENTS: dict = {
              "measured_at": "2026-08-14"},
             {"num_ctx": 16384, "vram_mib": 8001, "total_mib": 8001,
              "pct_gpu": 100, "tok_s_median": 49.36, "tok_s_stdev": 0.12,
-             "ms_per_token": 20.26, "cold_load_s": 20.49,
+             "ms_per_token": 20.26, "probe_ms_per_token": 18.27,
+             "cold_load_s": 20.49,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
         ],
         # Measured under Ollama BEFORE the copy was removed for the
@@ -247,9 +250,28 @@ def record_measurement(model_id: str, fingerprint: str,
 
 
 def baseline_ms_per_token(model_id: str, fingerprint: str) -> float | None:
-    """The figure the health probe's 5x rule compares against."""
+    """Sustained generation speed, from long runs. Used for planning."""
     vals = [m["ms_per_token"] for m in measurements(model_id, fingerprint)
             if m.get("ms_per_token")]
+    return min(vals) if vals else None
+
+
+def baseline_probe_ms_per_token(model_id: str, fingerprint: str) -> float | None:
+    """Speed under PROBE conditions, which is a different number.
+
+    A 10-token probe pays fixed per-request overhead that a 200-token run
+    amortises away. Measured on the reference instance, a perfectly healthy
+    gemma4:e2b probes at 21.86 ms/token against a 6.02 ms/token sustained
+    baseline -- 3.6x, which would have consumed most of a 5x margin and made
+    the paging detector fire on ordinary contention.
+
+    The health rule compares probe against probe. Falls back to the sustained
+    figure only when no probe baseline exists, which is strictly better than
+    no check at all but is recorded as the weaker comparison.
+    """
+    vals = [m["probe_ms_per_token"]
+            for m in measurements(model_id, fingerprint)
+            if m.get("probe_ms_per_token")]
     return min(vals) if vals else None
 
 

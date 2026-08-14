@@ -246,17 +246,54 @@ class OllamaManager:
         recs.append({"name": "qwen3:4b", "task": "quick lookups, formatting, status checks", "tier": "tiny"})
         return recs
 
-    def health_check(self, model):
+    def probe_generate(self, model, *, disable_thinking=False,
+                       num_predict=10, timeout=30):
+        """A real generation, with the timings needed to judge whether it was
+        healthy or merely alive.
+
+        Returns ms_per_token computed from Ollama's own `eval_count` /
+        `eval_duration`, which EXCLUDE `load_duration`. That separation is what
+        makes a latency threshold usable: a cold load of 20-55s on this host
+        would otherwise look identical to a model paging against RAM, and the
+        detector would fire RED on every cold start.
+
+        `disable_thinking` matters more than it looks. Every gemma4 model
+        declares the `thinking` capability, and a small budget is consumed
+        entirely by reasoning: measured, num_predict=10 against gemma4:12b
+        returns response='' with done_reason='length', while the same call with
+        think:false returns 'Hello!'. Probing a thinking model without this
+        reports a perfectly healthy model as dead.
+        """
+        body = {
+            "model": model,
+            "prompt": "Say hello in one word.",
+            "stream": False,
+            "options": {"num_predict": num_predict},
+        }
+        if disable_thinking:
+            body["think"] = False
         try:
-            resp = self._post("/api/generate", {
-                "model": model,
-                "prompt": "Say hello in one word.",
-                "stream": False,
-                "options": {"num_predict": 10},
-            }, timeout=30)
-            return bool(resp.get("response", "").strip())
-        except Exception:
-            return False
+            resp = self._post("/api/generate", body, timeout=timeout) or {}
+        except Exception as e:
+            return {"ok": False, "error": "%s: %s" % (type(e).__name__, e),
+                    "ms_per_token": None, "load_s": None}
+        text = (resp.get("response") or "").strip()
+        ec = resp.get("eval_count") or 0
+        ed = resp.get("eval_duration") or 0
+        return {
+            "ok": bool(text),
+            "text": text,
+            "eval_count": ec,
+            "ms_per_token": round((ed / 1e6) / ec, 2) if ec and ed else None,
+            "load_s": round((resp.get("load_duration") or 0) / 1e9, 2),
+            "done_reason": resp.get("done_reason"),
+            "error": None,
+        }
+
+    def health_check(self, model, *, disable_thinking=False):
+        """Bool form, kept for callers that only want liveness."""
+        return bool(self.probe_generate(
+            model, disable_thinking=disable_thinking).get("ok"))
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096):
