@@ -332,8 +332,13 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
     model = resident_model_for(prov)
 
     def _result(status, detail, proved):
+        # classification rides the health payload so the UI can label an
+        # on-device seat as local (defect #7) — ollama is local by nature.
         res = {"provider": name, "status": status, "detail": detail,
-               "config": "ok", "proved_inference": proved, "model": model}
+               "config": "ok", "proved_inference": proved, "model": model,
+               "classification": (prov.get("classification")
+                                  or ("local" if ptype == "ollama"
+                                      else "cloud"))}
         _PROBE_CACHE[name] = (time.time(), res)
         return res
 
