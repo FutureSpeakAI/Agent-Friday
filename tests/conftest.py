@@ -65,9 +65,22 @@ def pytest_addoption(parser):
         "--run-network", action="store_true", default=False,
         help="run tests marked `network` (live network and/or paid API calls)",
     )
+    # Live residency cycles load real multi-GB models and start real processes
+    # on whatever machine runs them. Opt-in for the same reason as `network`:
+    # the default suite must stay offline and fast.
+    parser.addoption(
+        "--run-live-residency", action="store_true", default=False,
+        help="run tests marked `live_residency` (loads real models, minutes)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--run-live-residency"):
+        skip_live = pytest.mark.skip(
+            reason="loads real multi-GB models; pass --run-live-residency")
+        for item in items:
+            if item.get_closest_marker("live_residency"):
+                item.add_marker(skip_live)
     if config.getoption("--run-network"):
         return
     skip_network = pytest.mark.skip(
