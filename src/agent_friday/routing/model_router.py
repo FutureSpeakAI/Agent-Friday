@@ -539,14 +539,22 @@ class ModelRouter:
                 "reason": "No local models installed",
             }
 
-        local_model = self._pick_local_model(models, task_type, mode)
+        # D6: .fridayhints `preferred_model` finally reaches dispatch. It was
+        # parsed, merged, and served over HTTP while nothing read it.
+        local_model = self._pick_local_model(
+            models, task_type, mode, preferred=ctx.get("preferred_model"))
         if local_model:
-            return {
+            out = {
                 "provider": "local",
                 "model": local_model,
                 "task_type": task_type,
                 "reason": f"Routing {task_type} to local model",
             }
+            # An override that could not be honoured travels WITH the result,
+            # so the caller can say why it did not get what it asked for.
+            if self.last_local_refusal:
+                out["override_refused"] = self.last_local_refusal
+            return out
 
         if self.fallback_to_cloud:
             return {
@@ -565,29 +573,109 @@ class ModelRouter:
             "reason": "local_only mode, using first available model",
         }
 
-    def _pick_local_model(self, models, task_type, mode):
-        model_names = [m["name"] for m in models]
-        sizes = {m["name"]: m.get("size_gb", 0) for m in models}
+    def _vram_fit(self, model_names):
+        """Which of these models actually fit this machine's GPU, and by how much.
 
-        # A user-configured default local model always wins when it's installed,
-        # regardless of task type. This is the on-device model the user actually
-        # chose (settings.model_routing.local_model, default "gemma4:latest").
-        pref = self.config.get("local_model")
-        if pref and pref in model_names:
+        Returns (fits, budget_mib, needs) — `fits` is None when the hardware or
+        the measurements are unknown, which means "do not filter", not "nothing
+        fits". Refusing to route on missing data would be worse than the size
+        heuristic it replaces.
+        """
+        try:
+            from agent_friday.services import hardware_profile as hwp
+            from agent_friday.services import residency_catalog as rc
+            from agent_friday.services import residency_policy as rp
+            profile = hwp.get()
+            budgets = rp.gpu_budgets(profile)
+            if not budgets:
+                return None, 0, {}
+            budget = max(b["available_mib"] for b in budgets)
+            fp = rc.profile_fingerprint(profile)
+            needs, fits = {}, []
+            for n in model_names:
+                v = rc.vram_at(n, fp, 16384)
+                if v is None:
+                    continue                  # unmeasured: neither in nor out
+                needs[n] = v
+                if v <= budget:
+                    fits.append(n)
+            if not needs:
+                return None, budget, {}
+            return fits, budget, needs
+        except Exception:
+            return None, 0, {}
+
+    def _pick_local_model(self, models, task_type, mode, preferred=None):
+        """Choose the on-device model, with a VRAM check rather than a size sort.
+
+        The heuristic this replaces ranked candidates by ARTIFACT SIZE, which on
+        the reference instance is not merely imprecise but inverted: gemma4:e2b
+        is a 7.2 GB artifact occupying 1763 MiB of VRAM, while gemma4:e4b is
+        9.6 GB occupying 3081 MiB. Worse, when the configured local_model was
+        not installed — as `gemma3:4b` is not — the CODE/RESEARCH branch fell
+        through to "largest artifact wins", selecting the one model on the box
+        guaranteed to spill onto the CPU.
+
+        Selection refusals are recorded on `self.last_local_refusal` so a caller
+        can surface WHY it did not get what it asked for. A silent substitution
+        is how `preferred_model` and `capability_routing.embedding.model`
+        became settings people could change while nothing happened.
+        """
+        self.last_local_refusal = None
+        model_names = [m["name"] for m in models]
+        if not model_names:
+            return None
+        sizes = {m["name"]: m.get("size_gb", 0) for m in models}
+        fits, budget, needs = self._vram_fit(model_names)
+
+        def _ok(name):
+            """Fits the card, or is unmeasured (never refuse on missing data)."""
+            return fits is None or name not in needs or name in fits
+
+        def _refuse(name, why):
+            self.last_local_refusal = {
+                "requested": name, "rule_id": "R3", "explanation": why}
+
+        # 1. An explicit per-workspace override (.fridayhints preferred_model)
+        #    outranks the global setting. D6: wired, not silently ignored.
+        for src, pref in (("preferred_model", preferred),
+                          ("local_model", self.config.get("local_model"))):
+            if not pref:
+                continue
+            if pref not in model_names:
+                _refuse(pref, "%s names %r, which is not installed; installed: "
+                              "%s" % (src, pref, ", ".join(sorted(model_names))))
+                continue
+            if not _ok(pref):
+                _refuse(pref, "%s names %r, which needs %d MiB but only %d MiB "
+                              "of GPU budget is available"
+                              % (src, pref, needs.get(pref, 0), budget))
+                continue
             return pref
 
+        # 2. Prefer what the residency policy pinned as the interactive seat.
+        try:
+            from agent_friday.services import hardware_profile as hwp
+            from agent_friday.services import residency_catalog as rc
+            from agent_friday.services import residency_policy as rp
+            profile = hwp.get()
+            plan = rp.plan(profile, rc.installed_entries(profile))
+            seat = (plan.get("seats") or {}).get("interactive_brain")
+            if seat and seat.get("model_id") in model_names:
+                return seat["model_id"]
+        except Exception:
+            pass
+
+        # 3. Fall back to the old shape, but only over models that FIT.
+        pool = [n for n in model_names if _ok(n)] or model_names
         if task_type in (TaskType.CODE, TaskType.RESEARCH):
-            for name in sorted(model_names, key=lambda n: -sizes.get(n, 0)):
+            for name in sorted(pool, key=lambda n: (-sizes.get(n, 0), n)):
                 if sizes.get(name, 0) >= 4:
                     return name
         if task_type == TaskType.SIMPLE:
-            for name in sorted(model_names, key=lambda n: sizes.get(n, 0)):
-                return name
-
-        if mode == "local_only" and model_names:
-            return model_names[0]
-        if mode in ("local_preferred", "smart") and model_names:
-            return model_names[0]
+            return sorted(pool, key=lambda n: (sizes.get(n, 0), n))[0]
+        if mode in ("local_only", "local_preferred", "smart"):
+            return sorted(pool, key=lambda n: (-sizes.get(n, 0), n))[0]
         return None
 
     def get_stats(self):
