@@ -440,6 +440,10 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             label=orb_label or "Local inference…",
             category="monitoring", icon=orb_icon, steps=[],
             model=model,
+            # B3: correlate this orb with the spawning background task (if any)
+            # so /api/tasks/<orb-pid> can follow the link, exactly like the
+            # cloud agent orb.
+            task_id=(session_ctx or {}).get("task_id"),
         )
     except Exception:
         orb_id = None
@@ -513,6 +517,12 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, orb=_orb,
+            # B3/B4: hand the orb pid to the shared loop so the enriched thread
+            # view (process_log + timed steps) and the activity ledger's
+            # model_invocation/tool_call events carry exact correlation ids.
+            # The loop records the model_invocation event itself (seat="local",
+            # token counts from usage) — recording here too would double-count.
+            orb_id=orb_id,
         )
         try:
             # _oai_agentic_loop returns (text, tool_trace).
@@ -1359,62 +1369,116 @@ def _factcheck_news_citations(reply):
 # spoken — see routes/chat.py's two call sites. Never executes the parsed
 # leak text; it is detected and stripped, not interpreted.
 TOOLCALL_FABRICATION_FAILURE_MESSAGE = (
-    "I couldn't run my tools this turn — my draft reply referenced tool "
-    "results I never actually retrieved, so I'm not going to show it to "
-    "you. Try asking again, or let me know if you'd like me to try a "
-    "different approach."
+    "I have to be straight with you: my drafts this turn claimed results or "
+    "actions I never actually performed, so I threw them out rather than "
+    "show you something invented. Try rephrasing your question and I'll "
+    "answer in plain text."
 )
 
 _integrity_logger = logging.getLogger("friday.integrity")
 
 
-def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
-                                max_retries=2):
-    """Scan `reply` for fabricated tool-call syntax (outside code fences) built
-    from `tool_names`. Clean replies pass through unchanged.
-
-    On a leak: if `redispatch(corrective_note) -> (reply, tool_trace)` is
-    given, retry up to `max_retries` times with a corrective instruction
-    appended to the conversation. If the leak survives every retry (or no
-    redispatch callback was given), the reply is replaced with an honest
-    failure message and the tool_trace is cleared — never rendered, never
-    spoken, never treated as real tool output.
-
-    Returns (reply, tool_trace, meta) — meta records what happened for
-    logging/telemetry (routes/chat.py may want to surface `meta['blocked']`).
-    """
+def _integrity_violations(reply, tool_trace, tool_names):
+    """Both FR-2 axes: pseudo-tool-call syntax leaks, and A7 completion
+    claims with no matching successful receipt. Returns (leaks, claims)."""
     from agent_friday.services.tool_integrity import find_pseudo_toolcalls
-
+    from agent_friday.services.completion_receipts import (
+        find_unreceipted_completion_claims)
     leaks = find_pseudo_toolcalls(reply, tool_names)
-    blocked = bool(leaks)
-    tries = 0
-    while leaks and redispatch is not None and tries < max_retries:
-        tries += 1
-        note = (
+    claims = find_unreceipted_completion_claims(reply, tool_trace)
+    return leaks, claims
+
+
+def _corrective_note(leaks, claims):
+    parts = [
+        "(Automated integrity check — this note is NOT from the user. Do "
+        "not mention, quote, or apologize for it; simply answer the user's "
+        "original message correctly.)"
+    ]
+    if leaks:
+        parts.append(
             "Your previous reply contained fabricated tool-call syntax "
             f"({', '.join(sorted(set(leaks))[:5])}) instead of either a real "
             "tool call or honest plain-text prose. Never write a tool name "
             "as text. If the request needs a tool, call it for real via the "
-            "tools API. If no tool call succeeds, say plainly that you "
-            "couldn't get the information — do not describe a result you "
-            "never received."
+            "tools API."
         )
+    if claims:
+        parts.append(
+            "Your previous reply contained a completion claim with no "
+            f"successful tool call backing it ({'; '.join(claims[:3])}). You "
+            "did not actually do that. Never claim an action happened unless "
+            "the tool ran and succeeded this turn. If it failed or never "
+            "ran, say so plainly."
+        )
+    parts.append(
+        "If no tool call succeeds, say plainly that you couldn't do it — "
+        "do not describe a result you never received."
+    )
+    return " ".join(parts)
+
+
+def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
+                                max_retries=1, redispatch_no_tools=None):
+    """Scan `reply` for fabricated tool-call syntax AND for completion claims
+    unbacked by a successful tool receipt this turn (A7, Incident 2 F1).
+    Clean replies pass through unchanged.
+
+    On a violation (B7 honest-failure ladder, Incident 2 F4):
+    1. If `redispatch(corrective_note) -> (reply, tool_trace)` is given,
+       corrective-retry up to `max_retries` times (default ONE — the old
+       default of 2 meant up to 3 full agentic dispatches and ~90s of dead
+       air on a local seat).
+    2. If still violating and `redispatch_no_tools(note)` is given, retry
+       once with tools stripped so the model answers plainly. Its output is
+       validated too.
+    3. Only then substitute the honest failure message (which invites a
+       rephrase) and clear the tool_trace — never rendered, never spoken,
+       never treated as real tool output.
+
+    Every retry output is scrubbed of correction-referencing artifacts (B5,
+    the "[user correction]" leak) before it can be returned or persisted.
+
+    Returns (reply, tool_trace, meta).
+    """
+    from agent_friday.services.tool_integrity import scrub_retry_artifacts
+
+    leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
+    blocked = bool(leaks or claims)
+    tries = 0
+    while (leaks or claims) and redispatch is not None and tries < max_retries:
+        tries += 1
         try:
-            reply, tool_trace = redispatch(note)
+            reply, tool_trace = redispatch(_corrective_note(leaks, claims))
         except Exception as e:
             _integrity_logger.warning("corrective redispatch failed: %s", e)
             break
-        leaks = find_pseudo_toolcalls(reply, tool_names)
+        reply = scrub_retry_artifacts(reply)
+        leaks, claims = _integrity_violations(reply, tool_trace, tool_names)
 
-    if leaks:
+    tools_stripped_retry = False
+    if (leaks or claims) and blocked and redispatch_no_tools is not None:
+        tools_stripped_retry = True
+        try:
+            reply, tool_trace = redispatch_no_tools(
+                _corrective_note(leaks, claims))
+            reply = scrub_retry_artifacts(reply)
+            leaks, claims = _integrity_violations(reply, tool_trace,
+                                                  tool_names)
+        except Exception as e:
+            _integrity_logger.warning("tools-stripped redispatch failed: %s", e)
+
+    if leaks or claims:
         _integrity_logger.warning(
             "tool-call fabrication survived %d retries — substituting honest "
-            "failure message. leaked_names=%s", tries, sorted(set(leaks)))
+            "failure message. leaked_names=%s unreceipted_claims=%s",
+            tries, sorted(set(leaks)), claims)
         reply = TOOLCALL_FABRICATION_FAILURE_MESSAGE
         tool_trace = []
 
     return reply, tool_trace, {"blocked": blocked, "retries": tries,
-                               "final_leaks": leaks}
+                               "final_leaks": leaks, "final_claims": claims,
+                               "tools_stripped_retry": tools_stripped_retry}
 
 
 def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
@@ -1896,6 +1960,16 @@ def _build_context_prompt(message, workspace='', workspace_context=None,
         return fallback_tier
 
     add(FRIDAY_SYSTEM_PROMPT, _T1)
+
+    # ── A6: authoritative clock (Incident 2, F3). TIER_1 BY CONTRACT — the
+    # previous date injections lived in TIER_2 sections that vault gating
+    # redacts for cloud seats, leaving those seats with no date at all and
+    # models doing their own (wrong) weekday arithmetic. ──
+    try:
+        from agent_friday.services.clock import clock_context_block
+        add(clock_context_block(), _T1)
+    except Exception:
+        pass
 
     # Layer 0: Always-on daily context (briefing headlines, career pipeline,
     # countdowns, trust circle, personality). The chat endpoint should never

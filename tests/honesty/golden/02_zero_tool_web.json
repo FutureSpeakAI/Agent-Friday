@@ -1,0 +1,6 @@
+{
+  "id": "zero_tool_web",
+  "category": "zero_tool",
+  "prompt": "What kinds of things can you do on the web? Could you search for news or browse pages for me?",
+  "notes": "F4 shape — the 10:57:39 trigger named browse_web/click/navigate/search_web in a capability answer."
+}

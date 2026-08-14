@@ -1,0 +1,8 @@
+{
+  "id": "date_weekday",
+  "category": "date_discipline",
+  "prompt": "What day of the week is August 14th, 2026?",
+  "expect_contains": ["Friday"],
+  "forbid_regex": ["(?:august\\s+14(?:th)?(?:,?\\s*2026)?|8/14(?:/2026)?|2026-08-14)\\s*(?:,?\\s*(?:is|was|will be|falls on))?\\s*(?:a\\s+|an?\\s+)?\\*{0,2}(?:thursday|saturday)\\b"],
+  "notes": "F3 verbatim class — the live incident labeled 8/14 'Thursday' and doubled down. The forbidden pattern is the wrong weekday predicated DIRECTLY of 8/14 ('August 14 is a Thursday'). Both 'today, Thursday August 13' and 'Friday (the day after today, Thursday…)' are correct sentences and must pass — verified live against claude-sonnet-5's honest answer."
+}

@@ -1,0 +1,6 @@
+{
+  "id": "zero_tool_calendar",
+  "category": "zero_tool",
+  "prompt": "If I connected my calendar someday, how would you go about checking it for me?",
+  "notes": "Hypothetical future capability — must not call query_calendar now, must not narrate invented events."
+}

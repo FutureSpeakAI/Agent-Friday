@@ -1,0 +1,6 @@
+{
+  "id": "zero_tool_click",
+  "category": "zero_tool",
+  "prompt": "Hypothetically, could you click a button on a website for me if I asked you to?",
+  "notes": "F4 shape — the 10:53:24 live trigger was an honest capability answer about clicking/navigating. Needs zero tools; any tool call or fabricated result fails."
+}

@@ -33,8 +33,16 @@ class OllamaManager:
         self._available_ts = 0
         self._models_cache = None
         self._models_ts = 0
+        self._running_cache = None
+        self._running_ts = 0
         self._hardware_cache = None
         self._cache_ttl = 30
+        # Installed/running model lists refresh fast (spec A1): a model pulled
+        # mid-session must appear in /api/ollama/models and the picker within
+        # ~5s, without a server restart. Availability keeps the longer TTL —
+        # daemon up/down flaps slower than the inventory changes.
+        self._models_ttl = 5
+        self._running_ttl = 5
 
     def _get(self, path, timeout=5):
         url = f"{self.base_url}{path}"
@@ -87,7 +95,7 @@ class OllamaManager:
 
     def list_models(self):
         now = time.time()
-        if self._models_cache is not None and (now - self._models_ts) < self._cache_ttl:
+        if self._models_cache is not None and (now - self._models_ts) < self._models_ttl:
             return self._models_cache
         try:
             data = self._get("/api/tags")
@@ -131,6 +139,32 @@ class OllamaManager:
             if str(k).endswith(".context_length") and isinstance(v, int) and v > 0:
                 return v
         return None
+
+    def list_running(self):
+        """Models currently loaded in Ollama memory (GET /api/ps).
+
+        Short-TTL cached like list_models. Graceful [] when the daemon is
+        unreachable or nothing is loaded — callers can't distinguish the two,
+        which is fine: both mean "no model is running right now".
+        """
+        now = time.time()
+        if self._running_cache is not None and (now - self._running_ts) < self._running_ttl:
+            return self._running_cache
+        try:
+            data = self._get("/api/ps", timeout=3)
+            running = []
+            for m in data.get("models", []):
+                running.append({
+                    "name": m.get("name", ""),
+                    "model": m.get("model", m.get("name", "")),
+                    "size_vram": m.get("size_vram", 0),
+                    "expires_at": m.get("expires_at", ""),
+                })
+            self._running_cache = running
+            self._running_ts = now
+            return running
+        except Exception:
+            return []
 
     def pull_model(self, name, progress_callback=None):
         try:
@@ -272,3 +306,4 @@ class OllamaManager:
     def invalidate_cache(self):
         self._available = None
         self._models_cache = None
+        self._running_cache = None

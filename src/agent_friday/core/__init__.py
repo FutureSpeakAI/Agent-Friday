@@ -1400,6 +1400,10 @@ DEFAULT_SETTINGS = {
     "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
     "creative_model": "gemini-nano-banana-2",   # image/creative generation (Nano Banana); video uses Veo
     "music_model": "lyria-clip",                # music generation (Lyria 3): 'lyria-clip' (≤30s) | 'lyria-pro' (full song)
+    # Custom-model escape hatch (spec A2): [{"provider": ..., "id": ...}] pairs
+    # the hosted/local catalogs don't know yet (private previews, self-hosted
+    # ids). The model catalog surfaces them flagged unverified + non-curated.
+    "custom_models": [],
     "voice_model": "gemini-2.5-flash-native-audio-latest",  # live audio. The -latest alias tracks Google's current native-audio model, so it survives preview retirements. MUST stay in sync with voice_engine.LIVE_MODEL — settings always win over that constant.
     # ── Creator Economy / Production (Layer 1) ──
     # Daily creation now chooses FREELY across all media (text/code/image/music/
@@ -1489,7 +1493,7 @@ DEFAULT_SETTINGS = {
         # "anthropic" leaves behavior unchanged.
         "cloud_provider": "anthropic",
         "openai_base_url": "https://openrouter.ai/api/v1",
-        "openai_model": "anthropic/claude-3.7-sonnet",
+        "openai_model": "anthropic/claude-sonnet-5",
         "openai_api_key": "",   # blank → falls back to env OPENAI_API_KEY / OPENROUTER_API_KEY
         # ── Sovereign Vault access control ──
         # vault_local_only: when true, vault TIER_2/TIER_3 content reaches local

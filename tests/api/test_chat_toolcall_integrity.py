@@ -42,7 +42,14 @@ class TestChatIntegrityWiring:
         def always_fabricates(messages, **kwargs):
             return "[query_calendar] shows a meeting with Mr. Peterson at 2pm.", []
 
+        def also_fabricates_plain(messages, **kwargs):
+            # B7: the tools-stripped last-chance dispatch goes through
+            # _call_claude (single-shot, returns text only) — keep it
+            # fabricating too so the honest failure is reached.
+            return "[query_calendar] still shows Mr. Peterson at 2pm."
+
         monkeypatch.setattr(chat_mod, "_call_claude_agent", always_fabricates)
+        monkeypatch.setattr(chat_mod, "_call_claude", also_fabricates_plain)
         resp = client.post("/api/chat", json={"message": "what's on my calendar today?"})
         assert resp.status_code == 200
         data = resp.get_json()
@@ -51,6 +58,23 @@ class TestChatIntegrityWiring:
         # Never persisted as if it were real.
         hist = client.get("/api/chat/history").get_json()
         assert "Mr. Peterson" not in str(hist)
+
+    def test_tools_stripped_retry_rescues_the_turn(self, client, monkeypatch):
+        # B7: when the corrective retry keeps fabricating but the model can
+        # answer plainly once tools are stripped, the user gets that plain
+        # answer — not the honest-failure message.
+        def always_fabricates(messages, **kwargs):
+            return "[query_calendar] shows a meeting with Mr. Peterson at 2pm.", []
+
+        def plain_answer(messages, **kwargs):
+            return "I couldn't check your calendar this turn — it may not be connected."
+
+        monkeypatch.setattr(chat_mod, "_call_claude_agent", always_fabricates)
+        monkeypatch.setattr(chat_mod, "_call_claude", plain_answer)
+        resp = client.post("/api/chat", json={"message": "what's on my calendar today?"})
+        data = resp.get_json()
+        assert "couldn't check your calendar" in data["response"]
+        assert "Mr. Peterson" not in data["response"]
 
     def test_no_fabricated_url_reaches_the_client_via_tool_trace(self, client, monkeypatch):
         def fabricates_a_url(messages, **kwargs):

@@ -165,6 +165,34 @@ def is_seat_green(model: str, provider: str = "local") -> bool:
     return bool(status and status.get("passed"))
 
 
+# ── A4/A5: the second gate axis (honesty battery) + dual-gate seating. ──
+
+def axis_status(model: str, provider: str = "local") -> dict:
+    """Per-axis gate state for the picker chips (A5):
+    {structural: green|red|ungated, honesty: green|red|ungated,
+     dual_green: bool}. Fail-closed on both axes."""
+    from agent_friday.services.honesty_battery import get_honesty_status
+
+    def _axis(status):
+        if status is None:
+            return "ungated"
+        return "green" if status.get("passed") else "red"
+
+    structural = _axis(get_cached_status(model, provider))
+    honesty = _axis(get_honesty_status(model, provider))
+    return {
+        "structural": structural,
+        "honesty": honesty,
+        "dual_green": structural == "green" and honesty == "green",
+    }
+
+
+def is_seat_dual_green(model: str, provider: str = "local") -> bool:
+    """A3/A5: a local model may hold the orchestrator seat ONLY when both
+    axes are green. Fail-closed like each individual axis."""
+    return axis_status(model, provider)["dual_green"]
+
+
 def get_last_known_green(provider: str = "local") -> str | None:
     """The most recently passed model for `provider` — the fallback seat when
     the currently-configured local_model isn't (or is no longer) green.
