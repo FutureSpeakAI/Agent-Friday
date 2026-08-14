@@ -371,6 +371,18 @@ to point at a decommissioned model and `local` at an uninstalled one; making the
 authoritative would remove the class of defect entirely, at the cost of user-set pointers being
 overridden by policy.
 
+**Q9 — Nothing boots the Arbiter when the server starts; should it?**
+This is the largest remaining gap and it is visible right now: with everything built, tested and
+committed, the **live** Friday server on `:3000` is running `gemma4:12b` at **262144 context,
+29 % / 71 % CPU/GPU** — **VERIFIED** by `ollama ps` at the end of this session. That is exactly
+the placement the layer exists to prevent, and it persists because the running process predates
+this branch and because `server.py` has no `Arbiter.boot()` hook. The policy engine, the
+catalog, the profile and the arbiter are all real and proven; **nothing yet owns the running
+system.** Wiring that is a deliberate next step rather than an oversight — it changes startup
+behaviour on Stephen's daily driver — but until it happens the measured benefits are available
+only to code that asks for them (`_pick_local_model` does, after a restart; `num_ctx` does not,
+because setting it is the Arbiter's job).
+
 **Q7 — On an 8 GB Windows host, R1's 6 GB OS reserve consumes the entire 75 % RAM ceiling, so
 every local model is refused (§7.3); is that the intended answer or should the reserve scale?**
 A fixed 6 GB reserve is right on a 32 GB machine and total on an 8 GB one, and the two
