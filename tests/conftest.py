@@ -23,6 +23,18 @@ import tempfile
 from pathlib import Path
 
 # ── Hermetic environment — MUST run before any `import server` ────────────────
+# Captured BEFORE the redirect below, into an ENV VAR rather than a module
+# constant. pytest imports this file as `conftest`, so a test doing
+# `from tests.conftest import ...` executes the module a SECOND time — by then
+# the redirect has already happened and a module constant would hold the temp
+# home, silently skipping every live test. `setdefault` makes the second
+# execution a no-op.
+#
+# The offline suite must never use this; it exists for the opt-in live tests
+# (`--run-live-residency`) that have to reach the real Ollama blob store and
+# runtime stack, which by definition do not exist under an isolated home.
+os.environ.setdefault("FRIDAY_REAL_HOME", str(Path.home()))
+
 _TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
 os.environ["FRIDAY_TESTING"] = "1"
 os.environ["USERPROFILE"] = str(_TEST_HOME)

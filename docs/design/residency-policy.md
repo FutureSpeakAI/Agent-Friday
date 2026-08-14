@@ -534,6 +534,16 @@ Backend control, per backend:
 | `comfyui` | stop the process, confirm the port closed | start, wait for readiness |
 | `cpu-service` | in-process; no GPU implication | — |
 
+**Degraded pins — added after the live run, because the design did not anticipate it.** A pinned
+seat whose backend cannot hold the model is a *degraded pin*, not a failed boot. The measured
+case: Ollama stores `gemma4:e2b` across several blobs, so pointing llama-server at a single blob
+gives `wrong number of tensors; expected 2012, got 601`. Failing the boot for that left the
+machine with **no seats at all**, which is strictly worse than one seat the daemon might evict.
+The seat now falls back to Ollama and carries `pin_unenforced` naming the real reason; only a
+failure of *both* backends degrades the boot. The rule this protects is honesty, not
+convenience — R9 says a pinned seat must not be delegated to a scheduler that evicts it, and a
+seat that had to be delegated anyway must say so rather than claim a pin it does not have.
+
 The llama-server column is why the `llama-cpp-brain` descriptor **mechanism** was preserved when
 the qwen3.6 brain was decommissioned this session: `routing/provider_descriptors.py` already
 classifies a loopback `base_url` as `local` and routes it through the openai-compatible adapter
