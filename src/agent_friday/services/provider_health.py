@@ -293,10 +293,28 @@ def resident_model_for(prov) -> str | None:
             # the probe reported the healthy daemon as down ("no output").
             # Probe a model that actually exists — the configured one when
             # installed, else the smallest installed.
-            if chosen and chosen in names:
+            #
+            # 2026-08-14 (second defect, same line): "smallest installed" is
+            # how the probe ended up sending qwen3-embedding:0.6b — a 639 MB
+            # EMBEDDING model — to /api/generate. An embedding model cannot
+            # produce text, so that probe returns empty forever and the entire
+            # local provider reports `down` while the daemon is healthy.
+            # Exclude anything that cannot generate before choosing.
+            def _gen(name):
+                try:
+                    from agent_friday.services.residency_catalog import (
+                        can_generate)
+                    return can_generate(name)
+                except Exception:
+                    return "embed" not in (name or "").lower()
+
+            if chosen and chosen in names and _gen(chosen):
                 return chosen
-            return sorted(installed,
-                          key=lambda m: m.get("size_gb") or 0)[0].get("name")
+            usable = [m for m in installed if _gen(m.get("name"))]
+            if usable:
+                return sorted(usable,
+                              key=lambda m: m.get("size_gb") or 0)[0].get("name")
+            return None
         return chosen or None
     if ptype == "anthropic":
         # 2026-08-14: orchestrator_model held the llama.cpp brain's alias,
@@ -308,6 +326,66 @@ def resident_model_for(prov) -> str | None:
             return orch
         return (prov.get("models") or [None])[0]
     return (prov.get("models") or [None])[0]
+
+
+# A model this much slower than its own recorded baseline is not healthy, it is
+# paging. Measured on the reference instance: llama.cpp throughput fell from
+# 21.6 to 5.5 tok/s (~4x) at the point the allocator began thrashing rather
+# than erroring, and Ollama's 26b spilled from 100% GPU to 79% CPU. 5x sits
+# just past the worst honest slowdown and well inside a collapse.
+LATENCY_UNHEALTHY_MULTIPLE = 5.0
+
+
+def _thinking(model_id: str) -> bool:
+    """Thinking models spend a small token budget entirely on reasoning."""
+    try:
+        from agent_friday.services.residency_catalog import (
+            needs_think_disabled)
+        return needs_think_disabled(model_id)
+    except Exception:
+        return False
+
+
+def _latency_verdict(model_id: str, ms_per_token) -> str | None:
+    """The RAM-paging detector. Returns an explanation, or None if fine.
+
+    Compares against the model's own recorded baseline rather than a global
+    constant, because 6 ms/token is healthy for the e2b and impossible for the
+    26b. No baseline means no verdict: an unmeasured model reports on liveness
+    alone rather than being failed on a guess.
+
+    The input is generation speed only — Ollama reports load_duration
+    separately from eval_duration — so a 55s cold load cannot trip this.
+    """
+    if not ms_per_token:
+        return None
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services.residency_catalog import (
+            baseline_ms_per_token, baseline_probe_ms_per_token,
+            profile_fingerprint)
+        fp = profile_fingerprint(hwp.get())
+        # Compare like with like. A 10-token probe pays fixed per-request
+        # overhead that a 200-token throughput run amortises away: measured, a
+        # healthy e2b probes at 8.68 ms/token against a 6.02 sustained
+        # baseline. Using the sustained figure spends ~1.4x of the 5x margin
+        # before anything is wrong, and on a contended box that is enough to
+        # fire on a healthy model.
+        baseline = baseline_probe_ms_per_token(model_id, fp)
+        kind = "probe"
+        if not baseline:
+            baseline = baseline_ms_per_token(model_id, fp)
+            kind = "sustained"
+    except Exception:
+        return None
+    if not baseline:
+        return None
+    if ms_per_token > baseline * LATENCY_UNHEALTHY_MULTIPLE:
+        return ("generation is %.1fx its recorded %s baseline (%.2f vs %.2f "
+                "ms/token) — consistent with the model paging against RAM "
+                "rather than running resident"
+                % (ms_per_token / baseline, kind, ms_per_token, baseline))
+    return None
 
 
 def inference_probe(name, prov=None, use_cache=True) -> dict | None:
@@ -351,11 +429,18 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             mgr = get_manager(prov.get("base_url") or "http://localhost:11434")
             # This is the call site decision D1 requires: `health_check` did a
             # real generation but had ZERO callers anywhere in the tree.
-            ok = mgr.health_check(model)
+            out = mgr.probe_generate(
+                model, disable_thinking=_thinking(model))
             ms = int((time.time() - t0) * 1000)
-            return _result("ok" if ok else "down",
-                           f"generated in {ms}ms" if ok
-                           else "no output from a real generation", bool(ok))
+            if not out.get("ok"):
+                return _result("down",
+                               out.get("error")
+                               or "no output from a real generation", False)
+            slow = _latency_verdict(model, out.get("ms_per_token"))
+            if slow:
+                return _result("unhealthy", slow, True)
+            return _result("ok", f"generated in {ms}ms"
+                                 f" ({out.get('ms_per_token')} ms/token)", True)
 
         if ptype == "anthropic":
             from agent_friday.core import get_anthropic_client
@@ -379,21 +464,36 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
             base = (prov.get("base_url") or "").rstrip("/")
             if not base or not model:
                 return _result("down", "no base_url or model", False)
+            # A thinking model needs room to think before it can say anything;
+            # a 1-token ceiling makes a healthy one look empty (measured on
+            # gemma4 via llama-server: 200 OK, content='').
+            budget = 64 if _thinking(model) else _PROBE_MAX_TOKENS
+            payload = {"model": model, "max_tokens": budget,
+                       "messages": [{"role": "user",
+                                     "content": _PROBE_PROMPT}]}
+            if _thinking(model):
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
             r = requests.post(
                 f"{base}/chat/completions",
                 headers={"Content-Type": "application/json",
                          **auth_headers(prov, provider_api_key(prov))},
-                json={"model": model, "max_tokens": _PROBE_MAX_TOKENS,
-                      "messages": [{"role": "user", "content": _PROBE_PROMPT}]},
-                timeout=10)
+                json=payload, timeout=30)
             ms = int((time.time() - t0) * 1000)
             if r.status_code >= 400:
                 return _result("down", f"HTTP {r.status_code}", False)
-            choices = (r.json() or {}).get("choices") or []
+            body = r.json() or {}
+            choices = body.get("choices") or []
             got = bool(choices)
-            return _result("ok" if got else "down",
-                           f"generated in {ms}ms" if got
-                           else "empty completion", got)
+            if not got:
+                return _result("down", "empty completion", False)
+            # llama-server reports real per-token timings; use them rather than
+            # wall clock, which would include queueing and the HTTP round trip.
+            per_tok = ((body.get("timings") or {})
+                       .get("predicted_per_token_ms"))
+            slow = _latency_verdict(model, per_tok)
+            if slow:
+                return _result("unhealthy", slow, True)
+            return _result("ok", f"generated in {ms}ms", True)
     except Exception as e:
         return _result("down", f"{type(e).__name__}: {str(e)[:100]}", False)
 

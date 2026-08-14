@@ -81,13 +81,19 @@ def test_shallow_check_never_claims_to_have_proved_inference():
 
 
 def test_ollama_probe_uses_the_real_generation_call_site(monkeypatch):
-    """D1 requires ollama_manager.health_check — previously zero call sites."""
+    """D1 requires a real generation — previously zero call sites.
+
+    2026-08-14: the seam moved from `health_check` (bool) to `probe_generate`
+    (text + timings), because a bool cannot express "alive but paging". The
+    requirement is unchanged: a real generation must happen.
+    """
     called = {}
 
     class _Mgr:
-        def health_check(self, model):
+        def probe_generate(self, model, **kw):
             called["model"] = model
-            return True
+            return {"ok": True, "text": "Hello!", "ms_per_token": 20.0,
+                    "load_s": 0.5, "error": None}
 
         def list_models(self):
             return [{"name": "gemma4:e4b", "size_gb": 3.4}]
@@ -101,7 +107,7 @@ def test_ollama_probe_uses_the_real_generation_call_site(monkeypatch):
               "base_url": "http://localhost:11434"},
         use_cache=False)
 
-    assert called, "health_check was not called — the probe is not real"
+    assert called, "probe_generate was not called — the probe is not real"
     assert res["status"] == "ok"
     assert res["proved_inference"] is True
 
@@ -109,7 +115,7 @@ def test_ollama_probe_uses_the_real_generation_call_site(monkeypatch):
 def test_probe_failure_is_down_not_an_exception(monkeypatch):
     """A blowing-up backend must degrade to `down`, never raise into the route."""
     class _Mgr:
-        def health_check(self, model):
+        def probe_generate(self, model, **kw):
             raise ConnectionRefusedError("ollama not running")
 
         def list_models(self):
