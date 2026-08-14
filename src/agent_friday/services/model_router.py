@@ -133,7 +133,13 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
             "ANTHROPIC_API_KEY is not set. Set it via the setup wizard (Settings → API Keys) or as an environment variable, then restart the server."
         )
     if model is None:
-        model = _load_settings().get("orchestrator_model") or ANTHROPIC_MODEL_DEFAULT
+        # Same law as the dispatch ladders (2026-08-14): orchestrator_model
+        # can hold a NON-claude id (the llama.cpp brain's alias) — resolving
+        # it here sent 'qwen3.6-…' to Anthropic and 404'd. Only claude-ish
+        # ids may reach this endpoint.
+        _settings = _load_settings()
+        model = _claude_safe_model(_settings.get("orchestrator_model"),
+                                   _settings) or ANTHROPIC_MODEL_DEFAULT
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
@@ -179,6 +185,14 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     except Exception:
         pass
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+    # Badge truth (2026-08-14): text-only Claude calls (validator's
+    # tools-stripped retry, briefings) attribute like every other primitive.
+    try:
+        from agent_friday.services import attribution
+        attribution.record_generation(model, provider="anthropic",
+                                      seat="cloud")
+    except Exception:
+        pass
     return "".join(parts).strip()
 
 
@@ -358,13 +372,19 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
 
     errors = []
     for name, fn, use_model in attempts:
+        _leg = f"{name} ({use_model})" if use_model else name
         try:
             text = fn(use_model)
             if text and text.strip():
                 return text
-            errors.append(f"{name}: empty response")
+            errors.append(f"{_leg}: empty response")
         except Exception as e:
-            errors.append(f"{name}: {e}")
+            errors.append(f"{_leg}: {e}")
+        try:
+            from agent_friday.services import attribution
+            attribution.note_fallback(errors[-1])
+        except Exception:
+            pass
     raise RuntimeError(
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Set ANTHROPIC_API_KEY via the setup "
@@ -444,6 +464,16 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                         f"tool-calling conformance gate, so this turn is running on "
                         f"'{_seat['model']}' instead — the last known-green local seat. "
                         f"Mention this to the user briefly if relevant.]")
+                    # Badge truth: the substitution is part of this message's
+                    # provenance — noted in the trace, and record_generation
+                    # below will name the SUBSTITUTED model.
+                    try:
+                        from agent_friday.services import attribution
+                        attribution.note_fallback(
+                            f"seat gate: {_seat['requested']} → "
+                            f"{_seat['model']} ({_seat['reason'][:120]})")
+                    except Exception:
+                        pass
                     model = _seat['model']
                 else:
                     _seat_notice = (
@@ -581,6 +611,15 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 _resp if isinstance(_resp, str) else None)
             if _text:
                 _orb(result=_text)
+        except Exception:
+            pass
+        # Badge truth (2026-08-14): `model` here is POST-substitution — if
+        # the seat gate swapped the requested model, this is the one that
+        # actually answered, which is exactly what the badge must say.
+        try:
+            from agent_friday.services import attribution
+            attribution.record_generation(model, provider="ollama",
+                                          seat="local")
         except Exception:
             pass
         return _resp
@@ -836,6 +875,17 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
                 _resp if isinstance(_resp, str) else None)
             if _text:
                 _orb(result=_text)
+        except Exception:
+            pass
+        # Badge truth (2026-08-14): a local-classification descriptor (the
+        # llama.cpp brain) is a LOCAL seat even though it rides the OpenAI
+        # transport — the badge must say local, and must name the model this
+        # endpoint actually ran.
+        try:
+            from agent_friday.services import attribution
+            attribution.record_generation(
+                model, provider=pname,
+                seat="local" if local_bypass else "openai")
         except Exception:
             pass
         return _resp

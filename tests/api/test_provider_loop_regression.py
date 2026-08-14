@@ -68,6 +68,14 @@ def test_call_ollama_with_tools_reaches_shared_loop(monkeypatch):
     import agent_friday.routing.ollama_manager as ollama_manager
     fake = _FakeOllamaManager()
     monkeypatch.setattr(ollama_manager, "get_manager", lambda *a, **k: fake)
+    # This test pins the tool-schema conversion, not the seat gate — pin the
+    # gate green so the (2026-08-14) inventory-aware refusal can't strip the
+    # tools before they reach the fake manager.
+    from agent_friday.services import model_seat_gate as gate
+    monkeypatch.setattr(gate, "resolve_local_seat",
+                        lambda m, provider="local": {
+                            "model": m, "seat_ok": True, "requested": m,
+                            "reason": "gated green", "fallback": None})
 
     anthropic_tool = {
         "name": "read_file",

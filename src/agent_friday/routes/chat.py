@@ -320,6 +320,13 @@ def chat():
         # We ALWAYS consult the router now — even in cloud_only mode — so a
         # vault-touching request is force-routed local (or refused) and vault
         # data never reaches the cloud.
+        # Badge truth (2026-08-14): attribution is collected per-turn from
+        # the dispatch layer itself — reset before any primitive runs.
+        try:
+            from agent_friday.services import attribution as _attr
+            _attr.reset()
+        except Exception:
+            _attr = None
         _routing_cfg = settings.get('model_routing') or {}
         _orb_label = (message or '').strip().splitlines()[0][:24] or 'Chat'
         try:
@@ -707,10 +714,30 @@ def chat():
         # ── B1: model attribution on every assistant message, persisted so
         # it survives reloads. seat is the class ("local"/"cloud"/"openai"),
         # model is the exact id that generated this reply. ──
-        _seat_class = 'local' if _routed_local else (
-            'openai' if _provider == 'openai' else 'cloud')
-        _seat_model = (_route_info.get('model')
-                       or settings.get('orchestrator_model') or '')
+        # ── Badge truth (2026-08-14): attribute the ACTUAL responding model,
+        # recorded by the primitive that generated the final text — never the
+        # router's intent. The morning's live failure: every reply badged
+        # 'qwen3.6-35b-a3b-iq4nl' while the brain never bound its port and
+        # gemma4:e4b (seat substitution) or Claude (ladder) actually answered.
+        # Routing intent remains only as a last-resort fallback when no
+        # primitive recorded (it always records on success). ──
+        _gen = None
+        _fallback_chain = []
+        try:
+            if _attr is not None:
+                _gen = _attr.last_generation()
+                _fallback_chain = _attr.fallback_chain()
+        except Exception:
+            pass
+        if _gen and _gen.get('model'):
+            _seat_model = _gen['model']
+            _seat_class = _gen.get('seat') or (
+                'local' if _routed_local else 'cloud')
+        else:
+            _seat_class = 'local' if _routed_local else (
+                'openai' if _provider == 'openai' else 'cloud')
+            _seat_model = (_route_info.get('model')
+                           or settings.get('orchestrator_model') or '')
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -721,6 +748,8 @@ def chat():
             'model': _seat_model,
             'seat': _seat_class,
         }
+        if _fallback_chain:
+            friday_msg['fallback_chain'] = _fallback_chain
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
 
@@ -812,6 +841,7 @@ def chat():
             "model": _seat_model,
             "seat": _seat_class,
             "seat_events": _seat_events,
+            "fallback_chain": _fallback_chain,
         })
     except Exception as e:
         traceback.print_exc()
@@ -932,6 +962,11 @@ def chat_send():
         # Route through the provider-agnostic agent dispatcher rather than the
         # bare Anthropic loop, so this endpoint works on a local/OpenAI setup
         # instead of hard-failing with "ANTHROPIC_API_KEY is not set".
+        try:
+            from agent_friday.services import attribution as _attr2
+            _attr2.reset()
+        except Exception:
+            _attr2 = None
         reply, tool_trace = _generate_agent(
             messages, system=system_prompt, temperature=settings.get('temperature'),
             session_ctx=_sess_ctx, workspace=workspace,
@@ -961,6 +996,17 @@ def chat_send():
             _seat_model, _seat_class = effective_seat(settings)
         except Exception:
             _seat_events, _seat_model, _seat_class = [], '', ''
+        # Badge truth: prefer the ACTUAL generator over the configured seat.
+        _fallback_chain = []
+        try:
+            if _attr2 is not None:
+                _gen = _attr2.last_generation()
+                _fallback_chain = _attr2.fallback_chain()
+                if _gen and _gen.get('model'):
+                    _seat_model = _gen['model']
+                    _seat_class = _gen.get('seat') or _seat_class
+        except Exception:
+            pass
 
         # Create persistent message objects
         user_msg = {
@@ -981,6 +1027,8 @@ def chat_send():
             'model': _seat_model,
             'seat': _seat_class,
         }
+        if _fallback_chain:
+            friday_msg['fallback_chain'] = _fallback_chain
         CHAT_HISTORY.append(user_msg)
         CHAT_HISTORY.append(friday_msg)
 
@@ -1004,7 +1052,8 @@ def chat_send():
         return jsonify({"status": "ok", "user_msg": user_msg, "friday_msg": friday_msg,
                         "sources": sources, "tool_trace": tool_trace,
                         "model": _seat_model, "seat": _seat_class,
-                        "seat_events": _seat_events})
+                        "seat_events": _seat_events,
+                        "fallback_chain": _fallback_chain})
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
