@@ -227,6 +227,14 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             errors.append(f"{_leg}: empty response")
         except Exception as e:
             errors.append(f"{_leg}: {e}")
+        # Badge truth: every abandoned leg is part of this message's
+        # provenance — the reply the user finally sees came from whichever
+        # leg succeeded next.
+        try:
+            from agent_friday.services import attribution
+            attribution.note_fallback(errors[-1])
+        except Exception:
+            pass
     if vault_access:
         # Refuse rather than raise: the caller surfaces this as the reply, and
         # the request was deliberately kept off every cloud provider.
@@ -4861,6 +4869,16 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
 
             if resp.stop_reason != 'tool_use' or not tool_uses:
                 _orb_safe(process_update, orb_id, status='completed', progress=1.0, label='Done')
+                # Badge truth (2026-08-14): record the model that ACTUALLY
+                # generated this text — the badge layer reads this, never
+                # the router's intent.
+                try:
+                    from agent_friday.services import attribution
+                    attribution.record_generation(
+                        model or ANTHROPIC_MODEL_DEFAULT,
+                        provider="anthropic", seat="cloud")
+                except Exception:
+                    pass
                 return ("".join(text_parts).strip(), tool_trace)
 
             # Promote orb category to whatever tool family is most active this round.
