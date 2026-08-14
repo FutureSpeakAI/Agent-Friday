@@ -1,0 +1,434 @@
+"""
+Agent Friday — HardwareProfile
+
+The machine, described well enough to place models on it. Detected, cached,
+serialized, and refreshed when the hardware actually changes.
+
+Why this exists (decision D4, docs/audits/decisions-2026-08.md): Friday had no
+hardware-profile concept anywhere. Detection existed in three unrelated places
+and fed only Ollama *install advice* and a binary voice CPU/GPU gate -- nothing
+detected ever influenced chat, image, or embedding model selection. This module
+is the single detector those three collapse into.
+
+It EXTENDS the existing detection rather than forking a fourth:
+  * routing/ollama_manager.detect_hardware  -- GPU name/VRAM, RAM, platform
+  * services/nemo_voice.gpu_tier_ready      -- CUDA availability + free VRAM
+  * services/compute_provider._compute_specs -- CPU/RAM, with gpu_* declared
+                                                and never populated
+
+Three things it does that none of those did:
+
+1. **Multi-GPU is first-class.** `nvidia-smi --query-gpu` emits ONE LINE PER
+   GPU. `ollama_manager.detect_hardware` does `stdout.strip().split(",")` and
+   reads parts[0]/parts[1] -- on a two-GPU host that reads the first GPU's name
+   and VRAM and silently discards the rest. Every GPU is parsed here, kept in
+   index order, and every budget downstream is computed per device.
+
+2. **The GPU baseline is measured, not assumed.** On the reference instance the
+   Windows compositor holds 1261 MiB of the 12282 MiB card with zero models
+   resident. A VRAM budget that ignores it overcommits by exactly that much.
+
+3. **Every estimate records its method.** Memory bandwidth is a heuristic from
+   SMBIOS module speed and channel count, not a microbenchmark; disk read rate
+   is a real sequential read whose page-cache state is disclosed. A number
+   without its method is a number you cannot later distrust correctly.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from agent_friday.core import runtime_dir
+
+# Windows: never flash a console window for a probe (same flag the rest of the
+# tree guards on; see routing/ollama_manager.py).
+_POPEN_FLAGS = 0x08000000 if sys.platform == "win32" else 0
+
+PROFILE_VERSION = 1
+
+# SMBIOSMemoryType -> bandwidth class. 26 = DDR4, 34/35 = DDR5, 30 = LPDDR4.
+_SMBIOS_MEM_TYPE = {
+    20: "ddr", 21: "ddr2", 24: "ddr3", 26: "ddr4",
+    30: "lpddr4", 34: "ddr5", 35: "lpddr5",
+}
+
+# OS memory reserve (policy rule R1). Windows genuinely needs more headroom
+# than Linux before paging becomes destructive.
+OS_RESERVE_MIB = {"windows": 6144, "linux": 4096, "darwin": 4096}
+
+
+def _run(cmd, timeout=15):
+    """Best-effort subprocess text capture. Never raises."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, creationflags=_POPEN_FLAGS)
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  OS / CPU / RAM
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _os_family() -> str:
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def detect_os() -> dict:
+    return {"family": _os_family(), "version": platform.version(),
+            "release": platform.release()}
+
+
+def detect_cpu() -> dict:
+    threads = os.cpu_count() or 1
+    physical, model = None, platform.processor() or ""
+    try:
+        import psutil
+        physical = psutil.cpu_count(logical=False)
+    except Exception:
+        pass
+    if _os_family() == "windows":
+        out = _run(["powershell", "-NoProfile", "-Command",
+                    "(Get-CimInstance Win32_Processor | "
+                    "Select-Object -First 1 Name,NumberOfCores | "
+                    "ConvertTo-Json -Compress)"])
+        try:
+            d = json.loads(out)
+            model = d.get("Name", model) or model
+            physical = physical or d.get("NumberOfCores")
+        except Exception:
+            pass
+    return {"threads": threads, "physical_cores": physical,
+            "model": model.strip()}
+
+
+def detect_ram() -> dict:
+    total_mib = available_mib = 0
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        total_mib = round(vm.total / 1048576)
+        available_mib = round(vm.available / 1048576)
+    except Exception:
+        if _os_family() == "linux":
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal"):
+                            total_mib = round(int(line.split()[1]) / 1024)
+                        elif line.startswith("MemAvailable"):
+                            available_mib = round(int(line.split()[1]) / 1024)
+            except Exception:
+                pass
+    return {"total_mib": total_mib, "available_mib": available_mib}
+
+
+def detect_memory_bandwidth() -> dict:
+    """Bandwidth CLASS, by heuristic, with the method recorded.
+
+    Not a microbenchmark: this reads the SMBIOS module type, clock, and channel
+    count and multiplies. It is right about the class (which is what placement
+    needs -- 'is CPU offload going to be painful?') and approximate about the
+    number. `method` says so, so a caller can never mistake it for measured.
+    """
+    cls, gb_s, method = "unknown", None, "heuristic-smbios"
+    if _os_family() == "windows":
+        out = _run(["powershell", "-NoProfile", "-Command",
+                    "(Get-CimInstance Win32_PhysicalMemory | "
+                    "Select-Object Speed,SMBIOSMemoryType | "
+                    "ConvertTo-Json -Compress)"])
+        try:
+            d = json.loads(out)
+            mods = d if isinstance(d, list) else [d]
+            if mods:
+                speed = int(mods[0].get("Speed") or 0)
+                mtype = int(mods[0].get("SMBIOSMemoryType") or 0)
+                cls = _SMBIOS_MEM_TYPE.get(mtype, "unknown")
+                # channels ~= populated modules (dual-channel boards pair them)
+                channels = min(len(mods), 4) or 1
+                if speed:
+                    gb_s = round(speed * 8 * channels / 1000, 1)
+        except Exception:
+            pass
+    elif _os_family() == "darwin":
+        # Apple silicon shares one pool between CPU and GPU; the whole
+        # VRAM-vs-RAM split the policy assumes does not apply. Flagged so the
+        # policy can refuse rather than guess (fixture P6).
+        if platform.machine().startswith("arm"):
+            cls, method = "unified", "declared-platform"
+    return {"class": cls, "gb_s_estimate": gb_s, "method": method}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GPUs — multi-GPU correct, baseline measured
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _compute_class(name: str) -> str:
+    """Coarse capability bucket, enough to decide whether an FP8 build loads."""
+    n = (name or "").lower()
+    if any(t in n for t in ("h100", "h200", "b100", "b200", "gb200")):
+        return "datacenter-fp8"
+    if any(t in n for t in ("rtx 50", "rtx 40", "l40", "l4", "ada")):
+        return "consumer-fp8"          # Ada+ has native FP8
+    if any(t in n for t in ("rtx 30", "a100", "a10", "ampere")):
+        return "consumer-bf16"
+    if "rtx 20" in n or "turing" in n:
+        return "consumer-fp16"
+    return "unknown"
+
+
+def detect_gpus() -> list:
+    """Every GPU, in index order, with its measured idle baseline.
+
+    The bug this replaces: `nvidia-smi --query-gpu=name,memory.total
+    --format=csv,noheader,nounits` prints one line PER GPU.
+    ollama_manager.detect_hardware splits the whole blob on "," and reads
+    parts[0]/parts[1], so on a multi-GPU host VRAM parsing is undefined and
+    every GPU after the first is invisible. Here each line is one device.
+    """
+    out = _run(["nvidia-smi",
+                "--query-gpu=index,name,memory.total,memory.used,driver_version",
+                "--format=csv,noheader,nounits"], timeout=20)
+    gpus = []
+    for line in (out or "").strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 4:
+            continue
+        try:
+            idx = int(parts[0])
+            total = int(parts[2])
+            used = int(parts[3])
+        except (ValueError, IndexError):
+            continue
+        gpus.append({
+            "index": idx,
+            "name": parts[1],
+            "vram_total_mib": total,
+            # Live reading. NOT the idle floor -- see vram_baseline_mib.
+            "vram_used_mib": used,
+            # The idle floor is deliberately NOT set here. `memory.used` at an
+            # arbitrary moment includes whatever we ourselves have resident:
+            # detecting while a model was loaded once recorded a "baseline" of
+            # 11120 MiB on a 12282 MiB card, which would have left the policy a
+            # ~1 GB budget and refused every placement. Only refresh_baseline()
+            # with a verified-idle GPU may write this.
+            "vram_baseline_mib": None,
+            "vram_baseline_at": None,
+            "compute_class": _compute_class(parts[1]),
+            "driver": parts[4] if len(parts) > 4 else None,
+            "vendor": "nvidia",
+        })
+    return sorted(gpus, key=lambda g: g["index"])
+
+
+# Used when the idle floor has never been measured. Conservative on purpose: a
+# desktop compositor really does hold ~1 GB, and under-reserving overcommits the
+# card, which fails at load time rather than at plan time.
+DEFAULT_VRAM_BASELINE_MIB = {"windows": 1024, "darwin": 512, "linux": 256}
+
+
+def effective_baseline_mib(gpu: dict, os_family: str) -> int:
+    """The idle floor to budget against: measured if we have it, else the default."""
+    measured = gpu.get("vram_baseline_mib")
+    if isinstance(measured, int) and measured >= 0:
+        return measured
+    return DEFAULT_VRAM_BASELINE_MIB.get(os_family, 512)
+
+
+def refresh_baseline(profile: dict, *, assert_idle: bool = False) -> dict:
+    """Record each GPU's idle floor.
+
+    `assert_idle` is the caller promising that nothing of ours is resident --
+    the Arbiter calls this at boot, before it loads anything. Without that
+    promise the live reading is not a baseline and is refused, because a
+    poisoned floor is worse than a defaulted one: it is wrong and it is cached.
+    """
+    if not assert_idle:
+        return profile
+    live = {g["index"]: g for g in detect_gpus()}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    for g in profile.get("gpus", []):
+        cur = live.get(g["index"])
+        if cur:
+            g["vram_baseline_mib"] = cur["vram_used_mib"]
+            g["vram_baseline_at"] = stamp
+    save(profile)
+    return profile
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Disk — free space and a real read rate, for load-time estimates
+# ─────────────────────────────────────────────────────────────────────────────
+
+def measure_disk_read_mib_s(sample_path: Path | None = None,
+                            target_bytes: int = 512 * 1024 * 1024) -> dict:
+    """Sequential read rate, used to estimate model load time.
+
+    Reads a real large file if one is available (an Ollama blob), else writes
+    and reads back a temp file. The page-cache state is NOT controlled, so this
+    is a warm-ish upper bound -- recorded in `method` rather than pretended
+    away, because an over-optimistic rate produces transition timeouts that are
+    too tight, which is the failure that matters.
+    """
+    src = sample_path
+    if src is None:
+        blobs = Path(os.environ.get(
+            "OLLAMA_MODELS", Path.home() / ".ollama" / "models")) / "blobs"
+        if blobs.is_dir():
+            cands = [p for p in blobs.glob("sha256-*")
+                     if p.is_file() and p.stat().st_size > target_bytes]
+            if cands:
+                src = max(cands, key=lambda p: p.stat().st_size)
+    if src is None or not Path(src).exists():
+        return {"read_mib_s": None, "method": "unavailable"}
+    read, t0 = 0, time.time()
+    try:
+        with open(src, "rb", buffering=0) as f:
+            while read < target_bytes:
+                b = f.read(8 * 1024 * 1024)
+                if not b:
+                    break
+                read += len(b)
+    except Exception:
+        return {"read_mib_s": None, "method": "unavailable"}
+    el = time.time() - t0
+    if el <= 0 or not read:
+        return {"read_mib_s": None, "method": "unavailable"}
+    return {"read_mib_s": round((read / 1048576) / el, 1),
+            "method": "sequential-blob-read-warm"}
+
+
+def detect_disk(measure_rate: bool = False, prior: dict | None = None) -> dict:
+    """Free space always; read rate only when asked (it costs seconds)."""
+    try:
+        free_mib = round(shutil.disk_usage(str(runtime_dir().parent)).free
+                         / 1048576)
+    except Exception:
+        free_mib = 0
+    rate = {"read_mib_s": (prior or {}).get("read_mib_s"),
+            "method": (prior or {}).get("method", "inherited")}
+    if measure_rate or rate["read_mib_s"] is None:
+        m = measure_disk_read_mib_s()
+        if m["read_mib_s"] is not None:
+            rate = m
+    return {"free_mib": free_mib, **rate}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Profile assembly, identity, cache
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _profile_id(os_d, cpu, ram, gpus, mem) -> str:
+    """Stable over free space and driver patches; changes on real hardware change.
+
+    Deliberately EXCLUDES available RAM, free disk, and the GPU idle baseline --
+    those move minute to minute and would make the id useless as a cache key.
+    """
+    ident = {
+        "v": PROFILE_VERSION,
+        "os": os_d.get("family"),
+        "threads": cpu.get("threads"),
+        "cores": cpu.get("physical_cores"),
+        "cpu": cpu.get("model"),
+        "ram_mib": ram.get("total_mib"),
+        "mem_class": mem.get("class"),
+        "gpus": [(g["index"], g["name"], g["vram_total_mib"]) for g in gpus],
+    }
+    blob = json.dumps(ident, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def cache_path() -> Path:
+    return runtime_dir() / "residency" / "hardware-profile.json"
+
+
+def detect(measure_disk_rate: bool = False, prior: dict | None = None) -> dict:
+    os_d = detect_os()
+    cpu = detect_cpu()
+    ram = detect_ram()
+    mem = detect_memory_bandwidth()
+    gpus = detect_gpus()
+    disk = detect_disk(measure_rate=measure_disk_rate,
+                       prior=(prior or {}).get("disk"))
+    return {
+        "profile_version": PROFILE_VERSION,
+        "profile_id": _profile_id(os_d, cpu, ram, gpus, mem),
+        "detected_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "os": os_d,
+        "cpu": cpu,
+        "ram": ram,
+        "memory_bandwidth": mem,
+        "gpus": gpus,
+        "disk": disk,
+        "os_reserve_mib": OS_RESERVE_MIB.get(os_d["family"], 4096),
+    }
+
+
+def load_cached() -> dict | None:
+    try:
+        return json.loads(cache_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save(profile: dict) -> None:
+    """Atomic write; a half-written profile must never be readable."""
+    p = cache_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(profile, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        pass          # a profile that cannot be cached is still usable in-memory
+
+
+def get(force: bool = False, measure_disk_rate: bool = False) -> dict:
+    """The cached profile, re-detected when the hardware identity changed.
+
+    Cheap, mutable fields (free disk, available RAM, GPU idle baseline) are
+    refreshed on every call; the expensive disk-rate measurement is inherited
+    from the cache unless explicitly requested.
+    """
+    cached = None if force else load_cached()
+    fresh = detect(measure_disk_rate=measure_disk_rate, prior=cached)
+    if cached and cached.get("profile_id") == fresh["profile_id"] and not force:
+        # Same machine: keep the recorded detection time and any measured rate,
+        # take the live volatile readings.
+        cached["ram"] = fresh["ram"]
+        cached["disk"]["free_mib"] = fresh["disk"]["free_mib"]
+        for old, new in zip(cached.get("gpus", []), fresh.get("gpus", [])):
+            # Live usage tracks; the measured idle floor is PRESERVED. Only
+            # refresh_baseline(assert_idle=True) may overwrite that, or a
+            # detection taken mid-load would silently destroy a good baseline.
+            old["vram_used_mib"] = new["vram_used_mib"]
+            old.setdefault("vram_baseline_mib", None)
+            old.setdefault("vram_baseline_at", None)
+        if measure_disk_rate:
+            cached["disk"] = fresh["disk"]
+        save(cached)
+        return cached
+    save(fresh)
+    return fresh
+
+
+def summary(profile: dict | None = None) -> str:
+    """One-line human form, for logs and refusal messages."""
+    p = profile or get()
+    g = ", ".join("%s %d MiB" % (x["name"], x["vram_total_mib"])
+                  for x in p.get("gpus", [])) or "no GPU"
+    return "%s | %s (%s threads) | %d MiB RAM (%s) | %s" % (
+        p["os"]["family"], p["cpu"]["model"], p["cpu"]["threads"],
+        p["ram"]["total_mib"], p["memory_bandwidth"]["class"], g)
