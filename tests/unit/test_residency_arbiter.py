@@ -108,9 +108,32 @@ def test_boot_adopts_an_already_resident_seat_instead_of_reloading(arb):
     assert ("adopt", "gemma4:12b") in actions
 
 
-def test_boot_failure_rolls_back_and_degrades():
+def test_a_backend_that_cannot_hold_a_model_degrades_the_pin_not_the_boot():
+    """Measured case: Ollama stores gemma4:e2b across several blobs, so a
+    single blob path gives llama-server "wrong number of tensors; expected
+    2012, got 601". Taking the whole boot down for that would leave the machine
+    with NO seats, which is strictly worse than one unenforced pin."""
     a = ra.Arbiter(profile=fx.P1, entries=fx.catalog(fx.P1),
                    ollama=FakeOllama(), llama=FakeLlama(fail=True),
+                   comfy=FakeComfy(),
+                   gguf_paths={"gemma4:12b": "/x/12b.gguf"})
+    a.compute_plan()
+    a.boot(measure_baseline=False)
+    assert a.state == ra.STATE_DEFAULT
+    seat = a.plan["seats"]["interactive_brain"]
+    assert "MAY BE EVICTED" in seat["pin_unenforced"]
+    assert "boom" in seat["pin_unenforced"], "the real reason is carried"
+    assert "gemma4:12b" in a.ollama.resident()
+
+
+def test_boot_failure_rolls_back_and_degrades():
+    """When BOTH backends refuse, there is nothing to degrade to."""
+    class DeadOllama(FakeOllama):
+        def load(self, model_id, num_ctx, keep_alive="15m", think=False):
+            raise RuntimeError("ollama is down too")
+
+    a = ra.Arbiter(profile=fx.P1, entries=fx.catalog(fx.P1),
+                   ollama=DeadOllama(), llama=FakeLlama(fail=True),
                    comfy=FakeComfy(),
                    gguf_paths={"gemma4:12b": "/x/12b.gguf"})
     a.compute_plan()

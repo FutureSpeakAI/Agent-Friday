@@ -368,19 +368,75 @@ def entry(model_id: str, profile: dict,
     }
 
 
+def gguf_registry_path() -> Path:
+    return runtime_dir() / "residency" / "gguf_models.json"
+
+
+def gguf_models() -> dict:
+    """model_id -> GGUF path, for models served by llama-server.
+
+    Ollama's `list_models` is not the whole local inventory any more. After the
+    26b moved to llama-server it stopped appearing in `ollama list` entirely,
+    and a catalog built from Ollama alone silently loses the heavy seat — the
+    plan then has no heavy_hitter and the arbiter cannot grant a heavy lease.
+    """
+    try:
+        raw = json.loads(gguf_registry_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {k: v for k, v in raw.items() if Path(v).exists()}
+
+
+def register_gguf(model_id: str, path) -> None:
+    p = gguf_registry_path()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data[model_id] = str(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def installed_entries(profile: dict) -> list:
-    """A CatalogEntry for every locally installed model."""
+    """A CatalogEntry for every locally available model, on either backend."""
     try:
         from agent_friday.routing.ollama_manager import get_manager
         models = get_manager().list_models()
     except Exception:
         models = []
-    out = []
+    out, seen = [], set()
     for m in models:
         name = m.get("name")
         if not name:
             continue
+        seen.add(name)
         out.append(entry(name, profile, BACKEND_OLLAMA,
                          artifact_bytes=int(round(
                              (m.get("size_gb") or 0) * 1024 ** 3))))
+    for model_id, path in sorted(gguf_models().items()):
+        if model_id in seen:
+            continue
+        try:
+            size = Path(path).stat().st_size
+        except Exception:
+            size = 0
+        e = entry(model_id, profile, BACKEND_LLAMA_SERVER, artifact_bytes=size)
+        # /api/show cannot describe a model the daemon does not have, so fill
+        # the facts the policy actually branches on from the seed + declared
+        # active-parameter table rather than leaving them empty.
+        if not e.get("modalities"):
+            e["modalities"] = ["completion", "tools", "thinking"]
+            e["can_generate"] = True
+            e["is_embedding"] = False
+            e["needs_think_disabled"] = True
+        if e.get("params_active_b") and not e.get("params_total_b"):
+            e["params_total_b"] = 25.8 if "26" in model_id else None
+            e["is_moe"] = bool(e["params_total_b"] and
+                               e["params_active_b"] < e["params_total_b"])
+        e["gguf_path"] = str(path)
+        out.append(e)
     return out

@@ -422,20 +422,32 @@ class Arbiter:
         entry = self._entry(seat["model_id"])
         gguf = self.gguf_paths.get(seat["model_id"])
         t0 = time.time()
+        why = None
         if gguf:
             port = PORT_BASE + len(self.llama.procs)
-            took = self.llama.load(seat["model_id"], seat["num_ctx"],
-                                   gguf_path=gguf, port=port,
-                                   timeout=self.timeout_for(entry))
+            try:
+                took = self.llama.load(seat["model_id"], seat["num_ctx"],
+                                       gguf_path=gguf, port=port,
+                                       timeout=self.timeout_for(entry))
+                self._record("load-pinned", role, seat["model_id"], took)
+                return took
+            except TransitionError as e:
+                # A backend that cannot hold this model is a DEGRADED PIN, not
+                # a failed boot. Measured case: Ollama stores gemma4:e2b across
+                # several blobs, so a single blob path gives llama-server
+                # "wrong number of tensors; expected 2012, got 601". Taking the
+                # whole boot down for that would leave the machine with no
+                # seats at all, which is strictly worse than one unenforced pin.
+                why = str(e)
         else:
-            # No GGUF mapped: fall back to Ollama and say so, rather than
-            # silently claiming a pin the backend will not honour.
-            self.ollama.load(seat["model_id"], seat["num_ctx"])
-            took = round(time.time() - t0, 2)
-            seat["pin_unenforced"] = (
-                "no GGUF mapped for %s, so this seat runs on Ollama and MAY BE "
-                "EVICTED by the daemon's own scheduler (R9)" % seat["model_id"])
-        self._record("load-pinned", role, seat["model_id"], took)
+            why = "no GGUF mapped"
+
+        self.ollama.load(seat["model_id"], seat["num_ctx"])
+        took = round(time.time() - t0, 2)
+        seat["pin_unenforced"] = (
+            "%s for %s, so this seat runs on Ollama and MAY BE EVICTED by the "
+            "daemon's own scheduler (R9)" % (why, seat["model_id"]))
+        self._record("load-pinned-degraded", role, seat["model_id"], took)
         return took
 
     def _load_leased(self, seat, role):

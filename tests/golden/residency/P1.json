@@ -52,7 +52,8 @@
       "num_ctx": 16384,
       "offload": {
         "expert_offload": true,
-        "host_mib": 8805
+        "host_mib": 8805,
+        "n_cpu_moe": 20
       },
       "over_target": false,
       "role": "heavy_hitter",

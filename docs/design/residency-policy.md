@@ -362,8 +362,14 @@ RAM 16384 × 0.75 = 12288 hard; × 0.65 = 10650 target; − 6144 Windows reserve
 
 | Role | Model | Device | num_ctx | Status | Rule |
 |---|---|---|---:|---|---|
-| `interactive_brain` | `gemma4:e4b` | gpu:0 | 8192 | pinned (3081) | **R6 demotion** — the 12b needs 8001 > 6368 and is dense, so it must fit or be demoted |
-| `sidekick` | `gemma4:e2b` | gpu:0 | 4096 | pinned (1763) | 3081 + 1763 = 4844 ≤ 6368 ✓ |
+| `interactive_brain` | `gemma4:e4b` | gpu:0 | 16384 | pinned (3081) | **R6 demotion** — the 12b needs 8001 > 6368 and is dense, so it must fit or be demoted |
+| `sidekick` | `gemma4:e2b` | gpu:0 | 8192 | pinned (1763) | 3081 + 1763 = 4844 ≤ 6368 ✓ |
+
+> **num_ctx is per ROLE, not per profile.** An earlier draft of this table shrank the contexts
+> on the smaller machine out of habit. The measured KV curve says not to: on the gemma4 family
+> context is nearly free (the 12b holds 7690 MiB at 4k and 8001 MiB at 16k — 311 MiB across a
+> 4× increase), so a cramped profile buys almost no VRAM by cutting the window and pays for it
+> in every conversation. Weights are what must be demoted, and R6 does that.
 | `embedder` | `qwen3-embedding:0.6b` | cpu | 2048 | resident | R3 — no VRAM headroom |
 | `heavy_hitter` | **none** | — | — | **refused** | **R2** — 17391 + 6144 reserve = 23535 > 12288 hard ceiling. Escalates to cloud. |
 | `image` | Z-Image FP8 | gpu:0 | n/a | leased, **evicts both pinned seats** | R5 |
@@ -575,7 +581,30 @@ alternative — the same contract as the override refusal in §2.4, so callers h
 
 ## 8. Decision questions
 
-Each answerable in one sentence.
+**Q1, Q2 and Q3 were answered by Stephen on 2026-08-14 and are recorded as resolved below.
+Q4 and Q5 remain open.** The questions are kept as written so the resolutions have their
+reasoning attached rather than arriving as bare assertions.
+
+### Resolutions
+
+| # | Answer | Consequence for Phase 2 |
+|---|---|---|
+| **Q1** | **CPU-resident embedder, as designed.** | §5.1 stands unchanged. The pinned sidekick keeps its 166 tok/s seat. |
+| **Q2** | **The Arbiter runs pinned seats as llama-server processes it owns.** | R9 gains a mechanism. Pinned seats on P1 are no longer Ollama's to evict — see §6.3. Ollama remains the backend for *leased* and on-demand seats, where its own scheduler evicting under pressure is harmless. |
+| **Q3** | **Delete the Ollama `gemma4:26b` copy first, then fetch Unsloth `UD-Q4_K_M`.** | The comparison is quant-for-quant (Q4_K_M vs UD-Q4_K_M) rather than confounded by a different quantization, so "pick by number" means something. Executed: the Ollama copy was removed *after* its measurement was banked (§1.2), taking free disk 19.6 → 36.3 GB; the 16.95 GB artifact leaves 19.4 GB, satisfying R8. Re-pull is the recovery path if llama-server loses. |
+
+**Q2 has a consequence worth stating plainly, because it enlarges the Arbiter's job.** Running
+pinned seats on llama-server means the Arbiter owns process lifecycle — spawn, readiness probe,
+health, termination, and restart-on-crash — for one process per pinned seat, each on its own
+loopback port, each registered through the existing `~/.friday/providers/*.json` descriptor
+mechanism. That mechanism was deliberately preserved when the qwen3.6 brain was decommissioned
+this session, and this is what it was preserved for. **UNKNOWN:** whether llama-server can load
+Ollama's own GGUF blobs directly from its content-addressed store, which would avoid
+re-downloading weights that are already on disk for the 12b and e2b. Settled by pointing
+`llama-server -m` at a blob path; if it cannot, pinned seats need their own GGUF artifacts and
+the disk budget in R8 must account for holding both copies.
+
+---
 
 **Q1 — Is a CPU-resident embedder on P1 acceptable?** R3 refuses it on the GPU by 1796 MiB
 (§4.2), and it costs 2029 MiB of VRAM for a 639 MB artifact, so the alternative is dropping the
