@@ -248,7 +248,17 @@ class Arbiter:
     # ── planning ────────────────────────────────────────────────────────────
 
     def compute_plan(self, overrides=None):
-        self.plan = rp.plan(self.profile, self.entries, overrides)
+        """Plan against the LIVE prompt overhead, not a recorded constant.
+
+        The system prompt is assembled from the vault, self-knowledge and
+        persona, and the tool registry grows when someone adds a tool. Both are
+        subtracted from every seat's usable window, so a plan built on a stale
+        overhead figure hands out windows that are the wrong size in a way
+        nothing would report.
+        """
+        from agent_friday.services import context_budget
+        self.plan = rp.plan(self.profile, self.entries, overrides,
+                            overhead_tokens=context_budget.overhead_tokens())
         return self.plan
 
     def timeout_for(self, entry):
@@ -428,6 +438,39 @@ class Arbiter:
                                  "model_id": model_id, "seconds": seconds,
                                  "state": self.state})
 
+    def _measure_resident(self, seat, cold_load_s=None):
+        """Record what a seat ACTUALLY cost at the context it was given.
+
+        Placement at an unmeasured context is an estimate — extrapolated along
+        the model's KV slope, or in the worst case a lower bound from a smaller
+        context. Loading the seat is the moment that estimate can be replaced
+        with a fact, and the next plan then works from evidence. Without this
+        the ladder would keep re-deciding from the same two seed rows forever.
+        """
+        model_id, num_ctx = seat.get("model_id"), seat.get("num_ctx")
+        if not model_id or not num_ctx:
+            return
+        try:
+            for m in (_get(self.ollama.base_url + "/api/ps") or {}) \
+                    .get("models", []):
+                if m.get("name") != model_id:
+                    continue
+                vram = round((m.get("size_vram") or 0) / 1048576)
+                total = round((m.get("size") or 0) / 1048576)
+                if not total:
+                    return
+                row = {"num_ctx": num_ctx, "vram_mib": vram,
+                       "total_mib": total,
+                       "pct_gpu": round(100.0 * vram / total) if total else 0,
+                       "backend": rc.BACKEND_OLLAMA}
+                if cold_load_s:
+                    row["cold_load_s"] = round(cold_load_s, 2)
+                rc.record_measurement(
+                    model_id, rc.profile_fingerprint(self.profile), row)
+                return
+        except Exception:
+            pass
+
     def _load_pinned(self, seat, role):
         """R9: a pinned seat is a process we own, not a request to a daemon."""
         entry = self._entry(seat["model_id"])
@@ -455,6 +498,7 @@ class Arbiter:
 
         self.ollama.load(seat["model_id"], seat["num_ctx"])
         took = round(time.time() - t0, 2)
+        self._measure_resident(seat, took)
         seat["pin_unenforced"] = (
             "%s for %s, so this seat runs on Ollama and MAY BE EVICTED by the "
             "daemon's own scheduler (R9)" % (why, seat["model_id"]))
@@ -485,6 +529,7 @@ class Arbiter:
         else:
             self.ollama.load(seat["model_id"], seat["num_ctx"] or 2048)
             took = round(time.time() - t0, 2)
+            self._measure_resident(seat, took)
         self._record("load-leased", role, seat["model_id"], took)
         return took
 

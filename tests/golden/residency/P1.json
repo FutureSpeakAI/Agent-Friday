@@ -20,7 +20,7 @@
     }
   },
   "pinned_vram_mib": {
-    "gpu:0": 9529
+    "gpu:0": 9625
   },
   "policy_version": 1,
   "profile_id": "p1-reference",
@@ -29,7 +29,7 @@
     "embedder": {
       "backend": "ollama",
       "demoted_from": "gpu",
-      "demotion_reason": "needs 2029 MiB, 468 MiB left after the pinned seats",
+      "demotion_reason": "needs 2029 MiB, 372 MiB left after the pinned seats",
       "demotion_rule": "R3",
       "device": "cpu",
       "est_load_s": 4.5,
@@ -44,6 +44,13 @@
     },
     "heavy_hitter": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": "needs 17391 MiB at the floor rung 32768, budget is 9997 MiB",
+        "floor": 28407,
+        "room_tokens": 12553,
+        "want": 44791
+      },
       "device": "gpu:0+cpu",
       "est_load_s": 59.1,
       "is_moe": true,
@@ -75,19 +82,33 @@
     },
     "interactive_brain": {
       "backend": "ollama",
+      "context": {
+        "basis": "measured",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 110857,
+        "want": 118519
+      },
       "device": "gpu:0",
       "est_load_s": 21.2,
       "is_moe": false,
       "model_id": "gemma4:12b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 131072,
       "offload": {},
       "role": "interactive_brain",
       "status": "pinned",
-      "vram_mib": 7718
+      "vram_mib": 7814
     },
     "sidekick": {
       "backend": "ollama",
+      "context": {
+        "basis": "measured",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 12553,
+        "want": 28407
+      },
       "device": "gpu:0",
       "est_load_s": 20.3,
       "is_moe": false,
@@ -101,13 +122,20 @@
     },
     "sidekick_heavy": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 45321,
+        "want": 44791
+      },
       "device": "gpu:0",
       "displaces": "loaded on demand; may displace a pinned seat",
       "est_load_s": 26.0,
       "is_moe": false,
       "model_id": "gemma4:e4b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick_heavy",
       "status": "leased",
