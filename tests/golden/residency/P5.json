@@ -54,7 +54,9 @@
       "offload": {
         "expert_offload": true,
         "host_mib": 17391,
-        "n_cpu_moe": null
+        "lease_budget_mib": null,
+        "n_cpu_moe": null,
+        "n_cpu_moe_basis": null
       },
       "over_target": true,
       "role": "heavy_hitter",

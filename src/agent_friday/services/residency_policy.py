@@ -44,6 +44,34 @@ DISK_FLOOR_MIB = 10 * 1024       # R8
 # 9802 MiB) and collapsed at 12 (14.94 tok/s, host RAM 31.5 of 31.9 GB).
 MOE_CPU_LAYERS_DEFAULT = 20
 
+# The sweep, as data. (n_cpu_moe, vram_mib, tok_s) on the reference instance,
+# 2026-08-14. More layers on the CPU means less VRAM and less speed.
+MOE_SWEEP = [(16, 10170, 31.34), (20, 9802, 27.80)]
+
+
+def n_cpu_moe_for_budget(budget_mib: int | None) -> tuple[int, str]:
+    """(layers, basis) — how many expert layers must sit on the CPU to fit.
+
+    This became a function rather than a constant when R10 took 1811 MiB off
+    the lease budget: 20 layers lands at 9802 MiB, which fit the old 9997 MiB
+    lease and does not fit the 8186 MiB one. Something had to give, and the
+    honest thing is for the plan to say what.
+
+    Interpolates the measured sweep and extrapolates beyond it at the same
+    MiB-per-layer rate, reporting "extrapolated" when it has left the measured
+    range. An extrapolated operating point is a starting guess for a sweep, not
+    a result — the number to trust is the one the next sweep records.
+    """
+    if budget_mib is None:
+        return MOE_CPU_LAYERS_DEFAULT, "measured"
+    for layers, vram, _ in MOE_SWEEP:
+        if vram <= budget_mib:
+            return layers, "measured"
+    (lo_l, lo_v, _), (hi_l, hi_v, _) = MOE_SWEEP[0], MOE_SWEEP[-1]
+    per_layer = (lo_v - hi_v) / float(hi_l - lo_l) or 1.0
+    extra = int(round((hi_v - budget_mib) / per_layer))
+    return max(hi_l + extra, hi_l + 1), "extrapolated"
+
 RULES = [
     {"id": "R1", "name": "os-reserve",
      "text": "OS memory reserve subtracted before any RAM budget.",
@@ -79,6 +107,11 @@ RULES = [
     {"id": "R9", "name": "pinned-not-delegated",
      "text": "A pinned seat is not delegated to a backend scheduler that "
              "evicts on its own criteria.", "thresholds": {}},
+    {"id": "R10", "name": "sidekick-always-resident",
+     "text": "The sidekick seat survives every lease. Friday stays awake and "
+             "answering while a heavy or image job holds the card, so a lease "
+             "budget is the GPU budget MINUS the retained sidekick.",
+     "thresholds": {}},
 ]
 
 RULE_BY_ID = {r["id"]: r for r in RULES}
@@ -143,6 +176,34 @@ DEFAULT_NUM_CTX = {
 # Seats that carry neither tool schemas nor a system prompt, and so are not
 # subject to the overhead arithmetic at all.
 NO_PROMPT_ROLES = frozenset({"embedder"})
+
+# R10. Seats a lease may NOT take. Stephen, 2026-08-15: "keep e2b awake so
+# Friday is always alive." A lease used to stand down the whole pinned set,
+# which meant asking for depth made Friday mute for the duration — the machine
+# looked hung rather than busy.
+#
+# This is not free and the plan must not pretend otherwise: on the reference
+# instance the sidekick holds 1811 MiB, so a lease sees 8186 MiB instead of
+# 9997 and the heavy model pushes more experts to the CPU. That cost is
+# subtracted here, in the plan, rather than discovered at load time.
+RETAINED_THROUGH_LEASE = frozenset({"sidekick"})
+
+
+def retained_mib(seats: dict) -> int:
+    """VRAM a lease cannot reclaim, because R10 keeps those seats resident."""
+    total = 0
+    for role in RETAINED_THROUGH_LEASE:
+        s = seats.get(role)
+        if s and str(s.get("device", "")).startswith("gpu"):
+            total += s.get("vram_mib") or 0
+    return total
+
+
+def _lease_budget(budgets: list, seats: dict) -> int | None:
+    """What a lease actually gets: the largest GPU, less the retained seats."""
+    if not budgets:
+        return None
+    return max(b["available_mib"] for b in budgets) - retained_mib(seats)
 
 
 def _refusal(role, model, rule_id, explanation, **numbers):
@@ -550,12 +611,12 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             if seats["interactive_brain"] else None
 
     if sidekick_heavy is not None:
-        # A leased seat is sized against the WHOLE GPU budget, not the residual
-        # after the pinned seats: a lease is exactly the moment the Arbiter is
-        # allowed to stand the brain down.
-        whole = max((b["available_mib"] for b in budgets), default=None)
-        cb = context_for("sidekick_heavy", sidekick_heavy, whole,
-                         overhead_tokens)
+        # A leased seat is sized against the LEASE budget: the whole GPU minus
+        # whatever R10 keeps resident. Not the residual after every pinned seat
+        # (a lease is exactly when the brain may stand down) and not the whole
+        # card either (the sidekick does not stand down).
+        cb = context_for("sidekick_heavy", sidekick_heavy,
+                         _lease_budget(budgets, seats), overhead_tokens)
         ctx = cb["num_ctx"] or DEFAULT_NUM_CTX["sidekick_heavy"]
         need = cb["vram_mib"]
         dev = ("gpu:%d" % order[0]["index"]) if budgets else "cpu"
@@ -586,8 +647,9 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
 
     # ── heavy_hitter placement and the RAM check.
     if heavy is not None:
-        seats["heavy_hitter"], hr = _heavy(heavy, heavy_seat, budgets, free,
-                                           ram, profile, overhead_tokens)
+        seats["heavy_hitter"], hr = _heavy(
+            heavy, heavy_seat, budgets, free, ram, profile, overhead_tokens,
+            _lease_budget(budgets, seats))
         if hr:
             refusals.append(hr)
     elif gen == []:
@@ -601,7 +663,11 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
             "role": "image", "model_id": "z-image-turbo-fp8",
             "backend": "comfyui", "device": "gpu:%d" % idx, "num_ctx": None,
             "offload": {}, "status": "leased", "exclusive": True,
-            "displaces": ("gpu:%d only" % idx) if multi_gpu else "all seats",
+            # R5 minus R10: exclusive of everything except the seat that keeps
+            # Friday answering while the picture renders.
+            "displaces": ("gpu:%d only" % idx) if multi_gpu else
+            "all seats except %s" % ", ".join(sorted(RETAINED_THROUGH_LEASE)),
+            "retained_mib": retained_mib(seats),
             "vram_mib": None, "est_load_s": None,
         }
     else:
@@ -619,18 +685,22 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     return _finish(profile, seats, refusals, budgets, ram)
 
 
-def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens):
+def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens,
+           lease_cap):
     """Place the heavy seat, or refuse it with arithmetic.
 
-    The capacity question for a LEASED seat is the GPU's whole budget, not the
-    residual after the pinned seats: a lease is exactly the moment the Arbiter
-    is allowed to evict them. Asking only about the residual would offload a
-    model that would have fit outright once the brain stepped aside.
+    The capacity question for a LEASED seat is the LEASE budget, not the
+    residual after the pinned seats and not the whole card either. A lease is
+    the moment the brain may be stood down — asking about the residual would
+    offload a model that would have fit once the brain stepped aside. But R10
+    holds the sidekick resident through the lease, so that VRAM is genuinely
+    not available and pretending otherwise would place a model that then has to
+    spill somewhere nobody planned for.
     """
     if preplaced is not None:
         return preplaced, None
 
-    whole = max((b["available_mib"] for b in budgets), default=None)
+    whole = lease_cap
     cb = context_for("heavy_hitter", heavy, whole, overhead_tokens)
     # When nothing on the ladder fits, the seat still needs an explicit context
     # (R7) — it takes the floor rung and offloads, rather than being handed the
@@ -649,7 +719,8 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens):
 
     if budgets and total is not None:
         best = max(budgets, key=lambda b: (b["available_mib"], -b["index"]))
-        if total <= best["available_mib"]:
+        if total <= (lease_cap if lease_cap is not None
+                     else best["available_mib"]):
             i = best["index"]
             if free.get(i, 0) >= total:
                 free[i] -= total
@@ -662,9 +733,11 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens):
             seat["context"] = ctx_info
             return seat, None
 
-    # Does not fit whole. The GPU keeps what it can hold; the rest is host RAM.
+    # Does not fit whole. The GPU keeps what it can hold BESIDE the retained
+    # sidekick; the rest is host RAM.
     if budgets:
-        cap = max(b["available_mib"] for b in budgets)
+        cap = lease_cap if lease_cap is not None else \
+            max(b["available_mib"] for b in budgets)
         gpu_portion = min(measured_vram or cap, cap)
     else:
         gpu_portion = 0
@@ -689,16 +762,18 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens):
     seat = _placement(heavy, "heavy_hitter",
                       ("gpu:%d+cpu" % sorted(free)[0]) if budgets else "cpu",
                       ctx, "leased", gpu_portion)
+    # The operating point, carried in the PLAN rather than left implicit in the
+    # Arbiter, and derived from the lease budget rather than fixed — because
+    # R10 changed that budget and a constant would silently overrun it.
+    layers, layer_basis = (n_cpu_moe_for_budget(lease_cap)
+                           if (budgets and heavy.get("is_moe"))
+                           else (None, None))
     seat["offload"] = {
         "expert_offload": bool(heavy.get("is_moe")),
         "host_mib": host_mib,
-        # The measured operating point, carried in the PLAN rather than left
-        # implicit in the Arbiter. Swept on the reference instance: 27.80 tok/s
-        # at 9802 MiB, against a collapse to 14.94 at --n-cpu-moe 12 where host
-        # RAM hit 31.5 of 31.9 GB. 16 is faster (31.34) and exceeds the R3
-        # ceiling by 173 MiB, so it is not offered.
-        "n_cpu_moe": MOE_CPU_LAYERS_DEFAULT if (budgets and heavy.get("is_moe"))
-        else None,
+        "n_cpu_moe": layers,
+        "n_cpu_moe_basis": layer_basis,
+        "lease_budget_mib": lease_cap,
     }
     seat["over_target"] = need > ram["target_ceiling_mib"]
     seat["context"] = ctx_info

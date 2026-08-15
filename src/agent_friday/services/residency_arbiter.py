@@ -375,7 +375,7 @@ class Arbiter:
                                   "expires_at": time.time() + ttl_s}
                 elif kind == "image_job":
                     displaced = self._evict_pinned()
-                    self.ollama.evict_all()
+                    self._evict_all_but_retained()
                     took = self.comfy.start()
                     self._record("start", "image", "comfyui", took)
                     self.lease = {"kind": kind, "role": "image",
@@ -409,7 +409,7 @@ class Arbiter:
                     self.llama.evict(self.lease["model_id"])
                 elif kind == "image_job":
                     self.comfy.stop()
-                self._restore_pinned()
+                self._restore_pinned(self.lease.get("displaced"))
                 self.lease = None
                 self.state = STATE_DEFAULT
                 el = round(time.time() - t0, 2)
@@ -534,8 +534,17 @@ class Arbiter:
         return took
 
     def _evict_pinned(self):
+        """Stand down the seats a lease may take. R10 says which it may not.
+
+        The sidekick stays. Before 2026-08-15 a lease evicted the whole pinned
+        set, so asking for depth made Friday mute for the duration — from the
+        outside the machine looked hung rather than busy. Stephen's call:
+        "keep e2b awake so Friday is always alive."
+        """
         displaced = []
         for role in ("interactive_brain", "sidekick", "embedder"):
+            if role in rp.RETAINED_THROUGH_LEASE:
+                continue
             seat = (self.plan["seats"] or {}).get(role)
             if not seat or not str(seat.get("device", "")).startswith("gpu"):
                 continue
@@ -547,17 +556,46 @@ class Arbiter:
                          round(time.time() - t0, 2))
         return displaced
 
-    def _restore_pinned(self):
-        for role in ("interactive_brain", "sidekick"):
+    def _restore_pinned(self, roles=None):
+        """Reload what a lease actually displaced.
+
+        `roles` comes from the lease's own record, so a retained seat is not
+        needlessly reloaded — reloading the sidekick would evict it first and
+        briefly produce exactly the silence R10 exists to prevent.
+        """
+        for role in (roles if roles is not None
+                     else ("interactive_brain", "sidekick")):
+            if role in rp.RETAINED_THROUGH_LEASE:
+                continue
             seat = (self.plan["seats"] or {}).get(role)
             if seat and seat.get("status") == "pinned":
                 self._load_pinned(seat, role)
 
+    def _retained_models(self):
+        seats = self.plan["seats"] or {}
+        return {(seats.get(r) or {}).get("model_id")
+                for r in rp.RETAINED_THROUGH_LEASE if seats.get(r)}
+
+    def _evict_all_but_retained(self):
+        """Clear the card for an exclusive lease, except what R10 keeps.
+
+        `evict_all()` on either backend would take the sidekick with everything
+        else. Evicting and then reloading it would cost a cold start and open
+        exactly the window of silence R10 exists to close, so the retained
+        seats are named and skipped instead.
+        """
+        keep = self._retained_models()
+        for name in list(self.ollama.resident()):
+            if name not in keep:
+                self.ollama.evict(name)
+        for name in list(self.llama.procs):
+            if name not in keep:
+                self.llama.evict(name)
+
     def _rollback(self):
         try:
             self.comfy.stop()
-            self.llama.evict_all()
-            self.ollama.evict_all()
+            self._evict_all_but_retained()
             self._restore_pinned()
             self.lease = None
         except Exception:

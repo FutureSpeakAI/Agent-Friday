@@ -70,12 +70,13 @@
     "image": {
       "backend": "comfyui",
       "device": "gpu:0",
-      "displaces": "all seats",
+      "displaces": "all seats except sidekick",
       "est_load_s": null,
       "exclusive": true,
       "model_id": "z-image-turbo-fp8",
       "num_ctx": null,
       "offload": {},
+      "retained_mib": 1811,
       "role": "image",
       "status": "leased",
       "vram_mib": null

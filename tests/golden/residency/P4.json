@@ -84,6 +84,7 @@
       "model_id": "z-image-turbo-fp8",
       "num_ctx": null,
       "offload": {},
+      "retained_mib": 1811,
       "role": "image",
       "status": "leased",
       "vram_mib": null
