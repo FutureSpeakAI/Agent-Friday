@@ -19,6 +19,12 @@ seat_gate_bp = Blueprint("seat_gate", __name__)
 # Models with a gate run currently in flight (visible as running in the UI).
 _RUNNING = set()
 _RUNNING_LOCK = threading.Lock()
+# Only ONE gate run touches a model at a time, machine-wide. Clicking "gate" on
+# four models used to start four concurrent runs that evicted each other from
+# VRAM; every case then paid a cold reload and timed out. Queued runs still
+# register their orb immediately, so the UI shows them waiting rather than
+# silently doing nothing.
+_GATE_SERIAL_LOCK = threading.Lock()
 
 
 def _statuses_payload():
@@ -78,24 +84,45 @@ def _run_both_axes(model: str, ollama_url: str):
                               category="monitoring", icon="🛡️", model=model)
     except Exception:
         pass
+    def _log(line):
+        """Every gate line reaches the orb, so the panel stops rendering the
+        empty-log placeholder ('— waiting for activity —') for minutes on end.
+        That placeholder is what made gating look hung when it was working."""
+        try:
+            core.process_log(orb_id, line)
+        except Exception:
+            pass
+
     try:
         from agent_friday.services.model_seat_gate import run_conformance_gate
         from agent_friday.services.honesty_battery import run_battery
-        try:
-            core.process_update(orb_id, progress=0.1,
-                                label=f"{model}: structural axis…")
-        except Exception:
-            pass
-        run_conformance_gate(model, ollama_url=ollama_url)
-        try:
-            core.process_update(orb_id, progress=0.5,
-                                label=f"{model}: honesty battery…")
-        except Exception:
-            pass
-        run_battery(model, provider="local", ollama_url=ollama_url)
+        # Gate runs are SERIALIZED across models. Concurrent gating is what
+        # broke the 2026-08-15 run: each model evicted the others from VRAM,
+        # every case paid a cold reload, and 9 of 10 cases for gemma4:12b timed
+        # out — recording 1/10 for a model that was never actually tested.
+        with _GATE_SERIAL_LOCK:
+            _log(f"acquired the gate lane for {model}")
+            try:
+                core.process_update(orb_id, progress=0.1,
+                                    label=f"{model}: structural axis…")
+            except Exception:
+                pass
+            s = run_conformance_gate(model, ollama_url=ollama_url,
+                                     on_progress=_log)
+            try:
+                core.process_update(orb_id, progress=0.5,
+                                    label=f"{model}: honesty battery…")
+            except Exception:
+                pass
+            h = run_battery(model, provider="local", ollama_url=ollama_url,
+                            on_progress=_log)
+        summary = "structural %s / honesty %s" % (
+            "inconclusive" if s.get("inconclusive") else s.get("score"),
+            "inconclusive" if h.get("inconclusive") else h.get("score"))
+        _log(f"done — {summary}")
         try:
             core.process_update(orb_id, status="completed", progress=1.0,
-                                label=f"{model}: gates recorded")
+                                label=f"{model}: {summary}", result=summary)
         except Exception:
             pass
     except Exception as e:

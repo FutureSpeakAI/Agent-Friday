@@ -95,23 +95,66 @@ def _score_response(oai_message: dict, tool_names) -> dict:
     }
 
 
+# A gate call must be able to absorb a cold load plus a full generation. The
+# old flat 120s could not: 9 of 10 cases for gemma4:12b timed out on
+# 2026-08-15 and the model scored 1/10 having never actually been tested.
+GATE_NUM_CTX = 8192
+GATE_TIMEOUT_S = 600
+
+
+def _is_harness_error(err: str) -> bool:
+    """Did the HARNESS give up, or did the MODEL misbehave?
+
+    Conflating the two is how an untested model earns a red. Timeouts,
+    refused connections and unreachable daemons say nothing whatsoever about
+    the model's tool-calling behaviour.
+    """
+    e = (err or "").lower()
+    return any(t in e for t in ("timed out", "timeout", "connection",
+                                "refused", "unreachable", "reset by peer",
+                                "remote end closed", "urlopen error"))
+
+
 def run_conformance_gate(model: str, *, provider: str = "local",
-                          ollama_url: str = "http://localhost:11434") -> dict:
+                          ollama_url: str = "http://localhost:11434",
+                          num_ctx: int = GATE_NUM_CTX,
+                          timeout: int = GATE_TIMEOUT_S,
+                          on_progress=None) -> dict:
     """Run the 10-prompt conformance check against a live Ollama model.
 
     Returns a result dict; also persists it to GATE_DIR as the cached status
     consumed by is_seat_green(). Does not raise on a failing model — a red
     result is a valid, expected outcome.
+
+    A run in which the harness itself failed is **inconclusive**, not red. On
+    2026-08-15 concurrent gating made the models evict each other, every
+    reload blew the 120s budget, and `gemma4:12b` was recorded as 1/10 with
+    nine timeouts — then that record overwrote `gemma4:e2b`'s existing green.
+    An inconclusive run is persisted for diagnosis but never overwrites a
+    prior verdict and never counts as a red.
     """
     tool_names, oai_tools = _tool_names_and_schema()
-    chat_fn, via = _gate_chat_fn(model, ollama_url)
+    chat_fn, via = _gate_chat_fn(model, ollama_url, num_ctx=num_ctx,
+                                 timeout=timeout)
+
+    def _emit(line):
+        if on_progress:
+            try:
+                on_progress(line)
+            except Exception:
+                pass
+
+    total = len(CONFORMANCE_PROMPTS)
+    _emit(f"structural: {total} prompts against {model} "
+          f"(num_ctx={num_ctx}, timeout={timeout}s, via {via})")
 
     results = []
-    for case in CONFORMANCE_PROMPTS:
+    for i, case in enumerate(CONFORMANCE_PROMPTS, 1):
         messages = [
             {"role": "system", "content": _GATE_SYSTEM_PROMPT},
             {"role": "user", "content": case["prompt"]},
         ]
+        t0 = time.time()
         try:
             resp = chat_fn(messages, model=model, tools=oai_tools,
                            temperature=0.2, max_tokens=300)
@@ -119,29 +162,54 @@ def run_conformance_gate(model: str, *, provider: str = "local",
             scored = _score_response(choice.get("message", {}) or {}, tool_names)
         except Exception as e:
             scored = {"real_call": False, "called": [], "prose_leaks": [],
-                      "content_excerpt": "", "passed": False, "error": str(e)}
+                      "content_excerpt": "", "passed": False, "error": str(e),
+                      "harness_error": _is_harness_error(str(e))}
         scored["id"] = case["id"]
         scored["prompt"] = case["prompt"]
         scored["expect_tool"] = case["expect_tool"]
+        scored["elapsed_s"] = round(time.time() - t0, 1)
         results.append(scored)
+        if scored.get("harness_error"):
+            verdict = "HARNESS ERROR"
+        elif scored.get("passed"):
+            verdict = "pass"
+        else:
+            verdict = "FAIL"
+        _emit("  [%d/%d] %-12s %-13s %5.1fs%s"
+              % (i, total, case["id"], verdict, scored["elapsed_s"],
+                 ("  called=" + ",".join(scored.get("called") or []))
+                 if scored.get("called") else ""))
 
     passed_count = sum(1 for r in results if r["passed"])
+    harness_errors = [r for r in results if r.get("harness_error")]
     all_leaks = [leak for r in results for leak in r["prose_leaks"]]
+    inconclusive = bool(harness_errors)
     result = {
         "model": model,
         "provider": provider,
         "via": via,
         "timestamp": time.time(),
+        "num_ctx": num_ctx,
         "score": f"{passed_count}/{len(results)}",
-        "passed": passed_count == len(results),
+        "passed": (None if inconclusive else passed_count == len(results)),
+        "inconclusive": inconclusive,
+        "harness_errors": len(harness_errors),
         "prose_leaks": all_leaks,
         "results": results,
     }
+    if inconclusive:
+        _emit("structural: INCONCLUSIVE — %d/%d cases failed in the harness "
+              "(not the model); prior verdict left untouched"
+              % (len(harness_errors), total))
+    else:
+        _emit("structural: %s — %s" % (result["score"],
+                                       "GREEN" if result["passed"] else "RED"))
     save_status(model, provider, result)
     return result
 
 
-def _gate_chat_fn(model: str, ollama_url: str):
+def _gate_chat_fn(model: str, ollama_url: str, *, num_ctx=GATE_NUM_CTX,
+                  timeout=GATE_TIMEOUT_S):
     """The chat-completion callable the gate should use for `model`, plus a
     'via' label for the stored record.
 
@@ -167,18 +235,40 @@ def _gate_chat_fn(model: str, ollama_url: str):
                 f"{base}/chat/completions",
                 data=json.dumps(body).encode("utf-8"), method="POST",
                 headers={"Content-Type": "application/json"})
-            with _rq.urlopen(req, timeout=120) as resp:
+            with _rq.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         return chat_fn, prov.get("name") or "openai-compatible-local"
 
     from agent_friday.routing.ollama_manager import get_manager
-    return get_manager(ollama_url).chat_completion, "ollama"
+    mgr = get_manager(ollama_url)
+
+    def ollama_chat(messages, model, tools=None, temperature=0.2,
+                    max_tokens=300):
+        return mgr.chat_completion(messages, model, tools=tools,
+                                   temperature=temperature,
+                                   max_tokens=max_tokens,
+                                   num_ctx=num_ctx, timeout=timeout)
+
+    return ollama_chat, "ollama"
 
 
 def save_status(model: str, provider: str, result: dict) -> Path:
+    """Persist a gate verdict.
+
+    An INCONCLUSIVE run (the harness timed out or could not reach the daemon)
+    is written beside the authoritative record, never over it. On 2026-08-15 a
+    run in which nine of ten cases timed out overwrote `gemma4:e2b`'s standing
+    green with a red — destroying a real verdict with a measurement that never
+    happened. Evidence of a failed measurement is not evidence about a model.
+    """
     GATE_DIR.mkdir(parents=True, exist_ok=True)
-    path = GATE_DIR / f"{_safe_name(model, provider)}.json"
+    base = _safe_name(model, provider)
+    if result.get("inconclusive"):
+        path = GATE_DIR / f"{base}.inconclusive.json"
+        path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return path
+    path = GATE_DIR / f"{base}.json"
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return path
 
@@ -194,9 +284,14 @@ def get_cached_status(model: str, provider: str = "local") -> dict | None:
 
 
 def is_seat_green(model: str, provider: str = "local") -> bool:
-    """Fail-closed: a model with no recorded conformance run is NOT green."""
+    """Fail-closed: a model with no recorded conformance run is NOT green.
+
+    `passed is None` means the run was inconclusive — the harness failed, not
+    the model. That is 'ungated', which is already fail-closed; it must not be
+    reported as a red, because a red is a claim about the model.
+    """
     status = get_cached_status(model, provider)
-    return bool(status and status.get("passed"))
+    return bool(status and status.get("passed") is True)
 
 
 # ── A4/A5: the second gate axis (honesty battery) + dual-gate seating. ──
@@ -210,7 +305,14 @@ def axis_status(model: str, provider: str = "local") -> dict:
     def _axis(status):
         if status is None:
             return "ungated"
-        return "green" if status.get("passed") else "red"
+        passed = status.get("passed")
+        if passed is None or status.get("inconclusive"):
+            # The harness failed, so the model was never actually measured.
+            # "ungated" is the honest label; "red" would be a claim we cannot
+            # support and would show the user a chip accusing a model that may
+            # be perfectly capable.
+            return "ungated"
+        return "green" if passed else "red"
 
     structural = _axis(get_cached_status(model, provider))
     honesty = _axis(get_honesty_status(model, provider))
@@ -236,8 +338,27 @@ def get_last_known_green(provider: str = "local") -> str | None:
     (the repo-committed reference results) so a fresh machine with no local
     gate history yet still has a documented-green fallback (gemma4:latest)
     rather than none at all.
+
+    **A green record for an UNINSTALLED model is not a usable fallback.**
+    2026-08-15: `qwen3.6-35b-a3b-iq4nl` was decommissioned (GGUF and descriptor
+    both deleted) but its green record survived, so this returned it as the
+    fallback seat for every refused local dispatch — a seat pointing at a model
+    that no longer exists anywhere on the machine. A gate record is evidence
+    that a model once behaved, not evidence that it is still servable.
+
+    Availability is only consulted when it is VERIFIABLE: `_installed_local_models`
+    returns None when the daemon is unreachable and nothing else declares an
+    inventory, and in that case a stale-looking record is preferred over no
+    fallback at all. Refusing on unverifiable data would turn a transient
+    daemon outage into "no local seat exists".
     """
+    installed = _installed_local_models()
+
+    def _servable(name):
+        return installed is None or name in installed
+
     best_model, best_ts = None, -1.0
+    skipped = []
     for directory in (GATE_DIR, EVIDENCE_DIR):
         if not directory.exists():
             continue
@@ -248,11 +369,19 @@ def get_last_known_green(provider: str = "local") -> str | None:
                 continue
             if data.get("provider") != provider or not data.get("passed"):
                 continue
+            name = data.get("model")
+            if not _servable(name):
+                skipped.append(name)
+                continue
             ts = data.get("timestamp") or 0
             if ts > best_ts:
-                best_model, best_ts = data.get("model"), ts
+                best_model, best_ts = name, ts
         if best_model:
             return best_model  # GATE_DIR (live) wins outright over EVIDENCE_DIR
+    if skipped and not best_model:
+        _seat_logger.info(
+            "seat gate: %d green record(s) ignored — model no longer "
+            "installed: %s", len(skipped), ", ".join(sorted(set(skipped))))
     return best_model
 
 

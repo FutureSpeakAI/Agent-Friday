@@ -296,15 +296,19 @@ class OllamaManager:
             model, disable_thinking=disable_thinking).get("ok"))
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
-                        max_tokens=4096):
+                        max_tokens=4096, num_ctx=None, timeout=120):
+        options = {"temperature": temperature, "num_predict": max_tokens}
+        # An explicit context is a placement decision, not a detail. Left unset
+        # gemma4 reports num_ctx 262144 and spills most of itself onto the CPU
+        # (measured: 79% CPU at the default, 51% at 16384) — which is what made
+        # 120s gate calls time out and score a healthy model 1/10.
+        if num_ctx:
+            options["num_ctx"] = num_ctx
         body = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+            "options": options,
         }
         if tools:
             body["tools"] = tools
@@ -315,22 +319,29 @@ class OllamaManager:
                 url, data=data, method="POST",
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception:
-            resp = self._post("/api/chat", {
+            # The native fallback MUST carry `tools` too. It did not, so any
+            # blip on the OpenAI-shaped path silently retried tool-less — a
+            # model that cannot be given tools cannot emit a tool call, so the
+            # retry was guaranteed to look like a tool-calling failure.
+            native = {
                 "model": model,
                 "messages": messages,
                 "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            }, timeout=120)
-            content = resp.get("message", {}).get("content", "")
+                "options": dict(options),
+            }
+            if tools:
+                native["tools"] = tools
+            resp = self._post("/api/chat", native, timeout=timeout)
+            msg = resp.get("message", {}) or {}
+            out_msg = {"role": "assistant", "content": msg.get("content", "")}
+            if msg.get("tool_calls"):
+                out_msg["tool_calls"] = msg["tool_calls"]
             return {
                 "choices": [{
-                    "message": {"role": "assistant", "content": content},
+                    "message": out_msg,
                     "finish_reason": "stop",
                 }],
                 "model": model,
