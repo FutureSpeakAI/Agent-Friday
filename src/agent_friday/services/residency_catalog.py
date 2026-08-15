@@ -116,6 +116,15 @@ SEED_MEASUREMENTS: dict = {
             {"num_ctx": 32768, "vram_mib": 7718, "total_mib": 7718,
              "pct_gpu": 100, "tok_s_median": 54.12,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-15"},
+            # The KV sweep that settled how much a bigger window actually
+            # costs. 96 MiB buys 4x the context: this is the evidence behind
+            # sizing the brain from the whole prompt rather than the tool list.
+            {"num_ctx": 65536, "vram_mib": 7750, "total_mib": 7750,
+             "pct_gpu": 100,
+             "backend": BACKEND_OLLAMA, "measured_at": "2026-08-15"},
+            {"num_ctx": 131072, "vram_mib": 7814, "total_mib": 7814,
+             "pct_gpu": 100,
+             "backend": BACKEND_OLLAMA, "measured_at": "2026-08-15"},
         ],
         # Measured under Ollama BEFORE the copy was removed for the
         # llama-server comparison. Kept: it is the banked half of a

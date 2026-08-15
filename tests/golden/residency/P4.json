@@ -29,7 +29,7 @@
   },
   "pinned_vram_mib": {
     "gpu:0": 21231,
-    "gpu:1": 7718
+    "gpu:1": 7814
   },
   "policy_version": 1,
   "profile_id": "p4-dual-asymmetric",
@@ -37,6 +37,13 @@
   "seats": {
     "embedder": {
       "backend": "ollama",
+      "context": {
+        "basis": "measured",
+        "capped_by": null,
+        "floor": 2048,
+        "room_tokens": 2048,
+        "want": 2048
+      },
       "device": "gpu:0",
       "est_load_s": 3.1,
       "is_moe": false,
@@ -50,12 +57,19 @@
     },
     "heavy_hitter": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 45321,
+        "want": 44791
+      },
       "device": "gpu:0",
       "est_load_s": 7.5,
       "is_moe": true,
       "model_id": "gemma4:26b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "heavy_hitter",
       "status": "pinned",
@@ -76,19 +90,33 @@
     },
     "interactive_brain": {
       "backend": "ollama",
+      "context": {
+        "basis": "measured",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 110857,
+        "want": 118519
+      },
       "device": "gpu:1",
       "est_load_s": 4.1,
       "is_moe": false,
       "model_id": "gemma4:12b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 131072,
       "offload": {},
       "role": "interactive_brain",
       "status": "pinned",
-      "vram_mib": 7718
+      "vram_mib": 7814
     },
     "sidekick": {
       "backend": "ollama",
+      "context": {
+        "basis": "measured",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 12553,
+        "want": 28407
+      },
       "device": "gpu:0",
       "est_load_s": 4.1,
       "is_moe": false,
@@ -102,13 +130,20 @@
     },
     "sidekick_heavy": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 45321,
+        "want": 44791
+      },
       "device": "gpu:0",
       "displaces": "loaded on demand; may displace a pinned seat",
       "est_load_s": 4.4,
       "is_moe": false,
       "model_id": "gemma4:e4b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick_heavy",
       "status": "leased",

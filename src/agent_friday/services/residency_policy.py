@@ -98,11 +98,39 @@ RULE_BY_ID = {r["id"]: r for r in RULES}
 # tool floor manufactures exactly the tool-calling failure the gate exists to
 # detect.
 #
-# So tool seats sit at 32768 (~4x the measured prompt). This is affordable
-# precisely because the KV curve is flat on this family: the 12b holds 7690 MiB
-# at 4k and 8001 MiB at 16k — 311 MiB across a 4x increase. The embedder holds
-# no tools and stays small.
+# CORRECTED 2026-08-15. This constant used to be 32768, and the arithmetic
+# behind it was wrong in a checkable way: it sized the window from the tool
+# registry ALONE (~8534 tokens x4) and ignored the system prompt, which at
+# ~11681 tokens is the LARGER of the two fixed costs. A 32768 seat therefore
+# had ~12552 tokens of room — 38% of its own window. See services/
+# context_budget.py, which measures both halves rather than assuming either.
+#
+# It stays as the floor rung and the dispatch fallback, not as the answer:
+# `context_for()` computes the real number from overhead + room, per role.
 TOOL_SEAT_NUM_CTX = 32768
+
+# Rungs, not arbitrary integers: backends allocate KV in blocks, and a tidy
+# number is one a human can recognise in `ollama ps` output or a bug report.
+CONTEXT_LADDER = (8192, 16384, 32768, 65536, 131072, 262144)
+
+# Below this a seat cannot hold the tools AND a short conversation, so it
+# cannot do tool-using work at all. R7 says the number is explicit; this says
+# it must also be sufficient, and a seat that cannot reach the floor is
+# refused with the arithmetic rather than quietly given a window that will
+# truncate its own tool definitions.
+MIN_CONVERSATION_ROOM = 8192
+
+# Conversation room wanted per role, on top of the fixed overhead. These are
+# job descriptions, not sizes: the brain is the seat that reads documents and
+# holds long conversations, so it gets the room; the sidekick answers reflexes
+# and would only be spending budget the brain needs.
+ROOM_TARGET = {
+    "interactive_brain": 98304,
+    "heavy_hitter": 24576,
+    "sidekick_heavy": 24576,
+    "sidekick": MIN_CONVERSATION_ROOM,
+    "embedder": 0,
+}
 
 DEFAULT_NUM_CTX = {
     "interactive_brain": TOOL_SEAT_NUM_CTX,
@@ -111,6 +139,10 @@ DEFAULT_NUM_CTX = {
     "sidekick_heavy": TOOL_SEAT_NUM_CTX,
     "embedder": 2048,
 }
+
+# Seats that carry neither tool schemas nor a system prompt, and so are not
+# subject to the overhead arithmetic at all.
+NO_PROMPT_ROLES = frozenset({"embedder"})
 
 
 def _refusal(role, model, rule_id, explanation, **numbers):
@@ -195,6 +227,163 @@ def _required_vram(e: dict, num_ctx: int) -> int | None:
     return total if total is not None else _vram_for(e, num_ctx)
 
 
+# ── Context sizing ───────────────────────────────────────────────────────────
+
+def _rows(e: dict) -> list:
+    """Measured rows as (num_ctx, required_mib), sorted.
+
+    `required` is total_mib where it exists, matching `_required_vram`: the
+    question a placement asks is "can one GPU hold this whole model", and the
+    26b's 8586 MiB VRAM figure is what it settled for on a 12 GB card, not what
+    it needs.
+    """
+    out = []
+    for m in (e.get("measured") or []):
+        mib = m.get("total_mib") or m.get("vram_mib")
+        if mib and m.get("num_ctx"):
+            out.append((m["num_ctx"], mib))
+    return sorted(out)
+
+
+def kv_slope_mib_per_token(e: dict) -> float | None:
+    """MiB of VRAM per token of context, from the model's OWN measurements.
+
+    Never a family constant. The gemma4 KV curve is flat enough that a constant
+    would be indistinguishable from noise on the small models and badly wrong on
+    the large ones — measured on the 12b, 32768 -> 131072 costs 96 MiB across
+    98304 tokens, or 0.00098 MiB/token, while a naive "1 KiB per token" rule
+    would predict 96 MiB for the same span on the e2b, whose whole KV allocation
+    at 32768 is 48 MiB above its 8192 figure.
+
+    Fitted on the two LARGEST measured contexts, because that is the end of the
+    curve we extrapolate from. Returns None when fewer than two contexts were
+    measured, or when the fit comes out non-positive — which happens for real:
+    the 12b measured 8001 MiB at 16384 under Ollama 0.32.9 and 7718 at 32768
+    under 0.32.11, so allocator changes across versions can dominate the signal
+    the fit is looking for. A None result means "extrapolation is not supported
+    by evidence", and the caller falls back to pessimism rather than to a guess.
+    """
+    rows = _rows(e)
+    if len(rows) < 2:
+        return None
+    (c_lo, v_lo), (c_hi, v_hi) = rows[-2], rows[-1]
+    span = c_hi - c_lo
+    if span <= 0:
+        return None
+    slope = (v_hi - v_lo) / float(span)
+    return slope if slope > 0 else None
+
+
+def vram_estimate_at(e: dict, num_ctx: int) -> tuple[int | None, str]:
+    """(MiB, basis) for holding this model at `num_ctx`.
+
+    Three bases, and the caller records which one it got, because a plan built
+    on an extrapolation and a plan built on a measurement deserve different
+    amounts of trust:
+
+      * "measured"     — a row exists at exactly this context, or at a larger
+                         one (using a larger context's figure is safe: KV only
+                         grows).
+      * "extrapolated" — projected along the model's own KV slope.
+      * "below-range"  — every measured row is at a SMALLER context and there
+                         is no slope to project along, so the largest measured
+                         figure is a LOWER BOUND, not an estimate. The caller
+                         must treat it as "at least this much" and the plan
+                         records the basis so nobody later mistakes it for a
+                         measurement. The fix is to measure, not to invent a
+                         markup: a made-up safety factor would be indis-
+                         tinguishable in the plan from a real number.
+    """
+    rows = _rows(e)
+    if not rows:
+        return None, "unknown"
+    exact = [v for c, v in rows if c == num_ctx]
+    if exact:
+        return exact[0], "measured"
+    slope = kv_slope_mib_per_token(e)
+    if slope is not None:
+        c_anchor, v_anchor = rows[-1]
+        est = v_anchor + slope * (num_ctx - c_anchor)
+        # Never below the largest measured figure when projecting upward.
+        if num_ctx > c_anchor:
+            est = max(est, v_anchor)
+        return int(round(est)), "extrapolated"
+    above = [v for c, v in rows if c >= num_ctx]
+    if above:
+        return min(above), "measured"
+    return max(v for _, v in rows), "below-range"
+
+
+def context_for(role: str, e: dict, budget_mib: int | None,
+                overhead_tokens: int) -> dict:
+    """The largest ladder rung this seat can afford, and why.
+
+    Sized from the WHOLE prompt: overhead (system prompt + tool schemas) plus
+    the conversation room the role's job actually needs. The previous rule sized
+    from the tool schemas alone and produced a seat that spent 62% of its window
+    on things the user never sees.
+
+    Returns a dict, always — a refusal here is information, not an exception:
+        {num_ctx, basis, vram_mib, want, floor, capped_by, room_tokens}
+    `num_ctx` is None only when even the floor rung will not fit, and then
+    `capped_by` says which constraint refused it.
+    """
+    if role in NO_PROMPT_ROLES:
+        # An embedder carries neither tool schemas nor a system prompt, so the
+        # overhead this function exists to account for simply is not there.
+        c = DEFAULT_NUM_CTX.get(role, 2048)
+        v, basis = vram_estimate_at(e, c)
+        return {"num_ctx": c, "basis": basis, "vram_mib": v, "want": c,
+                "floor": c, "capped_by": None, "room_tokens": c}
+
+    want = overhead_tokens + ROOM_TARGET.get(role, MIN_CONVERSATION_ROOM)
+    floor = overhead_tokens + MIN_CONVERSATION_ROOM
+    declared = e.get("context_window") or 0
+
+    rungs = [c for c in CONTEXT_LADDER if c >= floor]
+    if not rungs:
+        rungs = [CONTEXT_LADDER[-1]]
+    if declared:
+        allowed = [c for c in rungs if c <= declared]
+        if allowed:
+            rungs = allowed
+        else:
+            # The model's own window is below our floor. Take its window rather
+            # than a rung it cannot serve, and say so.
+            return {"num_ctx": min(declared, CONTEXT_LADDER[-1]),
+                    "basis": "model-window", "vram_mib": None, "want": want,
+                    "floor": floor, "capped_by": "model context window %d < "
+                    "floor %d (overhead %d + minimum room %d)"
+                    % (declared, floor, overhead_tokens, MIN_CONVERSATION_ROOM),
+                    "room_tokens": declared - overhead_tokens}
+
+    # Prefer the smallest rung that satisfies `want`; only go bigger if the
+    # budget is generous, and never bigger than needed — spare VRAM belongs to
+    # whichever seat has a job for it.
+    target = next((c for c in rungs if c >= want), rungs[-1])
+
+    if budget_mib is None:
+        v, basis = vram_estimate_at(e, target)
+        return {"num_ctx": target, "basis": basis, "vram_mib": v,
+                "want": want, "floor": floor, "capped_by": None,
+                "room_tokens": target - overhead_tokens}
+
+    for c in [c for c in rungs if c <= target][::-1]:
+        v, basis = vram_estimate_at(e, c)
+        if v is None or v <= budget_mib:
+            return {"num_ctx": c, "basis": basis, "vram_mib": v, "want": want,
+                    "floor": floor, "room_tokens": c - overhead_tokens,
+                    "capped_by": ("VRAM budget %d MiB" % budget_mib)
+                    if c < target else None}
+
+    smallest = rungs[0]
+    v, basis = vram_estimate_at(e, smallest)
+    return {"num_ctx": None, "basis": basis, "vram_mib": v, "want": want,
+            "floor": floor, "room_tokens": smallest - overhead_tokens,
+            "capped_by": "needs %s MiB at the floor rung %d, budget is %d MiB"
+            % (v, smallest, budget_mib)}
+
+
 def _ms(e: dict) -> float:
     """Lower is faster. Unmeasured sorts last, never first."""
     v = e.get("baseline_ms_per_token")
@@ -214,9 +403,22 @@ def _generation_candidates(entries: list) -> list:
 
 # ── The policy ───────────────────────────────────────────────────────────────
 
-def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
-    """(HardwareProfile, Catalog, overrides) -> PlacementPlan. Pure."""
+def plan(profile: dict, entries: list, overrides: dict | None = None,
+         overhead_tokens: int | None = None) -> dict:
+    """(HardwareProfile, Catalog, overrides, overhead) -> PlacementPlan. Pure.
+
+    `overhead_tokens` is how much of every window the system prompt and tool
+    schemas consume. It is a PARAMETER rather than something this module goes
+    and measures, because measuring it means assembling the system prompt —
+    file and vault reads — and this function's whole value is that it is pure
+    and its output is reproducible from its inputs. The Arbiter passes the live
+    figure; the default is the last measured one.
+    """
     overrides = dict(overrides or {})
+    if overhead_tokens is None:
+        from agent_friday.services.context_budget import (
+            MEASURED_OVERHEAD_TOKENS)
+        overhead_tokens = MEASURED_OVERHEAD_TOKENS
     seats: dict = {r: None for r in ROLES}
     refusals: list = []
 
@@ -251,8 +453,13 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
     if budgets:
         cap = max(b["available_mib"] for b in budgets)
         for e in remaining:
-            v = _required_vram(e, DEFAULT_NUM_CTX["interactive_brain"])
-            if v is not None and v <= cap:
+            # Qualification is asked at the FLOOR, not at the target: a model
+            # that can only afford the smallest usable window is still a
+            # candidate for the seat. Sizing happens in _place, against the
+            # budget that is actually left by then.
+            cb = context_for("interactive_brain", e, cap, overhead_tokens)
+            if cb["num_ctx"] is not None and cb["vram_mib"] is not None and \
+                    cb["vram_mib"] <= cap:
                 brain = e
                 break
     elif remaining:
@@ -271,17 +478,28 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
     order = sorted(budgets, key=lambda b: (-b["available_mib"], b["index"]))
 
     def _place(entry, role, status, prefer=None):
-        """Fit `entry` on one GPU. Returns a Placement or None."""
-        ctx = DEFAULT_NUM_CTX.get(role, 8192)
-        v = _required_vram(entry, ctx)
-        if v is None:
-            return None
+        """Fit `entry` on one GPU at the largest context it can afford there.
+
+        Context and fit are decided together, not in sequence. Choosing a
+        context first and then asking whether it fits is what produced a seat
+        sized from the tool registry alone: the number was picked before
+        anything knew what it would cost.
+        """
         idxs = ([prefer] if prefer is not None else
                 [b["index"] for b in order])
         for i in idxs:
-            if i is not None and free.get(i, 0) >= v:
-                free[i] -= v
-                return _placement(entry, role, "gpu:%d" % i, ctx, status, v)
+            if i is None:
+                continue
+            cb = context_for(role, entry, free.get(i, 0), overhead_tokens)
+            v = cb["vram_mib"]
+            if cb["num_ctx"] is None or v is None or free.get(i, 0) < v:
+                continue
+            free[i] -= v
+            p = _placement(entry, role, "gpu:%d" % i, cb["num_ctx"], status, v)
+            p["context"] = {k: cb[k] for k in
+                            ("basis", "want", "floor", "room_tokens",
+                             "capped_by")}
+            return p
         return None
 
     multi_gpu = len(budgets) >= 2
@@ -332,11 +550,20 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
             if seats["interactive_brain"] else None
 
     if sidekick_heavy is not None:
-        ctx = DEFAULT_NUM_CTX["sidekick_heavy"]
-        need = _required_vram(sidekick_heavy, ctx)
+        # A leased seat is sized against the WHOLE GPU budget, not the residual
+        # after the pinned seats: a lease is exactly the moment the Arbiter is
+        # allowed to stand the brain down.
+        whole = max((b["available_mib"] for b in budgets), default=None)
+        cb = context_for("sidekick_heavy", sidekick_heavy, whole,
+                         overhead_tokens)
+        ctx = cb["num_ctx"] or DEFAULT_NUM_CTX["sidekick_heavy"]
+        need = cb["vram_mib"]
         dev = ("gpu:%d" % order[0]["index"]) if budgets else "cpu"
         seat = _placement(sidekick_heavy, "sidekick_heavy", dev, ctx,
                           "leased", need or 0)
+        seat["context"] = {k: cb[k] for k in
+                           ("basis", "want", "floor", "room_tokens",
+                            "capped_by")}
         seat["displaces"] = ("loaded on demand; may displace a pinned seat"
                              if budgets else None)
         seats["sidekick_heavy"] = seat
@@ -360,7 +587,7 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
     # ── heavy_hitter placement and the RAM check.
     if heavy is not None:
         seats["heavy_hitter"], hr = _heavy(heavy, heavy_seat, budgets, free,
-                                           ram, profile)
+                                           ram, profile, overhead_tokens)
         if hr:
             refusals.append(hr)
     elif gen == []:
@@ -387,11 +614,12 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
     seats["stt"] = _cpu_seat("stt", "faster-whisper")
     seats["tts"] = _cpu_seat("tts", "kokoro")
 
-    _apply_overrides(seats, refusals, overrides, entries, free, budgets)
+    _apply_overrides(seats, refusals, overrides, entries, free, budgets,
+                     overhead_tokens)
     return _finish(profile, seats, refusals, budgets, ram)
 
 
-def _heavy(heavy, preplaced, budgets, free, ram, profile):
+def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens):
     """Place the heavy seat, or refuse it with arithmetic.
 
     The capacity question for a LEASED seat is the GPU's whole budget, not the
@@ -399,11 +627,25 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile):
     is allowed to evict them. Asking only about the residual would offload a
     model that would have fit outright once the brain stepped aside.
     """
-    ctx = DEFAULT_NUM_CTX["heavy_hitter"]
-    measured_vram = _vram_for(heavy, ctx)
-    total = _required_vram(heavy, ctx)
     if preplaced is not None:
         return preplaced, None
+
+    whole = max((b["available_mib"] for b in budgets), default=None)
+    cb = context_for("heavy_hitter", heavy, whole, overhead_tokens)
+    # When nothing on the ladder fits, the seat still needs an explicit context
+    # (R7) — it takes the floor rung and offloads, rather than being handed the
+    # backend default that R7 exists to prevent.
+    ctx = cb["num_ctx"] or (overhead_tokens + MIN_CONVERSATION_ROOM)
+    ctx = next((c for c in CONTEXT_LADDER if c >= ctx), CONTEXT_LADDER[-1])
+    measured_vram = _vram_for(heavy, ctx)
+    total = _required_vram(heavy, ctx)
+    ctx_info = dict(cb, num_ctx=ctx, room_tokens=ctx - overhead_tokens,
+                    capped_by=cb["capped_by"] or (
+                        "no ladder rung fits the %s MiB GPU budget, so the "
+                        "seat takes the floor rung and offloads" % whole
+                        if cb["num_ctx"] is None else None))
+    ctx_info = {k: ctx_info[k] for k in
+                ("basis", "want", "floor", "room_tokens", "capped_by")}
 
     if budgets and total is not None:
         best = max(budgets, key=lambda b: (b["available_mib"], -b["index"]))
@@ -417,6 +659,7 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile):
                 seat = _placement(heavy, "heavy_hitter", "gpu:%d" % i, ctx,
                                   "leased", total)
                 seat["displaces"] = "pinned seats on gpu:%d" % i
+            seat["context"] = ctx_info
             return seat, None
 
     # Does not fit whole. The GPU keeps what it can hold; the rest is host RAM.
@@ -458,6 +701,7 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile):
         else None,
     }
     seat["over_target"] = need > ram["target_ceiling_mib"]
+    seat["context"] = ctx_info
     return seat, None
 
 
@@ -479,7 +723,8 @@ def _cpu_seat(role, model_id):
             "status": "on-demand", "vram_mib": 0, "est_load_s": None}
 
 
-def _apply_overrides(seats, refusals, overrides, entries, free, budgets):
+def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
+                     overhead_tokens):
     """A user override binds a model to a role, or is refused with its reason.
 
     Never a silent ignore: that is what made `preferred_model` and
@@ -507,10 +752,13 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets):
                 "fill %s" % (", ".join(entry.get("modalities") or []) or "none",
                              role)))
             continue
-        ctx = DEFAULT_NUM_CTX.get(role, 8192)
-        need = _vram_for(entry, ctx)
-        cap = max(free.values()) if free else 0
         cur = seats.get(role)
+        cap = max(free.values()) if free else 0
+        headroom = cap + ((cur or {}).get("vram_mib") or 0)
+        cb = context_for(role, entry, headroom if budgets else None,
+                         overhead_tokens)
+        ctx = cb["num_ctx"] or DEFAULT_NUM_CTX.get(role, TOOL_SEAT_NUM_CTX)
+        need = cb["vram_mib"]
         if budgets and need is not None and cur is not None and \
                 cur.get("device", "").startswith("gpu") and need > cap + \
                 (cur.get("vram_mib") or 0):

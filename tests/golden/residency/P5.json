@@ -38,12 +38,19 @@
     },
     "heavy_hitter": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 45321,
+        "want": 44791
+      },
       "device": "cpu",
       "est_load_s": 17.1,
       "is_moe": true,
       "model_id": "gemma4:26b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {
         "expert_offload": true,
         "host_mib": 17391,
@@ -84,13 +91,20 @@
     },
     "sidekick_heavy": {
       "backend": "ollama",
+      "context": {
+        "basis": "below-range",
+        "capped_by": null,
+        "floor": 28407,
+        "room_tokens": 45321,
+        "want": 44791
+      },
       "device": "cpu",
       "displaces": null,
       "est_load_s": 8.5,
       "is_moe": false,
       "model_id": "gemma4:e4b",
       "needs_think_disabled": true,
-      "num_ctx": 32768,
+      "num_ctx": 65536,
       "offload": {},
       "role": "sidekick_heavy",
       "status": "leased",

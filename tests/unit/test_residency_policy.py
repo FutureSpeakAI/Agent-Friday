@@ -44,10 +44,14 @@ def test_p1_pins_the_12b_on_the_gpu_with_an_explicit_context():
     assert s["model_id"] == "gemma4:12b"
     assert s["device"] == "gpu:0"
     assert s["status"] == "pinned"
-    # 32768 is the TOOL-SEAT context: the 52-tool registry is ~8534 tokens,
-    # so a seat below ~12k truncates the tool definitions (measured: e2b
-    # scored 8/10 at 8192 having scored 10/10 at a larger context).
-    assert s["num_ctx"] == 32768        # R7: never a backend default
+    # 131072, and the arithmetic behind it is the point. The window has to
+    # hold the system prompt (~11681 tokens) AND the tool registry (~8534)
+    # before the conversation starts. This seat used to be 32768, sized from
+    # the tool registry alone, which left ~12.5k of room — 38% of its own
+    # window. See services/context_budget.py.
+    assert s["num_ctx"] == 131072       # R7: never a backend default
+    assert s["context"]["room_tokens"] > 100_000
+    assert s["context"]["basis"] == "measured"
 
 
 def test_p1_pins_the_e2b_beside_it():
@@ -59,7 +63,9 @@ def test_p1_pins_the_e2b_beside_it():
 def test_p1_pinned_pair_fits_the_budget_with_room_to_spare():
     p = _plan("P1")
     avail = p["budgets"]["gpus"][0]["available_mib"]
-    assert p["pinned_vram_mib"]["gpu:0"] == 7718 + 1811 == 9529
+    # The 12b at 131072 (7814) beside the e2b at 32768 (1811). Quadrupling the
+    # brain's window over the old 32768 placement cost 96 MiB.
+    assert p["pinned_vram_mib"]["gpu:0"] == 7814 + 1811 == 9625
     assert p["pinned_vram_mib"]["gpu:0"] <= avail == 9997
 
 
@@ -332,3 +338,89 @@ def test_every_refusal_cites_a_real_rule():
     for key in ALL:
         for r in _plan(key)["refusals"]:
             assert r["rule_id"] in rp.RULE_BY_ID
+
+
+# ── Context sized from the WHOLE prompt, not the tool list ───────────────────
+#
+# The defect these pin: TOOL_SEAT_NUM_CTX was derived from the 52-tool registry
+# alone (~8534 tokens x4 -> 32768) and ignored the system prompt, which at
+# ~11681 tokens is the larger of the two. Every tool seat therefore ran with
+# 38% of its window free and nothing reported it.
+
+def test_no_seat_is_sized_below_the_prompt_it_must_hold():
+    """A window smaller than its own fixed overhead cannot work at all."""
+    from agent_friday.services.context_budget import MEASURED_OVERHEAD_TOKENS
+    for key in fx.ALL_PROFILES:
+        for role, seat in _plan(key)["seats"].items():
+            if not seat or role in rp.NO_PROMPT_ROLES or not seat.get("num_ctx"):
+                continue
+            assert seat["num_ctx"] >= MEASURED_OVERHEAD_TOKENS, (
+                "%s/%s sized at %d, below the %d tokens of system prompt and "
+                "tool schemas it must carry"
+                % (key, role, seat["num_ctx"], MEASURED_OVERHEAD_TOKENS))
+
+
+def test_every_tool_seat_has_real_conversation_room():
+    from agent_friday.services.context_budget import MEASURED_OVERHEAD_TOKENS
+    for key in fx.ALL_PROFILES:
+        for role, seat in _plan(key)["seats"].items():
+            if not seat or role in rp.NO_PROMPT_ROLES or not seat.get("num_ctx"):
+                continue
+            room = seat["num_ctx"] - MEASURED_OVERHEAD_TOKENS
+            assert room >= rp.MIN_CONVERSATION_ROOM, (
+                "%s/%s has %d tokens of room, below the %d floor"
+                % (key, role, room, rp.MIN_CONVERSATION_ROOM))
+
+
+def test_the_embedder_is_exempt_from_the_overhead_arithmetic():
+    """It carries neither tools nor a system prompt, so it stays small."""
+    s = _plan("P1")["seats"]["embedder"]
+    assert s["num_ctx"] == 2048
+
+
+def test_kv_slope_comes_from_the_models_own_rows():
+    e = [x for x in fx.catalog(fx.ALL_PROFILES["P1"])
+         if x["model_id"] == "gemma4:12b"][0]
+    slope = rp.kv_slope_mib_per_token(e)
+    # 7750 -> 7814 MiB across 65536 -> 131072, measured 2026-08-15.
+    assert slope is not None and 0.0009 < slope < 0.0011
+
+
+def test_kv_slope_refuses_a_non_positive_fit_rather_than_inventing_one():
+    """VRAM that measured LOWER at a larger context is allocator noise.
+
+    Real case: the 12b measured 8001 MiB at 16384 under Ollama 0.32.9 and 7718
+    at 32768 under 0.32.11. A fit through those two rows slopes downward, and
+    projecting along it would predict a model shrinking as its context grows.
+    """
+    e = {"model_id": "noisy:1b", "measured": [
+        {"num_ctx": 16384, "vram_mib": 8001, "total_mib": 8001},
+        {"num_ctx": 32768, "vram_mib": 7718, "total_mib": 7718}]}
+    assert rp.kv_slope_mib_per_token(e) is None
+    mib, basis = rp.vram_estimate_at(e, 131072)
+    assert basis == "below-range", "a lower bound must not pass as an estimate"
+    assert mib == 8001
+
+
+def test_a_measured_row_is_labelled_measured_and_an_extrapolation_is_not():
+    e = [x for x in fx.catalog(fx.ALL_PROFILES["P1"])
+         if x["model_id"] == "gemma4:12b"][0]
+    assert rp.vram_estimate_at(e, 131072) == (7814, "measured")
+    mib, basis = rp.vram_estimate_at(e, 262144)
+    assert basis == "extrapolated" and mib > 7814
+
+
+def test_context_is_refused_with_arithmetic_when_the_floor_will_not_fit():
+    e = {"model_id": "huge:400b", "measured": [
+        {"num_ctx": 32768, "vram_mib": 400_000, "total_mib": 400_000}]}
+    cb = rp.context_for("interactive_brain", e, 10_000, 20_215)
+    assert cb["num_ctx"] is None
+    assert "budget is 10000 MiB" in cb["capped_by"]
+
+
+def test_a_model_whose_own_window_is_below_the_floor_says_so():
+    e = {"model_id": "tiny-ctx:1b", "context_window": 4096,
+         "measured": [{"num_ctx": 4096, "vram_mib": 500, "total_mib": 500}]}
+    cb = rp.context_for("sidekick", e, 10_000, 20_215)
+    assert cb["num_ctx"] == 4096
+    assert "model context window" in cb["capped_by"]
