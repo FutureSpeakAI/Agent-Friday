@@ -480,11 +480,27 @@ def inference_probe(name, prov=None, use_cache=True) -> dict | None:
                 model=model, max_tokens=_PROBE_MAX_TOKENS,
                 messages=[{"role": "user", "content": _PROBE_PROMPT}])
             ms = int((time.time() - t0) * 1000)
-            got = any(getattr(b, "type", None) == "text"
-                      for b in (getattr(resp, "content", None) or []))
+            # ANY content block proves inference ran — not specifically a text
+            # one. claude-sonnet-5 emits a `thinking` block first, so a modest
+            # budget can produce a response whose only block is thinking. That
+            # is a model that demonstrably generated, and calling it `down`
+            # reported a provider that was serving chat as dead (VERIFIED live
+            # 2026-08-15, intermittently: the same probe returned ok in 1614ms
+            # and `empty completion` minutes later, purely on whether thinking
+            # consumed the budget).
+            #
+            # Third instance of one pattern — Ollama thinking models, the
+            # 1-token budget, and now Claude's thinking block. The lesson is
+            # the same each time: prove that generation HAPPENED; do not
+            # demand a particular shape of output to prove it.
+            blocks = list(getattr(resp, "content", None) or [])
+            kinds = [getattr(b, "type", None) for b in blocks]
+            got = bool(blocks)
+            detail = f"generated in {ms}ms"
+            if got and "text" not in kinds:
+                detail += f" ({'+'.join(k for k in kinds if k)} only)"
             return _result("ok" if got else "down",
-                           f"generated in {ms}ms" if got
-                           else "empty completion", bool(got))
+                           detail if got else "empty completion", bool(got))
 
         if ptype == "openai-compatible":
             import requests
