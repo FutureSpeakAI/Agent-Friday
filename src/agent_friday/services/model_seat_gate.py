@@ -187,6 +187,18 @@ def run_conformance_gate(model: str, *, provider: str = "local",
         ]
         t0 = time.time()
         try:
+            # temperature 0.2, unchanged. RECORDED, not fixed: this gate is not
+            # reproducible at 0.2 — gemma4:e2b scored 10/10, then 8/10, then
+            # 8/10 across three runs on 2026-08-15, and the "failing" cases
+            # pass when replayed in isolation. honesty_battery.py:317 already
+            # documents the same effect on the other axis ("gemma4:latest at
+            # 0.2 swings between 9/10 and 7/10") and chose 0.0 for it.
+            #
+            # Setting 0.0 here was tried and is NOT an obvious improvement:
+            # the `email` case then fails deterministically where it passed at
+            # 0.2. Changing a gate's measurement semantics to get a nicer
+            # number is exactly the wrong instinct, so the threshold stays put
+            # and the variance is raised as a decision question instead.
             resp = chat_fn(messages, model=model, tools=oai_tools,
                            temperature=0.2, max_tokens=300)
             choice = (resp.get("choices") or [{}])[0]
