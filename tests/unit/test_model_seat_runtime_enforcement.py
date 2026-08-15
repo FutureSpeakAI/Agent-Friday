@@ -22,6 +22,14 @@ from agent_friday.services import model_seat_gate as gate
 def isolated_gate_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "GATE_DIR", tmp_path / "live")
     monkeypatch.setattr(gate, "EVIDENCE_DIR", tmp_path / "evidence")
+    # `get_last_known_green` now checks availability too (2026-08-15) — a green
+    # record for an uninstalled model is not a usable fallback seat. Without a
+    # pinned inventory these unit tests reach the developer's real Ollama
+    # daemon, which naturally does not have `old-green:latest`, and the tests
+    # fail for a reason that has nothing to do with what they assert.
+    # `resolve_local_seat` already had this check; the tests below that rely on
+    # it override this stub with their own inventory.
+    monkeypatch.setattr(gate, "_installed_local_models", lambda: None)
     return tmp_path
 
 

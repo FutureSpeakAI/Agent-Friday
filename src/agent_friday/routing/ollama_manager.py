@@ -296,7 +296,8 @@ class OllamaManager:
             model, disable_thinking=disable_thinking).get("ok"))
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
-                        max_tokens=4096, num_ctx=None, timeout=120):
+                        max_tokens=4096, num_ctx=None, timeout=120,
+                        think=None):
         options = {"temperature": temperature, "num_predict": max_tokens}
         # An explicit context is a placement decision, not a detail. Left unset
         # gemma4 reports num_ctx 262144 and spills most of itself onto the CPU
@@ -312,44 +313,62 @@ class OllamaManager:
         }
         if tools:
             body["tools"] = tools
-        try:
-            url = f"{self.base_url}/v1/chat/completions"
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(
-                url, data=data, method="POST",
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            # The native fallback MUST carry `tools` too. It did not, so any
-            # blip on the OpenAI-shaped path silently retried tool-less — a
-            # model that cannot be given tools cannot emit a tool call, so the
-            # retry was guaranteed to look like a tool-calling failure.
-            native = {
-                "model": model,
-                "messages": messages,
-                "stream": False,
-                "options": dict(options),
-            }
-            if tools:
-                native["tools"] = tools
-            resp = self._post("/api/chat", native, timeout=timeout)
-            msg = resp.get("message", {}) or {}
-            out_msg = {"role": "assistant", "content": msg.get("content", "")}
-            if msg.get("tool_calls"):
-                out_msg["tool_calls"] = msg["tool_calls"]
-            return {
-                "choices": [{
-                    "message": out_msg,
-                    "finish_reason": "stop",
-                }],
-                "model": model,
-                "usage": {
-                    "prompt_tokens": resp.get("prompt_eval_count", 0),
-                    "completion_tokens": resp.get("eval_count", 0),
-                },
-            }
+
+        # `options` is an OLLAMA-NATIVE field. The OpenAI-compatible endpoint
+        # accepts the request and silently discards it — VERIFIED 2026-08-15:
+        #
+        #   /v1/chat/completions  options.num_ctx=8192 -> ollama ps says 131072
+        #   /api/chat             options.num_ctx=8192 -> ollama ps says 8192
+        #
+        # So when a caller has asked for a specific context, the native
+        # endpoint is the only one that can honour it. Going to /v1 first and
+        # calling the result "pinned to 8192" would be a claim the wire does
+        # not support — and it is why the gate was still running the 26b at
+        # 262144 with 79% of it on the CPU after the num_ctx "fix".
+        if not num_ctx:
+            try:
+                url = f"{self.base_url}/v1/chat/completions"
+                data = json.dumps(body).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=data, method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except Exception:
+                pass
+        # Native path: honours `options`, and MUST carry `tools` too. It did
+        # not, so any blip on the OpenAI-shaped path silently retried
+        # tool-less — a model that cannot be given tools cannot emit a tool
+        # call, so the retry was guaranteed to look like a tool-calling
+        # failure. The response is normalised to the OpenAI shape callers
+        # expect, tool_calls included.
+        native = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": dict(options),
+        }
+        if tools:
+            native["tools"] = tools
+        if think is False:
+            native["think"] = False
+        resp = self._post("/api/chat", native, timeout=timeout)
+        msg = resp.get("message", {}) or {}
+        out_msg = {"role": "assistant", "content": msg.get("content", "")}
+        if msg.get("tool_calls"):
+            out_msg["tool_calls"] = msg["tool_calls"]
+        return {
+            "choices": [{
+                "message": out_msg,
+                "finish_reason": "stop",
+            }],
+            "model": model,
+            "usage": {
+                "prompt_tokens": resp.get("prompt_eval_count", 0),
+                "completion_tokens": resp.get("eval_count", 0),
+            },
+        }
 
     def invalidate_cache(self):
         self._available = None
