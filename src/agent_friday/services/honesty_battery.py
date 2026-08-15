@@ -451,8 +451,11 @@ def _run_item(item, dispatch) -> dict:
         scored = _SCORERS[category](item, message, tool_trace)
         scored["content_excerpt"] = (message.get("content") or "")[:400]
     except Exception as e:
+        # A harness fault is not a model verdict — see model_seat_gate.
+        from agent_friday.services.model_seat_gate import _is_harness_error
         scored = {"passed": False, "detail": {"error": str(e)},
-                  "content_excerpt": ""}
+                  "content_excerpt": "",
+                  "harness_error": _is_harness_error(str(e))}
     scored["id"] = item["id"]
     scored["category"] = category
     scored["prompt"] = item["prompt"]
@@ -461,9 +464,14 @@ def _run_item(item, dispatch) -> dict:
 
 def run_battery(model: str, *, provider: str = "local", dispatch=None,
                 ollama_url: str = "http://localhost:11434",
-                api_key: str = None) -> dict:
+                api_key: str = None, on_progress=None) -> dict:
     """Run the full honesty battery. A red result is a valid outcome —
-    commit the baseline whatever it shows. Persists to the gate store."""
+    commit the baseline whatever it shows. Persists to the gate store.
+
+    A run containing harness faults is INCONCLUSIVE and never overwrites a
+    standing verdict, for the same reason as the structural axis: a timeout
+    measures the harness, not the model.
+    """
     if dispatch is None:
         if provider == "local":
             dispatch = make_local_dispatch(model, ollama_url)
@@ -472,9 +480,29 @@ def run_battery(model: str, *, provider: str = "local", dispatch=None,
         else:
             raise ValueError(f"no dispatcher for provider {provider!r}")
 
+    def _emit(line):
+        if on_progress:
+            try:
+                on_progress(line)
+            except Exception:
+                pass
+
     items = load_golden()
-    results = [_run_item(item, dispatch) for item in items]
+    _emit("honesty: %d golden items against %s" % (len(items), model))
+    results = []
+    for i, item in enumerate(items, 1):
+        t0 = time.time()
+        r = _run_item(item, dispatch)
+        el = round(time.time() - t0, 1)
+        results.append(r)
+        verdict = ("HARNESS ERROR" if r.get("harness_error")
+                   else ("pass" if r.get("passed") else "FAIL"))
+        _emit("  [%d/%d] %-22s %-13s %5.1fs"
+              % (i, len(items), r.get("category", "?"), verdict, el))
+
     passed_count = sum(1 for r in results if r["passed"])
+    harness_errors = [r for r in results if r.get("harness_error")]
+    inconclusive = bool(harness_errors)
     by_cat = {}
     for r in results:
         c = by_cat.setdefault(r["category"], {"passed": 0, "total": 0})
@@ -487,10 +515,19 @@ def run_battery(model: str, *, provider: str = "local", dispatch=None,
         "provider": provider,
         "timestamp": time.time(),
         "score": f"{passed_count}/{len(results)}",
-        "passed": passed_count == len(results),
+        "passed": (None if inconclusive else passed_count == len(results)),
+        "inconclusive": inconclusive,
+        "harness_errors": len(harness_errors),
         "by_category": by_cat,
         "results": results,
     }
+    if inconclusive:
+        _emit("honesty: INCONCLUSIVE — %d/%d items failed in the harness "
+              "(not the model); prior verdict left untouched"
+              % (len(harness_errors), len(items)))
+    else:
+        _emit("honesty: %s — %s" % (result["score"],
+                                    "GREEN" if result["passed"] else "RED"))
     save_honesty_status(model, provider, result)
     return result
 
@@ -502,8 +539,13 @@ def _honesty_name(model: str, provider: str) -> str:
 
 
 def save_honesty_status(model: str, provider: str, result: dict) -> Path:
+    """Inconclusive runs land beside the authoritative record, never over it."""
     GATE_DIR.mkdir(parents=True, exist_ok=True)
-    path = GATE_DIR / _honesty_name(model, provider)
+    name = _honesty_name(model, provider)
+    if result.get("inconclusive"):
+        path = GATE_DIR / name.replace(".json", ".inconclusive.json")
+    else:
+        path = GATE_DIR / name
     path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return path
 
@@ -520,9 +562,13 @@ def get_honesty_status(model: str, provider: str = "local"):
 
 
 def is_honesty_green(model: str, provider: str = "local") -> bool:
-    """Fail-closed: no recorded honesty run is NOT green."""
+    """Fail-closed: no recorded honesty run is NOT green.
+
+    `passed is None` (inconclusive) is ungated, not red — the harness failed,
+    so nothing about the model was measured.
+    """
     status = get_honesty_status(model, provider)
-    return bool(status and status.get("passed"))
+    return bool(status and status.get("passed") is True)
 
 
 def save_honesty_evidence(result: dict) -> Path:
