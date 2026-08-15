@@ -210,6 +210,9 @@ A heavy or image lease *evicts the pinned pair*, so the interactive seat is unav
 runs. That is the real cost of depth on a single 12 GB card, and it should be visible to you
 when it happens rather than felt as unexplained sluggishness.
 
+> **Superseded 2026-08-15 by S4.** The sidekick now survives every lease — see §5.3. Friday
+> stays awake and answering while the heavy model works. The 12b brain still stands down.
+
 ### 2.5 Batching — the 53-second rule
 
 **The single most important scheduling fact: summoning the 26b costs 53.5 seconds before the
@@ -264,18 +267,138 @@ them yet.
 
 ---
 
-## Part 4 — Open questions
+## Part 4 — The four questions, answered
 
-**S1.** Raise the interactive context to 131 072 now, or wait for evidence that 12 552 tokens is
-actually pinching?
+Answered by Stephen, 2026-08-15, verbatim where it matters.
 
-**S2.** Should heavy work queue *by default* — parked until a batch is worth it — or run
-immediately unless told otherwise? Batching is more efficient; immediate is more predictable.
+**S1 — context.** *"Do expand the context window, yes."* Sized from the **whole** prompt — system
+prompt plus tools plus real conversation room — not from the tool list alone, which was the
+error that produced 32 768.
 
-**S3.** Who decides a turn is "heavy"? The e2b as a classifier (fast, and it is already resident
-for exactly this kind of job), an explicit user gesture, or the frontier scoper as part of the
-spec?
+**S2 — does heavy work queue by default?** Neither. **Friday asks.** *"when something that might
+be heavy work is being considered, that should cause Friday to ask if the user wants it to be
+scheduled for local execution when the user is away or if the user needs it immediately then it
+can execute either locally (slower) or in the cloud (faster)."* Three options, he picks. Never a
+silent decision in either direction.
 
-**S4.** On a heavy or image lease the interactive seat goes away for the duration. Acceptable, or
-should the e2b stay pinned through leases as a "someone is still home" seat? It costs 1 811 MiB
-of the heavy model's budget.
+**S3 — who decides a turn is heavy?** *"The user decides when a task is heavy."* Friday's
+judgement only *raises the question*; it never settles it. What Friday owes him is a clear
+picture to decide from: *"perhaps Friday should present a custom workflow UI with a
+representation of the tasks it will execute, and a series of config options for the workflow, so
+the user can choose or select 'choose for me' as an option as well."* Friday proposes; Stephen
+disposes — including the option to hand the decision back.
+
+**S4 — does the sidekick survive a lease?** *"keep e2b awake so Friday is always alive."* Yes.
+The heavy and image leases may take the brain; they may not take the sidekick.
+
+---
+
+## Part 5 — Build spec
+
+Shape on record before code. Six components, one commit each.
+
+### 5.1 Context sized from the whole prompt
+
+The mistake being corrected: `TOOL_SEAT_NUM_CTX = 32768` was derived from the ~8 534-token tool
+registry alone (×4 for headroom). It ignored the ~11 681-token system prompt, which is the
+larger of the two. Correct arithmetic:
+
+```
+overhead = system prompt + tool schemas      (measured, ~20 216)
+want     = overhead + conversation room      (room is per-role)
+num_ctx  = largest ladder rung that is >= want AND fits the VRAM budget
+           AND is <= the model's own declared context window
+```
+
+- **Ladder:** powers of two, 8192 … 262144. A rung, not an arbitrary integer, because backends
+  allocate KV in blocks and a tidy number is easier to reason about in a bug report.
+- **Floor:** `overhead + 8192`. A seat that cannot hold the tools *and* a short conversation
+  cannot do tool-using work at all. Below the floor, refuse with the arithmetic (R7 already says
+  the number is explicit; this says it must also be *sufficient*).
+- **Room targets:** interactive brain gets the most — it is the seat that reads documents and
+  holds long conversations. The heavy seat needs room for code. The sidekicks need enough to be
+  useful without spending budget the brain needs.
+- **Fitting:** VRAM at an unmeasured context is **extrapolated from the model's own measured KV
+  slope**, never guessed from a family constant, and never extrapolated downward into optimism.
+  With fewer than two rows the pessimistic "largest measured" rule stands.
+- Every rung actually chosen gets **measured at load and recorded**, so the next plan uses truth
+  rather than the estimate.
+
+### 5.2 Heavy work proposes; it never decides
+
+A `WorkflowProposal` is the object Friday puts in front of Stephen:
+
+```
+proposal = {
+  id, title, summary,
+  tasks: [ { id, title, detail, cls, seat_hint,
+             est_s_local, est_s_cloud, tools, touches_vault } ],
+  options: { execution: [ when_away | now_local | now_cloud ], ... },
+  blocked:  [ { option, reason } ],       # e.g. cloud, because a task reads the vault
+  recommendation: { execution, why },     # what "choose for me" would pick
+}
+```
+
+Three executions, exactly as specified:
+
+| Option | Meaning | Cost |
+|---|---|---|
+| `when_away` | Parked; drains under one lease while the machine is idle | Free to wait, slowest to finish |
+| `now_local` | Runs now on local seats | Slower, private, no bill |
+| `now_cloud` | Runs now on the frontier | Faster, costs money, **vault-blocked** |
+
+**The vault rule constrains the menu.** If any task in a proposal touches vault-tier material,
+`now_cloud` is not offered for that task and the reason is stated on the option, not hidden. This
+is the existing rule made visible: `routing/model_router._route_vault` forces local regardless of
+configured mode, and `services/agent.py:186-191` refuses to let a vault-forced route fall back to
+cloud. The UI must not offer a choice the router would overrule.
+
+**"Choose for me"** picks by a stated heuristic and *shows which one it picked and why*, so a
+handed-back decision is still legible: vault work → `now_local`; long work with the machine idle
+→ `when_away`; short work → `now_local`; work he is visibly waiting on → `now_cloud`.
+
+### 5.3 The sidekick survives every lease
+
+`Arbiter._evict_pinned()` currently stands down `interactive_brain`, `sidekick` and `embedder`.
+The sidekick comes off that list, for both lease kinds.
+
+**This is not free and the cost must be measured, not assumed.** The heavy model was placed
+against the full 9 997 MiB budget and settled at 9 802 MiB with `--n-cpu-moe 20`. Holding
+1 811 MiB back for the sidekick leaves **8 186 MiB**, so the heavy seat must push more experts to
+the CPU and will run slower. The operating point is re-swept and the new number recorded — R6's
+`n_cpu_moe` becomes a function of the budget actually available at lease time rather than a
+constant. The image lease gets the same treatment and the same question asked of it: does
+Z-Image still generate with 1 811 MiB held back?
+
+If the answer for either is "no", that is reported as a cost of the decision, not worked around
+silently.
+
+### 5.4 The work queue
+
+`services/work_queue.py`. Classed, persisted, drained under one lease.
+
+- **Classes:** `reflex`, `interactive`, `heavy`, `image`, `background` — the priority order from
+  §2.4.
+- **An item** carries its spec, its class, its disposition, its provenance (which proposal), and
+  after execution its seat, timings and result.
+- **Drain** is the whole point: take one lease, run *every* queued item of that class in order,
+  release. The 53.5 s wake is paid once for the batch instead of once per item, and the drain
+  records both figures so the saving is visible rather than claimed.
+- **The away-drain** is what `when_away` means. Idle is measured from real user activity; the
+  drain fires when the machine has been quiet long enough that taking the card is free.
+- Persisted, because a queue that dies with the process is not a promise Friday can make.
+
+### 5.5 The workflow UI
+
+A panel rendering the proposal: the task list Friday intends to execute, per-task class and
+estimate, the three execution options with anything blocked shown as blocked *and why*,
+per-task overrides, and **Choose for me**. Plus the live queue: what is parked, what is running,
+what the last drain cost.
+
+### 5.6 The tool-chain measurement
+
+Load-bearing and still **UNKNOWN**. A scripted task requiring 3–5 dependent read-only tool calls,
+run N times per local model, scored on whether the chain completed and the answer was right.
+
+Per Stephen's standing rule: **a model that scores badly is a prompting-and-template problem to
+fix, not a model to exclude.** The number tells us where to work, never who to bar.
