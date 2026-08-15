@@ -231,3 +231,62 @@ def test_no_generation_model_installed_reports_none(monkeypatch):
         "agent_friday.routing.ollama_manager.get_manager",
         lambda *a, **k: _Mgr())
     assert ph.resident_model_for({"type": "ollama"}) is None
+
+
+# ── proving inference happened, not that it took a particular shape ──────────
+
+class _Block:
+    def __init__(self, t):
+        self.type = t
+
+
+class _Resp:
+    def __init__(self, kinds):
+        self.content = [_Block(k) for k in kinds]
+
+
+def _anthropic_probe(monkeypatch, kinds):
+    monkeypatch.setattr(ph, "_provider",
+                        lambda n: {"name": "anthropic", "type": "anthropic",
+                                   "models": ["claude-sonnet-5"]})
+    monkeypatch.setattr(ph, "resident_model_for", lambda p: "claude-sonnet-5")
+
+    class _Msgs:
+        def create(self, **kw):
+            return _Resp(kinds)
+
+    class _Client:
+        messages = _Msgs()
+
+    monkeypatch.setattr("agent_friday.core.get_anthropic_client",
+                        lambda: _Client())
+    ph.reset_probe_cache()
+    return ph.inference_probe("anthropic", use_cache=False)
+
+
+def test_a_thinking_only_response_still_proves_inference(monkeypatch):
+    """claude-sonnet-5 emits a thinking block first, so a modest budget can
+    return a response whose ONLY block is thinking.
+
+    Demanding a `text` block reported a provider that was serving chat as
+    down — intermittently, purely on whether thinking ate the budget
+    (VERIFIED live: ok in 1614ms, then 'empty completion' minutes later).
+    """
+    r = _anthropic_probe(monkeypatch, ["thinking"])
+    assert r["status"] == "ok"
+    assert r["proved_inference"] is True
+    assert "thinking only" in r["detail"]
+
+
+def test_a_text_response_is_still_ok(monkeypatch):
+    r = _anthropic_probe(monkeypatch, ["text"])
+    assert r["status"] == "ok"
+    assert "only" not in r["detail"]
+
+
+def test_a_genuinely_empty_response_is_still_down(monkeypatch):
+    """No blocks at all is a real failure and must stay one."""
+    r = _anthropic_probe(monkeypatch, [])
+    assert r["status"] == "down"
+    assert r["detail"] == "empty completion"
+    assert r["proved_inference"] is False
