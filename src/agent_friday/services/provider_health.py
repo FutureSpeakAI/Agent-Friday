@@ -262,7 +262,18 @@ def _check(name, deep=False) -> dict:
 _PROBE_TTL_S = 60.0        # probes cost tokens; /api/health is polled often
 _PROBE_CACHE: dict = {}    # provider -> (ts, result)
 _PROBE_PROMPT = "hi"
-_PROBE_MAX_TOKENS = 1
+# A ONE-token budget cannot reliably prove inference works. VERIFIED live
+# 2026-08-15: /api/health reported `anthropic: down — empty completion` while
+# Anthropic was serving chat perfectly well, because a 1-token completion can
+# stop before any text block is emitted. Same failure shape as the thinking
+# models, which spend a small budget reasoning and return content=''.
+#
+# 16 tokens is still a trivial spend (this is cached for _PROBE_TTL_S) and is
+# enough for every provider to actually say something. A health check that
+# reports down on a healthy system destroys trust in the signal just as surely
+# as one that reports ok on a broken one — and this one was doing it to BOTH
+# providers at once.
+_PROBE_MAX_TOKENS = 16
 
 
 def resident_model_for(prov) -> str | None:
