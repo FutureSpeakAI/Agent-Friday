@@ -23244,30 +23244,46 @@ function fridayInvalidateModelCatalog() {
 // Components call this and render selectors from it — no hardcoded model lists.
 function useModelCatalog() {
   const [cat, setCat] = useState(window.__fridayModelCatalog || null);
+  const [err, setErr] = useState(null);
   useEffect(() => {
     const load = () => {
       if (window.__fridayModelCatalog) {
         setCat(window.__fridayModelCatalog);
+        setErr(null);
         return;
       }
-      apiFetch('/api/models').then(r => r.json()).then(d => {
+      apiFetch('/api/models').then(r => {
+        if (!r.ok) {
+          throw new Error('HTTP ' + r.status + (r.status === 401 ? ' — session expired' : ''));
+        }
+        return r.json();
+      }).then(d => {
         if (d && d.status === 'ok' && d.roles) {
           window.__fridayModelCatalog = d;
           setCat(d);
-        }
-      }).catch(() => {});
+          setErr(null);
+        } else throw new Error('catalog payload not ok');
+      }).catch(e => {
+        setErr(String(e && e.message || e));
+      });
     };
     load();
     window.addEventListener('friday:model-catalog-invalidated', load);
     return () => window.removeEventListener('friday:model-catalog-invalidated', load);
   }, []);
   const roles = cat && cat.roles || {};
-  // Static consts are ONLY the fetch-failed fallback. An empty role list from a
-  // successful catalog is truth (e.g. provider disabled) — render it empty
-  // rather than resurrecting hardcoded entries with no availability data.
-  const pick = r => cat ? roles[r] || [] : _MODEL_FALLBACK[r] || [];
+  // An empty role list from a SUCCESSFUL catalog is truth (e.g. provider
+  // disabled) — render it empty rather than resurrecting hardcoded entries.
+  //
+  // A FAILED fetch is not truth and must not be dressed as it. Falling back to
+  // the static consts silently presented six Claude models (and four Google
+  // ones) as "the catalog" on a tab whose token had expired, hiding four
+  // installed local models the server was serving perfectly well. Same class of
+  // dishonesty as a badge naming the wrong model: show the failure instead.
+  const pick = r => cat ? roles[r] || [] : [];
   const out = {
     loaded: !!cat,
+    error: err,
     orchestrator: pick('orchestrator'),
     subagent: pick('subagent'),
     creative: pick('creative'),
@@ -30307,6 +30323,35 @@ function SettingsTabModels({
   const mc = useModelCatalog();
   const mkSel = (role, key, label, desc) => {
     const models = mc[role] || [];
+    // A catalog we could not load is reported, not papered over. The old
+    // behaviour showed a hardcoded Claude-only list and looked authoritative.
+    if (mc.error) return /*#__PURE__*/React.createElement(StRow, {
+      key: key,
+      label: label,
+      desc: desc
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: '#ffb347',
+        border: '1px solid rgba(255,179,71,0.4)',
+        borderRadius: 6,
+        padding: '8px 10px',
+        lineHeight: 1.5
+      }
+    }, "\u26A0 Model catalog unavailable \u2014 ", mc.error, ".", /*#__PURE__*/React.createElement("br", null), "Currently routed: ", /*#__PURE__*/React.createElement("b", {
+      style: {
+        fontFamily: 'JetBrains Mono'
+      }
+    }, s[key] || '— default —'), ".", ' ', "This list is hidden rather than shown wrong. ", /*#__PURE__*/React.createElement("a", {
+      href: "#",
+      style: {
+        color: '#00d4ff'
+      },
+      onClick: e => {
+        e.preventDefault();
+        fridayInvalidateModelCatalog();
+      }
+    }, "Retry"), " or reload the page (Ctrl+Shift+R)."));
     return /*#__PURE__*/React.createElement(StRow, {
       key: key,
       label: label,

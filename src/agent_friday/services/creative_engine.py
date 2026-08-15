@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging as _logging
 import os
 import re
 import threading
@@ -103,6 +104,23 @@ _VIDEO_MODEL_MAP = {
 
 DEFAULT_IMAGE_MODEL = "gemini-nano-banana-pro"
 DEFAULT_VIDEO_MODEL = "veo"
+
+log = _logging.getLogger("friday.creative_engine")
+
+
+def _configured_image_model() -> str | None:
+    """The image model the user's creative seat actually names.
+
+    Read at call time, not import time, so changing the seat takes effect on
+    the next request — the same contract the settings UI advertises.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+        cr = (s.get("capability_routing") or {}).get("creative_image") or {}
+        return cr.get("model") or s.get("creative_model")
+    except Exception:
+        return None
 
 # Voice / text models that must NEVER be used for creative output.
 _FORBIDDEN_CREATIVE = (
@@ -577,6 +595,23 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
+    # ── Routed local image generation (D8). ────────────────────────────────
+    # When the creative seat names the on-device model, generate here and never
+    # reach for a cloud key. Checked BEFORE `is_available()`, which asks whether
+    # the *Gemini* client is configured — an on-device generation must not be
+    # refused for want of a cloud credential, which is precisely how a working
+    # local image stack stayed invisible.
+    try:
+        from agent_friday.services import local_image as _local_image
+        _requested = model or _configured_image_model()
+        if _requested == _local_image.MODEL_ID:
+            out = _local_image.generate(prompt, aspect_ratio=aspect_ratio)
+            out.setdefault("api_model", _local_image.MODEL_ID)
+            out.setdefault("prompt", prompt)
+            return out
+    except Exception as _li_err:                 # never break the cloud path
+        log.warning("local image dispatch skipped: %s", _li_err)
+
     if not is_available():
         if allow_demo:
             return _demo_creation("image", prompt, model or DEFAULT_IMAGE_MODEL,
