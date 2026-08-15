@@ -98,8 +98,39 @@ def _score_response(oai_message: dict, tool_names) -> dict:
 # A gate call must be able to absorb a cold load plus a full generation. The
 # old flat 120s could not: 9 of 10 cases for gemma4:12b timed out on
 # 2026-08-15 and the model scored 1/10 having never actually been tested.
-GATE_NUM_CTX = 8192
 GATE_TIMEOUT_S = 600
+
+# The context has to hold the TOOL DEFINITIONS, and they are not small.
+# Measured 2026-08-15: 52 tools serialise to 34 138 characters ~= 8 534
+# tokens, so the gate prompt is ~8 643 tokens before the model writes a word.
+#
+# An earlier value of 8192 was chosen from the KV/VRAM curve — the wrong input
+# entirely. It sat BELOW the prompt, so the tool definitions were truncated and
+# gemma4:e2b scored 8/10 at 8192 having scored 10/10 at the daemon default.
+# A context too small for the tools produces exactly the symptom the gate is
+# meant to detect (a model "failing" to call tools), which makes it worse than
+# no limit at all.
+#
+# 32768 leaves roughly 4x headroom over the measured prompt. gemma4's KV is
+# nearly free (7690 MiB at 4k vs 8001 MiB at 16k), so this costs little VRAM.
+GATE_NUM_CTX = 32768
+
+
+def min_tool_context(pad_tokens: int = 4096) -> int:
+    """Smallest power-of-two context that actually holds the tool registry.
+
+    Derived from the live schema rather than guessed, so it tracks the tool
+    count instead of going stale the next time tools are added.
+    """
+    try:
+        _names, tools = _tool_names_and_schema()
+        approx = len(json.dumps(tools)) // 4 + pad_tokens
+    except Exception:
+        return GATE_NUM_CTX
+    n = 4096
+    while n < approx and n < 131072:
+        n *= 2
+    return n
 
 
 def _is_harness_error(err: str) -> bool:

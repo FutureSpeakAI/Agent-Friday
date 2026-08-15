@@ -84,6 +84,11 @@ SEED_MEASUREMENTS: dict = {
              "ms_per_token": 6.02, "probe_ms_per_token": 8.68,
              "cold_load_s": 20.97,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
+            # 32768 is the tool-seat context (the 52-tool registry is ~8534
+            # tokens, so a seat below ~12k truncates the tool definitions).
+            {"num_ctx": 32768, "vram_mib": 1811, "total_mib": 1811,
+             "pct_gpu": 100, "tok_s_median": 178.22,
+             "backend": BACKEND_OLLAMA, "measured_at": "2026-08-15"},
         ],
         "gemma4:e4b": [
             {"num_ctx": 8192, "vram_mib": 3081, "total_mib": 3081,
@@ -104,6 +109,13 @@ SEED_MEASUREMENTS: dict = {
              "ms_per_token": 20.26, "probe_ms_per_token": 18.27,
              "cold_load_s": 20.49,
              "backend": BACKEND_OLLAMA, "measured_at": "2026-08-14"},
+            # The tool-seat context. Note it measures LOWER than 16384 did —
+            # taken under Ollama 0.32.11 where the earlier rows were 0.32.9.
+            # Recorded as measured rather than smoothed: the KV curve on this
+            # family is flat enough that allocator differences dominate it.
+            {"num_ctx": 32768, "vram_mib": 7718, "total_mib": 7718,
+             "pct_gpu": 100, "tok_s_median": 54.12,
+             "backend": BACKEND_OLLAMA, "measured_at": "2026-08-15"},
         ],
         # Measured under Ollama BEFORE the copy was removed for the
         # llama-server comparison. Kept: it is the banked half of a

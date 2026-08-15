@@ -44,7 +44,10 @@ def test_p1_pins_the_12b_on_the_gpu_with_an_explicit_context():
     assert s["model_id"] == "gemma4:12b"
     assert s["device"] == "gpu:0"
     assert s["status"] == "pinned"
-    assert s["num_ctx"] == 16384        # R7: never a backend default
+    # 32768 is the TOOL-SEAT context: the 52-tool registry is ~8534 tokens,
+    # so a seat below ~12k truncates the tool definitions (measured: e2b
+    # scored 8/10 at 8192 having scored 10/10 at a larger context).
+    assert s["num_ctx"] == 32768        # R7: never a backend default
 
 
 def test_p1_pins_the_e2b_beside_it():
@@ -56,7 +59,7 @@ def test_p1_pins_the_e2b_beside_it():
 def test_p1_pinned_pair_fits_the_budget_with_room_to_spare():
     p = _plan("P1")
     avail = p["budgets"]["gpus"][0]["available_mib"]
-    assert p["pinned_vram_mib"]["gpu:0"] == 8001 + 1763 == 9764
+    assert p["pinned_vram_mib"]["gpu:0"] == 7718 + 1811 == 9529
     assert p["pinned_vram_mib"]["gpu:0"] <= avail == 9997
 
 
@@ -142,7 +145,8 @@ def test_p4_puts_the_brain_on_the_other_card():
 def test_p4_gpu0_stays_within_budget():
     p = _plan("P4")
     g0 = [g for g in p["budgets"]["gpus"] if g["index"] == 0][0]
-    assert p["pinned_vram_mib"]["gpu:0"] == 17391 + 1763 + 2029 == 21183
+    # 1811 = the e2b at the 32768 tool-seat context (was 1763 at 8192).
+    assert p["pinned_vram_mib"]["gpu:0"] == 17391 + 1811 + 2029 == 21231
     assert p["pinned_vram_mib"]["gpu:0"] <= g0["available_mib"]
 
 
