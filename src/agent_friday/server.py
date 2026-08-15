@@ -85,6 +85,7 @@ ROUTE_MODULES = [
     'learning', 'messages',
     'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
     'persona', 'platform', 'projects', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
+    'work_plan',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio',
 ]
