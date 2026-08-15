@@ -168,6 +168,44 @@ def test_the_gate_pins_an_explicit_context():
     assert gate.GATE_TIMEOUT_S >= 600
 
 
+def test_num_ctx_forces_the_native_endpoint(monkeypatch):
+    """`options` is Ollama-NATIVE; /v1/chat/completions accepts the request and
+    silently discards it.
+
+    VERIFIED on the live daemon 2026-08-15:
+        /v1/chat/completions  options.num_ctx=8192 -> ollama ps says 131072
+        /api/chat             options.num_ctx=8192 -> ollama ps says   8192
+
+    So a caller asking for a context must reach the native endpoint, or the
+    'explicit context' is a claim the wire does not support. This is not
+    hypothetical: the gate was still running the 26b at 262144 with 79% of it
+    on the CPU *after* the num_ctx fix, because it went to /v1 first.
+    """
+    from agent_friday.routing import ollama_manager as om
+    mgr = om.OllamaManager.__new__(om.OllamaManager)
+    mgr.base_url = "http://localhost:11434"
+    seen = {}
+
+    def _post(path, body, timeout=30):
+        seen["path"] = path
+        seen["options"] = body.get("options")
+        seen["tools"] = body.get("tools")
+        return {"message": {"content": "ok"}}
+
+    mgr._post = _post
+
+    def _boom(*a, **k):
+        raise AssertionError("must not use /v1 when num_ctx is requested")
+    monkeypatch.setattr(om.urllib.request, "urlopen", _boom)
+
+    out = mgr.chat_completion([{"role": "user", "content": "hi"}], "m:1b",
+                              tools=[{"type": "function"}], num_ctx=8192)
+    assert seen["path"] == "/api/chat"
+    assert seen["options"]["num_ctx"] == 8192
+    assert seen["tools"], "the native path must still carry tools"
+    assert out["choices"][0]["message"]["content"] == "ok"
+
+
 # ── the fallback seat must still exist ───────────────────────────────────────
 
 def test_last_known_green_skips_an_uninstalled_model(monkeypatch, gate_dir):
