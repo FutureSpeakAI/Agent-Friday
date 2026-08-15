@@ -164,7 +164,10 @@ def test_a_broken_progress_callback_cannot_break_the_gate(monkeypatch,
 
 def test_the_gate_pins_an_explicit_context():
     """Ollama's default for gemma4 is 262144, which spills 79% onto the CPU."""
-    assert gate.GATE_NUM_CTX == 8192
+    # 32768, not 8192: the 52-tool registry is ~8534 tokens, so a context
+    # below the prompt truncates the tool definitions.
+    assert gate.GATE_NUM_CTX == 32768
+    assert gate.GATE_NUM_CTX >= gate.min_tool_context()
     assert gate.GATE_TIMEOUT_S >= 600
 
 

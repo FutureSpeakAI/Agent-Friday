@@ -52,7 +52,7 @@ def test_cpu_only_host_gets_its_own_fingerprint():
 
 def test_seed_carries_the_reference_measurements():
     rows = rc.measurements("gemma4:12b", rc.P1_FINGERPRINT)
-    assert [r["num_ctx"] for r in rows] == [4096, 8192, 16384]
+    assert [r["num_ctx"] for r in rows] == [4096, 8192, 16384, 32768]
     assert all(r["source"] == "seed" for r in rows)
 
 
@@ -92,7 +92,10 @@ def test_unmeasured_ctx_uses_the_nearest_measured_above():
 
 def test_ctx_above_everything_measured_uses_the_largest():
     """Never extrapolate downward: under-estimating VRAM fails at load time."""
-    assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 65536) == 8001
+    # 7718 is the 32768 row — the largest measured. It is LOWER than the
+    # 16384 row (8001) because it was taken under a newer Ollama; the
+    # lookup returns the largest measured CONTEXT, not the largest number.
+    assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 65536) == 7718
 
 
 # ── recorded measurements beat the seed ──────────────────────────────────────
