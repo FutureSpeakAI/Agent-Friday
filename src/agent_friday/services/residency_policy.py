@@ -25,8 +25,12 @@ from __future__ import annotations
 
 POLICY_VERSION = 1
 
-ROLES = ("interactive_brain", "heavy_hitter", "sidekick", "embedder",
-         "stt", "tts", "image")
+# `sidekick_heavy` is the second small seat: a more capable cheap model for
+# small-but-harder work, distinct from `sidekick` (the fastest thing that fits).
+# On the reference instance that is e4b (99.93 tok/s, 3081 MiB) beside e2b
+# (166.13 tok/s, 1763 MiB) — both genuinely useful, for different jobs.
+ROLES = ("interactive_brain", "heavy_hitter", "sidekick", "sidekick_heavy",
+         "embedder", "stt", "tts", "image")
 
 # ── Rules as data ────────────────────────────────────────────────────────────
 
@@ -87,6 +91,7 @@ DEFAULT_NUM_CTX = {
     "interactive_brain": 16384,
     "heavy_hitter": 16384,
     "sidekick": 8192,
+    "sidekick_heavy": 8192,
     "embedder": 2048,
 }
 
@@ -284,6 +289,15 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
                 brain, "interactive_brain", "cpu",
                 DEFAULT_NUM_CTX["interactive_brain"], "resident", 0)
 
+    # The next-best small model, for small-but-harder work. Leased rather than
+    # pinned: on P1 the pinned pair already sits at 9764 of 9997 MiB, so a third
+    # resident model would breach R3. It is a real, addressable seat that loads
+    # on demand — not a model quietly left unbound.
+    alt_pool = [e for e in side_pool
+                if sidekick is None or e["model_id"] != sidekick["model_id"]]
+    sidekick_heavy = (min(alt_pool, key=lambda e: (_ms(e), e["model_id"]))
+                      if alt_pool else None)
+
     if sidekick is not None:
         seats["sidekick"] = _place(sidekick, "sidekick", "pinned")
         if seats["sidekick"] is None:
@@ -299,6 +313,16 @@ def plan(profile: dict, entries: list, overrides: dict | None = None) -> dict:
                                  role="sidekick", collapsed_into=
                                  "interactive_brain") \
             if seats["interactive_brain"] else None
+
+    if sidekick_heavy is not None:
+        ctx = DEFAULT_NUM_CTX["sidekick_heavy"]
+        need = _required_vram(sidekick_heavy, ctx)
+        dev = ("gpu:%d" % order[0]["index"]) if budgets else "cpu"
+        seat = _placement(sidekick_heavy, "sidekick_heavy", dev, ctx,
+                          "leased", need or 0)
+        seat["displaces"] = ("loaded on demand; may displace a pinned seat"
+                             if budgets else None)
+        seats["sidekick_heavy"] = seat
 
     # ── embedder: GPU when there is room after the pinned seats, else CPU.
     if embedders:

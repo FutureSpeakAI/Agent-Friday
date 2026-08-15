@@ -1,0 +1,155 @@
+"""
+Agent Friday — seat binding: the residency plan drives `capability_routing`.
+
+Friday grew two vocabularies for the same idea and reconciled them BY HAND:
+
+  * `capability_routing` — reasoning / subagent / creative_* / voice / asr /
+    tts / embedding / local. What dispatch actually reads.
+  * residency roles — interactive_brain / heavy_hitter / sidekick /
+    sidekick_heavy / embedder / stt / tts / image. What the policy computes.
+
+Hand-reconciliation is exactly how `reasoning` came to point at a model that
+had been deleted from the disk, and `local` at a `gemma3:4b` that was never
+installed (Q5). This module makes the plan authoritative so that class of
+defect cannot recur.
+
+Two rules keep it honest:
+
+**A seat is only bound to a local model that is DUAL-GREEN.** The plan says
+where a model would fit; the gate says whether it can be trusted with tools.
+Binding an ungated model would hand it a seat that dispatch then refuses at
+runtime — trading a visible refusal here for an invisible one later.
+
+**`embedding` is never bound.** The plan's embedder seat is
+`qwen3-embedding:0.6b` at 1024 dimensions; the live store is
+`all-MiniLM-L6-v2` at 384. Decision D5 gates that switch on a re-index path
+that does not exist, and A5's dimension guard exists because the mismatch
+fails SILENTLY and presents as permanent memory loss. Overwriting this key
+from a plan would destroy the Chroma collections.
+"""
+from __future__ import annotations
+
+import logging
+
+_log = logging.getLogger("friday.seat_binding")
+
+# residency role -> capability_routing key
+SEAT_TO_CAPABILITY = {
+    "interactive_brain": "reasoning",
+    "heavy_hitter": "heavy_hitter",
+    "sidekick": "local",
+    "sidekick_heavy": "subagent",
+    "image": "creative_image",
+}
+
+# Flat legacy mirrors kept in sync (core._sync_capability_routing also does
+# this; both surfaces exist and disagreeing is worse than either).
+CAPABILITY_TO_FLAT = {
+    "reasoning": "orchestrator_model",
+    "subagent": "subagent_model",
+}
+
+# Never bound from a plan. See the module docstring — D5.
+NEVER_BIND = {"embedder", "stt", "tts"}
+
+# Seats whose model must hold tools. A local model needs BOTH gate axes green
+# before it may occupy one.
+TOOL_SEATS = {"interactive_brain", "heavy_hitter", "sidekick",
+              "sidekick_heavy"}
+
+
+def _provider_for(seat: dict) -> str:
+    backend = (seat or {}).get("backend") or ""
+    if backend == "llama-server":
+        return "llama-cpp-local"
+    if backend == "comfyui":
+        return "local-comfyui"
+    return "ollama-local"
+
+
+def propose(plan: dict, settings: dict) -> dict:
+    """Compute the capability_routing changes the plan implies. Pure.
+
+    Returns {"changes": {cap: {provider, model, from}}, "refusals": [...],
+             "skipped": [...]} — nothing is written.
+    """
+    from agent_friday.services.model_seat_gate import axis_status
+
+    cr = dict((settings or {}).get("capability_routing") or {})
+    changes, refusals, skipped = {}, [], []
+
+    for role, cap in sorted(SEAT_TO_CAPABILITY.items()):
+        if role in NEVER_BIND:
+            continue
+        seat = ((plan or {}).get("seats") or {}).get(role)
+        if not seat or not seat.get("model_id"):
+            refusal = [r for r in (plan or {}).get("refusals", [])
+                       if r.get("role") == role]
+            if refusal:
+                skipped.append({"role": role, "capability": cap,
+                                "why": refusal[0].get("explanation")})
+            continue
+
+        model = seat["model_id"]
+        provider = _provider_for(seat)
+        current = cr.get(cap) or {}
+
+        if role in TOOL_SEATS:
+            ax = axis_status(model, "local")
+            if not ax.get("dual_green"):
+                refusals.append({
+                    "role": role, "capability": cap, "model": model,
+                    "rule": "dual-green seating",
+                    "explanation": (
+                        "%s is structural=%s honesty=%s; a seat needs both "
+                        "axes green or dispatch refuses it at runtime. "
+                        "Leaving %s on %s."
+                        % (model, ax.get("structural"), ax.get("honesty"),
+                           cap, current.get("model") or "its current model")),
+                })
+                continue
+
+        if (current.get("provider") == provider
+                and current.get("model") == model):
+            continue
+        changes[cap] = {"provider": provider, "model": model,
+                        "from": dict(current) or None}
+
+    return {"changes": changes, "refusals": refusals, "skipped": skipped}
+
+
+def apply(plan: dict, settings: dict) -> dict:
+    """Bind the plan into `settings` in place. Returns the proposal applied."""
+    prop = propose(plan, settings)
+    if not prop["changes"]:
+        return prop
+    cr = settings.setdefault("capability_routing", {})
+    for cap, val in prop["changes"].items():
+        cr[cap] = {"provider": val["provider"], "model": val["model"]}
+        flat = CAPABILITY_TO_FLAT.get(cap)
+        if flat:
+            # provider_health.py:306 specifically guards against a foreign id
+            # reaching the Anthropic probe; keeping the mirror in step is what
+            # stops that happening.
+            settings[flat] = val["model"]
+        if cap == "local":
+            settings.setdefault("model_routing", {})["local_model"] = \
+                val["model"]
+    _log.info("seat binding applied: %s",
+              ", ".join("%s→%s" % (c, v["model"])
+                        for c, v in sorted(prop["changes"].items())))
+    return prop
+
+
+def describe(prop: dict) -> str:
+    """One human-readable block, for logs and the startup banner."""
+    lines = []
+    for cap, v in sorted((prop.get("changes") or {}).items()):
+        was = (v.get("from") or {}).get("model") or "—"
+        lines.append("  bound   %-15s %s  (was %s)" % (cap, v["model"], was))
+    for r in prop.get("refusals") or []:
+        lines.append("  REFUSED %-15s %s" % (r["capability"], r["explanation"]))
+    for s in prop.get("skipped") or []:
+        lines.append("  skipped %-15s %s" % (s["capability"],
+                                             (s.get("why") or "")[:100]))
+    return "\n".join(lines) or "  (no changes)"

@@ -82,6 +82,20 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "sidekick_heavy": {
+      "backend": "ollama",
+      "device": "cpu",
+      "displaces": null,
+      "est_load_s": 8.5,
+      "is_moe": false,
+      "model_id": "gemma4:e4b",
+      "needs_think_disabled": true,
+      "num_ctx": 8192,
+      "offload": {},
+      "role": "sidekick_heavy",
+      "status": "leased",
+      "vram_mib": 3081
+    },
     "stt": {
       "backend": "cpu-service",
       "device": "cpu",

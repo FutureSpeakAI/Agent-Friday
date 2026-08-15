@@ -42,6 +42,14 @@
       "backend_status": "UNKNOWN",
       "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
       "model": null,
+      "role": "sidekick_heavy",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
       "role": "embedder",
       "rule": "vram-budget",
       "rule_id": "R3"
@@ -77,6 +85,7 @@
     "image": null,
     "interactive_brain": null,
     "sidekick": null,
+    "sidekick_heavy": null,
     "stt": null,
     "tts": null
   }

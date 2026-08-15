@@ -161,6 +161,56 @@ def __getattr__(name):
     raise AttributeError(f"module 'server' has no attribute {name!r}")
 
 
+def _residency_boot():
+    """Plan the machine, bind the plan to capability_routing, boot the GPU.
+
+    Every step is individually tolerant. The ordering matters:
+
+    1. **Bind before booting.** The binding is what dispatch reads; the boot
+       is what makes VRAM match it. Binding first means that even if the GPU
+       work fails, the seats still point somewhere real.
+    2. **Gate-checked binding.** `seat_binding` refuses to seat a local model
+       that is not dual-green, so a plan can never hand dispatch a model it
+       will refuse at runtime.
+    3. **`embedding` is never bound** — D5 gates that on a re-index path that
+       does not exist, and the mismatch fails silently as memory loss.
+    """
+    try:
+        from agent_friday import core as _core
+        from agent_friday.services import hardware_profile as _hwp
+        from agent_friday.services import residency_catalog as _rc
+        from agent_friday.services import residency_arbiter as _ra
+        from agent_friday.services import seat_binding as _sb
+    except Exception as e:                       # pragma: no cover - import guard
+        print(f"  Residency: unavailable ({e})")
+        return
+
+    try:
+        profile = _hwp.get()
+        entries = _rc.installed_entries(profile)
+        arb = _ra.Arbiter(profile=profile, entries=entries)
+        plan = arb.compute_plan()
+        print("  Residency: %s" % _hwp.summary(profile))
+
+        settings = _core._load_settings() or {}
+        prop = _sb.apply(plan, settings)
+        if prop.get("changes"):
+            _core._save_settings(settings)
+        print("  Residency seats:\n%s" % _sb.describe(prop))
+    except Exception as e:
+        print(f"  Residency: planning/binding failed ({e})")
+        return
+
+    try:
+        _ra.ARBITER = arb                        # process-wide handle
+        arb.boot()
+        print("  Residency: booted to plan (%s)" % arb.state)
+    except Exception as e:
+        # A failed boot leaves the seats bound and the machine usable; the
+        # arbiter reports DEGRADED rather than the server refusing to start.
+        print(f"  Residency: boot failed, seats still bound ({e})")
+
+
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
     # Decrypt any onboarding-stored provider API keys into the environment so
@@ -217,6 +267,21 @@ if not _TESTING:
     # MCP) and push a notification on a connected->down edge.
     from agent_friday.services.connectors import connector_health_monitor_loop
     threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
+
+    # Residency: compute the placement plan, bind it into capability_routing,
+    # and bring the GPU to that plan (decision Q9).
+    #
+    # Until this existed the whole residency layer governed nothing: the plan
+    # sat in golden files while the live server ran gemma4:12b at a 262144
+    # context, 71% of it on the CPU — exactly the placement the layer exists to
+    # prevent. Seats were reconciled by hand, which is how `reasoning` came to
+    # point at a deleted model.
+    #
+    # Runs on a daemon thread and is FAIL-SOFT by construction: a residency
+    # problem must never stop Friday from starting. Opt out with
+    # FRIDAY_NO_ARBITER=1.
+    if os.environ.get("FRIDAY_NO_ARBITER") != "1":
+        threading.Thread(target=_residency_boot, daemon=True).start()
 
 
 def _resolve_bind_port():
