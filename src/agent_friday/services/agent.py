@@ -5103,9 +5103,33 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
-            try:
-                targs = json.loads(fn.get("arguments") or "{}")
-            except Exception:
+            # Two wire shapes, and assuming one of them silently destroyed
+            # every local tool call that took an argument.
+            #
+            # OpenAI's spec says `arguments` is a JSON STRING. Ollama's native
+            # /api/chat returns it as an already-parsed OBJECT:
+            #     {"function": {"name": "get_project",
+            #                   "arguments": {"name": "gamma"}}}
+            # `json.loads(dict)` raises TypeError, the except substituted {},
+            # and the tool then ran with NO arguments. Measured 2026-08-15 on
+            # a dependent 4-call chain: the model emitted `{"name": "gamma"}`
+            # correctly every time, the executor received `{}` every time, and
+            # the model — being told nothing was found — reported that the
+            # tools had failed. It read as a model too weak to chain tool
+            # calls. It was a type check.
+            #
+            # This surfaced when dispatch moved to /api/chat to make num_ctx
+            # take effect (the OpenAI-compatible endpoint silently discards
+            # `options`), which traded a working context for broken arguments.
+            _raw = fn.get("arguments")
+            if isinstance(_raw, dict):
+                targs = _raw
+            elif isinstance(_raw, str) and _raw.strip():
+                try:
+                    targs = json.loads(_raw)
+                except Exception:
+                    targs = {}
+            else:
                 targs = {}
             _t_tool = _time.time()
 
