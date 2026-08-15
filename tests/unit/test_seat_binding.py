@@ -192,3 +192,25 @@ def test_backend_determines_the_bound_provider(all_green):
                                     "backend": "llama-server"})
     prop = sb.propose(plan, _settings())
     assert prop["changes"]["reasoning"]["provider"] == "llama-cpp-local"
+
+
+def test_the_image_seat_updates_its_flat_mirror(all_green):
+    """core._sync_capability_routing DERIVES capability_routing from the flat
+    keys, so a capability written without its mirror is silently reverted.
+
+    Caught live 2026-08-15: the image seat became provider `local-comfyui`
+    with model `gemini-nano-banana-2` — a Google model on the on-device
+    provider — because `creative_model` still named the Gemini one.
+    """
+    s = _settings()
+    s["creative_model"] = "gemini-nano-banana-2"
+    sb.apply(_plan(), s)
+    assert s["creative_model"] == "z-image-turbo-fp8"
+
+
+def test_every_bound_capability_has_a_flat_mirror():
+    """A bound capability with no mirror loses to the sync on the next save."""
+    missing = [c for c in sb.SEAT_TO_CAPABILITY.values()
+               if c not in sb.CAPABILITY_TO_FLAT and c not in ("local",
+                                                               "heavy_hitter")]
+    assert not missing, "no flat mirror for: %s" % missing

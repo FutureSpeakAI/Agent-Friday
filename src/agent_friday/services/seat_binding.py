@@ -42,11 +42,23 @@ SEAT_TO_CAPABILITY = {
     "image": "creative_image",
 }
 
-# Flat legacy mirrors kept in sync (core._sync_capability_routing also does
-# this; both surfaces exist and disagreeing is worse than either).
+# Flat legacy mirrors. These are NOT optional bookkeeping: core's
+# `_sync_capability_routing` derives capability_routing FROM these keys, so a
+# capability written without its mirror is silently reverted.
+#
+# Caught live 2026-08-15. Binding the image seat without updating
+# `creative_model` produced a corrupted hybrid — provider `local-comfyui` with
+# model `gemini-nano-banana-2`, a Google model on the on-device provider:
+#
+#     "creative_image": {"provider": "local-comfyui",
+#                        "model": "gemini-nano-banana-2"}
+#
+# Every capability this module binds needs its mirror here, or the two
+# surfaces fight and the loser is whichever one dispatch happens to read.
 CAPABILITY_TO_FLAT = {
     "reasoning": "orchestrator_model",
     "subagent": "subagent_model",
+    "creative_image": "creative_model",
 }
 
 # Never bound from a plan. See the module docstring — D5.
