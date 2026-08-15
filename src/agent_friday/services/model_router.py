@@ -397,6 +397,16 @@ def _generate_text(messages, system=None, model=None, max_tokens=16384,
 _seat_logger = logging.getLogger("friday.model_seat_gate")
 
 
+def _plan_num_ctx(model):
+    """Context the residency plan specifies for `model`. Never the daemon
+    default — that default is what this exists to correct."""
+    try:
+        from agent_friday.services.residency_policy import num_ctx_for_model
+        return num_ctx_for_model(model)
+    except Exception:
+        return None
+
+
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                  temperature=None, orb_label=None, orb_icon='🏠',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
@@ -429,62 +439,22 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     if not model:
         model = routing_cfg.get('local_model') or model
 
-    # FR-1 hardening: un-bypassable seat enforcement. settings.json is
-    # re-read fresh every ~2s regardless of what wrote it (the UI's POST
-    # /api/settings gate only catches THAT one path) — re-check on every
-    # tool-using dispatch so an ungated/red model never gets a live seat,
-    # no matter how it landed in model_routing.local_model.
+    # 2026-08-15: the seat gate is GONE. It used to re-check every tool-using
+    # dispatch and, on a red/ungated model, silently substitute a different one
+    # or strip tools for the turn. That is why Friday "didn't work with all the
+    # models": you could bind a model and still not be served by it.
+    #
+    # Stephen's call, and he is right on the merits — gating a user-selected
+    # model behind a homegrown eval is not standard practice, and a model that
+    # isn't emitting tool calls is a prompting/template problem, not a defect.
+    # Proven here: the same models scored 1/10 and 0/10 under a broken harness
+    # and 10/10 once it was fixed. The models were never the problem.
+    #
+    # What replaces it is nothing at dispatch time. The model the user bound is
+    # the model that serves. Fabrication is caught where it actually happens —
+    # tool_integrity.find_pseudo_toolcalls already flags a reply that names
+    # tools it never called — and the badge keeps naming whoever answered.
     _seat_notice = None
-    if tools and model:
-        try:
-            from agent_friday.services import model_seat_gate as _seatmod
-            _seat = _seatmod.resolve_local_seat(model, provider='local')
-            if not _seat['seat_ok']:
-                _seat_logger.warning(
-                    "seat refused for tool-using turn: %s -> %s (%s)",
-                    _seat['requested'], _seat['model'], _seat['reason'])
-                try:
-                    from agent_friday import notifications_engine as _ne
-                    _ne.push(
-                        title="Local model seat refused",
-                        body=_seat['reason'] + (
-                            f" — fell back to '{_seat['model']}'." if _seat['model']
-                            else " — this turn ran without tools."),
-                        priority="high", source="model_seat_gate",
-                        kind="seat_refused",
-                        dedupe_key=f"seat_refused:{_seat['requested']}",
-                        actions=[{"label": "Review", "workspace": "system",
-                                 "tab": "connectors"}],
-                    )
-                except Exception:
-                    pass
-                if _seat['model']:
-                    _seat_notice = (
-                        f"[Note to self: '{_seat['requested']}' hasn't passed the "
-                        f"tool-calling conformance gate, so this turn is running on "
-                        f"'{_seat['model']}' instead — the last known-green local seat. "
-                        f"Mention this to the user briefly if relevant.]")
-                    # Badge truth: the substitution is part of this message's
-                    # provenance — noted in the trace, and record_generation
-                    # below will name the SUBSTITUTED model.
-                    try:
-                        from agent_friday.services import attribution
-                        attribution.note_fallback(
-                            f"seat gate: {_seat['requested']} → "
-                            f"{_seat['model']} ({_seat['reason'][:120]})")
-                    except Exception:
-                        pass
-                    model = _seat['model']
-                else:
-                    _seat_notice = (
-                        f"[Note to self: '{_seat['requested']}' hasn't passed the "
-                        f"tool-calling conformance gate and no known-green local "
-                        f"model is available, so tools are unavailable this turn. "
-                        f"Tell the user plainly you can't use tools right now rather "
-                        f"than guessing or narrating a result.]")
-                    tools = None
-        except Exception as e:
-            _seat_logger.warning("seat gate check failed, proceeding unenforced: %s", e)
 
     # ── 2026-08-14: descriptor-aware local dispatch, AFTER the seat gate. A
     # model declared by an enabled OpenAI-compatible LOCAL descriptor (the
@@ -559,10 +529,16 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
         def _send(_convo, _oai_tools):
             _t0 = _time.time()
             try:
+                # Apply the PLAN's context on every dispatch, not only when
+                # the Arbiter loads a seat at boot. Without this the first
+                # chat request reloads the model at Ollama's default and the
+                # placement is lost — measured: gemma4:12b at 262144 with 71%
+                # on the CPU, minutes after booting to a plan saying 32768.
                 resp = ollama.chat_completion(
                     _convo, model=model, tools=_oai_tools,
                     temperature=temperature if temperature is not None else 0.7,
                     max_tokens=max_tokens,
+                    num_ctx=_plan_num_ctx(model),
                 )
             except Exception:
                 try:

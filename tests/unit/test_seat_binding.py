@@ -117,19 +117,29 @@ def test_the_image_seat_binds_the_local_provider(all_green):
 
 # ── gate-checked binding ─────────────────────────────────────────────────────
 
-def test_an_ungated_local_model_is_refused_not_bound(monkeypatch):
-    """Binding an ungated model trades a visible refusal now for an invisible
-    one at dispatch time."""
+def test_an_ungated_local_model_is_bound_anyway(monkeypatch):
+    """No gate. 2026-08-15: a seat used to require both battery axes green,
+    which left heavy_hitter, local and subagent permanently unbound on
+    Stephen's machine — the plan computed them and then refused to apply them.
+    Any installed model binds to any seat."""
     monkeypatch.setattr(
         "agent_friday.services.model_seat_gate.axis_status",
-        lambda m, p="local": {"structural": "green", "honesty": "ungated",
-                              "dual_green": False})
+        lambda m, p="local": {"structural": "ungated", "gates": False})
     s = _settings()
     prop = sb.apply(_plan(), s)
-    assert "reasoning" not in prop["changes"]
-    assert s["capability_routing"]["reasoning"]["model"] == "old:1b"
-    r = [x for x in prop["refusals"] if x["capability"] == "reasoning"][0]
-    assert "honesty=ungated" in r["explanation"]
+    assert s["capability_routing"]["reasoning"]["model"] == "gemma4:12b"
+    assert prop["refusals"] == []
+
+
+def test_a_model_that_failed_the_diagnostic_is_still_bound(monkeypatch):
+    """A red structural record is information, not a veto."""
+    monkeypatch.setattr(
+        "agent_friday.services.model_seat_gate.axis_status",
+        lambda m, p="local": {"structural": "red", "gates": False})
+    s = _settings()
+    sb.apply(_plan(), s)
+    assert s["capability_routing"]["subagent"]["model"] == "gemma4:e4b"
+    assert s["capability_routing"]["heavy_hitter"]["model"] == "gemma4:26b"
 
 
 def test_the_image_seat_needs_no_gate(monkeypatch):
@@ -142,17 +152,6 @@ def test_the_image_seat_needs_no_gate(monkeypatch):
     sb.apply(_plan(), s)
     assert s["capability_routing"]["creative_image"]["model"] == \
         "z-image-turbo-fp8"
-
-
-def test_a_refused_seat_leaves_the_previous_value_untouched(monkeypatch):
-    monkeypatch.setattr(
-        "agent_friday.services.model_seat_gate.axis_status",
-        lambda m, p="local": {"structural": "red", "honesty": "red",
-                              "dual_green": False})
-    s = _settings()
-    before = dict(s["capability_routing"]["subagent"])
-    sb.apply(_plan(), s)
-    assert s["capability_routing"]["subagent"] == before
 
 
 # ── purity + reporting ───────────────────────────────────────────────────────

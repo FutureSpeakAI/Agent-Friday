@@ -1,132 +1,80 @@
-"""API tests for the FR-1 seat-change gate wired into POST /api/settings
-(routes/core_routes.py::_check_local_model_seat_gate).
+"""The seat gate is GONE — any model can take any seat (2026-08-15).
 
-CAUTION: /api/settings in this test suite writes to the real
-~/.friday/settings.json (same as the rest of tests/api/test_wiki_settings_routes.py
-::TestSettings) — there is no per-test FRIDAY_DIR isolation. Every test here
-that touches model_routing.local_model snapshots the pre-test value and
-restores it in a finally block so a test run never leaves the machine's real
-local-model seat changed. The conformance gate itself is always monkeypatched
-so no test makes a live Ollama call.
+This file used to assert the opposite: that `POST /api/settings` rejected a
+`model_routing.local_model` change when the model failed a structural
+conformance gate, or had no honesty-battery record, or failed one.
+
+Stephen's decision, and the evidence supported it. Gating a user-selected
+model behind a homegrown eval is not standard practice; the structural
+failures it fired on were a broken harness (the same models scored 1/10 and
+0/10, then 10/10 once fixed); and the honesty record it refused `gemma4:26b`
+on held eleven timeouts and one HTTP error — eleven empty answers, no model
+output at all.
+
+What these tests now pin is that nothing refuses a seat.
 """
 from __future__ import annotations
 
 import pytest
 
-from agent_friday.services import honesty_battery, model_seat_gate
-
-HONESTY_GREEN = {"axis": "honesty", "passed": True, "score": "12/12"}
-HONESTY_RED = {"axis": "honesty", "passed": False, "score": "8/12"}
+from agent_friday.services import model_seat_gate
 
 
 @pytest.fixture
-def preserve_local_model(client):
-    before = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
-    try:
-        yield before
-    finally:
-        client.post("/api/settings", json={"settings": {"model_routing": {"local_model": before}}})
+def preserve_local_model():
+    from agent_friday.core import _load_settings, _save_settings
+    before = (_load_settings().get("model_routing") or {}).get("local_model")
+    yield
+    s = _load_settings()
+    s.setdefault("model_routing", {})["local_model"] = before
+    _save_settings(s)
 
 
-class TestSeatGateRoute:
-    def test_red_model_rejected_and_not_persisted(self, client, monkeypatch, preserve_local_model):
-        monkeypatch.setattr(model_seat_gate, "get_cached_status", lambda *a, **k: None)
+class TestNoSeatGate:
+    def _set(self, client, model):
+        return client.post("/api/settings", json={
+            "settings": {"model_routing": {"local_model": model}}})
+
+    def test_a_model_with_no_gate_record_is_accepted(self, client, monkeypatch,
+                                                     preserve_local_model):
+        """Previously: rejected, 'fail-closed until dual green'."""
+        monkeypatch.setattr(model_seat_gate, "get_cached_status",
+                            lambda m, provider="local": None)
+        assert self._set(client, "brand-new:70b").status_code == 200
+
+    def test_a_model_that_failed_the_diagnostic_is_accepted(
+            self, client, monkeypatch, preserve_local_model):
+        """A red structural record is information, never a veto."""
         monkeypatch.setattr(
-            model_seat_gate, "run_conformance_gate",
-            lambda model, **k: {"model": model, "provider": "local", "passed": False,
-                                 "score": "0/10", "prose_leaks": [], "results": []},
-        )
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "some-red-model"}}})
-        assert resp.status_code == 400
-        body = resp.get_json()
-        assert body["status"] == "error"
-        assert "conformance gate" in body["message"]
-        assert "some-red-model" not in body["message"] or "0/10" in body["message"]
-        # Must not have been persisted.
-        current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
-        assert current == preserve_local_model
+            model_seat_gate, "get_cached_status",
+            lambda m, provider="local": {"passed": False, "score": "3/10"})
+        assert self._set(client, "chatty:7b").status_code == 200
 
-    def test_dual_green_model_accepted_and_persisted(self, client, monkeypatch, preserve_local_model):
-        # A5: seating now needs BOTH axes green — structural conformance
-        # AND the honesty battery.
-        monkeypatch.setattr(model_seat_gate, "get_cached_status", lambda *a, **k: None)
-        monkeypatch.setattr(
-            model_seat_gate, "run_conformance_gate",
-            lambda model, **k: {"model": model, "provider": "local", "passed": True,
-                                 "score": "10/10", "prose_leaks": [], "results": []},
-        )
-        monkeypatch.setattr(honesty_battery, "get_honesty_status",
-                            lambda *a, **k: dict(HONESTY_GREEN))
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "some-green-model"}}})
-        assert resp.status_code == 200
-        current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
-        assert current == "some-green-model"
-
-    def test_structural_green_without_honesty_record_fails_closed(self, client, monkeypatch, preserve_local_model):
-        monkeypatch.setattr(model_seat_gate, "get_cached_status",
-                             lambda *a, **k: {"passed": True, "score": "10/10"})
-        monkeypatch.setattr(honesty_battery, "get_honesty_status",
-                            lambda *a, **k: None)
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "structural-only-model"}}})
-        assert resp.status_code == 400
-        assert "honesty" in resp.get_json()["message"].lower()
-        current = client.get("/api/settings").get_json()["settings"]["model_routing"]["local_model"]
-        assert current == preserve_local_model
-
-    def test_honesty_red_model_rejected_with_reason(self, client, monkeypatch, preserve_local_model):
-        monkeypatch.setattr(model_seat_gate, "get_cached_status",
-                             lambda *a, **k: {"passed": True, "score": "10/10"})
-        monkeypatch.setattr(honesty_battery, "get_honesty_status",
-                            lambda *a, **k: dict(HONESTY_RED))
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "liar-model"}}})
-        assert resp.status_code == 400
-        body = resp.get_json()
-        assert "honesty battery" in body["message"]
-        assert body["honesty"]["score"] == "8/12"
-
-    def test_cached_green_status_skips_a_new_gate_run(self, client, monkeypatch, preserve_local_model):
-        monkeypatch.setattr(model_seat_gate, "get_cached_status",
-                             lambda *a, **k: {"passed": True, "score": "10/10"})
-        monkeypatch.setattr(honesty_battery, "get_honesty_status",
-                            lambda *a, **k: dict(HONESTY_GREEN))
-        calls = []
-        monkeypatch.setattr(model_seat_gate, "run_conformance_gate",
-                             lambda model, **k: calls.append(model) or {"passed": True})
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "already-gated-model"}}})
-        assert resp.status_code == 200
-        assert calls == []
-
-    def test_reassigning_the_same_model_never_calls_the_gate(self, client, monkeypatch, preserve_local_model):
-        calls = []
-        monkeypatch.setattr(model_seat_gate, "run_conformance_gate",
-                             lambda model, **k: calls.append(model) or {"passed": False})
-        resp = client.post(
-            "/api/settings",
-            json={"settings": {"model_routing": {"local_model": preserve_local_model}}},
-        )
-        assert resp.status_code == 200
-        assert calls == []
-
-    def test_unrelated_settings_never_touch_the_gate(self, client, monkeypatch):
-        calls = []
-        monkeypatch.setattr(model_seat_gate, "run_conformance_gate",
-                             lambda model, **k: calls.append(model) or {"passed": False})
-        resp = client.post("/api/settings", json={"settings": {"communication_style": "casual"}})
-        assert resp.status_code == 200
-        assert calls == []
-
-    def test_gate_error_surfaces_as_400_not_500(self, client, monkeypatch, preserve_local_model):
-        monkeypatch.setattr(model_seat_gate, "get_cached_status", lambda *a, **k: None)
-
-        def _boom(model, **k):
-            raise ConnectionError("Ollama unreachable")
+    def test_the_gate_check_never_runs_a_battery_on_save(self, client,
+                                                         monkeypatch,
+                                                         preserve_local_model):
+        """The save path must not block for minutes running an eval."""
+        def _boom(*a, **k):
+            raise AssertionError("no gate may run during a settings save")
         monkeypatch.setattr(model_seat_gate, "run_conformance_gate", _boom)
-        resp = client.post("/api/settings",
-                            json={"settings": {"model_routing": {"local_model": "unreachable-model"}}})
-        assert resp.status_code == 400
-        assert "not applied" in resp.get_json()["message"]
+        assert self._set(client, "anything:13b").status_code == 200
+
+    def test_the_guard_function_is_a_documented_no_op(self):
+        from agent_friday.routes.core_routes import _check_local_model_seat_gate
+        assert _check_local_model_seat_gate(
+            {"model_routing": {"local_model": "whatever:1b"}}) is None
+
+
+class TestNoHonestyBattery:
+    def test_the_module_is_gone(self):
+        with pytest.raises(ImportError):
+            import agent_friday.services.honesty_battery  # noqa: F401
+
+    def test_axis_status_reports_structural_only(self, monkeypatch):
+        monkeypatch.setattr(model_seat_gate, "get_cached_status",
+                            lambda m, provider="local": None)
+        st = model_seat_gate.axis_status("x:1b", "local")
+        assert st["structural"] == "ungated"
+        assert st["gates"] is False
+        assert "honesty" not in st
+        assert "dual_green" not in st

@@ -34632,8 +34632,11 @@ function App() {
       }
     });
   };
-  // ── A5: per-axis seat-gate status (structural + honesty) + on-demand runs.
-  // Fail-closed everywhere: no recorded run = ungated = not seatable.
+  // ── Seat-gate status: DIAGNOSTIC ONLY. Nothing here gates a binding.
+  // 2026-08-15: the gate was removed. Any installed model can be assigned to
+  // any seat and will actually serve. The chip reports whether the structural
+  // tool-call check has been run and what it said — it never blocks a choice,
+  // and a red/ungated model is fully selectable.
   const [seatGate, setSeatGate] = useState({});
   const refreshSeatGate = () => fetch('/api/seat-gate/statuses').then(r => r.json()).then(d => setSeatGate(d.statuses || {})).catch(() => {});
   useEffect(() => {
@@ -34673,31 +34676,25 @@ function App() {
         marginRight: 4
       }
     }, "\u23F3 gating");
-    const st = g.dual_green ? 'dual' : g.structural === 'green' ? 'structural' : g.structural === 'red' || g.honesty === 'red' ? 'red' : 'ungated';
+    const st = g.structural === 'green' ? 'green' : g.structural === 'red' ? 'red' : 'ungated';
     const cfg = {
-      dual: {
+      green: {
         c: '#00ff80',
         b: 'rgba(0,255,128,0.35)',
-        t: '✓✓',
-        ti: 'Dual-gate GREEN (structural + honesty) — eligible for the orchestrator seat.'
-      },
-      structural: {
-        c: '#f59e0b',
-        b: 'rgba(245,158,11,0.35)',
-        t: '✓·',
-        ti: 'Structural green, honesty ' + (g.honesty || 'ungated') + ' — run the honesty battery to qualify for the orchestrator seat.'
+        t: '✓',
+        ti: 'Structural tool-call check: PASSED. Informational only — every model is selectable regardless.'
       },
       red: {
-        c: '#f87171',
-        b: 'rgba(239,68,68,0.4)',
-        t: '✗',
-        ti: 'Gate RED — structural: ' + (g.structural || '?') + ', honesty: ' + (g.honesty || '?') + '. Fails closed: cannot hold a tool-using seat.'
+        c: '#f59e0b',
+        b: 'rgba(245,158,11,0.35)',
+        t: '!',
+        ti: 'Structural tool-call check: did not pass. This does NOT block anything — you can still assign this model to any seat. A model that will not emit tool calls is usually a prompting/template issue.'
       },
       ungated: {
         c: '#8b93a7',
         b: 'rgba(255,255,255,0.2)',
         t: '—',
-        ti: 'Ungated — fails closed until both axes have run. Click ▶ gate.'
+        ti: 'Not checked. Nothing is gated — assign this model freely. Click ▶ check to run the structural diagnostic.'
       }
     }[st];
     return /*#__PURE__*/React.createElement("span", {
@@ -37968,12 +37965,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           fontSize: 8,
           color: '#00d4ff'
         }
-      }, "\u25CF") : null), gateChip(m.name), !(seatGate[m.name] || {}).dual_green && !(seatGate[m.name] || {}).running && /*#__PURE__*/React.createElement("button", {
+      }, "\u25CF") : null), gateChip(m.name), !(seatGate[m.name] || {}).running && /*#__PURE__*/React.createElement("button", {
         onClick: e => {
           e.stopPropagation();
           runSeatGate(m.name);
         },
-        title: "Run both gate axes now (structural conformance + honesty battery). Progress shows as a process orb.",
+        title: "Run the structural tool-call diagnostic. Informational only \u2014 it does not gate anything.",
         style: {
           background: 'rgba(0,212,255,0.06)',
           border: '1px solid rgba(0,212,255,0.25)',
@@ -37985,7 +37982,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           padding: '0 4px',
           marginRight: 4
         }
-      }, "\u25B6 gate"), active && /*#__PURE__*/React.createElement("span", {
+      }, "\u25B6 check"), active && /*#__PURE__*/React.createElement("span", {
         style: {
           fontSize: 9,
           color: '#00ff80',

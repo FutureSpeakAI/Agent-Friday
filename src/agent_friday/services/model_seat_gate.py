@@ -1,22 +1,26 @@
-"""FR-1 — orchestrator seat conformance gate (docs: toolcall-integrity-v5).
+"""Structural tool-call conformance — a DIAGNOSTIC, not a gate.
 
-A local model may only hold Friday's tool-using seat (advertise/receive the
-CLAUDE_TOOLS registry) if it passes a structural conformance check: given the
-production tool registry, does it emit real tool_calls, or does it roleplay
-fabricated bracket-syntax pseudo-calls in prose (see tool_integrity.py)?
+Given the production tool registry, does a model emit real `tool_calls`, or
+does it roleplay fabricated bracket-syntax pseudo-calls in prose (see
+tool_integrity.py)? Ten canned prompts, each shaped to require exactly one
+registry tool.
 
-Ten canned prompts, each shaped to require exactly one registry tool. Pass =
-10/10 real structured tool_calls, zero prose leaks anywhere in the run.
+**Nothing here blocks anything.** As of 2026-08-15 the seat gate is removed:
+any installed model can be bound to any seat and will actually serve. This
+module measures and records so a curious human can look; it is never consulted
+to refuse a binding or a turn.
 
-This module measures and records. Two independent enforcement points consume
-it — routes/core_routes.py::api_settings (blocks a NEW ungated seat at
-settings-save time, UI path only) and resolve_local_seat() below (re-checked
-on every tool-using dispatch in model_router.py::_call_ollama, regardless of
-how settings.json changed — UI, a direct file edit, or any other writer).
-The second one is the un-bypassable layer: settings.json is re-read fresh
-every ~2s (core._SETTINGS_CACHE_TTL) with no requirement that a change went
-through the API, so the settings-save gate alone can be walked around by
-anything with filesystem access. resolve_local_seat() closes that gap.
+Removed on Stephen's decision, and the evidence supports it. Gating a
+user-selected model behind a homegrown eval is not standard practice, and the
+failures this instrument fired on were a harness problem rather than a model
+one — the same four models scored 1/10, 1/10, 4/10 and 0/10 under a broken
+harness and 10/10 apiece once it was fixed. A model that is not emitting tool
+calls is a prompting-and-template problem; fix the prompt, do not exile the
+model.
+
+The runtime protection that remains is `tool_integrity.find_pseudo_toolcalls`,
+which catches a reply naming tools it never called at the moment it happens —
+on any model, with no pre-flight roadblock.
 """
 from __future__ import annotations
 
@@ -337,95 +341,33 @@ def is_seat_green(model: str, provider: str = "local") -> bool:
     return bool(status and status.get("passed") is True)
 
 
-# ── A4/A5: the second gate axis (honesty battery) + dual-gate seating. ──
+# ── 2026-08-15: the honesty battery is GONE, and neither axis gates a seat. ──
+#
+# `axis_status` survives ONLY as a display: the picker chip may show whether a
+# model has a structural record, and nothing consults it to decide anything.
+# There is no `honesty` axis and no `dual_green` — a seat is never refused.
 
 def axis_status(model: str, provider: str = "local") -> dict:
-    """Per-axis gate state for the picker chips (A5):
-    {structural: green|red|ungated, honesty: green|red|ungated,
-     dual_green: bool}. Fail-closed on both axes."""
-    from agent_friday.services.honesty_battery import get_honesty_status
-
-    def _axis(status):
-        if status is None:
-            return "ungated"
-        passed = status.get("passed")
-        if passed is None or status.get("inconclusive"):
-            # The harness failed, so the model was never actually measured.
-            # "ungated" is the honest label; "red" would be a claim we cannot
-            # support and would show the user a chip accusing a model that may
-            # be perfectly capable.
-            return "ungated"
-        return "green" if passed else "red"
-
-    structural = _axis(get_cached_status(model, provider))
-    honesty = _axis(get_honesty_status(model, provider))
-    return {
-        "structural": structural,
-        "honesty": honesty,
-        "dual_green": structural == "green" and honesty == "green",
-    }
-
-
-def is_seat_dual_green(model: str, provider: str = "local") -> bool:
-    """A3/A5: a local model may hold the orchestrator seat ONLY when both
-    axes are green. Fail-closed like each individual axis."""
-    return axis_status(model, provider)["dual_green"]
+    """Informational only. Never gates a binding or a turn."""
+    status = get_cached_status(model, provider)
+    if status is None:
+        structural = "ungated"
+    elif status.get("passed") is None or status.get("inconclusive"):
+        structural = "ungated"
+    else:
+        structural = "green" if status.get("passed") else "red"
+    return {"structural": structural, "gates": False}
 
 
 def get_last_known_green(provider: str = "local") -> str | None:
-    """The most recently passed model for `provider` — the fallback seat when
-    the currently-configured local_model isn't (or is no longer) green.
+    """Removed. Always None.
 
-    Checks GATE_DIR (~/.friday/model_seat_conformance — this machine's own
-    live runs, most authoritative) first, then falls back to EVIDENCE_DIR
-    (the repo-committed reference results) so a fresh machine with no local
-    gate history yet still has a documented-green fallback (gemma4:latest)
-    rather than none at all.
-
-    **A green record for an UNINSTALLED model is not a usable fallback.**
-    2026-08-15: `qwen3.6-35b-a3b-iq4nl` was decommissioned (GGUF and descriptor
-    both deleted) but its green record survived, so this returned it as the
-    fallback seat for every refused local dispatch — a seat pointing at a model
-    that no longer exists anywhere on the machine. A gate record is evidence
-    that a model once behaved, not evidence that it is still servable.
-
-    Availability is only consulted when it is VERIFIABLE: `_installed_local_models`
-    returns None when the daemon is unreachable and nothing else declares an
-    inventory, and in that case a stale-looking record is preferred over no
-    fallback at all. Refusing on unverifiable data would turn a transient
-    daemon outage into "no local seat exists".
+    This existed solely to pick a substitute when the gate refused the user's
+    model. With no refusal there is no substitution, and a "last known green"
+    is exactly the silent swap that made a bound model not serve. It also aged
+    badly on its own — it once returned a model that had been deleted from disk.
     """
-    installed = _installed_local_models()
-
-    def _servable(name):
-        return installed is None or name in installed
-
-    best_model, best_ts = None, -1.0
-    skipped = []
-    for directory in (GATE_DIR, EVIDENCE_DIR):
-        if not directory.exists():
-            continue
-        for path in directory.glob(f"{provider}__*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if data.get("provider") != provider or not data.get("passed"):
-                continue
-            name = data.get("model")
-            if not _servable(name):
-                skipped.append(name)
-                continue
-            ts = data.get("timestamp") or 0
-            if ts > best_ts:
-                best_model, best_ts = name, ts
-        if best_model:
-            return best_model  # GATE_DIR (live) wins outright over EVIDENCE_DIR
-    if skipped and not best_model:
-        _seat_logger.info(
-            "seat gate: %d green record(s) ignored — model no longer "
-            "installed: %s", len(skipped), ", ".join(sorted(set(skipped))))
-    return best_model
+    return None
 
 
 def _installed_local_models():
@@ -513,85 +455,17 @@ def _similar_gate_records(model: str, provider: str = "local"):
 
 
 def resolve_local_seat(requested_model: str, *, provider: str = "local") -> dict:
-    """Un-bypassable, per-dispatch seat enforcement (FR-1 hardening).
+    """Pass-through. The requested model ALWAYS holds the seat.
 
-    Called on EVERY tool-using local dispatch, not just at settings-save
-    time — so a red/ungated model reaching model_routing.local_model by any
-    means (UI, direct settings.json edit, a future writer nobody's thought of
-    yet) is still refused a tool-using seat on its very next turn, no
-    restart required (settings.json is re-read every request; this function
-    is re-evaluated every request too).
-
-    Returns {
-      "model": the model actually cleared to hold the seat, or None,
-      "seat_ok": bool — True iff requested_model itself was used unmodified,
-      "requested": requested_model,
-      "reason": human-readable explanation,
-      "fallback": None | "last_known_green:<model>" | "tool_free",
-    }
+    This used to be the un-bypassable enforcement layer: on a red or ungated
+    model it substituted the "last known green" model for the turn, or stripped
+    tools entirely. That is precisely why binding a model did not mean being
+    served by it. Kept as a function so callers and their tests state plainly
+    that nothing is enforced, rather than the concept vanishing silently.
     """
-    if not requested_model:
-        return {"model": requested_model, "seat_ok": True, "requested": requested_model,
-                "reason": "no model requested", "fallback": None}
-    if is_seat_green(requested_model, provider):
-        return {"model": requested_model, "seat_ok": True, "requested": requested_model,
-                "reason": "gated green", "fallback": None}
-
-    # Human-readable gate summary — the reason string travels into
-    # notifications verbatim, and the previous f-string dumped the ENTIRE
-    # status dict (results array included) into it. Score, not blob.
-    status = get_cached_status(requested_model, provider)
-    if status:
-        gate_summary = f"failed at {status.get('score')}"
-    else:
-        gate_summary = "never run under this id"
-        # 2026-08-14 alias wrinkle: the brain is seated as
-        # 'qwen3.6-35b-a3b-iq4nl' (llama-cpp-brain) while its old green
-        # lives under 'qwen3.6:35b' (Ollama). Name the likely-same-model
-        # record so the bare "never run" stops reading as nonsense — but
-        # never act on it: a green earned under another provider or
-        # quantization does not transfer.
-        similar = _similar_gate_records(requested_model, provider)
-        if similar:
-            s = similar[0]
-            gate_summary += (
-                f"; a {'green' if s['passed'] else 'red'} record exists for "
-                f"'{s['model']}' on {s.get('via') or s['provider']} — likely "
-                f"the same model under another provider id. Gates don't "
-                f"transfer across providers/quantizations: run the gate for "
-                f"this seat")
-    base_reason = (f"'{requested_model}' is not a gated-green tool-calling "
-                   f"seat (conformance gate: {gate_summary})")
-
-    fallback_model = get_last_known_green(provider)
-    if fallback_model and fallback_model != requested_model:
-        # 2026-08-14 incident: the last-known-green seat (gemma4:latest) had
-        # been DELETED from the daemon — substituting it produced a local
-        # 404 every hour all night. The dynamic catalog knows what's
-        # installed; consult it before offering a fallback. Daemon
-        # unreachable (None) → can't verify → keep legacy behavior.
-        installed = _installed_local_models()
-        if installed is not None and fallback_model not in installed:
-            return {
-                "model": None, "seat_ok": False, "requested": requested_model,
-                "reason": (base_reason +
-                           f", and the last known-green local seat "
-                           f"'{fallback_model}' is no longer installed "
-                           f"(removed from the Ollama daemon) — no green "
-                           f"fallback available"),
-                "fallback": "tool_free",
-            }
-        return {
-            "model": fallback_model, "seat_ok": False, "requested": requested_model,
-            "reason": base_reason,
-            "fallback": f"last_known_green:{fallback_model}",
-        }
-    return {
-        "model": None, "seat_ok": False, "requested": requested_model,
-        "reason": (base_reason + " and no known-green local fallback seat "
-                   "exists"),
-        "fallback": "tool_free",
-    }
+    return {"model": requested_model, "seat_ok": True,
+            "requested": requested_model, "reason": "no seat gate",
+            "fallback": None}
 
 
 def save_evidence(model: str, provider: str, result: dict) -> Path:
