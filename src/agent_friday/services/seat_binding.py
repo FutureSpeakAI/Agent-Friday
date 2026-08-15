@@ -110,8 +110,17 @@ def propose(plan: dict, settings: dict) -> dict:
 
 
 def apply(plan: dict, settings: dict) -> dict:
-    """Bind the plan into `settings` in place. Returns the proposal applied."""
+    """Bind the plan into `settings` in place. Returns the proposal applied.
+
+    Mirrors are reconciled for EVERY bound capability, not only the ones that
+    changed. A capability can be correct while its flat key has drifted — edit
+    `model_routing.local_model` directly and `capability_routing.local` still
+    says something else — and `_sync_capability_routing` lets the flat key win,
+    so the drift silently becomes the answer. Repairing only the delta left
+    that divergence in place.
+    """
     prop = propose(plan, settings)
+    _reconcile_mirrors(plan, settings)
     if not prop["changes"]:
         return prop
     cr = settings.setdefault("capability_routing", {})
@@ -144,3 +153,25 @@ def describe(prop: dict) -> str:
         lines.append("  skipped %-15s %s" % (s["capability"],
                                              (s.get("why") or "")[:100]))
     return "\n".join(lines) or "  (no changes)"
+
+
+def _reconcile_mirrors(plan: dict, settings: dict) -> None:
+    """Force every flat mirror to agree with the capability the plan bound."""
+    seats = (plan or {}).get("seats") or {}
+    cr = settings.setdefault("capability_routing", {})
+    for role, cap in SEAT_TO_CAPABILITY.items():
+        if role in NEVER_BIND:
+            continue
+        seat = seats.get(role)
+        if not seat or not seat.get("model_id"):
+            continue
+        model = seat["model_id"]
+        if (cr.get(cap) or {}).get("model") != model:
+            continue          # propose() will set it; nothing to reconcile yet
+        flat = CAPABILITY_TO_FLAT.get(cap)
+        if flat and settings.get(flat) != model:
+            settings[flat] = model
+        if cap == "local":
+            mr = settings.setdefault("model_routing", {})
+            if mr.get("local_model") != model:
+                mr["local_model"] = model
