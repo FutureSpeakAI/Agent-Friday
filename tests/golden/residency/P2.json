@@ -20,7 +20,7 @@
     }
   },
   "pinned_vram_mib": {
-    "gpu:0": 4844
+    "gpu:0": 4892
   },
   "policy_version": 1,
   "profile_id": "p2-laptop-8gb",
@@ -39,7 +39,7 @@
     "embedder": {
       "backend": "ollama",
       "demoted_from": "gpu",
-      "demotion_reason": "needs 2029 MiB, 1420 MiB left after the pinned seats",
+      "demotion_reason": "needs 2029 MiB, 1372 MiB left after the pinned seats",
       "demotion_rule": "R3",
       "device": "cpu",
       "est_load_s": 4.5,
@@ -73,7 +73,7 @@
       "is_moe": false,
       "model_id": "gemma4:e4b",
       "needs_think_disabled": true,
-      "num_ctx": 16384,
+      "num_ctx": 32768,
       "offload": {},
       "role": "interactive_brain",
       "status": "pinned",
@@ -86,11 +86,11 @@
       "is_moe": false,
       "model_id": "gemma4:e2b",
       "needs_think_disabled": true,
-      "num_ctx": 8192,
+      "num_ctx": 32768,
       "offload": {},
       "role": "sidekick",
       "status": "pinned",
-      "vram_mib": 1763
+      "vram_mib": 1811
     },
     "sidekick_heavy": {
       "backend": "ollama",
@@ -100,11 +100,11 @@
       "is_moe": false,
       "model_id": "gemma4:12b",
       "needs_think_disabled": true,
-      "num_ctx": 8192,
+      "num_ctx": 32768,
       "offload": {},
       "role": "sidekick_heavy",
       "status": "leased",
-      "vram_mib": 7985
+      "vram_mib": 7718
     },
     "stt": {
       "backend": "cpu-service",

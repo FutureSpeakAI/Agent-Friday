@@ -87,11 +87,28 @@ RULE_BY_ID = {r["id"]: r for r in RULES}
 # backend default. Chosen from the measured KV curve -- on the gemma4 family
 # context is nearly free (12b: 7690 MiB at 4k vs 8001 at 16k), so the
 # interactive seat can afford a generous window.
+# R7 says every placement gets an explicit context. It does NOT say the number
+# may be picked from the VRAM curve alone — and that is the mistake this table
+# used to make.
+#
+# A tool-using seat must hold the TOOL DEFINITIONS. Measured 2026-08-15: the
+# 52-tool registry serialises to ~8 534 tokens, so a seat at 8192 truncates the
+# tools before the conversation even starts. gemma4:e2b scored 8/10 on the
+# structural gate at 8192 and 10/10 at a larger context — a context below the
+# tool floor manufactures exactly the tool-calling failure the gate exists to
+# detect.
+#
+# So tool seats sit at 32768 (~4x the measured prompt). This is affordable
+# precisely because the KV curve is flat on this family: the 12b holds 7690 MiB
+# at 4k and 8001 MiB at 16k — 311 MiB across a 4x increase. The embedder holds
+# no tools and stays small.
+TOOL_SEAT_NUM_CTX = 32768
+
 DEFAULT_NUM_CTX = {
-    "interactive_brain": 16384,
-    "heavy_hitter": 16384,
-    "sidekick": 8192,
-    "sidekick_heavy": 8192,
+    "interactive_brain": TOOL_SEAT_NUM_CTX,
+    "heavy_hitter": TOOL_SEAT_NUM_CTX,
+    "sidekick": TOOL_SEAT_NUM_CTX,
+    "sidekick_heavy": TOOL_SEAT_NUM_CTX,
     "embedder": 2048,
 }
 
