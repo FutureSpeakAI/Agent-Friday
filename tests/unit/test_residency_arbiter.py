@@ -152,13 +152,29 @@ def test_a_seat_without_a_gguf_says_its_pin_is_unenforced(arb):
 
 # ── heavy lease ──────────────────────────────────────────────────────────────
 
-def test_heavy_lease_displaces_the_pinned_seats(arb):
+def test_heavy_lease_displaces_the_brain_but_not_the_sidekick(arb):
+    """R10. Stephen, 2026-08-15: "keep e2b awake so Friday is always alive."
+
+    A heavy lease takes the brain — that is the cost of depth on one card. It
+    does not take the sidekick, so Friday keeps answering at 166 tok/s while
+    the 26b works.
+    """
     arb.boot(measure_baseline=False)
     out = arb.grant("heavy_turn")
     assert out["ok"] is True
     assert arb.state == ra.STATE_LEASED
     assert "interactive_brain" in out["lease"]["displaced"]
-    assert arb.llama.procs == {}
+    assert "sidekick" not in out["lease"]["displaced"]
+    assert set(arb.llama.procs) == {"gemma4:e2b"}
+
+
+def test_a_retained_seat_is_not_reloaded_on_release(arb):
+    """Reloading it would evict it first — a cold start and a silent window."""
+    arb.boot(measure_baseline=False)
+    before = arb.llama.procs.get("gemma4:e2b")
+    arb.grant("heavy_turn")
+    arb.release()
+    assert arb.llama.procs.get("gemma4:e2b") is before,         "the sidekick process was replaced, so it went away and came back"
 
 
 def test_release_restores_the_pinned_seats(arb):
@@ -203,8 +219,11 @@ def test_image_lease_starts_comfyui_and_clears_the_gpu(arb):
     out = arb.grant("image_job")
     assert out["ok"] is True
     assert arb.comfy.started is True
-    assert arb.llama.procs == {}
-    assert arb.ollama.resident() == {}
+    # R10: exclusive of everything EXCEPT the sidekick. An image job used to
+    # take the whole card, which left Friday unable to answer while a picture
+    # rendered — the machine looked hung rather than busy.
+    assert set(arb.llama.procs) == {"gemma4:e2b"}
+    assert set(arb.ollama.resident()) <= {"gemma4:e2b"}
 
 
 def test_image_release_stops_comfyui_and_hands_the_gpu_back(arb):

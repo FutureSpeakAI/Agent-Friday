@@ -93,7 +93,9 @@ def test_p1_heavy_hitter_is_leased_with_expert_offload():
 def test_p1_image_takes_an_exclusive_lease_over_everything():
     s = _plan("P1")["seats"]["image"]
     assert s["exclusive"] is True
-    assert s["displaces"] == "all seats"      # single GPU
+    # R5 minus R10: exclusive of everything except the seat that keeps
+    # Friday answering while the picture renders.
+    assert s["displaces"] == "all seats except sidekick"
 
 
 def test_p1_voice_stays_on_cpu():
@@ -115,7 +117,10 @@ def test_p2_refuses_the_heavy_seat_with_arithmetic():
     r = [x for x in p["refusals"] if x["role"] == "heavy_hitter"][0]
     assert r["rule_id"] == "R2"
     assert "12288" in r["explanation"]       # the ceiling it broke
-    assert "11127" in r["explanation"]       # the host RAM it needed
+    # 12938, not the 11127 it was before R10: holding the sidekick resident
+    # takes 1811 MiB off the lease budget, so more of the model lands in host
+    # RAM and the refusal it breaks is by a wider margin.
+    assert "12938" in r["explanation"]       # the host RAM it needed
 
 
 # ── P3 — the budget, not taste, moves the embedder onto the GPU ──────────────
@@ -231,7 +236,7 @@ def test_property_image_is_exclusive_on_single_gpu_hosts(key):
         return
     assert img["exclusive"] is True
     if len(p["budgets"]["gpus"]) == 1:
-        assert img["displaces"] == "all seats"
+        assert img["displaces"].startswith("all seats")
 
 
 @pytest.mark.parametrize("key", ALL)
@@ -330,7 +335,7 @@ def test_disk_floor_scales_with_a_very_large_artifact():
 
 def test_every_rule_has_a_stable_id_and_text():
     assert [r["id"] for r in rp.RULES] == \
-        ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]
+        ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"]
     assert all(r["text"] for r in rp.RULES)
 
 
@@ -424,3 +429,43 @@ def test_a_model_whose_own_window_is_below_the_floor_says_so():
     cb = rp.context_for("sidekick", e, 10_000, 20_215)
     assert cb["num_ctx"] == 4096
     assert "model context window" in cb["capped_by"]
+
+
+# ── R10 — the sidekick survives every lease ──────────────────────────────────
+#
+# Stephen, 2026-08-15: "keep e2b awake so Friday is always alive." Before this,
+# a lease stood down the whole pinned set, so asking for depth made Friday mute
+# for the duration and the machine looked hung rather than busy.
+
+def test_the_lease_budget_is_the_gpu_minus_the_retained_sidekick():
+    p = _plan("P1")
+    avail = p["budgets"]["gpus"][0]["available_mib"]
+    side = p["seats"]["sidekick"]["vram_mib"]
+    assert p["seats"]["heavy_hitter"]["offload"]["lease_budget_mib"] == \
+        avail - side == 9997 - 1811
+
+
+def test_an_image_lease_takes_everything_except_the_sidekick():
+    s = _plan("P1")["seats"]["image"]
+    assert s["exclusive"] is True
+    assert s["displaces"] == "all seats except sidekick"
+    assert s["retained_mib"] == 1811
+
+
+def test_the_offload_point_moves_because_the_lease_budget_moved():
+    """20 layers lands at 9802 MiB — fits 9997, does not fit 8186.
+
+    The cost of keeping Friday awake is that the heavy model pushes more
+    experts to the CPU and runs slower. The plan states it rather than letting
+    it be discovered at load time.
+    """
+    off = _plan("P1")["seats"]["heavy_hitter"]["offload"]
+    assert off["n_cpu_moe"] > rp.MOE_CPU_LAYERS_DEFAULT
+    assert off["n_cpu_moe_basis"] == "extrapolated", (
+        "an operating point outside the measured sweep must say so — it is a "
+        "starting guess for a sweep, not a result")
+
+
+def test_a_budget_inside_the_measured_sweep_reports_measured():
+    assert rp.n_cpu_moe_for_budget(10_500) == (16, "measured")
+    assert rp.n_cpu_moe_for_budget(9_900) == (20, "measured")
