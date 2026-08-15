@@ -54,17 +54,24 @@ ADAPTER_OPENAI_COMPAT = "openai-compatible"
 ADAPTER_OLLAMA = "ollama"
 ADAPTER_LOCAL_VOICE = "local-voice"
 ADAPTER_NEMO = "nemo-local"
+# On-device image generation (ComfyUI HTTP API on loopback). Local-capable for
+# the same reason ollama is: the transport terminates on this machine, so a
+# prompt sent to it never leaves. It still has to prove a private base_url
+# below — the adapter alone does not grant "local".
+ADAPTER_COMFYUI = "comfyui"
 ADAPTER_LITELLM = "litellm"  # optional escape hatch (spec §5.3) — not shipped yet
 
 ADAPTER_TYPES = (
     ADAPTER_ANTHROPIC, ADAPTER_GOOGLE, ADAPTER_OPENAI_COMPAT,
-    ADAPTER_OLLAMA, ADAPTER_LOCAL_VOICE, ADAPTER_NEMO, ADAPTER_LITELLM,
+    ADAPTER_OLLAMA, ADAPTER_LOCAL_VOICE, ADAPTER_NEMO, ADAPTER_COMFYUI,
+    ADAPTER_LITELLM,
 )
 
 # Adapters whose transport CAN keep data on-device. Only these may earn
 # classification "local" (an anthropic/google SDK call is cloud by definition).
 LOCAL_CAPABLE_ADAPTERS = {
     ADAPTER_OLLAMA, ADAPTER_LOCAL_VOICE, ADAPTER_NEMO, ADAPTER_OPENAI_COMPAT,
+    ADAPTER_COMFYUI,
 }
 
 CLASSIFICATION_CLOUD = "cloud"

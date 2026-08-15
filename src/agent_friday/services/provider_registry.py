@@ -123,6 +123,38 @@ DEFAULT_PROVIDERS = [
         "enabled": True,
     },
     {
+        # On-device image generation (Z-Image Turbo FP8 via ComfyUI). Until
+        # this entry existed the creative role could only ever resolve to a
+        # cloud Gemini model, so a working local image stack was invisible to
+        # the picker. Decision D8 gated it on a residency scheduler, because
+        # Z-Image's ~14.5 GB of weights and the language seats cannot share a
+        # 12 GB card — generation runs under the Arbiter's exclusive image
+        # lease (services/local_image.py).
+        #
+        # Availability is EARNED: model_catalog marks it unavailable unless the
+        # weights are actually on this machine, so the picker never offers a
+        # model that cannot run here.
+        "name": "local-comfyui",
+        "label": "Local (ComfyUI)",
+        "type": "comfyui",
+        "base_url": "http://127.0.0.1:8188",
+        "auth": {"type": "none"},
+        "classification": "local",
+        "models": ["z-image-turbo-fp8"],
+        "capabilities": ["image"],
+        "roles": [ROLE_CREATIVE],
+        "cost_per_1k": {},
+        "model_meta": {
+            "z-image-turbo-fp8": {
+                "label": "Z-Image Turbo FP8 (local image)",
+                "short": "Z-Image",
+                "roles": [ROLE_CREATIVE],
+                "modalities": ["image"],
+            },
+        },
+        "enabled": True,
+    },
+    {
         "name": "google-gemini",
         "label": "Google (Gemini)",
         "type": "google",

@@ -244,7 +244,17 @@ def _model_entries_for(provider: dict, registry) -> list:
     costs = provider.get("cost_per_1k") or {}
     available = registry.is_provider_available(pname)
     needs_key = _needs_key(provider)
-    is_local = ptype in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES
+    # Ask the single authority rather than matching on type strings. A
+    # hardcoded list is what made local openai-compatible providers render as
+    # cloud (fixed in 53dd414) and would have done the same to the on-device
+    # ComfyUI image provider — `classification_of` already enforces
+    # local-capable-adapter AND private-base-url, so a descriptor cannot claim
+    # local without earning it.
+    try:
+        from agent_friday.routing.provider_descriptors import classification_of
+        is_local = classification_of(provider) == "local"
+    except Exception:
+        is_local = ptype in ("ollama",) + VOICE_ENGINE_PROVIDER_TYPES
     engine_backend = ptype in VOICE_ENGINE_PROVIDER_TYPES
 
     ids = list(provider.get("models") or [])
