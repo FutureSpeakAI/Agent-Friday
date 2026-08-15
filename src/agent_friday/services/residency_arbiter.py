@@ -55,6 +55,17 @@ class TransitionError(RuntimeError):
     pass
 
 
+# The process-wide Arbiter, set by server._residency_boot. None means the
+# residency layer is not governing this process (tests, FRIDAY_NO_ARBITER=1,
+# or a failed import) — callers must treat that as "no arbiter", never as an
+# error, so nothing depends on residency being present to function.
+ARBITER = None
+
+
+def get_arbiter():
+    return ARBITER
+
+
 def _post(url, body, timeout=600):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),

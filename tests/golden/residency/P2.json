@@ -92,6 +92,20 @@
       "status": "pinned",
       "vram_mib": 1763
     },
+    "sidekick_heavy": {
+      "backend": "ollama",
+      "device": "gpu:0",
+      "displaces": "loaded on demand; may displace a pinned seat",
+      "est_load_s": 21.2,
+      "is_moe": false,
+      "model_id": "gemma4:12b",
+      "needs_think_disabled": true,
+      "num_ctx": 8192,
+      "offload": {},
+      "role": "sidekick_heavy",
+      "status": "leased",
+      "vram_mib": 7985
+    },
     "stt": {
       "backend": "cpu-service",
       "device": "cpu",
