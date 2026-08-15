@@ -92,10 +92,38 @@ gemma4:12b   3/3
 This matters more than it looks: a frontier model handing work down needs the local model to
 *consume and emit a machine-readable task spec*. That mechanism works today.
 
-**UNKNOWN:** the same probe against the 26b (not run). **UNKNOWN:** multi-step tool-loop
-reliability — how often a local model completes a 3–5 call chain without losing the thread. The
-structural check is single-turn only. The check that would settle it is a scripted multi-step
-task with read-only tools, scored over repeats.
+**UNKNOWN:** the same probe against the 26b (not run).
+
+### 0.6 The multi-step tool chain — measured 2026-08-15, and it was our bug
+
+This was the load-bearing unknown: "local executes the plan" *is* a chain of dependent tool
+calls, and only single-call conformance had ever been measured.
+
+A scripted task that cannot be answered without four dependent calls — list, then fetch each
+item, then look up the winner's owner — run through Friday's real dispatch (`_call_ollama` with
+tools, the same `_oai_agentic_loop`, the same `num_ctx`), five repeats per model:
+
+| Model | Correct | Reached the last call | Median chain |
+|---|---:|---:|---:|
+| `gemma4:e2b` | **5/5** | 5/5 | 10.6 s |
+| `gemma4:e4b` | **5/5** | 5/5 | 12.1 s |
+| `gemma4:12b` | **5/5** | 5/5 | 13.8 s |
+
+**15/15.** A 2-billion-parameter model walks a five-call dependent chain in under eleven seconds.
+
+**But the first run of the probe scored 0, and the cause was ours.** `_oai_agentic_loop` did
+`json.loads(fn.get("arguments") or "{}")`. OpenAI's spec says `arguments` is a JSON *string*;
+Ollama's native `/api/chat` returns it as an already-parsed *object*. `json.loads()` on a dict
+raises, a bare `except` substituted `{}`, and **every local tool call ran with no arguments at
+all** — silently, with no log. Verified against the raw daemon that the models were emitting
+correct arguments every time.
+
+The symptom was models reporting that their tools had failed and then apologising, which reads
+exactly like a model too weak to chain tool calls. It was a type check. Fixed; the table above is
+the same probe afterwards.
+
+Worth recording as a method note: **this is what "the model is bad at tools" usually turns out to
+be.** The honesty gate condemned models on the same class of evidence.
 
 ---
 
@@ -241,9 +269,9 @@ them yet.
 - **Long-context work is currently cramped.** ~12 552 usable tokens at today's setting (§0.3).
   A long article, a big diff, or a deep conversation will compact aggressively. Fixable for
   96 MiB and it should be fixed.
-- **Multi-step tool chains are unproven.** **UNKNOWN** — single-call conformance is measured,
-  chains are not. This is the highest-value unknown in the whole design, because "local executes
-  the plan" *is* a multi-step tool chain.
+- ~~**Multi-step tool chains are unproven.**~~ **Settled 2026-08-15: 15/15 across all three
+  models** (§0.6). The gap was never in the models — it was a type check in our own loop that
+  dropped every tool argument.
 - **Frontier-grade judgment on ambiguity.** Not a gap to close; it is why the frontier tier
   exists in the arrangement.
 - **The heavy hitter is only 47 % on GPU.** It spills to CPU on this card, so it is
@@ -256,8 +284,8 @@ them yet.
 
 1. **Raise the interactive context.** 32 768 → 131 072 for the pinned brain: 96 MiB, 4× the
    working room, still inside R3. Highest value-to-cost ratio available.
-2. **Measure the multi-step tool chain.** Until that number exists, "local executes the plan" is
-   an assumption. Score a scripted 3–5 call task over repeats, per model.
+2. ~~**Measure the multi-step tool chain.**~~ **Done — 15/15** (§0.6), after fixing the argument
+   parsing it exposed.
 3. **Build the work queue with classes** (§2.5). Reflex / interactive / heavy / image /
    background, each knowing its seat's price, draining heavy and image work in batches.
 4. **Make the task spec a real object.** The frontier→local handoff works because structured
