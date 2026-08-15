@@ -1,9 +1,12 @@
-"""A5 — seat-gate API: per-axis status + on-demand dual-axis runs.
+"""Seat-gate API — a DIAGNOSTIC surface. Nothing here gates anything.
 
-Nominating an ungated model for a tool-using or conversational seat
-triggers BOTH axes (structural conformance + honesty battery) with visible
-progress (a process orb), fail-closed with the reason shown. The picker
-chips read /api/seat-gate/statuses.
+As of 2026-08-15 the seat gate is removed: any installed model binds to any
+seat and actually serves. What remains is the ability to RUN the structural
+tool-call check on demand and look at the result — useful when a model is
+misbehaving, never a precondition for using it.
+
+The honesty battery is gone entirely (Stephen's decision). `_run_both_axes`
+keeps its name only because callers reference it; it runs one axis now.
 """
 from __future__ import annotations
 
@@ -78,6 +81,7 @@ def seat_gate_statuses():
 
 
 def _run_both_axes(model: str, ollama_url: str):
+    """Runs the structural diagnostic. Name kept for existing callers."""
     orb_id = f"gate-{model.replace(':', '_').replace('/', '_')}"
     try:
         core.process_register(orb_id, name="Seat Gate", label=f"Gating {model}",
@@ -95,7 +99,6 @@ def _run_both_axes(model: str, ollama_url: str):
 
     try:
         from agent_friday.services.model_seat_gate import run_conformance_gate
-        from agent_friday.services.honesty_battery import run_battery
         # Gate runs are SERIALIZED across models. Concurrent gating is what
         # broke the 2026-08-15 run: each model evicted the others from VRAM,
         # every case paid a cold reload, and 9 of 10 cases for gemma4:12b timed
@@ -109,16 +112,8 @@ def _run_both_axes(model: str, ollama_url: str):
                 pass
             s = run_conformance_gate(model, ollama_url=ollama_url,
                                      on_progress=_log)
-            try:
-                core.process_update(orb_id, progress=0.5,
-                                    label=f"{model}: honesty battery…")
-            except Exception:
-                pass
-            h = run_battery(model, provider="local", ollama_url=ollama_url,
-                            on_progress=_log)
-        summary = "structural %s / honesty %s" % (
-            "inconclusive" if s.get("inconclusive") else s.get("score"),
-            "inconclusive" if h.get("inconclusive") else h.get("score"))
+        summary = "structural %s (diagnostic only — nothing is gated)" % (
+            "inconclusive" if s.get("inconclusive") else s.get("score"))
         _log(f"done — {summary}")
         try:
             core.process_update(orb_id, status="completed", progress=1.0,

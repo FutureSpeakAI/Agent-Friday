@@ -1527,6 +1527,14 @@ DEFAULT_SETTINGS = {
     # single source the wizard + Settings UI + services.capability_router share.
     "capability_routing": {
         "reasoning":      {"provider": "anthropic",     "model": "claude-sonnet-5"},
+        # The heavy seat: the most capable local model, loaded on demand for
+        # hard turns. It MUST be declared here — `_sync_capability_routing`
+        # rebuilds capability_routing from these keys alone, so a capability
+        # missing from this table is silently dropped on every settings save.
+        # That is exactly what happened when the residency plan first bound it
+        # (2026-08-15): the binding wrote `heavy_hitter`, the next save deleted
+        # it, and the seat never appeared in settings or the UI.
+        "heavy_hitter":   {"provider": "ollama-local",  "model": ""},
         "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-4-6"},
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},

@@ -580,3 +580,30 @@ def check_disk_headroom(profile: dict, artifact_mib: int) -> dict:
             "resident set, so disk is a residency resource"
             % (after, artifact_mib, floor)),
     }
+
+
+def num_ctx_for_model(model_id: str, default: int = TOOL_SEAT_NUM_CTX) -> int:
+    """The context the PLAN specifies for whichever seat holds `model_id`.
+
+    Dispatch must apply this, not just the Arbiter at boot. Until 2026-08-15 it
+    did not: the Arbiter loaded a seat at the planned context, then the first
+    ordinary chat request reloaded the same model at Ollama's default and the
+    placement was silently lost. Measured consequence on the reference machine
+    — `gemma4:12b` resident at 262144 with 71% of it on the CPU, minutes after
+    booting to a plan that said 32768 and 100% GPU.
+
+    Reads the live Arbiter's plan when one is governing this process, so a
+    re-plan takes effect without a restart. Falls back to the tool-seat context
+    rather than to the daemon default, because the daemon default is the thing
+    being corrected.
+    """
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+        seats = ((arb.plan if arb else None) or {}).get("seats") or {}
+        for seat in seats.values():
+            if seat and seat.get("model_id") == model_id and seat.get("num_ctx"):
+                return int(seat["num_ctx"])
+    except Exception:
+        pass
+    return default

@@ -616,95 +616,26 @@ def api_setup_complete():
 
 # ── Agent Settings endpoints ──────────────────────────────────
 def _check_local_model_seat_gate(new_settings):
-    """FR-1 seat-change gate. Returns an error-body dict (to be jsonify'd
-    with a 400) if `new_settings` tries to assign a local model that fails
-    the tool-calling conformance gate; returns None to let the save proceed
-    (no local_model change requested, no-op reassignment to the same model,
-    or the model is already gated green)."""
-    routing = new_settings.get('model_routing')
-    if not isinstance(routing, dict) or 'local_model' not in routing:
-        return None
-    new_model = routing.get('local_model')
-    if not new_model:
-        return None
-    current = _load_settings().get('model_routing', {}).get('local_model')
-    if new_model == current:
-        return None
-    from agent_friday.services import model_seat_gate as _gate
-    status = _gate.get_cached_status(new_model, provider='local')
-    if status is None:
-        try:
-            status = _gate.run_conformance_gate(new_model, provider='local')
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": (f"Couldn't run the tool-calling conformance gate against "
-                            f"'{new_model}' ({e}). The seat change was not applied — "
-                            f"check that Ollama is running and reachable, then try again."),
-            }
-    if not status.get('passed'):
-        return {
-            "status": "error",
-            "message": (
-                f"'{new_model}' failed the tool-calling conformance gate "
-                f"({status.get('score')}) — a model that can't reliably make "
-                f"real structured tool calls cannot hold Friday's tool-using "
-                f"seat, it will confabulate results instead. Recommended: "
-                f"{_gate.RECOMMENDED_LOCAL_MODEL} (documented green in "
-                f"tests/conformance/results/)."
-            ),
-            "conformance": status,
-        }
+    """No-op. The seat gate was REMOVED on 2026-08-15 (Stephen's decision).
 
-    # ── A5: second axis — the honesty battery (Incident 2). Structural
-    # green alone is no longer enough for a conversational seat: the
-    # battery takes minutes on a local model, so an un-battery-tested
-    # nomination kicks off BOTH axes in the background (visible as a
-    # process orb via /api/seat-gate/run) and the save is rejected with
-    # the reason — fail-closed until dual green. ──
-    from agent_friday.services.honesty_battery import get_honesty_status
-    honesty = get_honesty_status(new_model, provider='local')
-    if honesty is None:
-        try:
-            from agent_friday.core import _TESTING as _testing
-            import agent_friday.routes.seat_gate as _sg
-            if not _testing:
-                with _sg._RUNNING_LOCK:
-                    already = new_model in _sg._RUNNING
-                    if not already:
-                        _sg._RUNNING.add(new_model)
-                if not already:
-                    import threading as _th
-                    _ollama_url = (_load_settings().get('model_routing') or {}).get(
-                        'ollama_url', 'http://localhost:11434')
-                    _th.Thread(target=_sg._run_both_axes,
-                               args=(new_model, _ollama_url), daemon=True).start()
-        except Exception:
-            pass
-        return {
-            "status": "error",
-            "message": (
-                f"'{new_model}' is structurally green but has no honesty-"
-                f"battery record yet. Both gate axes are now running in the "
-                f"background (watch the 🛡️ orb) — re-select the model once "
-                f"its picker chip shows dual green. Fail-closed until then."
-            ),
-            "conformance": status,
-        }
-    if not honesty.get('passed'):
-        return {
-            "status": "error",
-            "message": (
-                f"'{new_model}' failed the honesty battery "
-                f"({honesty.get('score')}) — it fabricates completions, "
-                f"affirms false premises, or mishandles dates/connection "
-                f"state under test (see tests/honesty/golden/). A model "
-                f"that lies about what it did cannot hold a conversational "
-                f"seat. Full detail: ~/.friday/model_seat_conformance/."
-            ),
-            "conformance": status,
-            "honesty": honesty,
-        }
+    This used to reject a `model_routing.local_model` save on two counts: a
+    failed structural conformance gate, and a failed-or-missing honesty
+    battery record. Both refused the save outright, so a model the user had
+    explicitly chosen could not take the seat — and an ungated model was
+    refused simply for never having been measured.
+
+    That is the roadblock. Gating a user-selected model behind a homegrown
+    eval is not standard practice, and the structural failures it fired on
+    turned out to be a harness problem, not a model one: the same models
+    scored 1/10 and 0/10 under the broken harness and 10/10 once it was
+    fixed. The honesty record it refused `gemma4:26b` on contained eleven
+    timeouts and one HTTP error — eleven empty answers, no model output at
+    all.
+
+    Kept as a function returning None so the call site and its tests stay
+    honest about the fact that nothing is checked here any more, rather than
+    the call quietly disappearing.
+    """
     return None
 
 

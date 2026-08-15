@@ -18,27 +18,27 @@ class TestStatuses:
         statuses = resp.get_json()["statuses"]
         assert "gemma4:latest" in statuses
         st = statuses["qwen3:8b"]
-        # qwen3:8b has no recorded run on either axis — fail-closed.
+        # Informational only — 2026-08-15 the gate was removed, so this
+        # reports a diagnostic result and gates nothing.
         assert st["structural"] in ("ungated", "green", "red")
-        assert st["honesty"] in ("ungated", "green", "red")
         assert st["running"] is False
-        assert isinstance(st["dual_green"], bool)
+        assert st["gates"] is False
+        assert "honesty" not in st and "dual_green" not in st
 
 
 class TestRun:
-    def test_run_triggers_both_axes(self, client, monkeypatch):
+    def test_run_triggers_the_structural_diagnostic_only(self, client,
+                                                         monkeypatch):
+        """One axis. The honesty battery module no longer exists."""
         calls = []
         import agent_friday.services.model_seat_gate as gate_mod
-        import agent_friday.services.honesty_battery as hb_mod
-        monkeypatch.setattr(gate_mod, "run_conformance_gate",
-                            lambda model, **kw: calls.append(("structural", model)) or {})
-        monkeypatch.setattr(hb_mod, "run_battery",
-                            lambda model, **kw: calls.append(("honesty", model)) or {})
+        monkeypatch.setattr(
+            gate_mod, "run_conformance_gate",
+            lambda model, **kw: calls.append(("structural", model)) or {})
         resp = client.post("/api/seat-gate/run", json={"model": "qwen3:8b"})
         assert resp.status_code == 200
         assert resp.get_json()["started"] is True
-        assert ("structural", "qwen3:8b") in calls
-        assert ("honesty", "qwen3:8b") in calls
+        assert calls == [("structural", "qwen3:8b")]
 
     def test_run_requires_model(self, client):
         assert client.post("/api/seat-gate/run", json={}).status_code == 400

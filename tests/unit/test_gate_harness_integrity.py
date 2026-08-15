@@ -211,25 +211,24 @@ def test_num_ctx_forces_the_native_endpoint(monkeypatch):
 
 # ── the fallback seat must still exist ───────────────────────────────────────
 
-def test_last_known_green_skips_an_uninstalled_model(monkeypatch, gate_dir):
-    """A green record is evidence a model once behaved, not that it is still
-    on the machine. qwen3.6-35b-a3b-iq4nl was decommissioned and kept being
-    handed out as the fallback seat."""
-    for name, model in (("local__gone_35b.json", "gone:35b"),
-                        ("local__here_2b.json", "here:2b")):
-        (gate_dir / name).write_text(json.dumps(
-            {"model": model, "provider": "local", "passed": True,
-             "timestamp": 100 if model == "gone:35b" else 50}))
-    monkeypatch.setattr(gate, "_installed_local_models",
-                        lambda: {"here:2b"})
-    assert gate.get_last_known_green("local") == "here:2b"
+def test_there_is_no_last_known_green_fallback_any_more(monkeypatch, gate_dir):
+    """The substitute-model fallback is gone with the gate.
 
-
-def test_unverifiable_inventory_does_not_refuse_a_fallback(monkeypatch,
-                                                           gate_dir):
-    """A daemon outage must not turn into 'no local seat exists'."""
+    It only ever existed to pick a replacement when the gate refused the
+    user's model, which is exactly the silent swap that made a bound model
+    not serve. It also aged badly on its own: it once returned a model that
+    had been deleted from disk.
+    """
     (gate_dir / "local__x_2b.json").write_text(json.dumps(
         {"model": "x:2b", "provider": "local", "passed": True,
          "timestamp": 10}))
-    monkeypatch.setattr(gate, "_installed_local_models", lambda: None)
-    assert gate.get_last_known_green("local") == "x:2b"
+    assert gate.get_last_known_green("local") is None
+
+
+def test_resolve_local_seat_never_substitutes(monkeypatch, gate_dir):
+    """The per-dispatch enforcement is a pass-through: the model the user
+    bound is the model that serves, gated or not."""
+    out = gate.resolve_local_seat("never-gated:70b", provider="local")
+    assert out["model"] == "never-gated:70b"
+    assert out["seat_ok"] is True
+    assert out["fallback"] is None

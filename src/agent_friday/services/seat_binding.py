@@ -13,12 +13,7 @@ had been deleted from the disk, and `local` at a `gemma3:4b` that was never
 installed (Q5). This module makes the plan authoritative so that class of
 defect cannot recur.
 
-Two rules keep it honest:
-
-**A seat is only bound to a local model that is DUAL-GREEN.** The plan says
-where a model would fit; the gate says whether it can be trusted with tools.
-Binding an ungated model would hand it a seat that dispatch then refuses at
-runtime — trading a visible refusal here for an invisible one later.
+One rule keeps it honest:
 
 **`embedding` is never bound.** The plan's embedder seat is
 `qwen3-embedding:0.6b` at 1024 dimensions; the live store is
@@ -64,12 +59,6 @@ CAPABILITY_TO_FLAT = {
 # Never bound from a plan. See the module docstring — D5.
 NEVER_BIND = {"embedder", "stt", "tts"}
 
-# Seats whose model must hold tools. A local model needs BOTH gate axes green
-# before it may occupy one.
-TOOL_SEATS = {"interactive_brain", "heavy_hitter", "sidekick",
-              "sidekick_heavy"}
-
-
 def _provider_for(seat: dict) -> str:
     backend = (seat or {}).get("backend") or ""
     if backend == "llama-server":
@@ -85,8 +74,6 @@ def propose(plan: dict, settings: dict) -> dict:
     Returns {"changes": {cap: {provider, model, from}}, "refusals": [...],
              "skipped": [...]} — nothing is written.
     """
-    from agent_friday.services.model_seat_gate import axis_status
-
     cr = dict((settings or {}).get("capability_routing") or {})
     changes, refusals, skipped = {}, [], []
 
@@ -106,20 +93,12 @@ def propose(plan: dict, settings: dict) -> dict:
         provider = _provider_for(seat)
         current = cr.get(cap) or {}
 
-        if role in TOOL_SEATS:
-            ax = axis_status(model, "local")
-            if not ax.get("dual_green"):
-                refusals.append({
-                    "role": role, "capability": cap, "model": model,
-                    "rule": "dual-green seating",
-                    "explanation": (
-                        "%s is structural=%s honesty=%s; a seat needs both "
-                        "axes green or dispatch refuses it at runtime. "
-                        "Leaving %s on %s."
-                        % (model, ax.get("structural"), ax.get("honesty"),
-                           cap, current.get("model") or "its current model")),
-                })
-                continue
+        # 2026-08-15: NO GATE. A seat used to require both battery axes
+        # green before it could be bound, which left heavy_hitter, local and
+        # subagent permanently unbound on this machine — the plan computed
+        # them correctly and then refused to apply them. Removed on Stephen's
+        # decision: any installed model is bindable to any seat, and binding
+        # it makes it actually serve.
 
         if (current.get("provider") == provider
                 and current.get("model") == model):
