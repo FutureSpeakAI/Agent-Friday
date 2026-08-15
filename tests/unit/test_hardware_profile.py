@@ -131,9 +131,38 @@ def test_a_measured_floor_survives_re_detection(smi, monkeypatch, tmp_path):
     hp.refresh_baseline(hp.get(force=True), assert_idle=True)
     # now a model is resident: 9000 MiB in use
     smi("0, NVIDIA GeForce RTX 4070, 12282, 9000, 610.88\n")
-    again = hp.get()
+    again = hp.get(force=True)
     assert again["gpus"][0]["vram_baseline_mib"] == 1261
     assert again["gpus"][0]["vram_used_mib"] == 9000
+
+
+def test_get_is_memoised_because_detection_is_expensive(smi, monkeypatch,
+                                                        tmp_path):
+    """detect_cpu() spawns PowerShell and detect_gpus() spawns nvidia-smi, so a
+    bare get() costs seconds on Windows. `_pick_local_model` consults the
+    profile on EVERY routing decision — measured at 4.6s per call before this
+    memo existed, which made model selection the slowest step in a turn.
+
+    The trade is explicit and is why the test above now passes force=True:
+    within the TTL you get a slightly stale snapshot. Callers that need live
+    VRAM call detect_gpus() directly, as the arbiter does.
+    """
+    monkeypatch.setattr(hp, "cache_path", lambda: tmp_path / "hw.json")
+    hp._MEMO["profile"] = None
+    calls = {"n": 0}
+
+    def counting_run(*a, **k):
+        calls["n"] += 1
+        return ONE_GPU
+
+    monkeypatch.setattr(hp, "_run", counting_run)
+    hp.get(force=True)
+    first = calls["n"]
+    for _ in range(20):
+        hp.get()
+    assert calls["n"] == first, "20 further get() calls must not re-detect"
+    hp.get(force=True)
+    assert calls["n"] > first, "force=True still re-detects"
 
 
 # ── compute class ────────────────────────────────────────────────────────────

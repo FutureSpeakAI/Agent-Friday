@@ -395,15 +395,44 @@ def save(profile: dict) -> None:
         pass          # a profile that cannot be cached is still usable in-memory
 
 
+# In-process memo. Detection is NOT cheap: detect_cpu() spawns PowerShell and
+# detect_gpus() spawns nvidia-smi, so a bare get() costs ~1-4s on Windows.
+# `_pick_local_model` consults the profile on every routing decision, which
+# turned a sub-millisecond choice into a multi-second one — measured at 4.6s
+# per call in the test suite before this memo existed. The disk cache alone did
+# not help, because get() re-detected in order to compare identities.
+_MEMO: dict = {"at": 0.0, "profile": None}
+_MEMO_TTL_S = 60.0
+
+
 def get(force: bool = False, measure_disk_rate: bool = False) -> dict:
     """The cached profile, re-detected when the hardware identity changed.
 
     Cheap, mutable fields (free disk, available RAM, GPU idle baseline) are
     refreshed on every call; the expensive disk-rate measurement is inherited
     from the cache unless explicitly requested.
+
+    Memoised for `_MEMO_TTL_S` — hardware does not change second to second, and
+    the callers that matter (routing, health) are on hot paths.
     """
-    cached = None if force else load_cached()
+    now = time.time()
+    if (not force and not measure_disk_rate
+            and _MEMO["profile"] is not None
+            and (now - _MEMO["at"]) < _MEMO_TTL_S):
+        return _MEMO["profile"]
+
+    # The on-disk profile is read even when forcing. `force` means "re-detect
+    # now", not "discard what was measured": the GPU idle floor can only be
+    # taken at a known-idle moment, so a forced re-detect that dropped it would
+    # silently destroy the one reading the VRAM budget depends on — and then
+    # persist the loss.
+    cached = load_cached()
     fresh = detect(measure_disk_rate=measure_disk_rate, prior=cached)
+    if cached and cached.get("profile_id") == fresh["profile_id"]:
+        for old, new in zip(cached.get("gpus", []), fresh.get("gpus", [])):
+            if old.get("vram_baseline_mib") is not None:
+                new["vram_baseline_mib"] = old["vram_baseline_mib"]
+                new["vram_baseline_at"] = old.get("vram_baseline_at")
     if cached and cached.get("profile_id") == fresh["profile_id"] and not force:
         # Same machine: keep the recorded detection time and any measured rate,
         # take the live volatile readings.
@@ -419,8 +448,10 @@ def get(force: bool = False, measure_disk_rate: bool = False) -> dict:
         if measure_disk_rate:
             cached["disk"] = fresh["disk"]
         save(cached)
+        _MEMO["at"], _MEMO["profile"] = now, cached
         return cached
     save(fresh)
+    _MEMO["at"], _MEMO["profile"] = now, fresh
     return fresh
 
 
