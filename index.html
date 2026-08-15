@@ -30316,6 +30316,463 @@ function SettingsTabGeneral({
     })
   })));
 }
+// ── Work: what Friday intends to do, and the choice she is asking for ────────
+//
+// Stephen, 2026-08-15: "The user decides when a task is heavy; perhaps Friday
+// should present a custom workflow UI with a representation of the tasks it
+// will execute, and a series of config options for the workflow, so the user
+// can choose or select 'choose for me' as an option as well."
+//
+// So: Friday proposes, Stephen disposes. Three executions, and an option that
+// is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
+// missing button teaches nothing, and the reason here is always something he
+// would want to know (this work reads your vault).
+const EXEC_META = {
+  when_away: {
+    label: 'While I’m away',
+    ico: '\u{1F319}',
+    hint: 'Parked. Runs under one lease when the machine goes quiet — the model wakes once for the whole batch.'
+  },
+  now_local: {
+    label: 'Now, locally',
+    ico: '\u{1F3E0}',
+    hint: 'Slower, private, no bill.'
+  },
+  now_cloud: {
+    label: 'Now, in the cloud',
+    ico: '☁️',
+    hint: 'Faster, costs money.'
+  }
+};
+const CLS_META = {
+  reflex: {
+    label: 'reflex',
+    c: '#8affc1'
+  },
+  interactive: {
+    label: 'chat',
+    c: '#00d4ff'
+  },
+  heavy: {
+    label: 'heavy',
+    c: '#ffb347'
+  },
+  image: {
+    label: 'image',
+    c: '#d78aff'
+  },
+  background: {
+    label: 'background',
+    c: 'rgba(255,255,255,0.45)'
+  }
+};
+function dur(s) {
+  s = Math.round(s || 0);
+  if (s < 90) return s + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  return (s / 3600).toFixed(1) + 'h';
+}
+function WorkProposal({
+  p,
+  onDecided
+}) {
+  const [per, setPer] = useState({});
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState('');
+  const blocked = {};
+  (p.blocked || []).forEach(b => {
+    blocked[b.option] = b.reason;
+  });
+  const rec = p.recommendation || {};
+  const decide = (execution, chooseForMe) => {
+    setBusy(chooseForMe ? 'auto' : execution);
+    setErr('');
+    apiFetch('/api/work/proposals/' + p.id + '/decide', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        execution,
+        choose_for_me: !!chooseForMe,
+        per_task: per
+      })
+    }).then(r => r.json().then(d => ({
+      ok: r.ok,
+      d
+    }))).then(({
+      ok,
+      d
+    }) => {
+      setBusy(null);
+      if (!ok) {
+        setErr(d.error || 'refused');
+        return;
+      }
+      onDecided && onDecided(d);
+    }).catch(e => {
+      setBusy(null);
+      setErr(String(e));
+    });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: '1px solid rgba(0,212,255,0.22)',
+      borderRadius: 10,
+      padding: 16,
+      marginBottom: 14,
+      background: 'rgba(0,212,255,0.03)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 10,
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'Orbitron',
+      fontSize: 13,
+      color: '#00d4ff'
+    }
+  }, p.title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.4)',
+      fontFamily: 'JetBrains Mono'
+    }
+  }, p.totals.n_tasks, " step", p.totals.n_tasks === 1 ? '' : 's', p.totals.n_heavy > 0 && /*#__PURE__*/React.createElement("span", null, " \xB7 ", p.totals.n_heavy, " heavy"))), p.summary && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.55)',
+      marginBottom: 10
+    }
+  }, p.summary), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 12
+    }
+  }, (p.tasks || []).map((t, i) => {
+    const cm = CLS_META[t.cls] || CLS_META.background;
+    return /*#__PURE__*/React.createElement("div", {
+      key: t.id,
+      style: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 9,
+        padding: '6px 0',
+        borderTop: i ? '1px solid rgba(255,255,255,0.05)' : 'none'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.25)',
+        fontFamily: 'JetBrains Mono',
+        width: 16,
+        flexShrink: 0,
+        paddingTop: 2
+      }
+    }, i + 1), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.85)'
+      }
+    }, t.title, t.touches_vault && /*#__PURE__*/React.createElement("span", {
+      title: "reads vault-tier material, which never leaves this machine",
+      style: {
+        marginLeft: 6,
+        fontSize: 10,
+        color: '#ffb347'
+      }
+    }, '\u{1F512} vault')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.38)',
+        fontFamily: 'JetBrains Mono',
+        marginTop: 2
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: cm.c
+      }
+    }, cm.label), t.seat_hint && /*#__PURE__*/React.createElement("span", null, " \xB7 ", t.seat_hint), /*#__PURE__*/React.createElement("span", null, " \xB7 ~", dur(t.est_s_local), " local"), t.est_s_cloud != null && /*#__PURE__*/React.createElement("span", null, " \xB7 ~", dur(t.est_s_cloud), " cloud"))), /*#__PURE__*/React.createElement("select", {
+      value: per[t.id] || '',
+      onChange: e => setPer(Object.assign({}, per, {
+        [t.id]: e.target.value || undefined
+      })),
+      style: {
+        background: 'rgba(0,0,0,0.3)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: 5,
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 10,
+        padding: '2px 4px',
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "same as workflow"), Object.keys(EXEC_META).map(k => /*#__PURE__*/React.createElement("option", {
+      key: k,
+      value: k,
+      disabled: k === 'now_cloud' && t.touches_vault
+    }, EXEC_META[k].label))));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.4)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 8
+    }
+  }, "total ~", dur(p.totals.est_s_local), " locally \xB7 ~", dur(p.totals.est_s_cloud), " in the cloud"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      marginBottom: 10
+    }
+  }, Object.keys(EXEC_META).map(k => {
+    const m = EXEC_META[k],
+      why = blocked[k];
+    return /*#__PURE__*/React.createElement("button", {
+      key: k,
+      disabled: !!why || !!busy,
+      onClick: () => decide(k, false),
+      title: why || m.hint,
+      style: {
+        flex: '1 1 150px',
+        textAlign: 'left',
+        padding: '8px 10px',
+        borderRadius: 7,
+        cursor: why ? 'not-allowed' : 'pointer',
+        background: why ? 'rgba(255,255,255,0.02)' : 'rgba(0,212,255,0.07)',
+        border: '1px solid ' + (why ? 'rgba(255,255,255,0.06)' : 'rgba(0,212,255,0.25)'),
+        color: why ? 'rgba(255,255,255,0.28)' : '#cfefff',
+        opacity: busy && busy !== k ? 0.5 : 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        fontFamily: 'JetBrains Mono'
+      }
+    }, m.ico, " ", m.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9,
+        opacity: 0.65,
+        marginTop: 2,
+        lineHeight: 1.35
+      }
+    }, why ? 'unavailable — ' + why : m.hint));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    disabled: !!busy,
+    onClick: () => decide(null, true),
+    style: {
+      padding: '7px 14px',
+      borderRadius: 7,
+      border: '1px solid rgba(138,255,193,0.3)',
+      background: 'rgba(138,255,193,0.08)',
+      color: '#8affc1',
+      cursor: 'pointer',
+      fontSize: 11,
+      fontFamily: 'JetBrains Mono'
+    }
+  }, "\u2728 Choose for me"), rec.execution && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.42)',
+      flex: 1,
+      minWidth: 180
+    }
+  }, "would pick ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'rgba(255,255,255,0.7)'
+    }
+  }, (EXEC_META[rec.execution] || {}).label), " \u2014 ", rec.why), /*#__PURE__*/React.createElement("button", {
+    disabled: !!busy,
+    onClick: () => {
+      apiFetch('/api/work/proposals/' + p.id, {
+        method: 'DELETE'
+      }).then(() => onDecided && onDecided({
+        dismissed: true
+      }));
+    },
+    style: {
+      padding: '7px 10px',
+      borderRadius: 7,
+      border: '1px solid rgba(255,255,255,0.1)',
+      background: 'none',
+      color: 'rgba(255,255,255,0.4)',
+      cursor: 'pointer',
+      fontSize: 11
+    }
+  }, "Not now")), err && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 11,
+      color: '#ff8080',
+      lineHeight: 1.4
+    }
+  }, err));
+}
+function SettingsTabWork() {
+  const [props, setProps] = useState(null);
+  const [q, setQ] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => {
+    apiFetch('/api/work/proposals').then(r => r.json()).then(d => setProps(d.proposals || [])).catch(() => setProps([]));
+    apiFetch('/api/work/queue').then(r => r.json()).then(setQ).catch(() => setQ(null));
+  };
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, []);
+  const drain = cls => {
+    setBusy(cls);
+    apiFetch('/api/work/queue/drain', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        class: cls,
+        force: true
+      })
+    }).then(r => r.json()).then(() => {
+      setBusy('');
+      load();
+    }).catch(() => setBusy(''));
+  };
+  const pending = q && q.pending || [];
+  const st = q && q.stats || {};
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
+    title: "Proposed work"
+  }, props === null && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.35)'
+    }
+  }, "loading\u2026"), props && props.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.35)',
+      lineHeight: 1.5
+    }
+  }, "Nothing waiting on you. When Friday judges a job might be heavy she will lay out the steps here and ask how you want it run \u2014 she will not decide that on her own."), (props || []).map(p => /*#__PURE__*/React.createElement(WorkProposal, {
+    key: p.id,
+    p: p,
+    onDecided: load
+  }))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Queue"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.4)',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 10
+    }
+  }, pending.length, " parked \xB7 idle ", dur(st.idle_s), " \xB7 ", st.away ? 'away — batches may run' : 'you are here — away-work is holding'), pending.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.3)'
+    }
+  }, "nothing queued"), pending.map(it => {
+    const cm = CLS_META[it.cls] || CLS_META.background;
+    return /*#__PURE__*/React.createElement("div", {
+      key: it.id,
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9,
+        padding: '6px 0',
+        borderTop: '1px solid rgba(255,255,255,0.05)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        color: cm.c,
+        fontFamily: 'JetBrains Mono',
+        width: 64,
+        flexShrink: 0
+      }
+    }, cm.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        fontSize: 11,
+        color: 'rgba(255,255,255,0.75)',
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }
+    }, it.title), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        color: 'rgba(255,255,255,0.35)',
+        fontFamily: 'JetBrains Mono',
+        flexShrink: 0
+      }
+    }, (EXEC_META[it.disposition] || {}).label), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        apiFetch('/api/work/queue/' + it.id, {
+          method: 'DELETE'
+        }).then(load);
+      },
+      style: {
+        background: 'none',
+        border: 'none',
+        color: 'rgba(255,255,255,0.3)',
+        cursor: 'pointer',
+        fontSize: 12,
+        flexShrink: 0
+      }
+    }, "\xD7"));
+  }), q && q.batches && Object.keys(q.batches).map(c => {
+    const b = q.batches[c];
+    if (!b || !b.items || !b.items.length) return null;
+    return /*#__PURE__*/React.createElement("div", {
+      key: c,
+      style: {
+        marginTop: 10,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: 'rgba(255,255,255,0.45)',
+        flex: 1,
+        minWidth: 200
+      }
+    }, c, ": ", b.why), /*#__PURE__*/React.createElement("button", {
+      disabled: busy === c,
+      onClick: () => drain(c),
+      style: {
+        padding: '5px 11px',
+        borderRadius: 6,
+        border: '1px solid rgba(0,212,255,0.25)',
+        background: 'rgba(0,212,255,0.07)',
+        color: '#00d4ff',
+        cursor: 'pointer',
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono'
+      }
+    }, busy === c ? 'running…' : 'Run now'));
+  })));
+}
 function SettingsTabModels({
   s,
   save
@@ -33003,6 +33460,10 @@ function SettingsWS() {
     label: 'Models',
     ico: '🧠'
   }, {
+    id: 'work',
+    label: 'Work',
+    ico: '\u{1F4CB}'
+  }, {
     id: 'providers',
     label: 'Providers',
     ico: '🧩'
@@ -33112,7 +33573,7 @@ function SettingsWS() {
   }), tab === 'models' && /*#__PURE__*/React.createElement(SettingsTabModels, {
     s: s,
     save: save
-  }), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
+  }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
     s: s,
     save: save
   }), tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {

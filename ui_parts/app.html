@@ -7399,6 +7399,180 @@ function SettingsTabGeneral({s,save}){
     </StSection>
   </div>;
 }
+// ── Work: what Friday intends to do, and the choice she is asking for ────────
+//
+// Stephen, 2026-08-15: "The user decides when a task is heavy; perhaps Friday
+// should present a custom workflow UI with a representation of the tasks it
+// will execute, and a series of config options for the workflow, so the user
+// can choose or select 'choose for me' as an option as well."
+//
+// So: Friday proposes, Stephen disposes. Three executions, and an option that
+// is unavailable is shown DISABLED WITH ITS REASON rather than hidden — a
+// missing button teaches nothing, and the reason here is always something he
+// would want to know (this work reads your vault).
+const EXEC_META={
+  when_away:{label:'While I’m away',ico:'\u{1F319}',
+             hint:'Parked. Runs under one lease when the machine goes quiet — the model wakes once for the whole batch.'},
+  now_local:{label:'Now, locally',ico:'\u{1F3E0}',
+             hint:'Slower, private, no bill.'},
+  now_cloud:{label:'Now, in the cloud',ico:'☁️',
+             hint:'Faster, costs money.'},
+};
+const CLS_META={
+  reflex:{label:'reflex',c:'#8affc1'}, interactive:{label:'chat',c:'#00d4ff'},
+  heavy:{label:'heavy',c:'#ffb347'}, image:{label:'image',c:'#d78aff'},
+  background:{label:'background',c:'rgba(255,255,255,0.45)'},
+};
+function dur(s){s=Math.round(s||0);if(s<90)return s+'s';if(s<3600)return Math.round(s/60)+'m';return (s/3600).toFixed(1)+'h';}
+
+function WorkProposal({p,onDecided}){
+  const[per,setPer]=useState({});
+  const[busy,setBusy]=useState(null);
+  const[err,setErr]=useState('');
+  const blocked={};(p.blocked||[]).forEach(b=>{blocked[b.option]=b.reason});
+  const rec=p.recommendation||{};
+  const decide=(execution,chooseForMe)=>{
+    setBusy(chooseForMe?'auto':execution);setErr('');
+    apiFetch('/api/work/proposals/'+p.id+'/decide',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({execution,choose_for_me:!!chooseForMe,per_task:per})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d})))
+      .then(({ok,d})=>{setBusy(null);if(!ok){setErr(d.error||'refused');return;}onDecided&&onDecided(d);})
+      .catch(e=>{setBusy(null);setErr(String(e))});
+  };
+  return <div style={{border:'1px solid rgba(0,212,255,0.22)',borderRadius:10,padding:16,marginBottom:14,background:'rgba(0,212,255,0.03)'}}>
+    <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4}}>
+      <div style={{fontFamily:'Orbitron',fontSize:13,color:'#00d4ff'}}>{p.title}</div>
+      <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono'}}>
+        {p.totals.n_tasks} step{p.totals.n_tasks===1?'':'s'}
+        {p.totals.n_heavy>0&&<span> · {p.totals.n_heavy} heavy</span>}
+      </div>
+    </div>
+    {p.summary&&<div style={{fontSize:11,color:'rgba(255,255,255,0.55)',marginBottom:10}}>{p.summary}</div>}
+
+    {/* The tasks Friday intends to execute. */}
+    <div style={{marginBottom:12}}>
+      {(p.tasks||[]).map((t,i)=>{
+        const cm=CLS_META[t.cls]||CLS_META.background;
+        return <div key={t.id} style={{display:'flex',alignItems:'flex-start',gap:9,padding:'6px 0',borderTop:i?'1px solid rgba(255,255,255,0.05)':'none'}}>
+          <span style={{fontSize:10,color:'rgba(255,255,255,0.25)',fontFamily:'JetBrains Mono',width:16,flexShrink:0,paddingTop:2}}>{i+1}</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.85)'}}>
+              {t.title}
+              {t.touches_vault&&<span title="reads vault-tier material, which never leaves this machine" style={{marginLeft:6,fontSize:10,color:'#ffb347'}}>{'\u{1F512} vault'}</span>}
+            </div>
+            <div style={{fontSize:10,color:'rgba(255,255,255,0.38)',fontFamily:'JetBrains Mono',marginTop:2}}>
+              <span style={{color:cm.c}}>{cm.label}</span>
+              {t.seat_hint&&<span> · {t.seat_hint}</span>}
+              <span> · ~{dur(t.est_s_local)} local</span>
+              {t.est_s_cloud!=null&&<span> · ~{dur(t.est_s_cloud)} cloud</span>}
+            </div>
+          </div>
+          {/* Per-task override, for when one step wants different treatment. */}
+          <select value={per[t.id]||''} onChange={e=>setPer(Object.assign({},per,{[t.id]:e.target.value||undefined}))}
+            style={{background:'rgba(0,0,0,0.3)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:5,color:'rgba(255,255,255,0.6)',fontSize:10,padding:'2px 4px',flexShrink:0}}>
+            <option value="">same as workflow</option>
+            {Object.keys(EXEC_META).map(k=>
+              <option key={k} value={k} disabled={k==='now_cloud'&&t.touches_vault}>{EXEC_META[k].label}</option>)}
+          </select>
+        </div>;
+      })}
+    </div>
+
+    <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:8}}>
+      total ~{dur(p.totals.est_s_local)} locally · ~{dur(p.totals.est_s_cloud)} in the cloud
+    </div>
+
+    {/* The choice. A blocked option stays visible WITH its reason. */}
+    <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:10}}>
+      {Object.keys(EXEC_META).map(k=>{
+        const m=EXEC_META[k],why=blocked[k];
+        return <button key={k} disabled={!!why||!!busy} onClick={()=>decide(k,false)}
+          title={why||m.hint}
+          style={{flex:'1 1 150px',textAlign:'left',padding:'8px 10px',borderRadius:7,cursor:why?'not-allowed':'pointer',
+            background:why?'rgba(255,255,255,0.02)':'rgba(0,212,255,0.07)',
+            border:'1px solid '+(why?'rgba(255,255,255,0.06)':'rgba(0,212,255,0.25)'),
+            color:why?'rgba(255,255,255,0.28)':'#cfefff',opacity:busy&&busy!==k?0.5:1}}>
+          <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{m.ico} {m.label}</div>
+          <div style={{fontSize:9,opacity:0.65,marginTop:2,lineHeight:1.35}}>{why?('unavailable — '+why):m.hint}</div>
+        </button>;
+      })}
+    </div>
+
+    {/* "Choose for me" — and it says what it would pick, before he clicks. */}
+    <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <button disabled={!!busy} onClick={()=>decide(null,true)}
+        style={{padding:'7px 14px',borderRadius:7,border:'1px solid rgba(138,255,193,0.3)',background:'rgba(138,255,193,0.08)',color:'#8affc1',cursor:'pointer',fontSize:11,fontFamily:'JetBrains Mono'}}>
+        ✨ Choose for me
+      </button>
+      {rec.execution&&<div style={{fontSize:10,color:'rgba(255,255,255,0.42)',flex:1,minWidth:180}}>
+        would pick <b style={{color:'rgba(255,255,255,0.7)'}}>{(EXEC_META[rec.execution]||{}).label}</b> — {rec.why}
+      </div>}
+      <button disabled={!!busy} onClick={()=>{apiFetch('/api/work/proposals/'+p.id,{method:'DELETE'}).then(()=>onDecided&&onDecided({dismissed:true}))}}
+        style={{padding:'7px 10px',borderRadius:7,border:'1px solid rgba(255,255,255,0.1)',background:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:11}}>
+        Not now
+      </button>
+    </div>
+    {err&&<div style={{marginTop:8,fontSize:11,color:'#ff8080',lineHeight:1.4}}>{err}</div>}
+  </div>;
+}
+
+function SettingsTabWork(){
+  const[props,setProps]=useState(null);
+  const[q,setQ]=useState(null);
+  const[busy,setBusy]=useState('');
+  const load=()=>{
+    apiFetch('/api/work/proposals').then(r=>r.json()).then(d=>setProps(d.proposals||[])).catch(()=>setProps([]));
+    apiFetch('/api/work/queue').then(r=>r.json()).then(setQ).catch(()=>setQ(null));
+  };
+  useEffect(()=>{load();const t=setInterval(load,8000);return()=>clearInterval(t)},[]);
+  const drain=(cls)=>{setBusy(cls);
+    apiFetch('/api/work/queue/drain',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({class:cls,force:true})})
+      .then(r=>r.json()).then(()=>{setBusy('');load()}).catch(()=>setBusy(''));
+  };
+  const pending=(q&&q.pending)||[];
+  const st=(q&&q.stats)||{};
+  return <div>
+    <StSection title="Proposed work">
+      {props===null&&<div style={{fontSize:11,color:'rgba(255,255,255,0.35)'}}>loading…</div>}
+      {props&&props.length===0&&<div style={{fontSize:11,color:'rgba(255,255,255,0.35)',lineHeight:1.5}}>
+        Nothing waiting on you. When Friday judges a job might be heavy she will lay out the steps here and ask how you want it run — she will not decide that on her own.
+      </div>}
+      {(props||[]).map(p=><WorkProposal key={p.id} p={p} onDecided={load}/>)}
+    </StSection>
+
+    <StSection title="Queue">
+      <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontFamily:'JetBrains Mono',marginBottom:10}}>
+        {pending.length} parked · idle {dur(st.idle_s)} · {st.away?'away — batches may run':'you are here — away-work is holding'}
+      </div>
+      {pending.length===0&&<div style={{fontSize:11,color:'rgba(255,255,255,0.3)'}}>nothing queued</div>}
+      {pending.map(it=>{
+        const cm=CLS_META[it.cls]||CLS_META.background;
+        return <div key={it.id} style={{display:'flex',alignItems:'center',gap:9,padding:'6px 0',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+          <span style={{fontSize:9,color:cm.c,fontFamily:'JetBrains Mono',width:64,flexShrink:0}}>{cm.label}</span>
+          <span style={{flex:1,fontSize:11,color:'rgba(255,255,255,0.75)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.title}</span>
+          <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono',flexShrink:0}}>{(EXEC_META[it.disposition]||{}).label}</span>
+          <button onClick={()=>{apiFetch('/api/work/queue/'+it.id,{method:'DELETE'}).then(load)}}
+            style={{background:'none',border:'none',color:'rgba(255,255,255,0.3)',cursor:'pointer',fontSize:12,flexShrink:0}}>×</button>
+        </div>;
+      })}
+      {/* Why a still queue is still: batch_ready explains itself rather than
+          looking broken. */}
+      {q&&q.batches&&Object.keys(q.batches).map(c=>{
+        const b=q.batches[c];if(!b||!b.items||!b.items.length)return null;
+        return <div key={c} style={{marginTop:10,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+          <span style={{fontSize:10,color:'rgba(255,255,255,0.45)',flex:1,minWidth:200}}>{c}: {b.why}</span>
+          <button disabled={busy===c} onClick={()=>drain(c)}
+            style={{padding:'5px 11px',borderRadius:6,border:'1px solid rgba(0,212,255,0.25)',background:'rgba(0,212,255,0.07)',color:'#00d4ff',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono'}}>
+            {busy===c?'running…':'Run now'}
+          </button>
+        </div>;
+      })}
+    </StSection>
+  </div>;
+}
+
 function SettingsTabModels({s,save}){
   const mc=useModelCatalog();
   const mkSel=(role,key,label,desc)=>{
@@ -8233,6 +8407,7 @@ function SettingsWS(){
   const TABS=[
     {id:'general',label:'General',ico:'⚡️'},
     {id:'models',label:'Models',ico:'🧠'},
+    {id:'work',label:'Work',ico:'\u{1F4CB}'},
     {id:'providers',label:'Providers',ico:'🧩'},
     {id:'voice',label:'Voice',ico:'🎤'},
     {id:'privacy',label:'Privacy & Security',ico:'🔒'},
@@ -8258,6 +8433,7 @@ function SettingsWS(){
       <div style={{flex:1,overflowY:'auto',padding:'24px 26px',minWidth:0}}>
         {tab==='general'&&<SettingsTabGeneral s={s} save={save}/>}
         {tab==='models'&&<SettingsTabModels s={s} save={save}/>}
+        {tab==='work'&&<SettingsTabWork/>}
         {tab==='providers'&&<SettingsTabProviders s={s} save={save}/>}
         {tab==='voice'&&<SettingsTabVoice s={s} save={save}/>}
         {tab==='privacy'&&<SettingsTabPrivacy s={s} save={save}/>}
