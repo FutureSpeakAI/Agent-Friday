@@ -183,33 +183,21 @@ def ollama_engine_path() -> Path:
 # a model that upstream cannot parse does not pay a failed load on every boot.
 _ENGINE_MEMO: dict = {}
 
-# Models left on the Ollama DAEMON on purpose, even though we now hold their
-# GGUF and could serve them ourselves.
+# Models we deliberately leave on the Ollama daemon. EMPTY as of 2026-08-15.
 #
-# Measured 2026-08-15. The gemma4 e-series does not emit OpenAI-shaped tool
-# calls; it emits a channel format:
+# It briefly held gemma4:e2b and e4b. Those models emit tool calls in a channel
+# format --  <|tool_call>call:get_weather{city:Oslo}<tool_call|>  -- which only
+# Ollama's DAEMON parsed, so serving them as processes we owned cost tool
+# calling outright: the model called correctly and `tool_calls` came back None.
 #
-#     <|channel>thought
-#     1.  **Analyze the user's request:** ...
+# services/channel_toolcalls.py now parses that format directly, and the seat
+# was verified as OUR process completing a five-call dependent chain with the
+# right arguments and the right answer. The exception no longer has a reason to
+# exist.
 #
-# The parser that turns that into a `tool_calls` array lives in Ollama's
-# DAEMON, not in the engine binary. Served by a process we own — either engine,
-# with the correct gemma4 chat template applied and verified in /props — the
-# same model returns `tool_calls: None` and either empty content or its raw
-# reasoning channel. Through the daemon it scores 5/5 on a dependent
-# five-call chain.
-#
-# So owning this process would buy residency control and pay for it with tool
-# calling, which is a bad trade for a seat whose job is answering ordinary
-# turns. Recorded here with its reason rather than left as an unexplained
-# exception, and revisited when either engine learns the channel format — or
-# when we parse it ourselves in _oai_agentic_loop, which is the real fix.
-DAEMON_SERVED = {
-    "gemma4:e2b": "emits <|channel> tool calls that only the Ollama daemon "
-                  "parses; served by our own process it loses tool calling "
-                  "entirely (measured 2026-08-15)",
-    "gemma4:e4b": "same channel format as gemma4:e2b",
-}
+# The mechanism stays. The next model with a private wire format belongs here,
+# with its measurement, rather than in a silent special case somewhere.
+DAEMON_SERVED: dict = {}
 
 
 class LlamaServerBackend:

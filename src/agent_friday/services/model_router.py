@@ -790,6 +790,24 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             if _oai_tools:
                 payload["tools"] = _oai_tools
                 payload["tool_choice"] = "auto"
+                # Thinking OFF for tool turns on the gemma4 family, and only
+                # for a local seat we serve ourselves.
+                #
+                # With it on, the model reasons inside <|channel>thought,
+                # concludes "now emit the call", closes the channel — and
+                # generation ENDS there, because the closing token is
+                # end-of-generation. Measured 2026-08-15: content ending
+                # "6. **Format the output:** Generate the JSON representation
+                # of the tool call.<channel|>" with tool_calls: None. With
+                # thinking disabled the same prompt returns the call directly.
+                if local_bypass:
+                    try:
+                        from agent_friday.services import channel_toolcalls
+                        if channel_toolcalls.needs_thinking_disabled(model):
+                            payload["chat_template_kwargs"] = {
+                                "enable_thinking": False}
+                    except Exception:
+                        pass
             # OpenRouter first-class features (descriptor-driven, harmless to
             # omit for providers that don't declare them):
             if features.get('usage_accounting'):
