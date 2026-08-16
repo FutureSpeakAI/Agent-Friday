@@ -1807,6 +1807,19 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
                 m = route.get('model') or '(unnamed model)'
                 seat = 'local' if route.get('is_local') else 'cloud'
                 _task_log(task_id, 'Asking %s (%s)…' % (m, seat))
+                # Warn-before-silence, applied to unattended work too. Nobody
+                # is watching a 3am heartbeat, but the pause is real and it is
+                # the reason a run that normally takes 20s sometimes takes 90 —
+                # so it belongs in the log Stephen reads afterwards rather than
+                # being left as an unexplained gap in the timings.
+                if route.get('is_local'):
+                    from agent_friday.services import pause_forecast as _pf
+                    f = _pf.before_local_turn(m)
+                    if f.get('will_pause'):
+                        _task_log(task_id, '  %s pause expected (%s): %s'
+                                  % (f.get('confidence') or 'likely',
+                                     _pf._plural(f.get('seconds') or 0),
+                                     (f.get('why') or '')[:120]))
             except Exception:
                 pass
         subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
