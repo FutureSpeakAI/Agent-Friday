@@ -1494,17 +1494,46 @@ def _front_page_story_urls(edition):
 
 
 def _front_page_story_titles(edition):
-    """Compact [{title, source}] of an edition's stories, for prompt context."""
+    """Compact [{title, source}] of an edition's stories, for prompt context.
+
+    Each headline is also registered with the egress gate as third-party
+    PUBLISHED text. Provenance, not assertion: these strings are in a Front
+    Page edition because Friday fetched them from an external news feed, and
+    the registration happens here — where they come off the archive — rather
+    than at send time where a caller could claim anything is news.
+
+    Without this, 9 of 120 headlines classified TIER_3 on the legal and
+    financial keyword rules ("Trump asks US Supreme Court…", "raised a $136M
+    Series B"), one tainted paragraph made the whole block sensitive, and the
+    weekly digest reached the model as a folder of redaction notices. Those
+    rules exist to keep Stephen's legal and financial affairs on the machine.
+    A headline the BBC published is neither.
+    """
     out = []
     if not isinstance(edition, dict):
         return out
+
+    def _pub(title, source):
+        try:
+            from agent_friday.services.egress_gate import register_public_text
+            register_public_text(title, origin=source or "news-feed")
+            # The exact line shape the digest builds, so the paragraph the gate
+            # actually sees matches — registering only the bare title would
+            # exempt a string that never appears in the prompt.
+            register_public_text("- %s (%s)" % (title, source or ""),
+                                 origin=source or "news-feed")
+        except Exception:
+            pass
+
     lead = edition.get("lead") or {}
     if lead.get("title"):
         out.append({"title": lead["title"], "source": lead.get("source", "")})
+        _pub(lead["title"], lead.get("source", ""))
     for sec in edition.get("sections") or []:
         for a in sec.get("articles") or []:
             if a.get("title"):
                 out.append({"title": a["title"], "source": a.get("source", "")})
+                _pub(a["title"], a.get("source", ""))
     return out
 
 

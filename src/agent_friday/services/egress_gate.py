@@ -175,6 +175,62 @@ _TRUSTED_PARAS: set = set()
 _TRUSTED_LOCK = threading.Lock()
 
 
+# ── Third-party published text ────────────────────────────────────────────────
+#
+# A SEPARATE registry from the self-authored one above, deliberately, because
+# the contracts differ and merging them would weaken the statement made there.
+#
+# The problem this solves: 9 of 120 public news headlines classify TIER_3 —
+# "Trump asks US Supreme Court to allow ballroom work to continue",
+# "Point2 Technology ... raised a $136M Series B". Those are the legal and
+# financial keyword rules doing their job on the wrong material: they exist to
+# keep STEPHEN's legal and financial affairs on the machine, and a headline the
+# BBC published is neither. One tainted paragraph made the whole weekly story
+# block tier-3, the gate withheld it, and Friday received a folder of redaction
+# notices and honestly refused to write an editorial from them.
+#
+# What earns the exemption is PROVENANCE, established at INGEST:
+#
+#   * `news_engine` registers each article's title/summary at the moment it
+#     comes back from an external feed fetch. The text is on this list because
+#     Friday retrieved it from a public source, not because anybody said so.
+#   * Exact match only — whole string or verbatim paragraph. Interpolating any
+#     user content produces a different string, which gates normally.
+#   * There is no send-time API. Nothing accepts "treat this as news" from a
+#     caller, so the exemption cannot be claimed by asserting it; a would-be
+#     spoofer would have to get their text into a news feed Friday subscribes
+#     to first, and even then it would only exempt that exact text.
+#
+# What it deliberately does NOT cover, even though all of it also "arrives from
+# outside": email bodies, calendar entries, documents, anything a tool returned
+# that was not a registered feed fetch, and Friday's own analysis ABOUT the
+# news — her synthesis may weave in private context and is classified normally.
+_PUBLIC_PARAS: set = set()
+_PUBLIC_MAX = 20000          # bounded; oldest-wins eviction is not worth it
+
+
+def register_public_text(text: str, origin: str = "") -> None:
+    """Register externally-published text as gate-exempt, by provenance.
+
+    Call ONLY from an ingest path, with text that came back from fetching a
+    public source. Never from a send path, and never with anything the user
+    wrote.
+    """
+    if not text or not isinstance(text, str):
+        return
+    t = text.strip()
+    if not t or len(t) > 2000:      # a headline or a summary, not a document
+        return
+    with _TRUSTED_LOCK:
+        if len(_PUBLIC_PARAS) < _PUBLIC_MAX:
+            _PUBLIC_PARAS.add(t)
+
+
+def public_text_count() -> int:
+    with _TRUSTED_LOCK:
+        return len(_PUBLIC_PARAS)
+
+
 def register_trusted_text(text: str) -> None:
     """Register a Friday-authored constant as gate-exempt.
 
@@ -261,7 +317,8 @@ def _gate_text(text: str, provider: str, field: str,
                 gated.append(p)
                 continue
             with _TRUSTED_LOCK:
-                _p_trusted = p.strip() in _TRUSTED_PARAS
+                _ps = p.strip()
+                _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS
             if _p_trusted:
                 gated.append(p)
                 trusted += 1
