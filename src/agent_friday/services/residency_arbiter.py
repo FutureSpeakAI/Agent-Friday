@@ -25,6 +25,7 @@ exhaustion it exists to prevent.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -66,6 +67,55 @@ def get_arbiter():
     return ARBITER
 
 
+def endpoints_path() -> Path:
+    return runtime_dir() / "residency" / "endpoints.json"
+
+
+def _publish_endpoints(procs: dict) -> None:
+    """Write the live seat->port map where OTHER processes can read it.
+
+    An in-memory map serves the server and nothing else. Any other process —
+    a measurement probe, a worker, a script — has no Arbiter, so it asks the
+    Ollama daemon, and with the daemon stopped it raises "Ollama is not
+    running" about a model that is loaded and healthy two ports away.
+    Measured 2026-08-15: the tool-chain probe scored 0/5 with that error while
+    the same seat answered a real turn inside the server in 4.5 s.
+
+    Best-effort and never fatal: a seat that cannot publish its port is still
+    a working seat for the process that owns it.
+    """
+    try:
+        p = endpoints_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        data = {"pid": os.getpid(), "updated_at": time.time(),
+                "endpoints": {m: "http://127.0.0.1:%d/v1" % port
+                              for m, (_proc, port) in procs.items()}}
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        pass
+
+
+def _published_endpoint(model_id: str) -> str | None:
+    """A seat's port from the file, verified live before it is trusted.
+
+    The file can outlive the process that wrote it, so a stale entry must not
+    send a caller to a port nobody is listening on. Health-checked first.
+    """
+    try:
+        data = json.loads(endpoints_path().read_text(encoding="utf-8"))
+        base = (data.get("endpoints") or {}).get(model_id)
+        if not base:
+            return None
+        port = int(base.rsplit(":", 1)[1].split("/")[0])
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/health" % port, timeout=2) as r:
+            return base if r.status == 200 else None
+    except Exception:
+        return None
+
+
 def owned_endpoint(model_id: str) -> str | None:
     """The OpenAI-compatible base URL of a seat WE are serving, or None.
 
@@ -79,14 +129,16 @@ def owned_endpoint(model_id: str) -> str | None:
 
     A seat that is resident and unreachable is worse than one that is neither.
     """
+    if not model_id:
+        return None
     arb = ARBITER
-    if arb is None or not model_id:
-        return None
-    entry = getattr(arb.llama, "procs", {}).get(model_id)
-    if not entry:
-        return None
-    _proc, port = entry
-    return "http://127.0.0.1:%d/v1" % port
+    if arb is not None:
+        entry = getattr(arb.llama, "procs", {}).get(model_id)
+        if entry:
+            _proc, port = entry
+            return "http://127.0.0.1:%d/v1" % port
+    # No Arbiter in THIS process. The seat may still be running in another one.
+    return _published_endpoint(model_id)
 
 
 def owned_provider(model_id: str) -> dict | None:
@@ -304,6 +356,7 @@ class LlamaServerBackend:
                         "http://127.0.0.1:%d/health" % port, timeout=3) as r:
                     if r.status == 200:
                         self.procs[model_id] = (proc, port)
+                        _publish_endpoints(self.procs)
                         return round(time.time() - t0, 2)
             except Exception:
                 time.sleep(1.5)
@@ -313,6 +366,7 @@ class LlamaServerBackend:
 
     def evict(self, model_id):
         entry = self.procs.pop(model_id, None)
+        _publish_endpoints(self.procs)
         if not entry:
             return
         proc, _ = entry
