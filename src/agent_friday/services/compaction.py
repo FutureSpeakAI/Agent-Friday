@@ -82,6 +82,21 @@ def resolve_context_window(model=None, cfg=None):
     cfg = cfg if cfg is not None else _cfg()
     if model:
         try:
+            # The residency PLAN first. It is the only component that knows the
+            # context a seat is actually being served at — `num_ctx` is chosen
+            # per-seat and applied on every dispatch. model_catalog asks the
+            # Ollama daemon, which returns None when the daemon is stopped, and
+            # compaction then budgeted gemma4:12b against a 200,000-token
+            # default while the seat was really serving 131,072. Budgeting 53%
+            # more window than exists means compacting too LATE, which
+            # overflows the seat instead of protecting it.
+            from agent_friday.services.residency_policy import num_ctx_for_model
+            planned = num_ctx_for_model(model, default=0)
+            if planned:
+                return int(planned)
+        except Exception:
+            pass
+        try:
             from agent_friday.services.model_catalog import context_window_for
             real = context_window_for(model)
             if real and real > 0:

@@ -2079,7 +2079,12 @@ function GeneratePanel({onCreated}){
   const imageModels=creative.filter(m=>(m.modalities||[]).includes('image'));
   const videoModels=creative.filter(m=>(m.modalities||[]).includes('video'));
   useEffect(()=>{if(!imgModel&&imageModels.length)setImgModel(imageModels[0].id);if(!vidModel&&videoModels.length)setVidModel(videoModels[0].id);},[mc.loaded]);
-  useEffect(()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setSeedFiles((d.files||[]).filter(x=>['png','jpg','jpeg','webp'].includes((x.name||'').split('.').pop().toLowerCase())))}).catch(()=>{})},[]);
+  /* Refreshes, rather than fetching once on mount. Workspaces stay mounted
+     and are shown/hidden, so "I just opened the Studio" does not remount the
+     panel — Stephen generated an image and the gallery kept showing whatever
+     it had loaded earlier ("her first audience"). The file was on disk and
+     first in /api/creations the whole time. */
+  useEffect(()=>{const load=()=>fetch('/api/creations').then(r=>r.json()).then(d=>{setSeedFiles((d.files||[]).filter(x=>['png','jpg','jpeg','webp'].includes((x.name||'').split('.').pop().toLowerCase())))}).catch(()=>{});load();const iv=setInterval(load,10000);return()=>clearInterval(iv)},[]);
   const go=async()=>{
     if(!prompt.trim()||busy)return;
     setBusy(true);setErr('');setResult(null);
@@ -2586,6 +2591,8 @@ function StudioWS(){
   const[expandedCard,setExpandedCard]=useState(null);const[imgErrors,setImgErrors]=useState({});
   const ICONS={html:'💻',md:'📝',svg:'🎨',png:'🖼️',jpg:'🖼️',jpeg:'🖼️',webp:'🖼️',mp3:'🎵',wav:'🔊',ogg:'🔊',m4a:'🔊',mp4:'🎬',webm:'🎬',mov:'🎬'};
   const loadCreations=()=>{fetch('/api/creations').then(r=>r.json()).then(d=>{setCreations(d.files||[]);setLoading(false)}).catch(()=>setLoading(false))};
+  /* Same reason: the gallery has to notice work finished while it was open. */
+  useEffect(()=>{const iv=setInterval(loadCreations,10000);return()=>clearInterval(iv)},[]);
   useEffect(()=>{loadCreations();fetch('/api/creations/creation-log.md').then(r=>r.ok?r.text():null).then(t=>{if(t)setCreationLog(t)}).catch(()=>{});fetch('/api/settings').then(r=>r.json()).then(d=>{const s=d.settings||d;setMinor(!!(s&&s.minor_mode))}).catch(()=>{})},[]);
   // Friday's AUTONOMOUS daily creation — an opt-in agent task that runs in a
   // Claude Code terminal. Kept deliberately OUT of the prompt-bar flow: user
@@ -10407,17 +10414,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   const[pausePending,setPausePending]=useState(null);   // {forecast, message}
   const sendChat=async(overrideMsg,opts)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;
     opts=opts||{};
+    /* His own message renders IMMEDIATELY and synchronously. Nothing about
+       echoing what he just typed needs the server's permission.
+
+       This was my regression. The warn-before-silence work put an awaited
+       /api/work/forecast call ahead of the optimistic render, so on a busy
+       machine the input kept his text and the log stayed empty for several
+       seconds — at which point pressing enter again is the reasonable thing to
+       do, and he sent twice. His transcript shows it happening twice ("On the
+       agenda today is testing you", "yes please"). A latency I introduced cost
+       him duplicate turns and duplicate tokens. */
+    if(!opts.alreadyShown){
+      setChatIn('');
+      setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);
+    }
+    /* And a hard guard: one turn in flight at a time. The optimistic render is
+       the real fix, but a stray double-tap should not cost a second inference
+       either. */
+    if(chatLoad&&!opts.skipForecast)return;
     if(!opts.skipForecast){
       try{
         const fr=await apiFetch('/api/work/forecast',{method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({kind:'local_turn'})});
         const f=await fr.json();
-        if(f&&f.will_pause){setPausePending({forecast:f,message:m});setChatIn('');return;}
+        if(f&&f.will_pause){setPausePending({forecast:f,message:m});return;}
       }catch(_){/* a forecast we cannot get must never block a message */}
     }
     setPausePending(null);
-    setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
+    setChatLoad(true);
     try{
       const body={message:m,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
       if(opts.routeMode)body.route_mode=opts.routeMode;
@@ -10938,9 +10963,10 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
                 .catch(()=>{});
               return;
             }
-            sendChat(m,{skipForecast:true,routeMode:id==='now_cloud'?'cloud':undefined});
+            sendChat(m,{skipForecast:true,alreadyShown:true,routeMode:id==='now_cloud'?'cloud':undefined});
           }}
-          onCancel={()=>{setChatIn(pausePending.message);setPausePending(null)}}/>}
+          onCancel={()=>{const m=pausePending.message;setChatIn(m);setPausePending(null);
+            setChatMsgs(p=>{const i=p.map(x=>x.role==='user'&&x.text===m).lastIndexOf(true);return i<0?p:p.filter((_,j)=>j!==i)})}}/>}
         {chatMsgs.map((m,i)=>m.role==='system'
           /* B2: system lines — seat changes and other transparency notices.
              Amber, centered, unmistakably NOT Friday speaking. Never sent to
