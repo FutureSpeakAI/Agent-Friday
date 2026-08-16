@@ -1505,6 +1505,15 @@ def _integrity_violations(reply, tool_trace, tool_names):
         find_unreceipted_completion_claims)
     leaks = find_pseudo_toolcalls(reply, tool_names)
     claims = find_unreceipted_completion_claims(reply, tool_trace)
+    # THIRD axis, added 2026-08-16: a promise of imminent action in a turn that
+    # then called nothing. Neither of the other two could see it — they both ask
+    # "did she claim to have done something", and "I'll do a quick search of
+    # your creations folder. Give me one second." claims nothing. The turn
+    # simply ended. Stephen caught it himself, twice, in one session.
+    from agent_friday.services.completion_receipts import find_unkept_promises
+    claims = list(claims) + [
+        "promised but never acted: %r" % pr
+        for pr in find_unkept_promises(reply, tool_trace)]
     return leaks, claims
 
 

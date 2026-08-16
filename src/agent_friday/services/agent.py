@@ -5125,6 +5125,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
     except Exception:
         pass
     loops = max_iters if oai_tools else 1
+    _empty_retried = False
     for _ in range(loops):
         resp = send_fn(convo, oai_tools)
 
@@ -5184,6 +5185,25 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         # No tools available, or the model is done calling them → final answer.
         if not oai_tools or not tool_calls:
             text = (msg.get("content") or "").strip()
+            # An EMPTY completion is not an answer.
+            #
+            # Stephen watched gemma4:12b think for two minutes and then deliver
+            # a blank message. That is worse than an error: an error says
+            # something went wrong, a blank bubble says Friday had nothing to
+            # say. One retry that tells the model what happened, then an honest
+            # failure — never silence dressed up as a reply.
+            if not text and not _empty_retried:
+                _empty_retried = True
+                convo.append({"role": "assistant", "content": ""})
+                convo.append({"role": "user", "content":
+                              "(Automated check — this is not from the user. "
+                              "Your previous response was empty. Answer the "
+                              "user's message directly, in words.)"})
+                continue
+            if not text:
+                text = ("[Friday returned an empty response twice in a row. "
+                        "That is a fault on this end, not an answer — please "
+                        "try again, and switch seats if it repeats.]")
             # Even with nothing to call, channel markup must not reach the
             # transcript — the thought channel is a scratchpad, not an answer.
             if text and "channel" in text:

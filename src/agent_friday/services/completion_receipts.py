@@ -68,7 +68,79 @@ _ARTIFACT = (
 
 _FIRST_PERSON = r"\bI(?:'ve| have| just|'d)?(?: just)?(?: successfully)?\s+"
 
+# Image artifacts are files too. The registry's _ARTIFACT list carried no image
+# extensions, so "saved as friday_local_00005_.png" — a completion claim naming
+# a specific file that did exist — matched nothing at all.
+_IMAGE_ARTIFACT = r"\S+\.(?:png|jpe?g|webp|gif|svg|mp4|mov|wav|mp3)\b"
+
+# A PROMISE is not a completion, and nothing looked for one until 2026-08-16.
+# Both existing detectors ask "did she claim to have DONE something without a
+# receipt". Neither asks "did she say she was ABOUT to do something and then end
+# the turn without doing it", which is what actually happened, twice:
+#
+#     "Give me one second to find it. I'll try to pull up the image for you now."
+#     "I'll do a quick search of your creations folder... Give me one second."
+#
+# Both times the turn ended there and no tool ran. From Stephen's side that is
+# indistinguishable from a lie, and he had to catch it himself.
+_PROMISE_RE = re.compile(
+    r"\b(?:"
+    r"I'll (?:go(?: ahead and)? )?(?:try to |now )?(?:search|look|check|find|pull"
+    r"|open|grab|fetch|scan|dig|run|do|take a look|see)"
+    r"|let me (?:go |just |quickly )?(?:search|look|check|find|pull|open|grab"
+    r"|fetch|scan|dig|run|see|take a look)"
+    r"|give me (?:one |a )?(?:second|moment|sec|minute)"
+    r"|I'm (?:going to|about to|now) (?:search|look|check|find|pull|open|grab|run)"
+    r"|(?:one|just a) (?:second|moment|sec) while I"
+    r"|hang on while I|bear with me while I"
+    r")\b", re.IGNORECASE)
+
+# Navigation and diagnostic claims. "I've moved you over to the Studio" and
+# "Diagnostics complete — Connectivity verified" both assert an action or a
+# result that only a tool could have produced.
+_NAVIGATED_RE = re.compile(
+    _FIRST_PERSON + r"(?:moved|switched|taken|brought|navigated|flipped)\s+you"
+    r"[^.!?\n]{0,40}?\b(?:to|over)\b", re.IGNORECASE)
+_DIAGNOSTIC_RE = re.compile(
+    r"\b(?:diagnostics?|system check|self[- ]?test|status check)\s+"
+    r"(?:complete|done|finished|passed)\b"
+    r"|\b(?:verified and responding|confirmed access"
+    r"|all systems (?:go|nominal))\b",
+    re.IGNORECASE)
+
+
+def find_unkept_promises(reply: str, tool_trace) -> list[str]:
+    """Promises of imminent action in a turn where NO tool ran.
+
+    Deliberately narrow: it fires only when the trace is COMPLETELY empty. A
+    turn that called three tools and also said "let me check" is doing exactly
+    what it said it would; a turn that promised and called nothing is not.
+    """
+    if not reply or tool_trace:
+        return []
+    return [m.group(0).strip()
+            for m in _PROMISE_RE.finditer(_strip_code(reply))]
+
+
 COMPLETION_CLAIM_REGISTRY = [
+    {
+        "id": "saved-image",
+        "pattern": re.compile(
+            _FIRST_PERSON + r"(?:created|generated|saved|rendered|made)"
+            r"[^.!?\n]{0,120}?" + _IMAGE_ARTIFACT, re.IGNORECASE),
+        "tools": ("image", "creat", "generat", "render", "draw"),
+    },
+    {
+        "id": "navigated-user",
+        "pattern": _NAVIGATED_RE,
+        "tools": ("navigate", "open", "switch", "workspace", "browse"),
+    },
+    {
+        "id": "ran-diagnostics",
+        "pattern": _DIAGNOSTIC_RE,
+        "tools": ("health", "status", "diagnos", "check", "calendar", "email",
+                  "wiki", "list"),
+    },
     {
         "id": "wrote-artifact",
         "pattern": re.compile(
