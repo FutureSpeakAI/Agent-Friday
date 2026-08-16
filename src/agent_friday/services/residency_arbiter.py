@@ -120,36 +120,149 @@ class OllamaBackend:
             self.evict(name)
 
 
+def ollama_engine_path() -> Path:
+    """Ollama's own llama-server, which we run as a PROCESS WE OWN.
+
+    Not the daemon. The daemon is what R9 exists because of; this is the engine
+    binary that ships beside it, started and killed by the Arbiter like any
+    other seat process. Nothing schedules it but us.
+    """
+    return (Path.home() / "AppData" / "Local" / "Programs" / "Ollama" /
+            "lib" / "ollama" / "llama-server.exe")
+
+
+# Which engine successfully loaded which model, learned at runtime and kept, so
+# a model that upstream cannot parse does not pay a failed load on every boot.
+_ENGINE_MEMO: dict = {}
+
+# Models left on the Ollama DAEMON on purpose, even though we now hold their
+# GGUF and could serve them ourselves.
+#
+# Measured 2026-08-15. The gemma4 e-series does not emit OpenAI-shaped tool
+# calls; it emits a channel format:
+#
+#     <|channel>thought
+#     1.  **Analyze the user's request:** ...
+#
+# The parser that turns that into a `tool_calls` array lives in Ollama's
+# DAEMON, not in the engine binary. Served by a process we own — either engine,
+# with the correct gemma4 chat template applied and verified in /props — the
+# same model returns `tool_calls: None` and either empty content or its raw
+# reasoning channel. Through the daemon it scores 5/5 on a dependent
+# five-call chain.
+#
+# So owning this process would buy residency control and pay for it with tool
+# calling, which is a bad trade for a seat whose job is answering ordinary
+# turns. Recorded here with its reason rather than left as an unexplained
+# exception, and revisited when either engine learns the channel format — or
+# when we parse it ourselves in _oai_agentic_loop, which is the real fix.
+DAEMON_SERVED = {
+    "gemma4:e2b": "emits <|channel> tool calls that only the Ollama daemon "
+                  "parses; served by our own process it loses tool calling "
+                  "entirely (measured 2026-08-15)",
+    "gemma4:e4b": "same channel format as gemma4:e2b",
+}
+
+
 class LlamaServerBackend:
-    """Pinned seats. One process per seat, owned end to end (R9)."""
+    """Pinned seats. One process per seat, owned end to end (R9).
+
+    Two engines, and the reason is measured rather than defensive. Upstream
+    llama.cpp (build 10415) loads `gemma4:12b` from the extracted GGUF fine and
+    refuses `gemma4:e2b` from a file that is provably intact:
+
+        done_getting_tensors: wrong number of tensors; expected 2012, got 601
+
+    That error was read for a day as "Ollama shards its models and llama.cpp
+    cannot reassemble them". It is not. The manifest has exactly one model
+    layer, the extracted file passes the GGUF magic check, and **Ollama's own
+    engine binary loads that same file and generates from it** — verified
+    2026-08-15, "ready." in 0.90 s. The gemma4 e-series tensor layout simply
+    is not what upstream's gemma3n reader expects.
+
+    So we try upstream first and fall back to the engine that ships with
+    Ollama. Either way the process is ours: we spawn it, health-check it, and
+    kill it. The daemon is not in the path.
+    """
 
     name = "llama-server"
 
-    def __init__(self, binary: Path | None = None):
+    def __init__(self, binary: Path | None = None, fallback: Path | None = None):
         self.binary = binary or (runtime_dir() / "llama.cpp" /
                                  "llama-server.exe")
+        self.fallback = fallback if fallback is not None else \
+            ollama_engine_path()
         self.procs: dict = {}          # model_id -> (Popen, port)
 
     def resident(self):
         return {m: 0 for m in self.procs}
 
+    def engines_for(self, model_id):
+        """Engines to try, best first, with anything already learned first."""
+        known = _ENGINE_MEMO.get(model_id)
+        order = [self.binary]
+        if self.fallback and Path(self.fallback).exists():
+            order.append(Path(self.fallback))
+        if known:
+            order = [Path(known)] + [b for b in order if str(b) != str(known)]
+        return [b for b in order if Path(b).exists()]
+
     def load(self, model_id, num_ctx, *, gguf_path, port,
              n_cpu_moe=None, timeout=300):
-        cmd = [str(self.binary), "-m", str(gguf_path), "--alias", model_id,
+        engines = self.engines_for(model_id)
+        if not engines:
+            raise TransitionError("no llama-server binary found (looked at %s "
+                                  "and %s)" % (self.binary, self.fallback))
+        last = None
+        for i, binary in enumerate(engines):
+            try:
+                took = self._spawn(binary, model_id, num_ctx,
+                                   gguf_path=gguf_path, port=port + i,
+                                   n_cpu_moe=n_cpu_moe, timeout=timeout)
+                _ENGINE_MEMO[model_id] = str(binary)
+                return took
+            except TransitionError as e:
+                last = e
+        raise TransitionError("no engine could load %s: %s" % (model_id, last))
+
+    def _spawn(self, binary, model_id, num_ctx, *, gguf_path, port,
+               n_cpu_moe=None, timeout=300):
+        cmd = [str(binary), "-m", str(gguf_path), "--alias", model_id,
                "--host", "127.0.0.1", "--port", str(port),
                "-ngl", "99", "--flash-attn", "on", "-c", str(num_ctx),
-               "--jinja", "--no-webui"]
+               "--jinja", "--no-webui",
+               # Batch size caps the COMPUTE buffer, which scales with context
+               # and dwarfs the KV cache at long windows. Measured: the 12b at
+               # 131072 took 11351 MiB of GPU at the default batch against 7813
+               # under Ollama, which runs -b 512 -ub 512. The extra ~3.5 GB is
+               # the compute buffer, not the model, and it is the difference
+               # between the pinned pair fitting and not.
+               "-b", "512", "-ub", "512"]
+        # A seat with no chat template silently falls back to ChatML, which
+        # leaks `<|im_end|>` into replies and — the part that matters — hands
+        # the seat a template with NO TOOL DEFINITIONS. gemma4:e2b and e4b ship
+        # without an embedded template; gguf_extract borrows the 12b's (same
+        # architecture, same tokenizer) and writes it beside the weights.
+        # Without this the sidekick would look like a model that cannot call
+        # tools, which is the misdiagnosis this codebase has already made twice.
+        try:
+            from agent_friday.services import gguf_extract as _gx
+            tmpl = _gx.chat_template_path(model_id)
+            if tmpl.exists():
+                cmd += ["--chat-template-file", str(tmpl)]
+        except Exception:
+            pass
         if n_cpu_moe is not None:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
-                                cwd=str(self.binary.parent))
+                                cwd=str(Path(binary).parent))
         t0 = time.time()
         while time.time() - t0 < timeout:
             if proc.poll() is not None:
                 raise TransitionError(
-                    "llama-server for %s exited %s during load"
-                    % (model_id, proc.returncode))
+                    "%s exited %s loading %s"
+                    % (Path(binary).parent.name, proc.returncode, model_id))
             try:
                 with urllib.request.urlopen(
                         "http://127.0.0.1:%d/health" % port, timeout=3) as r:
@@ -159,8 +272,8 @@ class LlamaServerBackend:
             except Exception:
                 time.sleep(1.5)
         proc.terminate()
-        raise TransitionError("llama-server for %s never became ready in %ss"
-                              % (model_id, timeout))
+        raise TransitionError("%s never became ready in %ss for %s"
+                              % (Path(binary).name, timeout, model_id))
 
     def evict(self, model_id):
         entry = self.procs.pop(model_id, None)
@@ -238,7 +351,13 @@ class Arbiter:
         self.ollama = ollama or OllamaBackend()
         self.llama = llama or LlamaServerBackend()
         self.comfy = comfy or ComfyUIBackend()
-        self.gguf_paths = dict(gguf_paths or {})
+        # Default to the extracted-GGUF registry rather than an empty dict.
+        # Left empty, every pinned seat silently took the degraded-pin path and
+        # the residency layer's central rule (R9) was unenforced everywhere
+        # while looking configured — the caller has to remember to pass the one
+        # thing without which nothing works.
+        self.gguf_paths = dict(gguf_paths if gguf_paths is not None
+                               else rc.gguf_models())
         self.state = STATE_DEFAULT
         self.plan = None
         self.lease = None
@@ -476,7 +595,14 @@ class Arbiter:
         entry = self._entry(seat["model_id"])
         gguf = self.gguf_paths.get(seat["model_id"])
         t0 = time.time()
-        why = None
+        why = DAEMON_SERVED.get(seat["model_id"])
+        if why:
+            # A deliberate exception, not a failure. It still reports as an
+            # unenforced pin below, because that is exactly what it is — and a
+            # seat we chose not to own must look the same in the status output
+            # as one we failed to own, or the honest report becomes a
+            # comfortable one.
+            gguf = None
         if gguf:
             port = PORT_BASE + len(self.llama.procs)
             try:
