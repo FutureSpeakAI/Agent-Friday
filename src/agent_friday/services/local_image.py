@@ -182,8 +182,42 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                     "reason": "ComfyUI rejected the workflow: %s" % sub}
         images = _await_result(pid)
         out_dir = comfy_root() / "output"
-        files = [str(out_dir / (i.get("subfolder") or "") / i["filename"])
-                 for i in images if i.get("filename")]
+        # The SAME envelope the cloud path returns: a list of dicts with
+        # filename/path/url, not bare path strings.
+        #
+        # This returned `files: ["C:\\...\\x.png"]` until 2026-08-15, and
+        # every caller does `result['files'][0].get('filename')` —
+        # routes/creations._flatten_first_file among them, which raised
+        # `'str' object has no attribute 'get'` and turned a SUCCESSFUL
+        # 108-second generation into an HTTP 500. The image was on disk; the
+        # envelope was the wrong shape. A local path that returns a different
+        # contract from the cloud path is not a local path, it is a second
+        # code path pretending to be one.
+        #
+        # The file is also COPIED into the creations directory, because that
+        # is the only place `/api/creations/<filename>` serves from. A picture
+        # left in ComfyUI's own output folder exists but cannot be looked at,
+        # which is its own quiet way of not working.
+        import shutil as _shutil
+
+        from agent_friday.core import CREATIONS_DIR
+        files = []
+        for i in images:
+            if not i.get("filename"):
+                continue
+            src = out_dir / (i.get("subfolder") or "") / i["filename"]
+            dest = src
+            try:
+                CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
+                dest = CREATIONS_DIR / i["filename"]
+                if src.resolve() != dest.resolve():
+                    _shutil.copy2(src, dest)
+            except Exception as _cp:
+                _log.warning("local image: could not publish %s to the "
+                             "gallery: %s", i["filename"], _cp)
+            files.append({"filename": i["filename"], "path": str(dest),
+                          "url": "/api/creations/%s" % i["filename"],
+                          "source_path": str(src)})
         return {
             "status": "ok" if files else "error",
             "provider": PROVIDER,
