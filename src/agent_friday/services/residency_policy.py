@@ -44,9 +44,35 @@ DISK_FLOOR_MIB = 10 * 1024       # R8
 # 9802 MiB) and collapsed at 12 (14.94 tok/s, host RAM 31.5 of 31.9 GB).
 MOE_CPU_LAYERS_DEFAULT = 20
 
-# The sweep, as data. (n_cpu_moe, vram_mib, tok_s) on the reference instance,
-# 2026-08-14. More layers on the CPU means less VRAM and less speed.
-MOE_SWEEP = [(16, 10170, 31.34), (20, 9802, 27.80)]
+# The sweep, as data: (n_cpu_moe, heavy_vram_mib, tok_s).
+#
+# Re-measured 2026-08-15 WITH THE SIDEKICK RESIDENT, which is the condition
+# R10 created and therefore the condition the number has to hold under. The
+# figures are the heavy model's own GPU footprint, so they are directly
+# comparable to the lease budget.
+#
+# The earlier sweep — (16, 10170, 31.34) and (20, 9802, 27.80) — is not carried
+# forward. It measured TOTAL GPU on an otherwise idle machine with no sidekick,
+# which is a different quantity against a different budget; mixing the two
+# bases in one table would produce a number that looks measured and is not.
+#
+# What this sweep overturned: the curve is NOT linear. A fit through the old
+# two points asked for 32 layers; 28 turned out to put only 2462 MiB on the
+# card against an 8186 MiB budget — wasting 5.7 GB to run slower. 18 fits the
+# budget and is the best point on this evidence.
+#
+# What it did NOT establish, despite looking like it might: the sidekick
+# answered in 1.24 s at 18 layers and 22-24 s at 20, 22 and 28. That is not a
+# CPU-contention gradient — 18 and 22 hold near-identical VRAM (7973 vs 7969)
+# and differ by 20 s. The 22-24 s figures match the e2b's measured 20.97 s COLD
+# LOAD almost exactly, so the likeliest reading is that Ollama evicts the
+# sidekick under memory pressure and each probe pays a reload. R10 stops the
+# ARBITER evicting it; it cannot stop the daemon, which is the same degraded-pin
+# problem that leaves the brain unresident (see docs/audits/
+# symphony-live-2026-08-15.md §4). Unconfirmed, and stated as unconfirmed.
+#
+# One run per candidate: a direction, not a settled number.
+MOE_SWEEP = [(18, 7973, 10.58), (20, 6014, 11.47), (28, 2462, 10.29)]
 
 
 def n_cpu_moe_for_budget(budget_mib: int | None) -> tuple[int, str]:
