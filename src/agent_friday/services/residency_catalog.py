@@ -422,18 +422,79 @@ def register_gguf(model_id: str, path) -> None:
         pass
 
 
+def store_entry(model_id: str, rec: dict, profile: dict) -> dict:
+    """A CatalogEntry built from Friday's OWN store — no daemon consulted.
+
+    Every capability here comes from the GGUF header rather than from
+    `/api/show`, which is the difference between Friday knowing what she has
+    and Friday being able to ask a service what she has.
+    """
+    fp = profile_fingerprint(profile)
+    return {
+        "model_id": model_id,
+        "backend": BACKEND_LLAMA_SERVER,
+        "artifact_bytes": rec.get("size_bytes") or 0,
+        "quantization": rec.get("quantization"),
+        "params_total_b": rec.get("params_total_b"),
+        "params_active_b": KNOWN_ACTIVE_PARAMS_B.get(model_id),
+        "is_moe": bool(KNOWN_ACTIVE_PARAMS_B.get(model_id)
+                       and rec.get("params_total_b")
+                       and KNOWN_ACTIVE_PARAMS_B[model_id]
+                       < rec["params_total_b"]),
+        "context_window": rec.get("context_window"),
+        "modalities": (["embedding"] if rec.get("is_embedding")
+                       else ["completion"] +
+                       (["tools"] if rec.get("template_supports_tools")
+                        else [])),
+        "can_generate": bool(rec.get("can_generate")),
+        "is_embedding": bool(rec.get("is_embedding")),
+        # The gemma4 family reasons before answering; a short probe measures
+        # the reasoning and calls a healthy model dead.
+        "needs_think_disabled": "gemma" in (rec.get("architecture") or "")
+        or "gemma" in model_id.lower(),
+        "profile_fingerprint": fp,
+        "measured": measurements(model_id, fp),
+        "baseline_ms_per_token": baseline_ms_per_token(model_id, fp),
+        "est_load_s": est_load_s(rec.get("size_bytes") or 0, profile,
+                                 bool(KNOWN_ACTIVE_PARAMS_B.get(model_id))),
+        "gguf_path": rec.get("path"),
+        "source": rec.get("source"),
+    }
+
+
 def installed_entries(profile: dict) -> list:
-    """A CatalogEntry for every locally available model, on either backend."""
+    """A CatalogEntry for every locally available model.
+
+    **Friday's own store first.** It used to be `ollama list` first, which made
+    a running daemon a prerequisite for Friday knowing her own capabilities:
+    stop Ollama and a machine holding 38 GB of usable weights reported that it
+    had no local models, the plan had no seats, and there was nothing to
+    explain why.
+
+    The daemon is still consulted, for anything in it that has not been
+    imported yet — so a model pulled with `ollama pull` five minutes ago still
+    appears, and nothing that worked yesterday stops working today. It is a
+    fallback now, not the source.
+    """
+    from agent_friday.services import model_store as ms
+
+    out, seen = [], set()
+    try:
+        for model_id, rec in sorted(ms.available().items()):
+            out.append(store_entry(model_id, rec, profile))
+            seen.add(model_id)
+    except Exception:
+        pass
+
     try:
         from agent_friday.routing.ollama_manager import get_manager
         models = get_manager().list_models()
     except Exception:
         models = []
-    out, seen = [], set()
     for m in models:
         name = m.get("name")
-        if not name:
-            continue
+        if not name or name in seen:
+            continue          # the store already described it, from the file
         seen.add(name)
         out.append(entry(name, profile, BACKEND_OLLAMA,
                          artifact_bytes=int(round(
