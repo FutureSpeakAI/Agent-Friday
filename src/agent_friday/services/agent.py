@@ -5192,7 +5192,17 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                     _c, text = _chan.extract(text, oai_tools)
                 except Exception:
                     pass
-            _orb(status='completed', progress=1.0, label=f'Done ({model})')
+            # Keep the DESCRIPTION. This used to overwrite it with
+            # f'Done ({model})', which is why every finished orb in Stephen's
+            # holographic desktop read the same thing — and read the model
+            # twice, since the scene already appends its own model badge:
+            #
+            #     ⚡ Done (gemma4:12b)  🏠 gemma4
+            #
+            # The model was the whole identity and the task was nowhere. An
+            # orb should say WHAT IT IS; "done" is already carried by the
+            # status field and by the colour.
+            _orb(status='completed', progress=1.0)
             _led_done()
             return text, tool_trace
 
