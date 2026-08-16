@@ -300,6 +300,10 @@ def create_image():
         aspect_ratio=data.get('aspect_ratio') or '1:1',
         n=data.get('n', 1),
         license=data.get('license'),
+        # Friday's own verification and diagnostic output. Kept out of the
+        # creations gallery and flagged in the manifest, so a test image can
+        # never again sit in Stephen's gallery looking like his own work.
+        system=bool(data.get('system')),
     )
     # The body carries status ('ok'|'blocked'|'unavailable'|'error'); these create
     # routes return HTTP 200 by convention (clients branch on the body's status).

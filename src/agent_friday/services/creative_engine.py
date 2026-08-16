@@ -579,7 +579,8 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                    n: int = 1, session_ctx: Optional[dict] = None,
                    scene_dna: Optional[dict] = None,
                    project_id: Optional[str] = None,
-                   allow_demo: bool = False, license=None) -> Dict[str, Any]:
+                   allow_demo: bool = False, license=None,
+                   system: bool = False) -> Dict[str, Any]:
     """Generate one or more images from a text prompt via a Gemini image model.
 
     scene_dna: an optional layered Scene DNA (services/scene_dna) — its setting/
@@ -605,7 +606,8 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         from agent_friday.services import local_image as _local_image
         _requested = model or _configured_image_model()
         if _requested == _local_image.MODEL_ID:
-            out = _local_image.generate(prompt, aspect_ratio=aspect_ratio)
+            out = _local_image.generate(prompt, aspect_ratio=aspect_ratio,
+                                        system=system)
             out.setdefault("api_model", _local_image.MODEL_ID)
             out.setdefault("prompt", prompt)
             return out
@@ -1128,6 +1130,7 @@ def generate(kind: str, prompt: str, **opts) -> Dict[str, Any]:
             project_id=opts.get("project_id"),
             allow_demo=opts.get("allow_demo", False),
             license=opts.get("license"),
+            system=opts.get("system", False),
         )
     if k in ("video", "vid", "clip", "movie"):
         return generate_video(
