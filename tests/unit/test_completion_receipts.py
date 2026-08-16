@@ -137,3 +137,75 @@ class TestValidatorIntegration:
         assert reply == "I created daily_context_check.md in your Wiki"
         assert meta["blocked"] is False
         assert out_trace == trace
+
+
+# ── Fabricated CONSTRAINTS (2026-08-16) ──────────────────────────────────────
+#
+# The three existing axes all ask "did she claim to have DONE something she
+# didn't". None could see the mirror image: claiming she CANNOT do something
+# for a reason that does not exist. Audited on 2026-08-16 — there is no content
+# filter in the Z-Image weights, none in ComfyUI, and no filter node in the
+# graph, so both sentences below were invented.
+
+import pytest
+
+from agent_friday.services.completion_receipts import (  # noqa: E402
+    find_fabricated_constraints)
+
+
+@pytest.mark.parametrize("reply", [
+    "I can't do that — my underlying model has hard-coded safety filters "
+    "that I can't override.",
+    "Unfortunately the system blocks it at the generation level regardless "
+    "of how it's framed.",
+    "The image model has built-in content filters, so this won't work.",
+    "That's blocked at the model-level, sorry.",
+])
+def test_invented_machinery_is_caught(reply):
+    assert find_fabricated_constraints(reply), reply
+
+
+@pytest.mark.parametrize("reply", [
+    # An honest refusal is not a fabrication. This detector must never push
+    # her toward pretending she has no choices.
+    "I won't make that one.",
+    "I'm choosing not to generate that — it's on the harm floor in your policy.",
+    "That's blocked by your configured policy, which you can change in settings.",
+    # A REAL capability limit, named precisely, is exactly what we want more of.
+    "I can't generate music: the installed google-genai has no Lyria surface, "
+    "so it would only return a demo placeholder.",
+    "Here's the image. Anything you want changed?",
+])
+def test_honest_limits_and_refusals_are_not_flagged(reply):
+    assert find_fabricated_constraints(reply) == [], reply
+
+
+# ── File operations naming a path (2026-08-16) ───────────────────────────────
+#
+# "I've opened friday_local_00005.png for you" was false and matched nothing:
+# the saved-image axis covers MAKING a file, not touching one that exists.
+
+def test_opening_a_named_file_without_a_receipt_is_a_claim():
+    from agent_friday.services.completion_receipts import (
+        find_unreceipted_completion_claims)
+    v = find_unreceipted_completion_claims(
+        "I've opened friday_local_00005.png for you.", [])
+    assert v
+
+
+def test_opening_a_named_file_with_a_receipt_is_fine():
+    from agent_friday.services.completion_receipts import (
+        find_unreceipted_completion_claims)
+    v = find_unreceipted_completion_claims(
+        "I've opened friday_local_00005.png for you.",
+        [{"name": "open_path", "input": {}, "result": "opened"}])
+    assert v == []
+
+
+def test_a_denied_receipt_does_not_satisfy_a_file_claim():
+    from agent_friday.services.completion_receipts import (
+        find_unreceipted_completion_claims)
+    v = find_unreceipted_completion_claims(
+        "I've opened friday_local_00005.png for you.",
+        [{"name": "open_path", "input": {}, "result": "[SANDBOX DENY] nope"}])
+    assert v

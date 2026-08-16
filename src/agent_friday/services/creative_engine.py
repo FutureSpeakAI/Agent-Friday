@@ -593,7 +593,15 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
     or {status:'blocked'|'unavailable'|'error', ...}. Never raises.
     """
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
-    allowed, reason = check_content_safety(prompt)
+    # One place decides, and it is legible to Stephen (services/creative_policy).
+    # It delegates to check_content_safety, so with the shipped defaults this is
+    # bit-for-bit the behaviour that was here before — the policy became
+    # readable and settable, it did not move.
+    try:
+        from agent_friday.services.creative_policy import evaluate as _evaluate
+        allowed, reason = _evaluate(prompt)
+    except Exception:
+        allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
     # ── Routed local image generation (D8). ────────────────────────────────
@@ -749,7 +757,15 @@ def generate_video(prompt: str, *, model: Optional[str] = None,
     the same envelope shape as generate_image(). Never raises.
     """
     prompt = _compose_scene_dna_prompt(prompt or "", scene_dna, project_id)
-    allowed, reason = check_content_safety(prompt)
+    # One place decides, and it is legible to Stephen (services/creative_policy).
+    # It delegates to check_content_safety, so with the shipped defaults this is
+    # bit-for-bit the behaviour that was here before — the policy became
+    # readable and settable, it did not move.
+    try:
+        from agent_friday.services.creative_policy import evaluate as _evaluate
+        allowed, reason = _evaluate(prompt)
+    except Exception:
+        allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
     if not is_available():

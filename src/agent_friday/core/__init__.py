@@ -1429,6 +1429,18 @@ DEFAULT_SETTINGS = {
     # floor, and adult content is hidden in the gallery. This filters what the
     # minor sees, not what exists — a parent toggles it off in Settings.
     "minor_mode": False,
+    # ── Creative policy (services/creative_policy.py) ──
+    # What Friday refuses to generate, written down where Stephen can read and
+    # set it. Before this existed there was nothing legible for a seat to
+    # consult, so a 12B model improvised — and invented a "hard-coded model
+    # filter" that does not exist rather than say it was declining.
+    # The shipped value is exactly the behaviour that was already in force.
+    # `harm_floor.enforced` is re-asserted True on load and is not a switch.
+    "creative_policy": {
+        "harm_floor": {"enforced": True},
+        "additional_blocked_categories": [],   # {label, pattern}; tightens only
+        "refusal_style": "plain",              # plain | brief — wording only
+    },
     # ── Semantic Context Pruning (RAG over our own conversation history) ──
     # When chat history exceeds max_turns, embedding-based retrieval keeps the
     # most relevant past turns instead of truncating from the oldest.

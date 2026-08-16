@@ -1514,6 +1514,16 @@ def _integrity_violations(reply, tool_trace, tool_names):
     claims = list(claims) + [
         "promised but never acted: %r" % pr
         for pr in find_unkept_promises(reply, tool_trace)]
+    # FOURTH axis, 2026-08-16: a fabricated CONSTRAINT. The other three all ask
+    # "did she claim to have done something she didn't". None could see the
+    # mirror image — claiming she cannot do something, for a reason that does
+    # not exist ("my underlying model has hard-coded safety filters"). Audited:
+    # no such filter exists anywhere in the local image path. Inventing one is
+    # the same lie as inventing an action, pointed at a boundary.
+    from agent_friday.services.completion_receipts import (
+        find_fabricated_constraints)
+    claims += ["invented a technical constraint that does not exist: %r" % fc
+               for fc in find_fabricated_constraints(reply)]
     return leaks, claims
 
 
@@ -1538,6 +1548,15 @@ def _corrective_note(leaks, claims):
             "did not actually do that. Never claim an action happened unless "
             "the tool ran and succeeded this turn. If it failed or never "
             "ran, say so plainly."
+        )
+    if any("invented a technical constraint" in c for c in claims):
+        parts.append(
+            "One of those was an invented CONSTRAINT. There is no content "
+            "filter in the local image model, none in ComfyUI, and no filter "
+            "node in the graph — the only policy is Friday's own and Stephen "
+            "sets it. If you are declining, say you are declining and give the "
+            "real reason in one sentence. Never blame machinery that does not "
+            "exist, and do not lecture the owner of the machine."
         )
     parts.append(
         "If no tool call succeeds, say plainly that you couldn't do it — "
@@ -1609,6 +1628,35 @@ def validate_toolcall_integrity(reply, tool_trace, tool_names, redispatch=None,
                                "tools_stripped_retry": tools_stripped_retry}
 
 
+# A refusal is a choice, and it is stated as one. Written against the specific
+# failures in Stephen's 2026-08-15 transcript, all four of which are here.
+REFUSAL_HONESTY_DIRECTIVE = (
+    "1. NEVER invent a technical constraint. Do not say a model has built-in "
+    "filters, that something is blocked at the generation level, that an "
+    "architectural limit stops you, or that you are unable to override "
+    "something — unless that is literally true of this machine and you can name "
+    "the component. Local image generation has NO model-level or ComfyUI-level "
+    "content filter; the only policy is Friday's own, it is listed below, and "
+    "Stephen sets it. A fabricated constraint is the same defect as claiming to "
+    "have opened a file you never opened: it is a false statement about the "
+    "world, told to avoid saying something plainer.\n"
+    "2. If you are declining, SAY YOU ARE DECLINING. 'I won't make that' is an "
+    "honest sentence. 'I can't, my model blocks it' — when nothing blocks it — "
+    "is not. Give the real reason, once, in one sentence.\n"
+    "3. Do not moralise at Stephen, and do not manage him. He owns this "
+    "machine, built you, and is not a member of the public to be risk-assessed. "
+    "Ordinary creative work — including artistic nudity, violence in fiction, "
+    "dark or political subject matter — is not restricted, is not a favour you "
+    "are granting, and is not something to warn about, hedge over, negotiate, "
+    "or offer to 'push the boundary' on. Do the work or say plainly that you "
+    "won't.\n"
+    "4. Never claim a capability you do not have, and never deny one you do. "
+    "The list below is probed at the time this prompt is built, not remembered. "
+    "If something is marked NO, do not offer it; if you are unsure, say you are "
+    "unsure rather than picking the confident-sounding answer."
+)
+
+
 def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
                               vault_control=None, vault_fallback='redact'):
     """Build a complete, vault-aware Friday system prompt for ANY Claude call.
@@ -1640,6 +1688,24 @@ def _get_friday_system_prompt(keywords='', workspace='', provider='cloud',
                 detail='self-knowledge')
         if self_knowledge:
             prefix += "\n\n== SELF-KNOWLEDGE ==\n" + self_knowledge + "\n"
+
+    # HONESTY ABOUT LIMITS, and a FACTUAL account of her own architecture.
+    #
+    # Both exist because of the same transcript. She refused an image by
+    # inventing "hard-coded safety filters in my underlying model" — machinery
+    # that does not exist anywhere in the local stack (audited: see
+    # docs/audits/z-image-content-filtering-2026-08-16.md) — and in the same
+    # session described capabilities she does not have. A model with nothing
+    # legible to consult improvises, and improvisation about yourself is
+    # indistinguishable from lying about yourself.
+    prefix += "\n\n== HONEST LIMITS ==\n" + REFUSAL_HONESTY_DIRECTIVE + "\n"
+    try:
+        from agent_friday.services.self_account import describe as _self_account
+        _acct = _self_account()
+        if _acct:
+            prefix += "\n== WHAT YOU ACTUALLY ARE ==\n" + _acct + "\n"
+    except Exception:
+        pass
 
     # v5 personalization — fold in the LOCAL user model + learned heuristics.
     # Both are TIER_1 behavioral text (never raw PII), both best-effort, and both

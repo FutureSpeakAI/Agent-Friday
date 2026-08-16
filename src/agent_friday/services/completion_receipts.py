@@ -122,6 +122,79 @@ def find_unkept_promises(reply: str, tool_trace) -> list[str]:
             for m in _PROMISE_RE.finditer(_strip_code(reply))]
 
 
+# A FABRICATED CONSTRAINT — the fourth axis, 2026-08-16.
+#
+# The other three all ask "did she claim to have DONE something she didn't".
+# None of them can see the opposite fabrication: claiming she CANNOT do
+# something, for a reason that does not exist.
+#
+#     "my underlying model has hard-coded safety filters that I can't override"
+#     "the system blocks it at the generation level regardless of how it's framed"
+#
+# Audited on 2026-08-16: there is no filter in the Z-Image weights, none in
+# ComfyUI, and no filter node in the graph. Both sentences were invented. They
+# are worse than an ordinary refusal, because they are unfalsifiable from the
+# user's chair and they blame a machine for a choice.
+#
+# This is deliberately narrow. It fires only on claims about MODEL-LEVEL or
+# SYSTEM-LEVEL blocking machinery, which is the thing that does not exist. It
+# must never fire on an honest refusal ("I won't make that"), on a real
+# capability limit ("I can't generate music — the installed SDK has no Lyria
+# surface"), or on Friday describing her OWN policy, which is real.
+_FABRICATED_CONSTRAINT_RE = re.compile(
+    r"(?:"
+    # a filter/block attributed to the model or the underlying system
+    r"\b(?:my |the )?(?:underlying |base |local |image )?model(?:'s)?\s+"
+    r"[^.!?\n]{0,30}?\b(?:has|have|contains?|includes?|enforces?)\b"
+    r"[^.!?\n]{0,40}?\b(?:safety |content |nsfw )?(?:filters?|guardrails?"
+    r"|restrictions?|censor\w*)\b"
+    r"|\bhard-?coded\s+(?:safety |content )?(?:filters?|limits?|restrictions?"
+    r"|guardrails?)\b"
+    r"|\bblocks? it at the (?:generation|model|system|pipeline) level\b"
+    r"|\b(?:blocked|filtered|refused|stopped) (?:at|by) the "
+    r"(?:generation|model|system|pipeline)[- ]level\b"
+    r"|\bthe (?:system|pipeline|generator) (?:blocks?|filters?|prevents?|"
+    r"refuses)\b[^.!?\n]{0,40}?\bregardless\b"
+    r"|\bI can'?t override\b[^.!?\n]{0,40}?\b(?:filters?|model|system|"
+    r"restrictions?)\b"
+    r"|\b(?:built-?in|baked-?in) (?:safety |content )?(?:filters?|"
+    r"restrictions?|guardrails?)\b"
+    r")", re.IGNORECASE)
+
+# Said ABOUT a limit that genuinely exists, these are honest. The guard keeps
+# the detector off Friday's own policy and off real, probed capability gaps.
+_REAL_LIMIT_RE = re.compile(
+    r"\b(?:my (?:own )?policy|Friday's policy|your (?:configured )?policy"
+    r"|you (?:set|configured)|in your (?:config|settings)|creative_policy"
+    r"|harm floor|I won'?t|I'm not going to|I'm choosing not to"
+    r"|no Lyria surface|generate_music|SDK|no API key|not installed"
+    r"|isn'?t installed|demo (?:mode|placeholder))\b", re.IGNORECASE)
+
+
+def find_fabricated_constraints(reply: str) -> list[str]:
+    """Claims that a model-level or system-level block prevents something.
+
+    No such machinery exists in the local image path, so a claim that it does
+    is a false statement about this machine. Returns the matched phrases;
+    empty means the reply invented nothing.
+    """
+    if not reply:
+        return []
+    scanned = _strip_code(reply)
+    out = []
+    for m in _FABRICATED_CONSTRAINT_RE.finditer(scanned):
+        start = scanned.rfind("\n", 0, m.start()) + 1
+        ends = [i for i in (scanned.find(".", m.end()),
+                            scanned.find("!", m.end()),
+                            scanned.find("?", m.end()),
+                            scanned.find("\n", m.end())) if i != -1]
+        sentence = scanned[start:min(ends) if ends else len(scanned)]
+        if _REAL_LIMIT_RE.search(sentence):
+            continue
+        out.append(m.group(0).strip())
+    return out
+
+
 COMPLETION_CLAIM_REGISTRY = [
     {
         "id": "saved-image",
@@ -129,6 +202,26 @@ COMPLETION_CLAIM_REGISTRY = [
             _FIRST_PERSON + r"(?:created|generated|saved|rendered|made)"
             r"[^.!?\n]{0,120}?" + _IMAGE_ARTIFACT, re.IGNORECASE),
         "tools": ("image", "creat", "generat", "render", "draw"),
+    },
+    {
+        # FILE OPERATIONS naming a specific path. `saved-image` covers making a
+        # file, not touching one that already exists — so "I've opened
+        # friday_local_00005.png for you" and "I checked the file, it's there"
+        # matched nothing at all, and both were false when Stephen read them.
+        # Opening, reading and deleting are as side-effecting as writing, and a
+        # claim about a named path is either backed by a receipt or invented.
+        "id": "file-operation",
+        "pattern": re.compile(
+            _FIRST_PERSON +
+            r"(?:opened|pulled up|brought up|displayed|loaded|read|located"
+            r"|found|checked|looked at|retrieved|deleted|removed|renamed"
+            r"|moved|copied)"
+            r"[^.!?\n]{0,120}?"
+            r"(?:" + _IMAGE_ARTIFACT + r"|" + _ARTIFACT + r")",
+            re.IGNORECASE),
+        "tools": ("open", "read", "file", "path", "view", "display", "show",
+                  "creation", "image", "list", "search", "find", "delete",
+                  "remove", "move", "copy", "rename"),
     },
     {
         "id": "navigated-user",
