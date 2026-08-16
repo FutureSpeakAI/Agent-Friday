@@ -1345,11 +1345,36 @@ def _resolve_open_target(target):
                 return str(p.resolve())
         except Exception:
             pass
-    # A bare name that happens to live in HOME.
+    # A bare name, looked for where Friday's own output and the user's files
+    # actually live.
+    #
+    # This only checked HOME, so `open_path("friday_local_00005_.png")` resolved
+    # to C:/Users/swebs/friday_local_00005_.png, which does not exist, and the
+    # tool answered "couldn't find anything matching". The file was in
+    # CREATIONS_DIR — Friday had generated it there minutes earlier and named it
+    # correctly. She would have failed at this even if she HAD called the tool
+    # instead of promising to.
+    #
+    # Creations first, because a bare filename in conversation is nearly always
+    # something she just produced. Bounded to a handful of known directories:
+    # no recursive walk, no guessing at partial names.
+    for base in (CREATIONS_DIR, HOME / 'Desktop', HOME / 'Downloads',
+                 HOME / 'Documents', HOME / 'Pictures', HOME):
+        try:
+            cand = base / raw
+            if cand.exists():
+                return str(cand.resolve())
+        except Exception:
+            continue
+    # Same filename, different extension or trailing underscore — ComfyUI names
+    # files friday_local_00005_.png and a model quoting it back may drop the
+    # dot-extension. Exact stem match only; never a fuzzy guess.
     try:
-        cand = HOME / raw
-        if cand.exists():
-            return str(cand.resolve())
+        stem = Path(raw).stem.rstrip('_')
+        if stem and len(stem) >= 6 and CREATIONS_DIR.exists():
+            for f in CREATIONS_DIR.iterdir():
+                if f.is_file() and f.stem.rstrip('_') == stem:
+                    return str(f.resolve())
     except Exception:
         pass
     return None
