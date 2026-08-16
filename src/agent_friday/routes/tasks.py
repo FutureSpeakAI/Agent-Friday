@@ -179,8 +179,32 @@ def api_agent_steer():
     return jsonify({"ok": True, "task_id": task_id, "queued": message[:120]})
 
 
+# How long a finished orb keeps ORBITING. Separate from how long its record
+# stays explorable, which is the distinction the old code was missing: it kept
+# monitoring processes for 900s and drew an orb for every one of them, so
+# fifteen minutes of green orbs accumulated around the avatar.
+ORB_VISIBLE_AFTER_DONE_S = 30
+
+
 @tasks_bp.route('/api/processes')
 def list_processes():
+    """Live processes, each carrying whether it should still be ORBITING.
+
+    Two lifetimes, deliberately different:
+
+      * **orbit** — a completed orb is gone 30 seconds after it finishes.
+        Stephen: "I do not want them hanging around in orbit around Friday's
+        avatar for longer than that."
+      * **record** — the detail (model, intent, log, result) stays explorable
+        for the full retention window. The original comment here was right that
+        transparency needs the detail to outlive the orb; it just expressed
+        that by keeping the ORB alive too.
+
+    A FAILED run never expires on the 30-second timer. A success that vanishes
+    is fine — you saw it succeed, or you did not need to. A failure that
+    vanishes before you looked at it is the machine hiding something, and this
+    codebase has spent a day removing exactly that kind of quiet.
+    """
     with PROCESSES_LOCK:
         out = []
         now = _time.time()
@@ -189,13 +213,41 @@ def list_processes():
             row["elapsed"] = int(now - row.get("started", now))
             if row.get("ended"):
                 row["elapsed"] = int(row["ended"] - row["started"])
+
+            status = row.get("status")
+            failed = status in ("error", "failed", "cancelled", "timeout")
+            ended = row.get("ended")
+            if not ended:
+                row["orb_visible"] = True                  # still working
+            elif failed:
+                row["orb_visible"] = not row.get("dismissed")
+            else:
+                row["orb_visible"] = (now - ended) <= ORB_VISIBLE_AFTER_DONE_S
+            row["orb_failed"] = failed
             out.append(row)
-            # Auto-purge completed processes. Ephemeral orbs go quickly, but
-            # inference/monitoring processes (the "what did that subagent DO?"
-            # ones) stay explorable for 15 minutes — transparency requires the
-            # detail (model, intent, result) to outlive the orb's fade-out.
-            if row.get("status") in ("completed", "error") and row.get("ended"):
-                _keep = 900 if row.get("category") == "monitoring" else 30
-                if now - row["ended"] > _keep:
+
+            # Record retention, unchanged for successes. A failure is kept far
+            # longer because it is the one a human still has questions about.
+            if status in ("completed", "error", "failed", "timeout") and ended:
+                if failed and not row.get("dismissed"):
+                    _keep = 86400
+                else:
+                    _keep = 900 if row.get("category") == "monitoring" else 30
+                if now - ended > _keep:
                     del PROCESSES[pid]
     return jsonify({"processes": out})
+
+
+@tasks_bp.route('/api/processes/<pid>/dismiss', methods=['POST'])
+def dismiss_process(pid):
+    """Acknowledge a failed orb so it stops orbiting.
+
+    Failures persist until dismissed rather than on a timer — a timer just
+    means the failure disappears while you are looking somewhere else.
+    """
+    with PROCESSES_LOCK:
+        p = PROCESSES.get(pid)
+        if p is None:
+            return jsonify({"ok": False, "error": "no such process"}), 404
+        p["dismissed"] = True
+    return jsonify({"ok": True})

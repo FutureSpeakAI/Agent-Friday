@@ -36991,17 +36991,25 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         // (and piled up on repeated API failures). Filtering them out here means
         // new failures never spawn an orb, and any existing orb whose process
         // flips to error drops out of pIds below → auto-dismisses within ~2s.
-        const _BAD_ORB = new Set(['error', 'failed', 'cancelled', 'canceled']);
-        const procs = (d.processes || []).filter(p => !_BAD_ORB.has(p.status));
+        /* Which processes still ORBIT. The server owns this now (orb_visible): a
+           completed orb is gone 30s after it finishes, while its record stays
+           explorable far longer — two lifetimes that used to be one, which is why
+           fifteen minutes of green orbs piled up around the avatar.
+             Failures are NOT filtered out any more. They used to be dropped here
+           entirely (_BAD_ORB), so a run that failed left nothing in orbit at all —
+           the machine quietly hid its own bad news. They now stay until dismissed
+           and wear a ⚠ so they read differently from work in progress. */
+        const procs = (d.processes || []).filter(p => p.orb_visible !== false);
         const existing = window.fridayGetOrbs?.() ?? [];
         const eIds = new Set(existing.map(o => o.id));
         const pIds = new Set(procs.map(p => p.id));
         for (const p of procs) {
+          const _ico = p.orb_failed ? '⚠' : p.icon || '⚡';
           if (!eIds.has(p.id)) window.fridayAddOrb?.({
             id: p.id,
             label: p.label || p.name || 'Task',
             category: p.category || 'default',
-            icon: p.icon || '⚡',
+            icon: _ico,
             model: p.model || null,
             color: p.color != null ? p.color : null
           });
