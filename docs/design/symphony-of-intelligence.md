@@ -401,6 +401,10 @@ Z-Image still generate with 1 811 MiB held back?
 If the answer for either is "no", that is reported as a cost of the decision, not worked around
 silently.
 
+> **Live, 2026-08-15.** The Arbiter no longer evicts the sidekick, and the plan subtracts its
+> 1 811 MiB from the lease budget (9 997 → 8 186). See §6 for what the running machine actually
+> does, including a separate problem the change surfaced.
+
 ### 5.4 The work queue
 
 `services/work_queue.py`. Classed, persisted, drained under one lease.
