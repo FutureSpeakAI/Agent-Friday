@@ -85,9 +85,17 @@ class TestBadgeReflectsActualGenerator:
 
 
 class TestPrimitivesRecord:
-    def test_call_ollama_records_post_substitution_model(self, client, monkeypatch):
-        # The real _call_ollama must record whatever model ACTUALLY ran —
-        # including a seat-gate substitution.
+    def test_call_ollama_records_the_model_that_actually_ran(self, client,
+                                                             monkeypatch):
+        """The badge attributes the RESPONDING model, not the intended seat.
+
+        This used to be written around a seat-gate substitution: the gate could
+        swap a "red" model for a last-known-green one, and the law was that the
+        badge had to name the substitute rather than the model the user picked.
+        The gate is gone (2026-08-15) and nothing substitutes any more — so the
+        law now has a simpler shape and a stricter one. What the user picked is
+        what runs, and that is what gets recorded.
+        """
         import agent_friday.services.model_router as mr
         import agent_friday.routing.ollama_manager as om
 
@@ -104,26 +112,16 @@ class TestPrimitivesRecord:
                         "model": model, "usage": {}}
 
         monkeypatch.setattr(om, "get_manager", lambda url=None: FakeMgr())
-        from agent_friday.services import model_seat_gate as gate
-        monkeypatch.setattr(gate, "resolve_local_seat",
-                            lambda m, provider="local": {
-                                "model": "gemma4:e4b", "seat_ok": False,
-                                "requested": m, "reason": "not green",
-                                "fallback": "last_known_green:gemma4:e4b"})
-        attribution.reset()
-        mr._call_ollama([{"role": "user", "content": "x"}],
-                        model="ungated-model", tools=None)
-        gen = attribution.last_generation()
-        assert gen and gen["model"] == "ungated-model" or gen["model"] == "gemma4:e4b"
-        # tools=None skips the gate; run again WITH tools to see substitution.
-        attribution.reset()
-        monkeypatch.setattr(mr, "CLAUDE_TOOLS", [], raising=False)
-        mr._call_ollama([{"role": "user", "content": "x"}],
-                        model="ungated-model",
-                        tools=[{"name": "t", "description": "d",
-                                "input_schema": {"type": "object",
-                                                 "properties": {}}}])
-        gen = attribution.last_generation()
-        assert gen and gen["model"] == "gemma4:e4b", (
-            "post-substitution model must be what gets recorded")
-        assert gen["seat"] == "local"
+
+        # Tool-free and tool-using turns alike: no substitution on either path.
+        for tools in (None, [{"name": "t", "description": "d",
+                              "input_schema": {"type": "object",
+                                               "properties": {}}}]):
+            attribution.reset()
+            mr._call_ollama([{"role": "user", "content": "x"}],
+                            model="whatever-model", tools=tools)
+            gen = attribution.last_generation()
+            assert gen and gen["model"] == "whatever-model", (
+                "the model the user chose must be the model recorded "
+                "(tools=%s)" % bool(tools))
+            assert gen["seat"] == "local"

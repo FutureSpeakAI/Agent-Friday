@@ -35,7 +35,11 @@ class _FakeOllamaManager:
         return True
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
-                        max_tokens=4096):
+                        max_tokens=4096, **kw):
+        # **kw so a new dispatch-time argument does not break the stub and
+        # make it look like the shared loop stopped being reached. `num_ctx`
+        # arrived on 2026-08-15 when dispatch started applying the residency
+        # plan's context on every call rather than only at Arbiter boot.
         self.calls.append({"messages": list(messages), "tools": tools})
         return {
             "choices": [{

@@ -52,7 +52,11 @@ def test_cpu_only_host_gets_its_own_fingerprint():
 
 def test_seed_carries_the_reference_measurements():
     rows = rc.measurements("gemma4:12b", rc.P1_FINGERPRINT)
-    assert [r["num_ctx"] for r in rows] == [4096, 8192, 16384, 32768]
+    # 65536 and 131072 were added 2026-08-15 by the KV sweep that settled how
+    # much a bigger window actually costs: 7718 -> 7750 -> 7814 MiB. 96 MiB for
+    # 4x the context is the evidence behind sizing the brain from the whole
+    # prompt rather than from the tool registry alone.
+    assert [r["num_ctx"] for r in rows] ==         [4096, 8192, 16384, 32768, 65536, 131072]
     assert all(r["source"] == "seed" for r in rows)
 
 
@@ -92,10 +96,17 @@ def test_unmeasured_ctx_uses_the_nearest_measured_above():
 
 def test_ctx_above_everything_measured_uses_the_largest():
     """Never extrapolate downward: under-estimating VRAM fails at load time."""
-    # 7718 is the 32768 row — the largest measured. It is LOWER than the
-    # 16384 row (8001) because it was taken under a newer Ollama; the
-    # lookup returns the largest measured CONTEXT, not the largest number.
-    assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 65536) == 7718
+    # 7814 is the 131072 row — the largest measured CONTEXT, which is what
+    # the lookup returns. Not the largest NUMBER: the 16384 row reads 8001,
+    # higher than several rows above it, because it was taken under an older
+    # Ollama whose allocator differed.
+    #
+    # Asked at 262144, above every measured row. 65536 and 131072 stopped
+    # being valid probes for this on 2026-08-15 when the KV sweep measured
+    # them directly — they now return exact matches, which is a different
+    # code path.
+    assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 262144) == 7814
+    assert rc.vram_at("gemma4:12b", rc.P1_FINGERPRINT, 65536) == 7750
 
 
 # ── recorded measurements beat the seed ──────────────────────────────────────

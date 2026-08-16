@@ -62,24 +62,36 @@ class TestGateSpeaksTheBrainsProtocol:
             "because it isn't an Ollama tag")
 
 
-class TestRefusalNamesTheAliasRecord:
-    def test_never_run_refusal_mentions_the_near_name_record(self, monkeypatch, tmp_path):
+class TestNothingRefusesASeat:
+    """The alias problem dissolved rather than being solved.
+
+    What this used to pin: a brain seated under a descriptor id could never
+    earn green under that id, so every tool-using turn was refused "never run",
+    and the refusal had to point at the near-name record (qwen3.6:35b vs
+    qwen3.6-35b-a3b-iq4nl) WITHOUT acting on it — because a gate score does not
+    transfer between two ids that merely look alike.
+
+    There is no refusal path left to get the wording right. Stephen removed the
+    gate on 2026-08-15: "I absolutely want the user to be able to set any model
+    they wish at any seat they wish, so this is non-negotiable." What is worth
+    pinning now is that the id under which a model is seated is simply the id
+    that gets dispatched, alias or not.
+    """
+
+    def test_a_descriptor_id_is_dispatched_as_itself(self):
+        seat = gate.resolve_local_seat(BRAIN)
+        assert seat["model"] == BRAIN
+        assert seat.get("seat_ok") is not False
+
+    def test_a_near_name_record_has_no_effect_either_way(self, monkeypatch,
+                                                        tmp_path):
+        """It cannot refuse, and it must not be silently borrowed either."""
         monkeypatch.setattr(gate, "GATE_DIR", tmp_path)
-        monkeypatch.setattr(gate, "EVIDENCE_DIR", tmp_path / "none")
         (tmp_path / "local__qwen3.6_35b.json").write_text(json.dumps({
             "model": "qwen3.6:35b", "provider": "local", "passed": True,
             "timestamp": 100, "score": "10/10"}), encoding="utf-8")
-        monkeypatch.setattr(gate, "is_seat_green", lambda m, p="local": False)
-        monkeypatch.setattr(gate, "get_cached_status", lambda m, p="local": None)
-        monkeypatch.setattr(gate, "get_last_known_green", lambda p="local": None)
         seat = gate.resolve_local_seat(BRAIN)
-        assert "never run under this id" in seat["reason"]
-        assert "qwen3.6:35b" in seat["reason"], (
-            "the refusal must point at the likely-same-model record")
-        assert "don't transfer" in seat["reason"]
-        # And crucially: the near-match must NOT be acted on.
-        assert seat["model"] is None
-
+        assert seat["model"] == BRAIN, "a lookalike record must not be adopted"
 
 class TestProbeModelChoice:
     def test_anthropic_probe_never_gets_a_foreign_id(self, monkeypatch):
