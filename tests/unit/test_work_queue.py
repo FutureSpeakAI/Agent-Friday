@@ -183,3 +183,37 @@ def test_cancel_only_applies_to_work_that_has_not_started():
     it = wq.enqueue("job", "x", cls="heavy", disposition="when_away")
     assert wq.cancel(it["id"]) is True
     assert wq.cancel(it["id"]) is False
+
+
+# ── the idle threshold is reachable, not just present ────────────────────────
+
+def test_the_away_threshold_is_configurable():
+    """At a fixed 15 minutes the timer cannot be OBSERVED firing without
+    sitting on your hands for a quarter of an hour, which is exactly how
+    "the away-drain works" stayed an untested claim through a whole build."""
+    from agent_friday import core
+    before = core._load_settings().get("away_drain_after_s")
+    try:
+        s = core._load_settings()
+        s["away_drain_after_s"] = 20
+        core._save_settings(s)
+        assert wq.away_after_s() == 20
+    finally:
+        s = core._load_settings()
+        s["away_drain_after_s"] = before if before is not None else 900
+        core._save_settings(s)
+
+
+def test_the_threshold_survives_a_settings_save():
+    """A key missing from DEFAULT_SETTINGS is DELETED on every save. That is
+    not hypothetical — it silently dropped `heavy_hitter` from
+    capability_routing, and a knob that accepts a write, reports success and
+    reverts is worse than no knob at all."""
+    from agent_friday.core import DEFAULT_SETTINGS
+    assert "away_drain_after_s" in DEFAULT_SETTINGS
+
+
+def test_a_bad_threshold_value_does_not_break_the_queue(monkeypatch):
+    monkeypatch.setattr("agent_friday.core._load_settings",
+                        lambda: {"away_drain_after_s": "not a number"})
+    assert wq.away_after_s() == wq.AWAY_AFTER_S_DEFAULT
