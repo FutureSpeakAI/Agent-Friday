@@ -257,26 +257,42 @@ def cancel_process(pid):
     if not proc:
         return jsonify({"ok": False, "error": "no such process"}), 404
 
-    # 1. The worker itself, if it is an image job.
+    # 1. The job flag, FIRST and unconditionally.
+    #
+    #    This used to go straight to ComfyUI's /interrupt and the Arbiter's
+    #    lease, and both of those only exist partway through a job. The orb is
+    #    registered before the lease is granted, so a cancel clicked in that
+    #    window found nothing running, truthfully answered "nothing to
+    #    interrupt" — and the generation carried on to completion regardless.
+    #    The flag has no such window: it is set here and every stage of
+    #    `local_image.generate` reads it.
     if str(pid).startswith("image-"):
         try:
-            import urllib.request as _u
-            from agent_friday.services.local_image import COMFY_PORT
-            _u.urlopen(_u.Request(
-                "http://127.0.0.1:%d/interrupt" % COMFY_PORT, data=b"{}",
-                headers={"Content-Type": "application/json"}), timeout=10)
-            stopped.append("image sampling")
+            from agent_friday.services import local_image as _li
+            _li.request_cancel(pid)
+            stopped.append("the job")
+            # Then ComfyUI, if it has got far enough to be sampling. Failure
+            # here is expected and harmless when it hasn't.
+            if _li.interrupt_comfy():
+                stopped.append("image sampling")
         except Exception:
             pass
 
-    # 2. The lease. Released even if the interrupt failed — a stranded lease is
-    #    the worse of the two failures.
+    # 2. The lease. The generation releases it itself on the way out, which is
+    #    the tidier path because it also stops ComfyUI in the right order — so
+    #    only step in if the job did not, and give it a moment to.
     try:
         from agent_friday.services.residency_arbiter import get_arbiter
         arb = get_arbiter()
         if arb is not None and arb.lease:
-            arb.release()
-            stopped.append("GPU lease")
+            _deadline = _time.time() + 8
+            while arb.lease and _time.time() < _deadline:
+                _time.sleep(0.5)
+            if arb.lease:
+                arb.release()
+                stopped.append("GPU lease")
+            else:
+                stopped.append("GPU lease (released by the job)")
     except Exception:
         pass
 

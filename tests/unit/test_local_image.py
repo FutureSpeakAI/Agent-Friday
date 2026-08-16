@@ -74,9 +74,10 @@ def test_missing_weights_report_unavailable_rather_than_failing(monkeypatch):
 def test_generation_takes_an_image_lease(installed, monkeypatch):
     arb = FakeArbiter()
     monkeypatch.setattr(li, "_post", lambda p, b, timeout=60: {"prompt_id": "1"})
-    monkeypatch.setattr(li, "_await_result",
-                        lambda pid, timeout=600: [{"filename": "a.png",
-                                                   "subfolder": ""}])
+    monkeypatch.setattr(
+        li, "_await_result",
+        lambda pid, timeout=600, cancelled=None: [
+            {"filename": "a.png", "subfolder": ""}])
     out = li.generate("x", arbiter=arb)
     assert arb.granted == ["image_job"]
     assert out["status"] == "ok"
@@ -127,9 +128,10 @@ def test_no_arbiter_still_generates_but_is_flagged(installed, monkeypatch):
     monkeypatch.setattr(
         "agent_friday.services.residency_arbiter.get_arbiter", lambda: None)
     monkeypatch.setattr(li, "_post", lambda p, b, timeout=60: {"prompt_id": "1"})
-    monkeypatch.setattr(li, "_await_result",
-                        lambda pid, timeout=600: [{"filename": "a.png",
-                                                   "subfolder": ""}])
+    monkeypatch.setattr(
+        li, "_await_result",
+        lambda pid, timeout=600, cancelled=None: [
+            {"filename": "a.png", "subfolder": ""}])
     out = li.generate("x")
     assert out["status"] == "ok"
     assert started["n"] == 1
@@ -180,3 +182,128 @@ def test_a_public_comfyui_url_is_still_cloud():
     from agent_friday.routing.provider_descriptors import classification_of
     assert classification_of({"type": "comfyui", "classification": "local",
                               "base_url": "https://comfy.example.com"}) == "cloud"
+
+
+# ── cancellation ─────────────────────────────────────────────────────────────
+#
+# Every test here is a defect that shipped on 2026-08-16 described as working.
+# The orb is registered BEFORE the lease is granted, so a cancel arriving in
+# that window found no lease, reported "nothing to interrupt", and the job ran
+# to completion anyway. Cancellation now hangs on a flag on the JOB, which
+# exists from the first line of generate() to the last.
+
+class _SlowArbiter(FakeArbiter):
+    """Grants a lease slowly, the way an eviction + ComfyUI start really does."""
+
+    def __init__(self, delay=0.4):
+        super().__init__()
+        self.delay = delay
+
+    def grant(self, kind, ttl_s=900):
+        import time
+        time.sleep(self.delay)
+        return super().grant(kind, ttl_s=ttl_s)
+
+
+def _capture_job_id(monkeypatch, then=None):
+    """Give a test the orb id generate() invents, so it can cancel that job."""
+    import agent_friday.core as core
+    seen = {}
+    real = core.process_register
+
+    def spy(pid, **kw):
+        seen["pid"] = pid
+        if then:
+            then(pid)
+        return real(pid, **kw)
+    monkeypatch.setattr(core, "process_register", spy)
+    return seen
+
+
+def test_cancel_before_the_lease_stops_the_job(installed, monkeypatch):
+    """THE defect: cancelling while the orb was up but the lease was not yet
+    granted did nothing at all, and the image generated anyway."""
+    posts = {"n": 0}
+    monkeypatch.setattr(li, "_post",
+                        lambda p, b, timeout=60: posts.__setitem__("n", posts["n"] + 1)
+                        or {"prompt_id": "1"})
+    arb = FakeArbiter()
+    seen = _capture_job_id(monkeypatch, then=li.request_cancel)
+    out = li.generate("x", arbiter=arb)
+    li.clear_cancel(seen.get("pid"))
+    assert out["status"] == "cancelled"
+    assert posts["n"] == 0, "a cancelled job must never reach ComfyUI"
+    assert arb.granted == [], "and must not take the GPU it no longer needs"
+
+
+def test_cancel_during_the_lease_gives_the_gpu_back(installed, monkeypatch):
+    """Taking the lease is the slowest part of the job, so this is when a
+    cancel most often lands. The GPU must come straight back."""
+    import threading
+    posts = {"n": 0}
+    monkeypatch.setattr(li, "_post",
+                        lambda p, b, timeout=60: posts.__setitem__("n", posts["n"] + 1)
+                        or {"prompt_id": "1"})
+    arb = _SlowArbiter(delay=0.5)
+    seen = _capture_job_id(
+        monkeypatch,
+        then=lambda pid: threading.Timer(0.1, li.request_cancel, args=(pid,)).start())
+    out = li.generate("x", arbiter=arb)
+    li.clear_cancel(seen.get("pid"))
+    assert out["status"] == "cancelled"
+    assert posts["n"] == 0
+    assert arb.released == 1, "a cancelled lease that is not released strands the GPU"
+
+
+def test_an_interrupted_prompt_ends_the_wait_immediately(monkeypatch):
+    """ComfyUI writes a history entry ONLY when the prompt is over. An
+    interrupted one has status_str='error', completed=False and no outputs —
+    the exact shape _await_result used to read as 'not finished yet' and then
+    poll for the remaining ten minutes."""
+    monkeypatch.setattr(li, "_get", lambda path, timeout=30: {"p1": {
+        "outputs": {},
+        "status": {"status_str": "error", "completed": False,
+                   "messages": [["execution_interrupted", {}]]}}})
+    with pytest.raises(li.Cancelled):
+        li._await_result("p1", timeout=30)
+
+
+def test_a_failed_prompt_is_an_error_not_a_cancellation(monkeypatch):
+    monkeypatch.setattr(li, "_get", lambda path, timeout=30: {"p1": {
+        "outputs": {},
+        "status": {"status_str": "error", "completed": False,
+                   "messages": [["execution_error", {}]]}}})
+    with pytest.raises(RuntimeError):
+        li._await_result("p1", timeout=30)
+
+
+def test_the_wait_honours_the_cancel_flag_and_interrupts_comfyui(monkeypatch):
+    interrupted = {"n": 0}
+    monkeypatch.setattr(li, "_get", lambda path, timeout=30: {})
+    monkeypatch.setattr(li, "interrupt_comfy",
+                        lambda timeout=10: interrupted.__setitem__("n", 1) or True)
+    with pytest.raises(li.Cancelled):
+        li._await_result("p1", timeout=30, cancelled=lambda: True)
+    assert interrupted["n"] == 1, "stopping the wait must also stop the sampler"
+
+
+# ── Friday's own output is not Stephen's ─────────────────────────────────────
+
+def test_system_generations_stay_out_of_the_creations_gallery(installed,
+                                                              monkeypatch):
+    """Verification images once landed in the gallery indistinguishable from
+    his own work, and he had to delete them by hand."""
+    monkeypatch.setattr(li, "_post", lambda p, b, timeout=60: {"prompt_id": "1"})
+    monkeypatch.setattr(
+        li, "_await_result",
+        lambda pid, timeout=600, cancelled=None: [
+            {"filename": "a.png", "subfolder": ""}])
+    copied = {"n": 0}
+    import shutil
+    monkeypatch.setattr(shutil, "copy2",
+                        lambda *a, **k: copied.__setitem__("n", copied["n"] + 1))
+    out = li.generate("x", arbiter=FakeArbiter(), system=True)
+    assert out["status"] == "ok"
+    assert copied["n"] == 0, "a system image must not be published to the gallery"
+    assert out["files"][0]["system_generated"] is True
+    assert out["files"][0]["url"] is None

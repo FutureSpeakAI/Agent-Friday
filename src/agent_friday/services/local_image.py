@@ -50,6 +50,61 @@ _SIZES = {
 }
 
 
+# ── Cancellation ───────────────────────────────────────────────────────────
+#
+# A cancel used to depend on the Arbiter's lease already existing, and the orb
+# is registered BEFORE the lease is granted. Anything arriving in that window
+# found no lease, found ComfyUI not yet started, reported "nothing to
+# interrupt" — and the job ran to completion anyway. The lease is the wrong
+# thing to hang cancellation on: it is one stage of a job with several.
+#
+# So cancellation is a flag on the JOB, set the instant it is asked for and
+# readable from the first line of `generate` to the last. The route sets it;
+# every stage checks it. It works before the lease exists, while ComfyUI is
+# still loading, and mid-sample.
+_CANCELLED: set = set()
+_CANCEL_LOCK = threading.Lock()
+
+
+class Cancelled(Exception):
+    """The owner asked for this job to stop. Not an error."""
+
+
+def request_cancel(job_id: str) -> bool:
+    """Mark a job cancelled. Safe to call before the job has really begun."""
+    if not job_id:
+        return False
+    with _CANCEL_LOCK:
+        _CANCELLED.add(str(job_id))
+    return True
+
+
+def is_cancelled(job_id) -> bool:
+    if not job_id:
+        return False
+    with _CANCEL_LOCK:
+        return str(job_id) in _CANCELLED
+
+
+def clear_cancel(job_id) -> None:
+    if not job_id:
+        return
+    with _CANCEL_LOCK:
+        _CANCELLED.discard(str(job_id))
+
+
+def interrupt_comfy(timeout: int = 10) -> bool:
+    """Ask ComfyUI to abandon the running prompt. False if it could not be
+    reached — which is normal when the job has not got that far yet."""
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            "http://127.0.0.1:%d/interrupt" % COMFY_PORT, data=b"{}",
+            headers={"Content-Type": "application/json"}), timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def comfy_root() -> Path:
     return runtime_dir() / "ComfyUI"
 
@@ -118,9 +173,29 @@ def _get(path, timeout=30):
         return json.loads(r.read().decode())
 
 
-def _await_result(prompt_id, timeout=600):
+def _await_result(prompt_id, timeout=600, cancelled=None):
+    """Wait for the prompt to produce files, or to stop producing anything.
+
+    Two things this got wrong before 2026-08-16, both of which turned a cancel
+    into a ten-minute hang:
+
+    1. It only returned on outputs or on `status.completed`. ComfyUI writes a
+       history entry ONLY when the prompt has finished (`task_done`, verified in
+       execution.py) — and an INTERRUPTED prompt finishes with
+       `status_str='error', completed=False` and no outputs. That is precisely
+       the one shape the loop treated as "not done yet", so it kept polling a
+       prompt that had already stopped, until the 600s timeout.
+    2. It had no idea cancellation existed, so the only way out was to wait.
+
+    Now: a finished-without-output entry ends the wait, and the cancel flag is
+    checked every tick and actually interrupts ComfyUI rather than just noting
+    that someone would like it to stop.
+    """
     t0 = time.time()
     while time.time() - t0 < timeout:
+        if cancelled is not None and cancelled():
+            interrupt_comfy()
+            raise Cancelled("cancelled while waiting for the image")
         try:
             hist = _get(f"/history/{prompt_id}")
         except Exception:
@@ -134,8 +209,19 @@ def _await_result(prompt_id, timeout=600):
                     files.append(img)
             if files:
                 return files
-            if entry.get("status", {}).get("completed"):
-                return files
+            status = entry.get("status") or {}
+            if status:
+                # The entry exists at all, so execution is over. No outputs
+                # means it was interrupted or it failed — either way, stop
+                # waiting and say which.
+                msgs = " ".join(str(m) for m in (status.get("messages") or []))
+                if status.get("completed"):
+                    return files
+                if "interrupt" in msgs.lower():
+                    raise Cancelled("ComfyUI reported the prompt was interrupted")
+                raise RuntimeError(
+                    "ComfyUI ended the prompt without producing an image: %s"
+                    % (status.get("status_str") or "unknown"))
         time.sleep(1.5)
     raise TimeoutError("ComfyUI did not return a result in %ss" % timeout)
 
@@ -168,20 +254,43 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
 
     Runs on its own thread and never raises into the caller: a lost progress
     socket must not fail a generation that is otherwise fine.
+
+    **The bug that made the first version of this useless.** It called
+    `create_connection(url, timeout=10)`, believing that to be a CONNECT
+    timeout. It is not: websocket-client passes it to `socket.settimeout`, so it
+    became the timeout on every subsequent `recv()`, and an idle read raises
+    `WebSocketTimeoutException`. The loop caught that with a bare
+    `except Exception: break` and the thread quietly died.
+
+    The sequence was: connect, receive `executing` for node 1 (UNETLoader),
+    then ComfyUI goes silent for as long as it takes to load 14.5 GB of fp8
+    weights — far more than ten seconds — and the listener was gone before a
+    single sampling step was reported. Every `progress` message ComfyUI sent
+    after that went to nobody. The symptom (one phase label, zero steps, a bar
+    that jumped 0 → 10% → 100%) looked like ComfyUI was not sending progress.
+    It was sending it the whole time.
+
+    So: silence is not failure. A read timeout means "still working" and is the
+    normal state of this socket during a model load. It is kept short only so
+    that `stop_flag` is honoured promptly when the job ends.
     """
     try:
         import websocket  # websocket-client
+        from websocket import WebSocketTimeoutException
     except Exception:
         return
     url = "ws://127.0.0.1:%d/ws?clientId=%s" % (COMFY_PORT, client_id)
     ws = None
     try:
-        ws = websocket.create_connection(url, timeout=10)
+        ws = websocket.create_connection(url, timeout=15)
+        ws.settimeout(2)          # a poll interval, NOT a deadline
         while not stop_flag():
             try:
                 raw = ws.recv()
+            except WebSocketTimeoutException:
+                continue          # silence — a model is loading, keep listening
             except Exception:
-                break
+                break             # closed or genuinely broken
             if not raw or isinstance(raw, (bytes, bytearray)):
                 continue          # binary frames are preview images, not status
             try:
@@ -190,10 +299,22 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
                 continue
             mtype = msg.get("type")
             data = msg.get("data") or {}
+            # Messages carry the prompt they belong to. Ignore anyone else's.
+            if data.get("prompt_id") and data["prompt_id"] != prompt_id:
+                continue
             if mtype == "progress":
                 value, mx = data.get("value") or 0, data.get("max") or 0
                 if mx:
                     on_update(step=value, steps=mx)
+            elif mtype == "progress_state":
+                # ComfyUI 0.33 emits this alongside the legacy `progress`. Take
+                # whichever node is actually running, so this keeps working if
+                # the legacy hook is ever dropped upstream.
+                for _nid, st in (data.get("nodes") or {}).items():
+                    if st.get("state") == "running" and st.get("max"):
+                        on_update(step=st.get("value") or 0, steps=st["max"],
+                                  phase=_PHASES.get(str(_nid)))
+                        break
             elif mtype == "executing":
                 node = data.get("node")
                 if node is None:
@@ -211,10 +332,17 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
 
 def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
              steps: int = DEFAULT_STEPS, seed: int = 0,
-             arbiter=None, lease_ttl_s: int = 900) -> dict:
+             arbiter=None, lease_ttl_s: int = 900,
+             system: bool = False) -> dict:
     """Generate one image on-device, under the Arbiter's exclusive image lease.
 
     Returns {status, files, model, provider, elapsed_s, ...}. Never raises.
+
+    `system=True` marks a generation Friday made for her own purposes —
+    verification, diagnostics, a smoke test. Those are NOT published to the
+    creations gallery and are flagged in the manifest, because test output
+    landing in Stephen's gallery is indistinguishable from his own work and he
+    had to go and delete mine by hand.
     """
     if not is_installed():
         return {"status": "unavailable", "provider": PROVIDER,
@@ -283,7 +411,17 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             except Exception:
                 pass
 
+    def _cancelled() -> bool:
+        return is_cancelled(orb_pid)
+
+    _outcome = {"status": "ok"}
+
     try:
+        # Before the lease. This is the window the old cancel could not reach:
+        # the orb exists and is on screen, so it can be cancelled, but nothing
+        # had been started yet for a lease-based cancel to find.
+        if _cancelled():
+            raise Cancelled("cancelled before the GPU was taken")
         if arbiter is not None:
             lease = arbiter.grant("image_job", ttl_s=lease_ttl_s)
             if not lease.get("ok"):
@@ -299,6 +437,13 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             ComfyUIBackend().start()
             _log.warning("local image: no arbiter — GPU is unmanaged for this "
                          "generation")
+
+        # Taking the lease evicts the language seats and starts ComfyUI, which
+        # is the slowest part of the job — a cancel very often arrives during
+        # exactly this. Give the GPU straight back rather than generating an
+        # image nobody is waiting for any more.
+        if _cancelled():
+            raise Cancelled("cancelled while the GPU was being prepared")
 
         wf = build_workflow(prompt, negative=negative, width=width,
                             height=height, steps=steps, seed=seed)
@@ -338,7 +483,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             daemon=True)
         _watcher.start()
         try:
-            images = _await_result(pid)
+            images = _await_result(pid, cancelled=_cancelled)
         finally:
             _state["stop"] = True
         out_dir = comfy_root() / "output"
@@ -367,6 +512,14 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                 continue
             src = out_dir / (i.get("subfolder") or "") / i["filename"]
             dest = src
+            if system:
+                # Left where ComfyUI wrote it, deliberately. The gallery lists
+                # CREATIONS_DIR, so not copying is what keeps Friday's own test
+                # output out of Stephen's work.
+                files.append({"filename": i["filename"], "path": str(src),
+                              "url": None, "source_path": str(src),
+                              "system_generated": True})
+                continue
             try:
                 CREATIONS_DIR.mkdir(parents=True, exist_ok=True)
                 dest = CREATIONS_DIR / i["filename"]
@@ -394,6 +547,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                         "model": MODEL_ID,
                         "width": width, "height": height, "steps": steps,
                         "created_at": time.time(),
+                        "system_generated": bool(system),
                     }) + "\n")
         except Exception as _me:
             _log.warning("local image: could not record the manifest entry: %s",
@@ -409,12 +563,26 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             "elapsed_s": round(time.time() - t0, 1),
             "local": True,
         }
+    except Cancelled as c:
+        # Cancellation is an outcome, not a failure. It must not be reported as
+        # an error and must not be reported as a finished image.
+        _outcome["status"] = "cancelled"
+        return {"status": "cancelled", "provider": PROVIDER, "model": MODEL_ID,
+                "reason": str(c), "prompt": prompt, "files": [],
+                "elapsed_s": round(time.time() - t0, 1), "local": True}
     except Exception as e:
+        _outcome["status"] = "failed"
         return {"status": "error", "provider": PROVIDER,
                 "reason": "%s: %s" % (type(e).__name__, e),
                 "elapsed_s": round(time.time() - t0, 1)}
     finally:
-        _orb(status='completed', progress=1.0)
+        if _outcome["status"] == "cancelled":
+            _orb(status='cancelled', label="Image: cancelled")
+        elif _outcome["status"] == "failed":
+            _orb(status='failed')
+        else:
+            _orb(status='completed', progress=1.0)
+        clear_cancel(orb_pid)
         # The GPU goes back whatever happened. A lease that is not released is
         # the failure mode that strands the machine with no language seats.
         if lease is not None and lease.get("ok") and arbiter is not None:
