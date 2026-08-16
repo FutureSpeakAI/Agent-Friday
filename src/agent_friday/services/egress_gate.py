@@ -251,7 +251,7 @@ def _redact_placeholder(tier: int) -> str:
     name = Tier.NAMES.get(tier, f"TIER_{tier}")
     return (
         f"[EGRESS-GATE: {name} content withheld — did not leave your device. "
-        f"Use a local model (Ollama) to process this without redaction.]"
+        f"Run this on a local seat to process it without redaction.]"
     )
 
 

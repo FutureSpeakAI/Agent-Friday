@@ -272,6 +272,37 @@ class ModelRouter:
         result["warning"] = warning
         return result
 
+    def _local_candidates(self):
+        """Local generation models Friday can actually serve right now.
+
+        Her OWN store first, the Ollama daemon second for anything not yet
+        imported. Extracted so the vault route and the unattended-tool route
+        cannot drift apart on the question of whether a local model exists —
+        they disagreed once already, and the disagreement sent vault content to
+        the cloud.
+        """
+        models = []
+        try:
+            from agent_friday.services import model_store as _ms
+            for mid, rec in sorted(_ms.available().items()):
+                if rec.get("can_generate"):
+                    models.append({"name": mid,
+                                   "size_gb": (rec.get("size_bytes") or 0)
+                                   / 1024 ** 3})
+        except Exception:
+            pass
+        try:
+            from agent_friday.routing.ollama_manager import get_manager
+            ollama = get_manager(
+                self.config.get("ollama_url", "http://localhost:11434"))
+            have = {m["name"] for m in models}
+            if ollama.is_available():
+                models += [m for m in ollama.list_models()
+                           if m.get("name") not in have]
+        except Exception:
+            pass
+        return models
+
     def _route_vault(self, ctx):
         """Force a vault-touching request onto a local model.
 
@@ -295,26 +326,7 @@ class ModelRouter:
         # Verified 2026-08-16 with the daemon stopped: this route returned
         # "Vault access required but no local model — cloud with redaction"
         # while gemma4:12b and gemma4:e2b were resident and answering.
-        models = []
-        try:
-            from agent_friday.services import model_store as _ms
-            for mid, rec in sorted(_ms.available().items()):
-                if rec.get("can_generate"):
-                    models.append({"name": mid,
-                                   "size_gb": (rec.get("size_bytes") or 0)
-                                   / 1024 ** 3})
-        except Exception:
-            pass
-        try:
-            from agent_friday.routing.ollama_manager import get_manager
-            ollama = get_manager(
-                self.config.get("ollama_url", "http://localhost:11434"))
-            have = {m["name"] for m in models}
-            if ollama.is_available():
-                models += [m for m in ollama.list_models()
-                           if m.get("name") not in have]
-        except Exception:
-            pass
+        models = self._local_candidates()
 
         if models:
             local_model = self._pick_local_model(models, TaskType.VAULT_ACCESS, self.mode) \
@@ -532,6 +544,48 @@ class ModelRouter:
             }
 
         if task_type == TaskType.TOOL_USE:
+            # Unattended work prefers a local seat.
+            #
+            # This rule is from 2026-06-27, when local tool calling did not
+            # work. It does now: 15/15 dependent five-call chains across e2b,
+            # e4b and 12b, and 6/6 with the Ollama daemon stopped entirely.
+            # Meanwhile every hourly heartbeat was spending ~42,654 input
+            # tokens on a cloud model to produce ~130 output tokens — about a
+            # million input tokens a day to read Stephen's own calendar and
+            # inbox, which is exactly the private material that should not be
+            # leaving the machine in the first place.
+            #
+            # Scoped to SCHEDULED and BACKGROUND work on Stephen's decision
+            # (2026-08-16). Interactive chat keeps today's cloud behaviour,
+            # because that is where he would feel the speed difference and he
+            # did not ask for that trade.
+            if ctx.get("is_background_task") or ctx.get("scheduled"):
+                local = self._local_candidates()
+                if local:
+                    # The BRAIN, not the fastest thing that fits. Stephen named
+                    # the 12b ("Can't Gemma 4:12b handle that?") and he is
+                    # right about the seat: a heartbeat reads a calendar and an
+                    # inbox and has to decide what is worth telling him, which
+                    # is judgement work, not reflex. _pick_local_model
+                    # optimises for speed and chose the 2B sidekick.
+                    names = {m["name"] for m in local}
+                    chosen = None
+                    try:
+                        from agent_friday.core import _load_settings as _ls
+                        cr = (_ls() or {}).get("capability_routing") or {}
+                        want = (cr.get("reasoning") or {}).get("model")
+                        if want in names:
+                            chosen = want
+                    except Exception:
+                        pass
+                    chosen = chosen or self._pick_local_model(
+                        local, task_type, self.mode) or local[0]["name"]
+                    return {
+                        "provider": "local",
+                        "model": chosen,
+                        "task_type": task_type,
+                        "reason": "Unattended tool work — kept on a local seat",
+                    }
             return {
                 "provider": "cloud",
                 "model": ctx.get("cloud_model") or self.config.get(

@@ -753,6 +753,14 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
             orb_id, name="Cloud Inference",
             label=orb_label or "Cloud inference…",
             category="monitoring", icon=orb_icon, steps=[], model=model,
+            # Correlate with the spawning background task, exactly like the
+            # Claude and Ollama orbs already did. Without it /api/tasks/<orb>
+            # cannot follow the link and the thread panel falls back to the
+            # orb's own (empty) steps — "— waiting for activity —" over a task
+            # whose log is sitting right there. This path now serves Friday's
+            # OWN LOCAL SEATS, so the gap would have re-broken the one thing
+            # Stephen has asked about three times.
+            task_id=(session_ctx or {}).get("task_id"),
         )
     except Exception:
         orb_id = None

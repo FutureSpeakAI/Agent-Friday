@@ -80,7 +80,7 @@ from agent_friday.services.wiki_engine import (
 def _generate_agent(messages, system=None, model=None, max_tokens=16384,
                     temperature=None, session_ctx=None, pii_lookup=None,
                     orb_label=None, orb_category='default', orb_icon='🧠',
-                    workspace=None):
+                    workspace=None, on_route=None):
     """Tool-using (agentic) generation via the user's CONFIGURED provider.
 
     The agentic analog of _generate_text(). Bare _call_claude_agent() requires
@@ -128,12 +128,25 @@ def _generate_agent(messages, system=None, model=None, max_tokens=16384,
             "has_tools": True,
             "workspace": workspace or '',
             "cloud_model": model or settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT,
+            # Unattended work is allowed to prefer a local seat. Without this
+            # the router cannot tell a scheduled heartbeat from Stephen typing,
+            # and every tool-using turn looked interactive.
+            "is_background_task": bool((session_ctx or {}).get(
+                "is_background_task")),
+            "scheduled": bool((session_ctx or {}).get("scheduled")),
         }) or {}
         provider = route.get('provider', 'cloud')
         routed_model = route.get('model') or model
         routed_provider_name = route.get('provider_name')
     except Exception as _re:
         print(f"  [AGENT] routing failed, defaulting to cloud: {_re}")
+    if on_route:
+        # Report the ACTUAL decision to whoever wants to narrate it. Never let
+        # a logging callback break a turn.
+        try:
+            on_route(dict(route, model=routed_model, provider=provider))
+        except Exception:
+            pass
 
     # Honor the router's verdicts BEFORE any provider sees the request.
     # refuse=True means vault access was required and the configured fallback
@@ -1783,8 +1796,19 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
             "side of the question has WEAKER evidence. Run a second round explicitly targeting "
             "that weaker side to avoid confirmation bias. State both sides in your output."
         )
-        # Stream a couple of milestone lines so the UI feels alive.
-        _task_log(task_id, 'Calling Claude…')
+        # Which model actually serves this is decided by the router INSIDE
+        # _generate_agent, so the old line here — a hardcoded 'Calling Claude…'
+        # written before routing — was a guess printed as a fact. It said
+        # Claude even when a local seat answered. `on_route` fires the moment
+        # the decision is made, with the decision itself, so the log names the
+        # real responder without duplicating the routing logic.
+        def _log_route(route):
+            try:
+                m = route.get('model') or '(unnamed model)'
+                seat = 'local' if route.get('is_local') else 'cloud'
+                _task_log(task_id, 'Asking %s (%s)…' % (m, seat))
+            except Exception:
+                pass
         subagent_model = _load_settings().get("subagent_model") or ANTHROPIC_MODEL_DEFAULT
         _bg_label = (name or prompt or 'Task')[:24]
         # Route through the provider-agnostic agent dispatcher so a background
@@ -1795,14 +1819,16 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
             session_ctx={"authenticated": True, "is_background_task": True,
                          "task_id": task_id},
             orb_label=_bg_label, orb_category='monitoring', orb_icon=orb_icon,
-            workspace='task',
+            workspace='task', on_route=_log_route,
         )
-        for step in tool_trace or []:
-            tn = step.get('name', '?')
-            ti = step.get('input') or {}
-            label = ti.get('query') or ti.get('path') or ti.get('command') or ti.get('url') or ''
-            line = f'{tn}({str(label)[:60]})' if label else tn
-            _task_log(task_id, '→ tool: ' + line)
+        # Tool lines are written by _task_log_tool AS EACH CALL HAPPENS now,
+        # so replaying the trace here would print every tool twice. What the
+        # trace still adds is the SHAPE of the run, once, at the end.
+        if tool_trace:
+            _task_log(task_id, 'Used %d tool call(s): %s'
+                      % (len(tool_trace),
+                         ', '.join(sorted({s.get('name', '?')
+                                           for s in tool_trace}))))
 
         # ── Timeout check ──
         _task_elapsed = _time.time() - (TASKS.get(task_id, {}).get('started') or _time.time())
@@ -1878,9 +1904,27 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
         evaluation = _evaluate_output(task_id, prompt, reply or '')
         if evaluation:
             _task_set(task_id, evaluation=evaluation)
-            grade_line = next((l for l in evaluation.splitlines() if l.startswith('GRADE:')), '')
+            lines = evaluation.splitlines()
+            grade_line = next((l for l in lines if l.startswith('GRADE:')), '')
+            reason_line = next((l for l in lines if l.startswith('REASON:')), '')
             if grade_line:
-                _task_log(task_id, f'Eval: {grade_line}')
+                # The REASON used to be stored and never shown — not in the
+                # log, and not rendered in the panel either. So a run ended on
+                # a bare "Eval: GRADE: FAIL" with no way to find out what
+                # failed. The actual reason for the heartbeat's FAIL was:
+                # "does not reply exactly NO CHANGE — it appends an
+                # unrequested reminder note". Friday was marked down for
+                # telling Stephen about tomorrow's appointment.
+                _task_log(task_id, 'Eval: %s' % grade_line)
+                if reason_line:
+                    _task_log(task_id, '  %s' % reason_line)
+                # And say what the grade DOES, because the answer is nothing.
+                # A grader whose verdict changes no outcome is a comment, and
+                # it should read as one rather than as a failure.
+                if 'FAIL' in grade_line or 'PARTIAL' in grade_line:
+                    _task_log(task_id,
+                              '  (advisory only — the result below was '
+                              'delivered unchanged)')
 
         _task_log(task_id, 'Done.')
 
@@ -4056,6 +4100,28 @@ def _confirmation_question(name, tool_input):
     return "Would you like me to go ahead with that?"
 
 
+def _task_log_tool(session_ctx, name, args):
+    """Write a tool call to the spawning task's log at EXECUTION time.
+
+    The task log used to get its tool lines from `tool_trace` after the whole
+    model call returned. For a 234-second heartbeat that meant four lines at
+    the start, silence for the entire run, and everything else at the end —
+    which is what "it still just says waiting for activity" describes. The
+    lines existed; they simply arrived too late to be progress.
+    """
+    tid = (session_ctx or {}).get("task_id")
+    if not tid:
+        return
+    try:
+        detail = ""
+        if isinstance(args, dict) and args:
+            first = next(iter(args.items()))
+            detail = "(%s=%s)" % (first[0], str(first[1])[:40])
+        _task_log(tid, "→ tool: %s%s" % (name, detail))
+    except Exception:
+        pass
+
+
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -4938,6 +5004,7 @@ def _call_claude_agent(messages, system=None, model=None, max_tokens=16384, temp
                         })
                         continue
 
+                _task_log_tool(session_ctx, tu.name, tu.input)
                 result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=session_ctx)
                 _tool_ms = int((_time.time() - _t_tool) * 1000)
                 _orb_tool_trace(orb_id, tu.name, tu.input, result, _tool_ms)
@@ -5188,6 +5255,7 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
                                              f"data — switch to a local model to access it."})
                     continue
 
+            _task_log_tool(session_ctx, tname, targs)
             result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                    session_ctx=session_ctx)
             _tool_ms = int((_time.time() - _t_tool) * 1000)
