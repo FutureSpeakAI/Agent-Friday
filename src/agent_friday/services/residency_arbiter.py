@@ -158,7 +158,22 @@ def owned_provider(model_id: str) -> dict | None:
         "name": "arbiter-local",
         "classification": "local",
         "type": "openai-compatible",
-        "adapter": "openai",
+        # MUST be "openai-compatible", not "openai".
+        #
+        # `adapter_of()` reads `adapter` before `type`, and only the adapters in
+        # LOCAL_CAPABLE_ADAPTERS earn local classification. "openai" is not one
+        # of them, so this single wrong word made `classification_of()` return
+        # "cloud" for a model running on 127.0.0.1 in a process we own, and
+        # `local_bypass` came out False. Two consequences, both measured
+        # 2026-08-16 in Stephen's activity ledger:
+        #
+        #   * the egress gate SEALED payloads on their way to Friday's own
+        #     local seat — vault-tier spans redacted before reaching a model
+        #     that is allowed to see them, which defeats the entire reason the
+        #     local tier exists;
+        #   * the ledger labelled those turns `gemma4:12b · openai`, so a local
+        #     model read as a cloud one.
+        "adapter": "openai-compatible",
         "base_url": base,
         "models": [model_id],
         "auth": {"type": "none"},
