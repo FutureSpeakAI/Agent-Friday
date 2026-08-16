@@ -5079,9 +5079,39 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model,
         msg = (choices[0].get("message", {}) if choices else {}) or {}
         tool_calls = msg.get("tool_calls") or []
 
+        # ── The gemma4 e-series speaks a channel format, not OpenAI shape ──
+        #
+        # It emits its calls inside the assistant's TEXT:
+        #     <|tool_call>call:get_weather{city:Oslo}<tool_call|>
+        # and `tool_calls` comes back empty. Ollama's daemon parsed that for
+        # us, which is the single reason those seats could not be served as
+        # processes we own without losing tool calling outright.
+        #
+        # Translated here rather than in a per-provider branch, so the loop
+        # stays one loop: below this point nothing can tell which wire format
+        # the model used.
+        _chan_text = msg.get("content") or ""
+        if oai_tools and not tool_calls and _chan_text:
+            try:
+                from agent_friday.services import channel_toolcalls as _chan
+                _found, _rest = _chan.extract(_chan_text, oai_tools)
+                if _found:
+                    tool_calls = _found
+                    msg = dict(msg, content=_rest, tool_calls=_found)
+            except Exception:
+                pass
+
         # No tools available, or the model is done calling them → final answer.
         if not oai_tools or not tool_calls:
             text = (msg.get("content") or "").strip()
+            # Even with nothing to call, channel markup must not reach the
+            # transcript — the thought channel is a scratchpad, not an answer.
+            if text and "channel" in text:
+                try:
+                    from agent_friday.services import channel_toolcalls as _chan
+                    _c, text = _chan.extract(text, oai_tools)
+                except Exception:
+                    pass
             _orb(status='completed', progress=1.0, label=f'Done ({model})')
             _led_done()
             return text, tool_trace

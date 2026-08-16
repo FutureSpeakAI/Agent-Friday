@@ -98,11 +98,10 @@ def test_boot_reaches_the_default_state(arb):
 def test_boot_pins_seats_as_owned_processes_not_daemon_requests(arb):
     """R9: Ollama evicted a 'pinned' model at every num_ctx tried."""
     arb.boot(measure_baseline=False)
-    # The brain is ours; the sidekick stays on the daemon by decision, not by
-    # failure — DAEMON_SERVED records why (its <|channel> tool calls are only
-    # parsed there). Both are seated; only one is a process we own.
-    assert set(arb.llama.procs) == {"gemma4:12b"}
-    assert "gemma4:e2b" in arb.ollama.resident()
+    # BOTH seats are processes we own. The sidekick was briefly excepted
+    # (its <|channel> tool calls were only parsed by Ollama's daemon);
+    # services/channel_toolcalls.py removed the need for that.
+    assert set(arb.llama.procs) == {"gemma4:12b", "gemma4:e2b"}
 
 
 def test_boot_adopts_an_already_resident_seat_instead_of_reloading(arb):
@@ -169,17 +168,16 @@ def test_heavy_lease_displaces_the_brain_but_not_the_sidekick(arb):
     assert arb.state == ra.STATE_LEASED
     assert "interactive_brain" in out["lease"]["displaced"]
     assert "sidekick" not in out["lease"]["displaced"]
-    assert "gemma4:12b" not in arb.llama.procs, "the brain should stand down"
-    assert "gemma4:e2b" in arb.ollama.resident(), "the sidekick must not"
+    assert set(arb.llama.procs) == {"gemma4:e2b"},         "the brain stands down; the sidekick does not"
 
 
 def test_a_retained_seat_is_not_reloaded_on_release(arb):
     """Reloading it would evict it first — a cold start and a silent window."""
     arb.boot(measure_baseline=False)
-    before = dict(arb.ollama.resident()).get("gemma4:e2b")
+    before = arb.llama.procs.get("gemma4:e2b")
     arb.grant("heavy_turn")
     arb.release()
-    assert dict(arb.ollama.resident()).get("gemma4:e2b") == before,         "the sidekick was reloaded, so it went away and came back"
+    assert arb.llama.procs.get("gemma4:e2b") is before,         "the sidekick process was replaced, so it went away and came back"
 
 
 def test_release_restores_the_pinned_seats(arb):
@@ -188,8 +186,7 @@ def test_release_restores_the_pinned_seats(arb):
     out = arb.release()
     assert out["ok"] is True
     assert arb.state == ra.STATE_DEFAULT
-    assert set(arb.llama.procs) == {"gemma4:12b"}, "the brain comes back"
-    assert "gemma4:e2b" in arb.ollama.resident(), "the sidekick never left"
+    assert set(arb.llama.procs) == {"gemma4:12b", "gemma4:e2b"}
 
 
 def test_two_leases_cannot_be_held_at_once(arb):
@@ -228,8 +225,8 @@ def test_image_lease_starts_comfyui_and_clears_the_gpu(arb):
     # R10: exclusive of everything EXCEPT the sidekick. An image job used to
     # take the whole card, which left Friday unable to answer while a picture
     # rendered — the machine looked hung rather than busy.
-    assert arb.llama.procs == {}, "an image lease takes the owned seats"
-    assert set(arb.ollama.resident()) == {"gemma4:e2b"},         "R10: except the sidekick, which keeps Friday answering"
+    assert set(arb.llama.procs) == {"gemma4:e2b"},         "R10: an image lease takes everything EXCEPT the sidekick, which is "        "what keeps Friday answering while the picture renders"
+    assert set(arb.ollama.resident()) == set()
 
 
 def test_image_release_stops_comfyui_and_hands_the_gpu_back(arb):
@@ -237,8 +234,7 @@ def test_image_release_stops_comfyui_and_hands_the_gpu_back(arb):
     arb.grant("image_job")
     arb.release()
     assert arb.comfy.started is False
-    assert set(arb.llama.procs) == {"gemma4:12b"}
-    assert "gemma4:e2b" in arb.ollama.resident()
+    assert set(arb.llama.procs) == {"gemma4:12b", "gemma4:e2b"}
 
 
 def test_a_failed_image_start_rolls_back(arb):
