@@ -157,3 +157,72 @@ The Arbiter no longer evicts the sidekick on either lease kind, and the plan sub
   check that catches the silent-mount failure) and every endpoint behind it is verified above,
   but nobody has looked at it.
 - The away-drain firing on its own after 15 minutes of real idleness.
+
+---
+
+## 8. The workflow panel, rendered
+
+Settings → Work, read out of the running page rather than asserted:
+
+```
+Rewrite the research notes            4 steps · 1 heavy
+1 List the source files               reflex · ~2s local · ~4s cloud
+2 Summarise each paper                heavy · gemma4:26b · ~2m local · ~33s cloud
+3 Draft the overview                  chat · ~20s local · ~17s cloud
+4 Cross-reference my private notes 🔒 vault
+                                      chat · ~9s local · ~8s cloud
+total ~3m locally · ~62s in the cloud
+
+[🌙 While I'm away]  [🏠 Now, locally]  [☁️ Now, in the cloud — DISABLED]
+
+  cloud button: "unavailable — 1 task(s) read vault-tier material, which
+  never leaves this machine: Cross-reference my private notes. The router
+  forces those local regardless of the configured mode, so a cloud run would
+  not do what the label says."
+
+[✨ Choose for me]  would pick Now, locally — some of this reads your vault,
+                    so it stays on this machine. Roughly 3m of local work.
+[Not now]
+```
+
+Every element asked for is there: the steps Friday intends to execute, per-step config, three
+options, the unavailable one shown **with its reason** rather than hidden, and a "choose for me"
+that states its pick before you click it. Queue section reads live —
+`0 parked · idle 8m · you are here — away-work is holding`.
+
+Verified by reading rendered page text. A screenshot was not possible: the browser pane is not
+being displayed in this session, so the page is not compositing frames.
+
+## 9. R10 measured — and the cost is CPU, not VRAM
+
+Sweeping `--n-cpu-moe` **with the sidekick resident**, which is the condition the number has to
+hold under. Sidekick answers in **0.61 s** with nothing else running:
+
+| `n_cpu_moe` | heavy on GPU | total GPU | heavy tok/s | sidekick answers in |
+|---:|---:|---:|---:|---:|
+| 18 | 7 973 MiB | 11 663 MiB | 10.58 | **1.24 s** |
+| 20 | 6 014 MiB | 9 704 MiB | 11.47 | 24.08 s |
+| 28 | 2 462 MiB | 6 152 MiB | 10.29 | 22.69 s |
+
+**Friday stays awake and answering while the heavy model works — R10 holds.** That was the
+requirement and it is met.
+
+Three things this changed my mind about:
+
+1. **My extrapolation was badly wrong.** The policy asked for 32 layers on the basis of a linear
+   fit through two points. The curve is not linear: 28 puts only 2 462 MiB on the card against an
+   8 186 MiB budget, wasting 5.7 GB to run *slower*. The plan labelled it `extrapolated`, which is
+   why it was checkable — but it was a guess and the guess was poor.
+2. **Pushing work onto the CPU to save VRAM is what makes Friday unresponsive.** The sidekick
+   answers in 1.24 s at 18 layers and 22–24 s at 20 and 28. More expert layers on the CPU means
+   the CPU is saturated, and the sidekick needs CPU too. The instinct to "free up VRAM for the
+   sidekick" is exactly backwards.
+3. **Holding the sidekick costs the heavy model a lot of speed** — 27.80 tok/s previously at
+   `n_cpu_moe 20` versus 11.47 here. **Caveat, and it matters:** the earlier figure was a median
+   of five warm runs on an otherwise idle machine; these are single runs with a browser and
+   preview pane also on the card (baseline 3 690 MiB rather than 712 MiB). Some of that gap is
+   the sidekick and some is everything else. **Not cleanly attributed** — do not quote the 2.4×
+   as the cost of R10 until it is re-measured on a quiet machine.
+
+Current best operating point on this evidence: **18**, which fits the budget and keeps the
+sidekick fast. It is one run per candidate, so it is a direction, not a settled number.
