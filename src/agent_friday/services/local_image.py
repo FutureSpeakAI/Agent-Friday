@@ -31,7 +31,7 @@ import uuid
 import urllib.request
 from pathlib import Path
 
-from agent_friday.core import runtime_dir
+from agent_friday.core import CREATIONS_DIR, runtime_dir
 
 _log = logging.getLogger("friday.local_image")
 
@@ -220,6 +220,22 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         return {"status": "unavailable", "provider": PROVIDER,
                 "reason": "Z-Image build not found under %s" % comfy_root()}
 
+    # An empty prompt is not a request, and the pipeline could not tell.
+    #
+    # build_workflow("") produces a perfectly VALID graph whose positive
+    # CLIPTextEncode carries "" — so ComfyUI renders whatever a diffusion model
+    # produces from no conditioning, saves it, and the caller gets
+    # {"status": "ok"} with a file. Success reported for output nobody asked
+    # for. That is how a generation can silently emit garbage that looks like
+    # it worked, and it would leave Friday unable to say what she had made
+    # because there was nothing to say.
+    if not (prompt or "").strip():
+        return {"status": "error", "provider": PROVIDER,
+                "reason": "no prompt — refusing to generate. An empty prompt "
+                          "renders successfully and produces something nobody "
+                          "asked for, so it is rejected here rather than "
+                          "reported as a success."}
+
     width, height = _SIZES.get(aspect_ratio, _SIZES["1:1"])
     if arbiter is None:
         from agent_friday.services.residency_arbiter import get_arbiter
@@ -362,6 +378,27 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             files.append({"filename": i["filename"], "path": str(dest),
                           "url": "/api/creations/%s" % i["filename"],
                           "source_path": str(src)})
+        # A manifest of what was made and from what. Friday could generate an
+        # image and then be unable to tell Stephen its filename — she guessed
+        # at a naming convention instead, and was wrong. ComfyUI chooses the
+        # name, so the only reliable record is the one written here at the
+        # moment the file lands.
+        try:
+            _man = CREATIONS_DIR / "creations-manifest.jsonl"
+            with open(_man, "a", encoding="utf-8") as _mf:
+                for _f in files:
+                    _mf.write(json.dumps({
+                        "filename": _f.get("filename"),
+                        "path": _f.get("path"),
+                        "prompt": prompt,
+                        "model": MODEL_ID,
+                        "width": width, "height": height, "steps": steps,
+                        "created_at": time.time(),
+                    }) + "\n")
+        except Exception as _me:
+            _log.warning("local image: could not record the manifest entry: %s",
+                         _me)
+
         return {
             "status": "ok" if files else "error",
             "provider": PROVIDER,
