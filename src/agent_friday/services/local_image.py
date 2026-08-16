@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 import urllib.request
@@ -139,6 +140,75 @@ def _await_result(prompt_id, timeout=600):
     raise TimeoutError("ComfyUI did not return a result in %ss" % timeout)
 
 
+# Node id -> the phase a human would call it. The workflow in build_workflow()
+# is fixed, so this is a lookup rather than a guess.
+_PHASES = {
+    "1": "loading the model",
+    "2": "loading the text encoder",
+    "3": "loading the decoder",
+    "4": "reading your prompt",
+    "5": "reading your prompt",
+    "6": "preparing the canvas",
+    "7": "sampling",
+    "8": "decoding the image",
+    "9": "saving",
+}
+
+
+def _watch_progress(prompt_id, client_id, on_update, stop_flag):
+    """Consume ComfyUI's websocket and report true progress.
+
+    The bar was previously two values — 0.5 when sampling started and 1.0 at
+    the end — because `_await_result` polls /history every 1.5s and history
+    only knows "not done" and "done". Meanwhile ComfyUI has been emitting
+    `progress` (step value/max) and `executing` (which node is running) the
+    whole time on a socket nothing connected to. Stephen watched a bar that
+    could not tell him anything, and the signal to make it true was already
+    arriving.
+
+    Runs on its own thread and never raises into the caller: a lost progress
+    socket must not fail a generation that is otherwise fine.
+    """
+    try:
+        import websocket  # websocket-client
+    except Exception:
+        return
+    url = "ws://127.0.0.1:%d/ws?clientId=%s" % (COMFY_PORT, client_id)
+    ws = None
+    try:
+        ws = websocket.create_connection(url, timeout=10)
+        while not stop_flag():
+            try:
+                raw = ws.recv()
+            except Exception:
+                break
+            if not raw or isinstance(raw, (bytes, bytearray)):
+                continue          # binary frames are preview images, not status
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            mtype = msg.get("type")
+            data = msg.get("data") or {}
+            if mtype == "progress":
+                value, mx = data.get("value") or 0, data.get("max") or 0
+                if mx:
+                    on_update(step=value, steps=mx)
+            elif mtype == "executing":
+                node = data.get("node")
+                if node is None:
+                    break         # null node == this prompt is finished
+                on_update(phase=_PHASES.get(str(node), "working"))
+    except Exception:
+        pass
+    finally:
+        try:
+            if ws:
+                ws.close()
+        except Exception:
+            pass
+
+
 def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
              steps: int = DEFAULT_STEPS, seed: int = 0,
              arbiter=None, lease_ttl_s: int = 900) -> dict:
@@ -157,6 +227,15 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
 
     lease = None
     t0 = time.time()
+    # What to expect, before it starts. A warning without a number is just an
+    # apology — the pause forecast already knows this job costs ~93s warm and
+    # ~180s from a cold ComfyUI, measured on this machine.
+    try:
+        from agent_friday.services import pause_forecast as _pf
+        _fc = _pf.before_image()
+        _eta_s = int(_fc.get("seconds") or 0)
+    except Exception:
+        _eta_s = 0
     # An orb for the IMAGE job, naming the image model.
     #
     # There was none. Stephen asked for an image and saw "a gemma4 process orb
@@ -176,7 +255,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                          label="Image: %s%s" % (_short,
                                                 "…" if len(prompt or "") > 38 else ""),
                          category="monitoring", icon="🎨", steps=[],
-                         model=MODEL_ID)
+                         model=MODEL_ID, eta_s=_eta_s or None)
     except Exception:
         orb_pid = None
 
@@ -207,13 +286,45 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
 
         wf = build_workflow(prompt, negative=negative, width=width,
                             height=height, steps=steps, seed=seed)
-        sub = _post("/prompt", {"prompt": wf})
+        client_id = uuid.uuid4().hex[:12]
+        sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
         pid = sub.get("prompt_id")
         if not pid:
             return {"status": "error", "provider": PROVIDER,
                     "reason": "ComfyUI rejected the workflow: %s" % sub}
-        _orb(progress=0.5, label="Image: rendering…")
-        images = _await_result(pid)
+
+        # Real progress, from the socket, on its own thread.
+        _state = {"stop": False, "phase": "starting", "step": 0, "steps": steps}
+
+        def _on_update(step=None, steps=None, phase=None):
+            if step is not None:
+                _state["step"] = step
+            if steps:
+                _state["steps"] = steps
+            if phase:
+                _state["phase"] = phase
+            st, mx = _state["step"], max(1, _state["steps"])
+            # Sampling is the long pole but not the whole job, so it maps onto
+            # the middle of the bar rather than all of it. A bar that hits 100%
+            # and then keeps going is worse than no bar.
+            frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
+                else (0.1 if st == 0 else 0.9)
+            label = "Image: %s" % _state["phase"]
+            if _state["phase"] == "sampling" and mx:
+                label = "Image: sampling, step %d of %d" % (st, mx)
+            _orb(progress=round(min(frac, 0.97), 3), label=label,
+                 step={"type": "phase", "name": _state["phase"],
+                       "step": st, "steps": mx, "ts": time.time()})
+
+        _watcher = threading.Thread(
+            target=_watch_progress,
+            args=(pid, client_id, _on_update, lambda: _state["stop"]),
+            daemon=True)
+        _watcher.start()
+        try:
+            images = _await_result(pid)
+        finally:
+            _state["stop"] = True
         out_dir = comfy_root() / "output"
         # The SAME envelope the cloud path returns: a list of dicts with
         # filename/path/url, not bare path strings.
