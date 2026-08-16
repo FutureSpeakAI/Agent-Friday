@@ -238,6 +238,60 @@ def list_processes():
     return jsonify({"processes": out})
 
 
+@tasks_bp.route('/api/processes/<pid>/cancel', methods=['POST'])
+def cancel_process(pid):
+    """Stop a running process and give the GPU back.
+
+    Correctness, not decoration. An image job holds the Arbiter's EXCLUSIVE
+    lease: until 2026-08-16 the only ways out were to wait it out or kill the
+    server, and killing the server strands the lease with no language seats
+    resident. Ninety seconds in and changing your mind should not cost you the
+    machine.
+
+    Best-effort and honest about it — the reply says what was actually stopped
+    rather than claiming success for everything it tried.
+    """
+    stopped = []
+    with PROCESSES_LOCK:
+        proc = dict(PROCESSES.get(pid) or {})
+    if not proc:
+        return jsonify({"ok": False, "error": "no such process"}), 404
+
+    # 1. The worker itself, if it is an image job.
+    if str(pid).startswith("image-"):
+        try:
+            import urllib.request as _u
+            from agent_friday.services.local_image import COMFY_PORT
+            _u.urlopen(_u.Request(
+                "http://127.0.0.1:%d/interrupt" % COMFY_PORT, data=b"{}",
+                headers={"Content-Type": "application/json"}), timeout=10)
+            stopped.append("image sampling")
+        except Exception:
+            pass
+
+    # 2. The lease. Released even if the interrupt failed — a stranded lease is
+    #    the worse of the two failures.
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+        if arb is not None and arb.lease:
+            arb.release()
+            stopped.append("GPU lease")
+    except Exception:
+        pass
+
+    with PROCESSES_LOCK:
+        p2 = PROCESSES.get(pid)
+        if p2 is not None:
+            p2["status"] = "cancelled"
+            p2["ended"] = _time.time()
+            p2["label"] = "Cancelled: %s" % (p2.get("label") or "process")
+    return jsonify({"ok": True, "stopped": stopped,
+                    "note": ("nothing to interrupt — the process had already "
+                             "finished or held no lease") if not stopped
+                    else None})
+
+
 @tasks_bp.route('/api/processes/<pid>/dismiss', methods=['POST'])
 def dismiss_process(pid):
     """Acknowledge a failed orb so it stops orbiting.

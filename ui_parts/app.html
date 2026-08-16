@@ -10168,6 +10168,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   useEffect(()=>{fetch('/api/chat/history').then(r=>r.json()).then(d=>{if(d.messages)setChatMsgs(d.messages.map(m=>({...m,time:m.time||(m.timestamp?new Date(m.timestamp).toLocaleTimeString():'')})))}).catch(()=>{})},[]);
   const dismissedNotifIds=useRef(new Set());
   const _notifPost=(url,id)=>{if(!id)return;try{fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{})}catch(_){}};
+  /* In-flight work, shown in the tray ABOVE the finished notifications.
+     Same object at two moments of its life: a process while it runs, a
+     conclusion when it ends. Stephen asked for a progress bar in the tray, and
+     this is where it belongs — one place that answers both "what is happening"
+     and "what finished". */
+  const[liveProcs,setLiveProcs]=useState([]);
+  useEffect(()=>{let on=true;
+    const tick=()=>apiFetch('/api/processes').then(r=>r.json()).then(d=>{
+      if(!on)return;
+      setLiveProcs((d.processes||[]).filter(p=>p.status==='running'));
+    }).catch(()=>{});
+    tick();const iv=setInterval(tick,1500);return()=>{on=false;clearInterval(iv)}},[]);
+  const cancelProc=(id)=>{apiFetch('/api/processes/'+encodeURIComponent(id)+'/cancel',{method:'POST'})
+    .then(()=>setLiveProcs(p=>p.filter(x=>x.id!==id))).catch(()=>{})};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
   const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id){dismissedNotifIds.current.add(n.id);_notifPost('/api/notifications/dismiss',n.id)}});setNotifs([])};
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
@@ -11180,6 +11194,35 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           {notifs.length>0&&<button onClick={clearAllNotifs} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>}
         </div>
       </div>
+      {/* Running now — real progress, an honest estimate, and a way out. */}
+      {liveProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>
+        <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.35)',letterSpacing:'.1em',marginBottom:6}}>RUNNING NOW</div>
+        {liveProcs.map(p=>{
+          const pct=Math.round((p.progress||0)*100);
+          const el=p.elapsed||0;const eta=p.eta_s||0;
+          /* Overrun is SAID, not hidden. A bar that parks at 99% and waits is
+             worse than one that admits it is taking longer than usual. */
+          const over=eta>0&&el>eta*1.25;
+          const bar=over?'#f59e0b':'#00d4ff';
+          const when=over?('longer than usual — '+el+'s so far')
+            :(eta>0?(Math.max(0,eta-el)+'s left of ~'+eta+'s'):(el+'s'));
+          return <div key={p.id} style={{marginBottom:8,padding:'7px 9px',borderRadius:7,background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <span style={{fontSize:12}}>{p.icon||'⚡'}</span>
+              <span style={{flex:1,fontSize:11,color:'rgba(255,255,255,0.85)',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.label||p.name}</span>
+              {p.model&&<span style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.4)'}}>{p.model}</span>}
+              <button onClick={()=>cancelProc(p.id)} title="Stop this and hand the GPU back"
+                style={{background:'none',border:'1px solid rgba(255,84,112,0.3)',color:'#ff5470',borderRadius:4,cursor:'pointer',fontSize:9,padding:'1px 6px',fontFamily:'JetBrains Mono'}}>stop</button>
+            </div>
+            <div style={{height:4,borderRadius:2,background:'rgba(255,255,255,0.08)',marginTop:6,overflow:'hidden'}}>
+              <div style={{height:'100%',width:Math.max(2,Math.min(100,pct))+'%',background:bar,transition:'width .4s ease'}}/>
+            </div>
+            <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:over?'#f59e0b':'rgba(255,255,255,0.35)',marginTop:3}}>
+              {pct}% · {when}
+            </div>
+          </div>;
+        })}
+      </div>}
       {notifs.length===0
         ?<div className="notif-empty">No new notifications</div>
         :notifs.slice(0,50).map((n,i)=>{

@@ -1143,7 +1143,7 @@ PROCESSES_LOCK = threading.Lock()
 
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
-                     task_id=None):
+                     task_id=None, eta_s=None):
     """Register a new process for the holographic orb display.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
@@ -1165,6 +1165,11 @@ def process_register(pid, *, name="Task", label=None, category="default",
             "steps": steps or [],
             "log": [],
             "task_id": task_id,
+            # How long this is expected to take, from measurements we already
+            # hold. The tray renders "42s left of ~93s" instead of a bar with
+            # no scale, and says "longer than usual" rather than parking at
+            # 99% — a warning without a number is just an apology.
+            "eta_s": eta_s,
             "started": _time.time(),
         }
 
