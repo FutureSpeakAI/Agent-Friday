@@ -346,6 +346,29 @@ def chat():
                 "vault_access": False, "refuse": False, "warning": None,
             }
 
+        # ── Per-turn escape hatch for "Friday is about to go quiet" ──
+        #
+        # Friday now warns before a local pause (services/pause_forecast.py)
+        # and offers the cloud instead. That offer has to be honourable for one
+        # turn without changing any setting — otherwise the warning is a
+        # notification rather than a choice.
+        #
+        # It CANNOT override a vault-forced local route. `_route_vault` exists
+        # precisely so TIER_2/3 material never leaves the machine, and a UI
+        # button must not be able to talk it round. The forecast already omits
+        # the cloud option for vault work; this refuses it again here, because
+        # a rule enforced only in the interface is not enforced.
+        _route_mode = str((data or {}).get('route_mode') or '').strip().lower()
+        if _route_mode == 'cloud' and not _route_info.get('vault_access'):
+            _route_info = dict(
+                _route_info, provider='cloud', is_local=False,
+                vault_allowed=False, vault_access=False, scrub_pii=True,
+                model=settings.get('orchestrator_model') or 'claude-opus-4-8',
+                route_override='user chose the cloud to avoid a local pause')
+        elif _route_mode == 'cloud':
+            print("  [ROUTER] refusing route_mode=cloud: this turn touches "
+                  "vault-tier material and stays local")
+
         _provider = _route_info.get('provider', 'cloud')
         _routed_local = bool(_route_info.get('is_local'))
         _vault_access = bool(_route_info.get('vault_access'))

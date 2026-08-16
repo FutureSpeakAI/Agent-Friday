@@ -7517,6 +7517,47 @@ function WorkProposal({p,onDecided}){
   </div>;
 }
 
+// The warning that has to arrive BEFORE the silence, not after it.
+//
+// Three things it must do, all of which were failures we actually saw:
+//   * say HOW LONG, so a wait is a wait and not a suspected crash;
+//   * say how sure — "might" is a real answer when Ollama can unload a model
+//     without telling us, and dressing that up as certainty teaches people to
+//     ignore the warning;
+//   * offer the way out, since a warning you cannot act on is a notification.
+const CONF_META={
+  certain:{c:'#ffb347',word:'This will pause'},
+  likely:{c:'#ffb347',word:'This will probably pause'},
+  possible:{c:'#8ab4ff',word:'This might pause'},
+};
+function PauseWarning({f,msg,onChoose,onCancel}){
+  const cm=CONF_META[f.confidence]||CONF_META.likely;
+  return <div style={{margin:'10px 0',border:'1px solid '+cm.c+'55',borderRadius:9,padding:12,background:cm.c+'0d'}}>
+    <div style={{display:'flex',alignItems:'baseline',gap:8,marginBottom:6}}>
+      <span style={{fontSize:13}}>⏳</span>
+      <span style={{fontFamily:'Orbitron',fontSize:12,color:cm.c}}>{cm.word} for {dur(f.seconds)}</span>
+      <span style={{fontSize:9,color:'rgba(255,255,255,0.35)',fontFamily:'JetBrains Mono'}}>{f.basis}</span>
+    </div>
+    <div style={{fontSize:11,color:'rgba(255,255,255,0.72)',lineHeight:1.5,marginBottom:4}}>{f.why}</div>
+    {f.stays_awake&&f.stays_awake.length>0&&
+      <div style={{fontSize:10,color:'#8affc1',marginBottom:4}}>Friday stays reachable on the {f.stays_awake.join(', ')} throughout.</div>}
+    {msg&&<div style={{fontSize:10,color:'rgba(255,255,255,0.4)',fontStyle:'italic',margin:'6px 0'}}>Holding: “{msg.slice(0,90)}{msg.length>90?'…':''}”</div>}
+    <div style={{display:'flex',gap:7,flexWrap:'wrap',marginTop:8}}>
+      {(f.options||[]).map(o=>
+        <button key={o.id} disabled={!!o.unavailable} onClick={()=>onChoose(o.id)} title={o.detail}
+          style={{flex:'1 1 140px',textAlign:'left',padding:'7px 9px',borderRadius:6,
+            cursor:o.unavailable?'not-allowed':'pointer',
+            background:o.unavailable?'rgba(255,255,255,0.02)':'rgba(0,212,255,0.07)',
+            border:'1px solid '+(o.unavailable?'rgba(255,255,255,0.06)':'rgba(0,212,255,0.25)'),
+            color:o.unavailable?'rgba(255,255,255,0.28)':'#cfefff'}}>
+          <div style={{fontSize:11,fontFamily:'JetBrains Mono'}}>{o.label}</div>
+          <div style={{fontSize:9,opacity:0.7,marginTop:2,lineHeight:1.35}}>{o.unavailable?'unavailable — '+o.detail:o.detail}</div>
+        </button>)}
+    </div>
+    <button onClick={onCancel} style={{marginTop:7,background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:10}}>put it back in the box</button>
+  </div>;
+}
+
 function SettingsTabWork(){
   const[props,setProps]=useState(null);
   const[q,setQ]=useState(null);
@@ -10344,9 +10385,33 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   useEffect(()=>{if(typeof agentSettings.camera_interval_sec==='number')setCameraIntervalSec(agentSettings.camera_interval_sec);if(typeof agentSettings.camera_auto_describe==='boolean')setCameraAutoDescribe(agentSettings.camera_auto_describe)},[agentSettings.camera_interval_sec,agentSettings.camera_auto_describe]);
   const toggleCamera=()=>{if(cameraOn){setCameraOn(false);setCameraControlsOpen(false);cameraFrameRef.current=null}else{setCameraOn(true);setCameraControlsOpen(true)}};
 
-  const sendChat=async(overrideMsg)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
+  // ── Never go quiet without saying so first ───────────────────────────────
+  //
+  // Stephen, 2026-08-15: "Friday should always warn the user when local
+  // inference will (or might) cause her to go silent for any amount of time so
+  // they can decide if cloud or scheduling for idle time would be better."
+  //
+  // The failure is not the pause, it is the UNANNOUNCED pause: the machine
+  // looks hung, and you find out afterwards that the cloud would have taken
+  // four seconds. So the message is HELD, not sent, until he picks — a warning
+  // he cannot act on is a notification, and notifications get ignored.
+  const[pausePending,setPausePending]=useState(null);   // {forecast, message}
+  const sendChat=async(overrideMsg,opts)=>{const m=(overrideMsg||chatIn).trim();if(!m)return;
+    opts=opts||{};
+    if(!opts.skipForecast){
+      try{
+        const fr=await apiFetch('/api/work/forecast',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({kind:'local_turn'})});
+        const f=await fr.json();
+        if(f&&f.will_pause){setPausePending({forecast:f,message:m});setChatIn('');return;}
+      }catch(_){/* a forecast we cannot get must never block a message */}
+    }
+    setPausePending(null);
+    setChatIn('');setChatMsgs(p=>[...p,{role:'user',text:m,time:new Date().toLocaleTimeString()}]);setChatLoad(true);
     try{
       const body={message:m,voice_mode:voiceOn,cite_sources:!!agentSettings.cite_sources};
+      if(opts.routeMode)body.route_mode=opts.routeMode;
       if(focusWin)body.workspace=focusWin;
       const frame=cameraOn?cameraFrameRef.current?.primary:null;
       if(frame)body.image=frame;
@@ -10848,7 +10913,25 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         </div>
       </div>
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
-        {chatMsgs.length===0&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
+        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to Friday. Type, speak, or drop a file.</div>}
+        {pausePending&&<PauseWarning f={pausePending.forecast} msg={pausePending.message}
+          onChoose={(id)=>{
+            const m=pausePending.message;
+            if(id==='when_away'){
+              setPausePending(null);
+              apiFetch('/api/work/proposals',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({title:m.slice(0,60),tasks:[{title:m.slice(0,60),detail:m,cls:'heavy'}]})})
+                .then(r=>r.json()).then(d=>d&&d.proposal&&
+                  apiFetch('/api/work/proposals/'+d.proposal.id+'/decide',{method:'POST',
+                    headers:{'Content-Type':'application/json'},body:JSON.stringify({execution:'when_away'})}))
+                .then(()=>setChatMsgs(p=>[...p,{role:'system',kind:'queued',
+                  text:'Parked for when you are away. It will run in a batch with anything else waiting.'}]))
+                .catch(()=>{});
+              return;
+            }
+            sendChat(m,{skipForecast:true,routeMode:id==='now_cloud'?'cloud':undefined});
+          }}
+          onCancel={()=>{setChatIn(pausePending.message);setPausePending(null)}}/>}
         {chatMsgs.map((m,i)=>m.role==='system'
           /* B2: system lines — seat changes and other transparency notices.
              Amber, centered, unmistakably NOT Friday speaking. Never sent to

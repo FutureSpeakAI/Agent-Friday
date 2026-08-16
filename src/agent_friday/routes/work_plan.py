@@ -135,6 +135,55 @@ def drain_queue():
     return jsonify(out)
 
 
+@work_plan_bp.route("/api/work/forecast", methods=["POST"])
+@login_required
+def forecast_pause():
+    """Will this make Friday go quiet, for how long, and how sure are we?
+
+    Meant to be called BEFORE the thing happens — that is the whole point.
+    Warning afterwards is just narrating a wait that already annoyed someone.
+
+    `kind` is one of local_turn / heavy_lease / image / drain. A caller that
+    does not know which it wants can pass `local_turn` with the seat's model
+    and get the common case: the first message of a session, where the seat is
+    not resident and the reply takes ~13 s longer than every message after it
+    for no visible reason.
+    """
+    from agent_friday.services import pause_forecast as pf
+
+    body = request.get_json(silent=True) or {}
+    kind = body.get("kind") or "local_turn"
+    kw = {}
+    if kind == "local_turn":
+        model = body.get("model") or _seat_for(body.get("cls"))
+        if not model:
+            return jsonify({"error": "no model, and no seat to infer one"}), 400
+        kw = {"model_id": model, "vault": bool(body.get("vault")),
+              "cloud_ok": _cloud_available()}
+    elif kind == "heavy_lease":
+        kw = {"vault": bool(body.get("vault")), "cloud_ok": _cloud_available()}
+    elif kind == "image":
+        kw = {"cloud_ok": _cloud_available()}
+    elif kind == "drain":
+        kw = {"cls": body.get("class") or "heavy"}
+    return jsonify(pf.forecast(kind, **kw))
+
+
+def _cloud_available() -> bool:
+    """Is there actually a cloud provider to offer?
+
+    Offering "use the cloud instead" with no key configured would be the same
+    class of lie as offering it for vault work — a choice that cannot be
+    honoured.
+    """
+    try:
+        from agent_friday import core
+        return bool(getattr(core, "ANTHROPIC_API_KEY", None) or
+                    getattr(core, "GEMINI_API_KEY", None))
+    except Exception:
+        return False
+
+
 @work_plan_bp.route("/api/work/activity", methods=["POST"])
 @login_required
 def touch_activity():
