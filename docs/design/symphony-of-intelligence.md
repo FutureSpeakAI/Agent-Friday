@@ -434,3 +434,70 @@ run N times per local model, scored on whether the chain completed and the answe
 
 Per Stephen's standing rule: **a model that scores badly is a prompting-and-template problem to
 fix, not a model to exclude.** The number tells us where to work, never who to bar.
+
+---
+
+## Part 6 — "Would this free us from Ollama?" (2026-08-15)
+
+Stephen's question, answered against what the machine now does rather than what the change was
+meant to do.
+
+**Short answer: it frees the inference path, and only the inference path — and less completely
+than intended, because two of the four seats had to stay on the daemon for a measured reason.**
+
+### 6.1 What extraction actually removed
+
+The GGUFs now live in `~/.friday/runtime/models/gguf/` as files whose lifetime we control, copied
+out of Ollama's content-addressed blob store (23 GB, 151 s). For the **brain**, that delivered
+exactly what was wanted: `gemma4:12b` runs at 131 072 in a process the Arbiter spawns,
+health-checks and kills. Ollama cannot evict it because Ollama does not know it exists. The R9
+violation and the ~13 s first-message cold load are both gone for that seat.
+
+### 6.2 What did not move, and why
+
+`gemma4:e2b` and `gemma4:e4b` stay on the daemon. Not an oversight — a measured trade, recorded
+in `residency_arbiter.DAEMON_SERVED`:
+
+- Upstream llama.cpp (build 10415) **cannot load them at all**: `expected 2012, got 601`. The
+  file declares exactly the 2012 tensors it expects; upstream's `gemma4` reader recognises only
+  601 of the names in it.
+- Ollama's own **engine binary** loads the identical file and generates from it. So we have a
+  working engine we can run as our own process.
+- But the e-series does not emit OpenAI-shaped tool calls. It emits `<|channel>thought …`, and
+  **the parser for that lives in Ollama's daemon, not in the engine.** Under our own process,
+  with the correct gemma4 template verified live in `/props`, the model returns
+  `tool_calls: None`. Through the daemon it scores 5/5 on a dependent five-call chain.
+
+Owning those processes would buy residency control and pay for it with tool calling. For the seat
+whose job is answering ordinary turns, that is a bad trade.
+
+**The real fix is ours to make:** parse `<|channel>` in `_oai_agentic_loop`, the same place that
+was already dropping tool arguments. Then the e-series can move too. That is a contained piece of
+work, not a research project.
+
+### 6.3 What still needs the daemon after all this
+
+| Area | Where | Replacement | Effort |
+|---|---|---|---|
+| Tool-call parsing for the e-series | Ollama daemon | parse `<\|channel\|>` in `_oai_agentic_loop` | small–medium, and the highest-value one |
+| Model discovery | `residency_catalog.installed_entries` → `list_models` | enumerate our own GGUF directory; the registry already exists and already holds models Ollama does not have | small |
+| Capabilities (completion / tools / thinking / embedding) | `_show` → `/api/show` | read GGUF metadata directly — `gguf_extract.gguf_metadata` already does this for architecture and chat template | small |
+| Embeddings | the embedder seat | `llama-server` exposes `/v1/embeddings` | medium — D5 says the embedding model must never change without a re-index |
+| Downloading models | `ollama pull` | fetch GGUFs from Hugging Face | medium |
+
+### 6.4 Is full independence worth it?
+
+**Partly, and not urgently.** Ranked by what each buys:
+
+1. **Channel tool-call parsing — yes, do this.** It is the only item that currently costs us a
+   capability. It would let both small seats become owned processes and finish the job R9 started.
+2. **Discovery and capabilities — yes, cheaply.** Both are small, both remove a hard dependency on
+   a daemon being up for Friday to know what she has, and `gguf_metadata` already exists.
+3. **Embeddings — later, carefully.** It is a live data path with a re-index hazard behind it.
+4. **Downloads — leave them.** This is the one place Ollama genuinely earns its keep: curation,
+   resumable transfers, and a name people recognise. Replacing it buys independence from something
+   that is not in the way.
+
+The honest summary: after 1–3, Ollama becomes a **downloader and a model store** that Friday can
+run without. That is a reasonable place to stop. Claiming today that we are free of it would be
+wrong — two seats still route their tool calls through it.

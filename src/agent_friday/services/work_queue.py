@@ -54,7 +54,29 @@ STATUSES = ("queued", "running", "done", "failed", "cancelled")
 # How long the machine must be quiet before an away-drain may take the card.
 # Long enough that it is not competing with someone who stepped out for coffee,
 # short enough to catch a lunch break.
-AWAY_AFTER_S = 15 * 60
+#
+# Configurable, and that is not a nicety: at fifteen minutes the timer cannot
+# be OBSERVED firing without sitting on your hands for a quarter of an hour, so
+# "the away-drain works" stayed an untested claim through a whole build. A
+# setting that can be turned down to seconds is what makes it checkable.
+AWAY_AFTER_S_DEFAULT = 15 * 60
+AWAY_AFTER_S = AWAY_AFTER_S_DEFAULT
+
+
+def away_after_s() -> float:
+    """The idle threshold, from settings, falling back to the default.
+
+    Read per call rather than cached: the point of making it configurable is
+    that someone can change it and immediately watch the effect.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        v = (_load_settings() or {}).get("away_drain_after_s")
+        if v is not None:
+            return max(1.0, float(v))
+    except Exception:
+        pass
+    return AWAY_AFTER_S
 
 _LOCK = threading.RLock()
 _LAST_ACTIVITY = [time.time()]
@@ -117,8 +139,9 @@ def idle_seconds() -> float:
     return max(0.0, time.time() - _LAST_ACTIVITY[0])
 
 
-def is_away(threshold_s: float = AWAY_AFTER_S) -> bool:
-    return idle_seconds() >= threshold_s
+def is_away(threshold_s: float | None = None) -> bool:
+    return idle_seconds() >= (away_after_s() if threshold_s is None
+                              else threshold_s)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,7 +242,7 @@ def pending(cls: str | None = None, disposition: str | None = None) -> list:
 
 
 def batch_ready(cls: str, *, min_items: int = 1,
-                threshold_s: float = AWAY_AFTER_S) -> dict:
+                threshold_s: float | None = None) -> dict:
     """Is it worth waking this seat right now, and why or why not?
 
     Returns the reasoning, not just a boolean, so a queue that is sitting still
@@ -227,6 +250,7 @@ def batch_ready(cls: str, *, min_items: int = 1,
     things are waiting for you to step away" are very different states and they
     look identical from the outside.
     """
+    threshold_s = away_after_s() if threshold_s is None else threshold_s
     now = [i for i in pending(cls) if i["disposition"] == "now_local"]
     away = [i for i in pending(cls) if i["disposition"] == "when_away"]
     if now:
@@ -254,7 +278,7 @@ def batch_ready(cls: str, *, min_items: int = 1,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def drain(cls: str, runner, *, arbiter=None, min_items: int = 1,
-          threshold_s: float = AWAY_AFTER_S, force: bool = False,
+          threshold_s: float | None = None, force: bool = False,
           ttl_s: int = 1800) -> dict:
     """Take ONE lease and run every queued item of `cls` under it.
 
@@ -342,5 +366,5 @@ def stats() -> dict:
         "queued_by_class": by_class,
         "idle_s": round(idle_seconds()),
         "away": is_away(),
-        "away_after_s": AWAY_AFTER_S,
+        "away_after_s": away_after_s(),
     }
