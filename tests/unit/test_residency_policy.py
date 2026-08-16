@@ -452,20 +452,29 @@ def test_an_image_lease_takes_everything_except_the_sidekick():
     assert s["retained_mib"] == 1811
 
 
-def test_the_offload_point_moves_because_the_lease_budget_moved():
-    """20 layers lands at 9802 MiB — fits 9997, does not fit 8186.
+def test_the_offload_point_comes_from_a_sweep_under_r10_conditions():
+    """Measured 2026-08-15 with the sidekick resident, which is the condition
+    R10 created and therefore the one the number has to hold under.
 
-    The cost of keeping Friday awake is that the heavy model pushes more
-    experts to the CPU and runs slower. The plan states it rather than letting
-    it be discovered at load time.
+    18 layers lands the heavy model at 7973 MiB, inside the 8186 MiB lease
+    budget. It is a MEASURED point, not the extrapolated 32 the old two-point
+    linear fit asked for — that guess would have wasted 5.7 GB of card to run
+    slower.
     """
     off = _plan("P1")["seats"]["heavy_hitter"]["offload"]
-    assert off["n_cpu_moe"] > rp.MOE_CPU_LAYERS_DEFAULT
-    assert off["n_cpu_moe_basis"] == "extrapolated", (
-        "an operating point outside the measured sweep must say so — it is a "
-        "starting guess for a sweep, not a result")
+    assert off["n_cpu_moe"] == 18
+    assert off["n_cpu_moe_basis"] == "measured"
 
 
 def test_a_budget_inside_the_measured_sweep_reports_measured():
-    assert rp.n_cpu_moe_for_budget(10_500) == (16, "measured")
-    assert rp.n_cpu_moe_for_budget(9_900) == (20, "measured")
+    assert rp.n_cpu_moe_for_budget(8_186) == (18, "measured")
+    assert rp.n_cpu_moe_for_budget(6_100) == (20, "measured")
+    assert rp.n_cpu_moe_for_budget(2_500) == (28, "measured")
+
+
+def test_a_budget_below_the_whole_sweep_says_it_is_extrapolating():
+    """An operating point outside the measured range is a starting guess for
+    the next sweep, never a result — and the plan has to say which it is."""
+    layers, basis = rp.n_cpu_moe_for_budget(1_000)
+    assert basis == "extrapolated"
+    assert layers > 28

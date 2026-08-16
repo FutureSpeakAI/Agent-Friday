@@ -3,7 +3,7 @@
 Live verification of the six components built today. Server restarted, real turns driven
 through real seats, output captured. Written to be checkable, including where it went wrong.
 
-Branch `phase-a-truth-flow`, unpushed.
+Branch `residency-policy`, unpushed.
 
 ---
 
@@ -144,19 +144,14 @@ rewritten to pin the inverse. A permanently red suite stops being a signal.
 
 The Arbiter no longer evicts the sidekick on either lease kind, and the plan subtracts its
 1 811 MiB from the lease budget (9 997 → 8 186 MiB), which moves the heavy model's offload point.
-
-*Sweep in progress at the time of writing; see the follow-up commit for the measured
-`--n-cpu-moe` operating point and whether Z-Image still generates with 1 811 MiB held back.*
+Measured in §9.
 
 ## 7. Still unverified
 
-- The `--n-cpu-moe` operating point for the 8 186 MiB lease budget. The plan currently asks for
-  32 with basis `extrapolated`, which is a starting guess for a sweep, not a result.
 - Whether Z-Image still generates with the sidekick retained.
-- The workflow panel rendered in a browser. It builds (JSX precompiles cleanly, which is the
-  check that catches the silent-mount failure) and every endpoint behind it is verified above,
-  but nobody has looked at it.
 - The away-drain firing on its own after 15 minutes of real idleness.
+- Whether the sidekick's 22–24 s probes are Ollama evicting and reloading it (§9). The cold-load
+  arithmetic fits, but nothing confirms it.
 
 ---
 
@@ -202,6 +197,7 @@ hold under. Sidekick answers in **0.61 s** with nothing else running:
 |---:|---:|---:|---:|---:|
 | 18 | 7 973 MiB | 11 663 MiB | 10.58 | **1.24 s** |
 | 20 | 6 014 MiB | 9 704 MiB | 11.47 | 24.08 s |
+| 22 | 7 969 MiB | 11 659 MiB | 10.30 | 24.73 s |
 | 28 | 2 462 MiB | 6 152 MiB | 10.29 | 22.69 s |
 
 **Friday stays awake and answering while the heavy model works — R10 holds.** That was the
@@ -213,10 +209,14 @@ Three things this changed my mind about:
    fit through two points. The curve is not linear: 28 puts only 2 462 MiB on the card against an
    8 186 MiB budget, wasting 5.7 GB to run *slower*. The plan labelled it `extrapolated`, which is
    why it was checkable — but it was a guess and the guess was poor.
-2. **Pushing work onto the CPU to save VRAM is what makes Friday unresponsive.** The sidekick
-   answers in 1.24 s at 18 layers and 22–24 s at 20 and 28. More expert layers on the CPU means
-   the CPU is saturated, and the sidekick needs CPU too. The instinct to "free up VRAM for the
-   sidekick" is exactly backwards.
+2. **The sidekick's latency is not explained by `n_cpu_moe`, and my first reading of it was
+   wrong.** I initially wrote this up as CPU contention — more expert layers on the CPU starving
+   the seat meant to stay awake. The 22-layer run killed that: 18 and 22 hold near-identical VRAM
+   (7 973 vs 7 969 MiB) and their sidekick probes differ by 23 seconds. The 22–24 s figures match
+   the e2b's measured **20.97 s cold load** almost exactly, so the likeliest reading is that
+   Ollama evicts the sidekick under memory pressure and each probe pays a reload. R10 stops the
+   *Arbiter* evicting it; it cannot stop the daemon — the same degraded-pin problem as §4.
+   **Unconfirmed**, and the check that would settle it is polling `ollama ps` during a lease.
 3. **Holding the sidekick costs the heavy model a lot of speed** — 27.80 tok/s previously at
    `n_cpu_moe 20` versus 11.47 here. **Caveat, and it matters:** the earlier figure was a median
    of five warm runs on an otherwise idle machine; these are single runs with a browser and
@@ -224,5 +224,11 @@ Three things this changed my mind about:
    the sidekick and some is everything else. **Not cleanly attributed** — do not quote the 2.4×
    as the cost of R10 until it is re-measured on a quiet machine.
 
-Current best operating point on this evidence: **18**, which fits the budget and keeps the
-sidekick fast. It is one run per candidate, so it is a direction, not a settled number.
+Current best operating point on this evidence: **18** — it fits the 8 186 MiB budget and is now
+in `MOE_SWEEP` as a measured point, replacing the extrapolated 32. One run per candidate, so it
+is a direction, not a settled number.
+
+The old sweep — `(16, 10170, 31.34)` and `(20, 9802, 27.80)` — was **dropped rather than merged**.
+It measured total GPU on an idle machine with no sidekick, which is a different quantity against
+a different budget; keeping both bases in one table would produce a number that looks measured
+and is not.

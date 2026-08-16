@@ -61,8 +61,8 @@
         "expert_offload": true,
         "host_mib": 9205,
         "lease_budget_mib": 8186,
-        "n_cpu_moe": 38,
-        "n_cpu_moe_basis": "extrapolated"
+        "n_cpu_moe": 18,
+        "n_cpu_moe_basis": "measured"
       },
       "over_target": false,
       "role": "heavy_hitter",
