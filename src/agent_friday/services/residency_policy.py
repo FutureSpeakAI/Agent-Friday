@@ -62,17 +62,23 @@ MOE_CPU_LAYERS_DEFAULT = 20
 # budget and is the best point on this evidence.
 #
 # What it did NOT establish, despite looking like it might: the sidekick
-# answered in 1.24 s at 18 layers and 22-24 s at 20, 22 and 28. That is not a
-# CPU-contention gradient — 18 and 22 hold near-identical VRAM (7973 vs 7969)
-# and differ by 20 s. The 22-24 s figures match the e2b's measured 20.97 s COLD
-# LOAD almost exactly, so the likeliest reading is that Ollama evicts the
-# sidekick under memory pressure and each probe pays a reload. R10 stops the
-# ARBITER evicting it; it cannot stop the daemon, which is the same degraded-pin
-# problem that leaves the brain unresident (see docs/audits/
-# symphony-live-2026-08-15.md §4). Unconfirmed, and stated as unconfirmed.
+# answered in 1.24 s at 18 layers and 22-25 s at 20, 22, 24 and 28. That is not
+# a CPU-contention gradient — 18 and 22 hold near-identical VRAM (7973 vs 7969)
+# and differ by 23 s. Two things point the same way instead:
+#   * 22-25 s matches the e2b's measured 20.97 s COLD LOAD almost exactly;
+#   * the n_cpu_moe=20 row reads 6014 MiB where its neighbours read ~7900, and
+#     6014 + 1810 (the sidekick) = 7824. The heavy figure is computed as
+#     (used - baseline), so a row that is low by exactly one sidekick is a row
+#     where the sidekick was NOT resident when the GPU was sampled.
+# So the likeliest reading is that Ollama evicts the sidekick under memory
+# pressure and each probe pays a reload. R10 stops the ARBITER evicting it; it
+# cannot stop the daemon — the same degraded-pin problem that leaves the brain
+# unresident (docs/audits/symphony-live-2026-08-15.md §4). Consistent with two
+# independent signals, still not directly confirmed.
 #
 # One run per candidate: a direction, not a settled number.
-MOE_SWEEP = [(18, 7973, 10.58), (20, 6014, 11.47), (28, 2462, 10.29)]
+MOE_SWEEP = [(18, 7973, 10.58), (20, 6014, 11.47), (22, 7969, 10.30),
+             (24, 7895, 9.44), (28, 2462, 10.29)]
 
 
 def n_cpu_moe_for_budget(budget_mib: int | None) -> tuple[int, str]:

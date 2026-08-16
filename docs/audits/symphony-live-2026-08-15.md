@@ -198,6 +198,7 @@ hold under. Sidekick answers in **0.61 s** with nothing else running:
 | 18 | 7 973 MiB | 11 663 MiB | 10.58 | **1.24 s** |
 | 20 | 6 014 MiB | 9 704 MiB | 11.47 | 24.08 s |
 | 22 | 7 969 MiB | 11 659 MiB | 10.30 | 24.73 s |
+| 24 | 7 895 MiB | 11 585 MiB | 9.44 | 23.43 s |
 | 28 | 2 462 MiB | 6 152 MiB | 10.29 | 22.69 s |
 
 **Friday stays awake and answering while the heavy model works — R10 holds.** That was the
@@ -213,10 +214,14 @@ Three things this changed my mind about:
    wrong.** I initially wrote this up as CPU contention — more expert layers on the CPU starving
    the seat meant to stay awake. The 22-layer run killed that: 18 and 22 hold near-identical VRAM
    (7 973 vs 7 969 MiB) and their sidekick probes differ by 23 seconds. The 22–24 s figures match
-   the e2b's measured **20.97 s cold load** almost exactly, so the likeliest reading is that
-   Ollama evicts the sidekick under memory pressure and each probe pays a reload. R10 stops the
-   *Arbiter* evicting it; it cannot stop the daemon — the same degraded-pin problem as §4.
-   **Unconfirmed**, and the check that would settle it is polling `ollama ps` during a lease.
+   the e2b's measured **20.97 s cold load** almost exactly. A second signal points the same way:
+   the `n_cpu_moe 20` row reads 6 014 MiB where its neighbours read ~7 900, and
+   6 014 + 1 810 (the sidekick) = 7 824. The heavy figure is computed as `used − baseline`, so a
+   row low by exactly one sidekick is a row where the sidekick was **not resident** when the GPU
+   was sampled. Likeliest reading: Ollama evicts the sidekick under memory pressure and each
+   probe pays a reload. R10 stops the *Arbiter* evicting it; it cannot stop the daemon — the same
+   degraded-pin problem as §4. Consistent with two independent signals, **still not directly
+   confirmed**; the check is polling `ollama ps` during a lease.
 3. **Holding the sidekick costs the heavy model a lot of speed** — 27.80 tok/s previously at
    `n_cpu_moe 20` versus 11.47 here. **Caveat, and it matters:** the earlier figure was a median
    of five warm runs on an otherwise idle machine; these are single runs with a browser and
