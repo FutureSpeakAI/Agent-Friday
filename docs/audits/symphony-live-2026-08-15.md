@@ -374,3 +374,123 @@ exactly what happened to `heavy_hitter`, and to `preferred_model` before that. *
   image lease was retested).
 - The re-run of the `--n-cpu-moe` sweep. It was queued as away-work and then cancelled rather
   than left armed on the machine unattended; the operating point is still one run per candidate.
+
+
+---
+
+# Round three — free (2026-08-15, later still)
+
+Stephen: *"do it. I want to be free."*
+
+## 16. The answer: yes, Ollama can be uninstalled. One caveat, and it is small.
+
+**Verified by stopping the daemon and running Friday against it.** Not reasoned about — the
+Ollama processes were killed, the port confirmed dead, and the server restarted from cold:
+
+```
+0. is the daemon actually down?          yes: URLError
+
+1. does Friday know what models she has?
+   interactive_brain  gemma4:12b            ctx=131072  pinned
+   sidekick           gemma4:e2b            ctx=32768   pinned
+   sidekick_heavy     gemma4:e4b            ctx=65536   leased
+   heavy_hitter       gemma4:26b            ctx=32768   leased
+   embedder           qwen3-embed:0.6b-q8   ctx=2048    resident
+   owned processes: ['gemma4:12b', 'gemma4:e2b']
+   ollama resident: {}
+   drift          : []
+
+2. a real turn, with tools, on a local seat
+   seat=gemma4:12b   4.5s  'ready'
+
+3. the pause forecast
+   will_pause=False - gemma4:12b is loaded in a process Friday owns,
+                      so it cannot be taken away.
+
+4. can she acquire a NEW model?
+   repo listing: 2 GGUFs, e.g. Qwen3-Embedding-0.6B-Q8_0.gguf
+
+5. conversation memory (embeddings)
+   1316 conversations, available
+```
+
+And the load-bearing one, from a **separate process** with the daemon still stopped — six
+dependent five-call tool chains:
+
+```
+gemma4:12b   3/3 correct, 5 calls each, 11.5-28.1s
+gemma4:e2b   3/3 correct, 5 calls each, ~39s
+```
+
+**The caveat: Ollama's ENGINE BINARY is still what loads `gemma4:e2b` and `e4b`.** Upstream
+llama.cpp cannot read their tensor layout. We run that binary as a process the Arbiter owns, so
+the *daemon* is irrelevant — but the file at
+`AppData/Local/Programs/Ollama/lib/ollama/llama-server.exe` has to survive the uninstall. If it
+does not, those two seats stop loading until upstream gains support or another build is
+installed. **The 12b and the 26b load on upstream llama.cpp and are unaffected**, so the brain
+and the heavy hitter keep working regardless.
+
+Two notes rather than caveats:
+
+- `~/.ollama/models` is now only an **import source**. Every model Friday uses has been copied
+  into `~/.friday/runtime/models/gguf/`, which is what she actually loads. Confirm those five
+  files are there before deleting anything; there is nothing else to preserve.
+- **Embeddings were never an Ollama dependency.** Conversation memory uses sentence-transformers
+  with `all-MiniLM-L6-v2` and always did. The `qwen3-embedding:0.6b` sitting in Ollama was never
+  the live embedder — so an item I earlier listed as "medium effort, D5 re-index hazard" turned
+  out to require no work at all.
+
+## 17. What made it possible
+
+**The channel parser.** gemma4's e-series emits
+`<|tool_call>call:get_weather{city:Oslo}<tool_call|>` rather than OpenAI-shaped tool calls, and
+only Ollama's daemon parsed it. That single gap was why two of four seats could not be owned.
+`services/channel_toolcalls.py` reads it directly — schema-aware, because values contain commas
+and the only reliable boundary is a declared parameter name — and thinking is disabled for tool
+turns, because with it on the model closes its thought channel on an end-of-generation token
+before the call is ever emitted.
+
+**Friday's own store.** `services/model_store.py` keeps a registry whose every fact is read from
+the GGUF header. Two defects only reading the FILE could catch:
+
+- An embedding model is one that declares a **pooling type**. Not one with "embed" in its name,
+  and not — as I first had it — one with a pooling type *and* no chat template.
+  Qwen3-Embedding-0.6B has both, and was classified as a chat model eligible to hold a seat and
+  answer questions. It has no output head.
+- Size lives in **either** `general.size_label` **or** `general.parameter_count`, depending on
+  the publisher. Reading one key left half the catalogue at None, everything sorted as zero, and
+  the planner seated the 2B model as the interactive brain and the 4B as the heavy hitter.
+
+**Direct acquisition.** `services/model_fetch.py` searches Hugging Face, lists a repo's
+quantizations, and downloads with resume and integrity verification. Proven: 609.5 MB in 15.2 s,
+`verified: sha256 against the publisher's checksum`.
+
+The verifier earned its keep by firing on **my own mistake**. I trusted the plain `ETag` from the
+resolve endpoint; it is a git blob id, not a content hash, and it is 64 hex characters so it
+passes a shape check and then fails against a perfectly good file. The authoritative hash is the
+tree API's LFS `oid`. A verifier that rejects valid downloads gets switched off, so being wrong
+there is worse than not checking at all.
+
+## 18. Nothing was broken on the way
+
+The sequencing held. Ollama stayed the source of truth until the direct path was proven on a real
+model, and `residency_catalog` still consults the daemon as a **fallback** for anything not yet
+imported — so a model pulled five minutes ago still appears, and there was never a commit where
+local inference was unavailable.
+
+One gap the sequencing did surface, one layer out: an in-memory seat-to-port map served the
+server process and nothing else, so a probe in a separate process raised "Ollama is not running"
+about a model that was answering real turns two ports away. The Arbiter now publishes
+`runtime/residency/endpoints.json`, health-checked before it is trusted.
+
+## 19. Still not verified
+
+- Whether the sidekick survives a **heavy** lease now that both seats are owned processes. Only
+  the image lease was retested, and that was before the channel parser landed.
+- The `--n-cpu-moe` operating point is still one run per candidate.
+- The 26b and e4b have not been loaded as owned processes since the channel parser landed. The
+  12b and e2b have, repeatedly. Nothing suggests they differ; nothing has proven it either.
+- Ollama is currently **stopped, not uninstalled**. The uninstall itself has not been performed,
+  so "it survives an uninstall" rests on the daemon being down and the files being copied — which
+  is the same thing in every respect testable without deleting his files, and is stated as that
+  rather than as more.
