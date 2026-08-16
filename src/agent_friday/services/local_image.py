@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 import urllib.request
 from pathlib import Path
 
@@ -156,6 +157,37 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
 
     lease = None
     t0 = time.time()
+    # An orb for the IMAGE job, naming the image model.
+    #
+    # There was none. Stephen asked for an image and saw "a gemma4 process orb
+    # instead of the stable diffusion orb" — because the only orb in flight was
+    # the language model's chat turn, correctly badged with the model that was
+    # running the conversation. The picture was being made by z-image-turbo-fp8
+    # with nothing on screen to say so.
+    #
+    # It also carries a description rather than a status word, per the orb work:
+    # "Image: santa clause riding a polar bear…" says what it IS.
+    orb_pid = None
+    try:
+        from agent_friday.core import process_register, process_update
+        orb_pid = "image-%s" % uuid.uuid4().hex[:8]
+        _short = (prompt or "").strip().replace("\n", " ")[:38]
+        process_register(orb_pid, name="Image",
+                         label="Image: %s%s" % (_short,
+                                                "…" if len(prompt or "") > 38 else ""),
+                         category="monitoring", icon="🎨", steps=[],
+                         model=MODEL_ID)
+    except Exception:
+        orb_pid = None
+
+    def _orb(**kw):
+        if orb_pid:
+            try:
+                from agent_friday.core import process_update as _pu
+                _pu(orb_pid, **kw)
+            except Exception:
+                pass
+
     try:
         if arbiter is not None:
             lease = arbiter.grant("image_job", ttl_s=lease_ttl_s)
@@ -180,6 +212,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         if not pid:
             return {"status": "error", "provider": PROVIDER,
                     "reason": "ComfyUI rejected the workflow: %s" % sub}
+        _orb(progress=0.5, label="Image: rendering…")
         images = _await_result(pid)
         out_dir = comfy_root() / "output"
         # The SAME envelope the cloud path returns: a list of dicts with
@@ -233,6 +266,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                 "reason": "%s: %s" % (type(e).__name__, e),
                 "elapsed_s": round(time.time() - t0, 1)}
     finally:
+        _orb(status='completed', progress=1.0)
         # The GPU goes back whatever happened. A lease that is not released is
         # the failure mode that strands the machine with no language seats.
         if lease is not None and lease.get("ok") and arbiter is not None:
