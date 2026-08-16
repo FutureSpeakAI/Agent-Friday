@@ -66,6 +66,54 @@ def get_arbiter():
     return ARBITER
 
 
+def owned_endpoint(model_id: str) -> str | None:
+    """The OpenAI-compatible base URL of a seat WE are serving, or None.
+
+    This is the other half of owning the runtime, and forgetting it made things
+    briefly worse rather than better. Extracting the brain's GGUF moved it off
+    the Ollama daemon into a process the Arbiter runs on a loopback port — at
+    which point dispatch, which still asked the daemon on :11434, could not
+    find it. Measured 2026-08-15: the brain sat resident and unreachable while
+    an ordinary "reply with one word" turn fell through to the cloud and took
+    2m05s, against 16s when the same model was served by the daemon.
+
+    A seat that is resident and unreachable is worse than one that is neither.
+    """
+    arb = ARBITER
+    if arb is None or not model_id:
+        return None
+    entry = getattr(arb.llama, "procs", {}).get(model_id)
+    if not entry:
+        return None
+    _proc, port = entry
+    return "http://127.0.0.1:%d/v1" % port
+
+
+def owned_provider(model_id: str) -> dict | None:
+    """An ad-hoc provider descriptor for a seat we serve ourselves.
+
+    Built at call time from the live port rather than registered in the
+    provider registry: the port is assigned when the process starts and a
+    stale registry entry would point dispatch at nothing. `classification` and
+    the loopback host are what keep `_call_openai`'s call-time local check
+    satisfied, so vault-tier material stays permitted — this is on-device by
+    construction, not by configuration.
+    """
+    base = owned_endpoint(model_id)
+    if not base:
+        return None
+    return {
+        "name": "arbiter-local",
+        "classification": "local",
+        "type": "openai-compatible",
+        "adapter": "openai",
+        "base_url": base,
+        "models": [model_id],
+        "auth": {"type": "none"},
+        "network": {"timeout_s": 600},
+    }
+
+
 def _post(url, body, timeout=600):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),

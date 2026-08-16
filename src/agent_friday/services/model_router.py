@@ -464,9 +464,25 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
     # same tool loop, same governance, still on-device — and the gate above
     # has already ruled on this exact id. ──
     if model:
+        _oai_local = None
+        # The Arbiter is asked FIRST, because it is the only authority that
+        # knows a seat's live port. Once a model's GGUF is extracted and the
+        # Arbiter runs it as an owned process, the Ollama daemon no longer has
+        # it — and dispatch that still asks :11434 finds nothing and falls
+        # through to the cloud. Measured 2026-08-15: the brain resident and
+        # unreachable, an ordinary turn taking 2m05s in the cloud against 16s
+        # locally. A registered descriptor cannot cover this: the port is
+        # assigned at process start, so anything static would be stale.
         try:
-            from agent_friday.services.model_seat_gate import _local_openai_descriptor
-            _oai_local = _local_openai_descriptor(model)
+            from agent_friday.services.residency_arbiter import owned_provider
+            _oai_local = owned_provider(model)
+        except Exception:
+            _oai_local = None
+        try:
+            if _oai_local is None:
+                from agent_friday.services.model_seat_gate import (
+                    _local_openai_descriptor)
+                _oai_local = _local_openai_descriptor(model)
         except Exception:
             _oai_local = None
         if _oai_local is not None:
