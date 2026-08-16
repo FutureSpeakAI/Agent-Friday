@@ -237,3 +237,140 @@ The old sweep — `(16, 10170, 31.34)` and `(20, 9802, 27.80)` — was **dropped
 It measured total GPU on an idle machine with no sidekick, which is a different quantity against
 a different budget; keeping both bases in one table would produce a number that looks measured
 and is not.
+
+
+---
+
+# Round two — owning the runtime (2026-08-15, later)
+
+## 10. The brain is ours now. The small seats are not, for a measured reason.
+
+23 GB of GGUFs extracted from Ollama's blob store in 151 s, against 336 GB free.
+
+```
+load-pinned            interactive_brain  gemma4:12b   6.58s
+load-pinned-degraded   sidekick           gemma4:e2b   23.5s
+owned processes: ['gemma4:12b']
+drift: []
+```
+
+`load-pinned`, not `load-pinned-degraded`. The brain runs at 131 072 in a process the Arbiter
+spawns and kills; Ollama cannot evict it because Ollama does not know it exists. **The ~13 s
+first-message cold load is gone.**
+
+Also found while measuring: llama-server took **11 351 MiB** for that seat at the default batch
+against Ollama's 7 813. The gap is the *compute buffer*, which scales with context and dwarfs KV
+at long windows. Ollama runs `-b 512 -ub 512`; we now do too, and the seat costs **7 607 MiB**.
+That 3.7 GB was the difference between the pinned pair fitting and not.
+
+**Two wrong diagnoses, corrected by reading the GGUF headers:**
+
+```
+gemma4-12b   arch=gemma4   667 tensors   chat template: EMBEDDED
+gemma4-e2b   arch=gemma4  2012 tensors   chat template: NONE
+gemma4-e4b   arch=gemma4  2131 tensors   chat template: NONE
+```
+
+`expected 2012, got 601` was never sharding, and never the projector I then blamed. The e2b file
+declares exactly the 2012 tensors llama.cpp expects; **upstream's gemma4 reader recognises only
+601 of the names in it.** Ollama's engine binary loads the identical file.
+
+Two further defects fell out, both of which would have looked like model incapacity:
+
+- e2b and e4b carry **no embedded chat template**, so llama-server fell back to ChatML — leaking
+  `<|im_end|>` into replies and handing the seat a template with **no tool definitions in it**.
+  Fixed by borrowing the 12b's (same architecture; refuses to borrow across architectures).
+- Even with the right template verified live in `/props`, the e-series emits
+  `<|channel>thought ...` rather than OpenAI-shaped tool calls, and **that parser lives in
+  Ollama's daemon**. Under our own process: `tool_calls: None`. Through the daemon: 5/5 on a
+  five-call chain.
+
+So `gemma4:e2b` and `e4b` stay on the daemon, in `DAEMON_SERVED` with the reason attached. They
+still report as unenforced pins — a seat we *chose* not to own must look the same in the status
+output as one we *failed* to own.
+
+## 11. The fix made things worse before it made them better
+
+```
+before extraction   gemma4:12b, seat=local,        16.2s
+after extraction    claude-sonnet-4-6, seat=cloud, 2m05s
+```
+
+The brain was resident, healthy and **unreachable**: dispatch still asked Ollama on :11434. A
+seat that is resident and unreachable is worse than one that is neither — it holds 7.6 GB and
+serves nothing. `owned_provider()` builds a descriptor from the seat's live port (it must be
+built at call time; the port is assigned at process start). Verified through ordinary dispatch
+with the full 52-tool registry:
+
+```
+seat=gemma4:12b  took=7.59s  result='ready.'   drift: []
+```
+
+## 12. Friday warns before she goes silent
+
+```
+POST /api/work/forecast {"kind":"local_turn"}
+  will_pause=False
+  why: gemma4:12b is loaded in a process Friday owns, so it cannot be taken away.
+
+POST /api/work/forecast {"kind":"image"}
+  will_pause=True  confidence=possible  ~186s
+  why: Generating an image takes the graphics card for about 3.1 minutes. The image
+       engine is not running yet, so this includes starting it - that part varies a lot.
+  stays awake: ['sidekick']
+```
+
+The composer **holds** the message and shows the three options rather than sending and hoping —
+a warning you cannot act on is a notification. "Use the cloud instead" is honoured for one turn
+via `route_mode`, and the chat route refuses that override for vault-forced turns with a log line
+rather than trusting the UI to have hidden the button.
+
+## 13. Image generation with the sidekick held back — it works
+
+```
+before: sidekick=True   GPU=11120 MiB
+status=ok in 83.2s  provider=local-comfyui  local=True
+  friday_local_00003_.png -> /api/creations/friday_local_00003_.png  (1270 KB on disk)
+after:  sidekick=False  GPU=11543 MiB
+```
+
+**Z-Image still generates with 1 811 MiB held back.** R10 survives the image lease.
+
+**But the sidekick did not survive it.** `sidekick=False` afterwards: Ollama evicted it under
+ComfyUI's memory pressure. R10 stops the *Arbiter* taking it; it cannot stop the daemon. Same
+limitation as section 10, and the strongest argument for parsing `<|channel>` ourselves — that
+one change would let both small seats become owned processes and close this properly.
+
+The first attempt returned **HTTP 500 after a successful 108-second generation**. The local path
+returned `files: ["C:\...png"]` where every caller does `files[0].get('filename')`, and the file
+was only written to ComfyUI's output folder, which is not where `/api/creations/<filename>`
+serves from. The picture existed and was unviewable. Both fixed.
+
+## 14. The away-drain, watched firing
+
+```
+threshold via the API: 900 -> 20.0
+2 items parked, activity marked. Hands off.
+  t+ 5s  idle=7   away=False
+  t+10s  idle=14  away=False
+  t+15s  idle=21  away=True
+  DRAIN FIRED: ran=2  why=away for 23s with 2 item(s) queued
+    say ready 1    seat=gemma4:12b   8.66s  'ready.'
+    say ready 2    seat=gemma4:12b   0.9s   'ready'
+```
+
+8.66 s then **0.9 s** — the second item rode in on the first's warm model. That is the batching
+argument in two lines.
+
+Getting here needed a third instance of an old defect: `away_drain_after_s` was missing from
+`DEFAULT_SETTINGS`, so every save deleted it. The API returned success and the value vanished —
+exactly what happened to `heavy_hitter`, and to `preferred_model` before that. **A key not in
+`DEFAULT_SETTINGS` is not "unconfigured", it is actively erased.**
+
+## 15. Still not verified
+
+- The `<|channel>` parser — designed, argued for, not written.
+- Whether the sidekick survives a *heavy* lease now that the brain is an owned process (only the
+  image lease was retested).
+- The re-run of the `--n-cpu-moe` sweep. It was queued as away-work and then cancelled rather
+  than left armed on the machine unattended; the operating point is still one run per candidate.
