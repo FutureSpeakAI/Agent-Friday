@@ -280,9 +280,41 @@ class ModelRouter:
           "deny"   → refuse outright
           "warn"   → refuse and ask the user to enable a local model
         """
-        from agent_friday.routing.ollama_manager import get_manager
-        ollama = get_manager(self.config.get("ollama_url", "http://localhost:11434"))
-        models = ollama.list_models() if ollama.is_available() else []
+        # Friday's OWN seats first, then the Ollama daemon.
+        #
+        # This asked only Ollama, which became a sovereignty defect the moment
+        # the residency layer started serving seats as processes Friday owns:
+        # with the daemon stopped, `list_models()` returns [] on a machine
+        # holding four loaded local models, "no local model available" is
+        # false, and vault-tier content falls through to
+        # `vault_cloud_fallback` — cloud with redaction. Redacted is not local.
+        # A rule that exists so private material never leaves the machine must
+        # not be defeated by asking the wrong component whether a local model
+        # exists.
+        #
+        # Verified 2026-08-16 with the daemon stopped: this route returned
+        # "Vault access required but no local model — cloud with redaction"
+        # while gemma4:12b and gemma4:e2b were resident and answering.
+        models = []
+        try:
+            from agent_friday.services import model_store as _ms
+            for mid, rec in sorted(_ms.available().items()):
+                if rec.get("can_generate"):
+                    models.append({"name": mid,
+                                   "size_gb": (rec.get("size_bytes") or 0)
+                                   / 1024 ** 3})
+        except Exception:
+            pass
+        try:
+            from agent_friday.routing.ollama_manager import get_manager
+            ollama = get_manager(
+                self.config.get("ollama_url", "http://localhost:11434"))
+            have = {m["name"] for m in models}
+            if ollama.is_available():
+                models += [m for m in ollama.list_models()
+                           if m.get("name") not in have]
+        except Exception:
+            pass
 
         if models:
             local_model = self._pick_local_model(models, TaskType.VAULT_ACCESS, self.mode) \
@@ -296,7 +328,8 @@ class ModelRouter:
 
         warning = (
             "This request needs vault access which requires a local model. "
-            "Please install Ollama or switch to local routing mode."
+            "No model is available in Friday's own store and the Ollama "
+            "daemon is not reachable either."
         )
         fallback = self.config.get("vault_cloud_fallback", "redact")
         if fallback in ("deny", "warn"):
