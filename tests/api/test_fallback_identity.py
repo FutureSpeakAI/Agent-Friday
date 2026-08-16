@@ -67,62 +67,42 @@ class TestCloudFallbackNeverGetsLocalId:
         assert cloud_model is None or str(cloud_model).startswith("claude")
 
 
-class TestLastKnownGreenInvalidation:
-    def test_green_but_uninstalled_model_is_not_offered_as_fallback(self, monkeypatch, tmp_path):
-        # gemma4:latest holds green evidence but was deleted from the daemon
-        # — the dynamic catalog knows it's gone; the gate must too.
-        monkeypatch.setattr(model_seat_gate, "is_seat_green",
-                            lambda m, p="local": False)
-        monkeypatch.setattr(model_seat_gate, "get_last_known_green",
-                            lambda p="local": "gemma4:latest")
-        monkeypatch.setattr(model_seat_gate, "_installed_local_models",
-                            lambda: {"gemma4:e2b", "gemma4:e4b"})
-        seat = model_seat_gate.resolve_local_seat("gemma4:e4b")
-        assert seat["model"] is None, (
-            "an uninstalled model must not be seated — it 404s at dispatch")
-        assert seat["fallback"] == "tool_free"
-        assert "no longer installed" in seat["reason"]
-        assert "gemma4:latest" in seat["reason"]
+class TestNothingSubstitutesAnyMore:
+    """The last-known-green fallback is gone, and with it a whole failure mode.
 
-    def test_green_and_installed_fallback_still_works(self, monkeypatch):
-        monkeypatch.setattr(model_seat_gate, "is_seat_green",
-                            lambda m, p="local": False)
-        monkeypatch.setattr(model_seat_gate, "get_last_known_green",
-                            lambda p="local": "gemma4:latest")
-        monkeypatch.setattr(model_seat_gate, "_installed_local_models",
-                            lambda: {"gemma4:latest", "gemma4:e4b"})
-        seat = model_seat_gate.resolve_local_seat("gemma4:e4b")
-        assert seat["model"] == "gemma4:latest"
-        assert seat["fallback"] == "last_known_green:gemma4:latest"
+    What these used to pin: the seat gate could refuse a model and swap in the
+    last one that had scored green, and that substitute had to be checked for
+    still being installed — because on 2026-08-14 it was not, and the chain ran
+    gemma4:e4b -> refused -> fall back to gemma4:latest -> deleted from the
+    daemon -> 404 -> the cloud leg forwarded the LOCAL id to Anthropic -> 404
+    -> heartbeat dead all night.
 
-    def test_daemon_unreachable_keeps_legacy_behavior(self, monkeypatch):
-        # Can't verify inventory → don't invalidate (the local call will fail
-        # with its own honest error if the model is really gone).
-        monkeypatch.setattr(model_seat_gate, "is_seat_green",
-                            lambda m, p="local": False)
-        monkeypatch.setattr(model_seat_gate, "get_last_known_green",
-                            lambda p="local": "gemma4:latest")
-        monkeypatch.setattr(model_seat_gate, "_installed_local_models",
-                            lambda: None)
-        seat = model_seat_gate.resolve_local_seat("gemma4:e4b")
-        assert seat["model"] == "gemma4:latest"
+    The gate is gone (2026-08-15, Stephen's decision). `resolve_local_seat` is
+    a pass-through: the model asked for is the model dispatched. That removes
+    the substitution step entirely, so the "stale green substitute" class of
+    bug cannot recur from this cause at all.
 
+    The cloud-identity law above still stands on its own and is where the real
+    protection lives now — a cloud provider must never receive a local model
+    id, whatever the reason a local leg failed.
+    """
 
-class TestRefusalReasonIsHuman:
-    def test_reason_carries_score_not_a_dict_dump(self, monkeypatch):
-        # Live notification for qwen3.6:35b embedded the ENTIRE status dict
-        # (results array included) in the reason string — unreadable in any
-        # notification surface. The reason must name the score, not the blob.
-        monkeypatch.setattr(model_seat_gate, "is_seat_green",
-                            lambda m, p="local": False)
-        monkeypatch.setattr(model_seat_gate, "get_cached_status",
-                            lambda m, p="local": {"passed": False, "score": "9/10",
-                                                  "results": [{"huge": "blob"}] * 10})
-        monkeypatch.setattr(model_seat_gate, "get_last_known_green",
-                            lambda p="local": "gemma4:latest")
-        monkeypatch.setattr(model_seat_gate, "_installed_local_models",
-                            lambda: {"gemma4:latest"})
-        seat = model_seat_gate.resolve_local_seat("qwen3.6:35b")
-        assert "9/10" in seat["reason"]
-        assert "results" not in seat["reason"]
-        assert len(seat["reason"]) < 300
+    def test_resolve_local_seat_returns_what_it_was_asked_for(self):
+        from agent_friday.services import model_seat_gate as gate
+        for model in ("gemma4:e4b", "brand-new:70b", "never-gated:1b"):
+            seat = gate.resolve_local_seat(model)
+            assert seat["model"] == model, (
+                "%r came back as %r — something is still substituting"
+                % (model, seat["model"]))
+
+    def test_there_is_no_last_known_green_to_fall_back_to(self):
+        from agent_friday.services import model_seat_gate as gate
+        assert gate.get_last_known_green() is None
+
+    def test_a_model_that_never_scored_is_still_dispatched(self):
+        """Stephen: "I absolutely want the user to be able to set any model
+        they wish at any seat they wish, so this is non-negotiable." """
+        from agent_friday.services import model_seat_gate as gate
+        seat = gate.resolve_local_seat("something-nobody-ever-tested:3b")
+        assert seat["model"] == "something-nobody-ever-tested:3b"
+        assert seat.get("seat_ok") is not False
