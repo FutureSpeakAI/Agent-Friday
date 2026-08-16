@@ -1314,6 +1314,12 @@ DEFAULT_SETTINGS = {
     # trimmed core set. Default is resolved per-install in _load_settings:
     # existing installs (~/.friday already present) → True; fresh installs → False.
     "show_all_workspaces": True,
+    # How long the machine must be idle before a parked batch may take the GPU.
+    # Present here because a key missing from DEFAULT_SETTINGS is DELETED on
+    # every save — the same defect that silently dropped `heavy_hitter` from
+    # capability_routing. Without this line the knob accepts a write, reports
+    # success, and reverts, which is worse than not having it.
+    "away_drain_after_s": 900,
     # ── Tool lifecycle hooks (Part B) ──
     # Each built-in PreToolUse/PostToolUse hook can be toggled here. Critical
     # hooks (governance_rings, vault_zt) ignore the toggle — they can't be
