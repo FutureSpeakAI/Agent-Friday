@@ -156,12 +156,12 @@ def find_events(query: str, *, days_back: int = 60, days_ahead: int = 400,
 def _already_there(current: str, addition: str) -> bool:
     """Is `addition` effectively already present in `current`?
 
-    A plain substring test is not enough, and I proved that on Stephen's real
-    calendar: his "Chiropractor" series already held
-    "Kapsner Chiropractic Centers - North Austin, 9012 Research Blvd Ste C-7,
-    Austin, TX 78758, USA". The address I was adding was not a substring of it
-    (the existing one has "- North Austin" in the middle), so it appended and
-    the field ended up holding the same clinic twice.
+    A plain substring test is not enough, and that was proved against a real
+    calendar: the existing location already held a fuller form of the same
+    address — "<Clinic> - <Neighbourhood>, <number> <Street> Ste C-7, <City>,
+    <ST> <ZIP>, USA" — while the address being added lacked the neighbourhood
+    segment in the middle. Not a substring, so it appended, and the field ended
+    up naming the same place twice.
 
     So: compare on the DISTINCTIVE tokens — the street number and street name —
     rather than the whole string. If the existing value already points at the

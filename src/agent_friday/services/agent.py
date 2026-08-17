@@ -1494,7 +1494,7 @@ def _resolve_open_target(target):
     # actually live.
     #
     # This only checked HOME, so `open_path("friday_local_00005_.png")` resolved
-    # to C:/Users/swebs/friday_local_00005_.png, which does not exist, and the
+    # to <HOME>/friday_local_00005_.png, which does not exist, and the
     # tool answered "couldn't find anything matching". The file was in
     # CREATIONS_DIR — Friday had generated it there minutes earlier and named it
     # correctly. She would have failed at this even if she HAD called the tool
