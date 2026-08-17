@@ -106,6 +106,56 @@ def _fail(url: str, reason: str, kind: str) -> FetchResult:
                         "error_kind": kind})
 
 
+def _firecrawl_enabled() -> bool:
+    try:
+        from agent_friday.services import firecrawl
+        return firecrawl.configured()
+    except Exception:
+        return False
+
+
+def _fetch_via_firecrawl(url, key, root, meta_path, text_path,
+                         register_provenance) -> FetchResult | None:
+    """Fetch through Firecrawl. Returns None to mean "fall back to direct".
+
+    None rather than a failure result, because Firecrawl being down is our
+    problem to route around, not a fact about the source. A genuine "this page
+    cannot be read" still has to come from actually trying.
+    """
+    from agent_friday.services import firecrawl
+    out = firecrawl.scrape(url)
+    if not out.get("ok"):
+        _log.info("firecrawl could not fetch %s (%s) — trying direct",
+                  url, out.get("error"))
+        return None
+    text = out.get("markdown") or ""
+    truncated = len(text) > MAX_EXTRACT_CHARS
+    if truncated:
+        text = text[:MAX_EXTRACT_CHARS]
+    rec = FetchResult({
+        "ok": True, "id": key, "url": url,
+        "final_url": out.get("final_url") or url,
+        "redirect_chain": [], "title": out.get("title") or "",
+        "http_status": out.get("status") or 200,
+        "content_type": "text/markdown",
+        "fetched_at": time.time(), "chars": len(text), "truncated": truncated,
+        "provenance": "fetched-by-friday-research", "via": "firecrawl",
+        "from_cache": False,
+    })
+    spans = _spans(text)
+    rec["spans"] = spans
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        text_path.write_text(text, encoding="utf-8")
+        meta_path.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+        rec["extracted_path"] = str(text_path)
+    except Exception as e:
+        rec["cache_error"] = str(e)
+    if register_provenance:
+        _register_spans(rec, spans)
+    return rec
+
+
 def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
           register_provenance: bool = True) -> FetchResult:
     """Fetch one URL safely. Returns a FetchResult / SourceRecord.
@@ -131,9 +181,25 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
         except Exception:
             pass  # unreadable cache entry → re-fetch
 
+    # ── SSRF check FIRST, before any backend is chosen ──
+    # Deliberately ahead of the Firecrawl branch. Routing through Firecrawl
+    # does mean THEIR infrastructure cannot reach this machine's localhost, so
+    # that hole is closed for anything they fetch — but Friday still falls back
+    # to a direct fetch when Firecrawl is unavailable, and a guard that lived
+    # inside the direct branch would be skipped on the way in and applied only
+    # on the way back. Checking here means there is no arrangement of failures
+    # in which a URL reaches the network unchecked.
     ok, why = check_url(url)
     if not ok:
         return _fail(url, why, "refused_unsafe")
+
+    if _firecrawl_enabled():
+        rec = _fetch_via_firecrawl(url, key, root, meta_path, text_path,
+                                   register_provenance)
+        if rec is not None:
+            return rec
+        # Fall through to the direct path — which re-checks nothing, because
+        # the check above already ran and the URL has not changed.
 
     current = url
     seen: list[str] = []
@@ -201,6 +267,7 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
         "chars": len(text),
         "truncated": truncated,
         "provenance": "fetched-by-friday-research",
+        "via": "direct",
         "from_cache": False,
     })
     spans = _spans(text)

@@ -104,10 +104,12 @@ UNVERIFIED = "present_unverified"
 
 _HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
                  "checked_at": 0.0}
+_FC_HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
+                    "checked_at": 0.0}
 
 
 def health_state() -> dict:
-    """The cached three-state health, plus what it was proven against.
+    """Brave's three-state health, plus what it was proven against.
 
     Never makes a network call — search() records the truth as it goes, and
     verify_key() records it deliberately. A status endpoint that reached out
@@ -119,11 +121,27 @@ def health_state() -> dict:
     return dict(_HEALTH)
 
 
+def firecrawl_health() -> dict:
+    """Same three states for Firecrawl. `working` only after a real query
+    returned real results — never on the strength of a stored string."""
+    if not _firecrawl_ready():
+        return {"state": ABSENT, "proven_on": None,
+                "detail": "No Firecrawl key is configured.", "checked_at": 0.0}
+    return dict(_FC_HEALTH)
+
+
 def _record_health(state: str, *, proven_on: str | None = None,
                    detail: str = "") -> None:
     import time as _t
     _HEALTH.update({"state": state, "proven_on": proven_on, "detail": detail,
                     "checked_at": _t.time()})
+
+
+def _record_fc_health(state: str, *, proven_on: str | None = None,
+                      detail: str = "") -> None:
+    import time as _t
+    _FC_HEALTH.update({"state": state, "proven_on": proven_on, "detail": detail,
+                       "checked_at": _t.time()})
 
 
 def verify_key(key: str | None = None) -> dict:
@@ -245,7 +263,34 @@ def key_status() -> dict:
 
 
 def active_backend() -> str:
+    """The backend that will be TRIED first.
+
+    Chain: firecrawl -> brave -> duckduckgo-scrape. Firecrawl leads because it
+    is the only one of the three that is not a scrape and that also returns
+    page content; Brave stays in place (demoted, not deleted) in case that
+    subscription gets sorted; the DDG scrape is last resort and is the one that
+    has already broken once.
+
+    "Tried first" is not "working" — see health_state().
+    """
+    try:
+        from agent_friday.services import firecrawl
+        if firecrawl.configured():
+            return "firecrawl"
+    except Exception:
+        pass
     return "brave" if brave_key() else "duckduckgo-scrape"
+
+
+def _firecrawl_search(query: str, count: int) -> dict:
+    from agent_friday.services import firecrawl
+    out = firecrawl.search(query, count)
+    if not out["ok"]:
+        return {"status": SearchStatus.BACKEND_BROKEN, "detail": out["error"]}
+    res = [{"title": r["title"], "url": r["url"], "snippet": r["snippet"]}
+           for r in out["results"]]
+    return {"status": SearchStatus.OK if res else SearchStatus.EMPTY,
+            "results": res, "detail": ""}
 
 
 def _brave(query: str, count: int) -> dict:
@@ -349,39 +394,66 @@ def search(query: str, count: int = 10) -> dict:
     if not q:
         return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
                 "backend": "none", "detail": "empty query"}
-    backend = active_backend()
-    try:
-        out = _brave(q, count) if backend == "brave" else _duckduckgo(q, count)
-    except Exception as e:
-        out = {"status": SearchStatus.BACKEND_BROKEN,
-               "detail": f"{type(e).__name__}: {e}"}
-    # Every real search is also evidence about the key. Recording it here means
-    # the health state cannot drift away from what is actually happening —
-    # a key that starts failing mid-day shows up without anyone re-verifying.
-    if backend == "brave":
+    # The chain, in order, skipping backends that are not configured. Each
+    # attempt records what it learned, so health cannot drift from reality and
+    # the caller is always told which backend ACTUALLY answered — a result
+    # labelled with the backend we hoped for would be its own small lie.
+    runners = [("firecrawl", _firecrawl_search)] if _firecrawl_ready() else []
+    if brave_key():
+        runners.append(("brave", _brave))
+    runners.append(("duckduckgo-scrape", _duckduckgo))
+
+    tried: list[str] = []
+    last: dict = {}
+    for name, fn in runners:
+        try:
+            out = fn(q, count)
+        except Exception as e:
+            out = {"status": SearchStatus.BACKEND_BROKEN,
+                   "detail": f"{type(e).__name__}: {e}"}
+        _note_backend_health(name, out)
         if out.get("status") == SearchStatus.OK:
+            out.setdefault("results", [])
+            out["query"] = q
+            out["backend"] = name
+            if tried:
+                out["detail"] = (f"{', '.join(tried)} failed; {name} answered. "
+                                 + (out.get("detail") or "")).strip()
+            return out
+        tried.append(f"{name} ({out.get('detail') or out.get('status')})")
+        last = out
+    last.setdefault("results", [])
+    last["query"] = q
+    last["backend"] = runners[-1][0] if runners else "none"
+    last["detail"] = "; ".join(tried)
+    return last
+
+
+def _firecrawl_ready() -> bool:
+    try:
+        from agent_friday.services import firecrawl
+        return firecrawl.configured()
+    except Exception:
+        return False
+
+
+def _note_backend_health(name: str, out: dict) -> None:
+    """Every real search is evidence about a key, whether anyone asked or not."""
+    st = out.get("status")
+    if name == "brave":
+        if st == SearchStatus.OK:
             _record_health(WORKING, proven_on="/res/v1/web/search",
                            detail="a live search returned results")
-        elif out.get("status") == SearchStatus.BACKEND_BROKEN:
+        elif st == SearchStatus.BACKEND_BROKEN:
             _record_health(PRESENT_FAILING, proven_on=None,
                            detail=str(out.get("detail"))[:160])
-    # A keyed Brave that fails should not silently strand research; fall back
-    # to the scrape, but say which backend actually answered.
-    if out.get("status") == SearchStatus.BACKEND_BROKEN and backend == "brave":
-        try:
-            alt = _duckduckgo(q, count)
-            if alt.get("status") == SearchStatus.OK:
-                alt["backend"] = "duckduckgo-scrape"
-                alt["query"] = q
-                alt["detail"] = f"Brave failed ({out.get('detail')}); used the fallback"
-                alt.setdefault("results", [])
-                return alt
-        except Exception:
-            pass
-    out.setdefault("results", [])
-    out["query"] = q
-    out["backend"] = backend
-    return out
+    elif name == "firecrawl":
+        if st == SearchStatus.OK:
+            _record_fc_health(WORKING, proven_on="/v1/search",
+                              detail="a live search returned results")
+        elif st == SearchStatus.BACKEND_BROKEN:
+            _record_fc_health(PRESENT_FAILING, proven_on=None,
+                              detail=str(out.get("detail"))[:160])
 
 
 def canary(force: bool = False) -> dict:

@@ -138,12 +138,24 @@ def api_search_backend():
     A paid key that went into the wrong store would otherwise be silently
     ignored, with search staying on the scrape and nothing saying why.
     """
-    from agent_friday.services import web_search
+    from agent_friday.services import firecrawl, web_search
     out = web_search.key_status()
     out["canary"] = web_search.canary()
+    # The chain, in the order it is actually tried, each with its own state.
+    out["chain"] = [
+        {"backend": "firecrawl", "role": "primary",
+         "health": web_search.firecrawl_health()},
+        {"backend": "brave", "role": "fallback",
+         "health": web_search.health_state()},
+        {"backend": "duckduckgo-scrape", "role": "last resort",
+         "health": {"state": "scrape",
+                    "detail": "no key; fragile, and has already broken once"}},
+    ]
+    out["active"] = web_search.active_backend()
     if request.args.get("verify") == "1":
-        # Live entitlement check — costs two Brave requests, so opt-in.
-        out["verify"] = web_search.verify_key()
+        # Live entitlement checks — these spend real requests, so opt-in.
+        out["verify"] = {"brave": web_search.verify_key(),
+                         "firecrawl": firecrawl.verify()}
     return jsonify(out)
 
 
