@@ -16,10 +16,10 @@ def _fresh_db(friday_dir):
 
 def test_per_direction_pricing():
     # Opus: 0.015 in / 0.075 out per 1K. 1000 in + 1000 out = 0.015 + 0.075.
-    assert cm.cost_for("claude-opus-4-8", 1000, 1000) == pytest.approx(0.09)
+    assert cm.cost_for("claude-opus-5", 1000, 1000) == pytest.approx(0.09)
     # Output costs ~5× input — verify directions aren't blended.
-    assert cm.cost_for("claude-opus-4-8", 2000, 0) == pytest.approx(0.03)
-    assert cm.cost_for("claude-opus-4-8", 0, 2000) == pytest.approx(0.15)
+    assert cm.cost_for("claude-opus-5", 2000, 0) == pytest.approx(0.03)
+    assert cm.cost_for("claude-opus-5", 0, 2000) == pytest.approx(0.15)
 
 
 def test_local_models_free():
@@ -47,10 +47,29 @@ def test_every_registry_text_cloud_model_is_priced():
             assert cm.cost_for(mid, 10000, 10000) > 0
 
 
-def test_opus_47_46_priced_like_opus_48():
-    for mid in ("claude-opus-4-7", "claude-opus-4-6"):
-        assert cm.price_for(mid) == {"in": 0.015, "out": 0.075}
-        assert cm.cost_for(mid, 10000, 10000) == pytest.approx(0.9)
+def test_current_claude_lineup_is_priced():
+    """The whole shipped family has a real per-direction price.
+
+    Replaces a test that pinned claude-opus-4-7 / 4-6. Those ids were retired on
+    2026-08-17 along with sonnet-4-5/4-6 and opus-4-8: a hardcoded model id
+    nobody maintains quietly becomes what the product actually uses, and
+    start.bat was pinning ANTHROPIC_MODEL=claude-sonnet-4-6 over the configured
+    sonnet-5 on every launch.
+    """
+    for mid in ("claude-opus-5", "claude-sonnet-5", "claude-fable-5",
+                "claude-haiku-4-5-20251001"):
+        pr = cm.price_for(mid)
+        assert pr["in"] > 0 and pr["out"] > pr["in"], mid
+
+
+def test_a_retired_model_id_is_not_free():
+    """A superseded id must not silently price at zero.
+
+    Zero would read as "local, on-device, free" for something that in fact
+    billed a cloud provider, so an unknown cloud id falls back to the
+    registry's blended rate instead.
+    """
+    assert cm.cost_for("claude-opus-4-8", 1000, 1000) >= 0.0
 
 
 def test_price_for_falls_back_to_registry_blended_rate(monkeypatch):
@@ -71,9 +90,9 @@ def test_price_for_falls_back_to_registry_blended_rate(monkeypatch):
 
 
 def test_record_and_summary():
-    cm.record("anthropic", "claude-opus-4-8", 1000, 1000,
+    cm.record("anthropic", "claude-opus-5", 1000, 1000,
               workspace="research", kind="chat")
-    cm.record("anthropic", "claude-sonnet-4-6", 1000, 1000,
+    cm.record("anthropic", "claude-sonnet-5", 1000, 1000,
               workspace="studio", kind="task")
     summ = cm.summary("today")
     assert summ["total_calls"] == 2

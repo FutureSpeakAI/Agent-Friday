@@ -154,7 +154,7 @@ def friday_health():
     # `active` is CONFIGURATION (a key is present), never health — decision D1.
     # The health verdict comes from _inference below, which proves inference.
     models = [
-        {"name": "Claude Opus 4.8", "active": bool(core.ANTHROPIC_API_KEY)},
+        {"name": "Claude Opus 5", "active": bool(core.ANTHROPIC_API_KEY)},
         {"name": "Gemini",     "active": bool(core.GEMINI_API_KEY)},
     ]
     ring_counts = {0: 0, 1: 0, 2: 0, 3: 0}
@@ -242,8 +242,8 @@ def friday_health():
         "creations_today": creations_today,
         "models": models,
         "agent_name": settings.get("agent_name", "AGENT FRIDAY"),
-        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-4-8"),
-        "subagent_model": settings.get("subagent_model", "claude-sonnet-4-6"),
+        "orchestrator_model": settings.get("orchestrator_model", "claude-opus-5"),
+        "subagent_model": settings.get("subagent_model", "claude-sonnet-5"),
         "creative_model": settings.get("creative_model", "gemini-nano-banana-2"),
         "voice_model": settings.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
         "vault": {

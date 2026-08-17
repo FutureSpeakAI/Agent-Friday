@@ -81,7 +81,7 @@ def _anthropic_models() -> list:
         pass
     # offline-fallback-only (two ids max by design — spec A2)
     return [("claude-sonnet-5", "Claude Sonnet 5", "Frontier default (offline fallback)"),
-            ("claude-opus-4-8", "Claude Opus 4.8", "Deep reasoning (offline fallback)")]
+            ("claude-opus-5", "Claude Opus 5", "Deep reasoning (offline fallback)")]
 
 
 def _creative_engines() -> list:
@@ -434,7 +434,7 @@ def step_model(total: int, provider_id: str, existing_model: str) -> str:
         models = models()
     if not models:
         console.print("  [yellow]No models available for this provider yet.[/yellow]")
-        return existing_model or "claude-opus-4-8"
+        return existing_model or "claude-opus-5"
 
     console.print(f"  [dim]Provider: {provider['name']}[/dim]\n")
     for i, (mid, mname, mdesc) in enumerate(models):
@@ -838,7 +838,7 @@ def main():
         # Step 3: Orchestrator model
         config["orchestrator_model"] = step_model(
             total_steps, config["provider"],
-            config.get("orchestrator_model", "claude-opus-4-8")
+            config.get("orchestrator_model", "claude-opus-5")
         )
 
         # Step 4: Creative engine
@@ -847,7 +847,7 @@ def main():
         )
     else:
         config.setdefault("provider", "anthropic")
-        config.setdefault("orchestrator_model", "claude-opus-4-8")
+        config.setdefault("orchestrator_model", "claude-opus-5")
         config.setdefault("creative_model", "gemini-nano-banana-2")
 
     # Step 5 (always): API keys
@@ -884,7 +884,7 @@ def main():
         config.setdefault("connectors", {})
 
     # Defaults that server expects
-    config.setdefault("subagent_model", "claude-sonnet-4-6")
+    config.setdefault("subagent_model", "claude-sonnet-5")
     config.setdefault("voice_model", "gemini-2.5-flash-native-audio-latest")
     config.setdefault("temperature", 0.7)
     config.setdefault("response_length", "standard")

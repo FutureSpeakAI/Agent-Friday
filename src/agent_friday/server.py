@@ -87,7 +87,7 @@ ROUTE_MODULES = [
     'persona', 'platform', 'projects', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
     'work_plan',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
-    'workspace_studio',
+    'workspace_studio', 'workspace_undo',
 ]
 
 
@@ -612,6 +612,44 @@ if __name__ == '__main__':
                   f"{_hw_cfg.get('stall_threshold_s', 90)}s)")
     except Exception as _hw_err:
         print(f"  Hang watchdog: skipped ({_hw_err})")
+
+    # BOOT INVARIANT (services/boot_guard.py).
+    #
+    # Two consecutive starts that never reached "serving" mean the last change
+    # broke the boot, so the last PROVEN-bootable state of the self-editable
+    # surfaces is restored before trying again. Proven means it actually booted
+    # once — not that a config was flagged good.
+    #
+    # A thread promotes the current state to known-good a few seconds after
+    # app.run() begins accepting, which is the earliest honest moment: the
+    # process is up and serving rather than merely past import.
+    try:
+        from agent_friday.services import boot_guard as _bg
+        if _bg.safe_mode():
+            print("  Boot guard: SAFE MODE — self-modification disabled, "
+                  "nothing will be auto-restored")
+        elif _bg.failing_to_boot():
+            _res = _bg.restore_known_good()
+            print("  Boot guard: %d failed starts — restored last "
+                  "proven-bootable state (%s)"
+                  % (_bg.status().get("consecutive_failed_boots"),
+                     ", ".join(_res.get("restored") or []) or "nothing to restore"))
+        _bg.mark_boot_started()
+
+        def _confirm_boot():
+            import time as _t
+            _t.sleep(20)
+            try:
+                _bg.mark_boot_succeeded()
+                _bg.snapshot_known_good()
+                print("  Boot guard: this state has now booted and is the "
+                      "known-good fallback")
+            except Exception as _e:
+                print(f"  Boot guard: could not record a good boot ({_e})")
+        import threading as _th
+        _th.Thread(target=_confirm_boot, daemon=True).start()
+    except Exception as _bg_err:
+        print(f"  Boot guard: unavailable ({_bg_err})")
 
     try:
         app.run(host=bind_host, port=_port, debug=False, threaded=True,

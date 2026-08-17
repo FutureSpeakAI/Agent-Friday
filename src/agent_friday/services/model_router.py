@@ -123,9 +123,9 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
 
     messages: list of {"role": "user"|"assistant", "content": "..."}
     system: optional system prompt (string)
-    model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-4-6 / claude-opus-4-8)
+    model: override the default model (claude-haiku-4-5-20251001 / claude-sonnet-5 / claude-opus-5)
     temperature: accepted for backward-compat but IGNORED — newer Claude
-        models (Opus 4.8+, Sonnet 4.6+) reject the deprecated param.
+        models (Opus 5+, Sonnet 5+) reject the deprecated param.
     """
     client = get_anthropic_client()
     if client is None:
@@ -148,7 +148,7 @@ def _call_claude(messages, system=None, model=None, max_tokens=16384, temperatur
     if system:
         kwargs["system"] = system
     # NOTE: `temperature` is intentionally NOT forwarded. Newer Claude models
-    # (Opus 4.8+, Sonnet 4.6+) reject the param with a 400 "temperature is
+    # (Opus 5+, Sonnet 5+) reject the param with a 400 "temperature is
     # deprecated for this model". The param is kept in the signature for
     # backward-compat with callers; the model's default sampling is used.
     if temperature is not None:
@@ -930,7 +930,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=4096,
 # (split here during the server decomposition), so the constants it reads must
 # be defined here too — agent.py keeps its own copies for its own use, but a
 # function resolves names against its OWN module globals, not the importer's.
-_TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 4.8 has 1M ctx — only compress at this threshold
+_TRAJ_CHAR_LIMIT = 2_000_000   # ~500K tokens; Opus 5 has 1M ctx — only compress at this threshold
 _TRAJ_KEEP_VERBATIM = 20       # keep last 20 turn-pairs (~40 messages) verbatim
 
 
@@ -941,7 +941,7 @@ def _estimate_chars(messages):
 def _traj_char_limit_for(model=None):
     """Compression threshold in CHARACTERS, model-aware (decision D3).
 
-    `_TRAJ_CHAR_LIMIT` is 2M chars because Opus 4.8 has a 1M-token window — the
+    `_TRAJ_CHAR_LIMIT` is 2M chars because Opus 5 has a 1M-token window — the
     comment on the constant says exactly that, and it was applied to every
     model regardless. On a 4K-window local model the old half had to exceed
     ~500K tokens before compression fired, i.e. never: the request overflowed
@@ -1302,7 +1302,7 @@ def _generate_session_summary(date_str, force=False):
         summary = _generate_text(
             [{"role": "user", "content": prompt}],
             system=system_prompt,
-            model=_load_settings().get('subagent_model') or 'claude-sonnet-4-6',
+            model=_load_settings().get('subagent_model') or 'claude-sonnet-5',
             workspace='chat',
         )
         summary = (summary or "").strip()

@@ -292,14 +292,14 @@ class IntegrityEngine:
             if settings_file.exists():
                 s = json.loads(settings_file.read_text(encoding="utf-8"))
                 return {
-                    "orchestrator": s.get("orchestrator_model", "claude-opus-4-8"),
-                    "subagent": s.get("subagent_model", "claude-sonnet-4-6"),
+                    "orchestrator": s.get("orchestrator_model", "claude-opus-5"),
+                    "subagent": s.get("subagent_model", "claude-sonnet-5"),
                     "creative": s.get("creative_model", "gemini-nano-banana-2"),
                     "voice": s.get("voice_model", "gemini-2.5-flash-native-audio-latest"),
                 }
         except Exception:
             pass
-        return {"orchestrator": "claude-opus-4-8"}
+        return {"orchestrator": "claude-opus-5"}
 
     def _load_epistemic(self) -> dict:
         try:

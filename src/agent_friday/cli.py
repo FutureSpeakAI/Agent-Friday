@@ -292,7 +292,7 @@ def cmd_setup(quick: bool = False):
 # agent_friday.services can't import on a broken install.
 _FALLBACK_ORCHESTRATOR_MODELS = [
     ("claude-sonnet-5", "Claude Sonnet 5", "Frontier default (offline fallback)"),
-    ("claude-opus-4-8", "Claude Opus 4.8", "Deep reasoning (offline fallback)"),
+    ("claude-opus-5", "Claude Opus 5", "Deep reasoning (offline fallback)"),
 ]
 _FALLBACK_CREATIVE_MODELS = [
     ("gemini-nano-banana-2", "Gemini Nano Banana 2", "Image generation (offline fallback)"),
@@ -363,10 +363,8 @@ def cmd_model():
     console.rule("[bold cyan]MODEL SELECTION[/bold cyan]")
 
     console.print("\n  [bold]Orchestrator[/bold] (primary reasoning + tool use)")
-    new_orch = _pick_model(orchestrator_models(), cfg.get("orchestrator_model", "claude-sonnet-5"), "")
 
     console.print("\n  [bold]Subagent[/bold] (background tasks)")
-    new_sub = _pick_model(subagent_models(), cfg.get("subagent_model", "claude-sonnet-4-6"), "")
 
     console.print("\n  [bold]Creative engine[/bold] (images, music, voice)")
     new_creative = _pick_model(creative_models(), cfg.get("creative_model", "gemini-nano-banana-2"), "")

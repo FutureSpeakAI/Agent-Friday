@@ -68,8 +68,7 @@ DEFAULT_CLOUD_MODEL = "claude-sonnet-5"
 CLOUD_MODEL_FALLBACK_CHAIN = (
     "claude-sonnet-5",
     "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-sonnet-4-6",
+    "claude-opus-5",
     "claude-haiku-4-5-20251001",
 )
 
@@ -78,10 +77,7 @@ CLOUD_MODEL_FALLBACK_CHAIN = (
 CLOUD_COST_PER_1K = {
     "claude-sonnet-5": 0.030,
     "claude-fable-5": 0.030,
-    "claude-opus-4-8": 0.075,
-    "claude-opus-4-7": 0.075,
-    "claude-opus-4-6": 0.075,
-    "claude-sonnet-4-6": 0.015,
+    "claude-opus-5": 0.075,
     "claude-haiku-4-5-20251001": 0.001,
 }
 

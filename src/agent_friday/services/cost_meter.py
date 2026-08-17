@@ -38,10 +38,7 @@ DB_PATH = FRIDAY_DIR / "costs.db"
 PRICING = {
     "claude-sonnet-5":            {"in": 0.003, "out": 0.015},
     "claude-fable-5":             {"in": 0.003, "out": 0.015},
-    "claude-opus-4-8":            {"in": 0.015, "out": 0.075},
-    "claude-opus-4-7":            {"in": 0.015, "out": 0.075},
-    "claude-opus-4-6":            {"in": 0.015, "out": 0.075},
-    "claude-sonnet-4-6":          {"in": 0.003, "out": 0.015},
+    "claude-opus-5":            {"in": 0.015, "out": 0.075},
     "claude-haiku-4-5-20251001":  {"in": 0.001, "out": 0.005},
     "gpt-4o":                     {"in": 0.0025, "out": 0.010},
     "gpt-4o-mini":                {"in": 0.00015, "out": 0.0006},

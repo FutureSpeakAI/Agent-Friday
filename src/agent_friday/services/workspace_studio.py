@@ -186,7 +186,27 @@ def _apply_to_doc(doc, patch, label=None):
 
 
 def apply_customization(ws_id, patch, label=None):
-    """Load → snapshot → merge → save. Returns (doc, version)."""
+    """Load → snapshot → merge → save. Returns (doc, version).
+
+    BLAST RADIUS: a workspace or liquid-UI change may not reach model routing,
+    the egress gate, the vault boundary or the safety rules. Those live outside
+    what a UI edit can touch on purpose — a self-edit that quietly widened the
+    vault boundary would be the worst outcome available in this system, and it
+    would be invisible in a diff nobody reads. Refused here, before the patch is
+    sanitized, so the refusal cannot be bypassed by a sanitizer that learns a
+    new key later.
+    """
+    try:
+        from agent_friday.services.boot_guard import check_blast_radius, safe_mode
+        if safe_mode():
+            return load_ws_doc(ws_id), None
+        ok, why = check_blast_radius(patch)
+        if not ok:
+            raise PermissionError(why)
+    except PermissionError:
+        raise
+    except Exception:
+        pass
     doc = load_ws_doc(ws_id)
     ver = _apply_to_doc(doc, patch, label)
     if ver is None:
@@ -206,6 +226,80 @@ def revert_customization(ws_id, version_id):
     doc["customization"] = json.loads(json.dumps(target.get("customization", {})))
     save_ws_doc(ws_id, doc)
     return doc
+
+
+def undo_last(ws_id):
+    """Undo the most recent change — the "roll that back" case.
+
+    The snapshot stack already made this possible and nothing could reach it:
+    `revert_customization` had no route, no tool and no button anywhere in the
+    tree, so a mechanism that worked was unusable. This is the one-step form,
+    and it is what both the spoken undo and the UI control call.
+    """
+    doc = load_ws_doc(ws_id)
+    vers = doc.get("versions") or []
+    if not vers:
+        return None, "there is nothing to undo for this workspace"
+    target = vers[-1]
+    out = revert_customization(ws_id, target["id"])
+    if out is None:
+        return None, "the snapshot for that change could not be found"
+    return out, None
+
+
+def restore_as_of(ws_id, when):
+    """Restore the state the workspace had AT a moment in time.
+
+    "Put my workspace back to how it was this morning" is the request that
+    version ids cannot answer — he will not remember which of six changes broke
+    it. `when` is an ISO timestamp or a datetime; the newest snapshot taken at
+    or before it wins, because that snapshot holds the state as it was BEFORE
+    the change that followed.
+    """
+    if isinstance(when, str):
+        try:
+            when = datetime.fromisoformat(when)
+        except Exception:
+            return None, "could not read %r as a time" % when
+    doc = load_ws_doc(ws_id)
+    vers = doc.get("versions") or []
+    if not vers:
+        return None, "this workspace has no history to restore from"
+    candidates = []
+    for v in vers:
+        try:
+            ts = datetime.fromisoformat(v["ts"])
+        except Exception:
+            continue
+        if ts <= when:
+            candidates.append((ts, v))
+    if not candidates:
+        oldest = vers[0]
+        return None, ("no snapshot exists at or before %s — the oldest is %s"
+                      % (when.isoformat(timespec="minutes"), oldest.get("ts")))
+    candidates.sort(key=lambda t: t[0])
+    target = candidates[-1][1]
+    out = revert_customization(ws_id, target["id"])
+    if out is None:
+        return None, "the chosen snapshot could not be restored"
+    return out, None
+
+
+def history(ws_id):
+    """The audit trail, in his language: what changed, when, how to undo it."""
+    doc = load_ws_doc(ws_id)
+    vers = doc.get("versions") or []
+    out = []
+    for v in reversed(vers):
+        out.append({
+            "version_id": v.get("id"),
+            "when": v.get("ts"),
+            "describes": ("state BEFORE: %s" % (v.get("label") or "a change")),
+            "undo_hint": ("restoring this version undoes '%s' and everything "
+                          "after it" % (v.get("label") or "that change")),
+        })
+    return {"workspace": ws_id, "current": doc.get("customization") or {},
+            "entries": out}
 
 
 def reset_customization(ws_id):

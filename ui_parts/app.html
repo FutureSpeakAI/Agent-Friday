@@ -5532,10 +5532,7 @@ const DRAFT_MODES=[
 // with availability. Nothing here is the source of truth.
 const ORCHESTRATOR_MODELS=[
   {id:'claude-sonnet-5',label:'Claude Sonnet 5',short:'Sonnet 5'},
-  {id:'claude-opus-4-8',label:'Claude Opus 4.8',short:'Opus 4.8'},
-  {id:'claude-opus-4-7',label:'Claude Opus 4.7',short:'Opus 4.7'},
-  {id:'claude-opus-4-6',label:'Claude Opus 4.6',short:'Opus 4.6'},
-  {id:'claude-sonnet-4-6',label:'Claude Sonnet 4.6',short:'Sonnet 4.6'},
+  {id:'claude-opus-5',label:'Claude Opus 5',short:'Opus 5'},
   {id:'claude-fable-5',label:'Claude Fable 5',short:'Fable 5'},
 ];
 const SUBAGENT_MODELS=ORCHESTRATOR_MODELS;
@@ -8762,7 +8759,6 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
-  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');

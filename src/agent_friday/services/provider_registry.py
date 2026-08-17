@@ -59,31 +59,34 @@ DEFAULT_PROVIDERS = [
         "type": "anthropic",
         "base_url": "https://api.anthropic.com",
         "auth": {"type": "env_var", "key": "ANTHROPIC_API_KEY"},
-        "models": ["claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7",
-                   "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5"],
+        # The CURRENT Claude family, 2026-08-17. Superseded ids (opus-4-6/4-7/4-8,
+        # sonnet-4-5/4-6) are gone rather than kept "just in case": a stale
+        # hardcoded model id is the same defect class as the picker's
+        # provider-ordered cap — nobody maintains it, and it quietly becomes
+        # what the product actually uses. `start.bat` was pinning
+        # ANTHROPIC_MODEL=claude-sonnet-4-6, overriding the configured
+        # sonnet-5 on every launch.
+        "models": ["claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+                   "claude-haiku-4-5-20251001"],
         "capabilities": ["tools", "vision"],
         "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
         "cost_per_1k": {
             "claude-sonnet-5": 0.030,
             "claude-fable-5": 0.030,
-            "claude-opus-4-8": 0.075,
-            "claude-opus-4-7": 0.075,
-            "claude-opus-4-6": 0.075,
-            "claude-sonnet-4-6": 0.045,
+            "claude-opus-5": 0.075,
+            "claude-haiku-4-5-20251001": 0.005,
         },
         "model_meta": {
             "claude-sonnet-5": {"label": "Claude Sonnet 5", "short": "Sonnet 5",
-                                 "modalities": ["text", "vision", "tools"]},
-            "claude-opus-4-8": {"label": "Claude Opus 4.8", "short": "Opus 4.8",
-                                 "modalities": ["text", "vision", "tools"]},
-            "claude-opus-4-7": {"label": "Claude Opus 4.7", "short": "Opus 4.7",
-                                 "modalities": ["text", "vision", "tools"]},
-            "claude-opus-4-6": {"label": "Claude Opus 4.6", "short": "Opus 4.6",
-                                 "modalities": ["text", "vision", "tools"]},
-            "claude-sonnet-4-6": {"label": "Claude Sonnet 4.6", "short": "Sonnet 4.6",
-                                   "modalities": ["text", "vision", "tools"]},
-            "claude-fable-5": {"label": "Claude Fable 5", "short": "Fable 5",
                                 "modalities": ["text", "vision", "tools"]},
+            "claude-opus-5": {"label": "Claude Opus 5", "short": "Opus 5",
+                              "modalities": ["text", "vision", "tools"]},
+            # Fable is the one to reach for on writing and spec work.
+            "claude-fable-5": {"label": "Claude Fable 5", "short": "Fable 5",
+                               "modalities": ["text", "vision", "tools"]},
+            "claude-haiku-4-5-20251001": {"label": "Claude Haiku 4.5",
+                                          "short": "Haiku 4.5",
+                                          "modalities": ["text", "vision", "tools"]},
         },
         "enabled": True,
     },
