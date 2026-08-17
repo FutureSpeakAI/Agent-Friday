@@ -363,7 +363,7 @@
                 this.scene.add(group);
                 const labelEl = document.createElement('div');
                 labelEl.className = 'orb-label';
-                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+(isLocal?'🏠 ':'☁️ ')+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
+                const modelSuffix = model ? ' <span class="'+(isLocal?'model-badge-local':'model-badge-cloud')+'">'+''+model.split(':')[0].split('-').slice(-1)[0]+'</span>' : '';
                 labelEl.innerHTML = '<span class="orb-icon">'+(icon||'⚡')+'</span> <span class="orb-text">'+(label||'').slice(0,20)+'</span>'+modelSuffix;
                 this.labelContainer.appendChild(labelEl);
                 this.orbs.set(id, {id,label,category,icon,model:model||null,group,sphere,glow,ring,ringGeo,ringSegs,labelEl,color,isLocal,

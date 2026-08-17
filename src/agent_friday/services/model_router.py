@@ -408,7 +408,13 @@ def _plan_num_ctx(model):
 
 
 def _call_ollama(messages, system=None, model=None, max_tokens=4096,
-                 temperature=None, orb_label=None, orb_icon='🏠',
+                 # An orb's icon should say what the WORK is, not what
+                 # transport carried it. This defaulted to a house, so every
+                 # Ollama-path orb wore one — and the scene appended a second
+                 # house to the label — which is the "little home icon keeps
+                 # appearing above process orbs" Stephen reported. Local is the
+                 # normal case now; marking it marks everything.
+                 temperature=None, orb_label=None, orb_icon='⚡',
                  tools=None, pii_lookup=None, session_ctx=None, max_iters=50):
     """Call a local Ollama model. Returns (text, tool_trace).
 
