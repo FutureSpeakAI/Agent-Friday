@@ -616,7 +616,8 @@ def _survivors(name: str, probe: str, out: str) -> list[str]:
 
 def _notify_probe_failure(leaked: list[dict]) -> None:
     try:
-        from agent_friday.services import notifications_engine
+        # Package root, not services/ — see _report_task_completion.
+        import agent_friday.notifications_engine as notifications_engine
         notifications_engine.push(
             title="Privacy judgment layer disabled",
             body=("Planted private test material survived the egress gate "
