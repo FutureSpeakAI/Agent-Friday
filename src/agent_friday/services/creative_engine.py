@@ -580,7 +580,7 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
                    scene_dna: Optional[dict] = None,
                    project_id: Optional[str] = None,
                    allow_demo: bool = False, license=None,
-                   system: bool = False) -> Dict[str, Any]:
+                   system: bool = False, prompts=None) -> Dict[str, Any]:
     """Generate one or more images from a text prompt via a Gemini image model.
 
     scene_dna: an optional layered Scene DNA (services/scene_dna) — its setting/
@@ -604,6 +604,18 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         allowed, reason = check_content_safety(prompt)
     if not allowed:
         return {"status": "blocked", "reason": reason}
+    # DISTINCT prompts in one batch. Every one is gated individually — a batch
+    # must not be a way to slip a prompt past the check that governs a single
+    # request.
+    opts_prompts = [str(p).strip() for p in (prompts or []) if str(p or "").strip()]
+    for _p in opts_prompts:
+        try:
+            from agent_friday.services.creative_policy import evaluate as _ev
+            _pok, _pwhy = _ev(_p)
+        except Exception:
+            _pok, _pwhy = check_content_safety(_p)
+        if not _pok:
+            return {"status": "blocked", "reason": _pwhy}
     # ── Routed local image generation (D8). ────────────────────────────────
     # When the creative seat names the on-device model, generate here and never
     # reach for a cloud key. Checked BEFORE `is_available()`, which asks whether
@@ -614,8 +626,15 @@ def generate_image(prompt: str, *, model: Optional[str] = None,
         from agent_friday.services import local_image as _local_image
         _requested = model or _configured_image_model()
         if _requested == _local_image.MODEL_ID:
+            # `n` used to stop here. The tool schema advertises it, the cloud
+            # path honours it, and this line dropped it — so "make me three"
+            # produced one, the model called again to make up the shortfall,
+            # and every repeat came back identical because the seed never
+            # varied. Nine files, three pictures, twenty minutes, and a GPU
+            # lease taken and released nine times.
             out = _local_image.generate(prompt, aspect_ratio=aspect_ratio,
-                                        system=system)
+                                        system=system, n=n,
+                                        prompts=opts_prompts)
             out.setdefault("api_model", _local_image.MODEL_ID)
             out.setdefault("prompt", prompt)
             return out
@@ -1147,6 +1166,7 @@ def generate(kind: str, prompt: str, **opts) -> Dict[str, Any]:
             allow_demo=opts.get("allow_demo", False),
             license=opts.get("license"),
             system=opts.get("system", False),
+            prompts=opts.get("prompts"),
         )
     if k in ("video", "vid", "clip", "movie"):
         return generate_video(

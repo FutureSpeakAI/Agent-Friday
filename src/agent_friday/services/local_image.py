@@ -333,10 +333,22 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
 def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
              steps: int = DEFAULT_STEPS, seed: int = 0,
              arbiter=None, lease_ttl_s: int = 900,
-             system: bool = False) -> dict:
+             system: bool = False, n: int = 1, prompts=None) -> dict:
     """Generate one image on-device, under the Arbiter's exclusive image lease.
 
     Returns {status, files, model, provider, elapsed_s, ...}. Never raises.
+
+    `prompts` is a list of DISTINCT prompts rendered in one batch, under ONE
+    lease. `n` repeats a single prompt that many times. Both exist because
+    neither did: `n` was in the tool schema, honoured by the cloud path, and
+    silently dropped here — so a request for three images produced one, the
+    model called again to make up the difference, and every repeat came back
+    byte-identical because the seed never varied. Nine files, three pictures.
+
+    One lease covers the whole batch on purpose. Taking a lease per image meant
+    evicting and reloading the language seats between every render, which is
+    why a three-image request took twenty minutes and looked like the GPU had
+    hung.
 
     `system=True` marks a generation Friday made for her own purposes —
     verification, diagnostics, a smoke test. Those are NOT published to the
@@ -363,6 +375,21 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                           "renders successfully and produces something nobody "
                           "asked for, so it is rejected here rather than "
                           "reported as a success."}
+
+    # The batch, resolved once. Distinct prompts win over a repeat count; an
+    # empty or blank entry is dropped rather than rendering conditioning-free
+    # garbage that looks like a success.
+    if prompts:
+        _queue = [str(p).strip() for p in prompts if str(p or "").strip()]
+    else:
+        try:
+            _n = max(1, min(int(n or 1), 8))
+        except (TypeError, ValueError):
+            _n = 1
+        _queue = [prompt] * _n
+    if not _queue:
+        return {"status": "error", "provider": PROVIDER,
+                "reason": "no usable prompts in the batch"}
 
     width, height = _SIZES.get(aspect_ratio, _SIZES["1:1"])
     if arbiter is None:
@@ -445,47 +472,76 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         if _cancelled():
             raise Cancelled("cancelled while the GPU was being prepared")
 
-        wf = build_workflow(prompt, negative=negative, width=width,
-                            height=height, steps=steps, seed=seed)
-        client_id = uuid.uuid4().hex[:12]
-        sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
-        pid = sub.get("prompt_id")
-        if not pid:
-            return {"status": "error", "provider": PROVIDER,
-                    "reason": "ComfyUI rejected the workflow: %s" % sub}
+        images = []
+        _total = len(_queue)
+        for _idx, _p in enumerate(_queue):
+            if _cancelled():
+                raise Cancelled("cancelled after %d of %d image%s"
+                                % (_idx, _total, "" if _total == 1 else "s"))
+            # A SEED PER IMAGE.
+            #
+            # `seed` defaulted to 0 and was never varied, and diffusion is
+            # deterministic: same prompt + same seed = the same file, byte for
+            # byte. On 2026-08-16 Stephen asked for three distinct images and
+            # got nine files that were three images repeated three times —
+            # md5-identical in groups of three. The model was asking for
+            # variety and the pipeline could not produce any.
+            _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
+            wf = build_workflow(_p, negative=negative, width=width,
+                                height=height, steps=steps, seed=_seed)
+            client_id = uuid.uuid4().hex[:12]
+            sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
+            pid = sub.get("prompt_id")
+            if not pid:
+                return {"status": "error", "provider": PROVIDER,
+                        "reason": "ComfyUI rejected the workflow: %s" % sub}
 
-        # Real progress, from the socket, on its own thread.
-        _state = {"stop": False, "phase": "starting", "step": 0, "steps": steps}
+            # Real progress, from the socket, on its own thread.
+            _state = {"stop": False, "phase": "starting", "step": 0,
+                      "steps": steps}
 
-        def _on_update(step=None, steps=None, phase=None):
-            if step is not None:
-                _state["step"] = step
-            if steps:
-                _state["steps"] = steps
-            if phase:
-                _state["phase"] = phase
-            st, mx = _state["step"], max(1, _state["steps"])
-            # Sampling is the long pole but not the whole job, so it maps onto
-            # the middle of the bar rather than all of it. A bar that hits 100%
-            # and then keeps going is worse than no bar.
-            frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
-                else (0.1 if st == 0 else 0.9)
-            label = "Image: %s" % _state["phase"]
-            if _state["phase"] == "sampling" and mx:
-                label = "Image: sampling, step %d of %d" % (st, mx)
-            _orb(progress=round(min(frac, 0.97), 3), label=label,
-                 step={"type": "phase", "name": _state["phase"],
-                       "step": st, "steps": mx, "ts": time.time()})
+            def _on_update(step=None, steps=None, phase=None, _i=_idx):
+                if step is not None:
+                    _state["step"] = step
+                if steps:
+                    _state["steps"] = steps
+                if phase:
+                    _state["phase"] = phase
+                st, mx = _state["step"], max(1, _state["steps"])
+                # Sampling is the long pole but not the whole job, so it maps
+                # onto the middle of the bar rather than all of it. A bar that
+                # hits 100% and then keeps going is worse than no bar. Across a
+                # BATCH the per-image bar is scaled into its own slice, so three
+                # images fill the bar once rather than three times.
+                frac = 0.15 + 0.7 * (st / mx) if _state["phase"] == "sampling" \
+                    else (0.1 if st == 0 else 0.9)
+                frac = (_i + min(frac, 0.99)) / _total
+                # A bar that goes BACKWARDS reads as a restart. Measured on the
+                # first live run: sampling finished at 85%, then ComfyUI's
+                # per-node progress reset `value` to 0 for the decode node and
+                # the bar fell to 10% just before the image appeared. Progress
+                # only ever moves forward within a job.
+                frac = max(frac, _state.get("floor", 0.0))
+                _state["floor"] = frac
+                label = "Image: %s" % _state["phase"]
+                if _state["phase"] == "sampling" and mx:
+                    label = "Image: sampling, step %d of %d" % (st, mx)
+                if _total > 1:
+                    label += " (%d of %d)" % (_i + 1, _total)
+                _orb(progress=round(min(frac, 0.97), 3), label=label,
+                     step={"type": "phase", "name": _state["phase"],
+                           "step": st, "steps": mx, "image": _i + 1,
+                           "images": _total, "ts": time.time()})
 
-        _watcher = threading.Thread(
-            target=_watch_progress,
-            args=(pid, client_id, _on_update, lambda: _state["stop"]),
-            daemon=True)
-        _watcher.start()
-        try:
-            images = _await_result(pid, cancelled=_cancelled)
-        finally:
-            _state["stop"] = True
+            _watcher = threading.Thread(
+                target=_watch_progress,
+                args=(pid, client_id, _on_update, lambda: _state["stop"]),
+                daemon=True)
+            _watcher.start()
+            try:
+                images.extend(_await_result(pid, cancelled=_cancelled))
+            finally:
+                _state["stop"] = True
         out_dir = comfy_root() / "output"
         # The SAME envelope the cloud path returns: a list of dicts with
         # filename/path/url, not bare path strings.
@@ -539,11 +595,14 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         try:
             _man = CREATIONS_DIR / "creations-manifest.jsonl"
             with open(_man, "a", encoding="utf-8") as _mf:
-                for _f in files:
+                for _i, _f in enumerate(files):
                     _mf.write(json.dumps({
                         "filename": _f.get("filename"),
                         "path": _f.get("path"),
-                        "prompt": prompt,
+                        # The prompt THIS file came from, not the batch's
+                        # first one — otherwise a three-prompt batch records
+                        # the same prompt three times and the manifest lies.
+                        "prompt": _queue[_i] if _i < len(_queue) else prompt,
                         "model": MODEL_ID,
                         "width": width, "height": height, "steps": steps,
                         "created_at": time.time(),
