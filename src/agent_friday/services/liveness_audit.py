@@ -335,6 +335,62 @@ def _probe_silent_work():
     return out
 
 
+def _probe_displays():
+    """A monitor Windows has dropped, and VRAM headroom for the desktop.
+
+    2026-08-17: Stephen's second monitor disappeared from Windows while the
+    panel kept showing a stale frame, and he found out by waving his mouse at a
+    dead screen. Nothing in Friday noticed. The adapter was sitting at
+    `Status: Error` in Device Manager the whole time, which is exactly the shape
+    this module exists for — a component reporting present while producing
+    nothing.
+
+    The second half is the condition that precedes it: free VRAM below what the
+    desktop needs. The arbiter budgets against a floor measured ONCE at boot
+    (542 MiB on this machine, against a documented ~1 GB compositor cost) and
+    nothing counts monitors or indirect adapters. So the card can be planned
+    full while Windows still needs room to draw.
+    """
+    out = []
+    try:
+        from agent_friday.services import hardware_profile as hp
+        disp = hp.detect_displays()
+        head = hp.vram_headroom()
+    except Exception as e:
+        return [_result("display state", tier="hardware", status=EMPTY,
+                        detail="probe failed: %s" % e)]
+    bad = [a for a in (disp.get("adapters") or [])
+           if str(a.get("status") or "").lower() not in ("ok", "")]
+    for a in bad:
+        out.append(_result(
+            "display adapter: %s" % (a.get("name") or "?"),
+            tier="hardware", status=ORPHANED, ran=True, produced=False,
+            consumed=False, consumer="the Windows desktop",
+            detail="status %s — Windows has dropped this output. The panel may "
+                   "still show a stale frame. Re-enumerate it (unplug/replug, "
+                   "or Device Manager disable/enable); a graphics-driver reset "
+                   "will not help an indirect adapter."
+                   % a.get("status")))
+    if not head.get("ok") and head.get("total_mib"):
+        out.append(_result(
+            "VRAM headroom for the desktop", tier="hardware", status=EMPTY,
+            ran=True, produced=False, consumed=True,
+            consumer="the Windows compositor and any indirect display adapter",
+            detail="%d MiB free against a %d MiB display reserve — short by "
+                   "%d MiB. This is the condition that precedes a display "
+                   "driver failure."
+                   % (head.get("free_mib", 0), head.get("display_reserve_mib", 0),
+                      head.get("shortfall_mib", 0))))
+    if not out:
+        out.append(_result(
+            "displays", tier="hardware", status=OK, ran=True, produced=True,
+            consumed=True,
+            detail="%d monitor(s), %d MiB free against a %d MiB reserve"
+                   % (disp.get("count", 0), head.get("free_mib", 0),
+                      head.get("display_reserve_mib", 0))))
+    return out
+
+
 def _probe_seat_drift():
     """Seats the PLAN calls resident against what is measurably serving.
 
@@ -397,6 +453,10 @@ def audit() -> dict:
             findings.append(_probe_file_tier(label, path, consumer))
         except Exception:
             pass
+    try:
+        findings += _probe_displays()
+    except Exception as e:
+        _log.warning("display probe failed: %s", e)
     try:
         findings += _probe_silent_work()
     except Exception as e:

@@ -1250,6 +1250,21 @@ DEFAULT_AGENT_PERSONALITY = (
 )
 
 DEFAULT_SETTINGS = {
+    # NOTE for anyone adding a setting: _load_settings_raw() WHITELISTS against
+    # this dict —
+    #     merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
+    # — so a key that is not declared here is written to settings.json
+    # successfully and then silently discarded on every read. The write reports
+    # success; the setting does nothing. Both switches below were added to
+    # settings.json and read back as False for exactly this reason, which meant
+    # two kill switches existed that could never be turned on.
+    "judgment_gate": {                    # deep-research.md §5 — the privacy
+        "enabled": False,                 # judgment layer. Default OFF; the
+        "model": "gemma4:e2b",            # layer is additive and removable.
+    },
+    "away_drain": {                       # P5 — drains queued heavy work on a
+        "enabled": False,                 # timer. Default OFF: it takes the GPU.
+    },
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
