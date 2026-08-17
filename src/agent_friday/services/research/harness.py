@@ -390,7 +390,7 @@ def synthesize(c: Commission) -> dict | None:
 
     by_id = {f.id: f for f in findings}
     sections = []
-    for sec in (outline.get("sections") or [])[:8]:
+    for sec in _outline_sections(outline, by_id)[:8]:
         ids = [i for i in (sec.get("finding_ids") or []) if i in by_id]
         if not ids:
             continue
@@ -406,6 +406,57 @@ def synthesize(c: Commission) -> dict | None:
                          "finding_ids": ids})
     return {"answer": str(outline.get("answer") or ""), "sections": sections,
             "synthesized_by": seat, "seat_note": seat_note}
+
+
+def _outline_sections(outline: dict, by_id: dict) -> list[dict]:
+    """Normalize whatever the outline model returned into section dicts.
+
+    MEASURED FAILURE 2026-08-17: a run that produced 9 good, fully-verified
+    findings still FAILED, on
+
+        AttributeError: 'str' object has no attribute 'get'
+
+    because the model returned `sections` as a list of heading STRINGS rather
+    than the {heading, finding_ids} objects the prompt asked for. Constrained
+    JSON decoding guarantees valid JSON, not the shape you wanted.
+
+    The irony worth recording: this module already guards exactly this in
+    _results_of() for Firecrawl's response, with a comment about how a shape
+    change would look like "the web returned nothing". The external API got the
+    defensive read and our own model output did not — and small local models
+    are far likelier to wander off a schema than a maintained API is.
+
+    A bare-string section keeps its heading and inherits every finding not yet
+    claimed by a previous section, so the work survives a shape the model got
+    slightly wrong instead of being thrown away at the last step.
+    """
+    raw = outline.get("sections")
+    if isinstance(raw, dict):          # {"Heading": [ids]} is also plausible
+        raw = [{"heading": k, "finding_ids": v} for k, v in raw.items()]
+    if not isinstance(raw, list):
+        raw = []
+    out, claimed = [], set()
+    for sec in raw:
+        if isinstance(sec, dict):
+            ids = sec.get("finding_ids") or sec.get("findings") or []
+            if isinstance(ids, str):
+                ids = [ids]
+            out.append({"heading": str(sec.get("heading") or sec.get("title")
+                                       or "Findings"),
+                        "finding_ids": [str(i) for i in ids]})
+            claimed.update(str(i) for i in ids)
+        elif isinstance(sec, str) and sec.strip():
+            out.append({"heading": sec.strip(), "finding_ids": []})
+    # Any section left without ids takes the unclaimed findings, so a
+    # heading-only outline still renders a cited report rather than nothing.
+    leftovers = [fid for fid in by_id if fid not in claimed]
+    for sec in out:
+        if not sec["finding_ids"] and leftovers:
+            sec["finding_ids"] = leftovers
+            leftovers = []
+    if not out and by_id:
+        out = [{"heading": "Findings", "finding_ids": list(by_id)}]
+    return out
 
 
 def _pick_synthesis_seat(c: Commission, n_findings: int) -> tuple[str, str]:
