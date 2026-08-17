@@ -82,7 +82,7 @@ ROUTE_MODULES = [
     'costs', 'creations', 'creative_pipeline', 'defederation', 'dreaming', 'edition',
     'ext_security', 'federation', 'finance_health', 'futurespeak', 'goals',
     'google', 'google_accounts', 'hooks', 'insights', 'jobs', 'knowledge_graph',
-    'learning', 'messages',
+    'learning', 'liveness', 'messages',
     'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
     'persona', 'platform', 'projects', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
     'work_plan',

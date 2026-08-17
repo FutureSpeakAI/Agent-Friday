@@ -82,8 +82,79 @@ def list_tasks():
                 'started': started,
                 'elapsed': int((ended or now) - started),
                 'process': True,
+                # THE "— waiting for activity —" BUG.
+                #
+                # Raised five times, diagnosed twice, and both diagnoses were
+                # about the wrong thing. The placeholder is not a rendering
+                # question and the emitter was never broken: `process_log`
+                # exists, its docstring literally says "so the notification
+                # detail panel shows activity", orbs carry a `log` AND a
+                # `steps` thread — and this dict, the one the tray actually
+                # renders, simply never copied either of them.
+                #
+                # Measured live during a heartbeat, three entries in the tray,
+                # all `running`, two of them named "Hourly heartbeat":
+                #   task  28541f5d  log: 4 lines ("Asking gemma4:12b (local)…")
+                #   orb   openai-f  log: ABSENT  -> "— waiting for activity —"
+                #   orb   local-c7  log: ABSENT  -> "— waiting for activity —"
+                # He was clicking the orb. It shares a name with the task, so
+                # from outside they are the same row, and the orb was always
+                # empty — which is why it was ALWAYS empty rather than
+                # sometimes.
+                # Orb's own log, else its step thread, else — when the orb is
+                # backed by a real task — that task's log. `get_task` already
+                # follows this link for the detail view; the list never did,
+                # which is why the row he clicks looked dead and the row he
+                # doesn't click had the lines.
+                'log': (list(p.get('log') or [])
+                        or _steps_as_log(p.get('steps'))
+                        or _linked_task_log(p.get('task_id'))),
+                'steps': list(p.get('steps') or []),
+                'linked_task_id': p.get('task_id'),
             })
     return jsonify({"tasks": tasks})
+
+
+def _linked_task_log(linked_tid):
+    """The log of the task an orb represents, when it names one."""
+    if not linked_tid:
+        return []
+    try:
+        t = _task_snapshot(linked_tid)
+        return list((t or {}).get("log") or [])
+    except Exception:
+        return []
+
+
+def _steps_as_log(steps):
+    """Render an orb's step thread as readable log lines.
+
+    A process that reports structured steps but no prose (image generation
+    does exactly this — phase/step/steps) still has plenty to show; it just
+    was not in a shape the panel could read.
+    """
+    out = []
+    for s in (steps or [])[-40:]:
+        if not isinstance(s, dict):
+            out.append(str(s))
+            continue
+        stamp = ""
+        try:
+            stamp = _time.strftime("%H:%M:%S", _time.localtime(s["ts"])) + " "
+        except Exception:
+            pass
+        kind = s.get("type")
+        if kind == "tool":
+            out.append("%s→ tool %s → %s (%sms)" % (
+                stamp, s.get("name"), s.get("status"), s.get("duration_ms")))
+        elif kind == "phase":
+            n, tot = s.get("step"), s.get("steps")
+            out.append("%s%s%s" % (
+                stamp, s.get("name") or "working",
+                (" — step %s of %s" % (n, tot)) if tot else ""))
+        else:
+            out.append("%s%s" % (stamp, s.get("name") or json.dumps(s)[:80]))
+    return out
 
 
 @tasks_bp.route('/api/tasks/<task_id>')
