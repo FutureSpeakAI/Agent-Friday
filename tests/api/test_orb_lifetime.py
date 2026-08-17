@@ -89,11 +89,41 @@ def test_the_record_outlives_the_orb(client):
 # ── failures do not vanish on a timer ────────────────────────────────────────
 
 @pytest.mark.parametrize("status", ["error", "failed", "timeout", "cancelled"])
-def test_a_failure_keeps_orbiting_however_long_ago_it_failed(client, status):
-    _add("p1", status=status, ended_ago=3600)
+def test_a_failure_does_not_vanish_on_the_success_timer(client, status):
+    """The point that still holds: a failure outlives the 30s success timer, so
+    it cannot disappear before he has looked at it."""
+    _add("p1", status=status, ended_ago=120)
     row = _rows(client)["p1"]
     assert row["orb_visible"] is True
     assert row["orb_failed"] is True
+
+
+def test_a_very_old_failure_stops_orbiting_but_is_still_reported(client):
+    """2026-08-16, Stephen: "The error orbs won't go away."
+
+    The previous round made failures persist until dismissed and then shipped
+    nothing that could dismiss one, so persistent became permanent and they
+    accumulated around the avatar. An age cap ends the orbit; the ROW is still
+    returned and still flagged, so nothing is hidden — it has just stopped
+    standing in front of the work in progress.
+    """
+    _add("p1", status="error", ended_ago=7200)
+    row = _rows(client)["p1"]
+    assert row["orb_visible"] is False
+    assert row["orb_failed"] is True          # still reported, still readable
+
+
+def test_failures_cannot_swarm_the_ring(client):
+    """Twenty failed orbits is not twenty times the information."""
+    from agent_friday.routes.tasks import ORB_FAILED_MAX_VISIBLE
+    for i in range(ORB_FAILED_MAX_VISIBLE + 4):
+        _add("p%d" % i, status="error", ended_ago=60 + i)
+    rows = _rows(client)
+    visible = [r for r in rows.values() if r.get("orb_visible")]
+    assert len(visible) == ORB_FAILED_MAX_VISIBLE
+    # The newest survive — the oldest are the ones already seen.
+    assert all(r["orb_failed"] for r in visible)
+    assert len(rows) == ORB_FAILED_MAX_VISIBLE + 4      # all still reported
 
 
 def test_a_failure_leaves_only_when_it_is_dismissed(client):
