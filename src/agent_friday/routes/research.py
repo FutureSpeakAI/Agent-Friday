@@ -141,6 +141,9 @@ def api_search_backend():
     from agent_friday.services import web_search
     out = web_search.key_status()
     out["canary"] = web_search.canary()
+    if request.args.get("verify") == "1":
+        # Live entitlement check — costs two Brave requests, so opt-in.
+        out["verify"] = web_search.verify_key()
     return jsonify(out)
 
 
