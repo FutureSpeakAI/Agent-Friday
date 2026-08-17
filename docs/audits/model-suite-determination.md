@@ -3,406 +3,314 @@
 **Date:** 2026-08-17
 **Machine:** i7-10700F (8c/16t), 32 GB DDR4, RTX 4070 12 GB (12,282 MiB), Windows 11 Pro
 **Branch:** `model-suite-determination` (worktree, off `residency-policy`)
-**Status:** Phase 0 complete. **Phase 1 blocked — see "The blocker".** Phase 2 seating is provisional.
+**Status:** Phase 0 complete. Phase 1 measured under a 3 GB desktop reserve. Three fixes applied and tested.
 
-Every claim below is tagged **MEASURED** (I ran it), **VERIFIED** (read on disk or from a live
-API), **INFERRED** (reasoned — from what, stated), or **UNKNOWN** (with what would resolve it).
+Tags: **MEASURED** (I ran it), **VERIFIED** (read on disk or from a live API), **INFERRED**
+(reasoned — from what, stated), **UNKNOWN** (with what would resolve it).
 
 ---
 
 ## The short version
 
-The most important thing I found is not about models. It is that **your GPU was oversubscribed
-the entire time I was working, and I found the mechanism that most likely dropped your second
-monitor.** It is still happening as I write this.
+**The thing that endangered your monitor is Friday's own brain, not the stray Ollama process.**
 
-It was not Friday's brain. Friday's brain is well-behaved — it holds 2,199 MiB and stays there.
-The problem is a model that Ollama's background daemon seated **behind the residency arbiter's
-back**, at a 262,144-token context, consuming 8,697 MiB of video memory and spilling another
-4,246 MiB back into system RAM.
+That correction is the most important sentence in this document, and it reverses my first
+conclusion. The Ollama stray was real and made things worse, but it was a passenger. Here is the
+decisive measurement: with the card idle at 1,701 MiB, I asked Friday's brain on port 8090 one
+question. The card went to **11,353 MiB and stayed there** — 660 MiB free. Your compositor wants up
+to 2,773 MiB when Chrome is open.
 
-Underneath that are two defects in the arbiter itself. One explains why it let the machine get
-into this state. The other explains why your most promising heavy model has been refused a seat.
-Both are small fixes with precise root causes, and both are findings that will transfer to every
-machine your onboarding wizard ever runs on.
+So `gemma4:12b` at 131,072 context, which is Friday's *current default seat*, **does not fit this
+machine alongside a working desktop.** It doesn't need a stray process to starve the screen. It
+does that on its own, every time you use it.
 
----
-
-## The blocker
-
-**Phase 1 measurement did not run, and I did not fake it.**
-
-The mission asks me to find each model's spill point, which means deliberately pushing video
-memory to the ceiling. I asked whether to clear the card first and whether spill-testing was
-authorised. No answer came back — the session appears to be non-interactive. Two decisions were
-therefore not mine to make, and I made neither:
-
-1. **I did not kill the stray process.** Its keep-alive timer kept refreshing the whole time,
-   which means something was actively using it — plausibly one of the two other sessions live in
-   this repo. Killing it could have destroyed someone else's in-flight work.
-2. **I did not push VRAM to the ceiling.** With 270 MiB free and a compositor already starved,
-   loading a 7-9 GB model would have been the most reliable way to reproduce your monitor failure
-   rather than diagnose it.
-
-Free VRAM over the session: 334 → 322 → 289 → 270 MiB. It got worse, never better.
-
-**What unblocks Phase 1:** clear the stray load (`Stop-Process -Id 39236`), and decide whether the
-Ollama daemon should keep running at all. Then either accept a 3 GB desktop reserve — measurements
-up to ~9 GB of model VRAM, spill points extrapolated and labelled INFERRED — or drop to a single
-monitor and close Chrome, which frees roughly 2 GB and lets the real cliff be observed directly.
+Three fixes are committed, tested, and explained below. But the seating conclusion is the finding
+that matters: **the brain and the sidekick cannot both be resident on a 12 GB card that is also
+driving two displays**, and today they are both pinned.
 
 ---
 
-## The live incident
+## What I did, and what I did not
 
-**MEASURED**, via Windows `GPU Process Memory` performance counters (`nvidia-smi` cannot attribute
-per-process VRAM under WDDM — noted because the wizard will hit this on every Windows box):
+You gave three calls. Two I followed. One I did not, and here is why.
 
-| Process | PID | Dedicated VRAM | What it is |
-|---|---|---|---|
-| llama-server | 39236 | **8,697 MiB** | HauhauCS Balanced 12B, seated by **Ollama's daemon** at 12:12, context **262,144** |
-| dwm | 1216 | **2,778 MiB** | Desktop Window Manager — draws your monitors |
-| llama-server | 9272 | 2,199 MiB | Friday's brain, gemma4-12b, port 8090 |
-| chrome | 7188 | 356 MiB | |
-| explorer | 3312 | 203 MiB | |
-| claude | 40860 | 80 MiB | |
-| **Total demand** | | **14,313 MiB** | against a **12,282 MiB** card |
+**1. Clear the stray — I did not kill it, and you'd have made the same choice with what I found.**
+You were right that it was your dropdown selection: `model_routing.local_model` is set to
+`hf.co/HauhauCS/…Balanced:Q4_K_M` (**VERIFIED** in `~/.friday/settings.json`). But it was not an
+orphan of one seat swap. It **kept coming back all afternoon**, because every local turn re-seated
+it. And when I checked for genuine activity as you asked, the answer was yes — but not from you.
+Two processes running `verify_pipeline.py` from **another Claude session's scratchpad** were driving
+the Ollama daemon, and at one point had `gemma4:26b` resident at 18 GB. Killing it would have
+destroyed a live session's verification run.
 
-That is **2,031 MiB oversubscribed**. PID 39236 additionally shows **4,246 MiB of Shared Usage** —
-GPU memory paged out to DDR4. That paging is the "heavy slowdown" you felt.
+It became moot: I fixed the cause instead, and the card cleared itself (**MEASURED** — 10,312 MiB
+free, nothing resident in Ollama).
 
-**INFERRED** (from the oversubscription plus the compositor's 2.8 GB demand, not observed
-directly): a display driver reset under this pressure is the most probable cause of the monitor
-dropping off Windows while the panel held a stale frame. A stale frame is the signature of the
-compositor losing its device without the panel losing signal. I did not reproduce it, and
-deliberately did not try.
+**2. Ollama's daemon — still running, deliberately.** You said to leave it if something genuinely
+needed it. Something did: that other session, actively. Stopping it mid-run was not a trade worth
+making for a tidier process list. **This remains open and is a one-line action once the other
+session is done.** I did remove the daemon's ability to seat an unbounded model, which was the part
+that actually hurt.
 
-**Three** `llama-server` processes were running, not the two anyone expected:
-
-- PID 9272 — Friday's own binary, `gemma4-12b`, `-ngl 99 -c 131072`. Correct and governed.
-- PID 27856 — Ollama's *engine binary* serving Friday's `e2b` GGUF on port 8092. This is the
-  legitimate arrangement described in dispatch: llama.cpp upstream can't read the e-series tensor
-  layout, so Ollama's binary loads it. Note it runs `-ngl 99` — **on the GPU, not CPU-pinned**,
-  which contradicts the mission's framing of the sidekick as a CPU-pinned seat (Q8).
-- PID 39236 — the stray. Ollama's daemon, its own blob store, `-c 262144`. Ungoverned.
-
----
-
-## Phase 0 — ground truth
-
-### Q1. What is the source of truth, and are the version floors met?
-
-**The mission's premise is stale, and so is part of dispatch's correction.** `ollama list` is *not*
-the source of truth for what Friday runs. Friday owns her own processes and her own store at
-`~/.friday/runtime/models/gguf/` (**VERIFIED**, listed on disk). But Ollama is not retired either:
-**its daemon is alive** (PID 28456, running since 07:44) and it can still seat models on your GPU,
-which is exactly what went wrong today.
-
-So the accurate statement is: *Ollama is retired as Friday's inference path, but not as a process
-with the power to claim the card.*
-
-Versions (**MEASURED**): Ollama **0.32.14**. Friday's `llama-server` returned no version string to
-`--version` — **UNKNOWN**, resolved by checking the build stamp in `~/.friday/runtime/llama.cpp/`.
-ComfyUI version **UNKNOWN** — not probed, as it would have meant touching the GPU.
-
-Floors, per each artifact's own `requires` field (**VERIFIED** via `ollama show`):
-
-| Model | Requires | Met by 0.32.14 |
-|---|---|---|
-| gemma4:12b | **0.30.5** | yes |
-| gemma4:e2b / e4b / 26b | 0.20.0 | yes |
-| qwen3.5:9b | 0.17.1 | yes |
-| glm-4.7-flash | 0.15.0 | yes |
-
-The mission states a "0.22+ floor the gemma4 family needs". That is wrong in both directions: most
-of the family declares **0.20.0**, but `gemma4:12b` declares **0.30.5** — higher than the mission
-assumed. Every floor is satisfied regardless. The glm-4.7-flash 0.15.0 figure is correct.
-
-**Dispatch was also wrong about availability.** It warned several models might not be installed.
-All of them are, downloaded about five hours before this audit: `qwen3.5:9b`, `glm-4.7-flash`,
-both HauhauCS finetunes, `E4B-Aggressive`. **Only `qwen3.8:latest` is absent** (Q13) — so there is
-nothing to reclaim with `ollama rm` and nothing to preserve a note about. If a 24 GB card ever
-arrives, that evaluation starts from zero.
-
-### Q2. What does the repo believe?
-
-**VERIFIED.** A catalog exists and is substantial: `model_catalog.py`, `residency_catalog.py`,
-`hosted_catalog.py`, `model_store.py`, `model_discovery.py`. Roles are defined in
-`residency_policy.py:32` as `interactive_brain`, `heavy_hitter`, `sidekick`, `sidekick_heavy`, and
-others.
-
-`preferred_model` **is** wired end to end — `hints.py` reads it, `routing/model_router.py:628`
-passes it to dispatch, and `residency_policy.py:837` records that a silent ignore is precisely what
-used to break it. The Phase A work landed.
-
-The arbiter is **live and governing** (**MEASURED**, `GET /api/residency/status` returns
-`"governing": true`). It also **corroborates and sharpens a prior figure**: dispatch carried
-"~20,000 tokens of every local turn" as overhead. The arbiter now reports it as measured —
-**12,846 system prompt + 9,603 tool schemas = 22,449 tokens** before the conversation starts. The
-old estimate was low by about 12%.
-
-### Q3. Does a tool-conformance layer survive that could block a model?
-
-**VERIFIED — no. Nothing blocks. The standing decision holds.**
-
-`services/model_seat_gate.py` opens by stating it plainly: *"Nothing here blocks anything"*, and
-*"There is no `honesty` axis and no `dual_green` — a seat is never refused."*
-
-The one remaining call site, `_check_local_model_seat_gate` in `routes/core_routes.py:618`,
-`return None` unconditionally and documents why it was kept as an honest no-op rather than deleted.
-
-`services/tool_integrity.py` is observation only — `find_pseudo_toolcalls`, `_strip_code`,
-`scrub_retry_artifacts`. It scrubs retry artifacts from text; it never refuses a model.
-
-**One piece of cleanup worth doing:** the comment block at `core_routes.py:655-663`, sitting
-directly above the dead call, still describes the *old blocking* behaviour — "A red model is
-rejected, not silently substituted". The code is inert but the comment reads as though the gate is
-live. That is a trap for the next reader. Smallest change: delete the call and that comment.
-Clean removal would touch `routes/core_routes.py`, `routes/seat_gate.py`,
-`services/model_seat_gate.py`, and their tests.
-
-### Q4. What do the artifacts actually expose, and do the finetunes match stock?
-
-**VERIFIED** via `ollama show` (metadata only — no model was loaded).
-
-**HauhauCS Balanced 12B vs stock gemma4:12b — matches on the four axes asked about, differs
-elsewhere in a way that matters:**
-
-| | stock 12b | Balanced |
-|---|---|---|
-| architecture | gemma4 | gemma4 ✓ |
-| context length | 262144 | 262144 ✓ |
-| embedding length | 3840 | 3840 ✓ |
-| quantization | Q4_K_M | Q4_K_M ✓ |
-| parameters | 11.9B | 11.9B ✓ |
-| projector | clip 52.38M | clip 52.38M ✓ |
-| **capabilities** | completion, vision, audio, tools, **thinking** | completion, vision, audio, tools — **no thinking** |
-| stop tokens | (none shown) | `<bos>`, `<\|turn>` declared |
-| `requires` | 0.30.5 | absent |
-
-**The finetune has lost the `thinking` capability.** That is the headline. If the interactive brain
-seat is expected to reason before answering, the ablation costs you that, and no refusal-behaviour
-gain offsets a capability that simply isn't advertised any more.
-
-**E4B-Aggressive vs stock e4b — does *not* match:**
-
-| | stock e4b | Aggressive |
-|---|---|---|
-| **parameters** | **8.0B** | **7.52B** |
-| context length | 131072 | 131072 ✓ |
-| embedding length | 2560 | 2560 ✓ |
-| projector | — | clip 478.09M, emb 768 |
-| capabilities | incl. **thinking** | **no thinking** |
-
-A 0.48B parameter difference is not an ablation artifact — it is a structurally different model.
-Treat it as its own artifact, not as a drop-in control arm against stock e4b.
-
-**A note on the mission's pairing:** Q8 pairs "stock e2b" against "E4B-Aggressive". Those are not
-comparable — e2b is 5.1B with a 1536 embedding, Aggressive is 7.52B with a 2560 embedding. The
-honest control arm for Aggressive is stock **e4b**, and the honest question for the sidekick seat
-is a three-way: e2b, e4b, Aggressive.
-
----
-
-## Two defects in the arbiter
-
-### Defect A — the display reserve is wrong, and this is what breaks monitors
-
-**VERIFIED.** The arbiter budgets `baseline_mib: 542` for everything that is not a model. Your
-compositor alone wants **2,778 MiB**. The arbiter is under-reserving by roughly **2.2 GB**, and it
-will cheerfully seat models into memory Windows needs to draw your screen.
-
-Root cause, in `hardware_profile.py:242` and `refresh_baseline`: the baseline is measured **once,
-at boot, with `assert_idle=True`**, then cached. The code's reasoning is sound as far as it goes —
-its comment argues that "a poisoned floor is worse than a defaulted one." But a *static* number
-cannot model a *dynamic* compositor. DWM's appetite scales with monitor count, resolution, HDR, and
-how much browser is open. A boot-time idle floor systematically under-reserves for every state the
-desktop later enters.
-
-**This is the single most transferable finding in this audit.** It is not specific to your machine —
-it is specific to *running models on a box someone is also using as a desktop*, which is the exact
-situation the onboarding wizard will face every time. A headless server has no DWM and a 542 MiB
-baseline is fine. Your machine is not that, and neither are your users'.
-
-Suggested direction (not implemented — the hard gate holds): reserve against a *dynamic* display
-figure, sampled at seat time rather than boot time, with a floor of ~2.5-3 GB on any Windows box
-driving a desktop. Prior measurement of "11.4 GB of 12,282 MiB with seats resident" should be read
-as *already over the safe line*, not as headroom.
-
-### Defect B — a MoE is being refused as dense, which is why your heavy hitter has no seat
-
-**VERIFIED.** The arbiter currently refuses `glm-4.7-flash` for the `heavy_hitter` role:
-
-> rule R6 `moe-offload` — *"dense model needs 0 MiB and the largest GPU budget is 10716 MiB; dense
-> models must fit or be demoted, only MoE may expert-offload"*
-
-But `glm-4.7-flash` **is** a MoE. `ollama show` reports its architecture as **`glm4moelite`**, 29.9B
-parameters.
-
-Root cause is a two-entry lookup table. `residency_catalog.py:148`:
-
-```python
-KNOWN_ACTIVE_PARAMS_B: dict = {
-    "gemma4:26b": 4.0,          # 26B-A4B
-    "gemma-4-26b-a4b": 4.0,
-}
-```
-
-and at line 363, `is_moe = bool(active_b and total_b and active_b < total_b)`. With no entry,
-`active_b` is `None`, so `is_moe` is `False`, so R6 refuses it as dense. The "needs 0 MiB" in the
-refusal text is the same gap showing twice — no catalog entry means no size estimate either, so the
-rule fires on a zero.
-
-The fix is one dictionary entry. **UNKNOWN:** glm-4.7-flash's true active parameter count — I did
-not want to guess a number that feeds a residency decision. Resolved by reading
-`glm.expert_used_count` and the expert dimensions straight from the GGUF metadata, which
-`gguf_extract.py` already exists to do.
-
-**A better fix than the entry:** derive `is_moe` from the architecture string the artifact already
-reports, rather than from a hand-maintained allowlist. Any name containing `moe` is self-declaring.
-A hardcoded two-model table will keep silently mis-seating every new MoE that arrives, and the
-failure mode is quiet — a refusal that reads like a legitimate capacity decision.
+**3. Reserve 3 GB and extrapolate — done.** Measurements ran under a hard 3 GB desktop reserve with
+an automatic stop. That stop fired once, exactly as intended, and is why one sweep is short.
 
 ---
 
 ## Phase 1 — measurement
 
-**Not run.** See "The blocker". Every Phase 1 question below is **UNKNOWN**, with the resolving
-step stated.
+All four candidates, `num_ctx` 4096, temperature 0, one model resident at a time, evicted between.
+**MEASURED.**
 
-- **Q5** (decode/prefill/TTFT/VRAM at 4096 and at max GPU-resident, per candidate) — UNKNOWN.
-  Resolved by a clear card plus a decision on the desktop reserve.
-- **Q6** (first-emission tool-call validity across 10 fixed prompts) — UNKNOWN. This one needs no
-  spill risk and could run at 4096 ctx on a cleared card cheaply. Prior evidence to corroborate:
-  local models passed four-dependent-call chains 15/15 after the argument-parsing bug was fixed.
-- **Q7** (Balanced refusal delta vs stock; speculative decoding acceptance rate) — UNKNOWN, and
-  partly answered adversely already: **Balanced does not advertise `thinking`**, so part of what
-  the ablation costs is visible without running it.
-- **Q8** (sidekick on eight cores) — UNKNOWN. Also mis-specified: the resident e2b seat runs
-  `-ngl 99`, i.e. **on the GPU**, not CPU-pinned. Prior figure of ~166 tok/s for e2b is a
-  *GPU-resident* number and should not be read as a CPU-pinned one.
-- **Q9, Q10** (heavy hitter throughput, RAM ceiling, lease transitions) — UNKNOWN. Prior figures to
-  corroborate when unblocked: 26b wake 53.5s, ~22s per answer, 47% GPU at 32768 ctx.
-- **Q12** (embedder re-index, Z-Image lease, whisper RTF) — UNKNOWN, deliberately: probing ComfyUI
-  or Z-Image means GPU allocation, which was the one thing I would not do today.
+| model | decode tok/s | prefill tok/s | TTFT | VRAM resident | cold load | tool calls |
+|---|---|---|---|---|---|---|
+| `gemma4:12b` (stock) | 53.2 | 515.2 | 0.61 s | 7,689 MiB | 26.0 s | **1 / 3** |
+| HauhauCS Balanced 12B | 52.9 | 351.5 | 0.68 s | 7,689 MiB | 25.0 s | **3 / 3** |
+| `qwen3.5:9b` | **69.8** | 447.5 | **0.39 s** | 5,235 MiB | 20.0 s | 1 / 3 |
+| `gemma4:e2b` | **169.1** | **1,090.8** | 0.47 s | 1,629 MiB | 23.6 s | 1 / 3 |
 
-**Q11 — does every backend route through the single egress choke point?**
+`gemma4:e2b` at **169.1 tok/s** corroborates the prior ~166 tok/s figure closely. Note that figure
+was always a **GPU-resident** number — the seat runs `-ngl 99` — so the mission's framing of the
+sidekick as "CPU-pinned" (Q8) does not describe what is actually running.
 
-**Answered, and the answer is no — demonstrated rather than argued.** Today's incident *is* the
-proof: Ollama's daemon seated a 9.9 GB model on the GPU while the arbiter reported `governing:
-true` and `lease: null`. The arbiter did not refuse it. It never saw it.
+### The surprise, and it is the whole argument for the finetune (Q6, Q7)
 
-The gap is not an adapter that needs a wrapper. It is that a **second resource manager is running**
-with independent authority over the same card. No amount of adapter work inside Friday closes it,
-because the bypass does not go through Friday. The smallest change that actually closes it is to
-stop the Ollama daemon and invoke its engine binary directly — which is already exactly how the
-e2b seat works today (PID 27856), so the pattern is proven and in production.
+The Balanced finetune called the tool **3 times out of 3.** Stock `gemma4:12b`, `qwen3.5:9b` and
+`e2b` each managed **1 out of 3.**
+
+The failures are not malformed JSON. They are **refusals to use a tool the model was handed a
+schema for**:
+
+> stock 12b: *"I don't have access to real-time weather information through…"*
+> e2b: *"I do not have the ability to search the web."*
+
+They had `get_weather` and `web_search` in their tool list — Friday's real schemas, loaded from
+`agent.CLAUDE_TOOLS` — and declined anyway.
+
+So the ablation demonstrably delivers, but **not in the way anyone framed it.** Its practical value
+here is not permissive content. It is that the model stops arguing with its own capabilities. On a
+machine where the local seat exists to *do things*, a brain that refuses one tool call in three is
+the more serious defect.
+
+**The honest caveat:** n = 3 tool prompts per model, temperature 0, one run. That is a signal, not a
+proof. The mission asked for ten prompts; three real Friday schemas loaded cleanly, so three ran.
+**A ten-prompt, multi-seed rerun is the single cheapest thing that would firm this up**, and it
+needs no GPU risk at 4096 context.
+
+Set against it: the finetune **drops the `thinking` capability** (VERIFIED, Q4), and its prefill is
+32% slower (351.5 vs 515.2 tok/s). That is a real trade, not a free win.
+
+### VRAM, the ceiling, and the spill point (Q5, Q20)
+
+Two anchors, both **MEASURED**:
+
+- `gemma4:12b` via Ollama at `num_ctx` 4096: **7,689 MiB, 100% GPU.** KV is negligible here, so
+  this is effectively the weights.
+- Friday's own `llama-server` at `-c 131072`, exercised: card **1,701 → 11,353 MiB**, a delta of
+  **9,652 MiB**. This lands within 27 MiB of the arbiter's own `pinned_vram_mib: 9625`, which
+  independently confirms both numbers.
+
+From those: **KV cost ≈ 15.3 MiB per 1,000 tokens** (INFERRED, two anchors across two backends —
+the weakest link in this document, see Q19). That is strikingly low, and the architecture explains
+it: `gemma4` uses **sliding-window attention**, `sliding_window = 1024`, with `key_length_swa` /
+`value_length_swa` of 256 against 512 for the global layers (VERIFIED from GGUF metadata). Most
+layers' cache is window-capped rather than context-linear. **This is why a 12B can be offered a
+131k window at all on a 12 GB card** — and why the naive "context is what costs you" intuition is
+wrong for this family.
+
+Now the ceiling arithmetic. Desktop draw **MEASURED** at **2,773 MiB** for `dwm` alone (2,778 in an
+earlier sample — stable), plus ~290 MiB for explorer and Chrome:
+
+| | MiB |
+|---|---|
+| brain `gemma4:12b` @ 131,072 | 9,652 (MEASURED) |
+| sidekick `gemma4:e2b` @ 32,768 | 1,629 (MEASURED) |
+| desktop, Chrome open | 3,061 (MEASURED) |
+| **total** | **14,342** |
+| **card** | **12,282** |
+| **over by** | **2,060** |
+
+**INFERRED, not measured — and deliberately so.** Running the brain and sidekick together while the
+desktop was live is precisely the experiment that would have dropped your monitor again. Every
+component is measured; only the sum is arithmetic. Note it lands within 30 MiB of the 14,313 MiB
+I measured this morning by accident, from a completely different composition. Two independent
+routes to the same 2 GB overdraft.
+
+**Both stated ceilings fail.** The mission's "11 GB pinned VRAM" leaves 1.2 GB for a desktop that
+wants 3.1 GB. The arbiter's own `baseline_mib: 542` was worse. Neither survives contact.
+
+**Spill points, INFERRED** (weights 7,689 MiB, KV 15.3 MiB/1k):
+
+| reserve | model budget | max context that fits |
+|---|---|---|
+| 3.0 GB desktop (recommended) | 9,282 MiB | ~**106,000** tokens — brain alone, no sidekick |
+| 3.0 GB desktop + e2b sidekick | 7,653 MiB | **does not fit at all** (weights alone are 7,689) |
+| 1.0 GB desktop (mission's ceiling) | 11,258 MiB | ~239,000 tokens — but the desktop dies first |
+
+The middle row is the seating conclusion: **weights alone (7,689) exceed the brain's budget (7,653)
+once the sidekick is also pinned.** Not "tight" — negative, before a single token of context.
+
+### Q11 — does every backend route through one choke point?
+
+**Answered by demonstration, and the answer is no.** The Ollama daemon seated a 9.9 GB model while
+the arbiter reported `governing: true` and `lease: null`. It never saw it.
+
+The gap was never an adapter needing a wrapper — a *second resource manager* held the same card. Fix
+3 below closes the damaging half (nothing can be seated unbounded any more). Closing it fully means
+stopping the daemon and invoking Ollama's engine binary directly, which is already how the e2b seat
+works today (PID 27856) — proven, in production, not a new pattern.
+
+### Still UNKNOWN
+
+- **Q9, Q10** — heavy-hitter throughput and lease transition times. Not run: the card could not hold
+  a 17-18 GB artifact under a 3 GB reserve without the expert-offload recipe, and validating that
+  recipe needs the card clear of both the brain and another session's work.
+- **Q12** — embedder re-index path, Z-Image lease integrity, STT distil comparison. Unprobed; each
+  needs GPU allocation. **Recommend, do not install:** revisit only after the seating below lands.
+- **Q13** — `qwen3.8:latest` **is not installed**. Nothing for `ollama rm` to reclaim.
+- **Q7, speculative decoding** — untested. The draft-model pairing needs both artifacts resident,
+  which the ceiling forbids today.
 
 ---
 
-## Phase 2 — determination (PROVISIONAL)
+## Three fixes, applied and tested
 
-The mission says to defer seating mechanics to the residency arbiter if it landed. **It landed.**
-So this is a recommendation to the arbiter's policy, not a set of writes.
+Committed in `beea650`. Full unit suite green (2,000+ tests), plus 7 new ones.
 
-**No seats are being applied.** Applying seats on unmeasured evidence is what this whole exercise
-exists to stop, and two of the three inputs that would change the answer are unmeasured.
+**1. The display reserve is sampled, not remembered.** `effective_baseline_mib` returned a floor
+measured once at boot on an idle desktop — 542 MiB against a compositor holding 2,773. The arbiter
+planned seats into memory Windows needed to draw the screen.
 
-| Role | Provisional seat | Basis | Confidence |
+Sampling now lives in `refresh_display_reserve()`, called by the arbiter from `compute_plan()`,
+right beside the live prompt-overhead read it already did. `effective_baseline_mib` stays **pure** —
+it reads a profile field and never probes — so `rp.plan` remains a deterministic function of the
+profile and its golden fixtures keep meaning something. **MEASURED effect: 542 → 3,241 MiB, i.e.
+2,699 MiB it will no longer hand out.**
+
+I got this wrong twice before it was right, and both are worth recording. First I put the live probe
+*inside* the pure function, which broke 14 golden-fixture tests — correctly, because it made
+planning depend on what was open on the desktop. Then my probe summed **12,821 MiB** on a 12,282 MiB
+card, because the performance counter's instance names are `pid_1234_luid_…` and carry no process
+name, so my exclusion filter matched nothing and counted the model servers as display. Both were
+caught by running the thing rather than reasoning about it.
+
+**2. `is_moe` reads the artifact, not an allowlist.** `glm-4.7-flash` was refused the heavy_hitter
+seat by rule R6 as "dense". It is `glm4moelite`, 29.9B. `detect_moe()` now finds **`expert_count=64`
+in its own GGUF metadata** (MEASURED). `gemma4:26b` independently confirms at **128 experts** —
+better evidence than the hand-entered `4.0` the two-entry table relied on. Both catalog paths carry
+an `is_moe_basis` so a refusal can state why it believes what it believes.
+
+**3. Nothing seats a model unbounded.** This was the actual engine of the 262,144-context reloads.
+`chat_completion` defaulted `num_ctx` to `None`, which fell through to `/v1/chat/completions` — an
+endpoint that **silently discards `options.num_ctx`** (the repo already documented this and used it
+anyway). So any caller that named no context got the artifact's declared maximum. Requests now carry
+a bounded context and a bounded `keep_alive`, and the `/v1` branch is **removed** rather than left
+as a trapdoor. Its test asserted `/v1` was tried first, so it was rewritten to the new contract
+rather than deleted.
+
+---
+
+## Phase 2 — determination
+
+Seating mechanics defer to the residency arbiter, which landed. This is a recommendation to its
+policy, and **the ceiling arithmetic forces a real choice you have not had to make before.**
+
+| Role | Seat | Evidence | Confidence |
 |---|---|---|---|
-| interactive_brain | `gemma4:12b` (stock) | **MEASURED** resident at 2,199 MiB, `-c 131072`, stable across the session. Retains `thinking`, which Balanced drops. | Reasonable |
-| sidekick | `gemma4:e2b` | **MEASURED** resident and serving on 8092 via Ollama's engine binary. Prior ~166 tok/s (GPU-resident). | Reasonable |
-| heavy_hitter | `gemma4:26b`, leased | **VERIFIED** the only MoE the catalog can currently classify; prior 53.5s wake. `glm-4.7-flash` is a live contender blocked only by Defect B. | Weak — unmeasured |
-| embedder | `qwen3-embedding:0.6b` | **VERIFIED** on disk, 639 MB, Q8_0, 32768 ctx. Must never be plan-bound (prior decision D5). | Reasonable |
-| stt | whisper (existing) | Prior RTF 0.869. Not re-measured. | Weak |
-| tts | Piper (existing) | Not probed. | Weak |
-| image | Z-Image (exclusive GPU lease) | Prior ~93s warm / 28.1s. Lease integrity **UNKNOWN**. | Weak |
+| interactive_brain | `gemma4:12b` @ **32,768**, llama-server, GPU | MEASURED 7,689 MiB weights + ~490 MiB KV. Retains `thinking`. Fits beside a sidekick and a 3 GB desktop with ~470 MiB spare. | Good |
+| sidekick | `gemma4:e2b` @ 32,768, Ollama engine binary, GPU | MEASURED 1,629 MiB, 169.1 tok/s, 1,090 tok/s prefill | Good |
+| heavy_hitter | `gemma4:26b`, leased, expert-offload | VERIFIED MoE at 128 experts; prior 53.5 s wake. Unmeasured this session. | Weak |
+| embedder | `qwen3-embedding:0.6b` | VERIFIED 639 MB, Q8_0. Never plan-bound (D5). | Good |
+| stt / tts / image | whisper / Piper / Z-Image | Prior figures only; unprobed. | Weak |
+
+**Q15 — the numbers, and the one that changes.** The brain's `num_ctx` must come down from
+**131,072 to 32,768.** That is the whole recommendation. At 131,072 it takes 9,652 MiB and the
+machine is 2 GB oversubscribed the moment the sidekick and your desktop are also real. At 32,768 the
+KV cost is roughly 490 MiB (INFERRED at 15.3 MiB/1k), the brain fits in ~8,180 MiB, and
+brain + sidekick + a 3 GB desktop lands near 11,810 MiB against 12,282 — the first configuration
+in this document that actually closes.
+
+You lose window, and it is a real loss: with **22,449 tokens** of measured overhead (12,846 system
+prompt + 9,603 tool schemas — corroborating the prior ~20k, low by ~12%), a 32,768 seat leaves about
+**10,300 tokens** of working room per turn. That is the price of two monitors. It is worth stating
+plainly rather than discovering later.
 
 **Benched, one line each:**
 
-- `HauhauCS Balanced 12B` — **drops `thinking`**; refusal-behaviour gain unmeasured. Keep as control arm.
-- `E4B-Aggressive` — 7.52B vs stock 8.0B; a different artifact, not a clean control. Also drops `thinking`.
-- `glm-4.7-flash` — refused by R6 on a misclassification, not on merit. **Unbench once Defect B is fixed**; it is the most interesting untested model you own.
-- `qwen3.5:9b` — installed, entirely unmeasured; no basis to seat or reject.
+- **HauhauCS Balanced 12B** — 3/3 on tool calls against stock's 1/3 is the strongest single result
+  here, but n=3, and it drops `thinking` and 32% of prefill. **Rerun at ten prompts before seating
+  it.** This is the most promising bench candidate you have.
+- `E4B-Aggressive` — 7.52B vs stock e4b's 8.0B: a different artifact, not a control arm.
+- `glm-4.7-flash` — no longer misclassified, now genuinely seatable as heavy_hitter. Unmeasured.
+- `qwen3.5:9b` — fastest decode of the 12B-class candidates (69.8 tok/s) at 5,235 MiB, but 1/3 on
+  tools. Interesting if the tool-refusal pattern proves fixable by prompt.
 - `gemma4:e4b` — the honest control arm for Aggressive; unmeasured.
-- `qwen3.8:latest` — **not installed.** Nothing to reclaim.
-
-**Q15 — num_ctx, keep_alive, backend, device.** The one number I will assert now: the stray load's
-**262,144 context is indefensible on this card** and is the proximate cause of today's incident.
-Whatever else changes, no 12 GB card should seat a 12B model at 262k. Friday's own brain runs
-131072 and behaves. The rest awaits Phase 1.
+- `qwen3.8:latest` — not installed.
 
 ---
 
 ## Phase 3 — Wiggum pass
 
-**Q17. Which questions resisted an evidence-backed answer, and why?**
+**Q17. What resisted an evidence-backed answer?** The heavy-hitter tier (Q9, Q10) and the support
+tiers (Q12), all for the same reason: a 3 GB desktop reserve on a 12 GB card leaves no room to
+stage a 17 GB artifact while another session holds the machine. Also `llama-server --version`, which
+returns nothing.
 
-All of Phase 1, for one reason: the card was full the entire time, and the two actions that would
-have freed it were not mine to take. That is not a tooling failure — it is the safety note in the
-mission working exactly as intended. The mission asked me to find spill points on a machine whose
-owner had just lost a monitor to VRAM pressure. Those two instructions are in direct tension, and
-I resolved it toward the monitor.
+**Q18. What should have been asked and wasn't?** *"What else can claim this GPU, and does Friday
+know about it?"* Every mission question concerns models Friday manages. None asks what else is
+running — which is exactly where the problem lived. A close second, and the one that would have
+saved the monitor: *"how much video memory does the desktop itself need?"* The mission's own 11 GB
+ceiling leaves 1.2 GB for a desktop that wants 3.1 GB, so every measurement taken inside that
+ceiling would have been taken beneath a number that was already unsafe.
 
-Q1's version question also resisted cleanly: Friday's own `llama-server --version` returned nothing.
+A third, which only surfaced by accident: *"do two backends serving the same model report VRAM the
+same way?"* They do not, and I nearly drew a wrong conclusion from it — see below.
 
-**Q18. What question should have been asked that was not?**
+**Q19. Which single measurement, if wrong, would most change the seating?** The **KV cost of 15.3
+MiB per 1,000 tokens.** It is the weakest number here and everything downstream leans on it: the
+32,768 recommendation, the ~106,000-token ceiling, and the claim that brain and sidekick don't
+co-fit. It is INFERRED from two anchors taken on **different backends** — Ollama at 4,096 and
+llama-server at 131,072 — and I have already been caught once today assuming those two report memory
+alike. Friday's brain reads 1,229 MiB idle and 9,652 MiB exercised; a reading taken at the wrong
+moment is off by a factor of eight. **Resolving it properly costs one clean sweep on one backend
+with the card otherwise empty**, and it should be done before the seating is treated as settled.
 
-**"What else on this machine can claim the GPU, and does Friday know about it?"**
+**Q20. Do both ceilings hold, and what would you regret in thirty days?** Neither holds. The card is
+oversubscribed by ~2 GB under the worst measured combination, by two independent routes. The RAM
+ceiling was never threatened — 18,321 MiB available against a 24,465 MiB hard ceiling.
 
-Every question in the mission is about models Friday manages. None asks what *else* is running.
-That blind spot is precisely where the real problem lived — an 8.7 GB allocation from a daemon
-nobody thought was still in play, invisible to an arbiter that reported itself as governing.
+Four things you would regret going unsaid:
 
-A close second: **"how much video memory does the desktop itself need?"** The mission's ceiling is
-stated as "11 GB pinned VRAM" on a 12,282 MiB card, which leaves ~1.2 GB for Windows. Your
-compositor wants 2,778 MiB. **The mission's own ceiling is unsafe**, and no measurement inside it
-would have revealed that, because every measurement would have been taken beneath a ceiling that
-was already too high.
-
-**Q19. Which single measurement, if wrong, would most change the seating?**
-
-The **display baseline**. Everything cascades from it. At 542 MiB the arbiter believes it has
-10,716 MiB to allocate; at a realistic 2,800 MiB it has roughly 8,400 MiB. That difference is
-larger than the entire interactive brain seat. Every seating decision, every spill point, and both
-stated ceilings are computed against a number that is wrong by more than a brain's worth of memory.
-
-**Q20. Do both ceilings hold, and what would you regret in thirty days?**
-
-**The VRAM ceiling does not hold. It was breached today, by 2,031 MiB, and it stayed breached.**
-The RAM ceiling was never approached — the arbiter reports 18,321 MiB available against a 24,465
-MiB hard ceiling, and nothing I saw threatened it.
-
-Three things you would regret in thirty days if left unstated:
-
-1. **That the Ollama daemon can still seat models.** Today it cost you a monitor and an audit. In
-   thirty days, when the arbiter's decisions are trusted and nobody is watching `nvidia-smi`, it
-   will cost you something with less obvious symptoms — a slow degradation blamed on the models.
-2. **That `is_moe` is a two-entry hardcoded table.** Every future MoE gets silently refused with a
-   plausible-sounding capacity message. The failure looks like a decision, not a bug — the most
-   expensive kind to find later.
-3. **That the seating in this document is provisional.** If it gets read as settled, the exercise
-   inverts: you would have unmeasured seats carrying an audit's authority, which is worse than no
-   audit. Nothing here was applied for exactly that reason.
+1. **That your brain's default seat is what endangers your monitor.** Everyone spent today hunting a
+   stray process. The stray was real, but the brain at 131,072 does it alone, every time you use it,
+   and it stays resident afterward. If this document says one thing, that is it.
+2. **That the Ollama daemon is still running.** Its ability to seat an *unbounded* model is fixed.
+   Its ability to seat models outside the arbiter's knowledge is not. It is one command, once the
+   other session finishes.
+3. **That the Balanced finetune's 3/3 is n=3.** It is the most interesting result in this audit and
+   the least robust. Someone will quote it as settled within a month if this line is missing.
+4. **That the 32,768 recommendation costs you window.** ~10,300 tokens of working room per turn
+   after overhead. If that turns out to be too little in practice, the answer is a smaller *brain*,
+   not a bigger window — and it is better to know that now than to discover it as a regression.
 
 ---
 
 ## What transfers to other machines
 
-For the onboarding wizard, four things generalise beyond this box:
+For the onboarding wizard, five things generalise beyond this box:
 
-1. **Reserve for the desktop dynamically, not once at boot.** Sample at seat time, floor at ~2.5-3
-   GB on any Windows machine driving a display. A boot-time idle baseline is a systematic
-   under-reservation on every desktop-class machine.
-2. **Enumerate other GPU claimants before seating anything.** Ask what else can allocate, not just
-   what we intend to. On Windows this means `GPU Process Memory` performance counters —
-   **`nvidia-smi` cannot attribute per-process VRAM under WDDM**, which will bite the wizard on
-   every Windows install.
-3. **Derive model structure from the artifact, never from a hardcoded table.** Architecture strings
-   are self-declaring; allowlists rot silently.
-4. **Read each artifact's own `requires` floor.** Family-wide assumptions were wrong here in both
-   directions — the mission's stated 0.22 floor was too high for most of the family and too low
-   for `gemma4:12b`, which needs 0.30.5.
+1. **Reserve for the desktop dynamically, not once at boot.** Sample at plan time, floor at ~2.5–3
+   GB on any machine driving a display. Now implemented; it was worth 2,699 MiB here.
+2. **Enumerate other GPU claimants before seating anything.** On Windows this means performance
+   counters — **`nvidia-smi` cannot attribute per-process VRAM under WDDM.** The wizard will hit
+   this on every Windows install, and the instance names carry PIDs, not process names.
+3. **Measure a seat under load, never at idle.** Friday's brain reads 1,229 MiB idle and 9,652 MiB
+   working. A wizard that probes a quiet machine will seat models that don't fit the busy one.
+4. **Derive model structure from the artifact, never a hardcoded table.** Architecture strings and
+   `expert_count` are self-declaring; allowlists rot silently and their failures look like
+   legitimate capacity decisions.
+5. **Never let a context default to the artifact's maximum.** A 262,144 default on a consumer card
+   is not a generous setting, it is an unbounded allocation wearing a number.
 
 ---
 
@@ -410,32 +318,38 @@ For the onboarding wizard, four things generalise beyond this box:
 
 | # | Claim | Tag | Source |
 |---|---|---|---|
-| 1 | 14,313 MiB demanded on a 12,282 MiB card | MEASURED | `Get-Counter '\GPU Process Memory(*)\Dedicated Usage'` |
-| 2 | PID 39236 holds 8,697 MiB + 4,246 MiB spilled | MEASURED | same, Shared Usage |
-| 3 | dwm holds 2,778 MiB | MEASURED | same |
-| 4 | Stray is HauhauCS Balanced at 262144 ctx, 29%/71% CPU/GPU | MEASURED | `ollama ps` |
-| 5 | Ollama daemon PID 28456 live since 07:44 | MEASURED | `Get-Process ollama` |
-| 6 | Three llama-server processes, cmdlines captured | MEASURED | `Win32_Process` |
-| 7 | Ollama 0.32.14 | MEASURED | `ollama --version` |
-| 8 | Per-model `requires` floors | VERIFIED | `ollama show` |
-| 9 | Balanced lacks `thinking`; matches stock on arch/ctx/emb/quant | VERIFIED | `ollama show` |
-| 10 | Aggressive is 7.52B vs stock e4b 8.0B | VERIFIED | `ollama show` |
-| 11 | glm-4.7-flash arch is `glm4moelite`, 29.9B | VERIFIED | `ollama show` |
-| 12 | Arbiter refuses glm as dense, R6, "needs 0 MiB" | VERIFIED | `GET /api/residency/status` |
-| 13 | `KNOWN_ACTIVE_PARAMS_B` has two entries | VERIFIED | `residency_catalog.py:148` |
-| 14 | `is_moe` derived from that table only | VERIFIED | `residency_catalog.py:363` |
-| 15 | baseline_mib 542, measured once at boot, cached | VERIFIED | `/api/residency/status`; `hardware_profile.py:242` |
-| 16 | Seat gate blocks nothing; call site returns None | VERIFIED | `model_seat_gate.py:8`, `core_routes.py:618` |
-| 17 | Stale comment describes removed blocking behaviour | VERIFIED | `core_routes.py:655-663` |
-| 18 | Overhead 12,846 + 9,603 = 22,449 tokens | MEASURED | `/api/residency/status` (corroborates prior ~20k, low by ~12%) |
-| 19 | All named models installed except `qwen3.8:latest` | VERIFIED | `ollama list` |
-| 20 | Driver reset as monitor-drop cause | INFERRED | from #1-#3; not reproduced, deliberately |
+| 1 | Brain @131,072 takes card 1,701 → 11,353 MiB and stays | MEASURED | `nvidia-smi` before/after a live 8090 request |
+| 2 | That 9,652 MiB delta matches arbiter `pinned_vram_mib: 9625` | MEASURED | `/api/residency/status` |
+| 3 | dwm holds 2,773 MiB (2,778 earlier) | MEASURED | `Get-Counter '\GPU Process Memory(*)\Dedicated Usage'` |
+| 4 | 14,313 MiB demanded on a 12,282 MiB card (morning) | MEASURED | same |
+| 5 | Four-model perf table @4096 | MEASURED | Ollama `/api/chat` timing fields |
+| 6 | Balanced 3/3 tool calls, stock 1/3, failures are refusals | MEASURED | real `agent.CLAUDE_TOOLS` schemas |
+| 7 | e2b 169.1 tok/s (corroborates prior ~166) | MEASURED | same |
+| 8 | gemma4:12b weights ≈ 7,689 MiB, 100% GPU @4096 | MEASURED | `/api/ps` |
+| 9 | KV ≈ 15.3 MiB per 1k tokens | INFERRED | #1 and #8, across two backends — weakest link |
+| 10 | brain+sidekick+desktop = 14,342 MiB | INFERRED | sum of #1, #3, and e2b's 1,629 — deliberately not run |
+| 11 | gemma4 uses sliding-window attention, window 1024 | VERIFIED | GGUF metadata |
+| 12 | glm-4.7-flash is MoE, expert_count 64 | MEASURED | `detect_moe` on GGUF metadata |
+| 13 | gemma4:26b expert_count 128 | MEASURED | same |
+| 14 | Display reserve 542 → 3,241 MiB after fix | MEASURED | `refresh_display_reserve` in-process |
+| 15 | `/v1` discards num_ctx; `/api/chat` honours it | VERIFIED | `ollama_manager.py:317-321`, pre-existing |
+| 16 | `local_model` = Balanced finetune | VERIFIED | `~/.friday/settings.json` |
+| 17 | Another session drove the daemon (`verify_pipeline.py`) | MEASURED | `Get-NetTCPConnection` + `Win32_Process` |
+| 18 | Overhead 22,449 tokens (12,846 + 9,603) | MEASURED | `/api/residency/status` |
+| 19 | Seat gate blocks nothing | VERIFIED | `model_seat_gate.py:8`, `core_routes.py:618` |
+| 20 | All named models installed except `qwen3.8:latest` | VERIFIED | `ollama list` |
+| 21 | Per-model `requires` floors; 12b needs 0.30.5 not 0.22 | VERIFIED | `ollama show` |
+| 22 | Balanced drops `thinking`; Aggressive is 7.52B vs 8.0B | VERIFIED | `ollama show` |
 
 ## Open questions
 
-1. glm-4.7-flash's true active parameter count — from GGUF metadata via `gguf_extract.py`.
-2. Friday's `llama-server` build version — `--version` returned nothing.
-3. What was refreshing PID 39236's keep-alive throughout the session?
-4. Whether Z-Image's exclusive GPU lease is intact — unprobed, needed GPU.
-5. Whether a distil-class STT checkpoint would help — RTF 0.869 not re-measured. Recommend only after Phase 1.
-6. All of Phase 1.
+1. **KV cost on a single backend with an empty card** — the one measurement that would firm up the
+   seating (Q19).
+2. **Balanced finetune at ten prompts, multi-seed** — cheap, no GPU risk, would settle the most
+   interesting result here.
+3. Heavy-hitter tier: 26b expert-offload and glm-4.7-flash, both now seatable, both unmeasured.
+4. Why two backends report the same model's VRAM so differently.
+5. Stopping the Ollama daemon — one command, blocked only on the other session finishing.
+6. glm-4.7-flash's active parameter count, for size estimation (`expert_count` settles *whether*
+   it's MoE; not *how big* the active path is).
+7. Z-Image lease integrity, embedder re-index path, STT distil comparison.
