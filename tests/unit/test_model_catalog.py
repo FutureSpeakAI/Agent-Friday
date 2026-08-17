@@ -43,13 +43,45 @@ def test_orchestrator_spans_providers_not_just_cloud():
     """The whole point: orchestrator/subagent are no longer Claude-only."""
     cat = build_catalog()
     orch_providers = {e["provider"] for e in cat["roles"]["orchestrator"]}
-    # Anthropic, OpenAI, and local Ollama all offer the agent roles.
     assert "anthropic" in orch_providers
     assert "openai" in orch_providers
-    assert "ollama-local" in orch_providers
     # Same pool backs subagent.
     sub_providers = {e["provider"] for e in cat["roles"]["subagent"]}
-    assert {"anthropic", "openai", "ollama-local"} <= sub_providers
+    assert {"anthropic", "openai"} <= sub_providers
+
+
+def test_local_seats_cover_the_agent_roles_when_they_exist(monkeypatch):
+    """Local coverage comes from the seats Friday actually serves.
+
+    It used to come from `ollama-local`'s hardcoded fallback, which named
+    models on a daemon that is stopped — so the picker offered `gemma4:latest`
+    (not installed, not even a real tag) while the real seat answered two ports
+    away. The residency plan is the source now.
+    """
+    import agent_friday.services.model_catalog as mc
+
+    class _Arb:
+        plan = {"seats": {
+            "interactive_brain": {"model_id": "gemma4:12b", "device": "gpu:0",
+                                  "num_ctx": 131072, "status": "pinned"},
+            "heavy_hitter": {"model_id": "gemma4:26b", "device": "gpu:0+cpu",
+                             "num_ctx": 32768, "status": "leased"},
+            # Not language seats — these must NOT reach a model picker.
+            "stt": {"model_id": "faster-whisper", "device": "cpu"},
+            "image": {"model_id": "z-image-turbo-fp8", "device": "gpu:0"},
+        }}
+
+    import agent_friday.services.residency_arbiter as ra
+    monkeypatch.setattr(ra, "get_arbiter", lambda: _Arb())
+    cat = mc.build_catalog()
+    orch = cat["roles"]["orchestrator"]
+    ids = {e["id"] for e in orch}
+    assert {"gemma4:12b", "gemma4:26b"} <= ids
+    assert "faster-whisper" not in ids
+    seats = [e for e in orch if e["provider"] == "arbiter-local"]
+    # Local is local. Every one of these used to render with a cloud badge.
+    assert seats and all(e["local"] and e["classification"] == "local"
+                         for e in seats)
 
 
 def test_recalled_models_absent():
@@ -154,14 +186,31 @@ def test_live_ollama_models_only_merge_into_ollama_provider(monkeypatch):
     assert orch[0]["available"] is True
 
 
-def test_ollama_daemon_down_dims_static_models(monkeypatch):
+def test_a_stopped_ollama_daemon_names_no_models(monkeypatch):
+    """A daemon that is not running has no models, and saying otherwise is
+    invention — this test used to assert the opposite.
+
+    2026-08-16, Stephen: "listing Gemma4 as a cloud model, and as an Ollama
+    model (it is neither)." The Ollama entry came from this static fallback,
+    surviving on a daemon that has been retired; the cloud badge came from the
+    UI testing a `classification` field the API never sent. The provider row
+    still appears so the hint is readable — it just stops naming models it does
+    not have.
+    """
     import agent_friday.services.model_catalog as mc
     monkeypatch.setattr(mc, "_live_ollama_models", lambda _base: None)
     cat = mc.build_catalog()
-    entries = [e for e in cat["roles"]["orchestrator"] if e["provider"] == "ollama-local"]
-    assert entries, "static Ollama fallbacks should stay visible (dimmed) when the daemon is down"
-    assert all(e["available"] is False for e in entries)
-    assert all("Ollama" in (e["hint"] or "") for e in entries)
+    assert [e for e in cat["models"] if e["provider"] == "ollama-local"] == []
+    prov = [p for p in cat["providers"] if p.get("name") == "ollama-local"]
+    assert prov, "the provider itself stays listed so its hint is visible"
+
+
+def test_every_model_states_its_classification():
+    """The UI must never have to infer this again."""
+    cat = build_catalog()
+    for e in cat["models"]:
+        assert e.get("classification") in ("local", "cloud"), e["id"]
+        assert e["classification"] == ("local" if e.get("local") else "cloud")
 
 
 def test_voice_role_excludes_engine_component_models():

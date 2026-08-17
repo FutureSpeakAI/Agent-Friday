@@ -269,9 +269,19 @@ def _model_entries_for(provider: dict, registry) -> list:
             ids = list(live)
             # /api/ps: which of these are loaded in memory right now (spec A1).
             running_names = _live_ollama_running(provider.get("base_url"))
-        elif live is None:    # daemon down → static hints, dimmed
+        elif live is None:
+            # Daemon down → it has NO models, and saying otherwise is invention.
+            #
+            # This used to fall back to the static list, which is how a stopped
+            # daemon kept advertising "gemma4:latest" and "llama3.1:8b" —
+            # neither installed, one not even a real tag. Stephen saw gemma4
+            # listed as an Ollama model while the daemon was retired and the
+            # real seat was answering two ports away. The provider row still
+            # appears with the hint; it just stops naming models it does not
+            # have.
+            ids = []
             available = False
-            hint = "Ollama not running — start Ollama to use local models"
+            hint = "Ollama not running — start Ollama to use its models"
         else:                 # daemon up, nothing installed → static hints, dimmed
             available = False
             hint = "No local models installed — e.g. `ollama pull gemma3:4b`"
@@ -337,6 +347,11 @@ def _model_entries_for(provider: dict, registry) -> list:
             "roles": list(roles),
             "modalities": m.get("modalities") or ["text"],
             "local": is_local,
+            # Stated on every row, because the UI was inferring it and getting
+            # it wrong: app.html tested `provider.classification === 'local'`
+            # against a field the API never sent, so EVERY model — including
+            # on-device ones — rendered with a "cloud" badge.
+            "classification": "local" if is_local else "cloud",
             "available": bool(available),
             "needs_key": needs_key,
             "hint": hint,
@@ -404,6 +419,93 @@ def _voice_engines(registry) -> list:
     ]
 
 
+def _arbiter_seat_entries() -> list:
+    """The local models the residency Arbiter actually serves, as catalog rows.
+
+    These are real processes on real ports, health-checked before they are
+    trusted (runtime/residency/endpoints.json). They are marked `local` because
+    they ARE local — served over loopback by a process Friday owns — and they
+    carry `seat` so the picker can say which chair a model is sitting in.
+
+    Availability is earned here too: a seat in the plan that has no live
+    endpoint is offered but flagged, never silently presented as ready.
+    """
+    try:
+        from agent_friday.services.residency_arbiter import (
+            get_arbiter, owned_endpoint)
+    except Exception:
+        return []
+    seats = {}
+    try:
+        arb = get_arbiter()
+        if arb is not None:
+            seats = (arb.plan or {}).get("seats") or {}
+    except Exception:
+        seats = {}
+    if not seats:
+        # No in-process Arbiter — read the seat map off disk instead of
+        # returning nothing. Suppressing the dead Ollama daemon's invented list
+        # is right, but it must not cost Stephen every local model in the
+        # picker when the Arbiter simply isn't governing THIS process. The
+        # endpoints file is written by the Arbiter that is, and health-checked
+        # before it is trusted.
+        try:
+            import json as _json
+            from agent_friday.core import runtime_dir
+            p = runtime_dir() / "residency" / "endpoints.json"
+            if p.exists():
+                raw = _json.loads(p.read_text(encoding="utf-8")) or {}
+                entries = raw.get("seats") or raw
+                if isinstance(entries, dict):
+                    for k, v in entries.items():
+                        if isinstance(v, dict) and v.get("model_id"):
+                            seats[k] = v
+                        elif isinstance(v, str):
+                            seats[k] = {"model_id": k}
+        except Exception:
+            seats = seats or {}
+    if not seats:
+        return []
+    out, seen_ids = [], set()
+    for seat, s in seats.items():
+        if not isinstance(s, dict):
+            continue
+        mid = s.get("model_id")
+        # Only language seats belong in a MODEL picker. The image seat has its
+        # own provider entry, and stt/tts are voice engines.
+        if not mid or seat in ("stt", "tts", "image") or mid in seen_ids:
+            continue
+        seen_ids.add(mid)
+        try:
+            live = bool(owned_endpoint(mid))
+        except Exception:
+            live = False
+        m = _humanize(mid)
+        ctx = s.get("num_ctx")
+        out.append({
+            "id": mid,
+            "label": m["label"],
+            "short": m["short"],
+            "provider": "arbiter-local",
+            "provider_label": "Local (Friday's own seats)",
+            "roles": [ROLE_ORCHESTRATOR, ROLE_SUBAGENT],
+            "modalities": ["text", "tools"],
+            "local": True,
+            "classification": "local",
+            "available": True,
+            "needs_key": None,
+            "hint": ("%s seat · %s%s" % (
+                seat, s.get("device") or "?",
+                (" · %s ctx" % ctx) if ctx else ""))
+            + ("" if live else " · not currently loaded"),
+            "seat": seat,
+            "resident": live,
+            "cost_per_1k": 0.0,
+            "curated": True,
+        })
+    return out
+
+
 def build_catalog() -> dict:
     """Return the full model catalog grouped by UI role.
 
@@ -428,10 +530,30 @@ def build_catalog() -> dict:
     except Exception:
         pass
     flat, seen = [], set()
+    # The seats Friday ACTUALLY serves go in FIRST, so they win the dedupe.
+    #
+    # 2026-08-16, Stephen: "listing Gemma4 as a cloud model, and as an Ollama
+    # model (it is neither)". Both entries came from the retired `ollama-local`
+    # provider, whose hardcoded fallback list still named gemma4 while the
+    # daemon it describes is stopped — and the models he is really running,
+    # served by llama-server processes the Arbiter owns, appeared nowhere at
+    # all. The picker was showing a dead daemon's guesses instead of the live
+    # residency plan.
+    for e in _arbiter_seat_entries():
+        seen.add((e["id"], e["provider"]))
+        e["_ord"] = len(flat)
+        flat.append(e)
     for provider in registry.get_enabled_providers():
         for e in _model_entries_for(provider, registry):
             key = (e["id"], e["provider"])
             if key in seen:
+                continue
+            # A retired daemon must not name models. Ollama's daemon is stopped
+            # and Friday does not need it, so its STATIC fallback list is pure
+            # fiction — the same model, real and resident two ports away, is
+            # already in `flat` from the residency plan above.
+            if (e.get("provider") == "ollama-local" and not e.get("available")
+                    and any(f["id"] == e["id"] for f in flat)):
                 continue
             seen.add(key)
             e["_ord"] = len(flat)  # declaration order — models render as declared
