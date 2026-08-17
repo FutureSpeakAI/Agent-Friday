@@ -2170,6 +2170,13 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
 
         _task_log(task_id, 'Done.')
 
+        # ── P4: say so, unprompted ──
+        # A finished background task used to sit in an in-memory dict until
+        # something polled it. By the output-liveness rule that is a failure
+        # even though it exits zero: work completed that the user never hears
+        # about is work that did not happen, from where they are sitting.
+        _report_task_completion(task_id, name, final_status, result_text)
+
         # ── Task chaining: spawn the next link if this task defines one ──
         try:
             _advance_task_chain(task_id, result_text)
@@ -2179,6 +2186,42 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰'):
         traceback.print_exc()
         _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
         _task_log(task_id, f'Error: {e}')
+        # A FAILED task must report too. Silence on failure is the worse half
+        # of this gap: it reads exactly like success to anyone not watching.
+        _report_task_completion(task_id, name, 'failed', f'[Error] {e}')
+
+
+def _report_task_completion(task_id, name, status, result_text):
+    """Push a finished background task into the conversation (P4 / RS9).
+
+    Best-effort by design — a notification that raises must not turn a
+    completed task into a failed one — but never silent: a failure to notify
+    is logged into the task's own log, where it is visible.
+    """
+    try:
+        # notifications_engine lives at the PACKAGE ROOT, not under services/.
+        # Getting this wrong is invisible: the ImportError lands in the except
+        # below and the task completes looking green with nobody told — which
+        # is the exact defect this function exists to fix.
+        import agent_friday.notifications_engine as notifications_engine
+        body = (result_text or '').strip()
+        lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
+        ok = status not in ('failed', 'error')
+        notifications_engine.push(
+            title=f"Task {'finished' if ok else 'failed'}: {name}",
+            body=lede or ('Finished with no output.' if ok else 'Failed.'),
+            proactive_chat=True,
+            chat_message=(
+                f"Background task **{name}** {'finished' if ok else 'FAILED'}.\n\n"
+                f"{lede or '(no output)'}"
+            ),
+            target={"kind": "task", "id": task_id},
+        )
+    except Exception as ne:
+        try:
+            _task_log(task_id, f'Completion notice could not be sent: {ne}')
+        except Exception:
+            pass
 
 
 def _spawn_task(name, prompt, description='', on_complete=None,

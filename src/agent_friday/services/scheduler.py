@@ -967,6 +967,39 @@ def _tick():
                 dispatch(rec)
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
+    _reclaim_expired_lease()
+
+
+def _reclaim_expired_lease():
+    """P6 — nothing called Arbiter.expire_if_due(), so a crashed lease holder
+    stranded the GPU until a restart.
+
+    The method existed and was correct; it simply had no caller. This 60-second
+    tick is the natural home: it is already running, it is cheap, and a lease
+    that outlives its holder is exactly the kind of failure nobody notices
+    until chat has silently been on the sidekick for an hour.
+    """
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+        if not getattr(arb, "lease", None):
+            return
+        res = arb.expire_if_due()
+        if not isinstance(res, dict):
+            return
+        if res.get("ok") and "transition_s" in res:
+            _log.warning("reclaimed an expired GPU lease after %.1fs — the "
+                         "holder did not release it", res["transition_s"])
+        elif not res.get("ok"):
+            # Arbiter.release() returns ok=False and KEEPS the lease when
+            # eviction fails, so a failed reclaim leaves the GPU exactly as
+            # stranded as having no caller at all. Silence here would recreate
+            # the bug this function fixes, one layer up.
+            _log.error("GPU lease is EXPIRED but could not be reclaimed (%s) — "
+                       "the card is still held and chat stays on the sidekick",
+                       res.get("error"))
+    except Exception as e:
+        _log.debug("lease reclaim check skipped: %s", e)
 
 
 def _loop():
