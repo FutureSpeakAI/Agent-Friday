@@ -361,3 +361,33 @@ def test_receipt_matching_normalizes_markup_not_meaning(quote, should_match):
         f"{quote!r} -> found={found}, expected {should_match}. Normalization "
         f"must widen what counts as the same TEXT without weakening the "
         f"requirement that the text actually be present.")
+
+
+# ── Outline shape tolerance ───────────────────────────────────────────────────
+#
+# MEASURED 2026-08-17: a commission produced 9 fully-verified findings and then
+# FAILED on `AttributeError: 'str' object has no attribute 'get'`, because the
+# outline model returned `sections` as a list of heading strings instead of
+# objects. Constrained JSON decoding guarantees valid JSON, not the shape you
+# asked for. Losing nine good findings at the last step to a wrapper shape is
+# the definition of a green job producing nothing.
+
+@pytest.mark.parametrize("raw,expect_sections", [
+    ({"sections": [{"heading": "A", "finding_ids": ["f1"]}]}, 1),   # the happy shape
+    ({"sections": ["A", "B"]}, 2),                                  # the shape that crashed
+    ({"sections": {"A": ["f1"], "B": ["f2"]}}, 2),                  # dict-of-headings
+    ({"sections": [{"title": "A", "findings": ["f1"]}]}, 1),        # alternate key names
+    ({"sections": [{"heading": "A", "finding_ids": "f1"}]}, 1),     # scalar instead of list
+    ({"sections": []}, 1),                                          # empty -> catch-all
+    ({}, 1),                                                        # missing -> catch-all
+])
+def test_outline_shapes_never_lose_findings(raw, expect_sections):
+    from agent_friday.services.research.harness import _outline_sections
+    by_id = {"f1": object(), "f2": object()}
+    secs = _outline_sections(raw, by_id)
+    assert len(secs) == expect_sections, f"{raw!r} -> {secs!r}"
+    assert all(isinstance(s, dict) and "heading" in s for s in secs)
+    # No shape may drop every finding on the floor.
+    assert any(s["finding_ids"] for s in secs), (
+        f"{raw!r} produced sections with no findings — nine verified claims "
+        f"were lost to a wrapper shape once already")
