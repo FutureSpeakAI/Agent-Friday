@@ -84,7 +84,7 @@ ROUTE_MODULES = [
     'google', 'google_accounts', 'hooks', 'insights', 'jobs', 'knowledge_graph',
     'learning', 'liveness', 'messages',
     'news', 'notifications', 'onboarding', 'orchestrator', 'ownership',
-    'persona', 'platform', 'projects', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
+    'persona', 'platform', 'projects', 'research', 'residency', 'scheduler', 'seat_gate', 'skills', 'soul', 'tasks', 'todos',
     'work_plan',
     'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_studio', 'workspace_undo',
