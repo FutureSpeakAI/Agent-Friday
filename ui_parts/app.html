@@ -5544,7 +5544,18 @@ const VOICE_ENGINES=[
   {id:'local-gpu',label:'Local GPU (NeMo)',short:'Local GPU'},
   {id:'gemini',label:'Gemini Live (cloud)',short:'Gemini Live'},
 ];
-const _MODEL_FALLBACK={orchestrator:ORCHESTRATOR_MODELS,subagent:SUBAGENT_MODELS,creative:CREATIVE_MODELS,voice:VOICE_MODELS};
+/* Reported three times, diagnosed twice, still here: the orchestrator and
+   subagent selectors showing ONLY Claude models, and stale ones. This is why.
+   When the catalog fetch fails — a rotated API token in an old tab is the
+   usual cause — these constants took over and silently became the menu. A
+   fallback that looks exactly like real data is worse than an empty menu,
+   because nothing tells you it is a fallback.
+
+   Orchestrator/subagent now fall back to NOTHING. The selector says the
+   catalog could not be loaded and offers a retry, which is true and
+   actionable. Creative and voice keep small statics because those two lists
+   gate hardware setup flows that must render before a catalog exists. */
+const _MODEL_FALLBACK={orchestrator:[],subagent:[],creative:CREATIVE_MODELS,voice:VOICE_MODELS};
 // Invalidate the app-wide catalog cache AND tell every mounted useModelCatalog
 // consumer to refetch. Nulling the global alone never re-renders an already
 // mounted hook — the top-bar model menu would keep a stale (keyless →
@@ -5597,7 +5608,71 @@ function useModelCatalog(){
             ORCHESTRATOR_MODELS,CREATIVE_MODELS,VOICE_MODELS)
     .forEach(m=>{if(m&&m.id&&!byId[m.id])byId[m.id]=m;});
   out.byId=byId;
+  // The FLAT catalog — every model from every provider, plus the local seats
+  // Friday actually serves. The role lists are a curated handful; this is the
+  // whole thing, and it is what the search box searches.
+  out.all=(cat&&cat.models)||[];
   return out;
+}
+
+/* ── ModelSearchPicker ─────────────────────────────────────────────────────
+   Stephen, 2026-08-16: "This should show a dropdown with a selector and a typed
+   search input field so any model we have access to, or any model that's
+   installed, can operate within Agent Friday."
+
+   The old menu was a curated five-per-role list ordered by provider-declaration
+   order, with Anthropic declared first — which is why the orchestrator and
+   subagent selectors showed nothing but Claude no matter how many local models
+   were resident. It was not a hardcoded list; it was a cap of five over a list
+   Claude always won.
+
+   So: no cap, no curation, and no gating. A model that is not ready is shown
+   with what it needs and is STILL selectable — the standing rule is that a bad
+   diagnostic is information, never a veto, and "never gate a model Stephen
+   selected" applies to the UI as much as to the router. */
+function ModelSearchPicker({catalog,value,onPick,autoFocus,placeholder}){
+  const[q,setQ]=useState('');
+  const all=(catalog&&catalog.all)||[];
+  const needle=q.trim().toLowerCase();
+  const rows=needle
+    ? all.filter(m=>((m.id||'')+' '+(m.label||'')+' '+(m.provider_label||'')+' '+(m.provider||'')+' '+(m.seat||'')).toLowerCase().includes(needle))
+    : all.slice();
+  // Local first, then ready, then declared order — the on-device seats are the
+  // ones he is most often reaching for and they used to be unreachable.
+  rows.sort((a,b)=>((b.local?1:0)-(a.local?1:0))||((a.available===false?1:0)-(b.available===false?1:0)));
+  const shown=rows.slice(0,60);
+  return <div style={{display:'flex',flexDirection:'column',minHeight:0}}>
+    <div style={{padding:'6px 8px',position:'sticky',top:0,background:'rgba(10,14,26,0.96)',zIndex:1}}>
+      <input className="input" autoFocus={!!autoFocus} value={q} onChange={e=>setQ(e.target.value)}
+        placeholder={placeholder||'Search all models — name, provider, or seat…'}
+        style={{width:'100%',fontSize:11,fontFamily:'JetBrains Mono',padding:'6px 8px'}}/>
+      <div style={{fontSize:9,color:'rgba(255,255,255,0.35)',marginTop:4,fontFamily:'JetBrains Mono'}}>
+        {rows.length} of {all.length} model{all.length===1?'':'s'}{rows.length>shown.length?' · showing first '+shown.length:''}
+      </div>
+    </div>
+    <div style={{overflowY:'auto',maxHeight:'46vh'}}>
+      {all.length===0&&<div style={{padding:'10px 12px',fontSize:10,color:'#ffb347',fontFamily:'JetBrains Mono'}}>
+        Catalog not loaded{catalog&&catalog.error?' — '+catalog.error:''}. Nothing is listed rather than listing the wrong thing.
+      </div>}
+      {shown.map(m=>{
+        const cur=m.id===value;
+        return <button key={(m.provider||'')+'/'+m.id} onClick={()=>onPick&&onPick(m.id)}
+          title={m.hint||m.id}
+          style={{width:'100%',textAlign:'left',display:'flex',gap:7,alignItems:'center',padding:'6px 10px',border:'none',
+                  borderLeft:cur?'2px solid rgba(0,212,255,0.7)':'2px solid transparent',
+                  background:cur?'rgba(0,212,255,0.12)':'transparent',cursor:'pointer',
+                  color:cur?'#00d4ff':'rgba(255,255,255,0.82)',fontSize:11,fontFamily:'Inter'}}>
+          <span style={{width:14,flexShrink:0,fontSize:10}} aria-hidden="true">{m.local?'🏠':(cur?'●':'')}</span>
+          <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.label||m.id}</span>
+          <span style={{fontSize:8,padding:'1px 5px',borderRadius:3,flexShrink:0,fontFamily:'JetBrains Mono',
+                        background:m.local?'rgba(0,255,128,0.10)':'rgba(0,212,255,0.10)',
+                        color:m.local?'#00ff80':'#00d4ff'}}>{m.local?'local':'cloud'}</span>
+          {m.available===false&&<span style={{fontSize:8,color:'#ffb347',flexShrink:0,fontFamily:'JetBrains Mono'}}
+            title={m.hint||'not ready'}>needs setup</span>}
+        </button>;
+      })}
+    </div>
+  </div>;
 }
 function DraftWS(){
   const[mode,setMode]=useState('freeform');
@@ -7634,6 +7709,25 @@ function SettingsTabModels({s,save}){
         {' '}This list is hidden rather than shown wrong. <a href="#" style={{color:'#00d4ff'}} onClick={e=>{e.preventDefault();fridayInvalidateModelCatalog();}}>Retry</a> or reload the page (Ctrl+Shift+R).
       </div>
     </StRow>;
+    /* Orchestrator and subagent get the SEARCHABLE picker over the whole
+       catalog. They are the two Stephen names most often and the two that were
+       stuck showing five Claude models. Creative and voice keep the curated
+       select: those lists are short, deliberately shaped, and tied to hardware
+       setup flows. */
+    if(role==='orchestrator'||role==='subagent'){
+      const curLabel=(mc.byId[s[key]]&&(mc.byId[s[key]].label||s[key]))||s[key]||'— default —';
+      return <StRow key={key} label={label} desc={desc}>
+        <div style={{border:'1px solid rgba(0,212,255,0.18)',borderRadius:8,background:'rgba(10,14,26,0.5)',overflow:'hidden'}}>
+          <div style={{padding:'6px 10px',fontSize:11,fontFamily:'JetBrains Mono',color:'#00d4ff',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+            Current: {curLabel}
+            {s[key]&&<button className="settings-btn" style={{fontSize:9,padding:'2px 7px',marginLeft:8}}
+              onClick={()=>save({[key]:''})}>use default</button>}
+          </div>
+          <ModelSearchPicker catalog={mc} value={s[key]||''} onPick={id=>save({[key]:id})}
+            placeholder={'Search all models for '+label.toLowerCase()+'…'}/>
+        </div>
+      </StRow>;
+    }
     return <StRow key={key} label={label} desc={desc}>
       <select className="input" style={{width:'100%'}} value={s[key]||''} onChange={e=>save({[key]:e.target.value})}>
         <option value="">— default —</option>
@@ -8024,7 +8118,12 @@ function ProviderRow({prov,onChanged}){
   const h=prov.health||{};
   const envKey=((prov.auth||{}).key)||'';
   const needsKey=(prov.auth||{}).type==='env_var';
-  const isLocal=prov.classification==='local';
+  /* Was `prov.classification==='local'` — tested against a field /api/models
+     never sent, so it was false for EVERY provider and every model wore a
+     "cloud" badge, including gemma4 running on this machine. The API now
+     states classification explicitly; `local` is the older per-row boolean and
+     is kept as a fallback so an older server still renders correctly. */
+  const isLocal=(prov.classification==='local')||prov.local===true;
   const canDiscover=(prov.discovery||{}).mode==='api';
   const saveKey=async()=>{
     const key=keyDraft.trim(); if(!key)return;
@@ -10174,14 +10273,23 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
      this is where it belongs — one place that answers both "what is happening"
      and "what finished". */
   const[liveProcs,setLiveProcs]=useState([]);
+  const[failedProcs,setFailedProcs]=useState([]);
   useEffect(()=>{let on=true;
     const tick=()=>apiFetch('/api/processes').then(r=>r.json()).then(d=>{
       if(!on)return;
       setLiveProcs((d.processes||[]).filter(p=>p.status==='running'));
+      setFailedProcs((d.processes||[]).filter(p=>p.orb_failed&&!p.dismissed));
     }).catch(()=>{});
     tick();const iv=setInterval(tick,1500);return()=>{on=false;clearInterval(iv)}},[]);
   const cancelProc=(id)=>{apiFetch('/api/processes/'+encodeURIComponent(id)+'/cancel',{method:'POST'})
     .then(()=>setLiveProcs(p=>p.filter(x=>x.id!==id))).catch(()=>{})};
+  // Acknowledging a failure removes it from the ring immediately rather than on
+  // the next 1.5s poll — a dismiss that visibly lags feels like it did nothing.
+  const dismissProc=(id)=>{setFailedProcs(p=>p.filter(x=>x.id!==id));try{window.fridayRemoveOrb?.(id)}catch(_){}
+    apiFetch('/api/processes/'+encodeURIComponent(id)+'/dismiss',{method:'POST'}).catch(()=>{})};
+  const dismissAllFailed=()=>{const ids=failedProcs.map(p=>p.id);setFailedProcs([]);
+    ids.forEach(id=>{try{window.fridayRemoveOrb?.(id)}catch(_){}});
+    apiFetch('/api/processes/dismiss-failed',{method:'POST'}).catch(()=>{})};
   const clearNotif=(id)=>{if(id){dismissedNotifIds.current.add(id);_notifPost('/api/notifications/dismiss',id)}setNotifs(prev=>prev.filter(n=>(n.id||'')!==id))};
   const clearAllNotifs=()=>{notifs.forEach(n=>{if(n.id){dismissedNotifIds.current.add(n.id);_notifPost('/api/notifications/dismiss',n.id)}});setNotifs([])};
   const markNotifRead=(id)=>{setNotifs(prev=>prev.map(n=>(n.id||'')=== id?{...n,read:true}:n));_notifPost('/api/notifications/read',id)};
@@ -10590,6 +10698,15 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           {modelMenuOpen&&<div style={{position:'absolute',top:'calc(100% + 6px)',left:0,width:320,background:'rgba(10,14,26,0.9)',backdropFilter:'blur(16px) saturate(1.2)',WebkitBackdropFilter:'blur(16px) saturate(1.2)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:10,zIndex:200,padding:'4px 0 0',boxShadow:'0 4px 30px rgba(0,0,0,0.4)',fontFamily:'Inter',fontSize:11,maxHeight:'70vh',overflowY:'auto'}}>
             {/* ── 1 · Quick Switch — the current orchestrator + up to 4 available
                  alternatives. Pick one, menu closes. TV remote, not phone book. */}
+            {/* Search over the WHOLE catalog, above the shortcuts. The five
+                quick picks below are a convenience, not the menu — before this
+                they WERE the menu, capped at five and ordered so Claude always
+                filled them. */}
+            <div style={{borderBottom:'1px solid rgba(255,255,255,0.06)',paddingBottom:4}}>
+              <ModelSearchPicker catalog={modelCatalog} value={curOrchId}
+                autoFocus placeholder="Search every model — set the orchestrator…"
+                onPick={id=>{saveAgentSettings({orchestrator_model:id});setModelMenuOpen(false);setModelMenuRole(null)}}/>
+            </div>
             <div className="model-selector-tier">Quick Switch</div>
             {quickSwitch.length===0&&<div style={{padding:'2px 12px 8px',fontSize:10,color:'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>No providers configured — add an API key below</div>}
             {quickSwitch.map(m=>{
@@ -11194,6 +11311,25 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           {notifs.length>0&&<button onClick={clearAllNotifs} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>}
         </div>
       </div>
+      {/* Failed orbs — persistent, but now clearable.
+          They were kept past the 30s success timer so a failure could not
+          vanish before he looked at it. Nothing could acknowledge one, so
+          "persistent" became "permanent" and they accumulated around the
+          avatar. Each one leaves individually; the header clears them all. */}
+      {failedProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+          <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,179,71,0.75)',letterSpacing:'.1em',flex:1}}>
+            FAILED · {failedProcs.length}
+          </div>
+          <button onClick={dismissAllFailed} style={{background:'none',border:'none',color:'rgba(255,255,255,0.4)',cursor:'pointer',fontSize:10,fontFamily:'JetBrains Mono',padding:0}}>CLEAR ALL</button>
+        </div>
+        {failedProcs.slice(0,8).map(p=><div key={p.id} style={{display:'flex',alignItems:'center',gap:7,padding:'3px 0',fontSize:10,color:'rgba(255,255,255,0.7)'}}>
+          <span aria-hidden="true">⚠</span>
+          <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.label||p.name}>{p.label||p.name||'Task'}</span>
+          <button onClick={()=>dismissProc(p.id)} title="Dismiss this failure"
+            style={{background:'none',border:'none',color:'rgba(255,255,255,0.35)',cursor:'pointer',fontSize:11,padding:'0 2px'}}>✕</button>
+        </div>)}
+      </div>}
       {/* Running now — real progress, an honest estimate, and a way out. */}
       {liveProcs.length>0&&<div style={{padding:'6px 10px 2px'}}>
         <div style={{fontSize:9,fontFamily:'JetBrains Mono',color:'rgba(255,255,255,0.35)',letterSpacing:'.1em',marginBottom:6}}>RUNNING NOW</div>

@@ -184,6 +184,14 @@ def api_agent_steer():
 # monitoring processes for 900s and drew an orb for every one of them, so
 # fifteen minutes of green orbs accumulated around the avatar.
 ORB_VISIBLE_AFTER_DONE_S = 30
+# A failed orb stays until acknowledged — but "until acknowledged" turned into
+# "forever" because nothing could acknowledge it. Two caps keep persistence
+# from becoming accumulation, without a failure ever vanishing unseen: it stops
+# orbiting after this long, and only this many orbit at once. The RECORD
+# survives either way (24h), so nothing is lost — it just stops crowding out
+# the work in progress.
+ORB_FAILED_MAX_AGE_S = 3600
+ORB_FAILED_MAX_VISIBLE = 5
 
 
 @tasks_bp.route('/api/processes')
@@ -220,7 +228,13 @@ def list_processes():
             if not ended:
                 row["orb_visible"] = True                  # still working
             elif failed:
-                row["orb_visible"] = not row.get("dismissed")
+                # Persistent, but not permanent, and not a swarm. An orb older
+                # than the cap stops ORBITING while its record stays queryable
+                # — the failure is still there to read, it has just stopped
+                # standing in front of everything else. Newest failures win the
+                # remaining slots (applied after this loop).
+                row["orb_visible"] = (not row.get("dismissed")
+                                      and (now - ended) <= ORB_FAILED_MAX_AGE_S)
             else:
                 row["orb_visible"] = (now - ended) <= ORB_VISIBLE_AFTER_DONE_S
             row["orb_failed"] = failed
@@ -235,7 +249,19 @@ def list_processes():
                     _keep = 900 if row.get("category") == "monitoring" else 30
                 if now - ended > _keep:
                     del PROCESSES[pid]
-    return jsonify({"processes": out})
+
+        # Cap how many failures orbit at once, newest first. Twenty failed
+        # orbits around the avatar is not twenty times the information — it is
+        # a wall. The ones pushed out are still in this response (and still in
+        # the tray), they just stop competing for the ring.
+        _vis_failed = sorted(
+            [r for r in out if r.get("orb_failed") and r.get("orb_visible")],
+            key=lambda r: r.get("ended") or 0, reverse=True)
+        for _r in _vis_failed[ORB_FAILED_MAX_VISIBLE:]:
+            _r["orb_visible"] = False
+        out_failed_total = sum(1 for r in out if r.get("orb_failed")
+                               and not r.get("dismissed"))
+    return jsonify({"processes": out, "failed_pending": out_failed_total})
 
 
 @tasks_bp.route('/api/processes/<pid>/cancel', methods=['POST'])
@@ -306,6 +332,28 @@ def cancel_process(pid):
                     "note": ("nothing to interrupt — the process had already "
                              "finished or held no lease") if not stopped
                     else None})
+
+
+@tasks_bp.route('/api/processes/dismiss-failed', methods=['POST'])
+def dismiss_failed_processes():
+    """Clear every failed orb at once.
+
+    2026-08-16, Stephen: "The error orbs won't go away." The previous round got
+    half of this right — a failure that vanishes on the same 30-second timer as
+    a success is a failure the machine hid from you — and then shipped no way
+    to acknowledge one. Persistent became permanent, and they accumulated
+    around the avatar until they were the only thing there.
+
+    A failure still never disappears on its own. It leaves when he says so.
+    """
+    cleared = 0
+    with PROCESSES_LOCK:
+        for _pid, row in PROCESSES.items():
+            if (row.get("status") in ("error", "failed", "cancelled", "timeout")
+                    and not row.get("dismissed")):
+                row["dismissed"] = True
+                cleared += 1
+    return jsonify({"ok": True, "cleared": cleared})
 
 
 @tasks_bp.route('/api/processes/<pid>/dismiss', methods=['POST'])
