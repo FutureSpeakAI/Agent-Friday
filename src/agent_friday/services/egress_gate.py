@@ -207,6 +207,11 @@ _TRUSTED_LOCK = threading.Lock()
 # news — her synthesis may weave in private context and is classified normally.
 _PUBLIC_PARAS: set = set()
 _PUBLIC_MAX = 20000          # bounded; oldest-wins eviction is not worth it
+# P7(b): `origin` was accepted and thrown away, so the egress log could not
+# attribute an exemption to the page it came from — an audit surface that
+# says "this was exempt" without being able to say "because it came from
+# here" is not an audit surface. Bounded alongside _PUBLIC_PARAS.
+_PUBLIC_ORIGINS: dict = {}
 
 
 def register_public_text(text: str, origin: str = "") -> None:
@@ -224,6 +229,16 @@ def register_public_text(text: str, origin: str = "") -> None:
     with _TRUSTED_LOCK:
         if len(_PUBLIC_PARAS) < _PUBLIC_MAX:
             _PUBLIC_PARAS.add(t)
+            if origin:
+                _PUBLIC_ORIGINS[t] = str(origin)[:500]
+
+
+def public_origin_of(text: str) -> str:
+    """Which source a registered public string came from ("" if unknown)."""
+    if not text:
+        return ""
+    with _TRUSTED_LOCK:
+        return _PUBLIC_ORIGINS.get(text.strip(), "")
 
 
 def public_text_count() -> int:
@@ -245,6 +260,17 @@ def register_trusted_text(text: str) -> None:
             for p in text.split(sep):
                 if p.strip():
                     _TRUSTED_PARAS.add(p.strip())
+
+
+class NeverSendBlocked(RuntimeError):
+    """Raised when a payload contains never-send material (§5.3).
+
+    Deliberately an exception rather than a redaction: the never-list means
+    "block any payload containing this", not "strip this and carry on". It
+    propagates through model_router._seal_or_block, which already converts a
+    raising gate into a blocked send — so the strongest verdict reuses the
+    strongest existing path instead of inventing a second one.
+    """
 
 
 def _redact_placeholder(tier: int) -> str:
@@ -283,6 +309,92 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         pass
 
 
+# ── The judgment appeal (§5.3–§5.5) ───────────────────────────────────────────
+
+def _run_appeals(appeals: list, gated: list, provider: str, field: str,
+                 log_path) -> int:
+    """Give the judgment layer a chance to rescue over-blocked paragraphs.
+
+    THE SAFETY PROPERTY, enforced here and stated in judgment_gate's docstring:
+    the model may only rescue what the keyword rules over-blocked; it can never
+    authorize sending something unscrubbed. Three things make that true:
+
+      * every paragraph in `appeals` was ALREADY going to be withheld — this
+        function can only turn withheld into sent, never the reverse, and it is
+        never shown a paragraph that was already passing;
+      * a favourable verdict does not send the paragraph. It sends the paragraph
+        through the scrubber, and then through `verify_outgoing`, which is
+        deterministic code that does not consult the verdict. If a hard
+        identifier, watchlist token, or never-send token survives — or the text
+        still classifies SENSITIVE — the rescue is refused and the redaction
+        placeholder stays;
+      * if judgment cannot run at all, nothing is rescued and every paragraph
+        keeps the deterministic outcome (§5.4).
+
+    Returns how many paragraphs were actually rescued.
+    """
+    try:
+        from agent_friday.services import judgment_gate as jg
+    except Exception:
+        return 0
+    if not jg.enabled():
+        return 0
+
+    # §5.3: never-list material is not judged at all. No verdict overrides it.
+    judgeable, blocked_outright = [], 0
+    for idx, para, det_tier in appeals:
+        if jg.never_send_hits(para) or jg.hard_identifier_hits(para):
+            blocked_outright += 1
+            continue
+        judgeable.append((idx, para, det_tier))
+    if not judgeable:
+        return 0
+
+    verdicts, detail = jg.judge_spans([p for _, p, _ in judgeable])
+    if verdicts is None:
+        # §5.4: judgment could not run → the deterministic gate governs this
+        # payload unchanged. Never held hostage waiting for a judgment.
+        _log(provider, field, Tier.PRIVATE, "redact",
+             f"judgment unavailable ({detail}) — deterministic outcome kept",
+             log_path)
+        return 0
+
+    rescued = 0
+    for (idx, para, det_tier), v in zip(judgeable, verdicts):
+        verdict, reason = v.get("verdict"), v.get("reason", "")
+        if verdict == jg.NEVER_SEND:
+            continue                                  # floor does not move
+
+        # A favourable verdict earns a SCRUB ATTEMPT, not a send.
+        try:
+            from agent_friday.core import _scrub_pii
+            scrubbed, _sub = _scrub_pii(para)
+        except Exception:
+            continue                                  # cannot scrub → cannot send
+
+        check = jg.verify_outgoing(scrubbed)
+        if not check.ok:
+            # The step that makes a wrong judgment survivable.
+            _log(provider, field, det_tier, "redact",
+                 f"judgment said {verdict} but the scrub did not verify "
+                 f"({check.reason}; {','.join(check.hits)}) — withheld",
+                 log_path)
+            continue
+
+        gated[idx] = scrubbed
+        rescued += 1
+        _log(provider, field, det_tier, "allow",
+             f"judgment={verdict} overturned {Tier.NAMES.get(det_tier)} "
+             f"after verified scrub: {reason[:120]}", log_path)
+        jg.record_overturn(para, verdict, reason, provider, field=field,
+                           origin=public_origin_of(para))
+    if blocked_outright:
+        _log(provider, field, Tier.SENSITIVE, "drop",
+             f"{blocked_outright} paragraph(s) on the never-list — not judged",
+             log_path)
+    return rescued
+
+
 # ── Field-level gating ────────────────────────────────────────────────────────
 
 def _gate_text(text: str, provider: str, field: str,
@@ -299,9 +411,46 @@ def _gate_text(text: str, provider: str, field: str,
     """
     if not text or not isinstance(text, str):
         return text
+
+    # ── §5.3 the never-list: the floor, and it moves for nothing ──
+    # Found by the probe battery on 2026-08-17, before this layer ever shipped:
+    # the never-send check originally lived inside the judgment appeal, so with
+    # judgment disabled — the DEFAULT — a planted never-send token sailed
+    # straight through. A floor that only exists when an optional layer is
+    # switched on is not a floor. It runs here: unconditionally, ahead of the
+    # trusted and public registries (no provenance exemption may override it),
+    # ahead of classification, and independent of judgment.
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        _never = _jg.never_send_hits(text)
+    except Exception:
+        _never = []
+    if _never:
+        _log(provider, field, Tier.SENSITIVE, "block",
+             f"never-send material present ({len(_never)} token(s)) — payload blocked",
+             log_path)
+        raise NeverSendBlocked(
+            f"This payload contains material on your never-send list "
+            f"({len(_never)} match(es) in {field}), so I did not send it to "
+            f"{provider}. Nothing was redacted and sent — the whole call was "
+            f"stopped. Use a local model to work with this."
+        )
+
     with _TRUSTED_LOCK:
-        if text.strip() in _TRUSTED_TEXTS:
+        _t_stripped = text.strip()
+        # P7(a): the whole-field trusted check consulted _TRUSTED_TEXTS but NOT
+        # _PUBLIC_PARAS, so a registered public string sent as a single
+        # paragraph skipped the span loop entirely and was redacted whole —
+        # the exemption worked only for text that happened to arrive beside
+        # other paragraphs. Both registries are consulted here now.
+        if _t_stripped in _TRUSTED_TEXTS:
             _log(provider, field, Tier.PUBLIC, "allow", "trusted-self-authored", log_path)
+            return text
+        if _t_stripped in _PUBLIC_PARAS:
+            _origin = _PUBLIC_ORIGINS.get(_t_stripped, "")
+            _log(provider, field, Tier.PUBLIC, "allow",
+                 f"third-party-published{(' origin=' + _origin) if _origin else ''}",
+                 log_path)
             return text
     tier = _classify_cloud(text)
     if tier == Tier.PUBLIC:
@@ -312,6 +461,11 @@ def _gate_text(text: str, provider: str, field: str,
     if sep is not None:
         paras = text.split(sep)
         gated, withheld, trusted = [], 0, 0
+        # §5.4: judgment is an APPEALS COURT. Paragraphs the deterministic
+        # layers would withhold are collected here and judged in ONE batched
+        # call; paragraphs that already pass are never shown to the judge, so
+        # judgment cannot make anything travel that was not already travelling.
+        appeals: list[tuple[int, str, int]] = []   # (index, text, det_tier)
         for p in paras:
             if not p.strip():
                 gated.append(p)
@@ -327,10 +481,15 @@ def _gate_text(text: str, provider: str, field: str,
             if pt == Tier.PUBLIC:
                 gated.append(p)
             else:
+                appeals.append((len(gated), p, pt))
                 gated.append(_redact_placeholder(pt))
                 withheld += 1
+        if appeals:
+            rescued = _run_appeals(appeals, gated, provider, field, log_path)
+            withheld -= rescued
         nonempty = sum(1 for p in paras if p.strip())
-        if (0 < withheld < nonempty) or (withheld == 0 and trusted > 0):
+        if (0 < withheld < nonempty) or (withheld == 0 and trusted > 0) or \
+                (withheld == 0 and appeals):
             # Either the split localized the signal (partial withholding), or
             # the whole-field signal came entirely from trusted self-authored
             # paragraphs. withheld == 0 with NO trusted paragraphs means the
@@ -342,6 +501,17 @@ def _gate_text(text: str, provider: str, field: str,
             return sep.join(gated)
         # Fall through to the whole-field action (all paragraphs tripped, or
         # the signal could not be localized).
+
+    # Whole-field appeal. This case is NOT an edge case: a single-paragraph
+    # message has no separator, so it never reaches the span loop — and single
+    # paragraphs are what ordinary chat turns and research questions are made
+    # of. Without this, judgment would have covered only multi-paragraph text
+    # and quietly done nothing for the traffic it was built for.
+    _whole = [(0, text, tier)]
+    _slot = [None]
+    if _run_appeals(_whole, _slot, provider, field, log_path) and _slot[0] is not None:
+        return _slot[0]
+
     if tier == Tier.SENSITIVE:
         _log(provider, field, tier, "drop", f"tier={Tier.NAMES[tier]}", log_path)
         return ""  # cloud gets nothing for SENSITIVE
@@ -531,18 +701,59 @@ def gate_worker_payload(
     return sealed
 
 
+def _scrub_all(obj, lookup: dict):
+    """§5.5 step 1 — run core._scrub_pii over every string in the payload.
+
+    WHY THIS MOVED HERE. The design doc lists the scrub as step 1 "inside" the
+    gate, "existing, unconditional". It was neither. The scrubber ran at the
+    CHAT ROUTE (routes/chat.py) and as a tool post-hook, while the gate ran a
+    layer below at the model router — two systems that never met, with cloud
+    paths that got one and not the other (channels, workers, compute_client,
+    subagent dispatch). Putting the scrub at the choke point makes the
+    documented order of operations real, and means a call site cannot forget it.
+
+    Idempotent by construction: the placeholders it writes ([PII:kind:hash])
+    match none of the PII patterns, so paths that already scrubbed (chat) find
+    nothing left to do and pay only the regex pass.
+    """
+    from agent_friday.core import _scrub_pii
+    if isinstance(obj, str):
+        out, sub = _scrub_pii(obj)
+        lookup.update(sub)
+        return out
+    if isinstance(obj, list):
+        return [_scrub_all(x, lookup) for x in obj]
+    if isinstance(obj, dict):
+        # Only content-bearing keys. Scrubbing ids/roles/model names would
+        # corrupt the request shape for no privacy gain.
+        return {k: (_scrub_all(v, lookup)
+                    if k in ("content", "text", "system", "prompt") else v)
+                for k, v in obj.items()}
+    return obj
+
+
 def seal_outbound(
     payload: dict[str, Any],
     provider: str,
     log_path: Path | None = None,
+    pii_lookup: dict | None = None,
 ) -> dict[str, Any]:
     """Gate the assembled call payload before it leaves to a cloud provider.
 
     Parameters
     ----------
-    payload  : the fully assembled call payload (system, messages, tools, …)
-    provider : provider name — "anthropic", "openai", "gemini", "ollama", etc.
-    log_path : optional path to the egress log file
+    payload    : the fully assembled call payload (system, messages, tools, …)
+    provider   : provider name — "anthropic", "openai", "gemini", "ollama", etc.
+    log_path   : optional path to the egress log file
+    pii_lookup : optional dict the gate FILLS with tag -> real value, for the
+                 caller to pass to core._rehydrate_pii on the response.
+
+    On pii_lookup: seal_outbound returns a payload and has nowhere to hand back
+    a rehydration table, so callers that want their user's real data restored
+    in the reply pass a dict in. A caller that passes nothing still gets the
+    scrub — it just sees "[PII:addr:1a2b3c4d]" in the response instead of the
+    address. That default is deliberate: forgetting the parameter costs
+    legibility, never privacy.
 
     Returns a new payload dict with sensitive content redacted or dropped.
     Local providers (Ollama / 'local') are returned unchanged.
@@ -554,6 +765,21 @@ def seal_outbound(
 
     sealed = dict(payload)
 
+    # ── §5.5 step 1: deterministic identifier scrub, unconditional ──
+    _lk = pii_lookup if isinstance(pii_lookup, dict) else {}
+    try:
+        for key in ("system", "messages", "prompt"):
+            if key in sealed:
+                sealed[key] = _scrub_all(sealed[key], _lk)
+    except Exception as e:
+        # A scrub that cannot run must not become a send that skips it.
+        _dlog.error("PII scrub failed inside the gate — BLOCKING: %s", e)
+        raise RuntimeError(
+            f"Egress scrub failed; cloud send blocked rather than sent "
+            f"unscrubbed: {e}"
+        ) from e
+
+    # ── §5.5 steps 2-4: classify, judge, verify ──
     # System prompt
     if "system" in sealed and isinstance(sealed["system"], str):
         sealed["system"] = _gate_text(
@@ -629,6 +855,33 @@ def startup_self_test() -> dict:
             )
     except Exception as e:
         _SELF_TEST_RESULT = {"ok": False, "error": str(e)}
+
+    # ── §5.6.1: the probe battery ──
+    # The two-probe self-test above proves the gate withholds an SSN. It does
+    # not prove the judgment layer cannot be talked into rescuing something it
+    # should not, so the battery runs a fixture set of planted private material
+    # that must NEVER survive. A private-fixture failure disables the judgment
+    # layer and notifies loudly (in judgment_gate.probe_battery); it does not
+    # flip `ok`, because falling back to the deterministic gate is the SAFE
+    # state and refusing all cloud routing over it would be the worse failure.
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        battery = _jg.probe_battery()
+        _SELF_TEST_RESULT["judgment_battery"] = {
+            "ok": battery.get("ok"),
+            "private_probes": battery.get("private_probes"),
+            "leaked": [p["probe"] for p in battery.get("leaked", [])],
+            "public_lost": battery.get("public_lost", []),
+        }
+        if not battery.get("ok"):
+            _dlog.error(
+                "judgment probe battery FAILED (%s leaked) — judgment layer "
+                "disabled, deterministic gate governing alone",
+                ",".join(p["probe"] for p in battery.get("leaked", [])))
+    except Exception as e:
+        _SELF_TEST_RESULT["judgment_battery"] = {"ok": None, "error": str(e)}
+        _dlog.warning("judgment probe battery could not run: %s", e)
+
     return _SELF_TEST_RESULT
 
 
