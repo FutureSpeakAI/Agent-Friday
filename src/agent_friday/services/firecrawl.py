@@ -42,8 +42,44 @@ from typing import Any
 _log = logging.getLogger("friday.firecrawl")
 
 BASE = "https://api.firecrawl.dev"
+API_VERSION = "v2"          # the documented base; v1 also answers, v2 is current
 DEFAULT_TIMEOUT_S = 120
 SEARCH_TIMEOUT_S = 180
+
+# ── The rest of the surface, deliberately NOT built ───────────────────────────
+#
+# Relayed from Stephen's onboarding doc and NOT verified here, except where
+# noted. Recorded so the next person does not rediscover it, and left unbuilt
+# so this change stays about search and fetch:
+#
+#   POST /v2/parse        upload a LOCAL document (PDF/DOCX/XLSX/HTML, <=50 MB)
+#                         as multipart, get markdown. Distinct from /scrape,
+#                         which takes a URL. Would let Friday read a file
+#                         Stephen drops in rather than one she can reach.
+#   POST /v2/interact     browser actions on live pages — clicks, forms,
+#                         navigation. Would reach content behind an
+#                         interaction, which no fetch can.
+#   POST /v2/monitor      recurring checks on pages/crawls/search results,
+#                         DIFFED against the last snapshot, with a
+#                         plain-language goal to filter noise. This is a
+#                         candidate answer to the stale news-import problem —
+#                         it is change detection with a relevance judgment
+#                         attached, which is exactly what a news feed that
+#                         re-reports the same story lacks. FLAGGED, NOT BUILT.
+#   GET  /v2/search/research/papers
+#                         scientific paper index with metadata, full-text
+#                         passages and citation expansion. VERIFIED to exist
+#                         (returns a schema error on a bad param rather than
+#                         404), so the endpoint is real; its parameters were
+#                         not explored.
+#   POST /v2/support/ask  diagnose a failing call from its jobId, returning
+#                         prose plus machine-readable retry parameters.
+#
+# NOT INSTALLED, deliberately: their doc offers `npx firecrawl-cli init --all
+# --browser`, a CLI-plus-skills install. That is for an agent driving its own
+# terminal. Friday IS the product, so this is the integrate-into-app-code case:
+# plain REST from Friday's own process, key from the encrypted store. No global
+# toolchain was added to Stephen's machine.
 
 
 def api_key() -> str:
@@ -131,7 +167,7 @@ def search(query: str, count: int = 10, *, with_content: bool = False,
     body: dict[str, Any] = {"query": query, "limit": max(1, min(count, 20))}
     if with_content:
         body["scrapeOptions"] = {"formats": ["markdown"], "onlyMainContent": True}
-    payload, err = _post("/v1/search", body,
+    payload, err = _post(f"/{API_VERSION}/search", body,
                          timeout or (SEARCH_TIMEOUT_S if with_content else 60))
     if payload is None:
         return {"ok": False, "results": [], "error": err}
@@ -158,7 +194,7 @@ def scrape(url: str, *, timeout: int | None = None,
            main_only: bool = True) -> dict:
     """Fetch one page as markdown. Returns {ok, markdown, title, final_url,
     status, error}."""
-    payload, err = _post("/v1/scrape",
+    payload, err = _post(f"/{API_VERSION}/scrape",
                          {"url": url, "formats": ["markdown"],
                           "onlyMainContent": main_only},
                          timeout or DEFAULT_TIMEOUT_S)
@@ -190,7 +226,7 @@ def credits() -> dict:
     if not configured():
         return {"ok": False, "error": "no key"}
     try:
-        r = requests.get(f"{BASE}/v1/team/credit-usage",
+        r = requests.get(f"{BASE}/{API_VERSION}/team/credit-usage",
                          headers={"Authorization": f"Bearer {api_key()}"},
                          timeout=30)
         if r.status_code >= 400:

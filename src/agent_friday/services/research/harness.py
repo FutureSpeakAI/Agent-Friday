@@ -29,7 +29,14 @@ _log = logging.getLogger("friday.research")
 
 BRAIN = "gemma4:12b"        # judgment: reformulate, converse, done_when
 SIDEKICK = "gemma4:e2b"     # cheap structured work
-EXTRACTOR = "gemma4:e4b"    # page -> relevant verbatim spans
+# Extraction seat, MEASURED 2026-08-17 on a 24,000-char page:
+#   gemma4:e4b   33.1s  no usable JSON at all
+#   gemma4:e2b   26.3s  6 passages
+#   gemma4:12b  192.6s  2 passages
+# The e2b is both the fastest and the only one that reliably returns parseable
+# output AND finds more than a couple of passages. The 12b at 192.6s is also
+# what was timing out at the old 120s ceiling mid-commission.
+EXTRACTOR = "gemma4:e2b"    # page -> relevant verbatim spans
 HEAVY = "gemma4:26b"        # synthesis
 
 
@@ -226,6 +233,8 @@ def grind(c: Commission) -> None:
                     c.log(f"search returned nothing for {query!r}",
                           status=out.get("status"),
                           note=web_search.status_note(out))
+            c.log(f"searched {len(queries)} quer{'ies' if len(queries)!=1 else 'y'}, "
+                  f"{len(results)} results consulted", backend=out.get("backend"))
             # De-dup by URL, keep order.
             seen, picked = set(), []
             for r in results:
@@ -400,8 +409,46 @@ def _pick_synthesis_seat(c: Commission, n_findings: int) -> tuple[str, str]:
 
 # ── Stage E: verification — no receipt, no render (§3.5 / RS5) ────────────────
 
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")     # [text](url) -> text
+_MD_IMG = re.compile(r"!\[([^\]]*)\]\([^)]*\)")     # ![alt](url) -> alt
+
+
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip().lower()
+    """Normalize for receipt matching: content, not markup.
+
+    MEASURED DEFECT, 2026-08-17. Extraction returns quotes with markdown
+    stripped — the 12b returned
+
+        "Launch date | April 1, 2026, 22:35:12 UTC (6:35:12p.m. EDT)"
+
+    where the page holds
+
+        "Launch date | April 1, 2026, 22:35:12 [UTC](https://...) (6:35:12p.m. [EDT](https://...))"
+
+    Removing link syntax is a REASONABLE thing for a model to do, and a raw
+    string comparison called the result fabricated. So verification was
+    striking TRUE, correctly-sourced claims over markup — a false positive in
+    the one mechanism whose value depends on being believed. A kill count
+    inflated by punctuation teaches the reader to ignore kill counts.
+
+    What is normalized: markdown link and image syntax (the destination is
+    dropped, the visible text kept), emphasis markers, table pipes, and
+    whitespace. What is NOT normalized: the words themselves. A quote still has
+    to be present in the page to survive — this widens what counts as the same
+    text, it does not weaken the requirement that the text be there.
+    """
+    t = s or ""
+    t = _MD_IMG.sub(r"\1", t)
+    t = _MD_LINK.sub(r"\1", t)
+    # Emphasis markers VANISH; replacing them with a space turns "2024**,"
+    # into "2024 ," and reintroduces the mismatch this function exists to end.
+    t = re.sub(r"[*_`~]+", "", t)
+    # Structural markers become a space, or table cells run together.
+    t = re.sub(r"[>#|]+", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"\s+([,.;:!?)])", r"\1", t)     # no space before punctuation
+    t = re.sub(r"([(])\s+", r"\1", t)
+    return t.strip().lower()
 
 
 def verify(c: Commission, draft: dict) -> dict:
