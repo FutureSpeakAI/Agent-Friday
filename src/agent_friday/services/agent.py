@@ -426,75 +426,78 @@ def _html_to_text(html):
 
 
 def _tool_search_web(inp):
-    q = (inp or {}).get('query', '')
+    """Search the web. Delegates to services.web_search (deep-research P1).
+
+    Returns REAL hrefs, so browse_web can fetch what this found — the old
+    implementation returned DuckDuckGo's display text (a truncated, scheme-less
+    domain) and the pair could not work together. It also distinguishes "no
+    results" from "the search tool is broken" instead of returning a
+    challenge page's text under a "Search results" heading.
+    """
+    q = ((inp or {}).get('query') or '').strip()
     if not q:
         return "search_web error: 'query' is required."
     try:
-        import requests as _req
-        encoded = _req.utils.quote(q)
-        resp = _req.get(
-            f"https://html.duckduckgo.com/html/?q={encoded}",
-            timeout=12,
-            headers={'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'},
-        )
-        try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            results = []
-            for r in soup.select('.result')[:8]:
-                title_el = r.select_one('.result__title')
-                snip_el = r.select_one('.result__snippet')
-                url_el = r.select_one('.result__url')
-                if title_el and snip_el:
-                    results.append({
-                        'title': title_el.get_text(strip=True),
-                        'snippet': snip_el.get_text(strip=True),
-                        'url': url_el.get_text(strip=True) if url_el else '',
-                    })
-            if results:
-                lines = [f"Search results for '{q}':\n"]
-                for i, r in enumerate(results, 1):
-                    lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
-                return '\n'.join(lines)[:100_000]
-        except ImportError:
-            pass
-        # BS4 not available — return stripped text
-        text = _html_to_text(resp.text)
-        return f"Search results for '{q}' (raw):\n{text[:50_000]}"
-    except ImportError:
-        return (
-            f"requests library not installed. Install it with: pip install requests\n"
-            f"Query was: {q!r}"
-        )
+        from agent_friday.services import web_search as _ws
     except Exception as e:
-        return f"Web search error: {e}. Query: {q!r}"
+        return f"Web search unavailable (module import failed: {e}). Query: {q!r}"
+    try:
+        out = _ws.search(q, count=int((inp or {}).get('count') or 10))
+    except Exception as e:
+        return (f"Web search error: {type(e).__name__}: {e}. This is a TOOL "
+                f"FAILURE, not evidence that nothing is published. Query: {q!r}")
+
+    results = out.get('results') or []
+    if not results:
+        return (f"Search for {q!r} returned no results "
+                f"(backend: {out.get('backend')}).\n{_ws.status_note(out)}")
+    lines = [f"Search results for '{q}' (backend: {out.get('backend')}, "
+             f"{len(results)} results). URLs below are real and fetchable — "
+             f"pass one verbatim to browse_web:\n"]
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}")
+    if out.get('detail'):
+        lines.append(f"\n[note: {out['detail']}]")
+    return '\n'.join(lines)[:100_000]
 
 
 def _tool_browse_web(inp):
+    """Fetch a page's text. Routes through services.web_fetch, which applies
+    the SSRF guard to the URL AND to every redirect hop (deep-research P2).
+
+    Before this, browse_web fetched any http(s) URL: loopback, RFC1918, the
+    cloud-metadata address and Friday's own ports were all reachable by any
+    URL that reached the tool — including one embedded in a page Friday was
+    asked to read.
+    """
     url = ((inp or {}).get('url') or '').strip()
     if not url:
         return "browse_web error: 'url' is required."
-    if not (url.startswith('http://') or url.startswith('https://')):
-        return f"browse_web error: URL must start with http:// or https://. Got: {url!r}"
     try:
-        import requests as _req
-        resp = _req.get(
-            url, timeout=15,
-            headers={'User-Agent': 'Mozilla/5.0 FridayAgent/1.0'},
-            allow_redirects=True,
-        )
-        ct = resp.headers.get('content-type', '')
-        if 'html' in ct or 'text' in ct or not ct:
-            text = _html_to_text(resp.text)
-        else:
-            return f"Non-text content ({ct}) at {url} — can't extract text."
-        _log_context("browse_web", {"url": url, "chars": len(text)})
-        limit = 200_000
-        return f"[{url}]\n{text[:limit]}" + (f"\n...[truncated — {len(text)} chars total]" if len(text) > limit else "")
-    except ImportError:
-        return "browse_web requires the requests library. Install: pip install requests"
+        from agent_friday.services import web_fetch as _wf
     except Exception as e:
-        return f"Browse error ({url}): {e}"
+        return f"browse_web unavailable (module import failed: {e})"
+
+    rec = _wf.fetch(url)
+    if not rec.get('ok'):
+        kind = rec.get('error_kind')
+        if kind == 'refused_unsafe':
+            return (f"I did NOT fetch that URL — {rec.get('error')}. Internal "
+                    f"and local-network addresses are off limits to this tool.")
+        if kind == 'unreadable_type':
+            return (f"Could not read {url} — {rec.get('error')}. Say so plainly "
+                    f"rather than substituting a different source.")
+        return f"Browse error ({url}): {rec.get('error')}"
+
+    text = _wf.load_extraction(rec['id']) or ''
+    _log_context("browse_web", {"url": url, "chars": len(text),
+                                "cached": rec.get('from_cache')})
+    header = f"[{rec.get('final_url') or url}]"
+    if rec.get('redirect_chain'):
+        header += f"\n[followed {len(rec['redirect_chain'])} redirect(s), each safety-checked]"
+    tail = (f"\n...[truncated — {rec.get('chars')} chars extracted]"
+            if rec.get('truncated') else "")
+    return f"{header}\n{text}{tail}"
 
 
 def _tool_read_file(inp):

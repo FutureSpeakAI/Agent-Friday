@@ -1,0 +1,226 @@
+"""
+web_search — structured web search with URLs you can actually fetch.
+
+Three defects this replaces (deep-research.md P1, plus one the design did not
+know about because it was found live on 2026-08-17):
+
+  1. The old scraper returned `.result__url`'s DISPLAY TEXT as the url — a
+     truncated, scheme-less domain string. search_web found a page and handed
+     browse_web something unfetchable. The real href is on the `.result__a`
+     anchor; that is what this module returns.
+
+  2. LIVE FINDING, worse than the design assumed: html.duckduckgo.com now
+     answers a plain GET with HTTP 202 and an anti-bot challenge page. Zero
+     `.result` blocks parse, and the old code's fallback branch then returned
+     the CHALLENGE PAGE's text under the heading "Search results for '<q>'".
+     Friday's web search was not degraded, it was dead, and it reported its
+     own deadness as content. A POST with a browser User-Agent gets HTTP 200
+     and real results; that is the request this module makes.
+
+  3. Zero results was ambiguous between "nothing is published about this" and
+     "our scraper broke" (§7.2). Every response from this module carries a
+     `status` that distinguishes them, and `canary()` settles it by asking a
+     question with a known stable answer.
+
+Backends, in order: Brave Web Search when BRAVE_SEARCH_API_KEY is set (the
+paid general-search key Q1 approved), DuckDuckGo HTML otherwise. The DDG path
+is a scrape and is labelled as one — when it breaks again, the caller finds
+out rather than receiving an error page dressed as research.
+"""
+from __future__ import annotations
+
+import os
+import time
+from typing import Any
+
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+# A query whose answer is stable and heavily indexed. Used only to tell a
+# broken tool from an empty web (§7.2) — never surfaced as a finding.
+_CANARY_QUERY = "wikipedia"
+_CANARY_TTL_S = 300.0
+_canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
+
+
+class SearchStatus:
+    OK = "ok"                      # results returned
+    EMPTY = "empty"                # backend answered, genuinely nothing
+    BACKEND_BROKEN = "backend_broken"   # challenge page, parse failure, HTTP error
+    NO_BACKEND = "no_backend"      # nothing configured or importable
+
+
+def brave_key() -> str:
+    return (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+
+
+def active_backend() -> str:
+    return "brave" if brave_key() else "duckduckgo-scrape"
+
+
+def _brave(query: str, count: int) -> dict:
+    import requests
+    key = brave_key()
+    r = requests.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={"q": query, "count": min(max(count, 1), 20)},
+        headers={"Accept": "application/json", "X-Subscription-Token": key},
+        timeout=20,
+    )
+    if r.status_code == 401:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": "Brave rejected the API key (HTTP 401)"}
+    if r.status_code == 429:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": "Brave rate limit reached (HTTP 429)"}
+    if r.status_code >= 400:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"Brave returned HTTP {r.status_code}"}
+    data = r.json()
+    items = ((data.get("web") or {}).get("results")) or []
+    results = [{
+        "title": (it.get("title") or "").strip(),
+        "url": (it.get("url") or "").strip(),
+        "snippet": (it.get("description") or "").strip(),
+    } for it in items if (it.get("url") or "").startswith(("http://", "https://"))]
+    return {"status": SearchStatus.OK if results else SearchStatus.EMPTY,
+            "results": results, "detail": ""}
+
+
+def _unwrap_ddg(href: str) -> str:
+    """DDG sometimes wraps the destination in its own redirector
+    (//duckduckgo.com/l/?uddg=<encoded>). Return the real target."""
+    from urllib.parse import parse_qs, unquote, urlparse
+    if not href:
+        return ""
+    if href.startswith("//"):
+        href = "https:" + href
+    p = urlparse(href)
+    if "duckduckgo.com" in (p.netloc or "") and p.path.startswith("/l/"):
+        target = (parse_qs(p.query).get("uddg") or [""])[0]
+        if target:
+            return unquote(target)
+    return href
+
+
+def _duckduckgo(query: str, count: int) -> dict:
+    import requests
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return {"status": SearchStatus.NO_BACKEND,
+                "detail": "beautifulsoup4 is not installed"}
+    # POST, not GET: a GET now answers 202 with an anti-bot challenge.
+    r = requests.post("https://html.duckduckgo.com/html/", data={"q": query},
+                      timeout=20, headers={"User-Agent": _UA})
+    if r.status_code != 200:
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": f"DuckDuckGo returned HTTP {r.status_code} "
+                          f"(202 means its anti-bot challenge)"}
+    body_l = r.text.lower()
+    soup = BeautifulSoup(r.text, "html.parser")
+    blocks = soup.select(".result")
+    if not blocks:
+        # Do NOT fall back to dumping page text as "results" — that is the
+        # defect this module exists to remove.
+        challenged = "anomaly" in body_l or "challenge" in body_l
+        return {"status": SearchStatus.BACKEND_BROKEN,
+                "detail": ("DuckDuckGo served an anti-bot challenge instead of "
+                           "results" if challenged else
+                           "DuckDuckGo's result markup did not parse — the "
+                           "page layout likely changed")}
+    results = []
+    for b in blocks:
+        a = b.select_one(".result__a")
+        if not a:
+            continue
+        url = _unwrap_ddg((a.get("href") or "").strip())
+        if not url.startswith(("http://", "https://")):
+            continue
+        snip = b.select_one(".result__snippet")
+        results.append({
+            "title": a.get_text(strip=True),
+            "url": url,                                  # a real href, P1's fix
+            "snippet": snip.get_text(strip=True) if snip else "",
+        })
+        if len(results) >= count:
+            break
+    return {"status": SearchStatus.OK if results else SearchStatus.EMPTY,
+            "results": results, "detail": ""}
+
+
+def search(query: str, count: int = 10) -> dict:
+    """Search the web. Returns {status, results[], backend, detail, query}.
+
+    `results[i]["url"]` is always a real, fetchable, clickable href — that is
+    this function's contract and the thing the old one got wrong.
+    """
+    q = (query or "").strip()
+    if not q:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": "empty query"}
+    backend = active_backend()
+    try:
+        out = _brave(q, count) if backend == "brave" else _duckduckgo(q, count)
+    except Exception as e:
+        out = {"status": SearchStatus.BACKEND_BROKEN,
+               "detail": f"{type(e).__name__}: {e}"}
+    # A keyed Brave that fails should not silently strand research; fall back
+    # to the scrape, but say which backend actually answered.
+    if out.get("status") == SearchStatus.BACKEND_BROKEN and backend == "brave":
+        try:
+            alt = _duckduckgo(q, count)
+            if alt.get("status") == SearchStatus.OK:
+                alt["backend"] = "duckduckgo-scrape"
+                alt["query"] = q
+                alt["detail"] = f"Brave failed ({out.get('detail')}); used the fallback"
+                alt.setdefault("results", [])
+                return alt
+        except Exception:
+            pass
+    out.setdefault("results", [])
+    out["query"] = q
+    out["backend"] = backend
+    return out
+
+
+def canary(force: bool = False) -> dict:
+    """Is the search tool working at all? (§7.2)
+
+    Cheap and cached: a commission that finds nothing across ten sub-questions
+    calls this once to decide whether it discovered an absence or hit a broken
+    scraper. Reporting "there is nothing published" when the tool is down is a
+    fabricated empirical result, which is worse than reporting nothing.
+    """
+    now = time.time()
+    if not force and _canary_cache["ok"] is not None and \
+            (now - _canary_cache["ts"]) < _CANARY_TTL_S:
+        return {"ok": _canary_cache["ok"], "detail": _canary_cache["detail"],
+                "cached": True}
+    out = search(_CANARY_QUERY, count=3)
+    ok = out.get("status") == SearchStatus.OK and bool(out.get("results"))
+    detail = out.get("detail") or ("search is answering normally" if ok else
+                                   f"status={out.get('status')}")
+    _canary_cache.update({"ts": now, "ok": ok, "detail": detail})
+    return {"ok": ok, "detail": detail, "backend": out.get("backend"),
+            "cached": False}
+
+
+def status_note(out: dict) -> str:
+    """The sentence a tool result should carry when a search returns nothing —
+    written so a model cannot mistake a broken tool for an empty web."""
+    st = out.get("status")
+    if st == SearchStatus.OK:
+        return ""
+    if st == SearchStatus.EMPTY:
+        c = canary()
+        if c.get("ok"):
+            return ("No results. The search tool is verified working (canary "
+                    "passed), so this is a genuine absence for this query.")
+        return ("No results, AND the search tool failed its canary check "
+                f"({c.get('detail')}). Treat this as a BROKEN TOOL, not as "
+                f"evidence that nothing is published. Do not report an absence.")
+    if st == SearchStatus.NO_BACKEND:
+        return f"Search is not available: {out.get('detail')}"
+    return (f"The search backend failed: {out.get('detail')}. This is a tool "
+            f"failure, NOT evidence that nothing is published.")
