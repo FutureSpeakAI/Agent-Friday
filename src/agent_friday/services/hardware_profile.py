@@ -463,3 +463,125 @@ def summary(profile: dict | None = None) -> str:
     return "%s | %s (%s threads) | %d MiB RAM (%s) | %s" % (
         p["os"]["family"], p["cpu"]["model"], p["cpu"]["threads"],
         p["ram"]["total_mib"], p["memory_bandwidth"]["class"], g)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Displays — VRAM the OS needs that nothing was counting
+#
+#  2026-08-17. Stephen's second monitor vanished from Windows while still
+#  showing a stale frame. The cause was an indirect (USB) display driver
+#  crashing — `TrgIdd.dll`, device `Trigger 6 External Graphics`, which went to
+#  status Error — and NOT an NVIDIA reset: zero TDR/4101 events in twelve hours.
+#
+#  But the card was at 11,691 MiB used of 12,282 (322 MiB free) after the
+#  heartbeat loaded a 9.6 GB model four minutes earlier, and an indirect display
+#  driver allocates GPU memory for its framebuffer. Contributing: likely.
+#  Proven: no.
+#
+#  What IS proven is the budgeting gap it exposed. `refresh_baseline` measures
+#  `memory.used` ONCE at Arbiter boot and freezes it as the idle floor — it read
+#  542 MiB on this machine, against a documented Windows compositor cost of
+#  ~1 GB. Nothing counts monitors, nothing counts resolution, nothing notices an
+#  indirect adapter, and nothing re-measures when the display setup changes. So
+#  the arbiter can plan the card full while the desktop still needs room.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Per-monitor framebuffer cost, generously rounded. A 4K surface at 32bpp is
+# ~32 MiB, but the compositor keeps several buffers per output plus overlay and
+# scaling surfaces, so the honest per-display figure is far above the naive one.
+_DISPLAY_BASE_MIB = 256          # compositor itself, first display included
+_DISPLAY_PER_EXTRA_MIB = 192     # each additional attached monitor
+_DISPLAY_HIDPI_EXTRA_MIB = 128   # per monitor above 2560 wide
+# An indirect/USB display adapter renders on the host GPU and copies out. It
+# costs more than a directly attached panel and it is the fragile one.
+_DISPLAY_INDIRECT_EXTRA_MIB = 256
+
+
+def detect_displays() -> dict:
+    """Attached monitors and adapters. Best-effort; never raises.
+
+    Returns {count, hidpi, indirect, adapters:[{name,status,indirect}], ok}.
+    `ok` is False when an adapter is present but in an error state — which is
+    exactly the condition Windows was in after the driver crash.
+    """
+    out = {"count": 0, "hidpi": 0, "indirect": 0, "adapters": [], "ok": True}
+    if platform.system().lower() != "windows":
+        return out
+    ps = (
+        r"$m=@(Get-CimInstance -Namespace root\wmi "
+        "WmiMonitorBasicDisplayParams -ErrorAction SilentlyContinue);"
+        "$v=@(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue"
+        "|Select-Object Name,Status,CurrentHorizontalResolution);"
+        "[Console]::Out.Write((ConvertTo-Json @{monitors=$m.Count;video=$v} "
+        "-Depth 4 -Compress))"
+    )
+    try:
+        raw = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=20).stdout.strip()
+        data = json.loads(raw) if raw else {}
+    except Exception:
+        return out
+    vids = data.get("video") or []
+    if isinstance(vids, dict):
+        vids = [vids]
+    out["count"] = int(data.get("monitors") or 0)
+    for v in vids:
+        name = str(v.get("name") or v.get("Name") or "")
+        status = str(v.get("status") or v.get("Status") or "")
+        width = v.get("currentHorizontalResolution") or v.get(
+            "CurrentHorizontalResolution") or 0
+        # An indirect display driver has no PCI adapter RAM and a virtual-ish
+        # name; the reliable tell on Windows is a non-NVIDIA/AMD/Intel adapter.
+        indirect = not any(k in name.lower()
+                           for k in ("nvidia", "amd", "radeon", "intel"))
+        out["adapters"].append({"name": name, "status": status,
+                                "indirect": indirect})
+        if indirect:
+            out["indirect"] += 1
+        if status and status.lower() != "ok":
+            out["ok"] = False
+        try:
+            if int(width or 0) > 2560:
+                out["hidpi"] += 1
+        except Exception:
+            pass
+    return out
+
+
+def display_reserve_mib(displays: dict | None = None) -> int:
+    """VRAM to hold back for the desktop, scaled to what is attached.
+
+    This is the number the old code did not have. It replaces a single
+    boot-time snapshot with something that grows when he plugs a monitor in.
+    """
+    d = displays if displays is not None else detect_displays()
+    count = max(1, int(d.get("count") or 1))
+    mib = _DISPLAY_BASE_MIB
+    mib += _DISPLAY_PER_EXTRA_MIB * (count - 1)
+    mib += _DISPLAY_HIDPI_EXTRA_MIB * int(d.get("hidpi") or 0)
+    mib += _DISPLAY_INDIRECT_EXTRA_MIB * int(d.get("indirect") or 0)
+    return int(mib)
+
+
+def vram_headroom(gpu_index: int = 0) -> dict:
+    """Live free VRAM against the display reserve.
+
+    The check that was missing: the plan did arithmetic against its own ceiling
+    and nothing ever asked the card what was actually free before committing a
+    load. 322 MiB free is not a number a plan should be allowed to reach.
+    """
+    gpus = detect_gpus()
+    gpu = next((g for g in gpus if g.get("index") == gpu_index), None)
+    if not gpu:
+        return {"ok": True, "reason": "no GPU detected"}
+    total = int(gpu.get("vram_total_mib") or 0)
+    used = int(gpu.get("vram_used_mib") or 0)
+    free = max(0, total - used)
+    reserve = display_reserve_mib()
+    return {
+        "ok": free >= reserve,
+        "total_mib": total, "used_mib": used, "free_mib": free,
+        "display_reserve_mib": reserve,
+        "shortfall_mib": max(0, reserve - free),
+    }

@@ -573,6 +573,34 @@ class Arbiter:
                         % self.lease["kind"]}
             if self.state not in (STATE_DEFAULT,):
                 return {"ok": False, "error": "arbiter is %s" % self.state}
+            # DISPLAY HEADROOM, checked against the LIVE card before committing.
+            #
+            # 2026-08-17: the plan did its arithmetic against a floor measured
+            # once at Arbiter boot (542 MiB here, against a documented ~1 GB
+            # Windows compositor cost) and nothing ever asked the GPU what was
+            # actually free. The card reached 322 MiB free after a heartbeat
+            # loaded a 9.6 GB model, and four minutes later an indirect display
+            # driver crashed and Windows lost Stephen's second monitor.
+            #
+            # A refusal here is a sentence he can read. A driver reset is him
+            # waving a mouse at a dead screen wondering what happened.
+            try:
+                from agent_friday.services.hardware_profile import vram_headroom
+                _hd = vram_headroom()
+                if _hd.get("total_mib") and not _hd.get("ok"):
+                    self.state = STATE_DEFAULT
+                    return {"ok": False, "error": (
+                        "not enough VRAM left for the desktop: %d MiB free "
+                        "against a %d MiB display reserve (short by %d). "
+                        "Loading now risks the display driver, which is how "
+                        "the second monitor was lost on 2026-08-17. Free the "
+                        "card or close a display-heavy app first."
+                        % (_hd.get("free_mib", 0),
+                           _hd.get("display_reserve_mib", 0),
+                           _hd.get("shortfall_mib", 0))),
+                        "refused": {"rule_id": "R-DISPLAY-RESERVE"}}
+            except Exception:
+                pass
             self.state = STATE_TRANSITIONING
             t0 = time.time()
             try:
