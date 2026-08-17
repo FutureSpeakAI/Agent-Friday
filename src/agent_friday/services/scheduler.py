@@ -968,6 +968,89 @@ def _tick():
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
+    _away_drain_tick()
+
+
+# ── P5: the away-drain, OFF by default ────────────────────────────────────────
+#
+# work_queue.drain() exists and holds one Arbiter lease across a whole batch,
+# but nothing ever calls it on a timer — it fires only from an HTTP route the
+# UI must poll, so queued `when_away` work simply waits forever if nobody
+# opens the panel.
+#
+# Deliberately DEFAULT OFF, and that is not caution theatre. This is the one
+# piece of the design that starts taking the GPU on a schedule, and taking the
+# GPU is not free on this machine: Stephen lost a second monitor to VRAM
+# pressure on 2026-08-17. A background job that quietly claims the card while
+# he is working is a job that can take his screen. He turns it on.
+#
+# Even when enabled it will not start a drain without display headroom.
+
+def away_drain_enabled() -> bool:
+    try:
+        return bool(((core._load_settings() or {}).get("away_drain") or {})
+                    .get("enabled", False))
+    except Exception:
+        return False
+
+
+def away_drain_state() -> dict:
+    """Reportable, like the judgment gate — a scheduler that is off should be
+    visibly off rather than indistinguishable from one that is on and idle."""
+    enabled = away_drain_enabled()
+    pending = None
+    try:
+        from agent_friday.services import work_queue
+        pending = len(work_queue.batch_ready("heavy", min_items=1) or [])
+    except Exception:
+        pass
+    return {
+        "enabled": enabled,
+        "pending_heavy": pending,
+        "summary": ("ON — queued heavy work drains automatically when the GPU "
+                    "has room." if enabled else
+                    "OFF — queued heavy work waits until you drain it. Friday "
+                    "will not take the GPU on a timer unless you turn this on."),
+    }
+
+
+def _away_drain_tick() -> None:
+    if not away_drain_enabled():
+        return
+    try:
+        from agent_friday.services import gpu_headroom, work_queue
+        batch = work_queue.batch_ready("heavy", min_items=1)
+        if not batch:
+            return
+        head = gpu_headroom.check(6000)
+        if head.get("ok") is not True:
+            _log.info("away-drain holding off: %s", head.get("reason"))
+            return
+        from agent_friday.services.residency_arbiter import get_arbiter
+        res = work_queue.drain("heavy", _drain_runner, arbiter=get_arbiter())
+        _log.info("away-drain completed: %s", res)
+        _announce_drain(res)
+    except Exception as e:
+        _log.warning("away-drain tick failed: %s", e)
+
+
+def _drain_runner(item):
+    from agent_friday.services import local_call
+    return local_call.call("You are completing a queued background job.",
+                           str(item.get("spec") or ""), "gemma4:26b",
+                           max_tokens=4096)
+
+
+def _announce_drain(res) -> None:
+    """A drain that runs and tells nobody is the same defect as P4."""
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="Queued work finished",
+                body=str(res)[:300], proactive_chat=True,
+                chat_message=f"I drained the queued heavy work while you were "
+                             f"away. {str(res)[:300]}")
+    except Exception as e:
+        _log.warning("could not announce the drain: %s", e)
 
 
 def _reclaim_expired_lease():

@@ -279,17 +279,31 @@ Reply with STRICT JSON only, no prose, no code fence:
 One entry per span, in order, using the given index."""
 
 
+# The sidekick, not the brain. Measured 2026-08-17 on a 12-case fixture
+# (6 public / 6 first-person private), both seats warm:
+#
+#   gemma4:e2b   3 spans 1.2s | 6 spans 1.7s   12/12 correct, 0 false rescues
+#   gemma4:12b   3 spans 49.6s | 6 spans 40.2s  12/12 correct, 0 false rescues
+#
+# Same verdicts, ~30x the latency. The design INFERRED 2-4s on the brain and
+# the real figure was 40-60s, which would have put a minute onto every cloud
+# call that today loses content. The e2b also survives every Arbiter lease
+# (R10), so judgment stays available while the heavy seat is writing — the
+# brain does not.
+#
+# Honest limit on that evidence: both seats scored 100%, so this measures "no
+# difference detected on clear-cut cases", not "identical judgment". A harder
+# fixture could separate them; the false-rescue count (the dangerous error) was
+# zero for both, which is the number that matters most.
+DEFAULT_JUDGE_MODEL = "gemma4:e2b"
+
+
 def _judge_model() -> str | None:
-    """The interactive_brain seat, or whatever local model is configured."""
+    """The seat that judges. Settings override; sidekick by default."""
     explicit = _cfg("model", None)
     if explicit:
         return str(explicit)
-    try:
-        from agent_friday.core import _load_settings
-        rc = (_load_settings() or {}).get("model_routing") or {}
-        return rc.get("local_model") or None
-    except Exception:
-        return None
+    return DEFAULT_JUDGE_MODEL
 
 
 def judge_spans(spans: list[str]) -> tuple[list[dict] | None, str]:
@@ -311,17 +325,19 @@ def judge_spans(spans: list[str]) -> tuple[list[dict] | None, str]:
     _local.judging = True
     t0 = time.time()
     try:
-        from agent_friday.services.model_router import _call_ollama
+        # Direct, tool-free, JSON-constrained. NOT model_router._call_ollama:
+        # that runs an agentic tool loop even with no tools passed, and a
+        # 3-span batch came back after 48.9s as "[Agent hit max tool iterations
+        # without completing.]" — see services/local_call.py. Single spans
+        # escaped it, which is exactly why this failure hid until the first
+        # batched call.
+        from agent_friday.services import local_call
         model = _judge_model()
-        raw, _ = _call_ollama(
-            [{"role": "user", "content":
-              f"Classify these {len(trimmed)} spans:\n{payload}"}],
-            system=_JUDGE_SYSTEM,
-            model=model,
-            max_tokens=2048,
-            orb_label="privacy judgment",
-            orb_icon="⚖️",
-        )
+        raw = local_call.call(
+            _JUDGE_SYSTEM,
+            f"Classify these {len(trimmed)} spans:\n{payload}",
+            model, json_mode=True, max_tokens=2048,
+            timeout=int(_cfg("timeout_s", JUDGE_TIMEOUT_S * 4)))
     except Exception as e:
         _log.warning("judgment call failed: %s", e)
         return None, f"{type(e).__name__}: {e}"
@@ -639,3 +655,123 @@ def _notify_probe_failure(leaked: list[dict]) -> None:
 
 def probe_result() -> dict | None:
     return _PROBE_RESULT
+
+
+# ── Dry run — what WOULD happen to this text (§3.2 / RS2) ─────────────────────
+
+def dry_run(text: str) -> dict:
+    """Compute the protection plan for `text` without sending anything.
+
+    Research needs to tell Stephen, BEFORE the work starts, whether Claude will
+    see his question and what would be removed from it (Q5). That means asking
+    the gate a hypothetical, and a hypothetical must not be answerable by
+    "send it and see".
+
+    Returns:
+      cloud_allowed  bool   — False when never-send material is load-bearing
+      question_sent  str    — the protected text Claude would actually receive
+      scrub_tags     [kind] — KINDS ONLY. Never values; this dict gets shown.
+      scrub_count    int
+      reason         str
+
+    Note the asymmetry with the live gate: here a NEVER_SEND verdict or a
+    surviving identifier means `cloud_allowed=False` for the whole commission,
+    rather than redacting one span. A research question with a hole in it is
+    not a research question.
+    """
+    from agent_friday.core import _scrub_pii
+    from agent_friday.services.sensitivity_classifier import classify
+
+    raw = (text or "").strip()
+    if not raw:
+        return {"cloud_allowed": True, "question_sent": "", "scrub_tags": [],
+                "scrub_count": 0, "reason": "nothing to protect"}
+
+    never = never_send_hits(raw)
+    if never:
+        return {"cloud_allowed": False, "question_sent": None,
+                "scrub_tags": [], "scrub_count": 0,
+                "reason": (f"The question contains material on your never-send "
+                           f"list ({len(never)} match"
+                           f"{'es' if len(never) != 1 else ''}).")}
+
+    scrubbed, lookup = _scrub_pii(raw)
+    kinds = sorted({t.split(":")[1] for t in lookup if t.count(":") >= 2})
+
+    check = verify_outgoing(scrubbed)
+    if not check.ok:
+        return {"cloud_allowed": False, "question_sent": None,
+                "scrub_tags": kinds, "scrub_count": len(lookup),
+                "reason": (f"After scrubbing, the question still cannot be "
+                           f"protected: {check.reason}.")}
+
+    tier = classify(scrubbed, default=Tier.PUBLIC, egress=True)
+    if tier <= Tier.PUBLIC:
+        return {"cloud_allowed": True, "question_sent": scrubbed,
+                "scrub_tags": kinds, "scrub_count": len(lookup),
+                "reason": "Nothing in the question needs to stay here."}
+
+    # Keywords object. This is exactly the appeals-court case, so ask.
+    if not enabled():
+        # Judgment off: the deterministic verdict stands, and a question the
+        # keyword rules dislike does not go to Claude. Say WHY, so the answer
+        # reads as a setting rather than a mystery.
+        return {"cloud_allowed": False, "question_sent": None,
+                "scrub_tags": kinds, "scrub_count": len(lookup),
+                "reason": ("The keyword rules flag this question and the "
+                           "judgment layer is switched off, so it stays here.")}
+
+    verdicts, detail = judge_spans([scrubbed])
+    if verdicts is None:
+        return {"cloud_allowed": False, "question_sent": None,
+                "scrub_tags": kinds, "scrub_count": len(lookup),
+                "reason": f"I could not get a judgment on it ({detail}), so it stays here."}
+    v = verdicts[0]
+    if v.get("verdict") == NEVER_SEND:
+        return {"cloud_allowed": False, "question_sent": None,
+                "scrub_tags": kinds, "scrub_count": len(lookup),
+                "reason": v.get("reason", "judged private")}
+    return {"cloud_allowed": True, "question_sent": scrubbed,
+            "scrub_tags": kinds, "scrub_count": len(lookup),
+            "reason": v.get("reason", "")}
+
+
+# ── Is this layer actually running? (visibility) ──────────────────────────────
+
+def state() -> dict:
+    """Everything needed to answer "is my privacy judgment on?" without asking.
+
+    A privacy layer that exists and is not running is the "green but doing
+    nothing" pattern, so its state is reportable rather than inferable.
+    """
+    setting = False
+    try:
+        from agent_friday.core import _load_settings
+        setting = bool(((_load_settings() or {}).get("judgment_gate") or {})
+                       .get("enabled", False))
+    except Exception:
+        pass
+    probe = probe_result()
+    if _PROBE_DISABLED:
+        summary = ("OFF — disabled automatically because planted private test "
+                   "material survived the startup probes.")
+    elif not setting:
+        summary = ("OFF — not enabled. The original keyword rules are "
+                   "governing alone, which over-blocks public material on "
+                   "legal, medical and financial topics.")
+    else:
+        summary = "ON — judging spans the keyword rules would otherwise withhold."
+    return {
+        "enabled_setting": setting,
+        "disabled_by_probe": _PROBE_DISABLED,
+        "effective": enabled(),
+        "summary": summary,
+        "model": _judge_model(),
+        "never_send_tokens": len(never_send_tokens()),
+        "probe": {"ok": (probe or {}).get("ok"),
+                  "private_probes": (probe or {}).get("private_probes"),
+                  "leaked": [p["probe"] for p in (probe or {}).get("leaked", [])],
+                  "public_lost": (probe or {}).get("public_lost", []),
+                  "ran": probe is not None},
+        "overturns_7d": overturn_digest(7),
+    }
