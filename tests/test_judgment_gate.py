@@ -321,3 +321,43 @@ def test_register_public_text_stores_origin():
     text = "A quite unremarkable third-party sentence for origin testing."
     eg.register_public_text(text, origin="https://example.org/c")
     assert eg.public_origin_of(text) == "https://example.org/c"
+
+
+# ── Receipt matching: content, not markup ─────────────────────────────────────
+#
+# MEASURED DEFECT 2026-08-17: extraction returns quotes with markdown stripped
+# (the 12b returned "22:35:12 UTC" where the page held "22:35:12 [UTC](...)"),
+# and a raw string compare called that fabricated. Verification was striking
+# TRUE, correctly-sourced claims over punctuation — a false positive in the one
+# mechanism whose whole value is being believed.
+#
+# These tests pin BOTH halves: markup differences must not strike a true quote,
+# and altered or invented text must still be struck.
+
+_RECEIPT_PAGE = (
+    "| Launch date | April 1, 2026, 22:35:12 [UTC](https://en.wikipedia.org/wiki/UTC) "
+    "(6:35:12p.m. [EDT](https://en.wikipedia.org/wiki/EDT)) |\n\n"
+    "In **December 2024**, outgoing administrator Nelson announced a delay.\n\n"
+    "![Orion capsule](https://example.org/img.png) The `Orion` spacecraft is ready."
+)
+
+
+@pytest.mark.parametrize("quote,should_match", [
+    # True quotes that markup differences must NOT kill
+    ("Launch date | April 1, 2026, 22:35:12 UTC (6:35:12p.m. EDT)", True),
+    ("In December 2024, outgoing administrator Nelson announced a delay.", True),
+    ("In **December 2024**, outgoing administrator Nelson announced a delay.", True),
+    ("The Orion spacecraft is ready.", True),
+    # Fabrication and alteration that must STILL be struck
+    ("the crew is forty-seven astronauts", False),
+    ("Nelson announced the mission was cancelled entirely.", False),
+    ("Launch date | April 2, 2026, 22:35:12 UTC", False),
+    ("In December 2025, outgoing administrator Nelson announced a delay.", False),
+])
+def test_receipt_matching_normalizes_markup_not_meaning(quote, should_match):
+    from agent_friday.services.research.harness import _norm
+    found = _norm(quote) in _norm(_RECEIPT_PAGE)
+    assert found is should_match, (
+        f"{quote!r} -> found={found}, expected {should_match}. Normalization "
+        f"must widen what counts as the same TEXT without weakening the "
+        f"requirement that the text actually be present.")
