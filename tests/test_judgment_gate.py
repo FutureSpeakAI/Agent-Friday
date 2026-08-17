@@ -451,3 +451,84 @@ def test_scoper_accepts_sub_questions_as_bare_strings():
         if t:
             texts.append(t)
     assert texts == ["What happened?", "Who paid for it?"]
+
+
+# ── Two leaks found with the gate switched ON, 2026-08-17 ────────────────────
+
+@pytest.mark.parametrize("text,expected", [
+    # The regex bug: IGNORECASE \bus\b matched "US Supreme Court", so a news
+    # headline was treated as Stephen speaking about himself and withheld —
+    # destroying exactly the value this layer exists to recover.
+    ("Trump asks US Supreme Court to allow ballroom work to continue", False),
+    ("The FDA approved a new diabetes medication after a trial", False),
+    ("Travis County court records show the contractor filed for bankruptcy", False),
+    ("Point2 Technology raised a $136M Series B", False),
+    # Genuine first person must be caught.
+    ("My custody hearing is on the 14th", True),
+    ("I owe about $14,000 on the second mortgage", True),
+    ("he told us the deal was done", True),
+    ("We are meeting my lawyer tomorrow", True),
+])
+def test_first_person_floor_does_not_fire_on_third_party_news(text, expected):
+    from agent_friday.services import judgment_gate as jg
+    assert jg.looks_first_person(text) is expected, text
+
+
+def test_stephen_substance_requires_the_scrub_to_actually_separate(judging,
+                                                                   monkeypatch):
+    """LEAK FOUND LIVE: the judge correctly answered STEPHEN_SUBSTANCE for
+    "My custody hearing is on the 14th..." — and the scrubber found NOTHING to
+    replace, because the sentence has no name, number or address. It is pure
+    first-person substance. verify_outgoing passed it (it blocks at SENSITIVE;
+    this is PRIVATE), so a span the judge had just called Stephen's own private
+    material travelled verbatim.
+
+    A scrub that replaced nothing did not separate identity from substance."""
+    judging(jg.STEPHEN_SUBSTANCE, "his own affairs")
+    probe = ("My custody hearing is on the 14th and my lawyer says my ex will "
+             "contest the settlement figure I proposed for our daughter.")
+    out, _err = _seal(probe)
+    assert "custody hearing is on the 14th" not in out, (
+        f"first-person material with nothing scrubbable travelled: {out[:200]!r}")
+
+
+def test_first_person_cannot_be_judged_third_party(judging):
+    """A false rescue on his own affairs is the error class the whole design
+    exists to prevent — and the e2b produced one live, answering
+    ABOUT_THE_WORLD for a first-person sentence about his own finances.
+
+    NOTE ON SCOPE, because the first draft of this test asserted more than the
+    architecture promises: the first-person floor lives inside the APPEAL path,
+    and appeals only happen for spans the deterministic classifier already
+    withheld (§5.4 — judgment is an appeals court). A first-person span the
+    classifier rates PUBLIC never reaches judgment at all and is sent by the
+    layer beneath this one. See
+    test_classifier_recall_gap_is_not_something_judgment_fixes."""
+    judging(jg.ABOUT_THE_WORLD, "FORCED false rescue")
+    probe = PROBES["legal_1p"][0]        # classifies non-PUBLIC, so it appeals
+    out, _err = _seal(probe)
+    assert PROBES["legal_1p"][1] not in out, (
+        f"a first-person span was rescued as third-party material: {out[:200]!r}")
+
+
+def test_classifier_recall_gap_is_not_something_judgment_fixes():
+    """Documents a PRE-EXISTING limit, so nobody mistakes the judgment gate for
+    protection it does not provide.
+
+    Found while verifying the gate live: these first-person sentences about
+    Stephen's own money and clients are rated PUBLIC by the deterministic
+    classifier, so they are sent WITHOUT ever being appealed. That is the
+    keyword/embedding layer's recall, not a judgment failure — and it was true
+    before the judgment gate existed. Judgment can only rescue; it never sees
+    what the layer beneath it waved through.
+
+    If this test starts FAILING, the classifier got better and the gap closed.
+    """
+    from agent_friday.services.sensitivity_classifier import Tier, classify
+    unflagged = [
+        "I owe about $14,000 on the second mortgage and the bank has called twice.",
+        "My client in the housing case wants to know if the deposition is sealed.",
+    ]
+    tiers = {t: classify(t, default=Tier.PUBLIC, egress=True) for t in unflagged}
+    assert all(v == Tier.PUBLIC for v in tiers.values()), (
+        f"the classifier now flags these — update or delete this test: {tiers}")
