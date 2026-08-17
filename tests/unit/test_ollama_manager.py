@@ -395,8 +395,16 @@ class TestChatCompletionGraceful:
         with pytest.raises(Exception):
             mgr.chat_completion(self._make_messages(), "gemma4:latest")
 
-    def test_v1_fail_fallback_also_fails(self, mgr, monkeypatch):
-        """Confirm the fallback to /api/chat is attempted when /v1 fails."""
+    def test_every_request_goes_native_with_a_bounded_seat(self, mgr, monkeypatch):
+        """/v1 is never used, and no request may seat a model unbounded.
+
+        Rewritten 2026-08-17. This used to assert /v1 was tried FIRST and
+        /api/chat was the fallback. That ordering was the defect: /v1 silently
+        discards `options.num_ctx`, so a caller naming no context seated the
+        model at its declared maximum -- 262144 for gemma4, 9.9 GB on a 12 GB
+        card, with the compositor starved behind it. Every request now carries
+        a context and a bounded keep_alive, so native is the only path.
+        """
         call_paths = []
 
         class FakeResp:
@@ -418,13 +426,38 @@ class TestChatCompletionGraceful:
                 raise urllib.error.URLError("v1 not available")
             return FakeResp()
 
+        bodies = []
+        _orig = mgr._post
+
+        def spy(path, payload, timeout=None):
+            bodies.append((path, payload))
+            return {"message": {"content": "hello"},
+                    "prompt_eval_count": 5, "eval_count": 3}
+
         monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(mgr, "_post", spy)
         result = mgr.chat_completion(self._make_messages(), "gemma4:latest")
-        # Should have tried /v1 first, then fallen back to /api/chat
-        assert any("/v1/chat" in p for p in call_paths)
-        # Result is a normalized OAI-style dict
+
+        assert not any("/v1/chat" in p for p in call_paths), \
+            "/v1 discards num_ctx; it must never carry a seating request"
+        path, payload = bodies[-1]
+        assert path == "/api/chat"
+        assert payload["options"]["num_ctx"] == om.DEFAULT_NUM_CTX
+        assert payload["keep_alive"] == om.DEFAULT_KEEP_ALIVE
+        # Result is still normalized to the OAI-style dict callers expect
         assert "choices" in result
         assert result["choices"][0]["message"]["content"] == "hello"
+
+    def test_an_explicit_context_and_keep_alive_are_honoured(self, mgr, monkeypatch):
+        bodies = []
+        monkeypatch.setattr(mgr, "_post", lambda p, b, timeout=None: (
+            bodies.append((p, b)),
+            {"message": {"content": "ok"}})[1])
+        mgr.chat_completion(self._make_messages(), "gemma4:26b",
+                            num_ctx=32768, keep_alive="15m")
+        _, payload = bodies[-1]
+        assert payload["options"]["num_ctx"] == 32768
+        assert payload["keep_alive"] == "15m"
 
 
 # ── get_manager singleton ─────────────────────────────────────────────────────

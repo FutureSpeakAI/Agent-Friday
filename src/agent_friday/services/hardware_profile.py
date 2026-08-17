@@ -239,12 +239,117 @@ def detect_gpus() -> list:
 DEFAULT_VRAM_BASELINE_MIB = {"windows": 1024, "darwin": 512, "linux": 256}
 
 
+# What the desktop is allowed to shrink to. A compositor driving two displays
+# does not fit in the old 1 GB default, and being wrong DOWNWARD here is what
+# breaks screens -- being wrong upward only costs a seat.
+MIN_DISPLAY_RESERVE_MIB = {"windows": 2560, "darwin": 1024, "linux": 512}
+
+_DISPLAY_CACHE: tuple = (0.0, None)
+_DISPLAY_TTL_S = 20.0
+
+
+def live_display_mib(os_family: str) -> int | None:
+    """VRAM held right now by everything that is NOT one of our model servers.
+
+    Windows only for the moment. Note that `nvidia-smi` CANNOT attribute
+    per-process VRAM under WDDM -- it reports N/A for every process -- so the
+    reading comes from the OS performance counters instead. Any wizard that
+    ships to Windows will hit that same wall.
+
+    Returns None when it cannot tell, which the caller reads as "keep the
+    cached floor" rather than as zero.
+    """
+    # Platform guard BEFORE the cache read: keying the cache by value alone
+    # let a cached Windows reading leak out of a non-Windows call.
+    if os_family != "windows":
+        return None
+    if os.environ.get("FRIDAY_TESTING") == "1":
+        # The one function here that touches the machine, so it is the one that
+        # goes quiet under test -- otherwise a plan would depend on whatever the
+        # developer happens to have open. Callers monkeypatch this to drive the
+        # reserve logic; nothing above it needs a test-only branch.
+        return None
+    now = time.time()
+    stamp, hit = _DISPLAY_CACHE
+    if hit is not None and (now - stamp) < _DISPLAY_TTL_S:
+        return hit
+
+    # The counter's InstanceName is `pid_1234_luid_...` -- it carries NO process
+    # name, so the exclusion has to resolve each PID first. Filtering on the
+    # instance string directly matches nothing and silently sums the model
+    # servers into the display reserve, which reads as a card several GB larger
+    # than it is.
+    ps = (
+        "$n=@{};Get-Process|ForEach-Object{$n[$_.Id]=$_.ProcessName};"
+        "$t=0;(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage')."
+        "CounterSamples|ForEach-Object{"
+        "if($_.InstanceName -match 'pid_(\\d+)'){"
+        "$p=[int]$Matches[1];$nm=$n[$p];"
+        "if($nm -and $nm -notmatch '^(llama-server|ollama|python)$'){"
+        "$t+=$_.CookedValue}}};[int]($t/1MB)"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=15)
+        val = int((out.stdout or "").strip())
+    except Exception:
+        return None
+    if val <= 0:
+        return None
+    val = max(val, MIN_DISPLAY_RESERVE_MIB.get(os_family, 512))
+    globals()["_DISPLAY_CACHE"] = (now, val)
+    return val
+
+
 def effective_baseline_mib(gpu: dict, os_family: str) -> int:
-    """The idle floor to budget against: measured if we have it, else the default."""
+    """The floor to budget against. PURE -- a function of the profile, nothing else.
+
+    Reads `vram_display_reserve_mib` when a sampler has written one, and never
+    returns less than the cached idle floor. It does NOT probe: planning has to
+    be deterministic and replayable, which is the whole point of the policy
+    engine's golden fixtures. `refresh_display_reserve()` does the sampling and
+    writes the number in as data; this function only ever reads it.
+
+    Why the field exists at all: the boot-time idle measurement alone was the
+    defect that cost a monitor on 2026-08-17. A baseline sampled once, on an
+    idle desktop, cannot describe a compositor whose appetite moves with
+    monitor count, resolution, and how much browser is open. On the reference
+    box the cached floor read 542 MiB while dwm actually held 2,778 MiB -- a
+    2.2 GB under-reservation, more than an entire brain seat. The arbiter duly
+    planned seats into memory Windows needed to draw the screen.
+
+    A cached constant is wrong on every machine; it just differs in how much.
+    """
     measured = gpu.get("vram_baseline_mib")
-    if isinstance(measured, int) and measured >= 0:
-        return measured
-    return DEFAULT_VRAM_BASELINE_MIB.get(os_family, 512)
+    floor = (measured if isinstance(measured, int) and measured >= 0
+             else DEFAULT_VRAM_BASELINE_MIB.get(os_family, 512))
+    reserve = gpu.get("vram_display_reserve_mib")
+    if isinstance(reserve, int) and reserve > floor:
+        return reserve
+    return floor
+
+
+def refresh_display_reserve(profile: dict) -> dict:
+    """Sample what the desktop is holding NOW and write it into the profile.
+
+    The arbiter calls this before it plans, so the plan plans against the
+    screen the owner is actually looking at rather than the one that existed at
+    boot. Never lowers a reading below MIN_DISPLAY_RESERVE_MIB -- being wrong
+    downward here is what breaks displays; being wrong upward only costs a seat.
+
+    A machine where the probe cannot answer keeps whatever it had, so this is
+    strictly additive: no platform is worse off than before it existed.
+    """
+    fam = (profile.get("os_family")
+           or ("windows" if sys.platform.startswith("win") else "linux"))
+    live = live_display_mib(fam)
+    if live is None:
+        return profile
+    for g in profile.get("gpus", []):
+        g["vram_display_reserve_mib"] = live
+        g["vram_display_reserve_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    return profile
 
 
 def refresh_baseline(profile: dict, *, assert_idle: bool = False) -> dict:
