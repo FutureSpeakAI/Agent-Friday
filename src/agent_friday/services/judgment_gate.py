@@ -167,6 +167,50 @@ def never_send_hits(text: str) -> list[str]:
     return hits
 
 
+# ── First person is a deterministic floor, not a prompt instruction ───────────
+#
+# The judge prompt says "First person about his own affairs is NEVER
+# ABOUT_THE_WORLD". That is an instruction to a 2B model — a hope, not a
+# guarantee. FOUND LIVE 2026-08-17 with the gate switched on: the e2b answered
+# ABOUT_THE_WORLD for
+#
+#   "I owe about $14,000 on the second mortgage and the bank has called twice."
+#
+# and the span travelled, because the ABOUT_THE_WORLD path only applies the
+# identifier scrub — and there is no identifier in that sentence to find. A
+# false rescue on Stephen's own finances is precisely the error class the whole
+# design is arranged to make impossible, and the seat benchmark had measured it
+# at zero, which is exactly how much a benchmark is worth against live traffic.
+#
+# So the rule leaves the prompt and becomes code: a span that speaks in the
+# first person about the user's own affairs CANNOT be judged third-party
+# material. The model may still call it STEPHEN_SUBSTANCE (which then requires
+# a scrub that actually replaces something) or NEVER_SEND. It simply may not
+# call it somebody else's.
+# CASE-SENSITIVE on purpose. The first version used IGNORECASE and matched
+# "US" in "Trump asks US Supreme Court..." — flagging a news headline as
+# Stephen talking about himself, which withheld exactly the material this layer
+# exists to rescue. "us" and "me" are only first-person in lowercase ("US" is a
+# country, "ME" is a state); "I" is only first-person capitalised.
+_FIRST_PERSON_RE = re.compile(
+    r"\bI\b|\bI'(?:m|ve|ll|d)\b"                       # I, I'm, I've, I'll, I'd
+    r"|\b(?:my|mine|myself|our|ours|we|we're|we've|us|me)\b"   # lowercase only
+    r"|(?:^|[.!?]\s+|[\"'“]\s*)(?:My|Mine|Myself|Our|Ours|We|Us|Me)\b"
+)
+
+
+def looks_first_person(text: str) -> bool:
+    """True when the span speaks about the user's own affairs.
+
+    Deliberately generous: a false positive here costs one span of capability
+    (it degrades to STEPHEN_SUBSTANCE, which can still send once scrubbed), and
+    a false negative costs his privacy. Third-party news, which is what the
+    ABOUT_THE_WORLD verdict exists to rescue, is written in the third person
+    and is unaffected.
+    """
+    return bool(_FIRST_PERSON_RE.search(text or ""))
+
+
 def hard_identifier_hits(text: str) -> list[str]:
     """Hard identifiers surviving in outgoing text. Non-empty means BLOCK.
 

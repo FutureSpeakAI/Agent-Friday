@@ -365,12 +365,53 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         if verdict == jg.NEVER_SEND:
             continue                                  # floor does not move
 
+        # A first-person span cannot be third-party material, whatever the
+        # model says. Downgraded rather than dropped: STEPHEN_SUBSTANCE still
+        # allows a send once the scrub has actually separated something, so
+        # this costs capability only where identity is inseparable anyway.
+        if verdict == jg.ABOUT_THE_WORLD and jg.looks_first_person(para):
+            _log(provider, field, det_tier, "redact",
+                 "judgment said ABOUT_THE_WORLD on a FIRST-PERSON span — "
+                 "overruled to STEPHEN_SUBSTANCE; a span about the user's own "
+                 "affairs is never somebody else's", log_path)
+            verdict = jg.STEPHEN_SUBSTANCE
+
         # A favourable verdict earns a SCRUB ATTEMPT, not a send.
         try:
             from agent_friday.core import _scrub_pii
             scrubbed, _sub = _scrub_pii(para)
         except Exception:
             continue                                  # cannot scrub → cannot send
+
+        # ── STEPHEN_SUBSTANCE requires that the scrub ACTUALLY separated
+        # something (found live, 2026-08-17, with the gate switched on) ──
+        #
+        # §5.2 defines STEPHEN_SUBSTANCE as "his material, where the SUBSTANCE
+        # matters and the IDENTITY can be separated", treated by "scrubbed —
+        # identifying spans replaced by placeholders — then re-verified, then
+        # sent". The leak: for
+        #
+        #   "My custody hearing is on the 14th and my lawyer says my ex will
+        #    contest it."
+        #
+        # the judge correctly answered STEPHEN_SUBSTANCE — and the scrubber
+        # found NOTHING to replace, because the sentence carries no name,
+        # number or address. It is pure first-person substance. verify_outgoing
+        # then passed it, since it blocks at SENSITIVE and this classifies
+        # PRIVATE. So a span the judge had just identified as Stephen's own
+        # private material travelled verbatim.
+        #
+        # A scrub that replaced nothing did not separate identity from
+        # substance; it confirmed they cannot be separated. That is the
+        # definition of NEVER_SEND, so the span is withheld. ABOUT_THE_WORLD is
+        # unaffected — third-party material has no identity of his to separate,
+        # which is the whole point of the verdict.
+        if verdict == jg.STEPHEN_SUBSTANCE and not _sub:
+            _log(provider, field, det_tier, "redact",
+                 "judgment=STEPHEN_SUBSTANCE but the scrub replaced nothing — "
+                 "identity could not be separated from substance, so the span "
+                 "is withheld", log_path)
+            continue
 
         check = jg.verify_outgoing(scrubbed)
         if not check.ok:
