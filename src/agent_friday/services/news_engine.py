@@ -561,12 +561,27 @@ def _rss_results(feeds, limit=12):
 def _brave_results(query, limit=8):
     """Optional supplemental search via the Brave Search API.
 
-    Used only as a fallback when RSS yields nothing for a category and a
-    BRAVE_SEARCH_API_KEY is configured (free tier: ~2K queries/month). Returns
-    the same {title, snippet, url, source, ts} shape as _rss_results so callers
-    can treat both uniformly. No key → empty list (RSS stays primary).
+    Used only as a fallback when RSS yields nothing for a category and a Brave
+    subscription token is configured. Returns the same
+    {title, snippet, url, source, ts} shape as _rss_results so callers can
+    treat both uniformly. No key → empty list (RSS stays primary).
+
+    2026-08-17: the old docstring here promised a "free tier: ~2K
+    queries/month". That tier no longer exists — Brave now bills per request
+    ($5 per 1,000) with $5 of monthly credit. Verified there has never been a
+    key on this machine (empty provider store, nothing in env or any launch
+    script, and no Brave-sourced article in any news archive), so this fallback
+    has been inert since it was written and news has run on RSS alone.
+
+    Key lookup is shared with web_search so ONE token serves both this news
+    endpoint and the research pipeline's web endpoint — they differ only in
+    path, not in auth.
     """
-    key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+    try:
+        from agent_friday.services.web_search import brave_key as _bk
+        key = _bk()
+    except Exception:
+        key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
     if not key:
         return []
     try:
