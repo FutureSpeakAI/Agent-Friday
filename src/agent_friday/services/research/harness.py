@@ -199,6 +199,7 @@ def grind(c: Commission) -> None:
     started = time.time()
     fetches_total = 0
     search_ok_any = False
+    model_failures: list[str] = []
 
     for idx, sq in enumerate(plan.sub_questions, 1):
         c.progress.update({"sub_question": idx, "note": sq.text[:120]})
@@ -282,7 +283,15 @@ def grind(c: Commission) -> None:
                     f"[{p['source_id']}] {p['text']}" for p in corpus[:60]),
                 BRAIN, max_tokens=3072)
             if conv is None:
-                c.log("the conversation step returned nothing usable")
+                # A MODEL failure, not an empty web. Recorded as such, because
+                # the caller decides between "delivered: found nothing" and
+                # "failed: my tools broke" on this distinction — and reporting
+                # a timeout as an absence is a fabricated empirical result,
+                # the same defect §7.2 fixes for search.
+                model_failures.append(sq.id)
+                c.log("MODEL FAILURE: the conversation step returned nothing "
+                      "usable (timeout or unparseable output) — this is NOT "
+                      "evidence the sources had no answer", sq_id=sq.id)
                 break
 
             for f in conv.get("findings", [])[:20]:
@@ -310,6 +319,19 @@ def grind(c: Commission) -> None:
                 break
             q = nxt
             c.log(f"following up: {nxt}", sq_id=sq.id, depth=depth + 1)
+
+    # A grind whose models failed on EVERY sub-question did not establish an
+    # absence; it established that the machine could not answer. Recorded so
+    # run() can fail the commission instead of delivering a search trail that
+    # reads like "there is nothing out there".
+    if model_failures and len(model_failures) >= len(plan.sub_questions):
+        c.failure = (
+            f"My local models failed on every sub-question "
+            f"({len(model_failures)}/{len(plan.sub_questions)}) — they timed "
+            f"out or returned unusable output. I am NOT reporting that nothing "
+            f"was found, because I could not finish looking.")
+        c.log("ALL sub-questions hit model failures — this is a failed "
+              "commission, not a finding of absence")
 
     # §7.2 — distinguish "nothing published" from "my tools are broken".
     if not search_ok_any:
