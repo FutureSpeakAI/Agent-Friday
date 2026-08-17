@@ -299,6 +299,10 @@ def create_image():
         style=data.get('style'),
         aspect_ratio=data.get('aspect_ratio') or '1:1',
         n=data.get('n', 1),
+        # DISTINCT prompts as one batch. Dropping this here is exactly the
+        # defect this batch of work is about — a caller asks for three
+        # different images, the field is not forwarded, and one comes back.
+        prompts=data.get('prompts'),
         license=data.get('license'),
         # Friday's own verification and diagnostic output. Kept out of the
         # creations gallery and flagged in the manifest, so a test image can

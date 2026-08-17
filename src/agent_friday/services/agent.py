@@ -2343,7 +2343,9 @@ CLAUDE_TOOLS.append({
             "model": {"type": "string", "description": "Image model: 'gemini-nano-banana-pro' (highest quality, default) or 'gemini-nano-banana-2' (faster). Optional."},
             "style": {"type": "string", "description": "Optional style preset: photorealistic, cinematic, digital-art, watercolor, oil-painting, anime, 3d-render, neon, minimalist, sketch — or free-text."},
             "aspect_ratio": {"type": "string", "description": "Optional aspect ratio: 1:1 (default), 3:4, 4:3, 9:16, 16:9."},
-            "n": {"type": "integer", "description": "How many images to generate (1-4, default 1)."},
+            "n": {"type": "integer", "description": "How many COPIES of the same prompt to render (1-8, default 1). Each gets its own random seed, so they vary. For DIFFERENT images use `prompts` instead."},
+            "prompts": {"type": "array", "items": {"type": "string"},
+                        "description": "Two or more DISTINCT prompts rendered as one batch, in a single GPU session. Use this whenever the user asks for several different images at once ('three different images of X, Y and Z') — do NOT call this tool repeatedly, which is slower and reloads the models between every render."},
         },
         "required": ["prompt"],
     },
@@ -2468,14 +2470,19 @@ def _tool_generate_image(inp):
     from agent_friday.services.creative_engine import generate_image
     inp = inp or {}
     prompt = (inp.get("prompt") or "").strip()
-    if not prompt:
-        return "generate_image error: 'prompt' is required."
+    _prompts = inp.get("prompts") or []
+    if isinstance(_prompts, str):          # a model may send one string
+        _prompts = [_prompts]
+    _prompts = [str(p).strip() for p in _prompts if str(p or "").strip()]
+    if not prompt and not _prompts:
+        return "generate_image error: 'prompt' or 'prompts' is required."
     res = generate_image(
-        prompt,
+        prompt or _prompts[0],
         model=inp.get("model"),
         style=inp.get("style"),
         aspect_ratio=inp.get("aspect_ratio") or "1:1",
         n=inp.get("n", 1),
+        prompts=_prompts,
     )
     return _creative_result_summary(res, "image")
 
