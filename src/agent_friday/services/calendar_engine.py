@@ -83,8 +83,29 @@ def _recent_unread_emails(limit=12):
 # client (the same Desktop client the gmail-mcp-multi setup already created).
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    # calendar.events — READ AND WRITE on events, and nothing else.
+    #
+    # This was `calendar.readonly` until 2026-08-17, which is why Stephen asked
+    # four times to have the clinic's address and phone added to his
+    # chiropractor entries and never got it. There was no write tool, and the
+    # token could not have performed one if there had been. She offered a map
+    # instead and reported "Done", which is the failure this fixes.
+    #
+    # Deliberately `calendar.events` rather than the broader `calendar`:
+    # editing events is the capability asked for. It does not need permission
+    # to create, delete or share entire calendars, and the narrower scope is
+    # the one to ask consent for.
+    "https://www.googleapis.com/auth/calendar.events",
+]
+
+# What the stored token was consented for BEFORE the scope widened. A token
+# holding only these cannot write, and saying so precisely is the difference
+# between "reconnect Google" and "reconnect Google, here is why".
+LEGACY_READONLY_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
+CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 GOOGLE_TOKEN_PATH = FRIDAY_DIR / "google_token.json"
 
 

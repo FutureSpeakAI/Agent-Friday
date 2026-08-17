@@ -124,6 +124,37 @@ def capabilities() -> list:
         caps.append({"name": "video generation (Veo)", "available": False,
                      "how": None, "note": "probe failed: %s" % e})
 
+    # Calendar, read vs WRITE, probed against the token's real scopes.
+    #
+    # This is the capability she claimed by implication for months. Stephen
+    # asked four times to have a clinic's address added to his chiropractor
+    # entries; there was no write tool and the legacy token was read-only, and
+    # she said neither — she offered a map and reported "Done". A capability
+    # list that cannot tell read from write is how that happens.
+    try:
+        from agent_friday.services.calendar_write import write_ready
+        ok, why = write_ready()
+        caps.append({
+            "name": "calendar (read)",
+            "available": True,
+            "how": "Google Calendar via the connected account(s)",
+            "note": None,
+        })
+        caps.append({
+            "name": "calendar (edit events)",
+            "available": bool(ok),
+            "how": ("add/update events and annotate a whole recurring series "
+                    "— annotate_calendar_events, create_calendar_event, "
+                    "update_calendar_event") if ok else None,
+            "note": None if ok else
+                    ("NOT available — %s. Say this plainly if asked to change a "
+                     "calendar entry; never substitute a map, directions, or "
+                     "any other action for the edit that was requested." % why),
+        })
+    except Exception as e:
+        caps.append({"name": "calendar (edit events)", "available": False,
+                     "how": None, "note": "probe failed: %s" % e})
+
     return caps
 
 
