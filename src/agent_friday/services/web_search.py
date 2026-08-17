@@ -51,7 +51,76 @@ class SearchStatus:
 
 
 def brave_key() -> str:
-    return (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+    """The Brave subscription token, from wherever Stephen put it.
+
+    Environment first (start.bat, which is how every other key here is set),
+    then the encrypted provider store, then settings. Checking all three
+    matters because the alternative is a key that is present, paid for, and
+    silently ignored because it went in the "wrong" place — and the symptom
+    would be search quietly staying on the DuckDuckGo scrape with nothing
+    saying why.
+
+    ONE key covers both endpoints: the news engine's /res/v1/news/search and
+    this module's /res/v1/web/search use the same X-Subscription-Token.
+    """
+    env = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+    if env:
+        return env
+    try:
+        from agent_friday.services import credential_store
+        k = credential_store.get_provider_key("brave")
+        if k and k.strip():
+            return k.strip()
+    except Exception:
+        pass
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+        for holder in (s, s.get("api_keys") or {}, s.get("search") or {}):
+            if isinstance(holder, dict):
+                v = holder.get("brave_search_api_key") or holder.get("brave_api_key")
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def key_status() -> dict:
+    """Where the key is (or is not), so 'why is search still scraping?' is
+    answerable without reading source."""
+    import os as _os
+    sources = {
+        "environment": bool((_os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()),
+        "encrypted_store": False,
+        "settings": False,
+    }
+    try:
+        from agent_friday.services import credential_store
+        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave"))
+    except Exception:
+        pass
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+        sources["settings"] = any(
+            isinstance(h, dict) and (h.get("brave_search_api_key")
+                                     or h.get("brave_api_key"))
+            for h in (s, s.get("api_keys") or {}, s.get("search") or {}))
+    except Exception:
+        pass
+    have = bool(brave_key())
+    return {
+        "configured": have,
+        "found_in": [k for k, v in sources.items() if v],
+        "backend": active_backend(),
+        "note": ("Brave is primary." if have else
+                 "No Brave key found in the environment, the encrypted "
+                 "provider store, or settings — search is on the DuckDuckGo "
+                 "scrape, which is fragile and has broken before. This also "
+                 "means the news engine's Brave path is inert and news is "
+                 "running on RSS alone."),
+    }
 
 
 def active_backend() -> str:

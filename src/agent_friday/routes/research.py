@@ -131,6 +131,19 @@ def api_left_the_machine():
     })
 
 
+@research_bp.route("/api/research/search-backend")
+def api_search_backend():
+    """Which search backend is live, and is the Brave key found?
+
+    A paid key that went into the wrong store would otherwise be silently
+    ignored, with search staying on the scrape and nothing saying why.
+    """
+    from agent_friday.services import web_search
+    out = web_search.key_status()
+    out["canary"] = web_search.canary()
+    return jsonify(out)
+
+
 @research_bp.route("/api/gpu/headroom")
 def api_gpu_headroom():
     """Does the desktop still have VRAM? Stephen lost a monitor to this."""
