@@ -309,6 +309,32 @@ CLAUDE_TOOLS = [
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "query_trust_graph", "description": "Look up a person in the trust graph by name or alias and return their entry (scores, evidence count, last interaction).",
      "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+    {"name": "annotate_calendar_events", "description": "ADD a location, phone number, or note to EVERY calendar event matching a search term — the tool for 'add the clinic's address and phone to all my chiropractor entries'. Purely additive: existing values are appended to, never replaced, and every prior value is returned so a change can be undone. Handles recurring series (edits the whole series, not one occurrence). Set dry_run to preview which events would change. If the result says the token is read-only, tell the user plainly that Google must be reconnected to grant event editing and offer to start it — do NOT substitute a map, directions, or any other action for the edit they asked for.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Text to match against event titles/descriptions, e.g. 'chiropractor'."},
+         "location": {"type": "string", "description": "Address to add to the event's location field."},
+         "phone": {"type": "string", "description": "Phone number to add to the event's description."},
+         "note": {"type": "string", "description": "Any other line to add to the description."},
+         "apply_to_series": {"type": "boolean", "description": "Default true — edit the whole recurring series rather than a single occurrence."},
+         "dry_run": {"type": "boolean", "description": "Preview the changes without writing."}},
+      "required": ["query"]}},
+    {"name": "create_calendar_event", "description": "Create a new event on the user's Google Calendar. Times are ISO 8601. If the token is read-only, say so plainly and offer to reconnect Google.",
+     "input_schema": {"type": "object", "properties": {
+         "title": {"type": "string"}, "start": {"type": "string", "description": "ISO 8601 start, e.g. 2026-08-18T11:30:00-05:00"},
+         "end": {"type": "string", "description": "ISO 8601 end. Defaults to one hour after start."},
+         "location": {"type": "string"}, "description": {"type": "string"},
+         "attendees": {"type": "array", "items": {"type": "string"}}},
+      "required": ["title", "start"]}},
+    {"name": "update_calendar_event", "description": "Change one existing event by id (title, time, location, description). Use annotate_calendar_events instead when adding the same detail to several events. CLEARING a field is refused unless allow_clearing is true, because blanking loses information — if the user wants a field emptied, confirm that specifically and pass the flag.",
+     "input_schema": {"type": "object", "properties": {
+         "event_id": {"type": "string"}, "title": {"type": "string"},
+         "start": {"type": "string"}, "end": {"type": "string"},
+         "location": {"type": "string"}, "description": {"type": "string"},
+         "allow_clearing": {"type": "boolean", "description": "Permit emptying a field. Only set when the user explicitly asked for erasure."}},
+      "required": ["event_id"]}},
+    {"name": "find_calendar_events", "description": "Search the user's calendar by text across the past 60 and next 400 days, returning event ids, titles, start times, locations and whether each belongs to a recurring series. Use before updating so you edit the right events.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string"}}, "required": ["query"]}},
     {"name": "query_calendar", "description": "Check the user's Google Calendar (today's & tomorrow's events). Built-in Google integration. If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to walk the user through it; do NOT say you lack calendar access.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_email", "description": "Search and read the user's recent Gmail (built-in read-only Google integration). If the result says 'not connected', the integration just needs a one-time OAuth connection — offer to set it up; do NOT say you can't access Gmail.",
@@ -673,6 +699,68 @@ def _summarize_multi_account_errors(result):
         entry["status"] = "error"
         entry["error"] = e.get("error")
     return list(by_id.values())
+
+
+def _calendar_write_summary(res, what):
+    """Render a write result as prose Friday can repeat truthfully."""
+    if not isinstance(res, dict):
+        return str(res)
+    if res.get("needs_reconnect"):
+        return ("I could not %s: %s" % (what, res.get("error")))
+    if res.get("error"):
+        return "I could not %s: %s" % (what, res.get("error"))
+    return json.dumps(res, default=str)[:2400]
+
+
+def _tool_annotate_calendar_events(inp):
+    """Add a location/phone/note to every matching event (additive)."""
+    from agent_friday.services import calendar_write as cw
+    inp = inp or {}
+    q = (inp.get("query") or "").strip()
+    if not q:
+        return "annotate_calendar_events error: 'query' is required."
+    res = cw.annotate_events(
+        q, location=(inp.get("location") or "").strip(),
+        phone=(inp.get("phone") or "").strip(),
+        note=(inp.get("note") or "").strip(),
+        apply_to_series=inp.get("apply_to_series", True),
+        dry_run=bool(inp.get("dry_run")))
+    return _calendar_write_summary(res, "update those calendar entries")
+
+
+def _tool_create_calendar_event(inp):
+    from agent_friday.services import calendar_write as cw
+    inp = inp or {}
+    res = cw.create_event(
+        title=(inp.get("title") or "").strip(),
+        start=(inp.get("start") or "").strip(),
+        end=(inp.get("end") or "").strip(),
+        location=(inp.get("location") or "").strip(),
+        description=(inp.get("description") or "").strip(),
+        attendees=inp.get("attendees") or None)
+    return _calendar_write_summary(res, "create that event")
+
+
+def _tool_update_calendar_event(inp):
+    from agent_friday.services import calendar_write as cw
+    inp = inp or {}
+    eid = (inp.get("event_id") or "").strip()
+    if not eid:
+        return "update_calendar_event error: 'event_id' is required."
+    res = cw.update_event(
+        eid, title=inp.get("title"), start=inp.get("start"),
+        end=inp.get("end"), location=inp.get("location"),
+        description=inp.get("description"),
+        allow_clearing=bool(inp.get("allow_clearing")))
+    return _calendar_write_summary(res, "update that event")
+
+
+def _tool_find_calendar_events(inp):
+    from agent_friday.services import calendar_write as cw
+    q = ((inp or {}).get("query") or "").strip()
+    if not q:
+        return "find_calendar_events error: 'query' is required."
+    return _calendar_write_summary(cw.find_events(q), "search your calendar")
 
 
 def _tool_query_calendar(_inp):
@@ -2698,6 +2786,10 @@ CLAUDE_TOOL_HANDLERS = {
     "write_clipboard": _tool_write_clipboard,
     "query_trust_graph": _tool_query_trust_graph,
     "query_calendar": _tool_query_calendar,
+    "annotate_calendar_events": _tool_annotate_calendar_events,
+    "create_calendar_event": _tool_create_calendar_event,
+    "update_calendar_event": _tool_update_calendar_event,
+    "find_calendar_events": _tool_find_calendar_events,
     "search_email": _tool_search_email,
     "search_drive": _tool_search_drive,
     "read_doc": _tool_read_doc,
@@ -3006,6 +3098,7 @@ TOOL_RINGS: dict[str, int] = {
     "search_wiki":          0,
     "query_trust_graph":    0,
     "query_calendar":       0,
+    "find_calendar_events": 0,   # search only, no mutation
     "get_career_pipeline":  0,
     "get_briefing":         0,
     "epistemic_score":      0,   # introspection — reads conversation memory
@@ -3016,6 +3109,11 @@ TOOL_RINGS: dict[str, int] = {
     "write_file":           1,
     "write_clipboard":      1,
     "propose_wiki_update":  1,
+    # Calendar writes reach Google and change state the user shares with
+    # other people, so Ring 2 with the rest of the network actions.
+    "annotate_calendar_events": 2,
+    "create_calendar_event":    2,
+    "update_calendar_event":    2,
     "correct_wiki":         1,
     "learn_skill":          1,
     # Ring 2 — NETWORK (external calls; requires authenticated session)
