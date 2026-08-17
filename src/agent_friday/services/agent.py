@@ -3,6 +3,7 @@ import io
 import json
 import glob
 import subprocess
+import shutil
 import base64
 import secrets
 import sys
@@ -335,7 +336,10 @@ CLAUDE_TOOLS = [
     {"name": "open_url", "description": "Open a URL / web page in the user's web browser — this opens a REAL browser tab on the user's screen (Chrome, or their default browser). Use this whenever the user asks you to 'open', 'pull up', 'go to', 'open a tab for', or 'open in the browser' any website or web page. You CAN open browser tabs — do not say you can't.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full http(s):// URL of the page to open in a browser tab."}}, "required": ["url"]}},
     {"name": "open_path", "description": "Open a local file, folder, or app on the user's computer (e.g. 'Downloads', 'Projects', a file path like C:\\Users\\me\\notes.txt, or an app like Notepad/Explorer). Reveals or opens only — never deletes.",
-     "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "A folder/file path or friendly name (Downloads, Desktop, Projects, an absolute path, or an app name)."}}, "required": ["path"]}},
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "A folder/file path or friendly name (Downloads, Desktop, Projects, an absolute path, or an app name). A bare filename Friday just created resolves against the creations folder."},
+         "in_browser": {"type": "boolean", "description": "Open the file as a tab in Chrome (or the default browser) instead of the OS default app. Use this for images, PDFs and HTML when the user asks for a browser tab, or when they want several files open side by side."}},
+      "required": ["path"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, wiki, studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "draft_email", "description": "Compose an email. Needs a write-enabled Gmail connection (native Google integration is read-only). If unavailable, tell the user it needs connecting and offer setup — do NOT say you can't email.",
@@ -1380,9 +1384,43 @@ def _resolve_open_target(target):
     return None
 
 
-def _perform_open(target):
+def _browser_command():
+    """The user's browser, preferring Chrome. Returns an argv prefix or None.
+
+    Stephen asked specifically for images "in their own Chrome tab", which
+    `os.startfile` cannot do — that hands the file to whatever app owns .png
+    (Photos on Windows) and there is no way to say 'in a browser instead'.
+    """
+    if sys.platform == 'win32':
+        for p in (
+            Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
+            / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
+            / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("LOCALAPPDATA", ""))
+            / "Google/Chrome/Application/chrome.exe",
+        ):
+            try:
+                if p.is_file():
+                    return [str(p)]
+            except Exception:
+                continue
+    elif sys.platform == 'darwin':
+        return ["open", "-a", "Google Chrome"]
+    else:
+        for exe in ("google-chrome", "chromium", "chromium-browser"):
+            if shutil.which(exe):
+                return [exe]
+    return None
+
+
+def _perform_open(target, in_browser=False):
     """Open an app or a resolved path. Returns a human-facing confirmation, or
-    None if nothing concrete could be resolved."""
+    None if nothing concrete could be resolved.
+
+    `in_browser` opens the file as a file:// URL in a browser tab (Chrome when
+    it is installed) instead of handing it to the OS default application.
+    """
     if not target:
         return "open_path error: no path/target provided."
     app = _open_app(target)
@@ -1391,6 +1429,26 @@ def _perform_open(target):
     resolved = _resolve_open_target(target)
     if not resolved:
         return None
+    if in_browser:
+        try:
+            url = Path(resolved).resolve().as_uri()
+        except Exception:
+            url = "file:///" + str(resolved).replace("\\", "/")
+        cmd = _browser_command()
+        try:
+            if cmd:
+                subprocess.Popen(cmd + [url])
+                where = "a Chrome tab"
+            else:
+                import webbrowser
+                if not webbrowser.open(url):
+                    raise RuntimeError("no browser could be launched")
+                where = "your browser"
+        except Exception as e:
+            return (f"I tried to open {resolved} in a browser tab but hit an "
+                    f"error: {e}")
+        return (f"Done — I opened **{Path(resolved).name}** in {where}."
+                f"\n\n`{url}`")
     try:
         if sys.platform == 'win32':
             os.startfile(resolved)  # type: ignore[attr-defined]
@@ -1405,8 +1463,10 @@ def _perform_open(target):
 
 
 def _tool_open_path(inp):
-    target = ((inp or {}).get('path') or (inp or {}).get('target') or '').strip()
-    result = _perform_open(target)
+    inp = inp or {}
+    target = (inp.get('path') or inp.get('target') or '').strip()
+    in_browser = bool(inp.get('in_browser'))
+    result = _perform_open(target, in_browser=in_browser)
     if result is None:
         return f"Couldn't find anything matching {target!r} to open."
     return result
@@ -4053,7 +4113,47 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
 # user command ("open news") still executes immediately — exactly the documented
 # exception. The gate activates ONLY when a route opts in by stamping a
 # session_id via prepare_confirmation_ctx(); everything else is unaffected.
-TOOL_REQUIRES_CONFIRMATION = {"open_url", "open_path", "navigate", "write_file"}
+# Actions that stop and ask before they run.
+#
+# 2026-08-17, Stephen: "Agent Friday was not able to open the images in their
+# own Chrome tab or in their own viewer. She also was not able to open web
+# pages. Agent Friday needs to be able to take these types of actions."
+#
+# `open_path` and `open_url` were in here, and that WAS the failure. The gate
+# does not error — it denies, records a pending confirmation, and hands the
+# model a message instructing it to "ask the user this exact yes/no question
+# and then stop and wait for their reply". Every `ok=False` for open_path in
+# the 2026-08-16 ledger is that denial, not a bug: eleven attempts, seven
+# denied, four allowed only after he answered yes. The turn ends by design, so
+# "open all nine of these" could never get past the first one.
+#
+# Opening a file he just asked for, or a page, on his own machine, at his own
+# request, is trivially reversible and is not what a confirmation gate is for.
+# It stays available as a setting for anyone who wants it; the default is that
+# Friday can do the thing she was asked to do.
+#
+# `write_file` and `navigate` stay gated: one creates persistent state, the
+# other moves the UI out from under him mid-task.
+_ALWAYS_CONFIRM = {"write_file", "navigate"}
+_OPTIONAL_CONFIRM = {"open_url", "open_path"}
+
+
+def _tools_requiring_confirmation() -> set:
+    """The live gate set. Read per call so a settings change takes effect
+    without a restart."""
+    out = set(_ALWAYS_CONFIRM)
+    try:
+        from agent_friday.core import _load_settings
+        if (_load_settings() or {}).get("confirm_before_opening"):
+            out |= _OPTIONAL_CONFIRM
+    except Exception:
+        pass
+    return out
+
+
+# Kept as a module-level name because tests and callers import it. It now
+# reflects only the unconditional half.
+TOOL_REQUIRES_CONFIRMATION = _ALWAYS_CONFIRM
 
 # Pending interactive confirmations, keyed by chat session id. A turn that calls
 # a gated tool records the action here and asks the user; their next turn's
@@ -4238,7 +4338,7 @@ def _hook_confirmation_gate(ctx):
     name = ctx.tool_name
     session_ctx = ctx.session_ctx
     _sid = (session_ctx or {}).get("session_id")
-    if (name in TOOL_REQUIRES_CONFIRMATION and _sid
+    if (name in _tools_requiring_confirmation() and _sid
             and not _confirmation_bypassed(session_ctx)):
         if (session_ctx or {}).get("confirm_granted"):
             # User approved on this turn — clear the marker and allow.
