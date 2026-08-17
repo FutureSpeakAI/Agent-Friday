@@ -13034,7 +13034,17 @@ function StudioWS() {
       }).catch(() => {});
     }
   });
-  const filtered = filter === 'all' ? creations : creations.filter(f => f.type === filter);
+  /* NEWEST FIRST, and never the bookkeeping files.
+     2026-08-17, Stephen: "I did not see any of these creations appear in the
+     studio." They were there — all nine of them — rendered 7,000 pixels down a
+     7,880-pixel page, below every older creation, with loading="lazy" so the
+     browser never even fetched them. Measured in the live DOM: his newest
+     image sat at offsetTop 7880 with naturalWidth 0. A gallery that puts the
+     thing you just made at the bottom has not shown it to you.
+     The manifest is a record OF the gallery, not an item in it. */
+  const _hidden = new Set(['jsonl', 'log']);
+  const _sorted = [...creations].filter(f => !_hidden.has((f.type || '').toLowerCase()) && f.name !== 'creations-manifest.jsonl').sort((a, b) => String(b.modified || '').localeCompare(String(a.modified || '')));
+  const filtered = filter === 'all' ? _sorted : _sorted.filter(f => f.type === filter);
   if (selected) {
     const ext = (selected.name || '').split('.').pop().toLowerCase();
     const url = '/api/creations/' + selected.name;
@@ -13300,7 +13310,7 @@ function StudioWS() {
       maxWidth: 680,
       margin: '0 auto'
     }
-  }, [...filtered].reverse().map((f, i) => {
+  }, filtered.map((f, i) => {
     const ext = (f.name || '').split('.').pop().toLowerCase();
     const icon = ICONS[ext] || '📄';
     const dateStr = f.modified ? new Date(f.modified).toLocaleDateString('en-US', {

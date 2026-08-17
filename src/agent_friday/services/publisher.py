@@ -262,10 +262,23 @@ def start() -> Dict[str, Any]:
     out: Dict[str, Any] = {"ok": True, "registered": []}
     try:
         from agent_friday.services.scheduler import register_builtin_task
+        # Every FIFTEEN minutes, not every one, and OFF until the pipeline is
+        # actually used.
+        #
+        # 2026-08-17, Stephen: "content publisher hasn't even been used so it
+        # should not be running." It ticked 1,440 times a day against an empty
+        # queue — every run claiming 0 posts — and its run records took 451 of
+        # the 500 slots in schedule_runs.jsonl, deleting the history of every
+        # job that runs less often. A maintenance job nobody asked for should
+        # not be the loudest thing in the log.
+        #
+        # `default_enabled` seeds the schedule disabled; the moment a post is
+        # scheduled the pipeline enables it (see _ensure_publisher_enabled),
+        # so this costs nothing to whoever does use the feature.
         register_builtin_task(
             "content_publisher", tick, label="Content publisher",
-            default_trigger="interval", default_spec={"every_minutes": 1},
-            notify="silent")
+            default_trigger="interval", default_spec={"every_minutes": 15},
+            notify="silent", default_enabled=False)
         out["registered"].append("content_publisher")
     except Exception as e:
         out["ok"] = False

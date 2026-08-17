@@ -40,7 +40,10 @@ from agent_friday.core import FRIDAY_DIR, _load_settings, process_log, process_r
 # ── Storage ──────────────────────────────────────────────────────────────────
 SCHEDULES_FILE = FRIDAY_DIR / "schedules.json"
 RUNS_FILE = FRIDAY_DIR / "schedule_runs.jsonl"
-RUNS_KEEP = 500                       # cap the run-history file to the last N runs
+RUNS_KEEP = 500                       # compact once the file exceeds this
+RUNS_PER_SCHEDULE = 25                # ...keeping this many runs PER schedule,
+                                      # so a per-minute job cannot evict a daily
+                                      # one's entire history (it did: 451/500)
 
 _STORE_LOCK = threading.RLock()
 _RUNS_LOCK = threading.Lock()
@@ -191,7 +194,7 @@ def delete_schedule(sid) -> bool:
 # ── Built-in task registration ───────────────────────────────────────────────
 def register_builtin_task(ref, fn, *, label, default_trigger="daily",
                           default_spec=None, notify="on_complete",
-                          weekday_only=None):
+                          weekday_only=None, default_enabled=True):
     """Register a built-in task callable under ``ref``.
 
     The scheduler seeds a default schedule for it on first run (see
@@ -204,6 +207,7 @@ def register_builtin_task(ref, fn, *, label, default_trigger="daily",
         "default_spec": dict(default_spec or {}),
         "notify": notify,
         "weekday_only": weekday_only,
+        "default_enabled": default_enabled,
     }
 
 
@@ -310,11 +314,32 @@ def _append_run(entry):
             FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
             with open(RUNS_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, default=str) + "\n")
-            # Rotate: keep only the last RUNS_KEEP lines.
+            # Rotate PER SCHEDULE, not globally.
+            #
+            # A flat "keep the last N lines" is a rotation policy that lets the
+            # noisiest job delete everyone else's history. Measured 2026-08-16:
+            # `content_publisher`, running every 60 seconds, held 451 of the 500
+            # slots, and session_summary / memory_dreaming / learning_epoch had
+            # ZERO surviving records. That is not a cosmetic problem — it is why
+            # "has anything been distilled to my wiki lately?" could not be
+            # answered from the log at all, and the question stayed open a day.
+            #
+            # Each schedule now keeps its own last RUNS_PER_SCHEDULE records, so
+            # a once-a-day job's history survives a once-a-minute neighbour.
             lines = RUNS_FILE.read_text(encoding="utf-8").splitlines()
             if len(lines) > RUNS_KEEP:
-                RUNS_FILE.write_text("\n".join(lines[-RUNS_KEEP:]) + "\n",
-                                     encoding="utf-8")
+                per, kept = {}, []
+                for ln in reversed(lines):          # newest first
+                    try:
+                        sid = json.loads(ln).get("id") or "?"
+                    except Exception:
+                        continue
+                    if per.get(sid, 0) >= RUNS_PER_SCHEDULE:
+                        continue
+                    per[sid] = per.get(sid, 0) + 1
+                    kept.append(ln)
+                kept.reverse()
+                RUNS_FILE.write_text("\n".join(kept) + "\n", encoding="utf-8")
         except Exception as e:
             print(f"  [scheduler] run-history write failed: {e}")
 
@@ -661,7 +686,10 @@ def _seed_and_reconcile():
                 "trigger": meta["default_trigger"],
                 "spec": meta["default_spec"],
                 "task": {"kind": "builtin", "ref": ref},
-                "enabled": True,
+                # Most builtins seed on; a few (the content publisher) are
+                # maintenance for a feature the owner may never touch, and a
+                # job nobody asked for should not run by default.
+                "enabled": meta.get("default_enabled", True),
                 "notify": meta["notify"],
             }, source="builtin")
             recs.append(rec)

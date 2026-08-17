@@ -1429,6 +1429,12 @@ DEFAULT_SETTINGS = {
     # floor, and adult content is hidden in the gallery. This filters what the
     # minor sees, not what exists — a parent toggles it off in Settings.
     "minor_mode": False,
+    # ── Ask before opening a file or a link? ──
+    # Off. Opening something on your own machine, because you just asked for
+    # it, is reversible and is not what a confirmation gate is for. It was on,
+    # and that is why "open all nine of these" stopped after none of them: the
+    # gate denies the call and instructs the model to stop and wait for a yes.
+    "confirm_before_opening": False,
     # ── Creative policy (services/creative_policy.py) ──
     # What Friday refuses to generate, written down where Stephen can read and
     # set it. Before this existed there was nothing legible for a seat to
