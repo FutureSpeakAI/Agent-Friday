@@ -293,9 +293,9 @@ ACTION_PERMISSION_POLICY = (
 # Tools Claude can call when answering the user. Each tool has a handler
 # in CLAUDE_TOOL_HANDLERS. Results are PII-shielded before being sent back.
 CLAUDE_TOOLS = [
-    {"name": "search_web", "description": "Search the web via DuckDuckGo for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki.",
+    {"name": "search_web", "description": "Search the web for current information. Returns ranked snippets with URLs. Use for news, facts, people, companies, anything not in the local wiki — AND for the small factual gaps inside a task you are already doing. If Stephen asks you to add a business's phone number and you have its name and address, that is a lookup: search for it, confirm it against the business's own site or a second source, and cite where it came from. Do not ask him for a detail he would reasonably expect you to find, and never invent one.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
-    {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page. Ring 2.",
+    {"name": "browse_web", "description": "Fetch a URL and return its full text content (HTML stripped). Use after search_web to read the full article/page, and to VERIFY a fact against its primary source — a business's own website beats a directory aggregator. When a detail matters enough to write somewhere permanent, confirm it on the source page rather than trusting a search snippet. Ring 2.",
      "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "Full https:// URL to fetch"}}, "required": ["url"]}},
     {"name": "read_file", "description": "Read any file on the local filesystem. Supports absolute paths (C:\\...) or paths relative to home (~). Returns up to 500000 chars.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or home-relative path, e.g. ~/Projects/foo/bar.py or ~/wiki/notes.md"}}, "required": ["path"]}},
