@@ -69,6 +69,66 @@ def _extract_json(raw: str) -> dict | None:
     return local_call.extract_json(raw)
 
 
+# ── Reading local-model output defensively ────────────────────────────────────
+#
+# THE GENERAL LESSON, learned the expensive way on 2026-08-17. A commission
+# produced 9 verified, correctly-cited findings and then failed at the last
+# step because the outline model returned `sections` as a list of heading
+# STRINGS rather than objects. Constrained JSON decoding guarantees valid JSON,
+# not the shape the prompt asked for.
+#
+# The inversion worth naming: this codebase writes careful defensive readers at
+# the NETWORK boundary — see firecrawl._results_of, which handles `data` being
+# either a list or a dict, with a comment about how a shape change would look
+# like "the web returned nothing" — and then reads the output of a
+# 2-billion-parameter local model with a bare `.get()`. The network boundary
+# faces a maintained commercial API with a versioned contract. The model
+# boundary faces a small model doing its best. The paranoia is pointed the
+# wrong way round.
+#
+# So every structural read of model output in this module goes through these.
+# The specific failures they prevent, each real and each present in the code
+# before this was written:
+#   * a STRING where a list belonged -> iterating it yields CHARACTERS, so a
+#     query list becomes single-letter searches and a passage list becomes
+#     one-character "verbatim quotes" that then fail verification
+#   * a DICT where a list belonged -> `[:20]` raises TypeError mid-grind
+#   * a LIST where a dict belonged -> `.get()` raises
+
+def _as_list(value) -> list:
+    """Whatever the model gave us, as a list — never a string's characters."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (str, bytes)):
+        s = value.decode() if isinstance(value, bytes) else value
+        return [s] if s.strip() else []
+    if isinstance(value, dict):
+        return list(value.values())
+    if isinstance(value, (set, tuple)):
+        return list(value)
+    return [value]
+
+
+def _as_dict(value) -> dict:
+    """A dict, or an empty one. Never a raised AttributeError."""
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _as_text(value) -> str:
+    """A stripped string. Lists get joined rather than str()'d into brackets."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        return " ".join(_as_text(v) for v in value).strip()
+    return str(value).strip()
+
+
 def _claude(system: str, user: str, *, max_tokens: int = 4096) -> str:
     """A cloud call. Goes through the normal gate — nothing here bypasses it."""
     from agent_friday.services.model_router import _call_claude
@@ -124,12 +184,17 @@ def scope(c: Commission) -> ResearchPlan | None:
         return None
 
     sqs = []
-    for i, s in enumerate(data.get("sub_questions") or []):
-        if not isinstance(s, dict) or not (s.get("text") or "").strip():
+    for i, s in enumerate(_as_list(data.get("sub_questions"))):
+        # A bare string is a plausible and useful shape ("just the question"),
+        # so it is accepted rather than dropped — losing the whole plan to a
+        # wrapper is the failure this guards.
+        text = _as_text(s) if isinstance(s, str) else _as_text(_as_dict(s).get("text"))
+        if not text:
             continue
-        sqs.append(SubQuestion(id=f"sq{i}", text=s["text"].strip(),
-                               perspective=str(s.get("perspective", "")),
-                               done_when=str(s.get("done_when", ""))))
+        d = _as_dict(s)
+        sqs.append(SubQuestion(id=f"sq{i}", text=text,
+                               perspective=_as_text(d.get("perspective")),
+                               done_when=_as_text(d.get("done_when"))))
         if len(sqs) >= c.budget["sub_questions"]:
             break
     if not sqs:
@@ -138,8 +203,8 @@ def scope(c: Commission) -> ResearchPlan | None:
 
     plan = ResearchPlan(
         commission_id=c.id,
-        perspectives=[p for p in (data.get("perspectives") or [])
-                      if isinstance(p, dict)],
+        perspectives=[_as_dict(p) for p in _as_list(data.get("perspectives"))
+                      if _as_dict(p)],
         sub_questions=sqs,
         working_title=str(data.get("working_title") or c.question)[:160],
         internal_first=[str(x) for x in (data.get("internal_first") or [])][:4],
@@ -221,7 +286,7 @@ def grind(c: Commission) -> None:
                              ("\n".join(p["text"][:200] for p in corpus[-4:])
                               or "(nothing yet)"),
                              SIDEKICK, max_tokens=512)
-            queries = [str(x) for x in (qd or {}).get("queries", []) if x][
+            queries = [_as_text(x) for x in _as_list(_as_dict(qd).get("queries")) if _as_text(x)][
                 :c.budget["queries_per_sq"]] or [q]
 
             results = []
@@ -265,9 +330,10 @@ def grind(c: Commission) -> None:
                     f"Question: {sq.text}\n\nPage ({rec.get('title')}):\n"
                     f"{page[:24000]}",
                     EXTRACTOR, max_tokens=1536)
-                for passage in (ex or {}).get("passages", [])[:8]:
-                    if isinstance(passage, str) and passage.strip():
-                        corpus.append({"text": passage.strip(),
+                for passage in _as_list(_as_dict(ex).get("passages"))[:8]:
+                    ptext = _as_text(passage)
+                    if ptext:
+                        corpus.append({"text": ptext,
                                        "source_id": rec["id"],
                                        "url": rec.get("final_url") or r["url"],
                                        "title": rec.get("title", "")})
@@ -294,13 +360,12 @@ def grind(c: Commission) -> None:
                       "evidence the sources had no answer", sq_id=sq.id)
                 break
 
-            for f in conv.get("findings", [])[:20]:
-                if not isinstance(f, dict):
-                    continue
-                claim, quote = (f.get("claim") or "").strip(), (f.get("quote") or "").strip()
+            for f in _as_list(_as_dict(conv).get("findings"))[:20]:
+                f = _as_dict(f)
+                claim, quote = _as_text(f.get("claim")), _as_text(f.get("quote"))
                 if not claim or not quote:
                     continue
-                src = str(f.get("source_id") or "")
+                src = _as_text(f.get("source_id"))
                 match = next((p for p in corpus if p["source_id"] == src), None) \
                     or next((p for p in corpus if quote[:60] in p["text"]), None)
                 c.add_finding(Finding(
@@ -311,10 +376,10 @@ def grind(c: Commission) -> None:
                     confidence=SINGLE_SOURCE))
             c.save()
 
-            if conv.get("done"):
+            if _as_dict(conv).get("done"):
                 c.log(f"done_when satisfied for {sq.id}")
                 break
-            nxt = (conv.get("best_followup") or "").strip()
+            nxt = _as_text(_as_dict(conv).get("best_followup"))
             if not nxt:
                 break
             q = nxt
@@ -402,9 +467,9 @@ def synthesize(c: Commission) -> dict | None:
                            f"Section heading: {sec.get('heading')}\n\n"
                            f"FINDINGS:\n{block}", seat, max_tokens=2048)
         sections.append({"heading": str(sec.get("heading") or "Findings"),
-                         "body": (body or {}).get("body", ""),
+                         "body": _as_text(_as_dict(body).get("body")),
                          "finding_ids": ids})
-    return {"answer": str(outline.get("answer") or ""), "sections": sections,
+    return {"answer": _as_text(_as_dict(outline).get("answer")), "sections": sections,
             "synthesized_by": seat, "seat_note": seat_note}
 
 
