@@ -47,6 +47,16 @@ jobs:
       - name: Run unit + API suites
         run: pytest tests/unit tests/api -q
 
+      # The privacy boundary was the one thing CI did not check. tests/security
+      # (~160 cases), the egress adversarial suite and the judgment-gate suite
+      # all existed and all ran only when somebody remembered to run them —
+      # which meant a change to egress_gate.py could merge with nothing
+      # automated saying whether the boundary still held. These are the tests
+      # that fail loudly if private material starts travelling; they belong in
+      # the gate, not in a habit.
+      - name: Run security + egress boundary suites
+        run: pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q
+
   lint:
     name: ruff (fatal rules)
     runs-on: ubuntu-latest
