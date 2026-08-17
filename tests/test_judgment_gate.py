@@ -391,3 +391,63 @@ def test_outline_shapes_never_lose_findings(raw, expect_sections):
     assert any(s["finding_ids"] for s in secs), (
         f"{raw!r} produced sections with no findings — nine verified claims "
         f"were lost to a wrapper shape once already")
+
+
+# ── Local-model output is read defensively, like a network boundary ───────────
+#
+# The inversion this fixes: firecrawl._results_of guards a MAINTAINED
+# COMMERCIAL API against shape drift, while the research harness read a
+# 2B-parameter local model's output with a bare .get(). The paranoia was
+# pointed the wrong way. These pin the readers.
+
+@pytest.mark.parametrize("value,expected", [
+    (None, []),
+    ([], []),
+    (["a", "b"], ["a", "b"]),
+    # THE ONE THAT MATTERED: a string must not iterate as characters. A query
+    # list read this way became single-letter searches; a passage list became
+    # one-character "verbatim quotes".
+    ("just one thing", ["just one thing"]),
+    ("", []),
+    ({"a": 1, "b": 2}, [1, 2]),
+    (("x", "y"), ["x", "y"]),
+    (42, [42]),
+])
+def test_as_list_never_explodes_a_string_into_characters(value, expected):
+    from agent_friday.services.research.harness import _as_list
+    assert _as_list(value) == expected
+
+
+@pytest.mark.parametrize("value,expected", [
+    ({"a": 1}, {"a": 1}),
+    (None, {}),
+    ("a string where a dict belonged", {}),   # would have raised AttributeError
+    ([1, 2, 3], {}),                          # would have raised AttributeError
+])
+def test_as_dict_never_raises(value, expected):
+    from agent_friday.services.research.harness import _as_dict
+    assert _as_dict(value) == expected
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("  hello  ", "hello"),
+    (None, ""),
+    (["a", "b"], "a b"),          # not "['a', 'b']"
+    (7, "7"),
+])
+def test_as_text_flattens_without_stringifying_brackets(value, expected):
+    from agent_friday.services.research.harness import _as_text
+    assert _as_text(value) == expected
+
+
+def test_scoper_accepts_sub_questions_as_bare_strings():
+    """A list of question strings is a plausible model output. Before the
+    guard, every one was skipped and the whole plan came back empty."""
+    from agent_friday.services.research.harness import _as_dict, _as_list, _as_text
+    data = {"sub_questions": ["What happened?", "Who paid for it?"]}
+    texts = []
+    for s in _as_list(data.get("sub_questions")):
+        t = _as_text(s) if isinstance(s, str) else _as_text(_as_dict(s).get("text"))
+        if t:
+            texts.append(t)
+    assert texts == ["What happened?", "Who paid for it?"]
