@@ -86,6 +86,46 @@ def brave_key() -> str:
     return ""
 
 
+# ── Three states, never two (the false-green this surface exists to kill) ─────
+#
+# ABSENT           no key anywhere
+# PRESENT_FAILING  a key is stored and Brave refuses it — the dangerous state,
+#                  because search silently falls back to the scrape and a
+#                  two-state report ("configured: true") would call it working
+# WORKING          proven against a named endpoint, with the proof recorded
+#
+# The middle state is the whole point. A key that exists but does not work must
+# never render as "Brave is primary" — that would hide a broken search
+# permanently, which is worse than having no key at all, because nobody looks.
+ABSENT = "absent"
+PRESENT_FAILING = "present_but_failing"
+WORKING = "working"
+UNVERIFIED = "present_unverified"
+
+_HEALTH: dict = {"state": UNVERIFIED, "proven_on": None, "detail": "",
+                 "checked_at": 0.0}
+
+
+def health_state() -> dict:
+    """The cached three-state health, plus what it was proven against.
+
+    Never makes a network call — search() records the truth as it goes, and
+    verify_key() records it deliberately. A status endpoint that reached out
+    on every page load would be its own problem.
+    """
+    if not brave_key():
+        return {"state": ABSENT, "proven_on": None,
+                "detail": "No Brave key is configured.", "checked_at": 0.0}
+    return dict(_HEALTH)
+
+
+def _record_health(state: str, *, proven_on: str | None = None,
+                   detail: str = "") -> None:
+    import time as _t
+    _HEALTH.update({"state": state, "proven_on": proven_on, "detail": detail,
+                    "checked_at": _t.time()})
+
+
 def verify_key(key: str | None = None) -> dict:
     """Ask Brave what this token is actually entitled to. One live call each.
 
@@ -135,18 +175,26 @@ def verify_key(key: str | None = None) -> dict:
     out["web_search"] = bool(web_ok)
     if web_ok and news_ok:
         out["summary"] = "Valid for both web search and news."
+        _record_health(WORKING, proven_on="/res/v1/web/search + /res/v1/news/search",
+                       detail="200 OK on both endpoints")
     elif news_ok and not web_ok:
         out["summary"] = ("Valid for NEWS ONLY — web search is refused. The "
                           "research pipeline needs web search; this needs a "
                           "plan that includes it.")
+        _record_health(PRESENT_FAILING, proven_on="/res/v1/news/search",
+                       detail="news endpoint works, web search refused")
     elif web_ok:
         out["summary"] = "Valid for web search."
+        _record_health(WORKING, proven_on="/res/v1/web/search",
+                       detail="200 OK on web search")
     else:
         code = (out["endpoints"].get("web", {}).get("code")
                 or out["endpoints"].get("news", {}).get("code") or "")
         out["summary"] = (f"Brave does not recognize this token ({code}). It is "
                           f"not a tier limitation — the API rejects it on every "
                           f"endpoint, the same way it rejects a made-up token.")
+        _record_health(PRESENT_FAILING, proven_on=None,
+                       detail=f"both endpoints refused ({code})")
     return out
 
 
@@ -176,6 +224,7 @@ def key_status() -> dict:
     have = bool(brave_key())
     return {
         "configured": have,
+        "state": health_state(),
         "found_in": [k for k, v in sources.items() if v],
         "backend": active_backend(),
         # A key being PRESENT is not a key being VALID. Saying "Brave is
@@ -306,6 +355,16 @@ def search(query: str, count: int = 10) -> dict:
     except Exception as e:
         out = {"status": SearchStatus.BACKEND_BROKEN,
                "detail": f"{type(e).__name__}: {e}"}
+    # Every real search is also evidence about the key. Recording it here means
+    # the health state cannot drift away from what is actually happening —
+    # a key that starts failing mid-day shows up without anyone re-verifying.
+    if backend == "brave":
+        if out.get("status") == SearchStatus.OK:
+            _record_health(WORKING, proven_on="/res/v1/web/search",
+                           detail="a live search returned results")
+        elif out.get("status") == SearchStatus.BACKEND_BROKEN:
+            _record_health(PRESENT_FAILING, proven_on=None,
+                           detail=str(out.get("detail"))[:160])
     # A keyed Brave that fails should not silently strand research; fall back
     # to the scrape, but say which backend actually answered.
     if out.get("status") == SearchStatus.BACKEND_BROKEN and backend == "brave":
