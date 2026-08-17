@@ -86,6 +86,70 @@ def brave_key() -> str:
     return ""
 
 
+def verify_key(key: str | None = None) -> dict:
+    """Ask Brave what this token is actually entitled to. One live call each.
+
+    Exists because entitlement is not something to reason about. A token can be
+    absent, malformed, unrecognized, valid-but-news-only, or valid-for-
+    everything, and the only authority on which is Brave. Reasoning about it
+    from the plan name on a pricing page is how you end up telling someone
+    their key is "news-only" when the API has never seen it.
+
+    Returns which endpoints answered, the error code for those that did not,
+    and any rate-limit/quota headers the API volunteered.
+    """
+    import requests
+    k = (key or brave_key() or "").strip()
+    if not k:
+        return {"configured": False, "valid": None,
+                "summary": "No Brave key is configured."}
+
+    endpoints = {
+        "web": "https://api.search.brave.com/res/v1/web/search",
+        "news": "https://api.search.brave.com/res/v1/news/search",
+    }
+    out: dict = {"configured": True, "endpoints": {}, "limits": {}}
+    for name, url in endpoints.items():
+        try:
+            r = requests.get(url, params={"q": "test", "count": 1},
+                             headers={"Accept": "application/json",
+                                      "X-Subscription-Token": k}, timeout=20)
+        except Exception as e:
+            out["endpoints"][name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            continue
+        entry = {"ok": r.status_code == 200, "http": r.status_code}
+        if r.status_code != 200:
+            try:
+                entry["code"] = (r.json().get("error") or {}).get("code", "")
+                entry["detail"] = (r.json().get("error") or {}).get("detail", "")
+            except Exception:
+                entry["detail"] = r.text[:200]
+        for hk, hv in r.headers.items():
+            if "ratelimit" in hk.lower() or "quota" in hk.lower():
+                out["limits"][hk] = hv
+        out["endpoints"][name] = entry
+
+    web_ok = out["endpoints"].get("web", {}).get("ok")
+    news_ok = out["endpoints"].get("news", {}).get("ok")
+    out["valid"] = bool(web_ok or news_ok)
+    out["web_search"] = bool(web_ok)
+    if web_ok and news_ok:
+        out["summary"] = "Valid for both web search and news."
+    elif news_ok and not web_ok:
+        out["summary"] = ("Valid for NEWS ONLY — web search is refused. The "
+                          "research pipeline needs web search; this needs a "
+                          "plan that includes it.")
+    elif web_ok:
+        out["summary"] = "Valid for web search."
+    else:
+        code = (out["endpoints"].get("web", {}).get("code")
+                or out["endpoints"].get("news", {}).get("code") or "")
+        out["summary"] = (f"Brave does not recognize this token ({code}). It is "
+                          f"not a tier limitation — the API rejects it on every "
+                          f"endpoint, the same way it rejects a made-up token.")
+    return out
+
+
 def key_status() -> dict:
     """Where the key is (or is not), so 'why is search still scraping?' is
     answerable without reading source."""
@@ -114,7 +178,15 @@ def key_status() -> dict:
         "configured": have,
         "found_in": [k for k, v in sources.items() if v],
         "backend": active_backend(),
-        "note": ("Brave is primary." if have else
+        # A key being PRESENT is not a key being VALID. Saying "Brave is
+        # primary" on the strength of a stored string is the same false-green
+        # reporting this whole surface exists to remove — an invalid token
+        # would leave every search silently falling back to the scrape while
+        # the status page claimed otherwise. Presence and validity are reported
+        # as different facts; verify_key() settles the second one.
+        "note": ("A Brave key is configured and will be tried first. Whether "
+                 "it AUTHENTICATES is a separate question — call this endpoint "
+                 "with ?verify=1 to ask Brave directly." if have else
                  "No Brave key found in the environment, the encrypted "
                  "provider store, or settings — search is on the DuckDuckGo "
                  "scrape, which is fragile and has broken before. This also "
