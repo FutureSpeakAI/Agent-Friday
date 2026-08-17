@@ -293,6 +293,48 @@ def _probe_embedder():
                        detail="could not measure: %s" % e)
 
 
+def _probe_silent_work():
+    """Work that ran and reported NOTHING about itself.
+
+    Stephen has opened the notifications dropdown on five separate occasions,
+    on a process that was genuinely running, and seen "— waiting for activity —"
+    every time. Nothing in this codebase treated that as a fault: the task was
+    running, so every health view said fine.
+
+    A unit of work that produces zero log lines and zero steps is not busy —
+    it is invisible, and invisible is the condition he has been staring at all
+    day. It gets reported here as the anomaly it is.
+    """
+    out = []
+    try:
+        from agent_friday.core import PROCESSES, PROCESSES_LOCK
+        with PROCESSES_LOCK:
+            rows = [dict(p, id=k) for k, p in PROCESSES.items()]
+    except Exception:
+        return []
+    silent = []
+    for p in rows:
+        if p.get("status") != "running":
+            continue
+        if (p.get("category") or "default") == "default":
+            continue
+        started = p.get("started") or time.time()
+        if time.time() - started < 20:      # give it a moment to say something
+            continue
+        if not (p.get("log") or p.get("steps")):
+            silent.append(p)
+    for p in silent:
+        out.append(_result(
+            "silent work: %s" % (p.get("label") or p.get("name") or p.get("id")),
+            tier="observability", status=EMPTY, ran=True, produced=False,
+            consumed=False,
+            consumer="notifications dropdown / orb thread panel",
+            detail="running %ds with zero log lines and zero steps — this is "
+                   "what renders as '— waiting for activity —'"
+                   % int(time.time() - (p.get("started") or time.time()))))
+    return out
+
+
 def _probe_seat_drift():
     """Seats the PLAN calls resident against what is measurably serving.
 
@@ -355,6 +397,10 @@ def audit() -> dict:
             findings.append(_probe_file_tier(label, path, consumer))
         except Exception:
             pass
+    try:
+        findings += _probe_silent_work()
+    except Exception as e:
+        _log.warning("silent-work probe failed: %s", e)
     try:
         findings += _probe_seat_drift()
     except Exception as e:
