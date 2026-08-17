@@ -30,7 +30,13 @@ import logging
 
 _log = logging.getLogger("friday.local_call")
 
-DEFAULT_TIMEOUT_S = 120
+# MEASURED 2026-08-17, and the old 120s was wrong in both directions of harm:
+# extraction on a large page ran 121s and the 12b's conversation step 192.6s,
+# so real work was being killed by the clock — and the timeout surfaced as
+# "returned nothing usable", which the research pipeline then delivered as a
+# finding-of-absence report. A model that timed out is not a web that had no
+# answer. 300s is above every step measured, with headroom.
+DEFAULT_TIMEOUT_S = 300
 
 
 def ollama_url() -> str:
