@@ -368,6 +368,16 @@ CLAUDE_TOOLS = [
       "required": ["path"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, wiki, studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
+    {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces or the liquid UI. Use whenever he says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
+     "input_schema": {"type": "object", "properties": {
+         "workspace": {"type": "string", "description": "Workspace id, e.g. 'studio', 'news', 'home'."},
+         "mode": {"type": "string", "enum": ["undo", "as_of", "version", "reset"], "description": "Default 'undo'."},
+         "when": {"type": "string", "description": "For mode 'as_of' — an ISO timestamp, e.g. 2026-08-17T08:00:00."},
+         "version_id": {"type": "string", "description": "For mode 'version'."}},
+      "required": ["workspace"]}},
+    {"name": "list_workspace_history", "description": "Show what changed in a workspace, when, and how to undo each change. Read this before reverting when he is not specific about which change he means.",
+     "input_schema": {"type": "object", "properties": {
+         "workspace": {"type": "string"}}, "required": ["workspace"]}},
     {"name": "draft_email", "description": "Compose an email. Needs a write-enabled Gmail connection (native Google integration is read-only). If unavailable, tell the user it needs connecting and offer setup — do NOT say you can't email.",
      "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
     {"name": "get_career_pipeline", "description": "Get the current job-search pipeline status from the wiki.",
@@ -761,6 +771,49 @@ def _tool_find_calendar_events(inp):
     if not q:
         return "find_calendar_events error: 'query' is required."
     return _calendar_write_summary(cw.find_events(q), "search your calendar")
+
+
+def _tool_revert_workspace(inp):
+    """Undo a liquid-UI / workspace change. The spoken half of the undo path."""
+    from agent_friday.services import workspace_studio as ws
+    inp = inp or {}
+    wsid = (inp.get("workspace") or "").strip()
+    if not wsid:
+        return "revert_workspace error: 'workspace' is required."
+    mode = (inp.get("mode") or "undo").strip().lower()
+    if mode == "reset":
+        ws.reset_customization(wsid)
+        return ("Reset %s back to its baseline. The state before the reset was "
+                "snapshotted, so this is undoable." % wsid)
+    if mode == "as_of":
+        when = (inp.get("when") or "").strip()
+        if not when:
+            return "revert_workspace error: mode 'as_of' needs 'when'."
+        doc, err = ws.restore_as_of(wsid, when)
+        if err:
+            return "I could not restore %s: %s" % (wsid, err)
+        return "Restored %s to how it was at %s." % (wsid, when)
+    if mode == "version":
+        vid = (inp.get("version_id") or "").strip()
+        if not vid:
+            return "revert_workspace error: mode 'version' needs 'version_id'."
+        doc = ws.revert_customization(wsid, vid)
+        if doc is None:
+            return "There is no version %s for %s." % (vid, wsid)
+        return "Restored %s to version %s." % (wsid, vid)
+    doc, err = ws.undo_last(wsid)
+    if err:
+        return "I could not undo the last change to %s: %s" % (wsid, err)
+    return ("Undid the most recent change to %s. That undo is snapshotted too, "
+            "so say the word if you want it back." % wsid)
+
+
+def _tool_list_workspace_history(inp):
+    from agent_friday.services import workspace_studio as ws
+    wsid = ((inp or {}).get("workspace") or "").strip()
+    if not wsid:
+        return "list_workspace_history error: 'workspace' is required."
+    return json.dumps(ws.history(wsid), default=str)[:2400]
 
 
 def _tool_query_calendar(_inp):
@@ -2786,6 +2839,8 @@ CLAUDE_TOOL_HANDLERS = {
     "write_clipboard": _tool_write_clipboard,
     "query_trust_graph": _tool_query_trust_graph,
     "query_calendar": _tool_query_calendar,
+    "revert_workspace": _tool_revert_workspace,
+    "list_workspace_history": _tool_list_workspace_history,
     "annotate_calendar_events": _tool_annotate_calendar_events,
     "create_calendar_event": _tool_create_calendar_event,
     "update_calendar_event": _tool_update_calendar_event,
@@ -3099,6 +3154,7 @@ TOOL_RINGS: dict[str, int] = {
     "query_trust_graph":    0,
     "query_calendar":       0,
     "find_calendar_events": 0,   # search only, no mutation
+    "list_workspace_history": 0,  # read-only history
     "get_career_pipeline":  0,
     "get_briefing":         0,
     "epistemic_score":      0,   # introspection — reads conversation memory
@@ -3109,6 +3165,9 @@ TOOL_RINGS: dict[str, int] = {
     "write_file":           1,
     "write_clipboard":      1,
     "propose_wiki_update":  1,
+    # Undo is Ring 1: it only ever moves local UI state to a state it
+    # already held, and every undo is itself snapshotted.
+    "revert_workspace":     1,
     # Calendar writes reach Google and change state the user shares with
     # other people, so Ring 2 with the rest of the network actions.
     "annotate_calendar_events": 2,

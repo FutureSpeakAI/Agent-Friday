@@ -253,13 +253,16 @@ def test_unavailable_entries_carry_key_hint(monkeypatch):
 def test_anthropic_picker_lineup_and_order():
     cat = build_catalog()
     orch_ids = [e["id"] for e in cat["roles"]["orchestrator"]]
-    for mid in ("claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7",
-                "claude-opus-4-6", "claude-sonnet-4-6", "claude-fable-5"):
+    # The CURRENT family, 2026-08-17. The superseded ids this used to pin
+    # (opus-4-6/4-7/4-8, sonnet-4-5/4-6) are retired: a stale hardcoded model id
+    # is unmaintained by definition and quietly becomes what ships.
+    for mid in ("claude-sonnet-5", "claude-opus-5", "claude-fable-5"):
         assert mid in orch_ids, f"{mid} missing from orchestrator picker"
     claude = [i for i in orch_ids if i.startswith("claude-")]
     assert claude[0] == "claude-sonnet-5", "the default should lead the Claude section"
-    # Haiku left the picker lineup (still a router fallback, never a picker row).
-    assert "claude-haiku-4-5-20251001" not in orch_ids
+    for retired in ("claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+                    "claude-sonnet-4-6", "claude-sonnet-4-5"):
+        assert retired not in orch_ids, f"{retired} is retired and must not appear"
 
 
 def test_lyria_absent_from_creative_picker():

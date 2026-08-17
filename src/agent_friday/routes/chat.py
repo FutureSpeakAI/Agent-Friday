@@ -295,7 +295,7 @@ def chat():
             try:
                 compressor = _get_context_compressor(_compress_cfg)
                 if compressor.should_compress(messages):
-                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-4-8'
+                    _selected_model = settings.get('orchestrator_model') or 'claude-opus-5'
                     # Brief process orb so the user can see compression happen.
                     _comp_pid = f"compress-{uuid.uuid4().hex[:8]}"
                     try:
@@ -335,13 +335,13 @@ def chat():
             _route_info = _router.route(messages, task_context={
                 "has_tools": True,
                 "workspace": workspace,
-                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-4-8',
+                "cloud_model": settings.get('orchestrator_model') or 'claude-opus-5',
             })
         except Exception as _re:
             print(f"  [ROUTER] routing failed, defaulting to cloud: {_re}")
             _route_info = {
                 "provider": "cloud",
-                "model": settings.get('orchestrator_model') or 'claude-opus-4-8',
+                "model": settings.get('orchestrator_model') or 'claude-opus-5',
                 "is_local": False, "vault_allowed": False, "scrub_pii": True,
                 "vault_access": False, "refuse": False, "warning": None,
             }
@@ -363,7 +363,7 @@ def chat():
             _route_info = dict(
                 _route_info, provider='cloud', is_local=False,
                 vault_allowed=False, vault_access=False, scrub_pii=True,
-                model=settings.get('orchestrator_model') or 'claude-opus-4-8',
+                model=settings.get('orchestrator_model') or 'claude-opus-5',
                 route_override='user chose the cloud to avoid a local pause')
         elif _route_mode == 'cloud':
             print("  [ROUTER] refusing route_mode=cloud: this turn touches "
@@ -621,7 +621,7 @@ def chat():
                         _est_tokens = len(str(messages)) // 4 + len(reply) // 4
                         _router.cost_tracker.record(
                             "cloud",
-                            settings.get('orchestrator_model') or 'claude-opus-4-8',
+                            settings.get('orchestrator_model') or 'claude-opus-5',
                             prompt_tokens=_est_tokens, completion_tokens=len(reply) // 4,
                         )
                     except Exception:
@@ -1236,7 +1236,7 @@ def sources_dossier(session_id):
         markdown = _generate_text(
             [{"role": "user", "content": dossier_prompt}],
             system=system_prompt,
-            model=_load_settings().get('subagent_model') or 'claude-sonnet-4-6',
+            model=_load_settings().get('subagent_model') or 'claude-sonnet-5',
             workspace='news',
         )
         # Fact-check pass so low-trust news sources in the sheet get flagged too.

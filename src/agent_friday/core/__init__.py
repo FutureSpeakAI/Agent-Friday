@@ -1404,11 +1404,11 @@ DEFAULT_SETTINGS = {
     # ── Agent Identity & Model Selection ──
     "agent_name": "AGENT FRIDAY",
     # Claude Sonnet 5 is the default orchestrator — best cost/quality ratio for
-    # most tasks; Opus 4.8 remains available for max-reasoning work. Fallback
-    # chain: Sonnet 5 → Fable 5 → Opus 4.8 → Sonnet 4.6 → Haiku 4.5
+    # most tasks; Opus 5 remains available for max-reasoning work. Fallback
+    # chain: Sonnet 5 → Fable 5 → Opus 5 → Sonnet 5 → Haiku 4.5
     # (see model_router.CLOUD_MODEL_FALLBACK_CHAIN).
     "orchestrator_model": "claude-sonnet-5",      # main agent brain
-    "subagent_model": "claude-sonnet-4-6",      # background tasks and drafts
+    "subagent_model": "claude-sonnet-5",      # background tasks and drafts
     "creative_model": "gemini-nano-banana-2",   # image/creative generation (Nano Banana); video uses Veo
     "music_model": "lyria-clip",                # music generation (Lyria 3): 'lyria-clip' (≤30s) | 'lyria-pro' (full song)
     # Custom-model escape hatch (spec A2): [{"provider": ..., "id": ...}] pairs
@@ -1564,7 +1564,7 @@ DEFAULT_SETTINGS = {
         # (2026-08-15): the binding wrote `heavy_hitter`, the next save deleted
         # it, and the seat never appeared in settings or the UI.
         "heavy_hitter":   {"provider": "ollama-local",  "model": ""},
-        "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-4-6"},
+        "subagent":       {"provider": "anthropic",     "model": "claude-sonnet-5"},
         "creative_image": {"provider": "google-gemini", "model": "gemini-nano-banana-2"},
         "creative_video": {"provider": "google-gemini", "model": "veo-3"},
         "creative_music": {"provider": "google-gemini", "model": "lyria-clip"},
