@@ -30810,16 +30810,42 @@ function PauseWarning({
   f,
   msg,
   onChoose,
-  onCancel
+  onCancel,
+  onNeverAsk
 }) {
+  /* Enter takes the first available option, Escape cancels. He should never
+     have to hunt for a mouse to unblock his own message. */
+  useEffect(() => {
+    const h = e => {
+      if (e.key === 'Escape') { e.preventDefault(); onCancel && onCancel(); }
+      if (e.key === 'Enter') {
+        const first = (f.options || []).filter(o => !o.unavailable)[0];
+        if (first) { e.preventDefault(); onChoose(first.id); }
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [f, onChoose, onCancel]);
   const cm = CONF_META[f.confidence] || CONF_META.likely;
+  const held = msg ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#f59e0b',
+      marginBottom: 6
+    }
+  }, "\u23F8 Your message is waiting for this answer \u2014 nothing has been sent yet.")
+    : null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       margin: '10px 0',
       border: '1px solid ' + cm.c + '55',
       borderRadius: 9,
       padding: 12,
-      background: cm.c + '0d'
+      // Opaque on purpose. This sits over the message list, and a translucent
+      // panel let the conversation bleed through the words he has to read to
+      // unblock himself.
+      background: '#111726'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -30898,7 +30924,21 @@ function PauseWarning({
       marginTop: 2,
       lineHeight: 1.35
     }
-  }, o.unavailable ? 'unavailable — ' + o.detail : o.detail)))), /*#__PURE__*/React.createElement("button", {
+  }, o.unavailable ? 'unavailable — ' + o.detail : o.detail)))), held, onNeverAsk && /*#__PURE__*/React.createElement("button", {
+    onClick: onNeverAsk,
+    title: "Send now and never show this warning again. You can turn it back on in Settings.",
+    style: {
+      marginTop: 7,
+      marginRight: 12,
+      background: 'none',
+      border: 'none',
+      color: 'rgba(255,255,255,0.5)',
+      cursor: 'pointer',
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      textDecoration: 'underline'
+    }
+  }, "Stop asking me this"), /*#__PURE__*/React.createElement("button", {
     onClick: onCancel,
     style: {
       marginTop: 7,
@@ -38428,6 +38468,22 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   // four seconds. So the message is HELD, not sent, until he picks — a warning
   // he cannot act on is a notification, and notifications get ignored.
   const [pausePending, setPausePending] = useState(null); // {forecast, message}
+  /* His answer, remembered per seat. Without this the forecast was re-asked on
+     every single send and re-prompted for a question he had already answered.
+     Keyed on the model id: switching seats asks once more (correct — it is a
+     genuinely new situation), and the same seat never asks twice. Persisted to
+     localStorage so a reload does not restart the interrogation. */
+  const [pauseAnswered, setPauseAnswered] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('friday.pauseAnswered') || '{}'); }
+    catch (_) { return {}; }
+  });
+  const rememberPauseChoice = (modelId, choice) => {
+    setPauseAnswered(prev => {
+      const next = { ...prev, [modelId || 'unknown']: choice };
+      try { localStorage.setItem('friday.pauseAnswered', JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
+  };
   const sendChat = async (overrideMsg, opts) => {
     const m = (overrideMsg || chatIn).trim();
     if (!m) return;
@@ -38465,12 +38521,20 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
           })
         });
         const f = await fr.json();
-        if (f && f.will_pause) {
+        const seatId = (f && (f.affects || [])[0]) || curOrchId || 'unknown';
+        const priorChoice = pauseAnswered[seatId];
+        if (f && f.will_pause && !agentSettings.pause_warnings_off && !priorChoice) {
           setPausePending({
             forecast: f,
-            message: m
+            message: m,
+            seatId: seatId
           });
           return;
+        }
+        /* Already answered for this seat: honour that answer silently rather
+           than asking again. "Wait" is the default and needs no detour. */
+        if (f && f.will_pause && priorChoice === 'now_cloud') {
+          opts = { ...opts, routeMode: 'cloud' };
         }
       } catch (_) {/* a forecast we cannot get must never block a message */}
     }
@@ -39410,57 +39474,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 12,
       marginTop: 30
     }
-  }, "Talk to Friday. Type, speak, or drop a file."), pausePending && /*#__PURE__*/React.createElement(PauseWarning, {
-    f: pausePending.forecast,
-    msg: pausePending.message,
-    onChoose: id => {
-      const m = pausePending.message;
-      if (id === 'when_away') {
-        setPausePending(null);
-        apiFetch('/api/work/proposals', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            title: m.slice(0, 60),
-            tasks: [{
-              title: m.slice(0, 60),
-              detail: m,
-              cls: 'heavy'
-            }]
-          })
-        }).then(r => r.json()).then(d => d && d.proposal && apiFetch('/api/work/proposals/' + d.proposal.id + '/decide', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            execution: 'when_away'
-          })
-        })).then(() => setChatMsgs(p => [...p, {
-          role: 'system',
-          kind: 'queued',
-          text: 'Parked for when you are away. It will run in a batch with anything else waiting.'
-        }])).catch(() => {});
-        return;
-      }
-      sendChat(m, {
-        skipForecast: true,
-        alreadyShown: true,
-        routeMode: id === 'now_cloud' ? 'cloud' : undefined
-      });
-    },
-    onCancel: () => {
-      const m = pausePending.message;
-      setChatIn(m);
-      setPausePending(null);
-      setChatMsgs(p => {
-        const i = p.map(x => x.role === 'user' && x.text === m).lastIndexOf(true);
-        return i < 0 ? p : p.filter((_, j) => j !== i);
-      });
-    }
-  }), chatMsgs.map((m, i) => m.role === 'system'
+  }, "Talk to Friday. Type, speak, or drop a file."), chatMsgs.map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -39560,7 +39574,72 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       marginLeft: 3,
       color: '#f59e0b'
     }
-  }, "\u26A0") : null)))), chatLoad && /*#__PURE__*/React.createElement("div", {
+  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, /*#__PURE__*/React.createElement(PauseWarning, {
+    f: pausePending.forecast,
+    msg: pausePending.message,
+    onChoose: id => {
+      const m = pausePending.message;
+      if (id === 'when_away') {
+        setPausePending(null);
+        apiFetch('/api/work/proposals', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: m.slice(0, 60),
+            tasks: [{
+              title: m.slice(0, 60),
+              detail: m,
+              cls: 'heavy'
+            }]
+          })
+        }).then(r => r.json()).then(d => d && d.proposal && apiFetch('/api/work/proposals/' + d.proposal.id + '/decide', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            execution: 'when_away'
+          })
+        })).then(() => setChatMsgs(p => [...p, {
+          role: 'system',
+          kind: 'queued',
+          text: 'Parked for when you are away. It will run in a batch with anything else waiting.'
+        }])).catch(() => {});
+        return;
+      }
+      rememberPauseChoice(pausePending.seatId, id);
+      sendChat(m, {
+        skipForecast: true,
+        alreadyShown: true,
+        routeMode: id === 'now_cloud' ? 'cloud' : undefined
+      });
+    },
+    onNeverAsk: () => {
+      /* The escape hatch. A confirmation that cannot be turned off becomes
+         noise, and noise is how a safety prompt gets ignored on the day it
+         matters. This sticks in settings, not just in this tab. */
+      const m = pausePending.message;
+      rememberPauseChoice(pausePending.seatId, 'wait_now');
+      setAgentSettings(a => ({ ...a, pause_warnings_off: true }));
+      apiFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pause_warnings_off: true })
+      }).catch(() => {});
+      sendChat(m, { skipForecast: true, alreadyShown: true });
+    },
+    onCancel: () => {
+      const m = pausePending.message;
+      setChatIn(m);
+      setPausePending(null);
+      setChatMsgs(p => {
+        const i = p.map(x => x.role === 'user' && x.text === m).lastIndexOf(true);
+        return i < 0 ? p : p.filter((_, j) => j !== i);
+      });
+    }
+  })), chatLoad && /*#__PURE__*/React.createElement("div", {
     className: "typing-indicator"
   }, /*#__PURE__*/React.createElement("span", {
     className: "label"
