@@ -556,11 +556,32 @@ def _call_ollama(messages, system=None, model=None, max_tokens=4096,
                 # chat request reloads the model at Ollama's default and the
                 # placement is lost — measured: gemma4:12b at 262144 with 71%
                 # on the CPU, minutes after booting to a plan saying 32768.
+                # A COLD model has to be loaded before it can answer, and the
+                # default 120s does not cover that: qwen3.5:9b is 6.6 GB, and
+                # on a card already under pressure the load alone can outlast
+                # the timeout. The turn then failed and fell back to the
+                # cloud — which is exactly what Stephen saw as "I switched
+                # models and nothing changed" (2026-08-18): he chose a local
+                # seat, the router honoured it, and Claude answered anyway.
+                #
+                # The wake estimate already exists in pause_forecast, computed
+                # from the artifact size, so use it rather than inventing a
+                # second number. Generous margin on top: waiting is what he
+                # was warned about and chose, whereas a wrong answer from the
+                # wrong model is not something he agreed to.
+                _to = 180
+                try:
+                    from agent_friday.services import pause_forecast as _pf
+                    _est, _ = _pf._load_estimate(model, None)
+                    _to = max(180, int(_est * 3) + 120)
+                except Exception:
+                    pass
                 resp = ollama.chat_completion(
                     _convo, model=model, tools=_oai_tools,
                     temperature=temperature if temperature is not None else 0.7,
                     max_tokens=max_tokens,
                     num_ctx=_plan_num_ctx(model),
+                    timeout=_to,
                 )
             except Exception:
                 try:

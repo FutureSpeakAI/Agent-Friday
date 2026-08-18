@@ -563,6 +563,7 @@ def chat():
 
         # ── Dispatch. ──
         reply, tool_trace = None, []
+        _fell_back_from_local = None
         if _routed_local:
             try:
                 reply, tool_trace = _call_ollama(
@@ -582,6 +583,15 @@ def chat():
                     print(f"  [ROUTER] local vault inference failed; refusing cloud fallback: {_ole}")
                     raise
                 print(f"  [ROUTER] local inference failed, falling back to cloud: {_ole}")
+                # He chose a local seat. Answering from the cloud instead is a
+                # decision he did not make, about data he chose to keep on the
+                # machine, and it must not happen quietly — a silent fallback
+                # is indistinguishable from "changing the model does nothing",
+                # which is precisely how this was reported.
+                _fell_back_from_local = {
+                    "model": _route_info.get('model'),
+                    "why": str(_ole)[:200],
+                }
                 _routed_local = False
                 _provider = 'cloud'
                 # Rebuild the prompt for cloud (gated) and scrub before sending.
@@ -865,6 +875,10 @@ def chat():
             "seat": _seat_class,
             "seat_events": _seat_events,
             "fallback_chain": _fallback_chain,
+            # Present only when his chosen local seat could not answer and the
+            # cloud did instead. The client renders it as a system line so the
+            # substitution is visible in the transcript, not just in a log.
+            "local_fallback": _fell_back_from_local,
         })
     except Exception as e:
         traceback.print_exc()
