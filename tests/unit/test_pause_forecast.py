@@ -67,21 +67,54 @@ def test_a_model_in_a_process_we_own_promises_no_pause(arb):
     assert "cannot be taken away" in f["why"]
 
 
-def test_a_daemon_served_model_is_a_MIGHT_not_a_promise(arb, monkeypatch):
-    """Ollama evicts on its own criteria and does not announce it.
+def test_a_loaded_daemon_model_does_not_warn_on_every_single_turn(arb, monkeypatch):
+    """Reversed on 2026-08-18, deliberately, after it reached a real desk.
 
-    Calling that "no pause" is how the silence arrives unannounced; calling it
-    certain would train Stephen to ignore the warning. It is a might, and it
-    has to say so.
+    This used to assert the opposite: a daemon-served model was a "might",
+    because Ollama can evict without announcing it. That is true — and it is
+    true before EVERY message, forever, so warning on it meant warning always.
+    Stephen hit exactly that: a confirmation before every message he sent,
+    which he had to scroll up to answer before anything would proceed.
+
+    A prompt that fires every time is not a safety feature. It is noise, and
+    noise is how the warning gets clicked through on the day it finally
+    matters. If the daemon does evict the model, the NEXT forecast sees it
+    cold and says so honestly — one warning, when there is really a wait.
     """
     monkeypatch.setattr(
         "agent_friday.services.residency_arbiter.DAEMON_SERVED",
         {"gemma4:e2b": "channel tool calls"}, raising=False)
     arb(_FakeArbiter(daemon=["gemma4:e2b"]))
     f = pf.before_local_turn("gemma4:e2b")
+    assert f["will_pause"] is False
+    assert "is loaded" in f["why"]
+
+
+def test_a_model_that_just_answered_is_not_called_cold(arb, monkeypatch):
+    """The residency plan is not the only witness to what is loaded.
+
+    Stephen switched his chat seat; the setting changed and the plan did not,
+    so his model appeared in no seat and no resident set. The forecaster read
+    that as "cold" and announced a 30-second wait before every message, while
+    that same model answered him at normal speed. A model that served a turn a
+    moment ago is warm, whatever the plan believes.
+    """
+    arb(_FakeArbiter())
+    monkeypatch.setattr(pf, "_served_recently", lambda mid, within_s=900.0: (True, 12.0))
+    f = pf.before_local_turn("some-model-the-plan-never-heard-of")
+    assert f["will_pause"] is False
+    assert "warm" in f["why"]
+
+
+def test_confidence_never_outruns_the_basis(arb, monkeypatch):
+    """A guessed duration may not be announced as certain."""
+    arb(_FakeArbiter())
+    monkeypatch.setattr(pf, "_served_recently", lambda mid, within_s=900.0: (False, None))
+    monkeypatch.setattr(pf, "RECORDED_COLD_LOAD_S", {})
+    f = pf.before_local_turn("never-timed-here:1b")
     assert f["will_pause"] is True
+    assert f["basis"] == pf.ROUGH_DEFAULT_BASIS
     assert f["confidence"] == pf.POSSIBLE
-    assert "can unload it without telling us" in f["why"]
 
 
 def test_a_pause_too_short_to_mention_is_not_mentioned(arb, monkeypatch):

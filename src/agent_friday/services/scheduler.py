@@ -957,13 +957,51 @@ def _seed_default_agent_schedules():
 _STARTED = False
 
 
+def _uses_gpu(rec) -> bool:
+    """Will running this schedule put work on the GPU?
+
+    Conservative on purpose: anything that reaches a model counts. A schedule
+    that only moves files is not worth delaying, but guessing wrong in that
+    direction merely delays a chore, and guessing wrong the other way is what
+    took his machine down.
+    """
+    kind = (rec or {}).get("kind") or (rec or {}).get("action") or ""
+    if kind in ("agent_prompt", "agent", "task", "prompt", "briefing",
+                "digest", "consolidation", "dreaming"):
+        return True
+    # Unknown kinds default to "yes, it might" — see the docstring.
+    return not kind.startswith(("file", "cleanup", "prune", "publish"))
+
+
 def _tick():
     now = _now_central()
     with _STORE_LOCK:
         recs = [dict(r) for r in _read_store()]
+    # Anything that wakes on a timer defers while the card is leased.
+    #
+    # Queue-then-run, not skip: an hourly heartbeat that runs a few minutes
+    # late costs nothing, whereas a heartbeat that runs DURING an image job
+    # costs a slowed generation and a desktop that crawls. The record is left
+    # unmarked, so the very next tick after the lease releases runs it — no
+    # separate queue to drain and nothing silently dropped.
+    #
+    # Manual dispatch is deliberately not gated: if he asks for it now, he gets
+    # it now, and he can see what else is running.
+    held = None
+    try:
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        held = exclusive_lease()
+    except Exception:
+        held = None
+
     for rec in recs:
         try:
             if _is_due(rec, now):
+                if held and _uses_gpu(rec):
+                    _log.info("holding %s: the %s job holds the GPU; it will "
+                              "run on the first tick after that releases",
+                              rec.get('id'), held.get('kind') or 'current')
+                    continue
                 dispatch(rec)
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
@@ -1025,6 +1063,14 @@ def _away_drain_tick() -> None:
         head = gpu_headroom.check(6000)
         if head.get("ok") is not True:
             _log.info("away-drain holding off: %s", head.get("reason"))
+            return
+        # The drain takes its own lease, but taking one while an image job
+        # holds the card is the same collision by a different door.
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        _held = exclusive_lease()
+        if _held:
+            _log.info("away-drain holding off: the %s job holds the GPU",
+                      _held.get("kind") or "current")
             return
         from agent_friday.services.residency_arbiter import get_arbiter
         res = work_queue.drain("heavy", _drain_runner, arbiter=get_arbiter())

@@ -866,15 +866,23 @@ def _apply_overrides(seats, refusals, overrides, entries, free, budgets,
                          overhead_tokens)
         ctx = cb["num_ctx"] or DEFAULT_NUM_CTX.get(role, TOOL_SEAT_NUM_CTX)
         need = cb["vram_mib"]
-        if budgets and need is not None and cur is not None and \
-                cur.get("device", "").startswith("gpu") and need > cap + \
-                (cur.get("vram_mib") or 0):
+        # `cur is not None` used to be part of this guard, so an override
+        # onto an EMPTY seat skipped the VRAM check entirely and was placed
+        # whether or not the card had room. Nothing exercised it while
+        # overrides were never supplied; feeding Stephen's choices in
+        # (2026-08-18) walks straight through it, and over-committing this
+        # card is what drops his second monitor. An unseated role has no
+        # VRAM of its own to reclaim, so its headroom is simply `cap`.
+        if budgets and need is not None and need > headroom:
+            # `cur` is None when the base plan left this role unseated, so
+            # the message may not assume a model to fall back to.
             refusals.append(_refusal(
                 role, model_id, "R3",
                 "override needs %d MiB but only %d MiB is available on the "
-                "largest GPU after the other pinned seats; nearest permitted: "
-                "%s" % (need, cap + (cur.get("vram_mib") or 0),
-                        cur.get("model_id"))))
+                "largest GPU after the other pinned seats%s"
+                % (need, headroom,
+                   ("; nearest permitted: %s" % cur.get("model_id"))
+                   if cur else "; this role stays empty")))
             continue
         seats[role] = _placement(entry, role,
                                  cur["device"] if cur else

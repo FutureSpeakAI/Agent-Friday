@@ -101,8 +101,10 @@ def replan():
         arb = get_arbiter()
         if arb is None:
             return jsonify({"error": "no Arbiter in this process"}), 409
+        from agent_friday.core import _load_settings
+        from agent_friday.services import seat_binding as sb
         arb.entries = rc.installed_entries(arb.profile)
-        plan = arb.compute_plan()
+        plan = arb.compute_plan(sb.overrides_from_settings(_load_settings() or {}))
         return jsonify({"ok": True,
                         "seats": {r: (s or {}).get("model_id")
                                   for r, s in (plan.get("seats") or {}).items()},

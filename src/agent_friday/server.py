@@ -190,10 +190,14 @@ def _residency_boot():
         profile = _hwp.get()
         entries = _rc.installed_entries(profile)
         arb = _ra.Arbiter(profile=profile, entries=entries)
-        plan = arb.compute_plan()
-        print("  Residency: %s" % _hwp.summary(profile))
-
         settings = _core._load_settings() or {}
+        # Plan AROUND what he chose, rather than planning without him and then
+        # overwriting his choice. Where a choice cannot be seated the plan
+        # records a refusal with its reason (visible in /api/residency/status),
+        # which is the honest outcome; silently seating something else is what
+        # produced a plan and a dispatcher that disagreed all session.
+        plan = arb.compute_plan(_sb.overrides_from_settings(settings))
+        print("  Residency: %s" % _hwp.summary(profile))
         prop = _sb.apply(plan, settings)
         if prop.get("changes"):
             _core._save_settings(settings)
