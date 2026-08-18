@@ -77,14 +77,59 @@
       "role": "image",
       "rule": "vram-budget",
       "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "orchestrator",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "sidekick_fast",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "function_manager",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "memory_manager",
+      "rule": "vram-budget",
+      "rule_id": "R3"
+    },
+    {
+      "backend_status": "UNKNOWN",
+      "explanation": "unified-memory backend not implemented: no MLX/Metal/ROCm backend exists in the tree, and the VRAM and RAM budgets are one pool on this class rather than two independent ones",
+      "model": null,
+      "role": "researcher",
+      "rule": "vram-budget",
+      "rule_id": "R3"
     }
   ],
   "seats": {
     "embedder": null,
+    "function_manager": null,
     "heavy_hitter": null,
     "image": null,
     "interactive_brain": null,
+    "memory_manager": null,
+    "orchestrator": null,
+    "researcher": null,
     "sidekick": null,
+    "sidekick_fast": null,
     "sidekick_heavy": null,
     "stt": null,
     "tts": null

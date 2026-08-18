@@ -517,6 +517,23 @@ class Arbiter:
                             image_model=_configured_image_model())
         return self.plan
 
+    def preview(self, assignments):
+        """What a proposed {role: model} selection would cost, before it lands.
+
+        Goes through the Arbiter rather than beside it so the advice is
+        computed against the SAME profile and catalog the plan uses -- including
+        the live display reserve. An advisory built from a stale snapshot would
+        tell him a lineup fits on a card that no longer has the room.
+
+        Never refuses. Returns `fits`, the overflow, and what would have to give.
+        """
+        with self._lock:
+            hwp.refresh_display_reserve(self.profile)
+            from agent_friday.services import context_budget
+            return rp.preview_assignment(
+                assignments or {}, self.entries, self.profile,
+                overhead_tokens=context_budget.overhead_tokens())
+
     def timeout_for(self, entry):
         est = (entry or {}).get("est_load_s")
         if not est:

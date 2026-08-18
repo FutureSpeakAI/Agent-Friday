@@ -1,4 +1,4 @@
-"""ResidencyPolicy — golden plans for six fixtures, plus the invariants.
+﻿"""ResidencyPolicy — golden plans for six fixtures, plus the invariants.
 
 The golden plans are the review surface: a policy change that moves a plan must
 move a committed file in the same commit, because a change in placement
@@ -335,7 +335,11 @@ def test_disk_floor_scales_with_a_very_large_artifact():
 
 def test_every_rule_has_a_stable_id_and_text():
     assert [r["id"] for r in rp.RULES] == \
-        ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"]
+        ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10",
+         # R11 added 2026-08-18 with the seven working roles: an unassigned
+         # orchestrator or memory manager is refused BY NAME rather than left
+         # as a silently empty seat.
+         "R11"]
     assert all(r["text"] for r in rp.RULES)
 
 

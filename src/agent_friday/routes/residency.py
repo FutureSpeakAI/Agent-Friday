@@ -1,4 +1,4 @@
-"""
+﻿"""
 Residency API — look at the plan the machine is actually running.
 
 There was no way to ask. The Arbiter computed a plan at boot, printed a
@@ -14,7 +14,7 @@ has to be able to show that arithmetic to somebody.
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from agent_friday.core import login_required
 
@@ -109,3 +109,63 @@ def replan():
                         "n_entries": len(arb.entries)})
     except Exception as e:
         return jsonify({"error": "%s: %s" % (type(e).__name__, e)}), 500
+
+
+@residency_bp.route("/api/residency/preview", methods=["POST"])
+@login_required
+def preview():
+    """Cost a proposed role->model selection WITHOUT committing it.
+
+    Stephen, 2026-08-18: "always advise the user when they're going to overflow
+    the memory with their selections." This is that advice, and it is a preview
+    rather than a gate: a selection that does not fit still comes back 200 with
+    `fits: false`, the overflow, and what would have to give. The choice is his.
+
+    Body: {"assignments": {"orchestrator": "gemma4:e4b", ...}}
+    """
+    try:
+        from agent_friday.services.residency_arbiter import get_arbiter
+        arb = get_arbiter()
+    except Exception as e:
+        return jsonify({"status": "error",
+                        "message": "%s: %s" % (type(e).__name__, e)}), 500
+    data = request.get_json(silent=True) or {}
+    assignments = data.get("assignments") or {}
+    if not isinstance(assignments, dict):
+        return jsonify({"status": "error",
+                        "message": "assignments must be an object"}), 400
+    if arb is None:
+        # No Arbiter in this process: still answer, from the catalog and a
+        # freshly detected profile, because a picker with no advice is worse
+        # than a picker with advice computed one layer further from the metal.
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services import residency_catalog as rc
+        from agent_friday.services import residency_policy as rp
+        profile = hwp.get()
+        hwp.refresh_display_reserve(profile)
+        view = rp.preview_assignment(assignments, rc.installed_entries(profile), profile)
+        return jsonify({"status": "ok", "governing": False, "preview": view})
+    return jsonify({"status": "ok", "governing": True,
+                    "preview": arb.preview(assignments)})
+
+
+@residency_bp.route("/api/residency/roles", methods=["GET"])
+@login_required
+def roles():
+    """The seats a picker may offer, and what each costs the machine.
+
+    The picker needs to know a role's residency class to explain itself: a
+    resident seat costs VRAM all day, a leased one only while it runs, and an
+    on-demand one waits until the card is quiet. Without that, seven roles look
+    like seven simultaneous models.
+    """
+    from agent_friday.services import residency_policy as rp
+    return jsonify({
+        "status": "ok",
+        "roles": [{"role": r,
+                   "residency": rp.residency_of(r),
+                   "cpu_capable": r in rp.CPU_CAPABLE_ROLES,
+                   "default_num_ctx": rp.DEFAULT_NUM_CTX.get(r)}
+                  for r in rp.ROLES],
+        "aliases": rp.ROLE_ALIASES,
+    })
