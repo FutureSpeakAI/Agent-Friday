@@ -292,6 +292,15 @@ def list_models():
         try:
             from agent_friday.services.hosted_catalog import catalog_meta
             cat_meta = catalog_meta()
+            # Stale-while-REVALIDATE, with the revalidate part actually wired.
+            # This endpoint reported anthropic as stale/never-fetched for its
+            # whole life while POST /api/models/refresh sat one screen away,
+            # working, waiting to be called (verified 2026-08-18: the picker
+            # served the hardcoded fallback list; one manual refresh returned
+            # 10 live models). Reporting a problem is not handling it — a
+            # stale catalog now kicks its own background refresh, throttled so
+            # UI polling cannot hammer the provider.
+            _kick_stale_catalog_refresh(cat_meta)
         except Exception:
             cat_meta = {}
         return jsonify({
@@ -318,6 +327,40 @@ def list_models():
         return jsonify({"status": "error", "message": str(e),
                         "roles": {}, "models": [], "providers": [],
                         "voice_engines": [], "catalog_meta": {}}), 200
+
+
+_CATALOG_KICK_AT = {}  # provider -> monotonic seconds of last background kick
+
+
+def _kick_stale_catalog_refresh(cat_meta):
+    """Background-refresh any stale hosted catalog, at most once per 10 min.
+
+    Fire-and-forget on a daemon thread: the /api/models response that noticed
+    the staleness returns immediately with the cached list, and the NEXT
+    request gets the live one. A refresh failure changes nothing — refresh()
+    is stale-while-revalidate and never clobbers a good cache.
+    """
+    import threading
+    import time as _t
+    for provider, meta in (cat_meta or {}).items():
+        if not (meta or {}).get("stale"):
+            continue
+        now = _t.monotonic()
+        if now - _CATALOG_KICK_AT.get(provider, -1e9) < 600:
+            continue
+        _CATALOG_KICK_AT[provider] = now
+
+        def _run(name=provider):
+            try:
+                from agent_friday.services.hosted_catalog import refresh
+                result = refresh(name)
+                print(f"  [CATALOG] background refresh {name}: "
+                      f"{result.get('status')} ({result.get('count', 0)} models)")
+            except Exception as e:
+                print(f"  [CATALOG] background refresh {name} failed: {e}")
+
+        threading.Thread(target=_run, daemon=True,
+                         name=f"catalog-refresh-{provider}").start()
 
 
 @core_bp.route('/api/models/refresh', methods=['POST'])

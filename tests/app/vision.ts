@@ -143,11 +143,27 @@ export async function judgeConfirmed(png: Buffer, intent: string, timeoutMs = 12
 
   const second = await judge(png, intent, timeoutMs);
   if (!second.judged) return { ...first, judged: false, why: second.why };
-  if (second.ok) {
-    return { ...first, ok: true, problems: [],
-      why: `a first pass reported ${first.problems.length} problem(s) but a second pass found none, so they were not counted` };
-  }
 
-  // Keep the second pass's wording; both passes agree something is wrong.
-  return { ...second, why: 'confirmed by two independent passes' };
+  // A problem counts only if BOTH passes describe THE SAME problem. Requiring
+  // merely that both passes find something let a hallucination through: one
+  // pass complained about overlapping text on a model named nowhere on the
+  // screen, the other pass complained about something unrelated, and the
+  // disagreement was scored as confirmation (caught 2026-08-18). Same-problem
+  // is approximated by content-word overlap, which is crude and good enough:
+  // real defects get described with the same nouns twice.
+  const words = (t: string) => new Set(
+    t.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 3 && !['text','icon','image','screen','button','section','visible','appears','missing','broken'].includes(w)));
+  const agrees = (a: string, b: string) => {
+    const wa = words(a); const wb = words(b);
+    let hit = 0; for (const w of wa) if (wb.has(w)) hit++;
+    return hit >= 2;
+  };
+  const confirmed = second.problems.filter(p2 => first.problems.some(p1 => agrees(p1, p2)));
+  if (confirmed.length === 0) {
+    return { ...first, ok: true, problems: [],
+      why: 'two passes each found problems but not the same ones — treated as noise, not signal' };
+  }
+  return { ok: false, problems: confirmed, sees: second.sees, judged: true,
+           why: 'the same problem was independently described by two passes' };
 }
