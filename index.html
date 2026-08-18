@@ -34732,6 +34732,16 @@ function App() {
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatIn, setChatIn] = useState('');
   const [chatLoad, setChatLoad] = useState(false);
+  /* Which conversation the in-flight turn belongs to.
+     `chatLoad` was one flag for the whole app and "+ New Chat" never reset it,
+     so a long turn (Opus 5 on a research commission) left it stuck true; the
+     next message was swallowed by the one-turn guard below and the "thinking"
+     indicator — bound to the same flag — span forever. Stephen, 2026-08-18:
+     "the new chat just showed 'Friday is thinking' and she didn't respond."
+     The guard is now scoped to the conversation that owns the running turn. */
+  const chatEpoch = useRef(0);
+  const inFlightEpoch = useRef(-1);
+  const inFlightSince = useRef(0);
   // ── Resizable chat panel ── drag the left edge for width, the top edge for
   // height. Clamped to 300–80vw × 200–80vh, persisted across sessions.
   const CHAT_MINW = 300,
@@ -36078,6 +36088,27 @@ function App() {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [sceneMenuOpen]);
+  /* No wait without an end. "Friday is thinking" with nothing behind it is
+     the same never-resolving state as the Intelligence spinner: if a turn has
+     been in flight far longer than any real reply takes, release the composer
+     and say so rather than spinning silently. */
+  useEffect(() => {
+    if (!chatLoad) return;
+    const iv = setInterval(() => {
+      if (!inFlightSince.current) return;
+      if (Date.now() - inFlightSince.current < 15 * 60 * 1000) return;
+      setChatLoad(false);
+      inFlightSince.current = 0;
+      setChatMsgs(p => [...p, {
+        role: 'system', kind: 'stalled',
+        text: 'That turn has been running for over fifteen minutes with no reply. '
+          + 'I have released this chat so you can keep talking — check the work '
+          + 'view to see whether it is still going.',
+      }]);
+    }, 30000);
+    return () => clearInterval(iv);
+  }, [chatLoad]);
+
   const modelCatalog = useModelCatalog();
   // Settings saved from the SettingsWS window (Model Browser assigns, the
   // AI-Models tab selects) live in useSettings' own state, not agentSettings —
@@ -38695,7 +38726,22 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     /* And a hard guard: one turn in flight at a time. The optimistic render is
        the real fix, but a stray double-tap should not cost a second inference
        either. */
-    if (chatLoad && !opts.skipForecast) return;
+    if (chatLoad && !opts.skipForecast) {
+      if (inFlightEpoch.current === chatEpoch.current) {
+        // Same conversation, turn still running: a double-tap. Say so rather
+        // than swallowing it — a silent return is indistinguishable from a
+        // hang, which is how this was reported.
+        setChatMsgs(p => [...p, {
+          role: 'system', kind: 'busy',
+          text: 'Still finishing the previous message here. This one was not sent — '
+            + 'send it again once she replies, or start a new chat to talk while it runs.',
+        }]);
+        return;
+      }
+      // A different conversation owns that turn. It keeps running and reports
+      // back to where it started; this chat is free to talk.
+      setChatLoad(false);
+    }
     if (!opts.skipForecast) {
       try {
         const fr = await apiFetch('/api/work/forecast', {
@@ -38726,6 +38772,8 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       } catch (_) {/* a forecast we cannot get must never block a message */}
     }
     setPausePending(null);
+    inFlightEpoch.current = chatEpoch.current;
+    inFlightSince.current = Date.now();
     setChatLoad(true);
     try {
       const body = {
@@ -39649,6 +39697,12 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
     }
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
+      // A new conversation is not responsible for the old one's turn. Bump the
+      // epoch so any reply still in flight lands in the conversation that
+      // asked for it, and release the composer here immediately.
+      chatEpoch.current += 1;
+      setChatLoad(false);
+      setPausePending(null);
       setChatMsgs([]);
       fetch('/api/chat/clear', {
         method: 'POST'
