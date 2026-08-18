@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — ResidencyPolicy
 
 A pure, deterministic function:
@@ -496,9 +496,20 @@ def _generation_candidates(entries: list) -> list:
 
 # ── The policy ───────────────────────────────────────────────────────────────
 
+DEFAULT_IMAGE_MODEL = "z-image-turbo-fp8"
+
+
 def plan(profile: dict, entries: list, overrides: dict | None = None,
-         overhead_tokens: int | None = None) -> dict:
+         overhead_tokens: int | None = None,
+         image_model: str | None = None) -> dict:
     """(HardwareProfile, Catalog, overrides, overhead) -> PlacementPlan. Pure.
+
+    `image_model` is a PARAMETER for the same reason `overhead_tokens` is. The
+    image seat is a ComfyUI model, so it can never appear in `entries` — that
+    catalog holds language models — and the normal override path would refuse
+    it as "not installed". Naming it here keeps the plan honest about which
+    model the exclusive lease is actually for, without this module going and
+    reading settings or touching a disk.
 
     `overhead_tokens` is how much of every window the system prompt and tool
     schemas consume. It is a PARAMETER rather than something this module goes
@@ -692,7 +703,7 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
     if budgets:
         idx = order[-1]["index"] if multi_gpu else order[0]["index"]
         seats["image"] = {
-            "role": "image", "model_id": "z-image-turbo-fp8",
+            "role": "image", "model_id": image_model or DEFAULT_IMAGE_MODEL,
             "backend": "comfyui", "device": "gpu:%d" % idx, "num_ctx": None,
             "offload": {}, "status": "leased", "exclusive": True,
             # R5 minus R10: exclusive of everything except the seat that keeps
@@ -704,7 +715,7 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
         }
     else:
         refusals.append(_refusal(
-            "image", "z-image-turbo-fp8", "R5",
+            "image", image_model or DEFAULT_IMAGE_MODEL, "R5",
             "no GPU to lease; local image generation is unavailable on this "
             "profile and escalates to cloud"))
 

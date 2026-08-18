@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — local image generation (Z-Image Turbo via ComfyUI).
 
 Decision D8 held routed local image generation until a residency scheduler
@@ -35,11 +35,56 @@ from agent_friday.core import CREATIONS_DIR, runtime_dir
 
 _log = logging.getLogger("friday.local_image")
 
-MODEL_ID = "z-image-turbo-fp8"
+MODEL_ID = "z-image-turbo-fp8"        # the DEFAULT seat, not the only one
+SD35_MEDIUM_ID = "sd3.5-medium-fp8"
 PROVIDER = "local-comfyui"
 COMFY_PORT = 8188
 DEFAULT_STEPS = 8
 DEFAULT_CFG = 1.0
+
+# ── The installed image models ─────────────────────────────────────────────
+#
+# One entry per on-device model, each declaring the files that prove it is
+# really here and the sampler settings it actually wants. Z-Image is a turbo
+# model — 8 steps at cfg 1.0 — and SD 3.5 Medium is not: it needs ~30 steps at
+# cfg ~4.5, which is most of why it costs several times as much per picture.
+# Feeding one model the other's defaults produces a grey smear, so the defaults
+# live beside the files rather than in a shared constant.
+#
+# `files` is (subdirectory, filename). A model is offered ONLY when every one
+# of its files is on disk — availability is earned, not declared.
+MODELS: dict = {
+    MODEL_ID: {
+        "label": "Z-Image Turbo FP8 (local image)",
+        "short": "Z-Image",
+        "files": [("diffusion_models", "z_image_turbo_fp8_e4m3fn.safetensors"),
+                  ("text_encoders", "qwen_3_4b.safetensors"),
+                  ("vae", "ae.safetensors")],
+        "steps": 8, "cfg": 1.0,
+        "sampler": "euler", "scheduler": "simple",
+        "note": "turbo: 8 steps, fast",
+    },
+    SD35_MEDIUM_ID: {
+        "label": "Stable Diffusion 3.5 Medium (local image)",
+        "short": "SD 3.5 Medium",
+        # The Comfy-Org repackage bundles transformer + CLIP-L + CLIP-G +
+        # T5-XXL(fp8 scaled) in ONE checkpoint, so CheckpointLoaderSimple
+        # yields MODEL/CLIP/VAE together and no separate loaders are needed.
+        # The fp8 T5 is deliberate: the fp16 encoder is 9.79 GB on its own and
+        # would not fit beside a compositor that wants ~2.8 GB of this card.
+        "files": [("checkpoints",
+                   "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors")],
+        "steps": 30, "cfg": 4.5,
+        "sampler": "euler", "scheduler": "sgm_uniform",
+        "note": "30 steps, higher fidelity, slower",
+        "licence": "Stability AI Community License — free below $1M annual "
+                   "revenue; attribution required when redistributed",
+    },
+}
+
+
+def model_spec(model_id: str | None = None) -> dict:
+    return MODELS.get(model_id or MODEL_ID) or MODELS[MODEL_ID]
 
 _SIZES = {
     "1:1": (1024, 1024),
@@ -109,22 +154,48 @@ def comfy_root() -> Path:
     return runtime_dir() / "ComfyUI"
 
 
-def is_installed() -> bool:
-    """Is the Z-Image build actually present? Availability is earned, not
-    declared — the picker must not offer a model this machine cannot run."""
+def is_installed(model_id: str | None = None) -> bool:
+    """Are this model's weights actually present? Availability is earned, not
+    declared — the picker must not offer a model this machine cannot run.
+
+    Defaults to the Z-Image seat so existing callers keep their meaning.
+    """
     root = comfy_root()
-    return (root.is_dir()
-            and (root / "models" / "diffusion_models"
-                 / "z_image_turbo_fp8_e4m3fn.safetensors").exists()
-            and (root / "models" / "text_encoders"
-                 / "qwen_3_4b.safetensors").exists()
-            and (root / "models" / "vae" / "ae.safetensors").exists())
+    if not root.is_dir():
+        return False
+    spec = MODELS.get(model_id or MODEL_ID)
+    if not spec:
+        return False
+    return all((root / "models" / sub / name).exists()
+               for sub, name in spec["files"])
+
+
+def available_models() -> list:
+    """Every on-device image model whose weights are really here.
+
+    This is what the picker reads. A model missing one file is absent from the
+    list rather than present and broken.
+    """
+    return [mid for mid in MODELS if is_installed(mid)]
 
 
 def build_workflow(prompt: str, *, negative: str = "", width: int = 1024,
                    height: int = 1024, steps: int = DEFAULT_STEPS,
                    cfg: float = DEFAULT_CFG, seed: int = 0,
-                   filename_prefix: str = "friday_local") -> dict:
+                   filename_prefix: str = "friday_local",
+                   model_id: str | None = None) -> dict:
+    """The ComfyUI graph for one picture, on whichever model is seated.
+
+    Both graphs end identically — EmptySD3LatentImage → KSampler → VAEDecode →
+    SaveImage — because both are SD3-family latents. They differ only in how
+    the model, CLIP and VAE arrive: Z-Image loads three separate files, and the
+    SD 3.5 Medium repackage carries all three in one checkpoint.
+    """
+    spec = model_spec(model_id)
+    if (model_id or MODEL_ID) == SD35_MEDIUM_ID:
+        return _sd35_workflow(prompt, negative=negative, width=width,
+                              height=height, steps=steps, cfg=cfg, seed=seed,
+                              filename_prefix=filename_prefix, spec=spec)
     return {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": "z_image_turbo_fp8_e4m3fn.safetensors",
@@ -152,6 +223,43 @@ def build_workflow(prompt: str, *, negative: str = "", width: int = 1024,
                          "denoise": 1.0}},
         "8": {"class_type": "VAEDecode",
               "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"images": ["8", 0],
+                         "filename_prefix": filename_prefix}},
+    }
+
+
+def _sd35_workflow(prompt, *, negative, width, height, steps, cfg, seed,
+                   filename_prefix, spec) -> dict:
+    """Stable Diffusion 3.5 Medium, from the single bundled checkpoint.
+
+    CheckpointLoaderSimple returns (MODEL, CLIP, VAE) from the one file, so
+    node 1 feeds the sampler, the text encoders AND the decoder. Node numbering
+    is kept parallel to the Z-Image graph so the two read alike side by side.
+
+    cfg matters here in a way it does not for Z-Image: a turbo model runs at
+    cfg 1.0 (no guidance), and running SD 3.5 that way produces mush. The
+    sampler pair is euler/sgm_uniform, per Stability's own reference workflow.
+    """
+    ckpt = spec["files"][0][1]
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": ckpt}},
+        "4": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["1", 1], "text": prompt}},
+        "5": {"class_type": "CLIPTextEncode",
+              "inputs": {"clip": ["1", 1], "text": negative}},
+        "6": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "7": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["4", 0],
+                         "negative": ["5", 0], "latent_image": ["6", 0],
+                         "seed": seed, "steps": steps, "cfg": cfg,
+                         "sampler_name": spec.get("sampler", "euler"),
+                         "scheduler": spec.get("scheduler", "sgm_uniform"),
+                         "denoise": 1.0}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["7", 0], "vae": ["1", 2]}},
         "9": {"class_type": "SaveImage",
               "inputs": {"images": ["8", 0],
                          "filename_prefix": filename_prefix}},
@@ -331,9 +439,10 @@ def _watch_progress(prompt_id, client_id, on_update, stop_flag):
 
 
 def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
-             steps: int = DEFAULT_STEPS, seed: int = 0,
+             steps: int = 0, seed: int = 0,
              arbiter=None, lease_ttl_s: int = 900,
-             system: bool = False, n: int = 1, prompts=None) -> dict:
+             system: bool = False, n: int = 1, prompts=None,
+             model: str | None = None) -> dict:
     """Generate one image on-device, under the Arbiter's exclusive image lease.
 
     Returns {status, files, model, provider, elapsed_s, ...}. Never raises.
@@ -407,6 +516,19 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         _eta_s = int(_fc.get("seconds") or 0)
     except Exception:
         _eta_s = 0
+    # Which model is answering, and on ITS terms. `steps=0` means "whatever
+    # this model wants" — 8 for a turbo model, 30 for SD 3.5 — because a caller
+    # that names no step count is asking for a good picture, not for eight
+    # steps. cfg follows the same rule and is not a caller-facing knob: the two
+    # models disagree about it by a factor of four and getting it wrong yields
+    # a grey smear rather than a slow picture.
+    _model_id = model or MODEL_ID
+    if not is_installed(_model_id):
+        _model_id = MODEL_ID
+    _spec = model_spec(_model_id)
+    steps = steps or _spec["steps"]
+    _cfg = _spec["cfg"]
+
     # An orb for the IMAGE job, naming the image model.
     #
     # There was none. Stephen asked for an image and saw "a gemma4 process orb
@@ -426,7 +548,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                          label="Image: %s%s" % (_short,
                                                 "…" if len(prompt or "") > 38 else ""),
                          category="monitoring", icon="🎨", steps=[],
-                         model=MODEL_ID, eta_s=_eta_s or None)
+                         model=_model_id, eta_s=_eta_s or None)
     except Exception:
         orb_pid = None
 
@@ -488,7 +610,8 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
             # variety and the pipeline could not produce any.
             _seed = seed if seed else uuid.uuid4().int % (2 ** 63)
             wf = build_workflow(_p, negative=negative, width=width,
-                                height=height, steps=steps, seed=_seed)
+                                height=height, steps=steps, seed=_seed,
+                                cfg=_cfg, model_id=_model_id)
             client_id = uuid.uuid4().hex[:12]
             sub = _post("/prompt", {"prompt": wf, "client_id": client_id})
             pid = sub.get("prompt_id")
@@ -603,7 +726,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
                         # first one — otherwise a three-prompt batch records
                         # the same prompt three times and the manifest lies.
                         "prompt": _queue[_i] if _i < len(_queue) else prompt,
-                        "model": MODEL_ID,
+                        "model": _model_id,
                         "width": width, "height": height, "steps": steps,
                         "created_at": time.time(),
                         "system_generated": bool(system),
@@ -615,7 +738,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         return {
             "status": "ok" if files else "error",
             "provider": PROVIDER,
-            "model": MODEL_ID,
+            "model": _model_id,
             "files": files,
             "prompt": prompt,
             "width": width, "height": height, "steps": steps,
@@ -626,7 +749,7 @@ def generate(prompt: str, *, aspect_ratio: str = "1:1", negative: str = "",
         # Cancellation is an outcome, not a failure. It must not be reported as
         # an error and must not be reported as a finished image.
         _outcome["status"] = "cancelled"
-        return {"status": "cancelled", "provider": PROVIDER, "model": MODEL_ID,
+        return {"status": "cancelled", "provider": PROVIDER, "model": _model_id,
                 "reason": str(c), "prompt": prompt, "files": [],
                 "elapsed_s": round(time.time() - t0, 1), "local": True}
     except Exception as e:
