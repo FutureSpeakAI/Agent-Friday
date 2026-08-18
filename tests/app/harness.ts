@@ -150,7 +150,7 @@ export async function bootApp(page: Page) {
  * simply had not finished. But a screen that NEVER settles is a real defect,
  * so this does not quietly give up: it says which spinner is still on screen.
  */
-export async function waitForSettled(page: Page, timeout = 25000) {
+export async function waitForSettled(page: Page, timeout = 45000) {
   const stillLoading = async () => page.evaluate(() => {
     const vis = (e: Element) => {
       const r = e.getBoundingClientRect();

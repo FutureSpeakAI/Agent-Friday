@@ -1,0 +1,26 @@
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="40%" stop-color="#7b61ff"/>
+      <stop offset="100%" stop-color="#ff00ff"/>
+    </linearGradient>
+    <linearGradient id="hg2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00ffcc"/>
+      <stop offset="50%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#7b61ff"/>
+    </linearGradient>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="0.6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- folded broadsheet: front page with masthead, columns, and a turned-back leaf -->
+  <g filter="url(#gl)">
+    <path d="M6 7h16v18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7z" stroke="url(#hg)" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M22 11h3a1 1 0 0 1 1 1v12a3 3 0 0 1-3 3h-3" stroke="url(#hg2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M9 11h10" stroke="url(#hg)" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M9 15h4M9 18h4M9 21h4" stroke="url(#hg2)" stroke-width="1.3" stroke-linecap="round"/>
+    <rect x="15" y="15" width="4" height="6.5" rx="0.8" stroke="url(#hg2)" stroke-width="1.3"/>
+  </g>
+</svg>

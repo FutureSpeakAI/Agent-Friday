@@ -2,19 +2,22 @@
 
   GET  /api/workspace/<ws>/history        the audit trail
   POST /api/workspace/<ws>/undo           undo the most recent change
-  POST /api/workspace/<ws>/revert         {version_id} restore a specific version
   POST /api/workspace/<ws>/restore-as-of  {when} restore state at a moment
-  POST /api/workspace/<ws>/reset          back to baseline
 
 Stephen, 2026-08-17: "if I decide to talk to Friday and modify one of my
 workspaces, that needs to be easily rolled back either by telling Friday to roll
 it back or through a UI element."
 
-The snapshot machinery for this already existed in services/workspace_studio.py
-and NOTHING could reach it — `revert_customization` had no route, no tool and no
-button anywhere in the tree. Built, never wired, which is the day's recurring
-shape. These routes are the button's half; `revert_workspace` is the spoken half;
-both call the same functions.
+NOTE (2026-08-18): this module originally also registered /revert and /reset,
+believing the snapshot machinery had no routes. It did — workspace_studio.py has
+registered both since before the public release, and because 'workspace_studio'
+sorts before 'workspace_undo' in blueprint registration, Flask served the studio
+handlers and the duplicates here were dead code that LOOKED live (the app-level
+test suite proved this at runtime: the two handlers return different JSON shapes,
+and only the studio shape ever came back). The UI in ui_parts/app.html reads the
+studio shape ({status, customization, versions}), so studio keeps /revert and
+/reset; this module keeps the routes only it provides. Do not re-add the
+duplicates — Flask will not warn you, it will just ignore them.
 """
 from flask import Blueprint, jsonify, request
 
@@ -41,18 +44,6 @@ def ws_undo(ws_id):
                             "can be undone too"})
 
 
-@workspace_undo_bp.route("/api/workspace/<ws_id>/revert", methods=["POST"])
-def ws_revert(ws_id):
-    vid = (request.get_json(silent=True) or {}).get("version_id")
-    if not vid:
-        return jsonify({"ok": False, "error": "version_id is required"}), 400
-    doc = _ws().revert_customization(ws_id, vid)
-    if doc is None:
-        return jsonify({"ok": False, "error": "no such version"}), 404
-    return jsonify({"ok": True,
-                    "customization": doc.get("customization") or {}})
-
-
 @workspace_undo_bp.route("/api/workspace/<ws_id>/restore-as-of", methods=["POST"])
 def ws_restore_as_of(ws_id):
     when = (request.get_json(silent=True) or {}).get("when")
@@ -66,8 +57,3 @@ def ws_restore_as_of(ws_id):
                     "customization": doc.get("customization") or {}})
 
 
-@workspace_undo_bp.route("/api/workspace/<ws_id>/reset", methods=["POST"])
-def ws_reset(ws_id):
-    doc = _ws().reset_customization(ws_id)
-    return jsonify({"ok": True,
-                    "customization": doc.get("customization") or {}})

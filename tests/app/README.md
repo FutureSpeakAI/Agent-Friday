@@ -104,3 +104,21 @@ real, minor, and worth a small colour bump.
 The lesson is built into the suite. A vision finding is a **lead**, not a
 verdict; where a measurement is possible, `liveness.ts` measures it, and the
 number wins. Vision is for the things no number can express.
+
+## Known residual noise in the vision tier
+
+Two findings survive every calibration pass and are recorded here so nobody
+re-litigates them from scratch:
+
+- **Long model ids truncate with an ellipsis** in the picker. True, and already
+  handled — every row carries the full id as a hover title. A vision judge
+  cannot hover, so it will keep reporting this.
+- **Occasional invented specifics.** A local 12b judge sometimes describes
+  elements that are not on the screen (a model name, a button). Confirmation
+  now requires two passes to describe the SAME problem, which filters most of
+  it; what remains is the price of judging with a small local model, accepted
+  so screenshots of real personal data never leave the machine.
+
+Treat a red vision test as a lead to check by hand, not a verdict. The tier
+earned its keep by catching the blank screen, the missing dock, unreadable
+buttons, and never-resolving spinners — all real.

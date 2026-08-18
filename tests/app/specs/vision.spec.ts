@@ -22,8 +22,11 @@ import { judgeConfirmed, describeVerdict } from '../vision';
 const SCREENS: { workspace: string | null; intent: string; reveal?: string }[] = [
   {
     workspace: null,
-    intent: 'show the Friday desktop on open: a dock of workspace buttons down one side, each with ' +
-            'a legible icon and label, and a main area with readable content — not a blank screen.',
+    intent: 'show the Friday desktop on open: a dock of workspace buttons with legible icons ' +
+            'and labels, and a main area with readable content. The default panel is a finite ' +
+            'morning edition: sections reading "Nothing here today, on purpose." are a ' +
+            'deliberate design choice (the edition ends rather than infinitely scrolling) and ' +
+            'are NOT a fault. A blank screen or a spinner that never resolves IS a fault.',
   },
   {
     workspace: 'Settings',

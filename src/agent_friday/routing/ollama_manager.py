@@ -375,6 +375,31 @@ class OllamaManager:
         if think is False:
             native["think"] = False
         resp = self._post("/api/chat", native, timeout=timeout)
+
+        # ── The reserve is a guard here, not a gauge. ──
+        # display_at_risk() used to be consulted in exactly one place: the
+        # read-only /api/gpu/headroom endpoint. Nothing acted on it, so one
+        # ordinary chat turn pinned ~8 GB for the full keep_alive and left the
+        # card at 493 MiB free — under the display reserve, in the state that
+        # already cost a monitor — for five minutes after the answer arrived
+        # (measured 2026-08-18: 9188 -> 493 -> 493 -> 493 across three turns).
+        #
+        # The dip while generating is the price of using the model at all; the
+        # five pinned minutes afterwards are not. If the card is under the
+        # reserve once the turn is done, release the seat immediately instead
+        # of letting it squat. Next turn pays a reload (~2-4 s); the desktop
+        # keeps its memory. Best-effort: a failure to check must never break
+        # the answer we already have.
+        try:
+            from agent_friday.services.gpu_headroom import display_at_risk
+            _risk = display_at_risk()
+            if _risk.get("at_risk"):
+                self._post("/api/generate", {"model": model, "prompt": "",
+                                             "keep_alive": 0}, timeout=10)
+                print(f"  [GPU-GUARD] released {model} after turn: {_risk.get('reason')}")
+        except Exception:
+            pass
+
         msg = resp.get("message", {}) or {}
         out_msg = {"role": "assistant", "content": msg.get("content", "")}
         if msg.get("tool_calls"):

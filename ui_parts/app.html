@@ -2014,7 +2014,7 @@ function LicensePicker({value,onChange,label='License'}){
   const cur=LICENSE_TERMS.find(t=>t.id===v.terms)||LICENSE_TERMS[0];
   const price=(v.market&&v.market.price)||'';
   return(<div style={{marginBottom:10}}>
-    <div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{label} <span style={{textTransform:'none',color:'#5a7a86'}}>· {cur.hint}</span></div>
+    <div style={{fontSize:10,color:'#7fb6c9',fontFamily:'JetBrains Mono',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:3}}>{label} <span style={{textTransform:'none',color:'#6a8b98'}}>· {cur.hint}</span></div>
     <div style={{display:'flex',gap:8}}>
       <select className="input" style={{flex:1}} value={v.terms} onChange={e=>set({terms:e.target.value})}>
         {LICENSE_TERMS.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
@@ -2043,7 +2043,7 @@ function ProvenanceBar({filename}){
   const load=()=>fetch('/api/provenance/by-file/'+encodeURIComponent(filename)).then(r=>r.json()).then(d=>{setData(d);const L=d&&d.manifest&&d.manifest.license;if(L)setLic({terms:L.terms,market:L.market});}).catch(()=>setData(null));
   useEffect(()=>{setData(null);setEdit(false);load();},[filename]);
   if(!data)return null;
-  if(data.status!=='ok'||!data.manifest)return <div style={{fontSize:10,color:'#5a7a86',fontFamily:'JetBrains Mono',marginBottom:8}}>No signed provenance for this file yet.</div>;
+  if(data.status!=='ok'||!data.manifest)return <div style={{fontSize:10,color:'#6a8b98',fontFamily:'JetBrains Mono',marginBottom:8}}>No signed provenance for this file yet.</div>;
   const m=data.manifest;const v=data.verification||{};const L=m.license||{};
   const verified=v.valid;const sig=v.checks&&v.checks.signature_ok;
   const save=async()=>{setSaving(true);try{await fetch('/api/provenance/by-file/'+encodeURIComponent(filename)+'/license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({license:lic})});await load();setEdit(false);}catch(e){}setSaving(false);};
@@ -2051,7 +2051,7 @@ function ProvenanceBar({filename}){
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
       <span title="Ed25519-signed Content Credential" style={{fontSize:10,fontFamily:'JetBrains Mono',color:verified?'#22c55e':sig===false?'#ff0080':'#7fb6c9'}}>{verified?'🔏 Signed & verified':sig===false?'⚠ signature mismatch':'🔏 Signed'}</span>
       <LicenseChip terms={L.terms} price={L.market&&L.market.price}/>
-      {(m.media_type)&&<span style={{fontSize:9,color:'#5a7a86'}}>{m.media_type}</span>}
+      {(m.media_type)&&<span style={{fontSize:9,color:'#6a8b98'}}>{m.media_type}</span>}
       <button className="btn btn-magenta" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setEdit(!edit)}>{edit?'Close':'Change license'}</button>
     </div>
     {edit&&lic&&<div style={{marginTop:8}}>
@@ -2162,7 +2162,7 @@ function MusicPanel({onCreated}){
   };
   const f=result&&result.files&&result.files[0];const fx=f?(f.filename||f.url||'').split('.').pop().toLowerCase():'';
   return(<div className="card" style={{marginBottom:12,padding:14}}>
-    <div style={{display:'flex',gap:6,marginBottom:12,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎵 Compose music — Lyria 3</span><span style={{fontSize:9,color:'#5a7a86',fontFamily:'JetBrains Mono'}}>44.1kHz stereo</span></div>
+    <div style={{display:'flex',gap:6,marginBottom:12,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎵 Compose music — Lyria 3</span><span style={{fontSize:9,color:'#6a8b98',fontFamily:'JetBrains Mono'}}>44.1kHz stereo</span></div>
     {cloudAvail&&!cloudAvail.available&&<div style={{marginBottom:10,padding:'7px 10px',borderRadius:6,background:'rgba(255,190,0,0.08)',border:'1px solid rgba(255,190,0,0.25)',color:'#ffd166',fontSize:10,fontFamily:'JetBrains Mono'}}>⚠ Cloud music unavailable — demo mode only. {cloudAvail.reason||'SDK update required.'} Generations will save a text preview.</div>}
     <Lbl>Prompt</Lbl>
     <textarea className="input" style={{width:'100%',minHeight:56,resize:'vertical',marginBottom:8}} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Warm lo-fi hip-hop with mellow Rhodes, vinyl crackle, ~80 BPM…"/>
@@ -2288,7 +2288,7 @@ function TimelinePanel({onCreated}){
 // Starts the built-in 'full-production' pipeline (script→sceneDNA→keyframe→clip
 // →music→cut) and shows a VISUAL stage tracker polling the run — milestones, the
 // active stage, and Approve-&-Continue at cost-gate checkpoints.
-const PIPE_STATE_COL={completed:'#22c55e',running:'#00d4ff',awaiting_checkpoint:'#f59e0b',failed:'#ff0080',pending:'#5a7a86'};
+const PIPE_STATE_COL={completed:'#22c55e',running:'#00d4ff',awaiting_checkpoint:'#f59e0b',failed:'#ff0080',pending:'#6a8b98'};
 function ProductionPanel({onCreated}){
   const[logline,setLogline]=useState('');const[runId,setRunId]=useState('');const[run,setRun]=useState(null);
   const[busy,setBusy]=useState(false);const[err,setErr]=useState('');
@@ -2306,7 +2306,7 @@ function ProductionPanel({onCreated}){
   const stages=(run&&run.stages)||[];const idx=run?run.stage_index:0;const state=run&&run.state;
   const prodFile=run&&run.context&&(run.context.production_file||run.context.clip_file);
   return(<div className="card" style={{marginBottom:12,padding:14}}>
-    <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎬 Full production</span><span style={{fontSize:9,color:'#5a7a86',fontFamily:'JetBrains Mono'}}>script → video → music → cut</span></div>
+    <div style={{display:'flex',gap:6,marginBottom:6,alignItems:'center'}}><span style={{fontSize:11,fontWeight:700,color:'#fff'}}>🎬 Full production</span><span style={{fontSize:9,color:'#6a8b98',fontFamily:'JetBrains Mono'}}>script → video → music → cut</span></div>
     <div style={{fontSize:10,color:'#7a8a90',marginBottom:10}}>One logline becomes a scored micro-film. Cost-gate checkpoints pause for your OK before the expensive steps; without a cloud key each stage produces a demo preview.</div>
     <div style={{display:'flex',gap:6,marginBottom:12}}>
       <input className="input" style={{flex:1}} value={logline} onChange={e=>setLogline(e.target.value)} placeholder="A lighthouse keeper races a storm to signal a lost ship…" onKeyDown={e=>e.key==='Enter'&&start()}/>
@@ -2317,7 +2317,7 @@ function ProductionPanel({onCreated}){
       {/* horizontal stage stepper */}
       <div style={{display:'flex',alignItems:'stretch',gap:0,marginBottom:12,flexWrap:'wrap'}}>
         {stages.map((s,i)=>{const done=i<idx||state==='completed';const active=i===idx&&state!=='completed';const checkpoint=active&&state==='awaiting_checkpoint';
-          const col=state==='failed'&&active?'#ff0080':done?'#22c55e':checkpoint?'#f59e0b':active?'#00d4ff':'#5a7a86';
+          const col=state==='failed'&&active?'#ff0080':done?'#22c55e':checkpoint?'#f59e0b':active?'#00d4ff':'#6a8b98';
           return(<div key={i} style={{flex:'1 1 90px',minWidth:80}}>
             <div style={{display:'flex',alignItems:'center',gap:4}}>
               <div style={{width:22,height:22,borderRadius:'50%',flexShrink:0,border:'2px solid '+col,color:col,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,boxShadow:active?'0 0 10px '+col+'88':'none',background:done?col+'22':'transparent'}}>{done?'✓':i+1}</div>
@@ -4275,7 +4275,7 @@ function EditionCard({card}){
     <div style={{minWidth:0}}>
       <div className="card-title" style={{overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.title}</div>
       <div style={{fontSize:12,color:'#aab',lineHeight:1.45,margin:'4px 0',overflowWrap:'anywhere',wordBreak:'break-word'}}>{card.snippet}</div>
-      <div style={{display:'flex',gap:8,fontSize:10,color:'#5a7a86',flexWrap:'wrap',alignItems:'center'}}>
+      <div style={{display:'flex',gap:8,fontSize:10,color:'#6a8b98',flexWrap:'wrap',alignItems:'center'}}>
         <span style={{overflowWrap:'anywhere'}}>{card.source}</span>
         {card.fetched_at&&<span>· {card.fetched_at}</span>}
         {card.receipt&&<span title={'Receipt: '+card.receipt.engine}>🧾</span>}
@@ -4304,7 +4304,7 @@ function EditionSection({section}){
   return(<div style={{marginBottom:20}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:8}}>
       <div style={{fontSize:13,fontWeight:700,color:'#e8f4f8',fontFamily:'Orbitron',letterSpacing:'0.03em'}}>{section.label}</div>
-      <div style={{fontSize:10,color:'#5a7a86'}}>{real}/{section.budget}</div>
+      <div style={{fontSize:10,color:'#6a8b98'}}>{real}/{section.budget}</div>
     </div>
     {section.cards.map(c=><EditionCard key={c.id} card={c}/>)}
   </div>);
@@ -4331,7 +4331,7 @@ function EditionWS(){
     try{const r=await fetch('/api/edition/charter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:charterText})});const d=await r.json();if(d.charter)setCharter(d.charter);}
     catch(e){}finally{setCharterSaving(false);}
   };
-  if(loading)return <div style={{padding:20,textAlign:'center',color:'#5a7a86'}}>Loading your edition…</div>;
+  if(loading)return <div style={{padding:20,textAlign:'center',color:'#6a8b98'}}>Loading your edition…</div>;
   return(<div>
     <FridaySays text={edition?`Composed ${edition.composed_at}. You're caught up when you reach the bottom — no infinite scroll here.`:'No edition composed yet — hit Compose Now to build your first one.'}/>
     <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
@@ -4343,7 +4343,7 @@ function EditionWS(){
         <div className="card-title">Editorial Charter</div>
         <button className="btn" style={{fontSize:10}} onClick={()=>setCharterOpen(false)}>Close</button>
       </div>
-      <div style={{fontSize:10,color:'#5a7a86',marginBottom:6}}>Governs taste &amp; selection only — never accuracy. Last updated: {(charter&&charter.updated_at)||'—'}. Changes take effect on the next compose.</div>
+      <div style={{fontSize:10,color:'#6a8b98',marginBottom:6}}>Governs taste &amp; selection only — never accuracy. Last updated: {(charter&&charter.updated_at)||'—'}. Changes take effect on the next compose.</div>
       <textarea className="input" style={{width:'100%',minHeight:220,fontFamily:'JetBrains Mono',fontSize:11,whiteSpace:'pre-wrap'}} value={charterText} onChange={e=>setCharterText(e.target.value)}/>
       <button className="btn" style={{fontSize:11,marginTop:8}} disabled={charterSaving||!charterText.trim()} onClick={saveCharter}>{charterSaving?'Saving…':'Save charter'}</button>
     </div>}
@@ -4363,10 +4363,10 @@ function EditionWS(){
           {edition.rationale.map((line,i)=><div key={i} style={{marginBottom:4,minWidth:0,overflowWrap:'anywhere',wordBreak:'break-word'}}>{line}</div>)}
         </div>
       </div>
-      <div style={{textAlign:'center',padding:'20px 0',color:'#5a7a86',fontSize:12,fontFamily:'JetBrains Mono',borderTop:'1px dashed rgba(255,255,255,0.08)'}}>
+      <div style={{textAlign:'center',padding:'20px 0',color:'#6a8b98',fontSize:12,fontFamily:'JetBrains Mono',borderTop:'1px dashed rgba(255,255,255,0.08)'}}>
         ✓ You're caught up. Nothing else today.
       </div>
-    </>:<div style={{textAlign:'center',padding:30,color:'#5a7a86'}}>No edition yet — hit Compose Now above.</div>}
+    </>:<div style={{textAlign:'center',padding:30,color:'#6a8b98'}}>No edition yet — hit Compose Now above.</div>}
   </div>);
 }
 function NewsWS(){
@@ -8759,6 +8759,7 @@ function App(){
   },[killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS=['AI/Tech','Politics','Media','Local','Business'];
+  const DEFAULT_AGENT_SETTINGS={temperature:0.7,response_length:'standard',include_sources:true,news_priorities:[...NEWS_TOPICS],communication_style:'professional',camera_interval_sec:3,camera_auto_describe:false,tts_voice:'Aoede',voice_language:'',voice_style_prompt:'',voice_temperature:null,voice_max_tokens:0,voice_affective:false,voice_proactive:false,voice_context_compression:false,agent_name:'AGENT FRIDAY',orchestrator_model:'claude-opus-4-8',subagent_model:'claude-sonnet-4-6',creative_model:'gemini-nano-banana-2',voice_model:'gemini-3.1-flash-live-preview',audio_input_device_id:'',audio_output_device_id:'',computer_control_enabled:false,show_all_workspaces:true};
   const[agentSettings,setAgentSettings]=useState(DEFAULT_AGENT_SETTINGS);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
@@ -11505,7 +11506,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
         <div className="dock-group">
           <div className="dock-group-btns">
             {g.items.filter(w=>showAllWorkspaces||w.core).map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(suggestedWs.has(w.id)&&!openWins.has(w.id))?'suggested':''}`} onClick={()=>toggle(w.id)} title={(suggestedWs.has(w.id)&&!openWins.has(w.id))?'Suggested — Friday predicts you’ll want this':undefined} style={{position:'relative'}}>
-              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} onError={e=>{e.target.style.display='none';e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
+              <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
               {w.id==='wiki'&&wikiPending>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{wikiPending}</span>}
               {w.id==='messages'&&msgActionable>0&&<span style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#00d4ff',color:'#031018',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(0,212,255,0.7)'}}>{msgActionable}</span>}
               {w.id==='content'&&contentAlerts>0&&<span title="Held or failed posts need your attention — Content → Queue" style={{position:'absolute',top:2,right:2,minWidth:14,height:14,padding:'0 4px',borderRadius:7,background:'#f59e0b',color:'#0a0a0f',fontSize:9,fontWeight:700,fontFamily:'Orbitron',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 8px rgba(245,158,11,0.7)'}}>{contentAlerts}</span>}

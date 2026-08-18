@@ -10360,7 +10360,7 @@ function LicensePicker({
   }, label, " ", /*#__PURE__*/React.createElement("span", {
     style: {
       textTransform: 'none',
-      color: '#5a7a86'
+      color: '#6a8b98'
     }
   }, "\xB7 ", cur.hint)), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -10457,7 +10457,7 @@ function ProvenanceBar({
   if (data.status !== 'ok' || !data.manifest) return /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
-      color: '#5a7a86',
+      color: '#6a8b98',
       fontFamily: 'JetBrains Mono',
       marginBottom: 8
     }
@@ -10512,7 +10512,7 @@ function ProvenanceBar({
   }), m.media_type && /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
-      color: '#5a7a86'
+      color: '#6a8b98'
     }
   }, m.media_type), /*#__PURE__*/React.createElement("button", {
     className: "btn btn-magenta",
@@ -10937,7 +10937,7 @@ function MusicPanel({
   }, "\uD83C\uDFB5 Compose music \u2014 Lyria 3"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
-      color: '#5a7a86',
+      color: '#6a8b98',
       fontFamily: 'JetBrains Mono'
     }
   }, "44.1kHz stereo")), cloudAvail && !cloudAvail.available && /*#__PURE__*/React.createElement("div", {
@@ -11601,7 +11601,7 @@ const PIPE_STATE_COL = {
   running: '#00d4ff',
   awaiting_checkpoint: '#f59e0b',
   failed: '#ff0080',
-  pending: '#5a7a86'
+  pending: '#6a8b98'
 };
 function ProductionPanel({
   onCreated
@@ -11714,7 +11714,7 @@ function ProductionPanel({
   }, "\uD83C\uDFAC Full production"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 9,
-      color: '#5a7a86',
+      color: '#6a8b98',
       fontFamily: 'JetBrains Mono'
     }
   }, "script \u2192 video \u2192 music \u2192 cut")), /*#__PURE__*/React.createElement("div", {
@@ -11769,7 +11769,7 @@ function ProductionPanel({
     const done = i < idx || state === 'completed';
     const active = i === idx && state !== 'completed';
     const checkpoint = active && state === 'awaiting_checkpoint';
-    const col = state === 'failed' && active ? '#ff0080' : done ? '#22c55e' : checkpoint ? '#f59e0b' : active ? '#00d4ff' : '#5a7a86';
+    const col = state === 'failed' && active ? '#ff0080' : done ? '#22c55e' : checkpoint ? '#f59e0b' : active ? '#00d4ff' : '#6a8b98';
     return /*#__PURE__*/React.createElement("div", {
       key: i,
       style: {
@@ -19134,7 +19134,7 @@ function EditionCard({
       display: 'flex',
       gap: 8,
       fontSize: 10,
-      color: '#5a7a86',
+      color: '#6a8b98',
       flexWrap: 'wrap',
       alignItems: 'center'
     }
@@ -19257,7 +19257,7 @@ function EditionSection({
   }, section.label), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
-      color: '#5a7a86'
+      color: '#6a8b98'
     }
   }, real, "/", section.budget)), section.cards.map(c => /*#__PURE__*/React.createElement(EditionCard, {
     key: c.id,
@@ -19326,7 +19326,7 @@ function EditionWS() {
     style: {
       padding: 20,
       textAlign: 'center',
-      color: '#5a7a86'
+      color: '#6a8b98'
     }
   }, "Loading your edition\u2026");
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(FridaySays, {
@@ -19376,7 +19376,7 @@ function EditionWS() {
   }, "Close")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
-      color: '#5a7a86',
+      color: '#6a8b98',
       marginBottom: 6
     }
   }, "Governs taste & selection only \u2014 never accuracy. Last updated: ", charter && charter.updated_at || '—', ". Changes take effect on the next compose."), /*#__PURE__*/React.createElement("textarea", {
@@ -19463,7 +19463,7 @@ function EditionWS() {
     style: {
       textAlign: 'center',
       padding: '20px 0',
-      color: '#5a7a86',
+      color: '#6a8b98',
       fontSize: 12,
       fontFamily: 'JetBrains Mono',
       borderTop: '1px dashed rgba(255,255,255,0.08)'
@@ -19472,7 +19472,7 @@ function EditionWS() {
     style: {
       textAlign: 'center',
       padding: 30,
-      color: '#5a7a86'
+      color: '#6a8b98'
     }
   }, "No edition yet \u2014 hit Compose Now above."));
 }
@@ -34222,6 +34222,32 @@ function App() {
   }, [killSwitch]);
   // Agent configuration (temperature, response prefs, personality, cLaws)
   const NEWS_TOPICS = ['AI/Tech', 'Politics', 'Media', 'Local', 'Business'];
+  const DEFAULT_AGENT_SETTINGS = {
+    temperature: 0.7,
+    response_length: 'standard',
+    include_sources: true,
+    news_priorities: [...NEWS_TOPICS],
+    communication_style: 'professional',
+    camera_interval_sec: 3,
+    camera_auto_describe: false,
+    tts_voice: 'Aoede',
+    voice_language: '',
+    voice_style_prompt: '',
+    voice_temperature: null,
+    voice_max_tokens: 0,
+    voice_affective: false,
+    voice_proactive: false,
+    voice_context_compression: false,
+    agent_name: 'AGENT FRIDAY',
+    orchestrator_model: 'claude-opus-4-8',
+    subagent_model: 'claude-sonnet-4-6',
+    creative_model: 'gemini-nano-banana-2',
+    voice_model: 'gemini-3.1-flash-live-preview',
+    audio_input_device_id: '',
+    audio_output_device_id: '',
+    computer_control_enabled: false,
+    show_all_workspaces: true
+  };
   const [agentSettings, setAgentSettings] = useState(DEFAULT_AGENT_SETTINGS);
   const [agentPersonality, setAgentPersonality] = useState('');
   const [personalityDraft, setPersonalityDraft] = useState('');
@@ -40830,9 +40856,19 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
   }, /*#__PURE__*/React.createElement("img", {
     src: `assets/icons/${w.id}.svg`,
     alt: w.label,
+    // A local 404 can error BEFORE React attaches onError, so the fallback
+    // never fired and the dock showed a broken-image glyph (edition.svg,
+    // 2026-08-17). The ref runs at mount, after the load already settled,
+    // and catches what the event missed.
+    ref: el => {
+      if (el && el.complete && el.naturalWidth === 0) {
+        el.style.display = 'none';
+        if (el.nextSibling) el.nextSibling.style.display = 'inline';
+      }
+    },
     onError: e => {
       e.target.style.display = 'none';
-      e.target.nextSibling.style.display = 'inline';
+      if (e.target.nextSibling) e.target.nextSibling.style.display = 'inline';
     }
   }), /*#__PURE__*/React.createElement("span", {
     style: {
