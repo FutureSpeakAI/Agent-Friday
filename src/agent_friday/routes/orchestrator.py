@@ -74,7 +74,11 @@ def cleanup_zombies():
     try:
         import time as _t
         from agent_friday.core import PROCESSES, PROCESSES_LOCK, process_update
-        max_age = float(request.get_json(silent=True, force=True) or {}).get("max_age_minutes", 30)
+        # The parentheses were wrong: this called float(dict) and raised on
+        # EVERY request, so the zombie reaper has never once run. Dead orbs
+        # accumulating with no way out is the visible half of that.
+        max_age = float((request.get_json(silent=True, force=True) or {})
+                        .get("max_age_minutes", 30))
         cutoff = _t.time() - max_age * 60
         killed = []
         with PROCESSES_LOCK:

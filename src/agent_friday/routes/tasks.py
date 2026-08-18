@@ -284,6 +284,13 @@ def list_processes():
     vanishes before you looked at it is the machine hiding something, and this
     codebase has spent a day removing exactly that kind of quiet.
     """
+    # An orphan should disappear on its own rather than wait to be asked
+    # about. Runs before the lock: _reap_orphans takes it itself.
+    try:
+        _reap_orphans()
+    except Exception:
+        pass
+
     with PROCESSES_LOCK:
         out = []
         now = _time.time()
@@ -425,6 +432,93 @@ def dismiss_failed_processes():
                 row["dismissed"] = True
                 cleared += 1
     return jsonify({"ok": True, "cleared": cleared})
+
+
+# How long a "running" orb may keep orbiting with nothing behind it.
+#
+# A process that starts a thread and dies without calling process_update stays
+# `running` forever, and `orb_visible` is unconditionally True while a row has
+# no `ended` — so a crashed job orbits until the server restarts. Stephen ended
+# the day with a desk full of them: "a bunch of error orbs and reasoning orbs
+# floating on my desktop but I don't want or need them."
+ORB_RUNNING_MAX_AGE_S = 1800
+
+
+def _reap_orphans(now=None):
+    """Retire `running` orbs whose work is plainly gone. Returns the ids.
+
+    Conservative on purpose: only rows with no end time, older than the cap, and
+    NOT holding the GPU lease. A live image job legitimately runs for minutes
+    and must never be reaped out from under him — that is his work, not litter.
+    """
+    import time as _t
+    now = now or _t.time()
+    leased = set()
+    try:
+        from agent_friday.services.residency_arbiter import exclusive_lease
+        _l = exclusive_lease() or {}
+        if _l.get("model_id"):
+            leased.add(str(_l.get("model_id")))
+            leased.add(str(_l.get("role")))
+            leased.add(str(_l.get("kind")))
+    except Exception:
+        pass
+
+    reaped = []
+    with PROCESSES_LOCK:
+        for pid, row in list(PROCESSES.items()):
+            if row.get("ended") or row.get("status") != "running":
+                continue
+            if (now - (row.get("started") or now)) <= ORB_RUNNING_MAX_AGE_S:
+                continue
+            blob = " ".join(str(row.get(k) or "") for k in ("label", "category", "kind"))
+            if any(x and x in blob for x in leased):
+                continue          # the GPU is genuinely working on this
+            row["status"] = "error"
+            row["ended"] = now
+            row["dismissed"] = True   # it was never seen working; do not now
+            row["label"] = (str(row.get("label") or pid) +
+                            " (stopped without reporting - cleared)")
+            reaped.append(pid)
+    return reaped
+
+
+@tasks_bp.route('/api/orbs/clear', methods=['POST'])
+def clear_orbs():
+    """Clear the desk. Body: {"scope": "finished"|"all"} (default "finished").
+
+    "finished" retires everything that has stopped — completed, failed,
+    cancelled, timed out — and reaps orphaned `running` rows. Anything actually
+    working is left alone.
+
+    "all" additionally retires live rows. Only for the case where he wants a
+    clean desk and does not care what is mid-flight; it does not kill the work,
+    it just stops the orb representing it from orbiting.
+
+    This exists because per-orb dismissal was the only exit and there were more
+    orbs than anyone wants to click. A record stays queryable after clearing —
+    what stops is the orbiting.
+    """
+    import time as _t
+    body = request.get_json(silent=True) or {}
+    scope = str(body.get("scope") or "finished").strip().lower()
+    now = _t.time()
+
+    reaped = _reap_orphans(now)
+    cleared = []
+    with PROCESSES_LOCK:
+        for pid, row in list(PROCESSES.items()):
+            if row.get("dismissed"):
+                continue
+            done = bool(row.get("ended")) or row.get("status") != "running"
+            if scope == "all" or done:
+                row["dismissed"] = True
+                if not row.get("ended"):
+                    row["ended"] = now
+                cleared.append(pid)
+    return jsonify({"ok": True, "cleared": len(cleared),
+                    "orphans_reaped": len(reaped),
+                    "ids": cleared, "orphan_ids": reaped})
 
 
 @tasks_bp.route('/api/processes/<pid>/dismiss', methods=['POST'])

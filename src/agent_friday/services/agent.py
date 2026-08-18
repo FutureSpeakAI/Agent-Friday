@@ -366,6 +366,18 @@ CLAUDE_TOOLS = [
          "path": {"type": "string", "description": "A folder/file path or friendly name (Downloads, Desktop, Projects, an absolute path, or an app name). A bare filename Friday just created resolves against the creations folder."},
          "in_browser": {"type": "boolean", "description": "Open the file as a tab in Chrome (or the default browser) instead of the OS default app. Use this for images, PDFs and HTML when the user asks for a browser tab, or when they want several files open side by side."}},
       "required": ["path"]}},
+    {"name": "switch_model",
+     "description": "Change which AI model answers the user's chat (the "
+                    "'reasoning' seat). Use this whenever they ask to switch, "
+                    "change, use or try a different model, by any name they "
+                    "use for it - 'switch to Gemma4 12B Uncensored', 'use the "
+                    "small local one', 'go back to Sonnet'. Matching is "
+                    "forgiving, so pass their words through. Takes effect on "
+                    "the next message.",
+     "input_schema": {"type": "object",
+                      "properties": {"model": {"type": "string",
+                                               "description": "The model the user named, in their words."}},
+                      "required": ["model"]}},
     {"name": "navigate", "description": "Switch the Friday desktop UI to one of its built-in workspaces, on-screen, for the user. Use this whenever the user asks to open, show, switch to, or go to a workspace by name — this drives the ACTUAL interface, so prefer it over just describing where something is. Workspaces: home, career, wiki, studio, trust, system, news, draft, code, finance, health, contacts, content, messages, calendar, family, futurespeak.",
      "input_schema": {"type": "object", "properties": {"workspace": {"type": "string", "description": "Workspace id or spoken name, e.g. 'studio', 'news', 'calendar', 'settings'."}}, "required": ["workspace"]}},
     {"name": "revert_workspace", "description": "Undo a change Friday made to one of the user's workspaces or the liquid UI. Use whenever he says 'roll that back', 'undo that', 'put it back', or 'restore my workspace to how it was this morning'. Modes: 'undo' (the most recent change), 'as_of' (the state at a time — pass when), 'version' (a specific version_id from the history), 'reset' (back to baseline). Every undo is itself snapshotted, so an undo can be undone. Call list_workspace_history first if you need to see what changed.",
@@ -1809,6 +1821,95 @@ def _tool_navigate(inp):
     return f"NAV_OK:{ws} — Opening the {label} workspace for the user now."
 
 
+def _tool_switch_model(inp):
+    """Change the chat model seat by name.
+
+    Stephen, 2026-08-18: "I asked twice for Gemma4:12B Uncensored and it didn't
+    know how to switch." There was no conversational path to a seat change at
+    all — only the UI controls — so the most natural way to ask was the one way
+    that could not work.
+
+    Writes `capability_routing.reasoning`, which is what dispatch reads, and
+    verifies the write by reading it back. Matching is forgiving because he
+    types what he means, not model ids: "gemma4 12b uncensored" has to find
+    hf.co/HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced:Q4_K_M.
+    """
+    want = ((inp or {}).get('model') or (inp or {}).get('name') or '').strip()
+    if not want:
+        return "SWITCH_FAIL: no model named."
+
+    try:
+        from agent_friday.core import _load_settings, _save_settings
+        from agent_friday.services.model_catalog import build_catalog
+    except Exception as e:
+        return f"SWITCH_FAIL: cannot reach the catalogue ({e})."
+
+    try:
+        cat = build_catalog()
+        ids = []
+        seen = set()
+        for m in (cat.get('models') or []):
+            mid = m.get('id')
+            if mid and mid not in seen:
+                seen.add(mid)
+                ids.append((mid, m.get('label') or mid,
+                            bool(m.get('local')) or m.get('classification') == 'local',
+                            (m.get('providers') or [m.get('provider')])[0]
+                            if m.get('providers') else m.get('provider')))
+    except Exception as e:
+        return f"SWITCH_FAIL: cannot read the catalogue ({e})."
+
+    def norm(x):
+        return ''.join(ch for ch in str(x).lower() if ch.isalnum())
+
+    nw = norm(want)
+    # Exact id, then id/label containment, then all-tokens-present. First match
+    # in catalogue order wins, and local models sort ahead of cloud ones.
+    # Local first, then first-party ids over aggregator ones: "Sonnet 5" should
+    # find claude-sonnet-5 on Anthropic, not anthropic/claude-sonnet-5 on an
+    # OpenRouter account he has no key for.
+    ranked = sorted(ids, key=lambda t: (not t[2], '/' in t[0], t[0]))
+    hit = None
+    for mid, label, is_local, prov in ranked:
+        if norm(mid) == nw or norm(label) == nw:
+            hit = (mid, label, prov)
+            break
+    if hit is None:
+        for mid, label, is_local, prov in ranked:
+            if nw and (nw in norm(mid) or nw in norm(label)):
+                hit = (mid, label, prov)
+                break
+    if hit is None:
+        toks = [t for t in ''.join(
+            c if c.isalnum() else ' ' for c in want.lower()).split() if t]
+        for mid, label, is_local, prov in ranked:
+            blob = norm(mid) + ' ' + norm(label)
+            if toks and all(norm(t) in blob for t in toks):
+                hit = (mid, label, prov)
+                break
+    if hit is None:
+        locals_ = [m for m, l, loc, pr in ranked if loc][:8]
+        return ("SWITCH_FAIL: nothing in the catalogue matches %r. "
+                "Local models installed: %s" % (want, ", ".join(locals_) or "none"))
+
+    mid, label, prov = hit
+    try:
+        cur = _load_settings() or {}
+        routing = dict(cur.get('capability_routing') or {})
+        routing['reasoning'] = {'model': mid, 'provider': prov or 'ollama-local'}
+        _save_settings({'capability_routing': routing, 'orchestrator_model': mid})
+        after = ((( _load_settings() or {}).get('capability_routing') or {})
+                 .get('reasoning') or {}).get('model')
+    except Exception as e:
+        return f"SWITCH_FAIL: could not save the seat ({e})."
+
+    if after != mid:
+        return (f"SWITCH_FAIL: the save did not take — the seat still reads "
+                f"{after!r}. Nothing was changed.")
+    return (f"SWITCH_OK:{mid} — the chat seat is now {label}. It takes effect on "
+            f"the next message; if it is cold, the first reply waits for it to load.")
+
+
 def _tool_draft_email(inp):
     """Compose an email. The native Google integration is READ-ONLY, so composing
     needs a write-enabled Gmail connection (the gmail-mcp connector can send once
@@ -2903,6 +3004,7 @@ CLAUDE_TOOL_HANDLERS = {
     "open_url": _tool_open_url,
     "open_path": _tool_open_path,
     "navigate": _tool_navigate,
+    "switch_model": _tool_switch_model,
     "draft_email": _tool_draft_email,
     "get_career_pipeline": _tool_get_career_pipeline,
     "get_briefing": _tool_get_briefing,
