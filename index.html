@@ -31653,11 +31653,19 @@ function SettingsTabIntelligence() {
     setSaving(key);
     apiFetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ capability_routing: { [key]: { model: m.id, provider: (m.providers || [])[0] } } }),
-    }).then(() => {
-      window.dispatchEvent(new CustomEvent('friday:model-catalog-invalidated'));
-      reload();
-    }).finally(() => setSaving(null));
+      // MUST be wrapped in `settings` — the route reads data['settings'].
+      body: JSON.stringify({ settings: { capability_routing: { [key]: { model: m.id, provider: (m.providers || [])[0] } } } }),
+    }).then(r => r.json()).then(() => apiFetch('/api/settings'))
+      .then(r => r.json()).then(d => {
+        const seated = ((((d || {}).settings || {}).capability_routing || {})[key] || {}).model;
+        if (seated !== m.id) {
+          console.error('[seat] save did not take:', key, 'asked', m.id, 'server holds', seated);
+          alert('That model did not stick — the server still has ' + (seated || 'nothing') + '.');
+          return;
+        }
+        window.dispatchEvent(new CustomEvent('friday:model-catalog-invalidated'));
+        reload();
+      }).catch(() => {}).finally(() => setSaving(null));
   };
 
   const onOpen = (next, key, m) => {
@@ -38989,11 +38997,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       apiFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ capability_routing: { reasoning: { model: m.id, provider: (m.providers || [])[0] } } })
-      }).then(() => {
-        setAgentSettings(a => ({ ...a, orchestrator_model: m.id }));
-        try { fridayInvalidateModelCatalog(); } catch (_) {}
-      });
+        // MUST be wrapped in `settings` — the route reads data['settings'].
+        body: JSON.stringify({ settings: { capability_routing: { reasoning: { model: m.id, provider: (m.providers || [])[0] } } } })
+      }).then(r => r.json()).then(() => apiFetch('/api/settings'))
+        .then(r => r.json()).then(d => {
+          // Confirm against what the SERVER now holds. A 200 means the request
+          // was accepted, not that the seat changed.
+          const seated = ((((d || {}).settings || {}).capability_routing || {})
+            .reasoning || {}).model;
+          if (seated !== m.id) {
+            setPendingSeat(null);
+            console.error('[seat] save did not take: asked for', m.id, 'server holds', seated);
+            alert('That model did not stick — the server still has ' + (seated || 'nothing') +
+                  '. Nothing was changed.');
+            return;
+          }
+          setAgentSettings(a => ({ ...a, orchestrator_model: m.id }));
+          try { fridayInvalidateModelCatalog(); } catch (_) {}
+        }).catch(() => setPendingSeat(null));
     }
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -39708,7 +39729,7 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       apiFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pause_warnings_off: true })
+        body: JSON.stringify({ settings: { pause_warnings_off: true } })
       }).catch(() => {});
       sendChat(m, { skipForecast: true, alreadyShown: true });
     },

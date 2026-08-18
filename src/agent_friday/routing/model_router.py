@@ -268,6 +268,100 @@ class ModelRouter:
         result["warning"] = warning
         return result
 
+    def _chosen_seat(self):
+        """The model he explicitly bound to the chat seat, or None.
+
+        `capability_routing.reasoning` is what the model picker writes, what
+        Settings -> Intelligence displays, and what capability_router.resolve()
+        reads. Until now the ROUTER consulted it in exactly one branch —
+        unattended tool work — so an interactive turn never looked at it.
+
+        That is why neither control appeared to work on 2026-08-18: the write
+        was correct, the setting persisted, the UI showed the new model, and
+        interactive dispatch went to the cloud regardless, because
+        `_route_basic` ended TOOL_USE with "Tool use requires cloud model".
+        Selecting gemma4:e4b and being answered by claude-sonnet-4-6 is not a
+        save that failed; it is a save nothing read.
+
+        An explicit binding is an instruction, not a hint. The classifier
+        decides when he has expressed no preference.
+        """
+        try:
+            from agent_friday.core import _load_settings
+            cr = (_load_settings() or {}).get("capability_routing") or {}
+            entry = cr.get("reasoning")
+            if isinstance(entry, dict):
+                model = (entry.get("model") or "").strip()
+                if model:
+                    return model, (entry.get("provider") or "").strip().lower()
+        except Exception:
+            pass
+        return None, None
+
+    # Providers that mean "this runs on this machine".
+    _LOCAL_PROVIDERS = {"ollama-local", "llama-cpp-local", "local", "local-comfyui",
+                        "local-voice-lite", "arbiter-local", "nvidia-nemo"}
+
+    def _route_chosen_seat(self, model_id, task_type, provider=None):
+        """Route to the seat he named.
+
+        The candidate probe is ADVISORY, not decisive. `_local_candidates()`
+        asks the Ollama daemon over HTTP, and on 2026-08-18 that call timed out
+        while the daemon was busy loading the previous turn's model — so a seat
+        he had explicitly bound to qwen3.5:9b was declared unserveable and the
+        turn was answered by claude-sonnet-5 instead.
+
+        That is worse than an ignored preference. A transient local hiccup
+        silently moved his private conversation to Anthropic. When the binding
+        itself names a local provider, the seat is local, and a local failure
+        must surface as a local failure rather than as a quiet trip to the
+        cloud.
+        """
+        if not model_id:
+            return None
+        if provider in self._LOCAL_PROVIDERS:
+            return {
+                "provider": "local",
+                "model": model_id,
+                "task_type": task_type,
+                "reason": "the model seat he chose (capability_routing.reasoning)",
+            }
+        names = {m["name"] for m in self._local_candidates()}
+        if model_id in names or self._is_registry_local(model_id):
+            return {
+                "provider": "local",
+                "model": model_id,
+                "task_type": task_type,
+                "reason": "the model seat he chose (capability_routing.reasoning)",
+            }
+        # A cloud id he chose is equally a choice — carry it rather than
+        # collapsing to the Anthropic default further down the stack.
+        if model_id.startswith(("claude", "gpt", "gemini")) or (
+                "/" in model_id and not model_id.startswith("hf.co/")):
+            return {
+                "provider": "cloud",
+                "model": model_id,
+                "task_type": task_type,
+                "reason": "the model seat he chose (capability_routing.reasoning)",
+            }
+
+        # He named a model nothing here can serve. Returning None used to drop
+        # through to the ordinary cloud branch, which is a SILENT SUBSTITUTION —
+        # the same defect being fixed, one layer down. On 2026-08-18 gemma4:12b
+        # and gemma4:e4b left the Ollama daemon mid-session (moved to
+        # llama-server), and a seat still pointing at them answered as Claude
+        # without a word. Route cloud, because refusing the turn helps nobody,
+        # but say plainly that this is not what he asked for; `reason` reaches
+        # the badge and the work log.
+        return {
+            "provider": "cloud",
+            "model": None,
+            "task_type": task_type,
+            "substituted_for": model_id,
+            "reason": ("you chose %s, but nothing on this machine can serve it "
+                       "right now — answered in the cloud instead" % model_id),
+        }
+
     def _local_candidates(self):
         """Local generation models Friday can actually serve right now.
 
@@ -373,6 +467,15 @@ class ModelRouter:
             return self._route_vault(ctx)
 
         result = self._apply_cloud_provider(self._route_basic(messages, ctx), ctx)
+        # Say which seat won and why. Three sessions have now debugged "the
+        # model I picked is not the model that answered" without this line.
+        try:
+            _m, _p = self._chosen_seat()
+            print("  [ROUTER] chose %s/%s | seat bound: %s (%s) | %s"
+                  % (result.get("provider"), result.get("model"), _m, _p,
+                     result.get("reason")))
+        except Exception:
+            pass
         return self._finalize(result, vault_access=False)
 
     def _is_registry_local(self, model_id: str) -> bool:
@@ -521,7 +624,19 @@ class ModelRouter:
 
         task_type = self.classify_task(messages, has_tools=has_tools, workspace=workspace)
 
+        # His explicit seat is consulted BEFORE the speed/size heuristics for
+        # every ordinary class. Voice keeps its own pipeline and the vault
+        # route has already run and taken precedence above; a task_override is
+        # a deliberate per-class rule and still wins over a general seat.
         overrides = self.config.get("task_overrides", {})
+        if task_type not in overrides and task_type != TaskType.VOICE:
+            _m, _p = self._chosen_seat()
+            chosen = self._route_chosen_seat(_m, task_type, _p)
+            if chosen and task_type != TaskType.TOOL_USE:
+                if chosen.get("model") is None:
+                    chosen["model"] = ctx.get("cloud_model") or self.config.get(
+                        "default_cloud_model", DEFAULT_CLOUD_MODEL)
+                return chosen
         if task_type in overrides:
             override = overrides[task_type]
             return {
@@ -582,13 +697,28 @@ class ModelRouter:
                         "task_type": task_type,
                         "reason": "Unattended tool work — kept on a local seat",
                     }
+            # An explicit seat wins for INTERACTIVE work too.
+            #
+            # The 2026-08-16 scoping ("interactive chat keeps today's cloud
+            # behaviour") was about not silently changing the speed trade he
+            # had not asked for. Choosing a model in the picker IS asking for
+            # it, and the whole point of the redesigned picker is that the
+            # choice takes effect. Leaving this branch cloud-only meant every
+            # selection he made was cosmetic.
+            _m, _p = self._chosen_seat()
+            chosen = self._route_chosen_seat(_m, task_type, _p)
+            if chosen:
+                if chosen.get("model") is None:
+                    chosen["model"] = ctx.get("cloud_model") or self.config.get(
+                        "default_cloud_model", DEFAULT_CLOUD_MODEL)
+                return chosen
             return {
                 "provider": "cloud",
                 "model": ctx.get("cloud_model") or self.config.get(
                     "default_cloud_model", DEFAULT_CLOUD_MODEL
                 ),
                 "task_type": task_type,
-                "reason": "Tool use requires cloud model",
+                "reason": "Tool use, and no seat was explicitly chosen",
             }
 
         from agent_friday.routing.ollama_manager import get_manager
