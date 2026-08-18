@@ -43,6 +43,11 @@ import time
 # Below this it reads as ordinary latency, and a warning would be noise.
 WORTH_WARNING_S = 3.0
 
+# The basis string for a number we have never measured. Kept as a constant
+# because confidence is derived from it: a forecast may not claim CERTAIN
+# about a duration it admits is a guess.
+ROUGH_DEFAULT_BASIS = "a rough default — this model has never been timed here"
+
 CERTAIN = "certain"       # it is not resident; it will load
 LIKELY = "likely"         # a transition we know the shape of
 POSSIBLE = "possible"     # depends on something we cannot see
@@ -104,6 +109,45 @@ def _residency():
     return resident, arb
 
 
+def _served_recently(model_id: str, within_s: float = 900.0):
+    """(bool, seconds_ago) — has this model actually answered a turn lately?
+
+    The residency layer only knows about seats it planned. On 2026-08-18
+    Stephen switched his chat seat in the UI; the SETTING changed, the
+    residency plan did not, and his chosen model appeared in no seat and no
+    resident set. The forecaster therefore looked it up, found nothing, and
+    announced "not loaded — about 30 seconds" before EVERY message, while that
+    same model was in fact answering him in normal time.
+
+    A model that served a turn a minute ago is not cold, whatever the plan
+    says. The cost ledger is the honest record of what actually ran, so it is
+    the check of last resort before claiming someone is about to wait.
+    """
+    import os
+    import sqlite3
+    path = os.path.expanduser("~/.friday/costs.db")
+    if not model_id or not os.path.exists(path):
+        return False, None
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=1.5)
+    except Exception:
+        return False, None
+    try:
+        row = con.execute("SELECT MAX(ts) FROM cost_calls WHERE model = ?",
+                          (model_id,)).fetchone()
+    except Exception:
+        return False, None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not row or not row[0]:
+        return False, None
+    ago = time.time() - float(row[0])
+    return (ago <= within_s), ago
+
+
 def _load_estimate(model_id: str, arb) -> tuple[float, str]:
     """(seconds, basis) for loading this model cold."""
     if arb is not None:
@@ -117,7 +161,7 @@ def _load_estimate(model_id: str, arb) -> tuple[float, str]:
                 return float(e["est_load_s"]), "estimated from artifact size"
     if model_id in RECORDED_COLD_LOAD_S:
         return RECORDED_COLD_LOAD_S[model_id], "recorded from an earlier run"
-    return 30.0, "a rough default — this model has never been timed here"
+    return 30.0, ROUGH_DEFAULT_BASIS
 
 
 def _options(seconds: float, *, vault: bool = False,
@@ -170,28 +214,34 @@ def before_local_turn(model_id: str, *, vault: bool = False,
         if owned:
             return _no_pause("%s is loaded in a process Friday owns, so it "
                              "cannot be taken away." % model_id)
-        seconds, basis = _load_estimate(model_id, arb)
-        if model_id in getattr(ra, "DAEMON_SERVED", {}):
-            return {
-                "will_pause": True, "seconds": seconds, "confidence": POSSIBLE,
-                "basis": basis,
-                "why": "%s is loaded now, but it runs on the Ollama daemon "
-                       "rather than in a process Friday controls, and that "
-                       "daemon can unload it without telling us. If it has "
-                       "been unloaded, the next message costs %s."
-                       % (model_id, _plural(seconds)),
-                "affects": [model_id],
-                "options": _options(seconds, vault=vault, cloud_ok=cloud_ok),
-                "checked_at": time.time(),
-            }
+        # A model that is loaded RIGHT NOW gets no warning, daemon-served or
+        # not. It was true that Ollama can evict without telling us — and it
+        # is true before every message, forever, so warning on it means
+        # warning always. A prompt that fires on every turn is not a safety
+        # feature; it is noise, and noise is how the warning gets clicked
+        # through on the day it finally matters. If the daemon does evict,
+        # the NEXT forecast sees a cold model and says so honestly.
         return _no_pause("%s is loaded." % model_id)
+
+    # Not in any resident set — but "the residency layer has never heard of
+    # this model" and "this model is cold" are different claims, and treating
+    # them as the same one is what produced a warning before every message.
+    served, ago = _served_recently(model_id)
+    if served:
+        return _no_pause(
+            "%s answered a message %s ago, so it is warm — whatever the "
+            "residency plan says about it." % (model_id, _plural(ago or 0)))
 
     seconds, basis = _load_estimate(model_id, arb)
     if seconds < WORTH_WARNING_S:
         return _no_pause("%s loads in under %ds." % (model_id,
                                                      int(WORTH_WARNING_S)))
     return {
-        "will_pause": True, "seconds": seconds, "confidence": CERTAIN,
+        # Confidence may not exceed the evidence. Announcing CERTAIN over a
+        # number whose own basis reads "a rough default" is the small lie that
+        # makes the whole warning easy to dismiss.
+        "will_pause": True, "seconds": seconds,
+        "confidence": POSSIBLE if basis == ROUGH_DEFAULT_BASIS else CERTAIN,
         "basis": basis,
         "why": "%s is not loaded, so the first reply has to wait for it — %s "
                "before any text appears. Messages after that are normal speed."
