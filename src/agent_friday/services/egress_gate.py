@@ -406,6 +406,24 @@ def _run_appeals(appeals: list, gated: list, provider: str, field: str,
         # definition of NEVER_SEND, so the span is withheld. ABOUT_THE_WORLD is
         # unaffected — third-party material has no identity of his to separate,
         # which is the whole point of the verdict.
+        # An explicit instruction from Stephen outranks this rule. The rule
+        # exists to stop his material travelling by ACCIDENT — when a verdict
+        # claimed identity was separable and the scrubber then separated
+        # nothing. It is not there to overrule him when he has said "research
+        # me". Vault content is unaffected either way: it never reaches a cloud
+        # payload at all (research.harness._assert_no_vault), so this relaxation
+        # cannot expose anyone else's material.
+        _ov = jg.override_active()
+        if verdict == jg.STEPHEN_SUBSTANCE and not _sub and _ov:
+            _log(provider, field, det_tier, "allow",
+                 f"judgment=STEPHEN_SUBSTANCE, scrub found nothing to separate, "
+                 f"but you authorized this ({_ov.reason or 'explicit instruction'})",
+                 log_path)
+            gated[idx] = scrubbed
+            rescued += 1
+            jg.record_overturn(para, verdict, f"override: {_ov.reason}", provider,
+                               field=field)
+            continue
         if verdict == jg.STEPHEN_SUBSTANCE and not _sub:
             _log(provider, field, det_tier, "redact",
                  "judgment=STEPHEN_SUBSTANCE but the scrub replaced nothing — "

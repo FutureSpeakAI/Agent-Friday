@@ -819,3 +819,113 @@ def state() -> dict:
                   "ran": probe is not None},
         "overturns_7d": overturn_digest(7),
     }
+
+
+# ── Stephen's instruction outranks the verdict (§ override) ───────────────────
+#
+# "the system should follow my instructions."
+#
+# The material this gate protects is his. He is the data subject, and it is his
+# privacy to spend. The gate ADVISES; he decides. This is the same rule already
+# settled for model selection — never gate a model he selected — extended to
+# privacy, which is where it always belonged.
+#
+# Three things the override does NOT touch, and the reasons are different:
+#
+#   1. THE NEVER-SEND FLOOR (§5.3). Credentials, government IDs, card and
+#      routing numbers, raw vault documents. He has never asked for these to
+#      move, and they are not a privacy preference — a leaked API key is not
+#      an opinion about disclosure.
+#
+#   2. OTHER PEOPLE'S IDENTIFIERS. His vault holds material about his daughter,
+#      his co-parent, colleagues and — he is a journalist — quite possibly
+#      sources. "It's my data" is true of most of it and not all of it. An
+#      override he gave meaning "search for my own name" must not sweep a
+#      source's name along with it. That is not a limit on his authority; it is
+#      the difference between spending his own privacy and spending someone
+#      else's. He can widen it explicitly; it will not widen by accident.
+#
+#   3. THE AUDIT. Everything that leaves under an override is recorded, so the
+#      "what left the machine" panel remains the accountability rather than a
+#      gate standing in front of him.
+
+_override = threading.local()
+
+
+class Override:
+    """Scope in which Stephen's explicit instruction outranks the classifier.
+
+    Used as a context manager so it cannot leak past the work it authorized:
+
+        with Override(reason="asked for web research on himself"):
+            ...
+    """
+
+    def __init__(self, *, reason: str = "", allow_owner_identifiers: bool = True):
+        self.reason = reason
+        self.allow_owner_identifiers = allow_owner_identifiers
+        self._prev = None
+
+    def __enter__(self):
+        self._prev = getattr(_override, "active", None)
+        _override.active = self
+        return self
+
+    def __exit__(self, *exc):
+        _override.active = self._prev
+        return False
+
+
+def override_active() -> "Override | None":
+    return getattr(_override, "active", None)
+
+
+def owner_identifiers() -> list[str]:
+    """Names and handles that are STEPHEN'S OWN.
+
+    Under an override these may travel — that is the whole point of "search the
+    web for me". Everything else on the privacy watchlist keeps scrubbing,
+    because the watchlist is largely other people.
+    """
+    out: list[str] = []
+    try:
+        from agent_friday.core import _load_settings
+        s = _load_settings() or {}
+        for key in ("user_name", "owner_name", "full_name"):
+            v = s.get(key)
+            if isinstance(v, str) and v.strip():
+                out.append(v.strip())
+        extras = s.get("owner_identities") or []
+        if isinstance(extras, list):
+            out += [str(x).strip() for x in extras if str(x).strip()]
+    except Exception:
+        pass
+    return out
+
+
+def protect_after_override(text: str) -> tuple[str, list[str]]:
+    """Scrub `text` for sending UNDER an override.
+
+    His own identifiers survive; everyone else's are replaced. Returns
+    (protected_text, kinds_scrubbed) so the proposal can say what will happen
+    in kinds, never values.
+    """
+    from agent_friday.core import _scrub_pii
+    own = owner_identifiers()
+    # Park his own identifiers behind sentinels so the scrubber cannot take
+    # them, then restore. Cheaper and far more predictable than teaching the
+    # scrubber a second notion of ownership.
+    parked: dict[str, str] = {}
+    staged = text or ""
+    for i, name in enumerate(sorted(own, key=len, reverse=True)):
+        if not name:
+            continue
+        token = f"\x00OWNER{i}\x00"
+        if name in staged:
+            staged = staged.replace(name, token)
+            parked[token] = name
+    scrubbed, lookup = _scrub_pii(staged)
+    for token, name in parked.items():
+        scrubbed = scrubbed.replace(token, name)
+    kinds = sorted({t.split(":")[1] for t in lookup if t.count(":") >= 2})
+    return scrubbed, kinds

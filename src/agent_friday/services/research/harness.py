@@ -18,6 +18,7 @@ import logging
 import re
 import time
 import uuid
+from pathlib import Path
 
 from agent_friday.services import web_fetch, web_search
 from agent_friday.services.research.objects import (
@@ -62,6 +63,20 @@ def _json_local(system: str, user: str, model: str, *, max_tokens: int = 2048,
     if out is None:
         _log.warning("research: no usable JSON from %s", model)
     return out
+
+
+def _json_local_or_cloud(seat: str, system: str, user: str, *,
+                         max_tokens: int = 2048) -> dict | None:
+    """One structured call on `seat`, cloud or local. Keeps the caller from
+    having to know which kind of model it just asked for."""
+    if seat and not seat.startswith("gemma"):
+        try:
+            return _extract_json(_claude(system, user, model=seat,
+                                         max_tokens=max_tokens))
+        except Exception as e:
+            _log.warning("cloud call on %s failed (%s) — using %s",
+                         seat, e, SIDEKICK)
+    return _json_local(system, user, SIDEKICK, max_tokens=max_tokens)
 
 
 def _extract_json(raw: str) -> dict | None:
@@ -129,11 +144,36 @@ def _as_text(value) -> str:
     return str(value).strip()
 
 
-def _claude(system: str, user: str, *, max_tokens: int = 4096) -> str:
-    """A cloud call. Goes through the normal gate — nothing here bypasses it."""
+def _claude(system: str, user: str, *, max_tokens: int = 4096,
+            model: str | None = None) -> str:
+    """A cloud call on the model Stephen NAMED.
+
+    The model is passed through verbatim: his standing rule is that the model
+    he picks is the model that answers, and a research commission is not an
+    exception to it. Goes through the normal gate — the override changes what
+    may be sent, never whether the gate runs.
+    """
+    from agent_friday.services import judgment_gate as jg
     from agent_friday.services.model_router import _call_claude
+    ctx = _CLOUD_OVERRIDE.get("ctx")
+    if ctx is not None:
+        with ctx:
+            return _call_claude([{"role": "user", "content": user}],
+                                system=system, model=model,
+                                max_tokens=max_tokens) or ""
     return _call_claude([{"role": "user", "content": user}], system=system,
-                        max_tokens=max_tokens) or ""
+                        model=model, max_tokens=max_tokens) or ""
+
+
+# Set for the life of a commission Stephen explicitly authorized. Without it,
+# his instruction was honoured at ROUTING (the commission went cloudward) and
+# then silently undone at EGRESS (the gate withheld his own name span by span)
+# — the routing said yes and the boundary said no, which is the worst of both.
+_CLOUD_OVERRIDE: dict = {"ctx": None}
+
+
+def set_cloud_override(ctx) -> None:
+    _CLOUD_OVERRIDE["ctx"] = ctx
 
 
 # ── Stage B: scoping, with the protection fork (§3.2 / RS2) ───────────────────
@@ -167,13 +207,30 @@ def scope(c: Commission) -> ResearchPlan | None:
     c.log("protection plan computed", cloud_allowed=c.protection.cloud_allowed,
           sentence=c.protection.sentence())
 
-    want_cloud = c.protection.cloud_allowed and c.disposition != "now_local"
+    # §override — an explicit instruction outranks the verdict.
+    forced = bool(c.instruction.get("allow_cloud"))
+    named_model = c.instruction.get("model")
+    if forced and not c.protection.cloud_allowed:
+        c.protection.cloud_allowed = True
+        c.protection.reason = (
+            "You told me to run this in the cloud, so I am. "
+            "(The classifier would have kept it local: "
+            f"{c.protection.reason})")
+        c.log("OVERRIDE: instruction outranks the classifier verdict",
+              instruction=c.instruction)
+    if forced:
+        set_cloud_override(jg.Override(
+            reason="you asked for this research to run in the cloud"))
+    want_cloud = c.protection.cloud_allowed and (
+        forced or c.disposition != "now_local")
     used, data = "", None
     if want_cloud:
         try:
-            raw = _claude(_SCOPE_SYSTEM, c.protection.question_sent or c.question)
+            raw = _claude(_SCOPE_SYSTEM,
+                          c.protection.question_sent or c.question,
+                          model=named_model)
             data = _extract_json(raw)
-            used = _anthropic_model_name()
+            used = named_model or _anthropic_model_name()
         except Exception as e:
             c.log(f"cloud scoping failed, falling back to the brain: {e}")
     if data is None:
@@ -209,6 +266,37 @@ def scope(c: Commission) -> ResearchPlan | None:
         working_title=str(data.get("working_title") or c.question)[:160],
         internal_first=[str(x) for x in (data.get("internal_first") or [])][:4],
         scoped_by=used)
+    # ── Per-sub-question protection (Stephen's design) ──
+    # "Opus 5 for the web work. Gemma4 can bring up the tail for the vault work
+    # before Friday presents the final report." One verdict for a whole
+    # commission is too coarse: a report on himself and his company mixes a
+    # public question with a private one, and either verdict is wrong for half
+    # of it.
+    # It is a SOURCE SPLIT, not a privacy adjudication (Stephen's spec).
+    # Web sub-questions go up to the named model with live sources; vault
+    # sub-questions stay down. Nothing needs judging span by span inside the
+    # research path, because vault content never crosses at all.
+    for sq in sqs:
+        is_vault = jg.looks_first_person(sq.text) or any(
+            k in sq.text.lower() for k in
+            ("my vault", "my notes", "my own", "my prior", "my previous"))
+        sq.source = VAULT_TIER if is_vault else WEB_TIER
+        sq.cloud_allowed = (sq.source == WEB_TIER) and (
+            forced or c.protection.cloud_allowed)
+        sq.protection_reason = (
+            "vault sub-question — read locally, never transmitted"
+            if is_vault else "public sub-question — web sources")
+    # His tail: one vault pass for personal context, always local.
+    sqs.append(SubQuestion(
+        id=f"sq{len(sqs)}",
+        text=f"What does my own material say that bears on: {c.question}",
+        perspective="personal context", done_when="vault passages retrieved",
+        cloud_allowed=False, source=VAULT_TIER,
+        protection_reason="vault sub-question — read locally, never transmitted"))
+    n_cloud = sum(1 for s in sqs if s.cloud_allowed)
+    c.log(f"per-sub-question fork: {n_cloud} cloud, {len(sqs)-n_cloud} local",
+          cloud=n_cloud, local=len(sqs)-n_cloud)
+
     c.plan = plan
     c.progress["sub_questions_total"] = len(sqs)
     c.save()
@@ -265,6 +353,9 @@ def grind(c: Commission) -> None:
     fetches_total = 0
     search_ok_any = False
     model_failures: list[str] = []
+    # The model he NAMED, used on sub-questions cleared for cloud.
+    cloud_model = c.instruction.get("model") if (
+        c.protection.cloud_allowed or c.instruction.get("allow_cloud")) else None
 
     for idx, sq in enumerate(plan.sub_questions, 1):
         c.progress.update({"sub_question": idx, "note": sq.text[:120]})
@@ -273,6 +364,31 @@ def grind(c: Commission) -> None:
               sq_id=sq.id)
 
         corpus: list[dict] = []
+        if getattr(sq, "source", WEB_TIER) == VAULT_TIER:
+            corpus = _vault_corpus(sq.text)
+            c.log(f"vault pass: {len(corpus)} passage(s) read locally "
+                  f"(never transmitted)", sq_id=sq.id, tier=VAULT_TIER)
+            sq.seat = BRAIN
+            if corpus:
+                _vp = '\\n\\n'.join(
+                    f"[{e['source_id']}] {e['text']}" for e in corpus)
+                conv = _json_local(
+                    _CONVERSE_SYSTEM,
+                    f"Sub-question: {sq.text}\n\nCORPUS:\n" + _vp,
+                    BRAIN, max_tokens=3072)
+                for f in _as_list(_as_dict(conv).get("findings"))[:20]:
+                    f = _as_dict(f)
+                    claim, quote = _as_text(f.get("claim")), _as_text(f.get("quote"))
+                    if not claim or not quote:
+                        continue
+                    match = next((e for e in corpus if quote[:50] in e["text"]), None)
+                    c.add_finding(Finding(
+                        id=uuid.uuid4().hex[:10], sub_question_id=sq.id,
+                        claim=claim, quote=quote,
+                        source_id=(match or corpus[0])["source_id"],
+                        url="", confidence=SINGLE_SOURCE))
+                c.save()
+            continue
         q = sq.text
         sq_fetches = 0
 
@@ -281,11 +397,18 @@ def grind(c: Commission) -> None:
                 c.log("wall-clock budget reached; stopping the grind early")
                 break
 
-            qd = _json_local(_QUERY_SYSTEM,
+            # He asked for the strong model on "the web work". Deciding WHAT
+            # to search for is the web work — on his own run the queries came
+            # from the 2B sidekick and returned SEC filings for Cerebras and
+            # Jet.AI instead of FutureSpeak.AI, and the strong model then
+            # faithfully extracted findings from the wrong corpus. A frontier
+            # reader over a bad corpus is still a bad report.
+            _q_seat = cloud_model if (sq.cloud_allowed and cloud_model) else SIDEKICK
+            qd = _json_local_or_cloud(_q_seat, _QUERY_SYSTEM,
                              f"Sub-question: {q}\n\nAlready known:\n" +
                              ("\n".join(p["text"][:200] for p in corpus[-4:])
                               or "(nothing yet)"),
-                             SIDEKICK, max_tokens=512)
+                             max_tokens=512)
             queries = [_as_text(x) for x in _as_list(_as_dict(qd).get("queries")) if _as_text(x)][
                 :c.budget["queries_per_sq"]] or [q]
 
@@ -333,7 +456,7 @@ def grind(c: Commission) -> None:
                 for passage in _as_list(_as_dict(ex).get("passages"))[:8]:
                     ptext = _as_text(passage)
                     if ptext:
-                        corpus.append({"text": ptext,
+                        corpus.append({"text": ptext, "tier": WEB_TIER,
                                        "source_id": rec["id"],
                                        "url": rec.get("final_url") or r["url"],
                                        "title": rec.get("title", "")})
@@ -342,12 +465,31 @@ def grind(c: Commission) -> None:
                 c.log("no usable passages at this depth")
                 break
 
-            conv = _json_local(
-                _CONVERSE_SYSTEM,
-                f"Sub-question: {sq.text}\ndone_when: {sq.done_when}\n\n"
-                f"CORPUS:\n" + "\n\n".join(
-                    f"[{p['source_id']}] {p['text']}" for p in corpus[:60]),
-                BRAIN, max_tokens=3072)
+            # ── Per-sub-question seat ──
+            # A PUBLIC sub-question gets the model Stephen named and the live
+            # web; a PRIVATE one is ground locally and never leaves. The corpus
+            # here is fetched web content, so on a public sub-question the only
+            # thing crossing is public material plus Friday's framing of a
+            # question already judged sendable.
+            _prompt = (
+                    f"Sub-question: {sq.text}\ndone_when: {sq.done_when}\n\n"
+                    f"CORPUS:\n" + "\n\n".join(
+                        f"[{p['source_id']}] {p['text']}" for p in corpus[:60])
+            )
+            if sq.cloud_allowed and cloud_model:
+                # THE INVARIANT. Web-tier only, re-checked rather than trusted.
+                _assert_no_vault(corpus)
+                sq.seat = cloud_model
+                try:
+                    conv = _extract_json(_claude(_CONVERSE_SYSTEM, _prompt,
+                                                 model=cloud_model))
+                except Exception as e:
+                    c.log(f'cloud grind failed on {sq.id}, falling back: {e}', sq_id=sq.id)
+                    sq.seat = BRAIN
+                    conv = _json_local(_CONVERSE_SYSTEM, _prompt, BRAIN, max_tokens=3072)
+            else:
+                sq.seat = BRAIN
+                conv = _json_local(_CONVERSE_SYSTEM, _prompt, BRAIN, max_tokens=3072)
             if conv is None:
                 # A MODEL failure, not an empty web. Recorded as such, because
                 # the caller decides between "delivered: found nothing" and
@@ -450,8 +592,21 @@ def synthesize(c: Commission) -> dict | None:
         outline = _json_local(_OUTLINE_SYSTEM, f"Question: {c.question}\n\n"
                               f"FINDINGS INDEX:\n{index}", seat, max_tokens=2048)
     if outline is None:
-        c.log("synthesis produced no outline")
-        return None
+        # DEFECT FOUND ON STEPHEN'S OWN RUN: 19 verified findings were thrown
+        # away and the commission delivered a finding-of-absence report,
+        # because the local outline model would not emit usable JSON. Real work
+        # discarded at the last step by a wrapper — the green-job pattern, for
+        # the third time in this file. An outline is a NICETY; the findings are
+        # the report. Group them by sub-question and write it anyway.
+        c.log("outline model returned nothing usable — grouping findings by "
+              "sub-question instead of discarding them")
+        by_sq: dict = {}
+        for f in findings:
+            by_sq.setdefault(f.sub_question_id, []).append(f.id)
+        titles = {s.id: s.text for s in (c.plan.sub_questions if c.plan else [])}
+        outline = {"answer": "",
+                   "sections": [{"heading": titles.get(k, "Findings")[:90],
+                                 "finding_ids": v} for k, v in by_sq.items()]}
 
     by_id = {f.id: f for f in findings}
     sections = []
@@ -525,6 +680,23 @@ def _outline_sections(outline: dict, by_id: dict) -> list[dict]:
 
 
 def _pick_synthesis_seat(c: Commission, n_findings: int) -> tuple[str, str]:
+    """Synthesis is ALWAYS local. This is the seam that makes the
+    per-sub-question fork honest.
+
+    A public sub-question is safe to send. A SYNTHESIS is not: it is a new
+    document weaving his vault context around public findings, and sending it
+    cloudward to be written would leak precisely what routing the private
+    sub-questions locally protected. Keeping it on-device makes the boundary
+    structural rather than a per-send judgment — findings from a private
+    sub-question can never enter a cloud payload, because no cloud payload is
+    assembled at this stage at all.
+
+    Cost, stated rather than hidden: the WRITING is weaker than Claude's. The
+    research — finding, reading, judging, where the quality actually lives —
+    still gets the model he named on everything public. The alternative, cloud
+    synthesis over scrubbed private findings, rests the whole boundary on a
+    scrub being complete, and that is the property that leaked twice today.
+    """
     """Which seat writes — and does the desktop have room for it?
 
     The heavy seat evicts the brain and wants several GB. Stephen lost a
@@ -656,3 +828,88 @@ def _pseudo_toolcall_check(draft: dict) -> bool:
         return not find_pseudo_toolcalls(text)
     except Exception:
         return True     # cannot check → do not fabricate a failure
+
+
+# ── The vault tier — local only, and structurally so ─────────────────────────
+#
+# Stephen's specification, verbatim: "My override allows it to do research
+# about me, not anything else. We're not taking material out of the vault and
+# sending it to the cloud other than the prompt for the research report."
+#
+# That is a better boundary than the one this file previously implemented, and
+# the reason is worth stating: it is safe BY CONSTRUCTION rather than by
+# policy. The earlier design asked "is this span safe to send?" per span — a
+# judgment, therefore fallible, and one that already produced two leaks today.
+# His rule asks nothing. Vault content is never transmitted, so material about
+# his daughter, his co-parent, his colleagues or his sources cannot leave
+# through this path regardless of how any classifier rules on any span. There
+# is no adjudication to get wrong.
+#
+# Mechanically:
+#   * every corpus entry carries a `tier`: "web" or "vault"
+#   * a cloud call is handed WEB-TIER ENTRIES ONLY, and _assert_no_vault()
+#     re-checks that before the call rather than trusting the filter
+#   * what crosses is the commission prompt plus public web content, full stop
+
+VAULT_TIER = "vault"
+WEB_TIER = "web"
+
+
+class VaultLeak(RuntimeError):
+    """Raised if vault-tier material ever reaches a cloud-bound payload.
+
+    A raise here means a bug, not a policy decision — the filter that should
+    have removed it did not. Failing the commission is correct: this is the one
+    invariant the whole design rests on.
+    """
+
+
+def _assert_no_vault(entries: list[dict]) -> None:
+    bad = [e for e in entries if e.get("tier") == VAULT_TIER]
+    if bad:
+        raise VaultLeak(
+            f"{len(bad)} vault-tier passage(s) reached a cloud payload. "
+            f"Vault content never leaves this machine; the commission is "
+            f"stopped rather than degraded.")
+
+
+def _vault_corpus(sq_text: str, limit: int = 6) -> list[dict]:
+    """Read the wiki/vault locally for passages relevant to `sq_text`.
+
+    Deliberately keyword-scored rather than model-driven: retrieval here is
+    cheap and the local seat's time is the pipeline's bottleneck. Returns
+    corpus entries tagged VAULT_TIER, which is what keeps them home.
+    """
+    import re as _re
+    try:
+        from agent_friday.services.wiki_engine import WIKI_DIR, wiki_read_text
+    except Exception:
+        return []
+    terms = {w.lower() for w in _re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", sq_text)}
+    if not terms:
+        return []
+    scored = []
+    try:
+        for f in Path(WIKI_DIR).rglob("*.md"):
+            try:
+                text = wiki_read_text(f)
+            except Exception:
+                continue
+            low = text.lower()
+            score = sum(1 for t in terms if t in low)
+            if score:
+                scored.append((score, f, text))
+    except Exception:
+        return []
+    scored.sort(key=lambda x: -x[0])
+    out = []
+    for score, f, text in scored[:limit]:
+        for para in _re.split(r"\n{2,}", text):
+            p = para.strip()
+            if len(p) < 60:
+                continue
+            if sum(1 for t in terms if t in p.lower()) >= 1:
+                out.append({"text": p[:1800], "source_id": f"vault:{f.stem}",
+                            "url": "", "title": f.stem, "tier": VAULT_TIER})
+                break
+    return out[:limit]
