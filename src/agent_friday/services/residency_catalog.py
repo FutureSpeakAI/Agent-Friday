@@ -143,12 +143,54 @@ SEED_MEASUREMENTS: dict = {
     }
 }
 
-# params_active is not reported by any daemon. Declared where known upstream;
-# None means unknown and `is_moe` then falls back to False rather than guessing.
+# params_active is not reported by any daemon. Declared where known upstream.
+# This table is now an OPTIONAL refinement, not the source of truth for
+# `is_moe` -- see detect_moe(). It used to be both, and that was a defect:
+# glm-4.7-flash (`glm4moelite`, 29.9B) was absent from it, so `is_moe` came out
+# False and rule R6 refused a genuine MoE for the heavy_hitter seat as though
+# it were dense. The refusal read like a legitimate capacity decision, which is
+# the expensive kind of wrong. A hand-maintained allowlist silently mis-seats
+# every new MoE that arrives; the artifact already declares what it is.
 KNOWN_ACTIVE_PARAMS_B: dict = {
     "gemma4:26b": 4.0,          # 26B-A4B
     "gemma-4-26b-a4b": 4.0,
 }
+
+
+def detect_moe(info: dict, total_b: float | None,
+               active_b: float | None) -> tuple[bool, str]:
+    """(is_moe, basis) -- read the artifact's own evidence, in order of authority.
+
+    1. `<arch>.expert_count` from GGUF metadata. Definitive: a model with
+       experts is a MoE, and nothing else reports that key.
+    2. The architecture string. `glm4moelite`, `qwen3moe`, `mixtral` and the
+       rest are self-declaring; a name carrying `moe` is not ambiguous.
+    3. The KNOWN_ACTIVE_PARAMS_B table, where active < total.
+
+    Returning the basis alongside the verdict so a refusal can say WHY it
+    believes what it believes. An unexplained "dense" verdict on a MoE is what
+    made the original defect so hard to see.
+    """
+    mi = (info or {}).get("model_info") or {}
+    arch = str(mi.get("general.architecture") or
+               ((info or {}).get("details") or {}).get("family") or "").lower()
+
+    for key, val in mi.items():
+        if not str(key).endswith(".expert_count"):
+            continue
+        try:
+            if int(val) > 1:
+                return True, "gguf:expert_count=%d" % int(val)
+        except (TypeError, ValueError):
+            pass
+
+    if "moe" in arch:
+        return True, "architecture:%s" % arch
+
+    if active_b and total_b and active_b < total_b:
+        return True, "known_active_params"
+
+    return False, ("architecture:%s" % arch) if arch else "no-evidence"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -360,7 +402,7 @@ def entry(model_id: str, profile: dict,
     active_b = KNOWN_ACTIVE_PARAMS_B.get(model_id)
     if active_b is None:
         active_b = KNOWN_ACTIVE_PARAMS_B.get((model_id or "").lower())
-    is_moe = bool(active_b and total_b and active_b < total_b)
+    is_moe, moe_basis = detect_moe(info, total_b, active_b)
 
     ctx = None
     try:
@@ -377,6 +419,7 @@ def entry(model_id: str, profile: dict,
         "params_total_b": total_b,
         "params_active_b": active_b,
         "is_moe": is_moe,
+        "is_moe_basis": moe_basis,
         "context_window": ctx,
         "modalities": caps,
         "can_generate": can_generate(model_id),
@@ -430,17 +473,27 @@ def store_entry(model_id: str, rec: dict, profile: dict) -> dict:
     and Friday being able to ask a service what she has.
     """
     fp = profile_fingerprint(profile)
+    # Same evidence order as the daemon path: the GGUF header states the
+    # architecture and the expert count, so `is_moe` is read rather than
+    # looked up. This path matters more than the daemon one now that Friday
+    # owns her own processes -- a MoE mis-read as dense here is refused the
+    # heavy_hitter seat by rule R6 with a message that sounds like capacity.
+    _arch = rec.get("arch") or rec.get("architecture") or ""
+    _shim = {"model_info": dict(
+        {k: v for k, v in rec.items() if str(k).endswith(".expert_count")},
+        **{"general.architecture": _arch})}
+    _active_b = KNOWN_ACTIVE_PARAMS_B.get(model_id)
+    _is_moe, _moe_basis = detect_moe(
+        _shim, rec.get("params_total_b"), _active_b)
     return {
         "model_id": model_id,
         "backend": BACKEND_LLAMA_SERVER,
         "artifact_bytes": rec.get("size_bytes") or 0,
         "quantization": rec.get("quantization"),
         "params_total_b": rec.get("params_total_b"),
-        "params_active_b": KNOWN_ACTIVE_PARAMS_B.get(model_id),
-        "is_moe": bool(KNOWN_ACTIVE_PARAMS_B.get(model_id)
-                       and rec.get("params_total_b")
-                       and KNOWN_ACTIVE_PARAMS_B[model_id]
-                       < rec["params_total_b"]),
+        "params_active_b": _active_b,
+        "is_moe": _is_moe,
+        "is_moe_basis": _moe_basis,
         "context_window": rec.get("context_window"),
         "modalities": (["embedding"] if rec.get("is_embedding")
                        else ["completion"] +
