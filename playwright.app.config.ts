@@ -7,8 +7,8 @@
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/app/specs',
-  timeout: 180_000,          // vision judging on a local model is slow
+  testDir: './tests/app',
+  timeout: 600_000,          // vision judging on a local model is slow
   expect: { timeout: 10_000 },
   retries: 0,                // a flaky pass is worse than an honest fail
   workers: 2,                // the server is a single local process; do not swamp it
