@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — the Arbiter: runtime owner of the GPUs.
 
 The policy decides what SHOULD be resident. The Arbiter is what makes it true
@@ -447,6 +447,28 @@ class ComfyUIBackend:
 #  The Arbiter
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _configured_image_model() -> str | None:
+    """Which image model the creative seat names, if it is really installed.
+
+    Read here rather than inside rp.plan so the policy stays pure. A configured
+    model whose weights are absent is ignored, so the plan never advertises an
+    exclusive lease for something that cannot render.
+    """
+    try:
+        from agent_friday.core import _load_settings
+        from agent_friday.services import local_image
+        st = _load_settings() or {}
+        # Same resolution order as creative_engine._configured_image_model,
+        # including the flat `creative_model` fallback. If the two disagreed,
+        # the plan would name one model while another actually rendered — the
+        # quiet kind of wrong that reads as correct in every log.
+        cr = (st.get("capability_routing") or {}).get("creative_image") or {}
+        mid = cr.get("model") or st.get("creative_model")
+        return mid if mid and local_image.is_installed(mid) else None
+    except Exception:
+        return None
+
+
 class Arbiter:
     def __init__(self, profile=None, entries=None, *, ollama=None,
                  llama=None, comfy=None, gguf_paths=None):
@@ -491,7 +513,8 @@ class Arbiter:
         from agent_friday.services import context_budget
         hwp.refresh_display_reserve(self.profile)
         self.plan = rp.plan(self.profile, self.entries, overrides,
-                            overhead_tokens=context_budget.overhead_tokens())
+                            overhead_tokens=context_budget.overhead_tokens(),
+                            image_model=_configured_image_model())
         return self.plan
 
     def timeout_for(self, entry):
