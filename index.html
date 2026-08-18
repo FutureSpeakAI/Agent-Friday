@@ -31226,10 +31226,47 @@ function consequence(m, machine, serving) {
 function useIntelligence(pollMs) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
+  /* A fetch that fails has to SAY so. "Reading the machine..." forever is the
+     same defect as everything else here — a surface that looks like it is
+     working while producing nothing. Stephen hit exactly that on 2026-08-18:
+     he opened Settings, got the spinner, and could not tell broken from
+     unfinished. Every async surface gets a timeout and a stated failure. */
   const load = React.useCallback(() => {
-    apiFetch('/api/intelligence').then(r => r.json()).then(j => {
-      if (j && j.status === 'ok') { setD(j); setErr(null); } else setErr('unavailable');
-    }).catch(() => setErr('unreachable'));
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    apiFetch('/api/intelligence', { signal: ctrl.signal }).then(r => {
+      if (!r.ok) {
+        // 401 after a restart is the commonest cause by far: the API token is
+        // minted per process and baked into the page, so a tab opened before
+        // the restart carries a dead one. Say that, rather than making him
+        // guess whether the app is broken or half-built.
+        setErr(r.status === 401 || r.status === 403
+          ? { kind: 'stale-tab',
+              what: 'This tab was loaded before the server restarted, so its access token is no longer valid.',
+              fix: 'Reload the page (Ctrl+Shift+R) and this will come straight back.' }
+          : { kind: 'http',
+              what: 'GET /api/intelligence answered HTTP ' + r.status + '.',
+              fix: r.status === 404
+                ? 'The server is running an older build that does not have this endpoint yet. Restart Friday.'
+                : 'Retry, and check the server log if it persists.' });
+        return null;
+      }
+      return r.json();
+    }).then(j => {
+      if (!j) return;
+      if (j.status === 'ok') { setD(j); setErr(null); }
+      else setErr({ kind: 'payload',
+                    what: 'The server answered, but not with a usable payload.',
+                    fix: String(j.message || j.error || 'No detail was given.') });
+    }).catch(e => {
+      setErr(e && e.name === 'AbortError'
+        ? { kind: 'timeout',
+            what: '/api/intelligence did not answer within 12 seconds.',
+            fix: 'The server may be busy loading a model. Retry in a moment.' }
+        : { kind: 'unreachable',
+            what: 'Could not reach the Friday server at all.',
+            fix: 'Check that it is still running, then retry.' });
+    }).finally(() => clearTimeout(timer));
   }, []);
   useEffect(() => {
     load();
@@ -31241,6 +31278,40 @@ function useIntelligence(pollMs) {
 }
 
 // ── Shared pieces ────────────────────────────────────────────────────────────
+
+/** What a failed fetch looks like: what was tried, what happened, what to do. */
+function LoadFailure({ err, onRetry, compact }) {
+  return E('div', {
+    style: {
+      border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.07)',
+      borderRadius: 8, padding: compact ? 10 : 14, fontFamily: 'JetBrains Mono',
+    },
+  },
+    E('div', { style: { fontSize: 11, color: '#f59e0b', marginBottom: 5 } },
+      err.kind === 'stale-tab' ? 'This page is out of date' : 'Could not read the machine'),
+    E('div', { style: { fontSize: 10.5, color: 'rgba(255,255,255,0.75)', lineHeight: 1.55 } }, err.what),
+    E('div', { style: { fontSize: 10.5, color: 'rgba(255,255,255,0.5)', lineHeight: 1.55, marginTop: 4 } }, err.fix),
+    E('div', { style: { marginTop: 9, display: 'flex', gap: 8 } },
+      err.kind === 'stale-tab'
+        ? E('button', {
+            onClick: () => location.reload(),
+            style: {
+              cursor: 'pointer', background: 'rgba(0,212,255,0.12)',
+              border: '1px solid rgba(0,212,255,0.4)', borderRadius: 6,
+              padding: '5px 10px', color: '#cfefff', fontFamily: 'JetBrains Mono', fontSize: 10.5,
+            },
+          }, 'Reload the page')
+        : null,
+      onRetry && E('button', {
+        onClick: onRetry,
+        style: {
+          cursor: 'pointer', background: 'transparent',
+          border: '1px solid rgba(255,255,255,0.18)', borderRadius: 6,
+          padding: '5px 10px', color: 'rgba(255,255,255,0.7)',
+          fontFamily: 'JetBrains Mono', fontSize: 10.5,
+        },
+      }, 'Try again')));
+}
 
 function StateChip({ m, serving }) {
   if (serving) {
@@ -31314,7 +31385,7 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
  * Unsuitable models are SHOWN, dimmed, with what they would need — hiding them
  * would leave him wondering where a model went.
  */
-function ModelPicker({ intel, need, current, onPick, onClose, note }) {
+function ModelPicker({ intel, need, current, onPick, onClose, note, err, onRetry }) {
   const [q, setQ] = useState('');
   const [showUnfit, setShowUnfit] = useState(false);
   const all = (intel && intel.models) || [];
@@ -31384,7 +31455,13 @@ function ModelPicker({ intel, need, current, onPick, onClose, note }) {
       g.more > 0 && E('div', {
         style: { fontSize: 10, color: 'rgba(255,255,255,0.32)', fontFamily: 'JetBrains Mono', marginLeft: 13 },
       }, '+' + g.more + ' more — search to reach them'))),
-    !groups.length && E('div', {
+    /* An empty list needs a reason. A search bar over nothing, with no
+       explanation, is indistinguishable from a broken app. */
+    !all.length && err && E(LoadFailure, { err: err, onRetry: onRetry, compact: true }),
+    !all.length && !err && E('div', {
+      style: { fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono', padding: 8 },
+    }, 'Still reading the catalogue…'),
+    all.length > 0 && !groups.length && E('div', {
       style: { fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono', padding: 8 },
     }, 'Nothing matched.'),
     hiddenUnfit > 0 && E('button', {
@@ -31412,7 +31489,7 @@ function ModelPicker({ intel, need, current, onPick, onClose, note }) {
 function QuickSwitch({ current, onPick, switching }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const { d } = useIntelligence(open ? 4000 : 20000);
+  const { d, err, reload } = useIntelligence(open ? 4000 : 20000);
   useEffect(() => {
     if (!open) return;
     const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -31463,7 +31540,8 @@ function QuickSwitch({ current, onPick, switching }) {
       E('span', { style: { fontSize: 10, opacity: 0.85 }, 'aria-hidden': 'true' }, '▾')),
     open && E('div', { style: { position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 2200 } },
       E(ModelPicker, {
-        intel: d, need: { role: 'orchestrator', modality: 'tools' }, current: current,
+        intel: d, err: err, onRetry: reload,
+        need: { role: 'orchestrator', modality: 'tools' }, current: current,
         onPick: onPick, onClose: () => setOpen(false),
         note: serving
           ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
@@ -31509,7 +31587,7 @@ function Bar({ used, total, reserve, label, sub }) {
       })));
 }
 
-function RoleRow({ r, intel, onOpen, openFor }) {
+function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
   const m = ((intel && intel.models) || []).filter(x => x.id === r.model)[0];
   const fit = m ? suitability(m, { role: r.requires_role, modality: r.requires }) : { ok: true };
   return E('div', {
@@ -31559,14 +31637,15 @@ function RoleRow({ r, intel, onOpen, openFor }) {
       ),
     openFor === r.key && E('div', { style: { position: 'absolute', right: 0, top: '100%', zIndex: 60 } },
       E(ModelPicker, {
-        intel: intel, need: { role: r.requires_role, modality: r.requires }, current: r.model,
+        intel: intel, err: pickerErr, onRetry: onRetry,
+        need: { role: r.requires_role, modality: r.requires }, current: r.model,
         onPick: mm => onOpen(null, r.key, mm), onClose: () => onOpen(null),
         note: r.label + ' — ' + r.help + ' Showing models that can actually do this job.',
       })));
 }
 
 function SettingsTabIntelligence() {
-  const { d, reload } = useIntelligence(15000);
+  const { d, err, reload } = useIntelligence(15000);
   const [openFor, setOpenFor] = useState(null);
   const [saving, setSaving] = useState(null);
 
@@ -31586,6 +31665,8 @@ function SettingsTabIntelligence() {
     setOpenFor(next);
   };
 
+  if (!d && err) return E('div', { style: { padding: 14 } },
+    E(LoadFailure, { err: err, onRetry: reload }));
   if (!d) return E('div', {
     style: { padding: 18, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.5)' },
   }, 'Reading the machine…');
@@ -31608,6 +31689,7 @@ function SettingsTabIntelligence() {
          'which is why speech models no longer appear as candidates for running your chat.'),
       (d.roles || []).map(r => E(RoleRow, {
         key: r.key, r: r, intel: d, onOpen: onOpen, openFor: openFor,
+        pickerErr: err, onRetry: reload,
       })),
       saving && E('div', {
         style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
