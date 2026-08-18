@@ -20,6 +20,41 @@
       "role": "image",
       "rule": "image-exclusive",
       "rule_id": "R5"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "orchestrator",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "sidekick_fast",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "function_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "memory_manager",
+      "rule": "assigned-role",
+      "rule_id": "R11"
+    },
+    {
+      "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named",
+      "model": null,
+      "role": "researcher",
+      "rule": "assigned-role",
+      "rule_id": "R11"
     }
   ],
   "seats": {
@@ -36,6 +71,7 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "function_manager": null,
     "heavy_hitter": {
       "backend": "ollama",
       "context": {
@@ -77,6 +113,9 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "memory_manager": null,
+    "orchestrator": null,
+    "researcher": null,
     "sidekick": {
       "backend": "ollama",
       "collapsed_into": "interactive_brain",
@@ -91,6 +130,7 @@
       "status": "resident",
       "vram_mib": 0
     },
+    "sidekick_fast": null,
     "sidekick_heavy": {
       "backend": "ollama",
       "context": {

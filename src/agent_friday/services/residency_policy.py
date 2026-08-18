@@ -30,7 +30,80 @@ POLICY_VERSION = 1
 # On the reference instance that is e4b (99.93 tok/s, 3081 MiB) beside e2b
 # (166.13 tok/s, 1763 MiB) — both genuinely useful, for different jobs.
 ROLES = ("interactive_brain", "heavy_hitter", "sidekick", "sidekick_heavy",
-         "embedder", "stt", "tts", "image")
+         "embedder", "stt", "tts", "image",
+         # The working roles Stephen named on 2026-08-18. They are ROLES, not
+         # models: one model may hold several, and several models may not hold
+         # one. See ROLE_RESIDENCY for why seven roles fit a card that cannot
+         # hold three copies of a 12B.
+         "orchestrator", "sidekick_fast", "function_manager",
+         "memory_manager", "researcher")
+
+# A role may be spelled more than one way without becoming two seats.
+# `embeddings_manager` is what the embedder seat is called when you describe it
+# by its job rather than its mechanism; they are the same seat and must resolve
+# to one, or the budget would count the model twice.
+ROLE_ALIASES = {
+    "embeddings_manager": "embedder",
+    "embedding_manager": "embedder",
+    "brain": "interactive_brain",
+    "heavy": "heavy_hitter",
+}
+
+
+def resolve_role(role: str) -> str:
+    """Canonical role id. Unknown roles pass through to be refused by name."""
+    return ROLE_ALIASES.get(role, role)
+
+
+# ── Residency classes ────────────────────────────────────────────────────────
+#
+# The arithmetic that makes seven roles possible on a 12 GB card. Only what is
+# RESIDENT costs VRAM all day. A leased seat costs VRAM while it runs and is
+# then given back; an on-demand seat costs nothing until something calls it, and
+# the nightly ones deliberately run when nothing else wants the card.
+#
+# Summing all seven as though each were resident is how a lineup that fits
+# comfortably gets refused.
+RESIDENT = "resident"
+LEASED = "leased"
+ON_DEMAND = "on-demand"
+
+ROLE_RESIDENCY = {
+    # The conversational path. These must be warm or Friday stutters.
+    "orchestrator": RESIDENT,
+    "sidekick": RESIDENT,
+    "sidekick_fast": RESIDENT,
+    "function_manager": RESIDENT,   # sits inside the tool loop
+    "embedder": RESIDENT,           # live recall happens mid-turn
+    "interactive_brain": RESIDENT,
+    # Commissioned work. Big, occasional, and worth waiting for.
+    "heavy_hitter": LEASED,
+    "researcher": LEASED,
+    "sidekick_heavy": LEASED,
+    "image": LEASED,
+    # Scheduled or reactive. Nothing is waiting on them in a conversation.
+    "memory_manager": ON_DEMAND,    # nightly consolidation
+    "stt": ON_DEMAND,
+    "tts": ON_DEMAND,
+}
+
+_WARMTH = {RESIDENT: 2, LEASED: 1, ON_DEMAND: 0}
+
+# Roles that do useful work without a GPU at all. This is not a claim that CPU
+# is as good — it is that these jobs are either tiny (an embedder at 2048
+# tokens) or unhurried (a consolidation pass that runs while he sleeps), and
+# moving them off the card buys headroom the conversational seats need.
+CPU_CAPABLE_ROLES = frozenset({"embedder", "memory_manager", "stt", "tts"})
+
+
+def residency_of(role: str) -> str:
+    return ROLE_RESIDENCY.get(resolve_role(role), RESIDENT)
+
+
+# Roles the policy will never fill on its own. See the comment at the end of
+# plan(): there is no "correct" orchestrator the way there is a correct brain.
+ASSIGNED_ROLES = ("orchestrator", "sidekick_fast", "function_manager",
+                  "memory_manager", "researcher")
 
 # ── Rules as data ────────────────────────────────────────────────────────────
 
@@ -144,6 +217,14 @@ RULES = [
              "answering while a heavy or image job holds the card, so a lease "
              "budget is the GPU budget MINUS the retained sidekick.",
      "thresholds": {}},
+    {"id": "R11", "name": "assigned-role",
+     "text": "The working roles (orchestrator, function manager, memory "
+             "manager, researcher, fast sidekick) are chosen by the user, not "
+             "inferred. There is no 'correct' orchestrator the way there is a "
+             "correct brain, so an unassigned one stays empty and says so "
+             "rather than being guessed at. One model may hold several roles "
+             "and is counted ONCE against the budget.",
+     "thresholds": {}},
 ]
 
 RULE_BY_ID = {r["id"]: r for r in RULES}
@@ -194,6 +275,15 @@ ROOM_TARGET = {
     "heavy_hitter": 24576,
     "sidekick_heavy": 24576,
     "sidekick": MIN_CONVERSATION_ROOM,
+    "sidekick_fast": MIN_CONVERSATION_ROOM,
+    # An orchestrator routes and calls tools; it does not hold the long
+    # conversation, so it does not need the brain's window.
+    "orchestrator": MIN_CONVERSATION_ROOM,
+    "function_manager": MIN_CONVERSATION_ROOM,
+    # These two read a lot in one pass -- a day of turns, or a research dossier
+    # -- so they get real room even though neither is resident.
+    "memory_manager": 24576,
+    "researcher": 24576,
     "embedder": 0,
 }
 
@@ -202,6 +292,11 @@ DEFAULT_NUM_CTX = {
     "heavy_hitter": TOOL_SEAT_NUM_CTX,
     "sidekick": TOOL_SEAT_NUM_CTX,
     "sidekick_heavy": TOOL_SEAT_NUM_CTX,
+    "orchestrator": TOOL_SEAT_NUM_CTX,
+    "sidekick_fast": TOOL_SEAT_NUM_CTX,
+    "function_manager": TOOL_SEAT_NUM_CTX,
+    "memory_manager": TOOL_SEAT_NUM_CTX,
+    "researcher": TOOL_SEAT_NUM_CTX,
     "embedder": 2048,
 }
 
@@ -725,6 +820,25 @@ def plan(profile: dict, entries: list, overrides: dict | None = None,
 
     _apply_overrides(seats, refusals, overrides, entries, free, budgets,
                      overhead_tokens)
+
+    # The working roles are ASSIGNED, not inferred.
+    #
+    # interactive_brain and sidekick are chosen by the policy because there is a
+    # right answer: the biggest thing that fits, and the fastest thing left.
+    # There is no such rule for "orchestrator" or "memory manager" -- which
+    # model should route, or should read the day and decide what is worth
+    # keeping, is a judgment about how Stephen wants to work, and guessing it
+    # would be the policy inventing a preference and then hiding it.
+    #
+    # So an unassigned working role carries a refusal that says so, rather than
+    # a silently empty seat. Assign one through `overrides` and it is placed
+    # like any other.
+    for role in ASSIGNED_ROLES:
+        if seats.get(role) is None:
+            refusals.append(_refusal(
+                role, None, "R11",
+                "no model assigned; this seat is chosen by the user, not "
+                "inferred, and stays empty until one is named"))
     return _finish(profile, seats, refusals, budgets, ram)
 
 
@@ -821,6 +935,242 @@ def _heavy(heavy, preplaced, budgets, free, ram, profile, overhead_tokens,
     seat["over_target"] = need > ram["target_ceiling_mib"]
     seat["context"] = ctx_info
     return seat, None
+
+
+# ---------------------------------------------------------------------------
+#  Assignment arithmetic: what a set of role->model choices actually costs
+# ---------------------------------------------------------------------------
+#
+# The whole point of this section is that it counts MODELS, not seats.
+#
+# A model held by three roles is one process holding one copy of one set of
+# weights. Charging it three times is the bug that would make a comfortable
+# lineup look impossible -- and it is an easy bug to write, because the natural
+# shape of the code is a loop over roles.
+#
+# Two consequences fall out of counting per model:
+#   * one context. Two roles sharing a model share its process, so the model is
+#     sized at the LARGEST context any of its roles needs -- not the sum, and
+#     not whichever role happened to be assigned last.
+#   * one residency class, the warmest. A model held by the orchestrator
+#     (resident) and the researcher (leased) is resident: it is already in
+#     memory, and a lease cannot evict what the conversation is using.
+
+def _role_ctx_want(role):
+    return DEFAULT_NUM_CTX.get(resolve_role(role), TOOL_SEAT_NUM_CTX)
+
+
+def assignment_cost(assignments, entries, *, overhead_tokens=None,
+                    prefer_cpu=True):
+    """What a {role: model_id} selection costs, deduplicated by model.
+
+    Returns per-model rows and three separate totals, because they are charged
+    against the card at different times:
+
+      resident_vram_mib   held all day, every day
+      peak_lease_vram_mib the LARGEST single leased model, not their sum --
+                          leases are exclusive, so two leased models never
+                          occupy the card at once
+      on_demand_vram_mib  the largest scheduled model, which runs when the
+                          conversational seats are idle
+
+    `peak_vram_mib` is what the card must actually survive: everything resident,
+    plus the biggest single thing that can land on top of it.
+    """
+    if overhead_tokens is None:
+        # Imported at call time, same as plan() does: context_budget reads the
+        # live system prompt, and importing it at module scope would make this
+        # module's import order matter.
+        from agent_friday.services.context_budget import (
+            MEASURED_OVERHEAD_TOKENS)
+        overhead_tokens = MEASURED_OVERHEAD_TOKENS
+    by_id = {e["model_id"]: e for e in entries}
+
+    grouped = {}
+    unknown = []
+    for role, model_id in sorted((assignments or {}).items()):
+        canon = resolve_role(role)
+        if canon not in ROLES:
+            unknown.append({"role": role, "model_id": model_id,
+                            "why": "unknown role"})
+            continue
+        if not model_id:
+            continue
+        g = grouped.setdefault(model_id,
+                               {"roles": [], "entry": by_id.get(model_id)})
+        g["roles"].append(canon)
+
+    models = []
+    for model_id, g in sorted(grouped.items()):
+        e = g["entry"]
+        roles = sorted(set(g["roles"]))
+        residency = max((residency_of(r) for r in roles),
+                        key=lambda c: _WARMTH.get(c, 0))
+        want_ctx = max(_role_ctx_want(r) for r in roles)
+        # CPU placement only when EVERY role on this model tolerates it: a
+        # model shared by the embedder and the orchestrator has to sit where
+        # the orchestrator needs it.
+        cpu_ok = prefer_cpu and all(r in CPU_CAPABLE_ROLES for r in roles)
+        row = {"model_id": model_id, "roles": roles, "residency": residency,
+               "num_ctx": want_ctx, "device": "cpu" if cpu_ok else "gpu",
+               "installed": e is not None}
+        if e is None:
+            row.update({"vram_mib": None, "ram_mib": None,
+                        "why": "not installed"})
+        else:
+            v, basis = vram_estimate_at(e, want_ctx)
+            row["vram_basis"] = basis
+            # AN UNKNOWN SIZE IS NOT ZERO.
+            #
+            # Coercing `None` to 0 makes an unmeasured model look free, and a
+            # lineup then "fits" precisely because nobody knows what it costs
+            # -- the most expensive kind of wrong answer this advisory could
+            # give. So an unsized model is carried as None and reported, and
+            # `fits` refuses to claim a fit it cannot support.
+            row["sized"] = v is not None
+            if v is None:
+                row["vram_mib"] = None
+                row["ram_mib"] = None
+                row["why"] = ("size unknown: no measured row at %d ctx"
+                              % want_ctx)
+            else:
+                row["vram_mib"] = 0 if cpu_ok else v
+                row["ram_mib"] = v if cpu_ok else 0
+            row["is_moe"] = bool(e.get("is_moe"))
+            # An MoE's raw footprint is not what it costs once experts are held
+            # on the CPU. Say so rather than quoting a number that will look
+            # wrong to anyone who has seen the offloaded seat run.
+            if row["is_moe"] and row["residency"] != RESIDENT:
+                row["note"] = ("MoE: expert offload reduces this at load time; "
+                               "figure shown is the full footprint")
+        models.append(row)
+
+    resident = sum(m.get("vram_mib") or 0
+                   for m in models if m["residency"] == RESIDENT)
+    leased = [m.get("vram_mib") or 0
+              for m in models if m["residency"] == LEASED]
+    ondemand = [m.get("vram_mib") or 0
+                for m in models if m["residency"] == ON_DEMAND]
+    peak_lease = max(leased) if leased else 0
+    peak_ondemand = max(ondemand) if ondemand else 0
+
+    # A LEASE DISPLACES THE RESIDENT SEATS (R5), all but those R10 keeps awake.
+    # So the card never holds the resident set AND a leased model at once, and
+    # adding them is the second way to refuse a lineup that fits. Getting this
+    # wrong is what made a 26B heavy hitter look like it needed 27 GB beside a
+    # 12B orchestrator, when in truth the 12B stands down while it runs.
+    retained = sum(
+        m.get("vram_mib") or 0 for m in models
+        if m["residency"] == RESIDENT
+        and set(m["roles"]) & RETAINED_THROUGH_LEASE)
+
+    # Three states the card actually passes through. The worst is the peak.
+    state_normal = resident
+    state_leased = retained + peak_lease
+    # Scheduled work is additive: nothing stands down for a nightly job today.
+    state_scheduled = resident + peak_ondemand
+    peak = max(state_normal, state_leased, state_scheduled)
+
+    return {
+        "models": models,
+        "unknown_roles": unknown,
+        "distinct_models": len(models),
+        "roles_assigned": sum(len(m["roles"]) for m in models),
+        "resident_vram_mib": resident,
+        "peak_lease_vram_mib": peak_lease,
+        "on_demand_vram_mib": peak_ondemand,
+        "retained_through_lease_mib": retained,
+        "peak_vram_mib": peak,
+        "peak_state": ("leased" if peak == state_leased and peak_lease
+                       else "scheduled" if peak == state_scheduled
+                       and peak_ondemand else "resident"),
+        "cpu_ram_mib": sum(m.get("ram_mib") or 0 for m in models),
+    }
+
+
+def preview_assignment(assignments, entries, profile, *, overhead_tokens=None):
+    """Advice for the picker, computed BEFORE the choice is committed.
+
+    Stephen, 2026-08-18: "always advise the user when they're going to overflow
+    the memory with their selections." So this answers, at selection time, the
+    three questions a refusal-after-the-fact never does: what does this cost,
+    what is left, and what would have to give.
+
+    It never refuses. A selection that does not fit comes back with
+    `fits: False`, the overflow in MiB, and `would_evict` naming the seats that
+    would make room. The choice stays his -- that has been the standing rule.
+    """
+    cost = assignment_cost(assignments, entries,
+                           overhead_tokens=overhead_tokens)
+    budgets = gpu_budgets(profile)
+    vram_budget = max((b["available_mib"] for b in budgets), default=0)
+    ram = ram_budget(profile)
+
+    peak = cost["peak_vram_mib"]
+    overflow = max(0, peak - vram_budget)
+
+    # What would have to give: shed the most expensive resident seats first,
+    # because that frees the most per seat surrendered.
+    would_evict = []
+    if overflow:
+        shed = 0
+        for m in sorted((m for m in cost["models"]
+                         if m["residency"] == RESIDENT),
+                        key=lambda m: -(m.get("vram_mib") or 0)):
+            if shed >= overflow:
+                break
+            shed += m.get("vram_mib") or 0
+            would_evict.append({"model_id": m["model_id"],
+                                "roles": m["roles"],
+                                "frees_mib": m.get("vram_mib") or 0})
+
+    missing = [m["model_id"] for m in cost["models"] if not m["installed"]]
+    unsized = [m["model_id"] for m in cost["models"]
+               if m["installed"] and not m.get("sized", True)]
+    ram_need = cost["cpu_ram_mib"] + ram["os_reserve_mib"]
+
+    out = dict(cost)
+    out.update({
+        "vram_budget_mib": vram_budget,
+        "vram_remaining_mib": max(0, vram_budget - peak),
+        "ram_budget_mib": ram["hard_ceiling_mib"],
+        "ram_projected_mib": ram_need,
+        "fits": (overflow == 0 and not missing and not unsized
+                 and ram_need <= ram["hard_ceiling_mib"]),
+        "overflow_mib": overflow,
+        "would_evict": would_evict,
+        "not_installed": missing,
+        "unsized": unsized,
+    })
+    out["advice"] = _advice_line(cost, vram_budget, overflow, would_evict,
+                                 missing, unsized)
+    return out
+
+
+def _advice_line(cost, vram_budget, overflow, would_evict, missing,
+                 unsized=()):
+    """One sentence a person can act on, not a dump of numbers."""
+    if missing:
+        return ("%s is not installed on this machine, so that seat would be "
+                "empty." % ", ".join(missing))
+    if unsized:
+        return ("%s has never been measured on this machine, so the cost of "
+                "this lineup is not known. Run one timed load before trusting "
+                "it." % ", ".join(unsized))
+    shared = [m for m in cost["models"] if len(m["roles"]) > 1]
+    note = ""
+    if shared:
+        note = (" %s covers %d roles and is counted once."
+                % (shared[0]["model_id"], len(shared[0]["roles"])))
+    if not overflow:
+        return ("Fits: %d MiB of %d MiB at peak, %d MiB spare.%s"
+                % (cost["peak_vram_mib"], vram_budget,
+                   vram_budget - cost["peak_vram_mib"], note))
+    give = (", ".join("%s (%d MiB)" % (w["model_id"], w["frees_mib"])
+                      for w in would_evict) or "a resident seat")
+    return ("Over by %d MiB: %d MiB needed against %d MiB usable. To fit, %s "
+            "would have to give.%s"
+            % (overflow, cost["peak_vram_mib"], vram_budget, give, note))
 
 
 def _placement(entry, role, device, num_ctx, status, vram_mib):

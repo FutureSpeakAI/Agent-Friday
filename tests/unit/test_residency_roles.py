@@ -1,0 +1,292 @@
+﻿"""The seven working roles, and the arithmetic that lets them share models.
+
+Stephen, 2026-08-18: seven roles -- memory manager, function manager,
+embeddings manager, orchestrator, sidekick, researcher, heavy hitter -- with
+one model allowed to hold several, and a warning BEFORE a selection overflows
+the card rather than a refusal after it.
+
+The bug these tests exist to prevent: counting a model once per ROLE instead of
+once per MODEL. Three roles on one 12B is one process holding one copy of one
+set of weights; charging it three times refuses a lineup that fits easily.
+"""
+from __future__ import annotations
+
+import pytest
+
+from agent_friday.services import residency_policy as rp
+
+
+# ── fixtures: entries shaped like the real catalog ───────────────────────────
+
+def _entry(model_id, vram_at_ctx, *, is_moe=False, embedding=False):
+    """A catalog entry with MEASURED rows, which is what sizing reads."""
+    return {
+        "model_id": model_id,
+        "backend": "llama-server",
+        "params_total_b": 12.0,
+        "context_window": 262144,
+        "can_generate": not embedding,
+        "is_embedding": embedding,
+        "is_moe": is_moe,
+        "measured": [{"num_ctx": c, "vram_mib": v, "total_mib": v}
+                     for c, v in sorted(vram_at_ctx.items())],
+    }
+
+
+@pytest.fixture
+def entries():
+    return [
+        _entry("gemma4:12b", {4096: 7689, 32768: 8180, 131072: 9652}),
+        _entry("gemma4:e2b", {4096: 1629, 32768: 1811}),
+        _entry("gemma4:26b", {4096: 9802, 32768: 9802}, is_moe=True),
+        _entry("gemma4:e4b", {4096: 3081, 32768: 3300}),
+        _entry("qwen3.5:9b", {4096: 5235, 32768: 5500}),
+        _entry("qwen3-embed:0.6b-q8", {2048: 640}, embedding=True),
+        _entry("functiongemma:270m", {4096: 300, 32768: 380}),
+    ]
+
+
+@pytest.fixture
+def profile():
+    return {
+        "os_family": "windows",
+        "gpus": [{"index": 0, "vram_total_mib": 12282,
+                  "vram_baseline_mib": 542,
+                  "vram_display_reserve_mib": 2800,
+                  "compute_class": "consumer-fp8", "name": "RTX 4070"}],
+        "ram": {"total_mib": 32620},
+        "os_reserve_mib": 6144,
+    }
+
+
+# ── the make-or-break: one model, many roles, counted ONCE ───────────────────
+
+def test_one_model_in_three_roles_is_charged_once(entries):
+    """The subtle bug that would quietly ruin this."""
+    cost = rp.assignment_cost(
+        {"orchestrator": "gemma4:12b",
+         "researcher": "gemma4:12b",
+         "function_manager": "gemma4:12b"}, entries)
+
+    assert cost["distinct_models"] == 1
+    assert cost["roles_assigned"] == 3
+    row = cost["models"][0]
+    assert row["roles"] == ["function_manager", "orchestrator", "researcher"]
+
+    # One copy of the weights, not three.
+    one_copy = row["vram_mib"]
+    assert cost["peak_vram_mib"] == one_copy
+    assert cost["peak_vram_mib"] < 3 * one_copy
+
+
+def test_the_same_three_roles_on_three_models_costs_three_times(entries):
+    """The control arm: distinct models really do add up."""
+    shared = rp.assignment_cost({"orchestrator": "gemma4:12b",
+                                 "researcher": "gemma4:12b",
+                                 "function_manager": "gemma4:12b"}, entries)
+    split = rp.assignment_cost({"orchestrator": "gemma4:12b",
+                                "researcher": "gemma4:26b",
+                                "function_manager": "gemma4:e2b"}, entries)
+    assert split["distinct_models"] == 3
+    assert split["peak_vram_mib"] > shared["peak_vram_mib"]
+
+
+def test_a_shared_model_gets_one_context_the_largest_any_role_needs(entries):
+    """Two roles share one process, so they cannot have two context sizes."""
+    cost = rp.assignment_cost({"embeddings_manager": "gemma4:12b",   # wants 2048
+                               "orchestrator": "gemma4:12b"}, entries)
+    assert cost["distinct_models"] == 1
+    assert cost["models"][0]["num_ctx"] == rp.DEFAULT_NUM_CTX["orchestrator"]
+
+
+def test_a_shared_model_takes_the_warmest_residency(entries):
+    """Resident beats leased: a lease cannot evict what the conversation uses."""
+    cost = rp.assignment_cost({"orchestrator": "gemma4:12b",     # resident
+                               "researcher": "gemma4:12b"}, entries)  # leased
+    assert cost["models"][0]["residency"] == rp.RESIDENT
+    assert cost["resident_vram_mib"] > 0
+    assert cost["peak_lease_vram_mib"] == 0
+
+
+# ── residency classes: what actually costs VRAM all day ──────────────────────
+
+def test_leases_are_exclusive_so_they_do_not_sum(entries):
+    """Two leased models never sit on the card together."""
+    cost = rp.assignment_cost({"heavy_hitter": "gemma4:26b",
+                               "researcher": "gemma4:12b"}, entries)
+    heavy = next(m for m in cost["models"] if m["model_id"] == "gemma4:26b")
+    assert cost["peak_lease_vram_mib"] == heavy["vram_mib"]
+    assert cost["resident_vram_mib"] == 0
+
+
+def test_a_scheduled_role_costs_nothing_resident(entries):
+    """The memory manager runs nightly; it must not be charged all day."""
+    cost = rp.assignment_cost({"memory_manager": "gemma4:12b"}, entries)
+    assert cost["models"][0]["residency"] == rp.ON_DEMAND
+    assert cost["resident_vram_mib"] == 0
+
+
+def test_seven_roles_fit_when_residency_is_respected(entries, profile):
+    """The headline claim: seven roles on a 12 GB card, and it closes.
+
+    Three models cover seven seats. The 8,458 MiB budget here is the honest
+    one -- 12,282 less a 1 GB reserve less a 2,800 MiB compositor -- which is
+    why the resident tier is small models and the big ones are leased.
+    """
+    view = rp.preview_assignment(
+        {"orchestrator": "gemma4:e4b",
+         "function_manager": "gemma4:e4b",
+         "memory_manager": "gemma4:e4b",
+         "sidekick": "gemma4:e2b",
+         "embeddings_manager": "qwen3-embed:0.6b-q8",
+         "researcher": "qwen3.5:9b",
+         "heavy_hitter": "qwen3.5:9b"}, entries, profile)
+    assert view["roles_assigned"] == 7
+    assert view["distinct_models"] == 4
+    assert view["fits"] is True, view["advice"]
+    # Resident tier is only the two small seats; the 9B arrives on a lease.
+    assert view["resident_vram_mib"] < view["vram_budget_mib"]
+
+
+def test_a_resident_12b_beside_a_sidekick_does_not_fit_and_says_so(entries,
+                                                                   profile):
+    """Measured 2026-08-17 and encoded here: once the compositor's 2.8 GB is
+    honestly reserved, a 12B cannot be RESIDENT beside the sidekick. This is
+    the arithmetic that forces the orchestrator to be a small model."""
+    view = rp.preview_assignment({"orchestrator": "gemma4:12b",
+                                  "sidekick": "gemma4:e2b"}, entries, profile)
+    assert view["fits"] is False
+    assert view["overflow_mib"] > 0
+    assert "gemma4:12b" in view["advice"]
+
+
+def test_the_26b_no_longer_fits_the_lease_budget(entries, profile):
+    """Its measured expert-offload seat is 9,802 MiB against 8,458 usable.
+
+    It fitted when the display was assumed to want ~1 GB. It does not now, and
+    the advisory must say so rather than let a lease fail at load time.
+    """
+    view = rp.preview_assignment({"heavy_hitter": "gemma4:26b",
+                                  "sidekick": "gemma4:e2b"}, entries, profile)
+    assert view["fits"] is False
+    assert view["peak_state"] == "leased"
+    assert view["overflow_mib"] > 0
+
+
+# ── CPU placement buys headroom ──────────────────────────────────────────────
+
+def test_a_cpu_capable_role_costs_no_vram(entries):
+    cost = rp.assignment_cost({"embeddings_manager": "qwen3-embed:0.6b-q8"},
+                              entries)
+    row = cost["models"][0]
+    assert row["device"] == "cpu"
+    assert row["vram_mib"] == 0
+    assert row["ram_mib"] > 0
+
+
+def test_sharing_a_model_with_a_gpu_role_pulls_it_back_onto_the_gpu(entries):
+    """An embedder sharing a model with the orchestrator sits where the
+    orchestrator needs it -- one process cannot be on two devices."""
+    cost = rp.assignment_cost({"embeddings_manager": "gemma4:12b",
+                               "orchestrator": "gemma4:12b"}, entries)
+    assert cost["models"][0]["device"] == "gpu"
+    assert cost["models"][0]["vram_mib"] > 0
+
+
+# ── warning at selection time, not after ─────────────────────────────────────
+
+def test_an_overflowing_selection_warns_and_says_what_would_give(entries,
+                                                                profile):
+    view = rp.preview_assignment({"orchestrator": "gemma4:12b",
+                                  "sidekick": "gemma4:26b",
+                                  "function_manager": "gemma4:e2b"},
+                                 entries, profile)
+    assert view["fits"] is False
+    assert view["overflow_mib"] > 0
+    assert view["would_evict"], "must name what would have to give"
+    assert "would have to give" in view["advice"]
+
+
+def test_it_advises_rather_than_refuses(entries, profile):
+    """A model he selects wins. This returns advice, never an exception."""
+    view = rp.preview_assignment({"orchestrator": "gemma4:26b",
+                                  "sidekick": "gemma4:26b"}, entries, profile)
+    assert isinstance(view, dict)
+    assert "advice" in view and view["advice"]
+
+
+def test_a_fitting_selection_reports_what_is_left(entries, profile):
+    view = rp.preview_assignment({"sidekick": "gemma4:e2b"}, entries, profile)
+    assert view["fits"] is True
+    assert view["vram_remaining_mib"] > 0
+    assert "Fits" in view["advice"]
+
+
+def test_an_uninstalled_model_is_named_not_silently_dropped(entries, profile):
+    view = rp.preview_assignment({"orchestrator": "nemotron-3-nano:4b"},
+                                 entries, profile)
+    assert view["fits"] is False
+    assert view["not_installed"] == ["nemotron-3-nano:4b"]
+    assert "not installed" in view["advice"]
+
+
+def test_the_advice_mentions_a_shared_model_so_the_saving_is_visible(entries,
+                                                                    profile):
+    view = rp.preview_assignment({"orchestrator": "gemma4:12b",
+                                  "function_manager": "gemma4:12b",
+                                  "researcher": "gemma4:12b"},
+                                 entries, profile)
+    assert "counted once" in view["advice"]
+
+
+# ── aliases must not become second seats ─────────────────────────────────────
+
+def test_embeddings_manager_and_embedder_are_one_seat(entries):
+    assert rp.resolve_role("embeddings_manager") == "embedder"
+    cost = rp.assignment_cost({"embeddings_manager": "qwen3-embed:0.6b-q8",
+                               "embedder": "qwen3-embed:0.6b-q8"}, entries)
+    assert cost["distinct_models"] == 1
+    assert cost["models"][0]["roles"] == ["embedder"]
+
+
+def test_an_unknown_role_is_reported_not_charged(entries):
+    cost = rp.assignment_cost({"wizard": "gemma4:12b"}, entries)
+    assert cost["distinct_models"] == 0
+    assert cost["unknown_roles"][0]["role"] == "wizard"
+
+
+def test_all_seven_named_roles_are_known():
+    for role in ("memory_manager", "function_manager", "embeddings_manager",
+                 "orchestrator", "sidekick", "researcher", "heavy_hitter"):
+        assert rp.resolve_role(role) in rp.ROLES, role
+        assert rp.residency_of(role) in (rp.RESIDENT, rp.LEASED, rp.ON_DEMAND)
+
+
+# ── an unknown size is not a free model ──────────────────────────────────────
+
+def test_an_unmeasured_model_is_not_counted_as_free(entries, profile):
+    """The most expensive wrong answer this advisory could give.
+
+    Coercing an unknown VRAM figure to 0 makes a lineup "fit" precisely because
+    nobody knows what it costs. Caught 2026-08-18 running the real catalog:
+    qwen3.5:9b had no measured row and the lineup came back FITS=True with the
+    9B reading 0 MiB.
+    """
+    entries = entries + [{"model_id": "brand-new:9b", "backend": "llama-server",
+                          "can_generate": True, "is_embedding": False,
+                          "is_moe": False, "measured": []}]
+    view = rp.preview_assignment({"orchestrator": "brand-new:9b"},
+                                 entries, profile)
+    row = view["models"][0]
+    assert row["sized"] is False
+    assert row["vram_mib"] is None, "unknown must not be reported as 0"
+    assert view["fits"] is False
+    assert view["unsized"] == ["brand-new:9b"]
+    assert "never been measured" in view["advice"]
+
+
+def test_a_measured_model_still_reports_a_number(entries, profile):
+    view = rp.preview_assignment({"sidekick": "gemma4:e2b"}, entries, profile)
+    assert view["models"][0]["sized"] is True
+    assert view["models"][0]["vram_mib"] == 1811
+    assert view["fits"] is True
