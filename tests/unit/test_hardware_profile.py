@@ -261,3 +261,52 @@ def test_save_is_atomic_leaving_no_partial_file(monkeypatch, tmp_path):
     monkeypatch.setattr(hp, "_run", lambda *a, **k: ONE_GPU)
     hp.save(hp.detect())
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# ── the display reserve ─────────────────────────────────────────────────────
+# Regression cover for 2026-08-17: the arbiter budgeted 542 MiB for a desktop
+# whose compositor actually held 2,778 MiB, planned seats into memory Windows
+# needed to draw the screen, and a monitor dropped off. The floor is now the
+# larger of the cached idle measurement and a sampled live display draw.
+
+def test_a_live_display_draw_beats_a_stale_idle_floor(monkeypatch):
+    monkeypatch.setattr(hp, "live_display_mib", lambda fam: 2778)
+    prof = {"os_family": "windows",
+            "gpus": [{"index": 0, "vram_baseline_mib": 542}]}
+    hp.refresh_display_reserve(prof)
+    gpu = prof["gpus"][0]
+    assert gpu["vram_display_reserve_mib"] == 2778
+    assert hp.effective_baseline_mib(gpu, "windows") == 2778
+
+
+def test_the_reserve_never_lowers_the_cached_floor(monkeypatch):
+    """Being wrong downward breaks screens; wrong upward only costs a seat."""
+    monkeypatch.setattr(hp, "live_display_mib", lambda fam: 800)
+    prof = {"os_family": "windows",
+            "gpus": [{"index": 0, "vram_baseline_mib": 3000}]}
+    hp.refresh_display_reserve(prof)
+    assert hp.effective_baseline_mib(prof["gpus"][0], "windows") == 3000
+
+
+def test_a_machine_that_cannot_sample_is_no_worse_off(monkeypatch):
+    monkeypatch.setattr(hp, "live_display_mib", lambda fam: None)
+    prof = {"os_family": "linux",
+            "gpus": [{"index": 0, "vram_baseline_mib": 256}]}
+    hp.refresh_display_reserve(prof)
+    gpu = prof["gpus"][0]
+    assert "vram_display_reserve_mib" not in gpu
+    assert hp.effective_baseline_mib(gpu, "linux") == 256
+
+
+def test_planning_stays_pure_no_probe_from_the_baseline_call(monkeypatch):
+    """effective_baseline_mib must never shell out -- golden plans replay."""
+    def _boom(fam):
+        raise AssertionError("effective_baseline_mib probed the machine")
+    monkeypatch.setattr(hp, "live_display_mib", _boom)
+    assert hp.effective_baseline_mib({"vram_baseline_mib": 542}, "windows") == 542
+
+
+def test_the_live_probe_is_windows_only(monkeypatch):
+    monkeypatch.setattr(hp, "_DISPLAY_CACHE", (0.0, None))
+    assert hp.live_display_mib("linux") is None
+    assert hp.live_display_mib("darwin") is None

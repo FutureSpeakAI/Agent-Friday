@@ -13,6 +13,18 @@ import urllib.error
 
 _POPEN_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
+# The context a request gets when its caller did not decide one. Deliberately
+# modest: a seat that fits and answers beats a seat sized by whatever maximum
+# the artifact declares. gemma4 declares 262144, which on a 12 GB card means
+# 9.9 GB resident and most of the model on the CPU. Callers that have planned a
+# context (the arbiter, every seated role) pass it explicitly and are unaffected.
+DEFAULT_NUM_CTX = 8192
+
+# Nothing holds GPU memory forever without an owner. Ollama's own default
+# outlives the turn that created it, so an unattended seat can sit on the card
+# long after the work is done.
+DEFAULT_KEEP_ALIVE = "5m"
+
 _instance = None
 _lock = threading.Lock()
 
@@ -297,14 +309,24 @@ class OllamaManager:
 
     def chat_completion(self, messages, model, tools=None, temperature=0.7,
                         max_tokens=4096, num_ctx=None, timeout=120,
-                        think=None):
+                        think=None, keep_alive=None):
         options = {"temperature": temperature, "num_predict": max_tokens}
         # An explicit context is a placement decision, not a detail. Left unset
         # gemma4 reports num_ctx 262144 and spills most of itself onto the CPU
         # (measured: 79% CPU at the default, 51% at 16384) — which is what made
         # 120s gate calls time out and score a healthy model 1/10.
-        if num_ctx:
-            options["num_ctx"] = num_ctx
+        #
+        # `None` used to mean "let the daemon decide", and on 2026-08-17 that
+        # cost a monitor: the top-bar dropdown seats `model_routing.local_model`
+        # through here without a context, the request fell to /v1 (below), and
+        # Ollama seated a 12B at its declared 262144 maximum — 9.9 GB resident,
+        # 4.2 GB of it spilled back to system RAM, while the compositor was
+        # starved for the memory it needed to drive two displays. The default
+        # is now bounded. A caller that knows its planned context still passes
+        # one; a caller that does not gets a seat that fits rather than a seat
+        # sized by whatever the artifact happens to declare.
+        num_ctx = num_ctx or DEFAULT_NUM_CTX
+        options["num_ctx"] = num_ctx
         body = {
             "model": model,
             "messages": messages,
@@ -325,18 +347,12 @@ class OllamaManager:
         # calling the result "pinned to 8192" would be a claim the wire does
         # not support — and it is why the gate was still running the 26b at
         # 262144 with 79% of it on the CPU after the num_ctx "fix".
-        if not num_ctx:
-            try:
-                url = f"{self.base_url}/v1/chat/completions"
-                data = json.dumps(body).encode("utf-8")
-                req = urllib.request.Request(
-                    url, data=data, method="POST",
-                    headers={"Content-Type": "application/json"},
-                )
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    return json.loads(resp.read().decode("utf-8"))
-            except Exception:
-                pass
+        #
+        # Every request now carries a context, so the /v1 branch is unreachable
+        # and has been removed rather than left as a trapdoor. It was never a
+        # fast path worth having: its only distinguishing behaviour was
+        # discarding the one option that decides how much of the machine the
+        # seat takes.
         # Native path: honours `options`, and MUST carry `tools` too. It did
         # not, so any blip on the OpenAI-shaped path silently retried
         # tool-less — a model that cannot be given tools cannot emit a tool
@@ -348,6 +364,11 @@ class OllamaManager:
             "messages": messages,
             "stream": False,
             "options": dict(options),
+            # Nothing may hold GPU memory indefinitely with no owner. Without
+            # this the daemon applies its own default and a seat nobody is
+            # using outlives the turn that created it — which is how 9.9 GB sat
+            # on the card for hours with no lease behind it.
+            "keep_alive": keep_alive or DEFAULT_KEEP_ALIVE,
         }
         if tools:
             native["tools"] = tools

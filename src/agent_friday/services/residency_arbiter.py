@@ -472,15 +472,24 @@ class Arbiter:
     # ── planning ────────────────────────────────────────────────────────────
 
     def compute_plan(self, overrides=None):
-        """Plan against the LIVE prompt overhead, not a recorded constant.
+        """Plan against the LIVE prompt overhead and the LIVE display draw.
 
         The system prompt is assembled from the vault, self-knowledge and
         persona, and the tool registry grows when someone adds a tool. Both are
         subtracted from every seat's usable window, so a plan built on a stale
         overhead figure hands out windows that are the wrong size in a way
         nothing would report.
+
+        The desktop's VRAM draw is the same kind of moving number and was being
+        treated as a constant. It is sampled here for the same reason: a plan
+        is only as good as the machine it was planned against, and on
+        2026-08-17 the gap between a 542 MiB cached floor and a 2,778 MiB
+        compositor took a monitor off the desktop. Sampling stays out here in
+        the arbiter so `rp.plan` remains a pure function of the profile and its
+        golden fixtures keep meaning something.
         """
         from agent_friday.services import context_budget
+        hwp.refresh_display_reserve(self.profile)
         self.plan = rp.plan(self.profile, self.entries, overrides,
                             overhead_tokens=context_budget.overhead_tokens())
         return self.plan
