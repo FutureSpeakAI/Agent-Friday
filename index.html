@@ -31058,6 +31058,613 @@ function SettingsTabWork() {
     }, busy === c ? 'running…' : 'Run now'));
   })));
 }
+// ═══════════════════════════════════════════════════════════════
+//  INTELLIGENCE — the model quick switch and Settings → Intelligence.
+//
+//  Both surfaces read ONE payload (/api/intelligence) so they cannot
+//  disagree with each other. Written with E = React.createElement rather
+//  than JSX, because index.html is served directly and has no build step.
+//
+//  What this replaces, and why:
+//    - a 460-row flat list truncated at "showing first 60"
+//    - the same model listed twice (arbiter-local and ollama-local are one
+//      daemon), with the selected dot rendering on both copies
+//    - an orchestrator picker offering Whisper (ASR), Piper (TTS) and
+//      Z-Image, none of which can run a tool loop
+//    - a `local` badge on every row, carrying no information
+//    - raw ids as labels: "Hf.co/HauhauCS/Gemma4 12B QAT Uncensored ... Q4_K_M"
+//    - no consequence: nothing said which choice was free and which cost a
+//      minute of silence
+// ═══════════════════════════════════════════════════════════════
+const E = React.createElement;
+
+// ── Formatting ───────────────────────────────────────────────────────────────
+
+/** "hf.co/HauhauCS/Gemma-4-E4B-Uncensored-...:Q4_K_M" -> "Gemma 4 E4B Uncensored (Aggressive)". */
+function prettyModel(id, label) {
+  if (!id) return label || '—';
+  let s = String(id);
+  s = s.replace(/^hf\.co\//i, '').replace(/^[^/]+\//, ''); // drop host + org
+  s = s.replace(/:(Q\d[^:]*|f?p?\d{1,2}|latest)$/i, ''); // drop quant / :latest
+  s = s.replace(/-(GGUF|QAT|AWQ|GPTQ)$/i, '');
+  const variant = (s.match(/-(Balanced|Aggressive|Instruct|Chat|Turbo)\b/i) || [])[1];
+  s = s.replace(/-(Balanced|Aggressive)\b/i, '');
+  s = s.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (variant && /balanced|aggressive/i.test(variant)) s += ' (' + variant + ')';
+  // Prefer the catalogue label when it is already human, but never when it is
+  // just the raw id restyled.
+  if (label && label.length < 40 && !/^hf\.co|\//i.test(label)) return label;
+  return s.length > 46 ? s.slice(0, 44) + '…' : s;
+}
+
+function fmtGB(bytes) {
+  if (!bytes) return null;
+  const gb = bytes / 1e9;
+  return (gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)) + ' GB';
+}
+
+function fmtAgo(ts) {
+  if (!ts) return null;
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 90) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
+/**
+ * Can this model do this job? Derived from the catalogue, never curated.
+ *
+ * Two signals, because neither is sufficient alone. `modalities` is right for
+ * media work but every local model declares only ["text"] — none advertise
+ * "tools" despite running tool loops daily, so filtering on modality alone
+ * would empty the list of every local model. `roles` is what the catalogue
+ * says a model is FOR, and it is correct exactly where it matters: Whisper and
+ * Piper carry no roles at all, Z-Image carries only "creative".
+ *
+ * `need` is { role, modality }; either match qualifies.
+ */
+function suitability(m, need) {
+  if (!need || (!need.role && !need.modality)) return { ok: true };
+  const mods = m.modalities || [];
+  const roles = m.roles || [];
+  if (need.modality && mods.indexOf(need.modality) !== -1) return { ok: true };
+  if (need.role && roles.indexOf(need.role) !== -1) return { ok: true };
+  const does = [];
+  if (roles.length) does.push(roles.join('/'));
+  if (mods.length) does.push(mods.join(', '));
+  const has = does.length ? does.join(' · ') : 'nothing declared';
+  const job = need.role === 'orchestrator' ? 'run your conversation'
+    : need.role === 'subagent' ? 'run background work'
+    : need.modality === 'image' ? 'make images'
+    : need.modality === 'video' ? 'make video'
+    : need.modality === 'audio' ? 'handle speech'
+    : need.modality === 'live' ? 'hold a live voice call'
+    : 'do this job';
+  return { ok: false, why: 'cannot ' + job + ' — it does ' + has };
+}
+
+/**
+ * The consequence line. This is the whole point of the redesign: he could not
+ * tell from the old list which choice was free and which cost a minute of
+ * silence.
+ */
+function consequence(m, machine, serving) {
+  const bits = [];
+  if (serving) return (m.local ? 'local' : 'cloud') + ' · answered your last turn';
+  bits.push(m.local ? 'local' : 'cloud');
+  if (m.local) {
+    if (m.state === 'resident') {
+      bits.push(m.seat_status === 'leased' ? 'leased — in use now' : 'resident — answers immediately');
+    } else {
+      bits.push('cold');
+      if (m.wake_s) bits.push('~' + m.wake_s + 's to wake (est.)');
+    }
+    const size = fmtGB(m.size_bytes);
+    if (size) bits.push(size);
+    // What it would evict: the resident seat whose VRAM this would need.
+    if (m.state === 'cold' && machine && machine.vram && m.size_bytes) {
+      const needMib = Math.round(m.size_bytes / 1048576);
+      const free = machine.vram.free_mib || 0;
+      if (needMib > free) {
+        const holders = (machine.resident || []).filter(r => r !== m.id);
+        if (holders.length) bits.push('evicts ' + prettyModel(holders[0]));
+        else bits.push('needs ' + Math.round(needMib / 1024) + ' GB, only ' +
+                       Math.round(free / 1024) + ' GB free now');
+      }
+    }
+  } else {
+    if (m.free) bits.push('free');
+    else if (m.cost_per_1k) bits.push('$' + m.cost_per_1k + '/1k tokens');
+    if (m.needs_key && !m.available) bits.push('needs ' + m.needs_key);
+  }
+  return bits.join(' · ');
+}
+
+// ── Data ─────────────────────────────────────────────────────────────────────
+
+function useIntelligence(pollMs) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = React.useCallback(() => {
+    apiFetch('/api/intelligence').then(r => r.json()).then(j => {
+      if (j && j.status === 'ok') { setD(j); setErr(null); } else setErr('unavailable');
+    }).catch(() => setErr('unreachable'));
+  }, []);
+  useEffect(() => {
+    load();
+    if (!pollMs) return;
+    const t = setInterval(load, pollMs);
+    return () => clearInterval(t);
+  }, [load, pollMs]);
+  return { d: d, err: err, reload: load };
+}
+
+// ── Shared pieces ────────────────────────────────────────────────────────────
+
+function StateChip({ m, serving }) {
+  if (serving) {
+    return E('span', {
+      style: {
+        fontSize: 9, fontFamily: 'JetBrains Mono', color: '#00ff80',
+        border: '1px solid #00ff8055', background: '#00ff8014',
+        borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+      },
+    }, 'answering now');
+  }
+  const map = {
+    resident: { t: 'resident', c: '#00ff80' },
+    cold: { t: 'cold', c: 'rgba(255,255,255,0.45)' },
+    cloud: { t: 'cloud', c: '#7b61ff' },
+  };
+  const s = m.seat_status === 'leased' ? { t: 'in use', c: '#f59e0b' } : (map[m.state] || map.cloud);
+  return E('span', {
+    style: {
+      fontSize: 9, fontFamily: 'JetBrains Mono', color: s.c, border: '1px solid ' + s.c + '55',
+      background: s.c + '14', borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap',
+    },
+  }, s.t);
+}
+
+/** One selectable model. Deduplicated upstream, so this renders once per model. */
+function ModelRow({ m, need, current, onPick, machine, servingId }) {
+  const fit = suitability(m, need);
+  const isCur = current === m.id;
+  return E('button', {
+    onClick: () => onPick(m),
+    title: m.id + (m.providers && m.providers.length > 1 ? '  (offered by ' + m.providers.join(', ') + ')' : ''),
+    style: {
+      display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+      background: isCur ? 'rgba(0,212,255,0.10)' : 'transparent',
+      border: '1px solid ' + (isCur ? 'rgba(0,212,255,0.45)' : 'transparent'),
+      borderRadius: 7, padding: '7px 9px', marginBottom: 2,
+      opacity: fit.ok ? 1 : 0.62,
+    },
+    onMouseEnter: e => { if (!isCur) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; },
+    onMouseLeave: e => { if (!isCur) e.currentTarget.style.background = 'transparent'; },
+  },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
+      E('span', {
+        style: {
+          width: 6, height: 6, borderRadius: 3, flexShrink: 0,
+          background: m.local ? '#00ff80' : '#7b61ff',
+          boxShadow: m.state === 'resident' ? '0 0 6px #00ff80' : 'none',
+        },
+      }),
+      E('span', {
+        style: {
+          fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+        },
+      }, prettyModel(m.id, m.label)),
+      isCur && E('span', { style: { fontSize: 9, color: '#00d4ff', fontFamily: 'JetBrains Mono' } }, 'in use'),
+      E(StateChip, { m: m, serving: servingId === m.id })),
+    E('div', {
+      style: {
+        fontSize: 10, color: fit.ok ? 'rgba(255,255,255,0.48)' : '#f59e0b',
+        fontFamily: 'JetBrains Mono', marginTop: 3, marginLeft: 13,
+      },
+    }, fit.ok ? consequence(m, machine, servingId === m.id) : fit.why));
+}
+
+/**
+ * The picker. Not a flat list: recently used, then this machine, then cloud
+ * grouped by provider. Search widens to the whole catalogue.
+ *
+ * Unsuitable models are SHOWN, dimmed, with what they would need — hiding them
+ * would leave him wondering where a model went.
+ */
+function ModelPicker({ intel, need, current, onPick, onClose, note }) {
+  const [q, setQ] = useState('');
+  const [showUnfit, setShowUnfit] = useState(false);
+  const all = (intel && intel.models) || [];
+  const machine = (intel && intel.machine) || null;
+  const ql = q.trim().toLowerCase();
+
+  const match = m => !ql || (m.id + ' ' + (m.label || '')).toLowerCase().indexOf(ql) !== -1;
+  const fitOK = m => suitability(m, need).ok;
+  const pool = all.filter(match).filter(m => showUnfit || fitOK(m) || m.id === current);
+
+  const groups = [];
+  if (ql) {
+    groups.push({ title: 'Matching “' + q + '”', rows: pool.slice(0, 60) });
+  } else {
+    const recent = pool.filter(m => m.last_used).sort((a, b) => b.last_used - a.last_used).slice(0, 4);
+    const rid = {}; recent.forEach(m => { rid[m.id] = 1; });
+    const local = pool.filter(m => m.local && !rid[m.id]);
+    const cloud = pool.filter(m => !m.local && !rid[m.id]);
+    if (recent.length) groups.push({ title: 'Recently used', rows: recent });
+    if (local.length) groups.push({ title: 'On this machine', rows: local });
+    const byProv = {};
+    cloud.forEach(m => {
+      const p = m.provider_label || (m.providers && m.providers[0]) || 'Cloud';
+      (byProv[p] = byProv[p] || []).push(m);
+    });
+    Object.keys(byProv).sort().forEach(p => {
+      groups.push({ title: p, rows: byProv[p].slice(0, 8), more: byProv[p].length - 8 });
+    });
+  }
+
+  const hiddenUnfit = all.filter(match).filter(m => !fitOK(m)).length;
+
+  return E('div', {
+    style: {
+      background: 'rgba(10,14,26,0.97)', border: '1px solid rgba(0,212,255,0.22)',
+      borderRadius: 12, padding: 10, width: 400, maxHeight: 520, overflowY: 'auto',
+      boxShadow: '0 18px 50px rgba(0,0,0,0.6)',
+    },
+  },
+    note && E('div', {
+      style: {
+        fontSize: 10, color: 'rgba(255,255,255,0.55)', fontFamily: 'JetBrains Mono',
+        marginBottom: 8, lineHeight: 1.5,
+      },
+    }, note),
+    E('input', {
+      autoFocus: true, value: q, onChange: e => setQ(e.target.value),
+      placeholder: 'Search all ' + all.length + ' models…',
+      style: {
+        width: '100%', boxSizing: 'border-box', background: 'rgba(0,0,0,0.4)',
+        border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, padding: '7px 9px',
+        color: '#fff', fontFamily: 'JetBrains Mono', fontSize: 12, marginBottom: 8,
+      },
+    }),
+    groups.map((g, gi) => E('div', { key: gi, style: { marginBottom: 8 } },
+      E('div', {
+        style: {
+          fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
+          color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', margin: '4px 0 4px 2px',
+        },
+      }, g.title),
+      g.rows.map(m => E(ModelRow, {
+        key: m.id, m: m, need: need, current: current, machine: machine,
+        servingId: intel && intel.serving && intel.serving.model,
+        onPick: mm => { onPick(mm); if (onClose) onClose(); },
+      })),
+      g.more > 0 && E('div', {
+        style: { fontSize: 10, color: 'rgba(255,255,255,0.32)', fontFamily: 'JetBrains Mono', marginLeft: 13 },
+      }, '+' + g.more + ' more — search to reach them'))),
+    !groups.length && E('div', {
+      style: { fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono', padding: 8 },
+    }, 'Nothing matched.'),
+    hiddenUnfit > 0 && E('button', {
+      onClick: () => setShowUnfit(v => !v),
+      style: {
+        width: '100%', marginTop: 4, background: 'transparent', cursor: 'pointer',
+        border: '1px dashed rgba(255,255,255,0.14)', borderRadius: 7, padding: '6px 8px',
+        color: 'rgba(255,255,255,0.5)', fontFamily: 'JetBrains Mono', fontSize: 10,
+      },
+    }, showUnfit
+      ? 'Hide ' + hiddenUnfit + ' that cannot do this job'
+      : 'Show ' + hiddenUnfit + ' that cannot do this job'));
+}
+
+// ── Surface 1: the top-bar quick switch ──────────────────────────────────────
+
+/**
+ * The pill answers exactly one question: who is answering me.
+ *
+ * It names the model that served the LAST ACTUAL TURN, from the cost ledger —
+ * not the model bound in settings. Those drift apart, and a pill showing the
+ * selection is how the app agreed with him for eleven minutes while serving
+ * something else.
+ */
+function QuickSwitch({ current, onPick, switching }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const { d } = useIntelligence(open ? 4000 : 20000);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  // Degrade to the configured model when /api/intelligence is unavailable
+  // (an older server process without the endpoint). A pill reading "—"
+  // because a fetch failed is precisely the silent-emptiness failure this app
+  // keeps shipping; show the bound model and label the state as unknown.
+  const serving = (d && d.serving) || (current ? { model: current, at: null, stale: true } : null);
+  const servingModel = serving && ((d && d.models) || []).filter(m => m.id === serving.model)[0];
+  const name = serving ? prettyModel(serving.model, servingModel && servingModel.label) : '—';
+  const isLocal = servingModel ? servingModel.local : (serving ? /:|^hf\./i.test(serving.model) : false);
+  const resident = servingModel && servingModel.state === 'resident';
+
+  return E('div', { ref: ref, style: { position: 'relative' } },
+    E('button', {
+      onClick: () => setOpen(o => !o),
+      title: !serving ? 'No turn served yet.'
+        : serving.stale
+          ? 'Bound model: ' + serving.model + '\nLive serving state unavailable until the server restarts.'
+          : 'Answering you now: ' + serving.model + '\nLast turn ' + (fmtAgo(serving.at) || '') + '\nClick to switch.',
+      'aria-label': 'Model quick switch',
+      style: {
+        background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.18)',
+        borderRadius: 10, padding: '3px 9px', cursor: 'pointer', fontFamily: 'JetBrains Mono',
+        fontSize: 11, color: 'rgba(255,255,255,0.88)', display: 'flex', alignItems: 'center', gap: 6,
+      },
+    },
+      E('span', {
+        style: {
+          width: 7, height: 7, borderRadius: 4, flexShrink: 0,
+          background: isLocal ? '#00ff80' : '#7b61ff',
+          boxShadow: resident ? '0 0 6px #00ff80' : 'none',
+        },
+      }),
+      E('span', null, name),
+      E('span', { style: { fontSize: 9, opacity: 0.5 } },
+        serving && serving.stale ? 'bound' : (isLocal ? 'local' : 'cloud')),
+      switching && E('span', {
+        style: {
+          fontSize: 9, color: '#f59e0b', border: '1px solid rgba(245,158,11,0.45)',
+          background: 'rgba(245,158,11,0.14)', borderRadius: 3, padding: '0 4px',
+        },
+      }, '→ ' + prettyModel(switching.id) + (switching.wake_s ? ' ~' + switching.wake_s + 's' : '')),
+      E('span', { style: { fontSize: 10, opacity: 0.85 }, 'aria-hidden': 'true' }, '▾')),
+    open && E('div', { style: { position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 2200 } },
+      E(ModelPicker, {
+        intel: d, need: { role: 'orchestrator', modality: 'tools' }, current: current,
+        onPick: onPick, onClose: () => setOpen(false),
+        note: serving
+          ? 'Answering you now: ' + prettyModel(serving.model) + ' · ' + (fmtAgo(serving.at) || 'recently') +
+            '. Pick another and the pill changes once it has actually served a turn.'
+          : 'Nothing has served a turn yet.',
+      })));
+}
+
+// ── Surface 2: Settings → Intelligence ───────────────────────────────────────
+
+function Bar({ used, total, reserve, label, sub }) {
+  const pct = total ? Math.min(100, (used / total) * 100) : 0;
+  const rpct = total && reserve ? Math.min(100, (reserve / total) * 100) : 0;
+  const tight = total && reserve && (total - used) < reserve;
+  return E('div', { style: { marginBottom: 10 } },
+    E('div', {
+      style: {
+        display: 'flex', justifyContent: 'space-between', fontSize: 10,
+        fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginBottom: 4,
+      },
+    }, E('span', null, label), E('span', { style: { color: tight ? '#ff4d6d' : 'inherit' } }, sub)),
+    E('div', {
+      style: {
+        position: 'relative', height: 8, borderRadius: 4, background: 'rgba(255,255,255,0.07)',
+        overflow: 'hidden',
+      },
+    },
+      E('div', {
+        style: {
+          width: pct + '%', height: '100%',
+          background: tight ? 'linear-gradient(90deg,#ff4d6d,#ff0080)' : 'linear-gradient(90deg,#00d4ff,#7b61ff)',
+        },
+      }),
+      // The display reserve, marked. A refusal becomes a legible trade rather
+      // than a blank no.
+      rpct > 0 && E('div', {
+        title: 'Display reserve — the desktop needs this much to drive your monitors',
+        style: {
+          position: 'absolute', top: -2, bottom: -2, right: 0, width: rpct + '%',
+          borderLeft: '2px solid rgba(255,77,109,0.8)',
+          background: 'repeating-linear-gradient(45deg,rgba(255,77,109,0.16) 0 4px,transparent 4px 8px)',
+        },
+      })));
+}
+
+function RoleRow({ r, intel, onOpen, openFor }) {
+  const m = ((intel && intel.models) || []).filter(x => x.id === r.model)[0];
+  const fit = m ? suitability(m, { role: r.requires_role, modality: r.requires }) : { ok: true };
+  return E('div', {
+    style: {
+      borderTop: '1px solid rgba(255,255,255,0.05)', padding: '10px 2px', position: 'relative',
+    },
+  },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+      E('div', { style: { width: 168, flexShrink: 0 } },
+        E('div', {
+          style: { fontFamily: 'Orbitron', fontSize: 12, color: 'rgba(255,255,255,0.9)' },
+        }, r.label),
+        E('div', {
+          style: { fontSize: 9.5, color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginTop: 2 },
+        }, r.help)),
+      E('button', {
+        onClick: () => onOpen(openFor === r.key ? null : r.key),
+        style: {
+          flex: 1, textAlign: 'left', cursor: 'pointer', background: 'rgba(255,255,255,0.03)',
+          border: '1px solid ' + (openFor === r.key ? 'rgba(0,212,255,0.45)' : 'rgba(255,255,255,0.08)'),
+          borderRadius: 8, padding: '7px 10px',
+        },
+      },
+        E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
+          E('span', {
+            style: {
+              width: 6, height: 6, borderRadius: 3, flexShrink: 0,
+              background: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)',
+            },
+          }),
+          E('span', {
+            style: {
+              fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.92)', flex: 1,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            },
+          }, r.model ? prettyModel(r.model, m && m.label) : 'not set'),
+          m && E(StateChip, { m: m })),
+        E('div', {
+          style: {
+            fontSize: 10, fontFamily: 'JetBrains Mono', marginTop: 3, marginLeft: 13,
+            color: fit.ok ? 'rgba(255,255,255,0.45)' : '#f59e0b',
+          },
+        }, !fit.ok ? fit.why
+          : [r.where || (m && !m.local ? 'cloud' : '—'),
+             r.proven ? 'proven — has served ' + (fmtAgo(r.last_used) || 'before') : 'untested on this machine',
+            ].join(' · '))),
+      ),
+    openFor === r.key && E('div', { style: { position: 'absolute', right: 0, top: '100%', zIndex: 60 } },
+      E(ModelPicker, {
+        intel: intel, need: { role: r.requires_role, modality: r.requires }, current: r.model,
+        onPick: mm => onOpen(null, r.key, mm), onClose: () => onOpen(null),
+        note: r.label + ' — ' + r.help + ' Showing models that can actually do this job.',
+      })));
+}
+
+function SettingsTabIntelligence() {
+  const { d, reload } = useIntelligence(15000);
+  const [openFor, setOpenFor] = useState(null);
+  const [saving, setSaving] = useState(null);
+
+  const pick = (key, m) => {
+    setSaving(key);
+    apiFetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capability_routing: { [key]: { model: m.id, provider: (m.providers || [])[0] } } }),
+    }).then(() => {
+      window.dispatchEvent(new CustomEvent('friday:model-catalog-invalidated'));
+      reload();
+    }).finally(() => setSaving(null));
+  };
+
+  const onOpen = (next, key, m) => {
+    if (key && m) { pick(key, m); setOpenFor(null); return; }
+    setOpenFor(next);
+  };
+
+  if (!d) return E('div', {
+    style: { padding: 18, fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.5)' },
+  }, 'Reading the machine…');
+
+  const mach = d.machine || {};
+  const vram = mach.vram || {};
+  const ram = mach.ram || {};
+  const vUsed = (vram.total_mib || 0) - (vram.free_mib || 0);
+
+  return E('div', { style: { padding: '4px 2px' } },
+
+    // ── ROLES ────────────────────────────────────────────────────────────────
+    E(StSection, { title: 'WHAT RUNS EACH JOB' },
+      E('div', {
+        style: {
+          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
+          lineHeight: 1.6, marginBottom: 4,
+        },
+      }, 'One row per job. Clicking a row shows only models that can actually do it — ' +
+         'which is why speech models no longer appear as candidates for running your chat.'),
+      (d.roles || []).map(r => E(RoleRow, {
+        key: r.key, r: r, intel: d, onOpen: onOpen, openFor: openFor,
+      })),
+      saving && E('div', {
+        style: { fontSize: 10, color: '#f59e0b', fontFamily: 'JetBrains Mono', marginTop: 8 },
+      }, 'Saving ' + saving + '…')),
+
+    // ── MACHINE ──────────────────────────────────────────────────────────────
+    E(StSection, { title: 'THE MACHINE' },
+      E(Bar, {
+        label: (vram.gpu || 'GPU') + ' — video memory',
+        used: vUsed, total: vram.total_mib, reserve: vram.reserve_mib,
+        sub: vram.total_mib
+          ? Math.round((vram.free_mib || 0) / 1024 * 10) / 10 + ' GB free of ' +
+            Math.round(vram.total_mib / 1024) + ' GB' + (vram.at_risk ? ' — under the display reserve' : '')
+          : 'unavailable',
+      }),
+      ram.total_mib && E(Bar, {
+        label: 'System memory',
+        used: (ram.total_mib || 0) - (ram.available_mib || 0), total: ram.total_mib,
+        reserve: ram.reserve_mib,
+        sub: Math.round((ram.available_mib || 0) / 1024) + ' GB free of ' +
+             Math.round(ram.total_mib / 1024) + ' GB',
+      }),
+      E('div', {
+        style: { fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.55)', marginTop: 6 },
+      },
+        E('span', { style: { color: 'rgba(255,255,255,0.38)' } }, 'Loaded now: '),
+        (mach.resident || []).length
+          ? (mach.resident || []).map(x => prettyModel(x)).join(', ')
+          // Never claim an idle card while the bar shows it full. If residency
+          // reported nothing but the memory is gone, say the truth: something
+          // is holding it and we cannot name it.
+          : (vram.total_mib && (vram.free_mib || 0) < vram.total_mib * 0.5
+              ? 'not reported — but ' +
+                Math.round((vram.total_mib - (vram.free_mib || 0)) / 1024) +
+                ' GB is in use by something'
+              : 'nothing — the card is idle')),
+      (mach.refusals || []).length > 0 && E('div', { style: { marginTop: 10 } },
+        E('div', {
+          style: {
+            fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase',
+            color: 'rgba(255,255,255,0.38)', fontFamily: 'JetBrains Mono', marginBottom: 4,
+          },
+        }, 'What will not fit right now'),
+        (mach.refusals || []).map((f, i) => E('div', {
+          key: i,
+          style: {
+            fontSize: 10.5, fontFamily: 'JetBrains Mono', color: '#f59e0b',
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
+            borderRadius: 6, padding: '5px 8px', marginBottom: 3, lineHeight: 1.5,
+          },
+        }, prettyModel(f.model) + ' for ' + (f.role || 'a seat') + ' — ' + f.explanation)))),
+
+    // ── PROVIDERS ────────────────────────────────────────────────────────────
+    E(StSection, { title: 'PROVIDERS' },
+      E('div', {
+        style: {
+          fontSize: 10.5, color: 'rgba(255,255,255,0.45)', fontFamily: 'JetBrains Mono',
+          lineHeight: 1.6, marginBottom: 6,
+        },
+      }, 'Connected is not the same as used. The last column is what has actually been served.'),
+      (d.providers || []).map(p => E('div', {
+        key: p.name,
+        style: {
+          display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px',
+          borderTop: '1px solid rgba(255,255,255,0.05)',
+        },
+      },
+        E('span', {
+          title: p.connected ? 'connected' : 'not connected',
+          style: {
+            width: 7, height: 7, borderRadius: 4, flexShrink: 0,
+            background: p.connected ? '#00ff80' : 'rgba(255,255,255,0.25)',
+          },
+        }),
+        E('div', { style: { width: 150, flexShrink: 0 } },
+          E('div', {
+            style: { fontFamily: 'JetBrains Mono', fontSize: 12, color: 'rgba(255,255,255,0.9)' },
+          }, p.label),
+          E('div', {
+            style: { fontSize: 9.5, color: 'rgba(255,255,255,0.35)', fontFamily: 'JetBrains Mono' },
+          }, p.key_env ? (p.key_present ? p.key_env + ' set' : p.key_env + ' missing') : 'no key needed')),
+        E('div', {
+          style: { flex: 1, fontSize: 10.5, fontFamily: 'JetBrains Mono', color: 'rgba(255,255,255,0.5)' },
+        }, p.models + ' model' + (p.models === 1 ? '' : 's')),
+        E('div', {
+          style: {
+            width: 190, textAlign: 'right', fontSize: 10.5, fontFamily: 'JetBrains Mono',
+            color: p.last_used ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.3)',
+          },
+        }, p.last_used
+          ? [fmtAgo(p.last_used), p.calls + ' calls',
+             p.cost_usd > 0 ? '$' + p.cost_usd.toFixed(2) : 'free'].join(' · ')
+          : 'never served anything')))),
+  );
+}
+
+
 function SettingsTabModels({
   s,
   save
@@ -33791,17 +34398,13 @@ function SettingsWS() {
     label: 'General',
     ico: '⚡️'
   }, {
-    id: 'models',
-    label: 'Models',
+    id: 'intelligence',
+    label: 'Intelligence',
     ico: '🧠'
   }, {
     id: 'work',
     label: 'Work',
     ico: '\u{1F4CB}'
-  }, {
-    id: 'providers',
-    label: 'Providers',
-    ico: '🧩'
   }, {
     id: 'voice',
     label: 'Voice',
@@ -33822,10 +34425,6 @@ function SettingsWS() {
     id: 'economy',
     label: 'Economy',
     ico: '💎'
-  }, {
-    id: 'orchestrator',
-    label: 'Orchestrator',
-    ico: '⚙️'
   }, {
     id: 'connectors',
     label: 'Connectors',
@@ -33905,13 +34504,7 @@ function SettingsWS() {
   }, tab === 'general' && /*#__PURE__*/React.createElement(SettingsTabGeneral, {
     s: s,
     save: save
-  }), tab === 'models' && /*#__PURE__*/React.createElement(SettingsTabModels, {
-    s: s,
-    save: save
-  }), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), tab === 'providers' && /*#__PURE__*/React.createElement(SettingsTabProviders, {
-    s: s,
-    save: save
-  }), tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
+  }), tab === 'intelligence' && /*#__PURE__*/React.createElement(SettingsTabIntelligence, null), tab === 'work' && /*#__PURE__*/React.createElement(SettingsTabWork, null), false, tab === 'voice' && /*#__PURE__*/React.createElement(SettingsTabVoice, {
     s: s,
     save: save
   }), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
@@ -33920,7 +34513,7 @@ function SettingsWS() {
   }), tab === 'knowledge' && /*#__PURE__*/React.createElement(SettingsTabKnowledge, {
     s: s,
     save: save
-  }), tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), tab === 'orchestrator' && /*#__PURE__*/React.createElement(SettingsTabOrchestrator, null), tab === 'connectors' && /*#__PURE__*/React.createElement(SettingsTabConnectors, {
+  }), tab === 'federation' && /*#__PURE__*/React.createElement(SettingsTabFederation, null), tab === 'economy' && /*#__PURE__*/React.createElement(SettingsTabEconomy, null), false, tab === 'connectors' && /*#__PURE__*/React.createElement(SettingsTabConnectors, {
     s: s,
     save: save
   }), tab === 'about' && /*#__PURE__*/React.createElement(SettingsTabAbout, null)));
@@ -35264,6 +35857,9 @@ function App() {
     } catch (e) {}
   };
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  // The model just chosen, shown as "-> X ~7s" on the pill until a turn
+  // has actually been served by it. Cleared by the served-model effect.
+  const [pendingSeat, setPendingSeat] = useState(null);
   const [modelMenuRole, setModelMenuRole] = useState(null); // which By-Role row is expanded (one at a time)
   const [localAllOpen, setLocalAllOpen] = useState(false); // Local Models: full installed list vs top 4
   const modelMenuRef = useRef(null);
@@ -35346,6 +35942,12 @@ function App() {
     return null;
   })();
   const seatMismatch = !!(lastServed && curOrchId && lastServed.model !== curOrchId);
+  // The pill promises "switching to X" and must stop promising once X has
+  // actually answered. Anything else is the old bug in a new costume: the
+  // UI asserting a state the dispatcher has not reached.
+  useEffect(() => {
+    if (pendingSeat && lastServed && lastServed.model === pendingSeat.id) setPendingSeat(null);
+  }, [pendingSeat, lastServed && lastServed.model]);
   const quickSwitch = (() => {
     const pool = _mmRole('orchestrator');
     const cur = pool.find(m => m.id === curOrchId) || (curOrchId ? {
@@ -38230,685 +38832,24 @@ registerProcessor('friday-pcm-player', FridayPCMPlayer);
       fontSize: 13,
       userSelect: 'none'
     }
-  }, "|"), /*#__PURE__*/React.createElement("div", {
-    ref: modelMenuRef,
-    style: {
-      position: 'relative'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setModelMenuOpen(o => !o);
-      setModelMenuRole(null);
-      setLocalAllOpen(false);
-      setSceneMenuOpen(false);
-    },
-    style: {
-      background: 'rgba(0,0,0,0.35)',
-      border: '1px solid ' + (routingMode !== 'cloud_only' ? 'rgba(245,158,11,0.35)' : 'rgba(255,255,255,0.18)'),
-      borderRadius: 10,
-      padding: '3px 9px',
-      cursor: 'pointer',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.88)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      transition: 'border-color .2s,background .2s'
-    },
-    title: "Model selection & routing",
-    "aria-label": "Model selection"
-  }, (() => {
-    const capr = (agentSettings.capability_routing || {}).reasoning || {};
-    const seatProv = routingMode === 'local_only' ? 'ollama-local' : capr.provider || 'anthropic';
-    const h = seatHealth[seatProv];
-    const st = h ? h.proved_inference ? 'live' : 'down' : 'unknown';
-    const col = st === 'live' ? '#00ff80' : st === 'down' ? '#ff4d6d' : '#f59e0b';
-    const lbl = st === 'live' ? 'live — proved a real generation' : st === 'down' ? 'DOWN or still loading — replies are falling back to another seat' : 'not probed yet';
-    return /*#__PURE__*/React.createElement("span", {
-      "aria-label": 'Seat health: ' + st,
-      title: 'Seat provider ' + seatProv + ': ' + lbl + (h && h.detail ? ' · ' + String(h.detail).slice(0, 120) : ''),
-      style: {
-        display: 'inline-block',
-        width: 7,
-        height: 7,
-        borderRadius: 4,
-        background: col,
-        boxShadow: st === 'live' ? '0 0 6px ' + col : 'none',
-        flexShrink: 0
-      }
-    });
-  })(), orchModel.short, seatMismatch && /*#__PURE__*/React.createElement("span", {
-    title: 'Your selection is ' + curOrchId + ', but the last reply was actually generated by ' + lastServed.model + (lastServed.seat ? ' (' + lastServed.seat + ' seat)' : '') + '. The selection has not taken effect yet — it may still be loading, or it may not be the key this path dispatches on.',
-    style: {
-      fontSize: 9,
-      padding: '0 4px',
-      borderRadius: 3,
-      background: 'rgba(245,158,11,0.14)',
-      border: '1px solid rgba(245,158,11,0.45)',
-      color: '#f59e0b',
-      fontFamily: 'JetBrains Mono',
-      whiteSpace: 'nowrap'
-    }
-  }, "\u26A0 serving ", String(lastServed.model).split('/').pop().slice(0, 18)), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      opacity: 0.85
-    },
-    "aria-hidden": "true"
-  }, "\u25BE")), modelMenuOpen && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      top: 'calc(100% + 6px)',
-      left: 0,
-      width: 320,
-      background: 'rgba(10,14,26,0.9)',
-      backdropFilter: 'blur(16px) saturate(1.2)',
-      WebkitBackdropFilter: 'blur(16px) saturate(1.2)',
-      border: '1px solid rgba(0,212,255,0.15)',
-      borderRadius: 10,
-      zIndex: 200,
-      padding: '4px 0 0',
-      boxShadow: '0 4px 30px rgba(0,0,0,0.4)',
-      fontFamily: 'Inter',
-      fontSize: 11,
-      maxHeight: '70vh',
-      overflowY: 'auto'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
-      paddingBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement(ModelSearchPicker, {
-    catalog: modelCatalog,
-    value: curOrchId,
-    autoFocus: true,
-    placeholder: "Search every model \u2014 set the orchestrator\u2026",
-    onPick: id => {
-      saveAgentSettings({
-        orchestrator_model: id
+  }, "|"), /*#__PURE__*/React.createElement(QuickSwitch, {
+    current: curOrchId,
+    switching: pendingSeat,
+    onPick: m => {
+      // Write the capability the chat seat actually dispatches on. The
+      // server mirrors it into orchestrator_model; writing the flat key
+      // alone is what let a selection sit unread for eleven minutes.
+      setPendingSeat(m);
+      apiFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capability_routing: { reasoning: { model: m.id, provider: (m.providers || [])[0] } } })
+      }).then(() => {
+        setAgentSettings(a => ({ ...a, orchestrator_model: m.id }));
+        try { fridayInvalidateModelCatalog(); } catch (_) {}
       });
-      setModelMenuOpen(false);
-      setModelMenuRole(null);
     }
   })), /*#__PURE__*/React.createElement("div", {
-    className: "model-selector-tier"
-  }, "Quick Switch"), quickSwitch.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '2px 12px 8px',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.45)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "No providers configured \u2014 add an API key below"), quickSwitch.map(m => {
-    const cur = m.id === curOrchId;
-    return /*#__PURE__*/React.createElement("button", {
-      key: m.id,
-      onClick: () => {
-        saveAgentSettings({
-          orchestrator_model: m.id
-        });
-        setModelMenuOpen(false);
-        setModelMenuRole(null);
-      },
-      className: "model-option-cloud",
-      title: cur ? 'Current orchestrator' : 'Switch orchestrator to ' + m.label,
-      style: {
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        borderLeft: cur ? '2px solid rgba(0,212,255,0.7)' : '2px solid transparent',
-        background: cur ? 'rgba(0,212,255,0.12)' : 'transparent',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.8)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        width: 15,
-        flexShrink: 0,
-        textAlign: 'center',
-        fontSize: 10
-      },
-      "aria-hidden": "true"
-    }, m.local ? '🏠' : cur ? '●' : ''), /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, m.label), m.provider_label ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 9,
-        color: 'rgba(255,255,255,0.3)',
-        flexShrink: 0
-      }
-    }, m.provider_label) : null);
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "model-selector-tier",
-    style: {
-      borderTop: '1px solid rgba(255,255,255,0.06)',
-      marginTop: 4,
-      paddingTop: 8
-    }
-  }, "By Role"), [{
-    id: 'orchestrator',
-    ico: '🧠',
-    label: 'Orchestrator',
-    key: 'orchestrator_model',
-    active: orchModel
-  }, {
-    id: 'subagent',
-    ico: '🔧',
-    label: 'Subagent',
-    key: 'subagent_model',
-    active: subagentModel
-  }].map(row => {
-    const open = modelMenuRole === row.id;
-    const opts = _mmRole(row.id).slice(0, 5);
-    return /*#__PURE__*/React.createElement("div", {
-      key: row.id
-    }, /*#__PURE__*/React.createElement("button", {
-      onClick: () => setModelMenuRole(open ? null : row.id),
-      "aria-expanded": open,
-      title: open ? 'Collapse' : 'Change ' + row.label.toLowerCase() + ' model',
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7,
-        width: '100%',
-        textAlign: 'left',
-        background: open ? 'rgba(0,212,255,0.06)' : 'transparent',
-        border: 'none',
-        padding: '4px 12px',
-        cursor: 'pointer',
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        color: 'rgba(255,255,255,0.8)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        width: 15,
-        flexShrink: 0,
-        textAlign: 'center'
-      },
-      "aria-hidden": "true"
-    }, row.ico), /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: 'rgba(255,255,255,0.5)',
-        flexShrink: 0
-      }
-    }, row.label), /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        color: '#00d4ff',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        textAlign: 'right'
-      }
-    }, row.active.short || row.active.label), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 9,
-        opacity: 0.7,
-        flexShrink: 0
-      },
-      "aria-hidden": "true"
-    }, open ? '▴' : '▾')), open && /*#__PURE__*/React.createElement("div", {
-      style: {
-        paddingBottom: 4
-      }
-    }, opts.length === 0 && /*#__PURE__*/React.createElement("div", {
-      style: {
-        padding: '2px 12px 4px 34px',
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.45)',
-        fontFamily: 'JetBrains Mono'
-      }
-    }, "No available models \u2014 add a provider key"), opts.map(m => {
-      const cur = agentSettings[row.key] === m.id;
-      return /*#__PURE__*/React.createElement("button", {
-        key: m.id,
-        onClick: () => {
-          saveAgentSettings({
-            [row.key]: m.id
-          });
-          setModelMenuRole(null);
-        },
-        className: "model-option-cloud",
-        title: (m.provider_label || '') + (m.local ? ' · on-device' : ''),
-        style: {
-          width: '100%',
-          textAlign: 'left',
-          border: 'none',
-          padding: '3px 12px 3px 34px',
-          fontSize: 10,
-          background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
-          color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          flex: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
-        }
-      }, m.local ? '🏠 ' : '', m.label), cur ? /*#__PURE__*/React.createElement("span", {
-        style: {
-          flexShrink: 0
-        },
-        "aria-hidden": "true"
-      }, "\u2713") : null);
-    })));
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setModelMenuRole(modelMenuRole === 'creative' ? null : 'creative'),
-    "aria-expanded": modelMenuRole === 'creative',
-    title: modelMenuRole === 'creative' ? 'Collapse' : 'Change creative models',
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      width: '100%',
-      textAlign: 'left',
-      background: modelMenuRole === 'creative' ? 'rgba(0,212,255,0.06)' : 'transparent',
-      border: 'none',
-      padding: '4px 12px',
-      cursor: 'pointer',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.8)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 15,
-      flexShrink: 0,
-      textAlign: 'center'
-    },
-    "aria-hidden": "true"
-  }, "\uD83C\uDFA8"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.5)',
-      flexShrink: 0
-    }
-  }, "Creative"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      color: '#00d4ff',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-      textAlign: 'right'
-    }
-  }, creativeModel.short || creativeModel.label), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      opacity: 0.7,
-      flexShrink: 0
-    },
-    "aria-hidden": "true"
-  }, modelMenuRole === 'creative' ? '▴' : '▾')), modelMenuRole === 'creative' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      paddingBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 12px 2px 34px',
-      fontFamily: 'Orbitron',
-      fontSize: 8,
-      color: 'rgba(0,212,255,0.55)',
-      letterSpacing: '0.1em',
-      textTransform: 'uppercase'
-    }
-  }, "Image model"), mmCreativeImg.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '2px 12px 4px 34px',
-      fontSize: 10,
-      color: 'rgba(255,255,255,0.45)',
-      fontFamily: 'JetBrains Mono'
-    }
-  }, "No available models \u2014 add a provider key"), mmCreativeImg.map(m => {
-    const cur = agentSettings.creative_model === m.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: m.id,
-      onClick: () => {
-        saveAgentSettings({
-          creative_model: m.id
-        });
-        setModelMenuRole(null);
-      },
-      className: "model-option-cloud",
-      title: (m.provider_label || '') + (m.local ? ' · on-device' : ''),
-      style: {
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        padding: '3px 12px 3px 34px',
-        fontSize: 10,
-        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, m.local ? '🏠 ' : '', m.label), cur ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        flexShrink: 0
-      },
-      "aria-hidden": "true"
-    }, "\u2713") : null);
-  }), mmCreativeVid.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 12px 2px 34px',
-      fontFamily: 'Orbitron',
-      fontSize: 8,
-      color: 'rgba(0,212,255,0.55)',
-      letterSpacing: '0.1em',
-      textTransform: 'uppercase'
-    }
-  }, "Video model"), mmCreativeVid.map(m => {
-    const cur = creativeVideoId === m.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: m.id,
-      onClick: () => {
-        saveAgentSettings({
-          capability_routing: {
-            creative_video: {
-              model: m.id,
-              provider: m.provider
-            }
-          }
-        });
-        setModelMenuRole(null);
-      },
-      className: "model-option-cloud",
-      title: (m.provider_label || '') + ' · video',
-      style: {
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        padding: '3px 12px 3px 34px',
-        fontSize: 10,
-        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, m.label), cur ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        flexShrink: 0
-      },
-      "aria-hidden": "true"
-    }, "\u2713") : null);
-  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setModelMenuRole(modelMenuRole === 'voice' ? null : 'voice'),
-    "aria-expanded": modelMenuRole === 'voice',
-    title: modelMenuRole === 'voice' ? 'Collapse' : 'Change voice engine',
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      width: '100%',
-      textAlign: 'left',
-      background: modelMenuRole === 'voice' ? 'rgba(0,212,255,0.06)' : 'transparent',
-      border: 'none',
-      padding: '4px 12px',
-      cursor: 'pointer',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 11,
-      color: 'rgba(255,255,255,0.8)'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 15,
-      flexShrink: 0,
-      textAlign: 'center'
-    },
-    "aria-hidden": "true"
-  }, "\uD83C\uDFA4"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'rgba(255,255,255,0.5)',
-      flexShrink: 0
-    }
-  }, "Voice"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      flex: 1,
-      color: '#00d4ff',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-      textAlign: 'right'
-    }
-  }, voiceEngineMeta.short || voiceEngineMeta.label), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      opacity: 0.7,
-      flexShrink: 0
-    },
-    "aria-hidden": "true"
-  }, modelMenuRole === 'voice' ? '▴' : '▾')), modelMenuRole === 'voice' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      paddingBottom: 4
-    }
-  }, mmVoiceEngines.map(en => {
-    const cur = voiceEngine === en.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: en.id,
-      onClick: () => {
-        saveAgentSettings({
-          voice_engine: en.id
-        });
-        if (en.id !== 'gemini') setModelMenuRole(null);
-      },
-      className: "model-option-cloud",
-      title: en.hint || en.label,
-      style: {
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        padding: '3px 12px 3px 34px',
-        fontSize: 10,
-        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, en.label), cur ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        flexShrink: 0
-      },
-      "aria-hidden": "true"
-    }, "\u2713") : null);
-  }), voiceEngine === 'gemini' && mmVoiceModels.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '4px 12px 2px 34px',
-      fontFamily: 'Orbitron',
-      fontSize: 8,
-      color: 'rgba(0,212,255,0.55)',
-      letterSpacing: '0.1em',
-      textTransform: 'uppercase'
-    }
-  }, "Gemini Live model"), mmVoiceModels.map(m => {
-    const cur = agentSettings.voice_model === m.id;
-    return /*#__PURE__*/React.createElement("button", {
-      key: m.id,
-      onClick: () => {
-        saveAgentSettings({
-          voice_model: m.id
-        });
-        setModelMenuRole(null);
-      },
-      className: "model-option-cloud",
-      title: "Gemini Live model",
-      style: {
-        width: '100%',
-        textAlign: 'left',
-        border: 'none',
-        padding: '3px 12px 3px 34px',
-        fontSize: 10,
-        background: cur ? 'rgba(0,212,255,0.10)' : 'transparent',
-        color: cur ? '#00d4ff' : 'rgba(255,255,255,0.75)'
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        flex: 1,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, m.label), cur ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        flexShrink: 0
-      },
-      "aria-hidden": "true"
-    }, "\u2713") : null);
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "model-selector-tier",
-    style: {
-      borderTop: '1px solid rgba(255,255,255,0.06)',
-      marginTop: 4,
-      paddingTop: 8
-    }
-  }, "Routing Mode"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '2px 12px 6px',
-      display: 'flex',
-      gap: 4
-    }
-  }, [{
-    id: 'cloud_only',
-    label: 'Cloud Only'
-  }, {
-    id: 'smart',
-    label: 'Smart'
-  }, {
-    id: 'local_preferred',
-    label: 'Local Pref.'
-  }, {
-    id: 'local_only',
-    label: 'Local Only'
-  }].map(rm => /*#__PURE__*/React.createElement("button", {
-    key: rm.id,
-    onClick: () => setRoutingMode(rm.id),
-    title: rm.id === 'local_preferred' ? 'Local Preferred' : rm.label,
-    style: {
-      background: routingMode === rm.id ? 'rgba(0,212,255,0.15)' : 'rgba(255,255,255,0.04)',
-      border: '1px solid ' + (routingMode === rm.id ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.1)'),
-      borderRadius: 5,
-      padding: '3px 6px',
-      cursor: 'pointer',
-      color: routingMode === rm.id ? '#00d4ff' : 'rgba(255,255,255,0.65)',
-      fontSize: 9,
-      fontFamily: 'JetBrains Mono',
-      transition: 'all .15s',
-      flex: 1,
-      whiteSpace: 'nowrap'
-    }
-  }, rm.label))), (() => {
-    const MODE_MEANING = {
-      cloud_only: 'All conversation goes to the cloud orchestrator seat.',
-      smart: 'The router picks the seat per turn — vault-touching turns always go local.',
-      local_preferred: 'Local seat answers first; cloud orchestrator only as fallback.',
-      local_only: 'ALL conversation goes to the local seat. The cloud orchestrator is NOT consulted.'
-    };
-    const localM = (agentSettings.model_routing || {}).local_model || 'gemma4:latest';
-    // #7: a local-classification provider (llama.cpp brain at
-    // 127.0.0.1) is a LOCAL seat in any mode — classification
-    // rides the health payload.
-    const capProv = ((agentSettings.capability_routing || {}).reasoning || {}).provider;
-    const provLocal = (seatHealth[capProv] || {}).classification === 'local';
-    const effLocal = routingMode === 'local_only' || provLocal;
-    const effModel = routingMode === 'local_only' ? localM : agentSettings.orchestrator_model || '';
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        padding: '0 12px 6px'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9,
-        color: routingMode === 'local_only' ? '#f59e0b' : 'rgba(255,255,255,0.45)',
-        fontFamily: 'JetBrains Mono',
-        lineHeight: 1.5
-      }
-    }, MODE_MEANING[routingMode] || ''), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9,
-        fontFamily: 'JetBrains Mono',
-        marginTop: 2,
-        color: 'rgba(255,255,255,0.6)'
-      }
-    }, "Conversational seat now: ", /*#__PURE__*/React.createElement("span", {
-      title: provLocal ? 'Served on-device (' + capProv + ') — local seat over the OpenAI-compatible transport' : undefined,
-      style: {
-        color: effLocal ? '#f59e0b' : '#00d4ff'
-      }
-    }, effModel, " \xB7 ", effLocal ? 'local' : 'cloud')), routingMode !== 'cloud_only' && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9,
-        color: 'rgba(255,255,255,0.45)',
-        fontFamily: 'JetBrains Mono',
-        marginTop: 2
-      }
-    }, "Today: ", routingStats.local_requests, " local \xB7 ", routingStats.cloud_requests, " cloud", routingStats.local_tokens > 0 ? ` · ${routingStats.local_tokens.toLocaleString()} local tokens` : '', !ollamaStatus.available ? ' · Ollama offline' : ''));
-  })(), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setModelMenuOpen(false);
-      setModelMenuRole(null);
-      window.__fridaySettingsTab = 'providers';
-      try {
-        window.dispatchEvent(new CustomEvent('friday:settings-tab', {
-          detail: {
-            tab: 'providers'
-          }
-        }));
-      } catch (_) {}
-      if (openWins.has('settings')) {
-        bringFront('settings');
-      } else {
-        toggle('settings');
-      }
-    },
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      width: '100%',
-      background: 'rgba(0,212,255,0.04)',
-      border: 'none',
-      borderTop: '1px solid rgba(255,255,255,0.08)',
-      marginTop: 4,
-      padding: '8px 12px',
-      cursor: 'pointer',
-      color: 'rgba(0,212,255,0.85)',
-      fontFamily: 'JetBrains Mono',
-      fontSize: 10,
-      letterSpacing: '.05em',
-      borderRadius: '0 0 9px 9px',
-      transition: 'background .15s'
-    },
-    onMouseEnter: e => {
-      e.currentTarget.style.background = 'rgba(0,212,255,0.10)';
-    },
-    onMouseLeave: e => {
-      e.currentTarget.style.background = 'rgba(0,212,255,0.04)';
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true"
-  }, "\u2699\uFE0F"), " Browse All Models")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
