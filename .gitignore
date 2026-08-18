@@ -167,3 +167,9 @@ AGENT_BEST_PRACTICES.md
 # Playwright output — local test artifacts, never for the public tree
 test-results/
 playwright-report/
+
+# Scenario-tier runtime artifacts. These capture real conversations, including
+# tool results that contain personal data (inbox contents, email addresses).
+# Local diagnostics only — never committed; this repo is public.
+tests/app/scenarios/transcript.json
+tests/app/scenarios/sent-messages.json
