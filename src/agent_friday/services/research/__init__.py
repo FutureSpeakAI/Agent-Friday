@@ -29,15 +29,21 @@ __all__ = ["propose", "run", "run_async", "status", "list_commissions",
 
 
 def propose(question: str, *, context: str | None = None,
-            disposition: str = "now_local", budget: dict | None = None) -> dict:
+            disposition: str = "now_local", budget: dict | None = None,
+            model: str | None = None, allow_cloud: bool | None = None) -> dict:
     """Create a commission and compute what Stephen needs in order to veto it.
 
     Per §3.1 the protection plan arrives BEFORE the work starts, not in the
     credits: either "Claude will see a protected version of this question —
     2 names scrubbed" or "Claude will never see this question".
     """
+    instruction = {}
+    if model:
+        instruction["model"] = model
+    if allow_cloud is not None:
+        instruction["allow_cloud"] = bool(allow_cloud)
     c = Commission(question, context=context, disposition=disposition,
-                   budget=budget)
+                   budget=budget, instruction=instruction)
     c.save()
     from agent_friday.services import judgment_gate as jg
     dry = jg.dry_run("\n\n".join(x for x in (question, context) if x))
@@ -48,6 +54,15 @@ def propose(question: str, *, context: str | None = None,
     c.protection.reason = dry.get("reason") or ""
     c.save()
 
+    # §override — told once, up front, then it proceeds. Not a dialogue per
+    # sub-question and not a confirmation per turn: a confirmation he cannot
+    # dismiss becomes noise, and he has been explicit about that today.
+    if instruction.get("allow_cloud") and not c.protection.cloud_allowed:
+        c.protection.cloud_allowed = True
+        c.protection.reason = ("You asked for this to run in the cloud. "
+                               "Going ahead — the classifier would have kept "
+                               "it local.")
+        c.save()
     est_min = round(c.budget["wall_clock_soft_s"] / 60)
     dispositions = ["when_away", "now_local"]
     if c.protection.cloud_allowed:
@@ -60,6 +75,7 @@ def propose(question: str, *, context: str | None = None,
         # RS3: cloud_allowed=false removes every cloud option, with the reason.
         "dispositions": dispositions,
         "estimate_minutes_max": est_min,
+        "instruction": c.instruction,
         "warning": (f"This can take up to about {est_min} minutes and will read "
                     f"up to {c.budget['fetches_total']} pages."),
     }
@@ -84,8 +100,13 @@ def run(commission_id: str) -> dict:
         if c.failure:                       # the canary tripped (§7.2)
             return _fail(c, c.failure)
 
+        _cloud_sqs = [s for s in plan.sub_questions if s.cloud_allowed]
         c.colophon = {
             "scoped_by": plan.scoped_by, "ground_by": ground_by,
+            "instruction": c.instruction or None,
+            "fork": {"cloud_sub_questions": len(_cloud_sqs),
+                     "local_sub_questions": len(plan.sub_questions) - len(_cloud_sqs),
+                     "seats": sorted({s.seat for s in plan.sub_questions if s.seat})},
             "fetches": c.progress.get("fetches", 0),
             "wall_clock_s": round(time.time() - t0, 1),
             "protection": c.protection.sentence(),

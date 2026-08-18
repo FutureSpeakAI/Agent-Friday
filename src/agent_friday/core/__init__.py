@@ -1265,6 +1265,12 @@ DEFAULT_SETTINGS = {
     "away_drain": {                       # P5 — drains queued heavy work on a
         "enabled": False,                 # timer. Default OFF: it takes the GPU.
     },
+    # Who the user IS. Needed to tell HIS identifiers from other people's when
+    # an override lets his own name travel (judgment_gate.protect_after_override).
+    # Undeclared here, these were written to settings.json and silently
+    # discarded on read — the third time that whitelist has bitten tonight.
+    "user_name": "",
+    "owner_identities": [],
     "temperature": 0.7,
     "response_length": "standard",        # concise | standard | detailed
     "include_sources": True,
@@ -1797,8 +1803,15 @@ def _load_settings():
 
 def _save_settings(data):
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
-    # Invalidate the cache first so any concurrent reader re-loads from disk
-    # once we're done writing, not from the stale pre-write snapshot.
+    # Invalidate BEFORE and AFTER the write.
+    #
+    # Before-only was a race with a two-second blast radius: the cache is
+    # cleared, the file is then read/merged/replaced, and any reader arriving in
+    # that window re-populates the cache from the OLD file and serves it for the
+    # full TTL. On 2026-08-18 that made a model switch intermittently invisible
+    # — the seat was on disk, the read-back confirmed it, and a chat turn a
+    # moment later was still routed by the previous seat, so it answered from
+    # the cloud. Same code, same server: passed one run, failed the next.
     _invalidate_settings_cache()
     # Read existing file first to preserve any keys not in DEFAULT_SETTINGS
     existing = {}
@@ -1834,6 +1847,9 @@ def _save_settings(data):
     except Exception:
         pass
     _tmp.replace(SETTINGS_FILE)
+    # The write is complete and on disk; clear again so nothing keeps a
+    # snapshot taken mid-write.
+    _invalidate_settings_cache()
     return merged
 
 

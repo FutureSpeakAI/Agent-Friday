@@ -22,13 +22,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+
 from agent_friday.services.web_safety import MAX_REDIRECT_HOPS, UnsafeURLError, check_url
+
+# NameError: _log was used in the Firecrawl->direct fallback and never
+# defined here. It only fires when Firecrawl fails on a page, so five clean
+# test runs never reached it — and it killed a real commission of Stephen's
+# at 203s, after the search had already succeeded.
+_log = logging.getLogger("friday.web_fetch")
 
 # Extraction cap. Generous — the 12b's 131k window can hold a large page — but
 # not unbounded, because one pathological page should not eat a commission's

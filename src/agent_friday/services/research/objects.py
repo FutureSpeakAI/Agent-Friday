@@ -90,10 +90,23 @@ class ProtectionPlan:
 
 @dataclass
 class SubQuestion:
+    """One separately-answerable question — with its OWN privacy verdict.
+
+    The fork used to be per-COMMISSION: one verdict for the whole job. Stephen
+    found the flaw by using it — a report on himself and his company mixes
+    "what has been published about FutureSpeak.AI" (public, deserves the
+    strongest model and the live web) with "what does my vault say about my
+    positioning" (his, stays here). One verdict for both is wrong in whichever
+    direction it lands.
+    """
     id: str
     text: str
     perspective: str = ""
     done_when: str = ""
+    cloud_allowed: bool = False       # computed per sub-question
+    protection_reason: str = ""
+    seat: str = ""                    # the model that actually ground it
+    source: str = "web"               # "web" | "vault" — a SOURCE split
 
 
 @dataclass
@@ -136,13 +149,21 @@ class Commission:
 
     def __init__(self, question: str, *, context: str | None = None,
                  disposition: str = "now_local", budget: dict | None = None,
-                 commission_id: str | None = None):
+                 commission_id: str | None = None,
+                 instruction: dict | None = None):
         self.id = commission_id or uuid.uuid4().hex[:12]
         self.created_at = time.time()
         self.question = question
         self.context = context
         self.disposition = disposition
         self.budget = {**DEFAULT_BUDGET, **(budget or {})}
+        # An EXPLICIT instruction from Stephen. "the system should follow my
+        # instructions" — naming a model or asking for web research on himself
+        # is an instruction, not a preference, and it outranks the classifier's
+        # verdict. The gate advises; he decides.
+        #   model       str|None  — the model he named, used verbatim
+        #   allow_cloud bool|None — True forces cloud even when the fork objects
+        self.instruction = dict(instruction or {})
         self.status = PROPOSED
         self.protection = ProtectionPlan()
         self.plan: ResearchPlan | None = None
@@ -181,6 +202,7 @@ class Commission:
             "disposition": self.disposition, "budget": self.budget,
             "status": self.status,
             "protection": asdict(self.protection),
+            "instruction": self.instruction,
             "plan": self.plan.to_dict() if self.plan else None,
             "report_path": self.report_path, "styled_path": self.styled_path,
             "colophon": self.colophon, "failure": self.failure,
@@ -199,7 +221,8 @@ class Commission:
             return None
         c = cls(d["question"], context=d.get("context"),
                 disposition=d.get("disposition", "now_local"),
-                budget=d.get("budget"), commission_id=d["id"])
+                budget=d.get("budget"), commission_id=d["id"],
+                instruction=d.get("instruction"))
         c.created_at = d.get("created_at", c.created_at)
         c.status = d.get("status", PROPOSED)
         c.protection = ProtectionPlan(**(d.get("protection") or {}))
